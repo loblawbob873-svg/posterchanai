@@ -761,7 +761,7 @@ window.PCMailFactory = function(dep){
                                  +'&until='+encodeURIComponent(cursor));
         if(!current())return;
         const seen=new Set(this.msgs.map(m=>this._key(m)));
-        for(const m of (r.messages||[])) if(!seen.has(this._key(m))){this.msgs.push(m);seen.add(this._key(m));}
+        for(const m of this._notPending(r.messages||[])) if(!seen.has(this._key(m))){this.msgs.push(m);seen.add(this._key(m));}
         this._next = r.next_until || 0;
         this.drawList();
       }catch(_){ if(current()&&btn){ btn.disabled=false; btn.textContent='Load older'; } }
@@ -786,7 +786,7 @@ window.PCMailFactory = function(dep){
           ? await this.api('/search?q='+encodeURIComponent(query))
           : await this.api('/messages?account='+encodeURIComponent(account)+'&folder='+encodeURIComponent(folder));
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
-        this.msgs=r.messages||[];
+        this.msgs=this._notPending(r.messages||[]);
         this._next=query?0:(r.next_until||0);
         // Answered from this device (no network, or the server unreachable): the list is real mail,
         // just not fresh — said the same way as a refresh that failed over a loaded list.
@@ -861,6 +861,7 @@ window.PCMailFactory = function(dep){
         this.open(this.openUid, this.openFolder, this.openAccount||account||this.acct||'__all');
     },
     _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
+    _notPending(list){ const p=this._pendingGone; return (p&&p.size) ? list.filter(m=>!p.has(this._key(m))) : list; },
     /* THE POINT OF A THREAD IS THAT IT IS ONE ROW.
      *
      * Reported as "threading is showing multiple messages in Inbox, the point of threads is to
@@ -996,14 +997,105 @@ window.PCMailFactory = function(dep){
       if(action==='delete' && !await uiConfirm('Delete '+this.sel.size+' message(s)?',
                                                 { ok:'Delete', danger:true })) return false;
       const keys=[...this.sel]; this.sel.clear(); this.updateBulk();
-      const path = action==='read' ? '/mark-read' : '/'+action;
+      if(action==='delete' || action==='archive'){ this.removeMessages(action, keys); return true; }
+      const path = '/mark-read';
       for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
         const account=k.slice(0,i), folder=k.slice(i+1,j), uid=k.slice(j+1);
-        const body={account, folder, uid}; if(action==='read') body.read=true;
-        try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(_){}
+        try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account, folder, uid, read:true})}); }catch(_){}
       }
-      toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
+      toast('marked read'); this.loadList();
       return true;
+    },
+    /* DELETE (AND ARCHIVE) ARE OPTIMISTIC: THE MESSAGE LEAVES FIRST, THE SERVER IS ASKED BEHIND IT.
+     *
+     * Reported as "deletes are slow and do not update the UI well". Nothing on screen changed until
+     * the server had finished, and the server's half was the slow half: per message it opened TWO
+     * IMAP sessions (one only to LIST the folders and learn the Trash folder's name, one to
+     * SELECT/COPY/STORE/EXPUNGE), bulk delete did that once per message IN SERIES, and only then did
+     * the client re-read the whole folder list AND the Sent folder before the row went away. The
+     * read pane stayed on the deleted message the whole time.
+     *
+     * Now the rows go at once, the read pane moves to the next conversation (or, where the reader is
+     * a full-screen sheet over the list -- the phone layout -- closes back to the list), and the
+     * server is asked with ONE request per folder (`uids`, one IMAP session). There is no reload
+     * after: what is on screen IS the answer. A refusal puts the messages back where they were and
+     * SAYS so -- an optimistic UI that fails silently is a delete that quietly did not happen.
+     * Messages in flight are kept out of any list read that lands meanwhile (`_pendingGone`), or a
+     * background refresh would paint them back before the server had finished. */
+    _paneIsSheet(pane){
+      try{ return getComputedStyle(pane).position === 'fixed'; }catch(_){ return false; }
+    },
+    _emptyPane(){
+      const pane=$('#mail-read',this.root);
+      if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
+      this.openUid=null; this.openFolder=null; this.openAccount=null;
+    },
+    async removeMessages(action, keys){
+      keys=[...new Set(keys)].filter(Boolean);
+      if(!keys.length) return true;
+      const want=new Set(keys), root=this.root, account=this.acct, folder=this.folder, query=this.q;
+      const isOpen = x => this.openUid!=null && String(x.uid)===String(this.openUid)
+        && (x.account||this.acct)===(this.openAccount||this.acct) && (x.folder||this.folder)===(this.openFolder||this.folder);
+      const before=this._conversations();
+      const firstRow=before.findIndex(c=>c.all.some(x=>want.has(this._key(x))));
+      const openRow=before.findIndex(c=>c.all.concat(c.mine||[]).some(isOpen));
+      const openGoes = openRow>=0 && before[openRow].all.some(x=>want.has(this._key(x)));
+      // Snapshot what is leaving, with its place, so a refusal can put it back where it was.
+      const gone=[]; this.msgs.forEach((m,i)=>{ if(want.has(this._key(m))) gone.push({m,i}); });
+      this._pendingGone=this._pendingGone||new Set();
+      keys.forEach(k=>this._pendingGone.add(k));
+      const cursorKey=(this.msgs[this.cursor] ? this._key(this.msgs[this.cursor]) : null);
+      this.msgs=this.msgs.filter(m=>!want.has(this._key(m)));
+      if(this.sel) keys.forEach(k=>this.sel.delete(k));
+      if(cursorKey && want.has(cursorKey)) this.cursor=-1;
+      else if(cursorKey) this.cursor=this.msgs.findIndex(m=>this._key(m)===cursorKey);
+      const pane=$('#mail-read',this.root);
+      let next=null;
+      if(openGoes){
+        const after=this._conversations();
+        next = after.length ? after[Math.min(Math.max(openRow, 0), after.length-1)] : null;
+        if(!next || (pane && this._paneIsSheet(pane)) || (next.all[0].folder||this.folder)==='Drafts') this._emptyPane();
+        else { const n=next.all[0]; this.cursor=this.msgs.indexOf(n); this.open(n.uid, n.folder||this.folder, n.account||this.acct); }
+      }else if(firstRow>=0 && this.cursor<0){
+        const after=this._conversations();
+        if(after.length) this.cursor=this.msgs.indexOf(after[Math.min(firstRow, after.length-1)].all[0]);
+      }
+      this.drawList();
+      // One request per mailbox folder -- a batch is one IMAP session on the server.
+      const groups=new Map();
+      for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
+        const g=k.slice(0,j); if(!groups.has(g)) groups.set(g,{account:k.slice(0,i), folder:k.slice(i+1,j), uids:[], keys:[]});
+        groups.get(g).uids.push(k.slice(j+1)); groups.get(g).keys.push(k); }
+      const failedKeys=[]; let why='';
+      await Promise.all([...groups.values()].map(async g=>{
+        try{
+          const r=await this.api('/'+action,{method:'POST',headers:{'Content-Type':'application/json'},
+                                             body:JSON.stringify({account:g.account, folder:g.folder, uid:g.uids[0], uids:g.uids})});
+          if(r && r.ok===false){
+            const bad=new Set((r.failed||g.uids).map(String));
+            g.keys.forEach((k,i)=>{ if(bad.has(String(g.uids[i]))) failedKeys.push(k); });
+          }
+        }catch(e){ failedKeys.push(...g.keys); why=(e&&e.message)||''; }
+      }));
+      keys.forEach(k=>this._pendingGone.delete(k));
+      const verb = action==='delete' ? 'delete' : 'archive';
+      if(!failedKeys.length){
+        toast((action==='delete'?'deleted':'archived') + (keys.length>1 ? ' '+keys.length+' messages' : ''));
+        return true;
+      }
+      // PUT BACK what the server refused -- into the list it was taken from, if that is still showing.
+      const bad=new Set(failedKeys); let restored=0;
+      if(root===this.root && account===this.acct && folder===this.folder && query===this.q){
+        const have=new Set(this.msgs.map(m=>this._key(m)));
+        for(const {m,i} of gone){
+          if(!bad.has(this._key(m)) || have.has(this._key(m))) continue;
+          this.msgs.splice(Math.min(i, this.msgs.length), 0, m); have.add(this._key(m)); restored++;
+        }
+        this.drawList();
+      }
+      toast('Could not '+verb+' '+(failedKeys.length===1?'that message':failedKeys.length+' messages')
+            +(restored?' — '+(failedKeys.length===1?'it is':'they are')+' back in the list':'')+(why?' ('+why+')':''));
+      return false;
     },
     async open(uid, folder, account){
       /* `__all` WHEN NO ACCOUNT IS SELECTED, never the string "null".
@@ -1079,7 +1171,55 @@ window.PCMailFactory = function(dep){
      * markup: the only thing it adds is an anchor around a run that is already inert. */
     _linkify(t){ return String(t||'').replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)])/g,
       (m0, pre, url) => pre + '<a href="' + (/^www\./i.test(url) ? 'https://' + url : url)
-        + '" target="_blank" rel="noopener noreferrer">' + url + '</a>'); },
+        + '" target="_blank" rel="noopener noreferrer">' + url + '</a>')
+      /* …and an ADDRESS is a link to the composer (`data-mailto`, handled in _renderThread), not to
+         the browser's mailto: handler. Preceded by start/space/`(`/`;` -- the `;` is the end of an
+         escaped `&lt;`, i.e. "Bob <bob@x.com>" -- so nothing inside an anchor made above matches. */
+      .replace(/(^|[\s(;,])(mailto:)?([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})(?![A-Za-z0-9@-])((?:\?[^\s<>"')]*[^\s<>"'.,;:!?)])?)/g,
+        // A written-out `mailto:x?subject=…` keeps its query (it is already escaped text, so `&` is `&amp;`).
+        (m0, pre, scheme, addr, query) => pre + '<a class="mm-addr" href="mailto:' + addr + (scheme ? query : '') + '" data-mailto="' + addr + '">'
+          + (scheme || '') + addr + (scheme ? query : '') + '</a>' + (scheme ? '' : query)); },
+    /* EVERY ADDRESS IN A HEADER IS A WAY TO WRITE TO IT. "Clicking an email address in an Email
+     * message should bring up the composer" -- From/To/Cc were one plain string, and a mailto: link
+     * handed to the browser does nothing at all in the APK or the desktop shell (no mail handler is
+     * registered there). Each address becomes its own link carrying `data-mailto`; the click is
+     * taken by `_mailtoClick` and opens THIS app's composer. The visible text stays what the header
+     * said (name and address), so nothing is hidden by becoming clickable. */
+    _addrLinks(raw, cls){
+      const s=String(raw||''); if(!s.trim()) return '';
+      const parts=[]; let cur='', q=false, a=false;
+      for(const ch of s){                         // split on commas outside "quotes" and <angles>
+        if(ch==='"') q=!q; else if(ch==='<') a=true; else if(ch==='>') a=false;
+        if(ch===',' && !q && !a){ parts.push(cur); cur=''; } else cur+=ch;
+      }
+      parts.push(cur);
+      return parts.map(p=>p.trim()).filter(Boolean).map(p=>{
+        const m=p.match(/<([^<>\s]+@[^<>\s]+)>/) || p.match(/([^\s<>",;]+@[^\s<>",;]+)/);
+        if(!m) return enc(p);
+        const addr=m[1];
+        const label=cls==='mm-from-addr' ? enc(addr) : enc(p);
+        return `<a class="mm-addr${cls?' '+cls:''}" href="mailto:${enc(addr)}" data-mailto="${enc(addr)}" title="Write to ${enc(addr)}">${label}</a>`;
+      }).join(', ');
+    },
+    /* A mailto: link is the composer. `href` may carry ?subject=…&cc=…&body=… (RFC 6068). */
+    _mailtoClick(e){
+      const a=e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if(!a) return false;
+      const raw=String(a.getAttribute('href')||'');
+      const href=/^mailto:/i.test(raw) ? raw : (a.getAttribute('data-mailto') ? 'mailto:'+a.getAttribute('data-mailto') : raw);
+      if(!/^mailto:/i.test(href)) return false;
+      e.preventDefault(); e.stopPropagation();
+      let to='', q='';
+      { const raw=href.slice(7), i=raw.indexOf('?'); to=i<0?raw:raw.slice(0,i); q=i<0?'':raw.slice(i+1); }
+      const dec=v=>{ try{ return decodeURIComponent(v.replace(/\+/g,'%20')); }catch(_){ return v; } };
+      const opts={ to: dec(to), acct: this.openAccount||this.acct };
+      for(const kv of q.split('&')){ const j=kv.indexOf('='); if(j<0) continue;
+        const k=kv.slice(0,j).toLowerCase(), v=dec(kv.slice(j+1));
+        if(k==='subject') opts.subject=v; else if(k==='body') opts.body=v; else if(k==='cc') opts.cc=v;
+        else if(k==='to') opts.to=[opts.to,v].filter(Boolean).join(', '); }
+      this.compose(opts);
+      return true;
+    },
     /* AN EMAIL IS READ ON THE PAGE, NOT THROUGH A PORTHOLE.
      *
      * HTML mail renders in a sandboxed iframe, which is right — it is somebody else's markup. But
@@ -1181,11 +1321,14 @@ window.PCMailFactory = function(dep){
         : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`);
       const sender=String(m.from||m.from_email||'').replace(/\s*<[^>]*>\s*$/,'').trim()||String(m.from_email||'?');
       const initial=Array.from(sender)[0]||'?';
+      // The sender's ADDRESS, shown beside the name as a compose link. A From with no display name
+      // is only the address -- then the address link alone (the name button would just repeat it).
+      const fromAddr=String(m.from_email||((String(m.from||'').match(/<([^<>]+@[^<>]+)>/)||[])[1])||'').trim();
       const preview=String(m.preview||m.body_text||'').replace(/\s+/g,' ').trim().slice(0,110);
       return `<div class="mail-msg${expanded?' open':''}">
         <div class="mail-msg-hd" role="button" tabindex="0" aria-expanded="${expanded?'true':'false'}">
-          <span class="mm-avatar" aria-hidden="true">${enc(initial.toUpperCase())}</span>
-          <div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="View sender">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div>
+          <span class="mm-avatar mm-sender" role="button" data-from="${enc(fromAddr||m.from||'')}" data-name="${enc(m.from||'')}" title="View sender" aria-label="View sender">${enc(initial.toUpperCase())}</span>
+          <div class="mm-who"><div class="mm-fromline">${fromAddr && sender===fromAddr ? '' : `<b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="View sender">${enc(sender)}</b> `}${this._addrLinks(fromAddr || m.from || '', 'mm-from-addr')}</div><div class="muted small mm-to">To: ${this._addrLinks(m.to||'')}${m.cc?` · Cc: ${this._addrLinks(m.cc)}`:''}</div></div>
           ${preview?`<span class="mm-preview muted">${enc(preview)}</span>`:''}<span class="muted small mm-date">${enc(_mailDate(m.ts))}</span><span class="mm-chevron" aria-hidden="true">${_mi('chevron-down')}</span>
         </div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
@@ -1275,7 +1418,7 @@ window.PCMailFactory = function(dep){
       $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=(e)=>{
         // The sender's name is a button inside the header, and the header collapses the message.
         // Without this, asking who sent it also folds away what they wrote.
-        if(e.target.closest('.mm-sender')) return;
+        if(e.target.closest('.mm-sender, .mm-addr')) return;
         const open=hd.parentElement.classList.toggle('open');
         hd.setAttribute('aria-expanded',open?'true':'false');
       });
@@ -1283,6 +1426,17 @@ window.PCMailFactory = function(dep){
         if(e.key==='Enter'||e.key===' '){e.preventDefault();hd.click();}
       });
       $$('.mm-sender',pane).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); this.senderCard(b.dataset.from, b.dataset.name); });
+      // Addresses in the headers and mailto: links in a text body: one delegated handler, captured
+      // before the header's own click (which would fold the message away).
+      // ONCE per pane: the reader is re-rendered into the same element (seed paint, then /thread).
+      if(!pane.__pcMailto){ pane.__pcMailto=true; pane.addEventListener('click', e=>{ this._mailtoClick(e); }, true); }
+      // An HTML body is a sandboxed frame WITHOUT scripts but WITH allow-same-origin (see
+      // _sizeMailFrames), so its document is reachable and a listener added from HERE runs in this
+      // page's realm. Without it a mailto: link opened a blank popup, or nothing at all in the shells.
+      $$('iframe.mail-html',pane).forEach(fr=>{
+        const hook=()=>{ try{ const d=fr.contentDocument; if(d && !d.__pcMailto){ d.__pcMailto=true; d.addEventListener('click', e=>{ this._mailtoClick(e); }, true); } }catch(_){} };
+        hook(); fr.addEventListener('load', hook);
+      });
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
       $$('[data-thread-reply]',pane).forEach(b=>b.onclick=()=>this.action(b.dataset.threadReply,latest,latest.folder||folder,latest.account||acct));
       $$('[data-mail-attachment]',pane).forEach(a=> a.onclick=async e=>{
@@ -1492,11 +1646,15 @@ window.PCMailFactory = function(dep){
         this.openUid=null; this.loadList(); return;
       }
       if(act==='archive'||act==='delete'){
-        if(act==='delete' && !await uiConfirm('Delete this message?', { ok:'Delete', danger:true })) return;
-        try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
-        toast(act==='delete'?'deleted':'archived');
-        const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
-        this.openUid=null; this.loadList(); return;
+        /* The reader acts on the CONVERSATION it shows -- what that row's checkbox selects. Deleting
+           only the one message that was clicked left the row (and the pane) standing. */
+        const k=this._key(Object.assign({}, msg, {account:msg.account||acct, folder:msg.folder||folder}));
+        const row=this._conversations().find(c=>c.all.some(x=>this._key(x)===k));
+        const keys=row ? row.all.map(x=>this._key(x)) : [k];
+        if(act==='delete' && !await uiConfirm(keys.length>1?'Delete this conversation ('+keys.length+' messages)?':'Delete this message?', { ok:'Delete', danger:true })) return;
+        if(!row && String(this.openUid)===String(uid)) this._emptyPane();   // not in the list: still leave the pane
+        await this.removeMessages(act, keys);
+        return;
       }
     },
     compose(opts){
@@ -1508,6 +1666,8 @@ window.PCMailFactory = function(dep){
       else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
         // Same collision, same answer: a draft summarised for a list carries a count, not a list.
         (Array.isArray(dr.attachments)?dr.attachments:[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
+      // A mailto: link (RFC 6068) may carry cc/subject/body too -- a new message only.
+      if(!opts.mode && opts.to){ if(opts.cc) cc=String(opts.cc); if(opts.subject) subj=String(opts.subject); if(opts.body) body=String(opts.body); }
       const titles={forward:'Forward', reply:'Reply', replyall:'Reply all', draft:'Draft'};
       /* THE MESSAGE'S OWN ACCOUNT FOR REPLY/FORWARD — which this comment already promised and the
        * code did not do.

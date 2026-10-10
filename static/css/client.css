@@ -7626,6 +7626,15 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* The sender's name in a message header is a button; the header itself collapses the message. */
 .mm-sender{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
 .mm-sender:hover{color:var(--neon)}
+/* The From line is the name (opens the sender card) and the address (opens the composer) on one
+   line; To/Cc addresses are compose links too. `.mm-who b` is display:block for the old one-string
+   header, so the name is put back inline here. */
+.mm-fromline{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mm-fromline b.mm-sender{display:inline}
+.mm-avatar.mm-sender{text-decoration:none}
+.mm-addr{color:inherit;text-decoration:none;border-bottom:1px dotted color-mix(in srgb,currentColor 45%,transparent)}
+.mm-addr:hover,.mm-addr:focus-visible{color:var(--neon)}
+.mm-from-addr{color:var(--muted);font-size:.92em}
 
 /* uiPickOne's list — a question with N answers, in the same overlay as uiConfirm/uiPrompt. */
 .uipick-list{display:flex;flex-direction:column;gap:4px;max-height:min(46vh,340px);overflow-y:auto;

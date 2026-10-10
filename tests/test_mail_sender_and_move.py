@@ -41,7 +41,7 @@ class SenderCardTests(unittest.TestCase):
     def test_clicking_the_sender_does_not_collapse_the_message(self):
         """The header collapses the message and the sender lives inside it — without this, asking
         who sent something folds away what they wrote."""
-        self.assertIn("if(e.target.closest('.mm-sender')) return;", APP)
+        self.assertIn("if(e.target.closest('.mm-sender, .mm-addr')) return;", APP)
 
     def test_it_shows_the_address_not_just_the_name(self):
         fn = _mail_fn("senderCard(email, name){")

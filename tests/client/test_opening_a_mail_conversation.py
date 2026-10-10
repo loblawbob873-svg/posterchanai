@@ -41,8 +41,8 @@ def _icon_helper() -> str:
     return line.strip()
 
 
-def _block() -> str:
-    start = APP.index("    _msgBlock(m, folder, acct, expanded){")
+def _block(head="    _msgBlock(m, folder, acct, expanded){") -> str:
+    start = APP.index(head)
     depth, i, in_s = 0, APP.index("{", start), None
     j = i
     while j < len(APP):
@@ -80,6 +80,7 @@ def test_a_summary_row_in_the_conversation_does_not_blank_the_reader():
       // thing would hide a missing dependency rather than reveal one.
       const M = { msgs: [], convSent: [],
                   _linkify: t => enc(t), _nmailHtml: () => '',
+                  %s,
                   %s };
       const full    = {uid:'1', from:'a@b', subject:'s', ts:1, attachments:[{name:'f.pdf',type:'application/pdf',size:3}], body_text:'hi'};
       const summary = {uid:'2', from:'c@d', subject:'s', ts:2, attachments:2, preview:'p'};
@@ -89,7 +90,7 @@ def test_a_summary_row_in_the_conversation_does_not_blank_the_reader():
         catch (e) { out.push({uid:m.uid, error: String(e && e.message || e)}); }
       }
       console.log(JSON.stringify(out));
-    """ % (_icon_helper(), _block())
+    """ % (_icon_helper(), _block(), _block("    _addrLinks(raw, cls){"))
     done = subprocess.run([NODE, "-e", program], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr[-1500:]
     got = json.loads(done.stdout.strip())
