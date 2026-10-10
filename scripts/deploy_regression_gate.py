@@ -354,9 +354,12 @@ def _env_jobs():
     return max(0, min(64, int(raw)))
 
 
-def run_full_suite(root, env, directory, jobs=None, skip_browser=False):
-    """Every test file, in parallel shards (browser tests left out of a server-only deploy). Returns (ok, message)."""
+def run_full_suite(root, env, directory, jobs=None, skip_browser=False, select=None):
+    """Every test file, in parallel shards (browser tests left out of a server-only deploy). Returns (ok, message).
+    `select` narrows the files (./test.sh runs tests/ and tests/client/ as two verdicts)."""
     files = discover_test_files(root)
+    if select is not None:
+        files = [f for f in files if select(f)]
     skipped = 0
     if skip_browser:
         browser = browser_test_files(root)
@@ -559,6 +562,32 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
         return 0
 
 
+SUITES = {
+    'tests': lambda f: not f.startswith('tests/client/'),
+    'tests/client': lambda f: f.startswith('tests/client/'),
+}
+
+
+def run_suite(name, root=ROOT, jobs=0):
+    """One half of the full suite, sharded, for ./test.sh. Serially, tests/ took 36 min and tests/client
+    passed test.sh's 45-min cap without finishing, so `./test.sh` could not come back green at all; and a
+    serial run is one process, where a test that leaks state (a stub left in sys.modules) breaks tests in
+    files it never touches. Same shards and same flaky re-run as the gate, so the two cannot disagree.
+    Prints a pytest-shaped summary line, which is what test.sh's board quotes."""
+    private_tmp = runpy.run_path(str(Path(__file__).with_name('private_tmp.py')))
+    with tempfile.TemporaryDirectory(prefix='pc-suite-') as directory, private_tmp['scoped']('pct-suite-') as scratch:
+        env = private_tmp['child_env'](dict(os.environ), scratch)
+        for drop in ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS'):
+            env.pop(drop, None)
+        ok, message = run_full_suite(root, env, directory, jobs=jobs, select=SUITES[name])
+    print('[regressions] ' + message)
+    if ok:
+        print('%s passed' % message.split()[0])
+        return 0
+    print('%s failed' % message.split()[0])
+    return 1
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group()
@@ -569,6 +598,10 @@ if __name__ == '__main__':
     parser.add_argument('--jobs', type=int, default=0,
                         help='parallel shards for --full; fewer fits a box whose RAM is committed '
                              '(also PC_GATE_JOBS). 0 decides by CPU.')
+    parser.add_argument('--suite', choices=sorted(SUITES),
+                        help='run only this half of the full suite, sharded (./test.sh); no required list, no receipt')
     args = parser.parse_args()
+    if args.suite:
+        raise SystemExit(run_suite(args.suite, jobs=args.jobs))
     raise SystemExit(verify_receipt(args.verify) if args.verify
                      else run_gate(receipt=args.receipt, full=args.full, jobs=args.jobs))

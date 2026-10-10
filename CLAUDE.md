@@ -26,7 +26,9 @@ image gen, TTS/STT, email/news/torrents, a file manager, a **Nostr client + rela
 
 ## Test — `./test.sh`, before the deploy and after it
 
-One command runs everything: `pytest tests/`, `pytest tests/client/`, and all 20+ browser-driven
+One command runs everything: `tests/` and `tests/client/` (SHARDED through the deploy gate's own runner,
+`deploy_regression_gate.py --suite` — serially they overran the cap and one test's leaked stub failed a dozen
+others the gate never saw), and all 20+ browser-driven
 `scripts/check_*.py` (mobile layout, Meme Builder, the windowed desktop, Notes/Calendar/Contacts/
 Mail/vault/Web Search/Files, the composer and quote modals, the terminal, the extension). ~10 min.
 `--live URL` adds the checks that need a running instance; `--docker` runs the lot in a container

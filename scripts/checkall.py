@@ -435,12 +435,16 @@ CHECKS = {
 
 # The pytest suites. Split because one is 3 minutes of pure Python and the other is 5 minutes of
 # node subprocesses, and knowing WHICH half went red is most of the diagnosis.
+# Run SHARDED through the deploy gate's own runner (`deploy_regression_gate.py --suite`): serially, tests/
+# took 36 min and tests/client overran its 45-min cap, so this board could never come back green, and one
+# serial process let a test's leaked stub fail a dozen tests in other files that the gate never saw fail.
+# PC_GATE_MANAGED_PROCESSES: this runner already holds the checkout's runner lock.
 SUITES = [
-    dict(name="tests", group="unit", secs=2700,
-         argv=["-m", "pytest", "tests/", "-q", "--ignore=tests/client", "-p", "no:cacheprovider", "--durations=20"],
+    dict(name="tests", group="unit", secs=3600, env={"PC_GATE_MANAGED_PROCESSES": "1"},
+         argv=["scripts/deploy_regression_gate.py", "--suite", "tests"],
          detail="services, routers, relay, media — no browser"),
-    dict(name="tests/client", group="client", secs=2700,
-         argv=["-m", "pytest", "tests/client/", "-q", "-p", "no:cacheprovider", "--durations=20"],
+    dict(name="tests/client", group="client", secs=3600, env={"PC_GATE_MANAGED_PROCESSES": "1"},
+         argv=["scripts/deploy_regression_gate.py", "--suite", "tests/client"],
          detail="the shipped client JS, run under node against stubs"),
 ]
 
@@ -613,7 +617,7 @@ def run_suite(suite, tmp):
     t0 = time.time()
     argv = [PY, "-B"] + suite["argv"]
     with tempfile.TemporaryDirectory(prefix="pc-suite-pycache-") as cache:
-        env = {**os.environ, "PYTHONPYCACHEPREFIX": cache}
+        env = {**os.environ, **suite.get("env", {}), "PYTHONPYCACHEPREFIX": cache}
         code, out = _captured(argv, ROOT, env, suite["secs"], tmp / (suite["name"] + ".log"))
     return dict(suite, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]), name=suite["name"], registered=True)
