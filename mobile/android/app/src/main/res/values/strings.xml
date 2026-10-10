@@ -216,7 +216,7 @@
     <string name="home_live_wallpaper">Cyberpunk live wallpaper</string>
     <string name="home_no_live_wallpaper">This phone has no live wallpaper picker</string>
     <string name="home_wallpaper_offer_title">PosterChan live wallpaper</string>
-    <string name="home_wallpaper_offer">PosterChan dancing on a neon rooftop behind your home screen. Preview it? You can change it any time in Settings → Phone.</string>
+    <string name="home_wallpaper_offer">PosterChan dancing on a neon rooftop behind your home screen. Preview it? You can change it any time in Settings, on the Phone tab.</string>
     <string name="home_wallpaper_offer_yes">Preview</string>
     <string name="home_wallpaper_offer_no">No thanks</string>
 </resources>
