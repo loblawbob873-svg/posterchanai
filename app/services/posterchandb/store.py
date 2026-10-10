@@ -30,6 +30,7 @@ import hashlib
 import os
 import re
 import struct
+import collections
 import threading
 import time
 import zlib
@@ -255,6 +256,10 @@ class Store:
 
     def _reset_state(self) -> None:
         """Every index and column, empty — used before a full replay (and after a snapshot that failed part-way)."""
+        # Events whose SEARCH words are not indexed yet (a copy and a log replay defer them: the Postgres-exact
+        # tokenizer is ~93% of the cost of storing a real event). A search catches them up first, so answers
+        # stay exact; the mirror indexes them in the background and sends searches to Postgres meanwhile.
+        self._unworded = collections.deque()
         # per-event columns (index = sequence number)
         self.arenas: dict = {}                     # segment id -> its file's bytes (resident) or None (cold)
         self.seg_size: dict[int, int] = {}         # bytes of each segment (file + unflushed tail)
@@ -394,7 +399,7 @@ class Store:
                 # event pruned/purged and then received again, which is stored again -- as on Postgres.
                 if s0 is None or self.dead[s0]:
                     ev = self.codec.decode(rec)
-                    self._apply_put(ev, bytes(rec[:32]), len(rec), j + 2, origin, sid, replay=True)
+                    self._apply_put(ev, bytes(rec[:32]), len(rec), j + 2, origin, sid, replay=True, words=False)
             elif op == OP_DEAD:
                 self.seg_markers[sid].append(bytes(payload))
                 s = self._seq_of(bytes(payload[1:33]).hex())
@@ -479,10 +484,28 @@ class Store:
             return self.flush()
         return 0
 
-    def snapshot(self):
-        """Write an index snapshot now (flushes first). None while a compaction is running."""
+    @property
+    def words_pending(self) -> int:
+        return len(self._unworded)
+
+    def index_pending_words(self, limit: int | None = None) -> int:
+        """Index the search words of up to `limit` deferred events (all when None). Returns how many."""
         with self._lock:
-            if self._file is None or self._compacting:
+            q = self._unworded
+            n = len(q) if limit is None else min(limit, len(q))
+            batch = [q.popleft() for _ in range(n)]
+            for seq in batch:
+                if self.dead[seq] or self.seg[seq] == DROPPED:
+                    continue
+                for w in search_words(self.codec.decode(self._rec(seq)).get("content", "")):
+                    self.words.add(_h(w), seq)
+            return len(batch)
+
+    def snapshot(self):
+        """Write an index snapshot now (flushes first). None while a compaction is running or search words are
+        still deferred (a snapshot is a COMPLETE index, so a restart from it has nothing left to catch up)."""
+        with self._lock:
+            if self._file is None or self._compacting or self._unworded:
                 return None
             self.flush()
             res = snapshot.save(self)
@@ -497,7 +520,7 @@ class Store:
             if self._file is None:
                 return
             self.flush()
-            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events:
+            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events and not self._unworded:
                 try:
                     snapshot.save(self)          # a clean stop: the next start loads instead of re-indexing
                     self._since_snap = 0
@@ -729,7 +752,7 @@ class Store:
             o = ORIGINS.get(origin or "wot", 4)
             rec = self.codec.encode(ev)
             start = self._frame(bytes([OP_PUT, o]) + rec)
-            self._apply_put(ev, rec[:32], len(rec), start + 2, o, self._active)
+            self._apply_put(ev, rec[:32], len(rec), start + 2, o, self._active, words=False)
             return "stored"
 
     def _index_quotes(self, ev: dict) -> None:
@@ -766,7 +789,7 @@ class Store:
             return True
 
     def _apply_put(self, ev: dict, raw_id: bytes, n: int, off: int, origin: int, sid: int,
-                   replay: bool = False) -> None:
+                   replay: bool = False, words: bool = True) -> None:
         seq = len(self.off)
         self.seg.append(sid)
         self.off.append(off)
@@ -801,8 +824,11 @@ class Store:
                     has_d = True
         if is_addressable(k) and not has_d:
             self.idx.add(_h("nod:%s:%d" % (pk, k)), seq)
-        for w in search_words(ev.get("content", "")):
-            self.words.add(_h(w), seq)
+        if words:
+            for w in search_words(ev.get("content", "")):
+                self.words.add(_h(w), seq)
+        else:
+            self._unworded.append(seq)
 
     def _apply_deletion(self, ev: dict) -> None:
         """NIP-09, exactly as the relay applies it (nostr_relay/store.py `if kind == 5`): `e` removes the
@@ -986,6 +1012,8 @@ class Store:
                     sets.append(np.unique(np.array([q for v in vals for q in self.dprefix.prefix(str(v))],
                                                    dtype=np.uint32)))
             if flt.get("search"):
+                if self._unworded:
+                    self.index_pending_words()     # exact answers: catch up whatever a copy/replay deferred
                 words = search_words(flt["search"])
                 if not words:
                     return []              # plainto_tsquery with no lexemes matches nothing

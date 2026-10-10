@@ -303,3 +303,26 @@ def test_a_close_without_the_postgres_token_leaves_no_clean_marker(relay_pg, tmp
     rs.mirror = None
     m.close()                                         # no detach: nothing proves which Postgres state it matches
     assert not os.path.exists(os.path.join(path, M.CLEAN))
+
+
+def test_searches_go_to_postgres_until_the_words_are_indexed_then_come_from_ram(relay_pg, tmp_path, monkeypatch):
+    rs, dsn = relay_pg
+    gen = Gen(45)
+    _feed(rs, gen, 600)
+    gate = M.threading.Event()
+    real = M.Mirror._index_words
+    monkeypatch.setattr(M.Mirror, "_index_words", lambda self: (gate.wait(30), real(self)))
+    m = _attach(rs, _mirror(str(tmp_path / "relay"), dsn))
+    assert _until(lambda: m.state == "ready")
+    assert m.store.words_pending > 0
+    f = {"search": "nostr", "limit": 100}
+    before = m.counters["served"]
+    assert [e["id"] for e in rs._query_sync([f], 5000)] == _pg_answer(rs, f)
+    assert m.counters["search_to_postgres"] >= 1 and m.counters["served"] == before
+    assert m.store.words_pending > 0, "a search indexed everything inline on a relay thread"
+    gate.set()
+    assert _until(lambda: m.store.words_pending == 0)
+    served = m.counters["served"]
+    assert not _same_answers(rs, gen, 200)
+    assert m.counters["served"] > served
+    assert _until(lambda: os.path.exists(os.path.join(m.path, "index.snap"))), "no snapshot after indexing"

@@ -88,7 +88,8 @@ class Mirror:
         self._maint = None
         self._gov = None
         self.counters = {"put": 0, "gone": 0, "served": 0, "fallback": 0, "shadow_ok": 0, "shadow_diff": 0,
-                         "apply_errors": 0, "copied": 0}
+                         "apply_errors": 0, "copied": 0, "search_to_postgres": 0}
+        self._words_thread = None
         self.last_diff = None
         self.pg_count = self.my_count = None
 
@@ -136,12 +137,32 @@ class Mirror:
     def _set(self, state: str, why: str) -> None:
         self.state, self.why = state, why
         self.log("[posterchandb] mirror %s: %s" % (state, why))
+        if state == "ready" and self._words_thread is None and self.store is not None and self.store.words_pending:
+            self._words_thread = threading.Thread(target=self._index_words, name="posterchandb-words", daemon=True)
+            self._words_thread.start()
         if state == "ready" and self.maintenance and self._maint is None:
             pol = lambda: maint_mod.Policy(min_free_pct=0)     # noqa: E731 -- Postgres decides what is deleted
             # Snapshots HOURLY, never at shutdown: the stop must fit systemd's 10 s, and with a snapshot at most an
             # hour old the next start replays seconds of log instead of re-indexing everything.
             self._maint = maint_mod.Maintainer(self.store, pol, log=self.log, snapshot_hours=1.0)
             self._maint.start()
+
+    def _index_words(self) -> None:
+        """Search words deferred by the copy (or a replay), in small batches at idle priority with a pause between
+        them: the tokenizer is pure Python, so a long run would hold the GIL against the relay's own event loop.
+        Searches go to Postgres until this finishes; then a snapshot makes the next start complete at once."""
+        maint_mod.lower_priority()
+        st, t0, total = self.store, time.monotonic(), self.store.words_pending
+        while not self._stop.is_set() and st.words_pending:
+            st.index_pending_words(300)
+            self._stop.wait(0.01)
+        if self._stop.is_set():
+            return
+        self.log("[posterchandb] search words indexed for %d events in %.0fs" % (total, time.monotonic() - t0))
+        try:
+            st.snapshot()
+        except OSError as e:
+            self.log("[posterchandb] snapshot after word indexing failed: %r" % (e,))
 
     def close(self, clean_token: str | None = None, timeout: float = 5.0) -> None:
         """Drain what the relay already wrote, flush + fsync, and mark CLEAN only if nothing was lost. NO snapshot
@@ -151,6 +172,8 @@ class Mirror:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout)
+        if self._words_thread:
+            self._words_thread.join(2.0)        # one batch at most; the rest resumes from the log next start
         if self._maint:
             self._maint.stop(timeout=2.0)       # a compaction cut short is crash-safe (it is replayed or redone)
         if self._gov:
@@ -317,6 +340,9 @@ class Mirror:
         """The relay's _query_sync, answered from RAM -- or None (the caller asks Postgres)."""
         if not self.serving():
             return None
+        if self.store.words_pending and any((f or {}).get("search") for f in filters or []):
+            self.counters["search_to_postgres"] += 1    # its words are still being indexed
+            return None
         if not self._wait_applied(self._enq, self.wait_s):
             self.counters["fallback"] += 1
             return None
@@ -343,6 +369,8 @@ class Mirror:
         never values (search text, authors): feedback_no_prompt_logging."""
         if self.state != "ready" or random.random() >= self.sample:
             return
+        if self.store.words_pending and any((f or {}).get("search") for f in filters or []):
+            return                                       # answering it here would index everything inline
         if not self._wait_applied(self._enq, 0.05):
             return
         try:
@@ -363,6 +391,7 @@ class Mirror:
 
     def stats(self) -> dict:
         out = {"mode": self.mode, "state": self.state, "why": self.why, "queued": self._enq - self._applied,
+               "search_words_pending": self.store.words_pending if self.store is not None else None,
                "pg_count": self.pg_count, "mirror_count": self.my_count}
         out.update(self.counters)
         if self.last_diff:
