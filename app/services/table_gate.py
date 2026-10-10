@@ -19,6 +19,7 @@ is monotonic). The marker is wave 1's -- one `_migrated` DocTable, one shape, on
 The point reads below are the other half of "never empty for could-not-ask": while a big table is still loading
 after a restart, a lookup by key reads that ONE document from the relay instead of failing or waiting for the load.
 """
+import asyncio
 import logging
 
 from app.services import doc_table
@@ -92,8 +93,19 @@ def get_row(t: DocTable, k):
         row = t.peek(k)
         return dict(row) if row is not None else None
     if _in_loop():
+        # ONE ROW NEEDS ONE RELAY READ, not the whole table (2026-10-10: mail sync answered 503 for 10+ minutes
+        # while the whole-table load kept timing out behind wave 1's copy). Read just this document on a helper
+        # thread, bounded; "could not ask" still raises Unavailable. The background load still starts.
         _load_soon(t)
-        raise Unavailable("table %s is still loading" % t.name)
+        import concurrent.futures
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(lambda: asyncio.run(t.aget_remote(k)))
+        try:
+            return fut.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            raise Unavailable("table %s is still loading" % t.name)
+        finally:
+            ex.shutdown(wait=False)         # never hold the loop past the bound for a slow read
     return t.get(k)
 
 
