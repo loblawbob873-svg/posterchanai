@@ -27,6 +27,7 @@ from app.services import paid_retention_service as prs
 from app.services.nostr import bip340
 from app.services.nostr.event import build_event
 from tests import scratch_postgres
+from tests.relay_backends import BACKENDS, pcdb_factory
 
 DAY = 86400
 
@@ -230,11 +231,15 @@ def _admin():
     return conn
 
 
-@pytest.fixture
-def store_factory():
+@pytest.fixture(params=BACKENDS)
+def store_factory(request):
     """Opened RelayStores in a scratch schema (the `posterchan` role can't CREATE DATABASE), so an
     unqualified table can only resolve inside it and a mistake errors instead of touching the live
     relay. Mirrors tests/test_relay_prune.py."""
+    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
+        with pcdb_factory() as make:
+            yield make
+        return
     schema = "pcai_paid_test_" + uuid.uuid4().hex[:10]
     conn = _admin()
     conn.cursor().execute(f'CREATE SCHEMA "{schema}"')

@@ -96,7 +96,7 @@ def test_the_purge_removes_stored_payload_notes_and_nothing_else(store_factory):
                         "content": c, "tags": [], "sig": "0" * 128})
         await st.add_events_bulk(evs, origin="wot")
         removed = await st.delete_hidden_payload()
-        left = {r["id"] for r in st._conn().execute("SELECT id FROM events").fetchall()}
+        left = {e["id"] for e in await st.query([{"limit": 5000}])}     # both backends (tests/relay_backends.py)
         return removed, left, evs
     removed, left, evs = _run(go)
     assert removed == 2

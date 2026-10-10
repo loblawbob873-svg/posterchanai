@@ -136,7 +136,7 @@ store is opened once at relay start, so saving any of them restarts the relay (`
 
 | setting | default | what it does |
 |---|---|---|
-| `posterchandb_mode` | **off** | `off` = Postgres only. `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
+| `posterchandb_mode` | **off** | `off` = Postgres only. `primary` = PosterChanDB alone, no Postgres (after a promotion, below). `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
 | `posterchandb_flush_seconds` | **300** | The write delay. A clean stop flushes first; a crash loses at most this window from PosterChanDB only — Postgres has every event, and the next start copies again. |
 | `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older segments; drains by itself when the machine runs low (MemAvailable + PSI, cache.py). |
 
@@ -180,6 +180,39 @@ Postgres stays the source of truth until the last step; each step is one setting
    (NOCOW). A query is answered from RAM only while the mirror is ready, nothing it depends on is queued
    (waits ≤0.05 s), and it does not throw; otherwise Postgres answers it.
 5. Retire the Postgres event tables once a node has run clean for an agreed period.
+6. **Primary** (`POSTERCHANDB_MODE=primary`, task #161) -- see below.
+
+## Primary mode: no Postgres at all (`nostr_relay/pcdb_store.py`)
+
+`PcdbRelayStore` has RelayStore's whole interface; thread.py builds it instead of RelayStore + mirror when the mode
+is `primary` (`thread._open_store`). Every other mode is unchanged.
+
+- **Events and tags**: the posterchandb `Store`, whose ingest rules are RelayStore's (differential-tested).
+- **relay_kv / wot / bridge_nip05 / bridge_puppet**: a SIDECAR beside the segments, one file per table
+  (`sidecar-<table>.json`), each replaced atomically on every change (temp file, fsync, rename, fsync of the
+  directory). A SIGKILL at any instant leaves the last complete state; a file this code did not write is refused,
+  never read as empty (an empty WoT/kv would forget the pinned, never-pruned authors).
+- **Prune, preview, content purges**: store.py's rules, read from its constants, evaluated over the numpy columns
+  in chunks -- 65,536 rows copied per lock hold, 512 deaths, 128 decoded records, 256 id lookups. Measured on 200k
+  events: the longest store-lock hold of a whole prune / preview / word purge / author purge / COUNT / negentropy
+  is **~3 ms** (`tests/test_pcdb_relay_store.py` prints it). The content scans run on their own thread; only the
+  deletions go through the writer thread. The tiered (pay-to-stay) rules are DATA (`_tiered_specs`); the masks are
+  built from them and `_tiered_rules` describes them, so the description a test reads is the rule that runs.
+- **Durability**: a direct write is fsynced (`Store.sync`, fsync outside the lock) before the relay answers OK;
+  purges and prune passes are synced when they finish; synced copies wait for the flush timer as in serve mode.
+- **Search** while words replayed at startup are still being indexed is REFUSED (`SearchNotReady` → CLOSED with the
+  reason), never answered empty.
+
+**Promotion** (`scripts/posterchandb_promote.py`, relay STOPPED, read-only against Postgres): the mirror directory
+must carry CLEAN with the token Postgres holds, and its live count AND id set must equal Postgres's; only then are the
+four tables exported into the sidecar and a `PRIMARY` marker written. `--new` initialises an empty primary store for
+a node that never had Postgres. Opening as primary consumes CLEAN (the directory is the truth now, and a later serve
+start must copy rather than trust a token that still matches a Postgres it no longer equals); any non-primary start
+removes `PRIMARY` (the sidecar stops being kept, so primary again needs a new promotion). An unpromoted or
+since-overwritten directory is refused at start and the relay runs on Postgres in serve mode; any other failure to
+open a promoted store is raised -- Postgres is stale by then, and falling back would split the history.
+
+Rolling back (primary → serve) loses what was written while primary: serve copies Postgres afresh.
 
 A clean close writes `CLEAN`; without it (a crash, a run with the mirror off) the next start copies afresh.
 

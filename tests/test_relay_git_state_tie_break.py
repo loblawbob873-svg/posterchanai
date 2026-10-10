@@ -27,6 +27,7 @@ psycopg2 = pytest.importorskip("psycopg2")
 
 from app.services.nostr_relay.store import RelayStore, _STRICT_TIE_KINDS  # noqa: E402
 from tests import scratch_postgres
+from tests.relay_backends import BACKENDS, pcdb_factory
 
 DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 OWNER = "a" * 64
@@ -41,8 +42,12 @@ def _admin():
     return conn
 
 
-@pytest.fixture
-def store_factory():
+@pytest.fixture(params=BACKENDS)
+def store_factory(request):
+    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
+        with pcdb_factory() as make:
+            yield make
+        return
     schema = "pcai_tie_test_" + uuid.uuid4().hex[:10]
     conn = _admin()
     conn.cursor().execute(f'CREATE SCHEMA "{schema}"')

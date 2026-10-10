@@ -13,6 +13,7 @@ from app.services.nostr.quotes import quote_pubkeys
 from app.services.nostr_relay.server import _matches
 from app.services import nostr_push_service as push
 from tests.test_relay_prune import store_factory, _run
+from tests.relay_backends import is_pcdb
 
 QUOTE = json.loads((Path(__file__).parent / 'fixtures/nostr/ditto_quote_no_p.json').read_text())
 OWNER = QUOTE['tags'][0][3]
@@ -52,13 +53,15 @@ def test_postgres_index_backfill_and_new_events_agree_with_live_matching(store_f
         assert await store.query([FILTER]) == [QUOTE]
         assert await store.query([{'#p': [OWNER]}]) == []
         assert await store.query([{'#q': [QUOTE['tags'][0][1]]}]) == [QUOTE]
-        # Simulate an existing database before the derived index existed.
-        conn = store._conn()
-        conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
-        conn.execute("DELETE FROM relay_kv WHERE key='quote_author_index_v1'")
-        assert await store.query([FILTER]) == []
-        store._index_existing_quotes(conn)
-        store._index_existing_quotes(conn)
+        # Simulate an existing database before the derived index existed. (Postgres only: the one-time
+        # migration has no PosterChanDB counterpart -- that store derives the index at ingest and on copy.)
+        if not is_pcdb(store):
+            conn = store._conn()
+            conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
+            conn.execute("DELETE FROM relay_kv WHERE key='quote_author_index_v1'")
+            assert await store.query([FILTER]) == []
+            store._index_existing_quotes(conn)
+            store._index_existing_quotes(conn)
         assert await store.query([FILTER]) == [QUOTE]
         assert (await store.query([FILTER]))[0]['tags'] == QUOTE['tags']
         # A user-supplied multi-letter tag cannot impersonate the derived index.
@@ -157,6 +160,9 @@ def test_backfill_v2_indexes_existing_bare_quotes(store_factory):
     async def run(loop):
         store = store_factory(loop)
         assert await store.add_event(post) and await store.add_event(q)
+        if is_pcdb(store):     # no migration to run: the index is derived at ingest
+            assert [e['id'] for e in await store.query([flt])] == [q['id']]
+            return
         conn = store._conn()
         conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
         # The state every LIVE database is in: v1 already ran, v2 never has.

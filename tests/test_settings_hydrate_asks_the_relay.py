@@ -168,7 +168,7 @@ def test_open_store_for_settings_makes_the_store_the_settings_source(monkeypatch
     seen = {}
 
     class Store:
-        def __init__(self, dsn):
+        def __init__(self, dsn, **kw):
             seen["dsn"] = dsn
 
         def open(self, loop):
