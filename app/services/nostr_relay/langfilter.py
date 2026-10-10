@@ -316,8 +316,12 @@ def detect_languages(text: str) -> set:
     if hangul and kana:  # mixed: count hangul as Korean too
         langs["ko"] = max(langs["ko"], hangul)
 
+    # Under the absolute floor a script decides only when Latin does not OUTNUMBER it: "Check this anime:
+    # 鬼滅の刃" is 4 of 18 letters (22%) and was refused as Japanese from an English speaker, while a short
+    # note that is mostly foreign ("これは日本 hello") still is one. Six or more still block on their own.
+    latin = counts.get("latin", 0)
     found = {code for code, c in langs.items()
-             if c and ((c / letters) >= _BLOCK_THRESHOLD or c >= _BLOCK_ABS_MIN)}
+             if c and (c >= _BLOCK_ABS_MIN or ((c / letters) >= _BLOCK_THRESHOLD and c >= latin))}
     if viet >= _VIET_MIN:
         found.add("vi")
     if tagalog:

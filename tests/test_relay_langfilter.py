@@ -169,9 +169,10 @@ def test_the_absolute_floor_is_exactly_six_characters(n, expected):
 
 
 def test_the_ratio_rule_fires_at_twenty_percent():
-    """1 Cyrillic among 5 letters is exactly 20% and blocks; 1 among 6 is below and does not.
-    Neither reaches the absolute floor, so this isolates the ratio."""
-    assert lf.detect_languages("abcd" + "д") == {"ru"}          # 1/5 = 20%
+    """Under the absolute floor the ratio decides -- for a note the foreign script is not outnumbered in
+    (see the phrase rule at the end of this file). 2 Cyrillic + 2 Latin is 50% and blocks; 1 Cyrillic
+    among 6 letters is 16.7% and does not."""
+    assert lf.detect_languages("дд" + "ab") == {"ru"}           # 2/4 = 50%
     assert lf.detect_languages("abcde" + "д") == set()          # 1/6 = 16.7%
 
 
@@ -293,3 +294,29 @@ def test_odd_input_is_no_language_rather_than_an_exception(text):
     """This runs on every event the relay ingests, so an exception here is a relay that stops
     accepting writes."""
     assert lf.detect_languages(text) == set()
+
+
+# --------------------------------------------------------------------------- a phrase is not a language
+# 2026-10-10: Vyram -- an English speaker who posts about anime -- was refused "language 'ja' not accepted"
+# nine times in ten minutes. A short English note naming a show crossed the 20% ratio on four characters
+# ("Check this anime: 鬼滅の刃" is 4 of 18 letters). Under the absolute floor the ratio now only decides
+# when the foreign script is not OUTNUMBERED by Latin -- a short foreign note still trips it; a short
+# foreign phrase inside an English note does not. Six or more characters still block (bilingual spam).
+@pytest.mark.parametrize("text", [
+    "Check this anime: 鬼滅の刃",
+    "ok ツ",
+    "new ep of ワンピース is out!!",
+    "lol 草",
+    "this is so 可愛い",
+])
+def test_a_short_phrase_inside_an_english_note_is_not_that_language(text):
+    assert lf.detect_languages(text) == set(), text
+
+
+@pytest.mark.parametrize("text,lang", [
+    ("これは日本語の文です", "ja"),
+    ("Привет мир hi", "ru"),
+    ("你好朋友们 hi", "zh"),
+])
+def test_a_short_note_mostly_in_a_blocked_script_still_blocks(text, lang):
+    assert lang in lf.detect_languages(text), text
