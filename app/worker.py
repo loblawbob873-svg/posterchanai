@@ -127,7 +127,7 @@ async def _run():
     logger.info(f"[worker] {started}/{len(_SCHEDULERS)} schedulers running")
     # Keep the loop alive AND periodically re-hydrate settings from the relay, so changes made in the
     # main process (admin Save, the bridge OAuth token write) reach this separate process within a
-    # couple of minutes without a restart. hydrate_from_db reads the relay's Postgres directly (cheap).
+    # couple of minutes without a restart. hydrate_from_db asks the relay over its loopback socket (cheap).
     from app.database import SessionLocal
     from app.services import settings_store
     while True:

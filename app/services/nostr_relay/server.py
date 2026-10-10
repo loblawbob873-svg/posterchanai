@@ -1911,6 +1911,21 @@ class RelayServer:
         # (a gate that unions, a query that does not) is the same mistake `_on_req` survives only
         # because it re-checks each event afterwards.
         authed = self._auth_pubkeys.get(conn, set())
+        # THE NODE OPERATOR MAY COUNT PRIVATE DOCUMENTS -- AND ONLY COUNT THEM. Admin -> Identities
+        # decides "signed up and never did anything" from these numbers (and offers such accounts for
+        # removal), so a member who only ever writes Notes -- kind 30078, private to them -- read as
+        # inactive once that page asked the relay instead of its database (#161). A socket that signed
+        # in (NIP-42) as THIS node's own key (`node_pubkey`, the keyfile operator -- not the wider
+        # `operator` set, which holds every linked user and bot) gets the unprotected count. A COUNT
+        # carries no event, no id and no content; REQ, negentropy and `_can_serve_event` are untouched,
+        # so the same socket still receives none of anybody else's private EVENTs.
+        node = str((self.cfg or {}).get("node_pubkey") or "")
+        if node and node in authed:
+            n = await self.store.count_filtered(filters, protect_nip78=False)
+            # `private` says which count this is, so a reader that needs it can tell it from the
+            # narrower one an older relay (or an unrecognised key) would give.
+            self._send(conn, ["COUNT", sub_id, {"count": n, "private": True}])
+            return
         for f in filters:
             if not self._filter_explicitly_requests_nip78([f]):
                 continue

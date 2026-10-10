@@ -23,7 +23,10 @@ def test_encrypted_cold_start_hydrate_drives_wallet_config(monkeypatch, tmp_path
         "monero_wallet_network": "stagenet",
         "monero_wallet_spend_ledger": str(tmp_path / "ledger.sqlite3"),
     }
-    rows = [("pcai:setting:" + key, "cipher:" + key) for key in values]
+    # The operator's setting documents as THIS node's relay answers them (#161: no SQL against its tables).
+    events = [{"id": "%064x" % i, "pubkey": "ab" * 32, "kind": 30078, "created_at": 1700000000,
+               "tags": [["d", "pcai:setting:" + key]], "content": "cipher:" + key}
+              for i, key in enumerate(values)]
     old_cache = dict(settings_store._CACHE)
     try:
         settings_store._CACHE.clear()  # process restart: no in-memory values survive
@@ -33,7 +36,9 @@ def test_encrypted_cold_start_hydrate_drives_wallet_config(monkeypatch, tmp_path
             "app.services.nostr.nip44.decrypt_self",
             lambda key, ciphertext: json.dumps({"value": values[ciphertext.removeprefix("cipher:")]}),
         )
-        assert settings_store.hydrate_from_db(DB(rows)) == len(values)
+        monkeypatch.setattr(settings_store, "_port", lambda db=None: 1)
+        monkeypatch.setattr(settings_store.relay_reader, "query", lambda filters, **k: list(events))
+        assert settings_store.hydrate_from_db(DB()) == len(values)
         cfg = WalletConfig.from_env()
         wallet = MoneroWallet(cfg)
         assert wallet.config.password == "hydrated-secret"

@@ -277,7 +277,7 @@ async def _alert(rec: dict, kind: str) -> None:
     # Refresh the settings cache FIRST. This process is the worker, whose cache only re-syncs every
     # 120s (app/worker.py), so a transition inside that window was judged against up-to-two-minutes-old
     # config — enable the alerts and the very next outage can still go out to nobody, silently, because
-    # the flag hadn't landed yet. Transitions are rare, and hydrate_from_db is a direct Postgres read,
+    # the flag hadn't landed yet. Transitions are rare, and hydrate_from_db is one loopback relay read,
     # so paying for one here buys alerts that obey the CURRENT configuration.
     try:
         from app.database import SessionLocal

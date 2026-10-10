@@ -31,13 +31,17 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     log = logging.getLogger("nostr-relay-proc")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # The store first, then the settings: this process reads its settings from its own store, because its
+    # websocket server -- the way every other process reads them -- is not listening yet (#161).
+    store = _t.open_store_for_settings(loop)
     cfg = _t._read_config()
     if not cfg.get("enabled"):
         log.info("[nostr-relay] disabled (nostr_relay_enabled off) — exiting")
+        loop.close()
         return
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     _t._relay.loop = loop
     _t._relay.cfg = cfg
 
@@ -51,7 +55,7 @@ def main() -> None:
 
     log.info("[nostr-relay] standalone process starting (pid %d)", os.getpid())
     try:
-        loop.run_until_complete(_t._main(cfg))
+        loop.run_until_complete(_t._main(cfg, store))
     except Exception:
         log.exception("[nostr-relay] process crashed")
     finally:

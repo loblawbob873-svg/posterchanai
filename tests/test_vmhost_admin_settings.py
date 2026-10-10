@@ -1,5 +1,5 @@
 """VM-hosting admin settings persist to Nostr and come back — through the SHIPPED save route and the
-SHIPPED hydrate, with real NIP-44 encryption against a fake relay event table.
+SHIPPED hydrate, with real NIP-44 encryption against a fake relay.
 
 Three tables must agree or a setting silently does nothing: the service's `config.DEFAULTS`, the
 typed `SettingsResponse` (an undeclared key never hydrates, and a checkbox then saves `false` over the
@@ -85,13 +85,11 @@ class FakeRelay:
         self.docs[d_tag] = nip44.encrypt_self(seckey, json.dumps(data))
         return True
 
-    def rows(self):
-        class DB:
-            def __init__(s, rows): s._rows = rows
-            def execute(s, *a, **k): return s
-            def fetchall(s): return s._rows
-            def rollback(s): pass
-        return DB([(d, c) for d, c in self.docs.items() if d.startswith("pcai:setting:")])
+    def events(self):
+        """The documents as THIS node's relay answers a REQ for them (#161: never read from its tables)."""
+        op = bip340.pubkey_from_seckey(OP_SK).hex()
+        return [{"id": "%064x" % i, "pubkey": op, "kind": 30078, "created_at": 1700000000,
+                 "tags": [["d", d]], "content": c} for i, (d, c) in enumerate(self.docs.items())]
 
 
 VALUES = {
@@ -153,7 +151,8 @@ def test_save_then_restart_then_hydrate_gives_the_same_host_configuration(monkey
     # The process restarts: nothing survives in memory.
     settings_store._CACHE.clear()
     assert vmconfig.current().enabled is False
-    n = settings_store.hydrate_from_db(relay.rows())
+    monkeypatch.setattr(settings_store.relay_reader, "query", lambda filters, **k: relay.events())
+    n = settings_store.hydrate_from_db(None)
     assert n >= len(VALUES)
     after = vmconfig.current()
     assert after == before

@@ -421,7 +421,7 @@ async def startup():
 
         # Settings live in the Nostr relay datastore (no SQL Setting table). init_db() already loaded
         # the local-only keys + defaults into the in-process cache; now mint the operator key (signs
-        # the setting docs) and hydrate the cache from the relay's event store (sync SQL) so the
+        # the setting docs) and hydrate the cache from the relay (sync, over its socket) so the
         # env-seed blocks below + every reader see authoritative values, and settings_store.put()
         # writes are signed.
         try:
@@ -812,6 +812,10 @@ async def startup():
                         # then push any default settings the relay doesn't yet hold UP to it (Nostr
                         # events) so the relay is the authoritative store of the out-of-box config.
                         settings_store.hydrate_from_db(_db)
+                        # The legacy-table migration needs a relay read behind it (it skips the keys the
+                        # relay holds); the early one is deferred when the relay was not up yet, and runs
+                        # here. Idempotent, so a node that already migrated early migrates nothing.
+                        settings_store.migrate_legacy_table(_db)
                         await settings_store.seed_relay_defaults(_db, DEFAULT_SETTINGS)
                         # Re-assert declarative env directives AFTER hydrate+seed so they win even when
                         # the relay still holds the default "false" (hydrate/seed would clobber the

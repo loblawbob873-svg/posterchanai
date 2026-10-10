@@ -34,42 +34,140 @@ SIGNUP_KINDS = (0, 3, 10002, 10050, 10063)
 POST_KINDS = (1, 6, 7, 16, 20, 21, 22, 40, 41, 42, 1063, 1068, 1018, 1111, 1984, 9802, 30023, 30311, 34550)
 
 
+_T_MAX = 2 ** 31 - 1         # the relay's created_at column is a 32-bit integer; never ask past it
+_HEAD = len(SIGNUP_KINDS) + 1   # the signup kinds are replaceable: one each at most, so one more is a non-signup
+
+
+def _chunks(seq, n):
+    seq = list(seq)
+    return [seq[i:i + n] for i in range(0, len(seq), n)]
+
+
+def _operator_key():
+    """THIS node's operator key, or None -- read, never minted (settings_store._operator_seckey mints one)."""
+    try:
+        from app.services import keystore
+        from app.services.nostr import nostr_service
+        nsec = keystore.get_operator_nsec()
+        return nostr_service.decode_seckey(nsec) if nsec else None
+    except Exception:
+        return None
+
+
+def _req_per_key(filters_by_pk: dict) -> dict:
+    """{pk: events} for {pk: filter}, ten filters per REQ (the relay's per-REQ cap -- more are dropped, silently)."""
+    from app.services import relay_reader
+    out = {pk: [] for pk in filters_by_pk}
+    for part in _chunks(filters_by_pk.items(), 10):
+        for ev in relay_reader.query([f for _pk, f in part], timeout=20):
+            pk = ev.get("pubkey")
+            if pk in out:
+                out[pk].append(ev)
+    return out
+
+
+def _bisect(preds: dict, count) -> dict:
+    """Binary searches over created_at, every key's step answered by ONE batch of relay COUNTs per round.
+
+    `preds` is {key: (lo, hi, make)}, where make(T) -> (filters, test(counts) -> bool) and the predicate is TRUE at
+    lo and FALSE at hi (monotone between). Returns {key: the largest T with the predicate true}."""
+    state = {k: [lo, hi, make] for k, (lo, hi, make) in preds.items()}
+    while True:
+        live = [st for st in state.values() if st[1] - st[0] > 1]
+        if not live:
+            return {k: st[0] for k, st in state.items()}
+        batch, plan = [], []
+        for st in live:
+            mid = (st[0] + st[1]) // 2
+            flts, test = st[2](mid)
+            plan.append((st, mid, test, len(batch), len(flts)))
+            batch.extend(flts)
+        got = count(batch)
+        for st, mid, test, at, n in plan:
+            if test(got[at:at + n]):
+                st[0] = mid
+            else:
+                st[1] = mid
+
+
 def activity(pubkeys: list) -> dict | None:
-    """BLOCKING: {pubkey: {"posts", "events", "last_post", "last_event", "first_seen"}} from the relay's own
-    Postgres, one grouped query for the whole list. None when the relay could not be asked -- which is never
-    the same answer as "no activity", or every member would read as inactive the moment Postgres hiccups."""
+    """BLOCKING: {pubkey: {"posts", "events", "last_post", "last_event", "first_seen"}} as THIS node's relay
+    answers its OPERATOR (#161: no SQL against the relay's tables). None when the relay could not be asked --
+    which is never the same answer as "no activity", or every member would read as inactive the moment it
+    hiccups, and Admin offers inactive accounts for removal.
+
+    Every number counts PRIVATE documents too (kinds 78/30078: Notes, Budget, the files index...): a member who
+    only ever writes Notes is active. The relay serves those to nobody but their author, so they are COUNTED --
+    NIP-45, signed in (NIP-42) as this node's operator key, the one socket the relay counts them for -- and never
+    read. The two dates a count cannot give directly (the newest event that is not a signup kind; the oldest
+    event) are found by binary search over those same counts with since/until. A relay that does not give the
+    operator count (no operator key here, an older relay, a refused sign-in) is "could not ask"."""
     if not pubkeys:
         return {}
-    try:
-        import psycopg2
-        from app.services.stats_bot_service import _relay_dsn
-        conn = psycopg2.connect(_relay_dsn(), connect_timeout=10)
-    except Exception as e:
-        logger.warning("[nip05] activity: relay database unreachable: %s", type(e).__name__)
+    import time
+    from app.services import relay_reader
+    pks = list(dict.fromkeys(pubkeys))
+    out = {pk: {"posts": 0, "events": 0, "last_post": None, "last_event": None, "first_seen": None}
+           for pk in pks}
+    sk = _operator_key()
+    if not sk:
+        logger.warning("[nip05] activity: no operator key — cannot count private documents")
         return None
+
+    def count(flts):
+        return relay_reader.counts(flts, timeout=20, auth_seckey=sk, private=True)
     try:
-        cur = conn.cursor()
-        cur.execute("SET statement_timeout = 20000")
-        cur.execute(
-            "SELECT pubkey, "
-            " count(*) FILTER (WHERE kind = ANY(%s)), "
-            " count(*) FILTER (WHERE NOT (kind = ANY(%s))), "
-            " max(created_at) FILTER (WHERE kind = ANY(%s)), "
-            " max(created_at) FILTER (WHERE NOT (kind = ANY(%s))), "
-            " min(created_at) "
-            "FROM events WHERE pubkey = ANY(%s) GROUP BY pubkey",
-            (list(POST_KINDS), list(SIGNUP_KINDS), list(POST_KINDS), list(SIGNUP_KINDS), list(pubkeys)))
-        out = {pk: {"posts": 0, "events": 0, "last_post": None, "last_event": None, "first_seen": None}
-               for pk in pubkeys}
-        for pk, posts, events, last_post, last_event, first in cur.fetchall():
-            out[pk] = {"posts": int(posts or 0), "events": int(events or 0), "last_post": last_post,
-                       "last_event": last_event, "first_seen": first}
+        now = int(time.time()) + 1
+        flts = []
+        for pk in pks:
+            flts += [{"authors": [pk], "kinds": list(POST_KINDS)}, {"authors": [pk]},
+                     {"authors": [pk], "kinds": list(SIGNUP_KINDS)},
+                     {"authors": [pk], "since": now}, {"authors": [pk], "kinds": list(SIGNUP_KINDS), "since": now}]
+        got = count(flts)
+        total, future = {}, {}
+        for i, pk in enumerate(pks):
+            posts, everything, signup, later, later_signup = got[5 * i:5 * i + 5]
+            total[pk] = everything
+            future[pk] = later - later_signup > 0
+            out[pk]["posts"] = posts
+            out[pk]["events"] = max(0, everything - signup)
+        have = [pk for pk in pks if total[pk] > 0]
+        newest = _req_per_key({pk: {"authors": [pk], "kinds": list(POST_KINDS), "limit": 1}
+                               for pk in pks if out[pk]["posts"] > 0})
+        for pk, evs in newest.items():
+            if evs:
+                out[pk]["last_post"] = max(int(e.get("created_at", 0)) for e in evs)
+        # The newest events a client may SEE bound both searches; private documents are withheld from any REQ,
+        # so this page never decides a date on its own unless it provably holds every counted event.
+        heads = _req_per_key({pk: {"authors": [pk], "limit": _HEAD} for pk in have})
+        preds = {}
+        for pk in have:
+            seen = [int(e.get("created_at", 0)) for e in heads.get(pk, []) if e.get("pubkey") == pk]
+            other = [int(e.get("created_at", 0)) for e in heads.get(pk, [])
+                     if e.get("pubkey") == pk and int(e.get("kind", -1)) not in SIGNUP_KINDS]
+            if out[pk]["events"] > 0:
+                def make_last(t, pk=pk):
+                    return ([{"authors": [pk], "since": t}, {"authors": [pk], "kinds": list(SIGNUP_KINDS), "since": t}],
+                            lambda c: c[0] - c[1] > 0)
+                lo = max(other) if other else 0
+                hi = _T_MAX + 1 if future[pk] else max(now, lo + 1)
+                preds[("last", pk)] = (lo, hi, make_last)
+            if seen and len(seen) >= total[pk]:
+                out[pk]["first_seen"] = min(seen)      # the page held every event the relay counts
+            else:
+                # Largest T with NOTHING at or before it; the oldest event is T + 1.
+                def make_first(t, pk=pk):
+                    return [{"authors": [pk], "until": t}], (lambda c: c[0] == 0)
+                preds[("first", pk)] = (-1, min(seen) if seen else _T_MAX, make_first)
+        for (what, pk), t in _bisect(preds, count).items():
+            if what == "last":
+                out[pk]["last_event"] = t
+            else:
+                out[pk]["first_seen"] = t + 1
         return out
-    except Exception as e:
-        logger.warning("[nip05] activity: query failed: %s", type(e).__name__)
+    except relay_reader.Unavailable as e:
+        logger.warning("[nip05] activity: the relay could not be asked: %s", type(e).__name__)
         return None
-    finally:
-        conn.close()
 
 
 async def rows(domain: str) -> dict:
