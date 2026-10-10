@@ -171,3 +171,26 @@ def test_a_window_pulled_back_after_it_lands_is_put_back():
     got = next(w for w in d["out"] if w["id"] == victim["id"])
     assert got["g"] == before[victim["id"]], ("left where it was pulled back to", got["g"], before[victim["id"]])
     assert d["r"].get("replaced", 0) >= 1, d["r"]
+
+
+def test_a_work_area_measured_before_the_monitor_settled_does_not_shrink_the_grid():
+    """#163 "autostart -> tiling ... tiles before the monitor chooses the final resolution at start. All the
+    tiled windows use only about 75 percent of the screen." At login DP-1 comes up at 2880x1920 and the saved
+    layout switches it to 3840x2560 a moment later; the shell renderer published its taskbar band while the
+    surface was still the small one. That area sits at the output's origin and is CONTAINED in the bigger
+    output, so arrange() used it until something republished. The band (75) is the part still true."""
+    stale = {"x": 0, "y": 10, "w": 2880, "h": 1845, "reserve": 75}
+    d = _arrange({"x": 1920, "y": 1290}, work=stale)
+    rects = [w["g"] for w in _dp1(d)]
+    assert len(rects) == 4, d["out"]
+    right = max(r["x"] + r["width"] for r in rects)
+    bottom = max(r["y"] + r["height"] for r in rects)
+    assert right == 3840 and bottom == 2560 - 75, ("tiled into the area of the mode the monitor started in",
+                                                   right, bottom, rects)
+    assert sum(r["width"] * r["height"] for r in rects) == 3840 * (2560 - 75), rects
+
+
+def test_a_current_measurement_is_still_used_exactly():
+    from_shell = {"x": 0, "y": 10, "w": 3840, "h": 2485, "reserve": 75}
+    rects = [w["g"] for w in _dp1(_arrange({"x": 1920, "y": 1290}, work=from_shell))]
+    assert max(r["y"] + r["height"] for r in rects) == 2485, rects
