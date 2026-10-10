@@ -475,7 +475,16 @@
      * menu entry — reported as "still no terminal app for the laptop, all I see is our remote
      * terminal". */
     if(v === 'terminal' && window.pcTerm) return false;
+    if(v === 'office' && _officeOnThisMachine()) return false;
     return INSTANCE_VIEWS.has(v);
+  }
+  /* OFFICE NEEDS NO SERVER ON A MACHINE THAT HAS ITS OWN — the terminal's argument, for documents.
+   * PosterChanOS ships Collabora (desktop/office-local.js, the `pcOfficeLocal` bridge), so with no
+   * instance at all the Office screen still opens the person's own files. `installed()` is preload's
+   * cached answer; boot re-applies the gating when the real one arrives (see _officeArrived). */
+  function _officeOnThisMachine(){
+    try{ const L = window.pcOfficeLocal; return !!(L && typeof L.installed === 'function' && L.installed() === true); }
+    catch(_){ return false; }
   }
   // A media server the USER named, as opposed to an instance's built-in one or the nostr.build fallback.
   // Deliberately not mediaServer(), which always answers with something uploadable.
@@ -579,7 +588,8 @@
            * to Home in switchView because the backend capability is absent.  Keep those dead rows
            * out of bundled shells too; otherwise the APK offers an app that can never open. */
           const aiOff = !!window.PC_NOSTR_ONLY && (b.dataset.view==='ai' || b.dataset.view==='markets');
-          b.classList.toggle('hidden', solo || aiOff);
+          const here = b.dataset.view==='office' && _officeOnThisMachine();
+          b.classList.toggle('hidden', (solo && !here) || aiOff);
         }
       });
       const music = $('#nav-music'); if(music) music.classList.toggle('hidden', solo);
@@ -601,7 +611,7 @@
     applyNavGroups();
     applyNavOrder();
     // Standing on a view that just went away → go somewhere that exists.
-    if(solo && INSTANCE_VIEWS.has(VIEW)){ try{ switchView(_startTimeline()); }catch(_){} }
+    if(solo && INSTANCE_VIEWS.has(VIEW) && !(VIEW==='office' && _officeOnThisMachine())){ try{ switchView(_startTimeline()); }catch(_){} }
   }
 
   /* ===== HIDING ROWS FROM THE LEFT NAV =========================================================
@@ -2747,6 +2757,19 @@
     if(_localShellBoot) window.PC_NOSTR_ONLY = _bootNostrOnly;
     applyInstanceGating();
     if(_localShellRestored){ try{ PCOS.navChanged && PCOS.navChanged(); }catch(_){} }
+    /* _officeArrived: preload's `installed()` is an IPC answer that may land after this gating ran. A
+     * standalone desktop whose suite IS installed must still get its Office row, so ask once and
+     * re-gate on a yes. Nothing to do with an instance: there, Office is never hidden by gating. */
+    try{
+      const L = window.pcOfficeLocal;
+      if(L && typeof L.available === 'function' && !_officeOnThisMachine())
+        Promise.resolve().then(()=>L.available()).then(v=>{
+          if(v !== true || !_standalone()) return;
+          let wasHidden = true; try{ const row = $('.nav-item[data-view="office"]'); wasHidden = !row || row.classList.contains('hidden'); }catch(_){ }
+          applyInstanceGating();
+          try{ const row = $('.nav-item[data-view="office"]'); if(wasHidden && row && !row.classList.contains('hidden') && window.PCOS && PCOS.navChanged) PCOS.navChanged(); }catch(_){ }
+        }, ()=>{});
+    }catch(_){ }
     // The logo becomes the way into PosterChan OS. Wired after gating, so the desktop's app list —
     // which it reads from the sidebar — reflects what this deployment actually shows.
     try{ _wireOsLogo(); }catch(_){}

@@ -10,6 +10,22 @@
      GRANT_FRESH) and so does this page: within FRESH an app opens with no request at all, and after it
      the app still opens at once while the check runs behind it. */
   const FRESH=600000;
+  /* OFFICE ON THIS MACHINE IS NOT AN INSTANCE APP. The desktop (PosterChanOS, the desktop app) ships
+     its own Collabora behind `pcOfficeLocal` (desktop/office-local.js): the person's own files, on
+     their own computer, through an editor that never talks to the instance. Gating that screen on
+     the instance's membership answer meant a server that was restarting, unreachable, not yet
+     hydrated ("Instance membership settings are not loaded yet") -- or one that simply said no --
+     put a membership panel where the Office home should be: "office broken on desktop". So with a
+     local editor present, Office is not asked about at all. Without one (the web, an APK, a desktop
+     build whose suite is not installed) nothing changes: Office is the instance's, and so is the gate.
+     `installed()` is filled in by preload from an IPC answer that can land after the first paint, so
+     the gate also asks `available()` itself and lets the screen in when the answer arrives. */
+  let officeHere=false;
+  function localOffice(){
+    if(officeHere)return true;
+    try{const L=root.pcOfficeLocal;return !!(L&&typeof L.installed==='function'&&L.installed()===true);}catch(_){return false;}
+  }
+  const onMachine=view=>view==='office'&&localOffice();
   /* THE VERDICT BELONGS TO THE ACCOUNT, NOT TO WHAT ITS PROFILE SAYS. Membership is the name this
      instance granted -- the server never reads the profile -- so editing your own NIP-05 (to an
      address of your own elsewhere, say) changes nothing here, and must not drop a stored yes and put
@@ -45,7 +61,7 @@
     state={...data,offline:false,checkedAt:Date.now()};error='';
     try{if(data.qualified)localStorage.setItem(storedKey(),JSON.stringify({data}));else localStorage.removeItem(storedKey());}catch(_){}
   }
-  function allowed(view){scope();if(!state)state=navigator.onLine===false?cachedOffline():remembered();return !(view in apps)||(state?.qualified===true&&(!state.offline||localApps.has(view)));}
+  function allowed(view){if(onMachine(view))return true;scope();if(!state)state=navigator.onLine===false?cachedOffline():remembered();return !(view in apps)||(state?.qualified===true&&(!state.offline||localApps.has(view)));}
   async function refresh(force=false){
     const epoch=scope(),pk=pc()?.viewer()?.pubkey;
     if(!pk)return null;
@@ -71,7 +87,7 @@
     pending=job;return job;
   }
   async function requireApp(view){
-    if(!(view in apps))return;
+    if(!(view in apps)||onMachine(view))return;
     scope();if(!state&&navigator.onLine!==false)state=remembered();
     if(state?.qualified&&!state.offline){
       if(Date.now()-state.checkedAt>=FRESH)void refresh();
@@ -92,6 +108,7 @@
      and every other case is a short panel that continues into the app by itself. */
   const verdict=()=>state&&typeof state.qualified==='boolean'?(state.qualified?'yes':'no'):'unknown';
   function gate(view,host){
+    if(onMachine(view))return false;      // never a background re-check either: nothing to re-check
     scope();
     if(allowed(view)){
       if(view in apps && state && Date.now()-state.checkedAt>=FRESH){
@@ -157,6 +174,13 @@
     /* The waiting panel carries no Check again button -- a check IS running, and a button that
        re-asks the question already in flight is a button that does nothing. */
     const retry=card.querySelector('.ia-retry');if(retry)retry.onclick=()=>update(true);
+    const L=root.pcOfficeLocal;
+    if(view==='office'&&L&&typeof L.available==='function')
+      Promise.resolve().then(()=>L.available()).then(v=>{
+        if(v!==true)return;
+        officeHere=true;
+        if(scope()===epoch&&card.isConnected)p.retryInstanceView(view);
+      },()=>{});
     // A failed or negative response waits for explicit retry; never recurse into a request loop.
     if(pk&&!state&&!error)update(false);
     return true;

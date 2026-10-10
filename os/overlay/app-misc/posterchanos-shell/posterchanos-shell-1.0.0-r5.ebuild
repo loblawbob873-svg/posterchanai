@@ -15,7 +15,15 @@ SLOT="0"
 # are masked on every stable install, which is every PosterChanOS machine, and the error
 # a person sees is "all ebuilds have been masked" about software their own OS ships.
 KEYWORDS="amd64"
-IUSE="monero gamescope"
+# `office` is ON by default. PosterChan Office opens the person's own documents on this machine
+# (desktop/office-local.js over /opt/posterchan-office) — but only the ISO's package list ever
+# installed the suite, so a machine installed before it joined that list never got it, and every
+# `update-posterchan` since left it out: Office there fell through to the instance, whose answer
+# while it was restarting was "Instance membership settings are not loaded yet" for a file on the
+# desktop ("office broken on desktop"; "office should always just work on PosterChanOS"). A
+# dependency of the session is what an update actually installs. ~860 MB unpacked, hence a flag
+# somebody can turn off rather than a hard requirement.
+IUSE="monero gamescope +office"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
@@ -43,6 +51,7 @@ RDEPEND="
 	sys-fs/udisks:2
 	sys-fs/exfatprogs
 	monero? ( net-p2p/monero-wallet-rpc-bin )
+	office? ( app-misc/posterchan-office )
 "
 
 src_install() {

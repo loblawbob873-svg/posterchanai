@@ -9,7 +9,16 @@ HOMEPAGE="https://poster.place"
 # republished under a tag that is written once and never touched — the desktop package's lesson: a
 # Manifest pins a digest, so a rolling "LATEST" URL verifies today and fails on the next upstream
 # release.
-SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/office-code-7d478de5/Collabora_Online-7d478de5.AppImage -> ${P}.AppImage"
+#
+# THE BUILD ID LIVES IN THE URL (CODE_BUILD), NEVER IN THE VERSION. This was published as
+# `posterchan-office-1.0.0_p7d478de5`, and `_p` takes DIGITS ONLY: portage read that file name as no
+# version at all and ignored the ebuild ("there are no ebuilds to satisfy app-misc/posterchan-office").
+# So no machine ever installed the suite -- gentoo.sh's package set failed on the atom and retried one
+# package at a time, naming it among the failures -- and Office on every PosterChanOS desktop fell
+# through to the instance. tests/test_overlay_ebuild_versions.py parses every ebuild name the way
+# portage does. A new CODE build is a new CODE_BUILD and a version bump (1.0.1, …).
+CODE_BUILD="7d478de5"
+SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/office-code-${CODE_BUILD}/Collabora_Online-${CODE_BUILD}.AppImage -> ${P}.AppImage"
 S="${WORKDIR}"
 
 LICENSE="MPL-2.0"
