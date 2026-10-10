@@ -449,6 +449,9 @@ class IncompleteRead(RuntimeError):
     """The namespace could not be read to its end -- never to be treated as "that is all of it"."""
 
 
+_PAGE_RETRY_SLEEP = 1.0
+
+
 async def list_all_docs(port: int, prefix: str, *, seckey: bytes | None = None,
                         pubkey: str | None = None, kind: int = APP_KIND, page: int = 1000) -> dict:
     """EVERY document under `prefix`, or an exception -- never a short answer.
@@ -461,8 +464,19 @@ async def list_all_docs(port: int, prefix: str, *, seckey: bytes | None = None,
     out: dict = {}
     cursor = None
     while True:
-        docs = await list_docs(port, prefix, seckey=seckey, pubkey=pubkey, kind=kind, strict=True,
-                               limit=page, with_meta="cursor", cursor=cursor)
+        # A PAGE THAT FAILS IS RETRIED, not the whole read (2026-10-10: the 190k-document Blossom index never
+        # loaded -- one slow page out of ~190 threw the read away every time). A page that keeps failing raises.
+        for attempt in range(4):
+            try:
+                docs = await list_docs(port, prefix, seckey=seckey, pubkey=pubkey, kind=kind, strict=True,
+                                       limit=page, with_meta="cursor", cursor=cursor)
+                break
+            except IncompleteRead:
+                raise
+            except Exception:
+                if attempt == 3:
+                    raise
+                await asyncio.sleep(_PAGE_RETRY_SLEEP * (attempt + 1))
         for d, (value, _stamp, _eid) in docs.items():
             out.setdefault(d, value)
         if len(docs) < page:
