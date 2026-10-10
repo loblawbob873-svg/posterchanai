@@ -51,11 +51,16 @@
     await verified(seal, context);
     const rumor = JSON.parse(await context.decrypt(seal.pubkey, seal.content));
     current(context);
-    if (!rumor || rumor.kind !== 3313 || rumor.pubkey !== seal.pubkey ||
-        !Number.isSafeInteger(rumor.created_at) || rumor.created_at < 0 ||
-        !Array.isArray(rumor.tags) || typeof rumor.content !== 'string' ||
-        rumor.id !== await rumorId(rumor))
-      throw new Error('The invitation has an invalid signed rumor');
+    // Each check names itself: one message for six causes ("invalid signed rumor") left an Android report
+    // impossible to act on. Nothing secret is in any of these.
+    const bad = why => new Error('The invitation has an invalid signed rumor: ' + why);
+    if (!rumor || typeof rumor !== 'object') throw bad('it is empty');
+    if (rumor.kind !== 3313) throw bad('not a Concord invitation (kind ' + String(rumor.kind) + ')');
+    if (rumor.pubkey !== seal.pubkey) throw bad("rumor author is not the seal's signer");
+    if (!Number.isSafeInteger(rumor.created_at) || rumor.created_at < 0) throw bad('bad created_at');
+    if (!Array.isArray(rumor.tags) || typeof rumor.content !== 'string') throw bad('bad tags or content');
+    if (typeof rumor.id !== 'string') throw bad('rumor has no id');
+    if (rumor.id !== await rumorId(rumor)) throw bad('rumor id does not match its content');
     current(context);
     const bundle = validate(globalThis.PosterCordReader.parseJoinMaterial(rumor.content), { forJoin: !!options.forJoin, now: options.now });
     return { id: outer.id, rumorId: rumor.id, inviter: seal.pubkey, createdAt: rumor.created_at, bundle };

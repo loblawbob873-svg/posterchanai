@@ -29,6 +29,11 @@ for(const hint of [true,false]){
  assert.equal(opened.inviter,senderPk);assert.equal(opened.bundle.community_id,bundle.community_id);
 }
 for(const options of [{kind:14},{badId:true},{badSeal:true},{mismatch:true},{body:{...bundle,owner_salt:'66'.repeat(32)}},{body:{...bundle,channels:Array(257).fill({})}}])await assert.rejects(()=>api.open(wire(options),context));
+// 2026-10-10: Android said only 'The invitation has an invalid signed rumor' -- six different checks, one message.
+// Each failure now NAMES its check, so the next report says which.
+await assert.rejects(()=>api.open(wire({kind:14}),context),/not a Concord invitation \(kind 14\)/);
+await assert.rejects(()=>api.open(wire({badId:true}),context),/rumor id does not match its content/);
+await assert.rejects(()=>api.open(wire({mismatch:true}),context),/rumor author is not the seal's signer/);
 const invalid=JSON.parse(JSON.stringify(wire()));invalid.sig='0'.repeat(128);await assert.rejects(()=>api.open(invalid,context));
 await assert.rejects(()=>api.open(wire(),{...context,pubkey:senderPk}));
 const expired=wire({body:{...bundle,expires_at:Date.now()-1}});assert((await api.open(expired,context)).bundle);await assert.rejects(()=>api.open(expired,context,{forJoin:true}));
