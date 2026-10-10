@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import user_table
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.search_service import get_search_service

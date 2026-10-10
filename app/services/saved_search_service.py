@@ -13,7 +13,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.services.user_table import UserRow as User
 
 logger = logging.getLogger("saved_search_service")
 
@@ -86,18 +86,3 @@ async def adelete_saved_search(db: Session, user: User, sid: int) -> bool:
             return False
         await t.adelete(str(int(sid)))
     return True
-
-
-# ---- the SQL side (#161 wave 1): SQL is the store of record until the `saved_searches` marker exists ----
-def _search_from_sql(r) -> dict:
-    return search_row(r.user_id, r.query, r.created_at)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    from app.services.app_tables import SAVED_SEARCHES
-    from app.services.legacy_sql import ModelLegacy
-    table_migration.register(ModelLegacy(SAVED_SEARCHES, "SavedSearch", _search_from_sql))
-
-
-_register_legacy()

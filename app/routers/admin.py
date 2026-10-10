@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 from app.database import get_db
 from app.utils import lb_auth
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services.relay_reader import Unavailable
 from app.services import user_table
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
@@ -1153,17 +1153,9 @@ def delete_user(
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                                 detail="The account's keys and links cannot be removed right now; the account was not deleted")
 
-        # 1-2. Legacy SQL conversations + their plaintext transcript rows, 7. legacy SQL user settings
-        conversation_table.delete_legacy_sql_rows(db, user_id)
-        user_settings_table.delete_legacy_sql_rows(db, user_id)
-        
-        # 10. Legacy SQL Exodus wallet backup rows (the FK)
+        # The Exodus wallet backups (#161: relay rows; the FK cascade is gone). This route is a sync def, i.e.
+        # on a threadpool thread, where running a coroutine to completion is fine.
         from app.services import exodus_tables
-        exodus_tables.delete_legacy_sql_rows(db, user_id)
-        db.commit()
-
-        # ... and their relay copies (#161: the FK cascade cannot reach a DocTable). This route is a sync def,
-        # i.e. on a threadpool thread, where running a coroutine to completion is fine.
         asyncio.run(exodus_tables.apurge_user(db, user_id))
 
         # 11. Finally, delete the user
@@ -1188,17 +1180,8 @@ def delete_user(
     except HTTPException:
         raise
     except Unavailable:
-        db.rollback()
         raise                                   # "could not ask" -> 503, retry; never a 500
-    except IntegrityError as e:
-        db.rollback()
-        logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user due to database constraints: {str(e)}"
-        )
     except Exception as e:
-        db.rollback()
         logger.error(f"Failed to delete user {user_id}: {type(e).__name__} - {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -13,7 +13,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 import json
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import settings_store, user_table
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -369,62 +369,3 @@ def start_social_notifications_scheduler() -> None:
     _scheduler.add_job(_job, "interval", seconds=secs, id="social_notif_poll", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info(f"[social] notification poller started (every {secs}s)")
-
-
-# --- the SQL side (#161 wave 1) ----------------------------------------------
-# Until the `social_reply_map` marker exists SQL is the store of record. Its rows are keyed "<chat>:<message>";
-# two SQL rows for one message collapse to the NEWEST (highest id) -- the one the old `ORDER BY id DESC` lookup
-# answered with -- and a write replaces whatever the message mapped to.
-from app.services.doc_table import Legacy as _Legacy  # noqa: E402
-
-
-class ReplyMapLegacy(_Legacy):
-    name = "social_reply_map"
-
-    @staticmethod
-    def row(r) -> dict:
-        from app.services.app_tables import to_iso
-        return {"user_id": r.user_id, "telegram_chat_id": str(r.telegram_chat_id),
-                "telegram_message_id": int(r.telegram_message_id), "platform": r.platform,
-                "target_id": r.target_id, "visibility": r.visibility, "created_at": to_iso(r.created_at)}
-
-    def rows(self, db) -> dict:
-        from app.models import SocialReplyMap
-        out = {}
-        for r in db.query(SocialReplyMap).order_by(SocialReplyMap.id.asc()).all():
-            out[reply_key(r.telegram_chat_id, r.telegram_message_id)] = self.row(r)
-        return out
-
-    @staticmethod
-    def _q(db, k):
-        from app.models import SocialReplyMap
-        chat, msg = str(k).rsplit(":", 1)
-        return db.query(SocialReplyMap).filter(SocialReplyMap.telegram_chat_id == chat,
-                                               SocialReplyMap.telegram_message_id == int(msg))
-
-    def get(self, db, k):
-        from app.models import SocialReplyMap
-        r = self._q(db, k).order_by(SocialReplyMap.id.desc()).first()
-        return self.row(r) if r is not None else None
-
-    def put(self, db, k, row: dict) -> None:
-        from app.models import SocialReplyMap
-        from app.services.legacy_sql import to_datetime
-        self._q(db, k).delete(synchronize_session=False)
-        db.add(SocialReplyMap(user_id=row.get("user_id"), telegram_chat_id=str(row.get("telegram_chat_id")),
-                              telegram_message_id=int(row.get("telegram_message_id")),
-                              platform=row.get("platform") or "", target_id=row.get("target_id"),
-                              visibility=row.get("visibility"), created_at=to_datetime(row.get("created_at"))))
-        db.flush()
-
-    def delete(self, db, k) -> None:
-        self._q(db, k).delete(synchronize_session=False)
-        db.flush()
-
-
-def _register_legacy():
-    from app.services import table_migration
-    table_migration.register(ReplyMapLegacy())
-
-
-_register_legacy()

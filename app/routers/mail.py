@@ -11,7 +11,7 @@ from pathlib import Path
 from app.database import get_db
 from app.auth import get_current_user
 from app.services import instance_membership
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services.mail_service import (get_attachment, get_user_mail_accounts, sanitize_filename,
                                        send_email, reply_to_message, forward_message,
                                        archive_message, delete_message, move_message,

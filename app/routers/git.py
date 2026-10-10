@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.auth import get_current_user
 from app.services import instance_membership
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import settings_store, git_host_service as ghs, git_proxy
 
 logger = logging.getLogger(__name__)

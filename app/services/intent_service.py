@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Optional
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from app.models import User
+    from app.services.user_table import UserRow as User
 
 logger = logging.getLogger(__name__)
 

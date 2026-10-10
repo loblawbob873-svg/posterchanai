@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, get_current_user_optional
 from app.database import SessionLocal, get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import instance_membership, user_table
 from app.services.relay_reader import Unavailable
 from app.services.telegram_client.manager import TGError, manager

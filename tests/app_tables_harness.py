@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import app_tables, doc_table
+from app.services import doc_table
 from app.services.nostr import bech32
 from tests.test_doc_table import SK, _Relay
 
@@ -29,46 +29,24 @@ def shared_relay(tmp_path_factory):
         r.close()
 
 
-def _no_database(*a, **k):
-    raise AssertionError("an app-table test opened the app's real database session")
-
-
-def _isolate(monkeypatch, port, *, ready=True):
+def _isolate(monkeypatch, port):
     from app.services import keystore
-    import app.database
-    # These tables left Postgres. A path under test that still opens the app's own session would reach the
-    # node's REAL database (the default URL is the local production Postgres) -- refuse it outright.
-    monkeypatch.setattr(app.database, "SessionLocal", _no_database)
+    # There is no SQL (app.database hands out a NoSQL session that raises on any query); the tables are
+    # relay-only from the first request.
     monkeypatch.setattr(keystore, "get_operator_nsec", lambda: bech32.encode("nsec", SK))
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(port))
     monkeypatch.setattr(doc_table, "NS", "pcai:t%d:" % next(_ns))
     doc_table.DocTable._registry.clear()
-    app_tables._pass_done.clear()
-    if ready:
-        for name in app_tables.TABLES:
-            app_tables.mark_pass_done(name)
 
 
 @pytest.fixture
 def tables(shared_relay, monkeypatch):
-    """Every app table empty, migrated (ready) and backed by the shared relay."""
+    """Every app table empty and backed by the shared relay."""
     _isolate(monkeypatch, shared_relay.port)
     try:
         yield SimpleNamespace(relay=shared_relay, port=shared_relay.port)
     finally:
         doc_table.DocTable._registry.clear()
-        app_tables._pass_done.clear()
-
-
-@pytest.fixture
-def unmigrated(shared_relay, monkeypatch):
-    """The same, but no table has a migration verdict yet."""
-    _isolate(monkeypatch, shared_relay.port, ready=False)
-    try:
-        yield SimpleNamespace(relay=shared_relay, port=shared_relay.port)
-    finally:
-        doc_table.DocTable._registry.clear()
-        app_tables._pass_done.clear()
 
 
 @pytest.fixture
@@ -83,7 +61,6 @@ def no_relay(monkeypatch):
         yield port
     finally:
         doc_table.DocTable._registry.clear()
-        app_tables._pass_done.clear()
 
 
 def fresh_process_view(name):

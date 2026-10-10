@@ -9,13 +9,13 @@ writes.
 
     from tests.doc_table_mem import mem_tables
     def test_x(monkeypatch):
-        mem = mem_tables(monkeypatch)                 # every table migrated and empty
+        mem = mem_tables(monkeypatch)                 # every table empty
         mem.put("api_keys", "1", {...})               # seed a row as the relay would hold it
 """
 import json
 import time
 
-from app.services import doc_table, table_migrate
+from app.services import doc_table
 from app.services.doc_table import DocTable
 from app.services.relay_reader import Unavailable
 
@@ -42,9 +42,8 @@ class MemRelay:
 
 
 def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
+    """`migrated` is accepted for old callers and ignored: every table is relay-only (#161)."""
     mem = MemRelay()
-    for name in migrated:
-        mem.rows[(table_migrate.MARKERS, name)] = {"ok": True, "verified": True, "rows": 0}
 
     async def aload(self, *, force=False):
         if self._loaded_at and not force:
@@ -101,9 +100,7 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
 
     monkeypatch.setattr(DocTable, "aload", aload)
     monkeypatch.setattr(DocTable, "aput", aput)
-    monkeypatch.setattr(DocTable, "_relay_put", aput)
     monkeypatch.setattr(DocTable, "adelete", adelete)
-    monkeypatch.setattr(DocTable, "_relay_delete", adelete)
     monkeypatch.setattr(DocTable, "aget_remote", aget_remote)
     monkeypatch.setattr(DocTable, "_start_live", lambda self, pk: None)
     monkeypatch.setattr(doc_table, "_operator", lambda: (b"\x01" * 32, "00" * 32))
@@ -112,9 +109,6 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
     monkeypatch.setattr(doc_table_bulk, "abulk_put", bulk_put)
     monkeypatch.setattr(doc_table_bulk.nostr_store, "delete_doc", delete_doc)
     monkeypatch.setattr(DocTable, "_registry", {})
-    # the markers this "process" has seen: none yet -- it reads them from `mem` like a fresh process would
-    monkeypatch.setattr(doc_table, "_marked", set())
-    monkeypatch.setattr(doc_table, "_neg", {})
     return mem
 
 

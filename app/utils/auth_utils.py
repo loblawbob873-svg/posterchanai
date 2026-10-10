@@ -9,7 +9,7 @@ call it invalid).
 import logging
 from typing import Optional
 from sqlalchemy.orm import Session
-from app.models import User
+from app.services.user_table import UserRow as User
 
 logger = logging.getLogger(__name__)
 

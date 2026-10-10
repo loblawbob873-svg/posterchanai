@@ -15,13 +15,10 @@ What it never does is answer "no rows" for "could not ask": until the first stri
 raises `Unavailable`, and a write that the relay refused raises too. The callers decide what unavailable means to
 them (refuse, retry, show "unknown") -- the same rule relay_reader keeps for single reads.
 
-THE MOVE FROM SQL, WITHOUT AN OUTAGE (wave 1). A table that came from Postgres has a `Legacy` bound to it
-(app/services/table_migration.py binds them at startup). Until that table's `_migrated` marker exists:
-  * SQL is AUTHORITATIVE: every read is answered from SQL (through the Legacy), exactly as before the move;
-  * every write goes to SQL FIRST and then to the relay, so the relay's copy converges and nothing written while
-    the one-time copy runs is lost. A relay half that fails is not an error then (SQL is the store of record and
-    the copy will carry it across) -- unless the marker appeared meanwhile, which is re-checked strictly.
-Once the marker is written the relay is authoritative and SQL is never read or written again.
+RELAY-ONLY (#161, owner's call: "the entire point of this was to avoid postgres"). There is no SQL side, no
+marker gating and no dual write: a node with no database at all serves every table from the first request. The
+rows a node held in Postgres before this are copied ONCE by scripts/migrate_tables_to_nostr.py (read-only SQL,
+verified row for row) -- the only code that still imports those SQLAlchemy models.
 
 AFTER A RESTART a big table takes a while to load (measured ~1 ms a row). The load runs on a THREAD of its own
 (`start_background_load`), never on the request loop, and while it runs:
@@ -110,147 +107,19 @@ def _norm(row: dict) -> dict:
     return json.loads(json.dumps(row, default=str))
 
 
-# ====================================================================== the SQL side, until the marker exists
-class Legacy:
-    """How one table's rows are read and written in SQL until its `_migrated` marker exists.
-
-    `rows(db)` is the whole table as {key: row} -- the SAME rows the migration copies, so a read answered from SQL
-    before the marker and one answered from the relay after it are indistinguishable. The other methods default to
-    that one where a table has nothing faster to offer."""
-    name = ""
-    copy = True             # False: a transient table that is marked without a copy and never written to SQL
-    int_ids = False         # keys are SQL integer ids: a new row takes SQL's id until the marker exists
-
-    def rows(self, db) -> dict:
-        raise NotImplementedError
-
-    def get(self, db, k):
-        return self.rows(db).get(str(k))
-
-    def put(self, db, k, row: dict) -> None:
-        raise NotImplementedError
-
-    def delete(self, db, k) -> None:
-        raise NotImplementedError
-
-    def insert(self, db, row: dict):
-        """Insert a NEW row letting SQL assign its id; returns the key. Only for `int_ids` tables."""
-        raise NotImplementedError
-
-
-LEGACIES: dict = {}             # DocTable name -> Legacy (table_migration.register fills it at store import)
-# Tables whose store module gates SQL-or-relay ITSELF (app/services/table_gate.py, wave 2: bots, user_settings,
-# conversations): no Legacy is bound to the DocTable -- the store writes the relay first and SQL after -- but its
-# background loader still waits for the table's `_migrated` marker, like a bound table's (table_migration fills it).
-GATED: set = set()
-_session_factory = None
-
-
-def set_session_factory(factory) -> None:
-    """The SQL sessions a Legacy is handed. Every process that serves these tables sets it at start
-    (table_migration.bind(SessionLocal)); until then a table that still lives in SQL is "could not ask" --
-    never read from the relay's incomplete copy, and never from whatever database a default URL points at."""
-    global _session_factory
-    _session_factory = factory
-
-
-def _sql(fn, *, write: bool = False):
-    """Run `fn(db)` in a session of its own. Any SQL failure is "could not ask" (Unavailable), never "no rows"."""
-    factory = _session_factory
-    if factory is None:
-        raise Unavailable("this process has no SQL session for the tables still being moved off it")
-    try:
-        db = factory()
-    except Exception as e:      # noqa: BLE001
-        raise Unavailable("could not open the SQL database: %s" % e) from e
-    try:
-        out = fn(db)
-        if write:
-            db.commit()
-        return out
-    except Unavailable:
-        db.rollback()
-        raise
-    except Exception as e:      # noqa: BLE001
-        try:
-            db.rollback()
-        except Exception:       # noqa: BLE001
-            pass
-        raise Unavailable("SQL could not be asked: %s: %s" % (type(e).__name__, e)) from e
-    finally:
-        db.close()
-
-
-# ====================================================================== migration markers
+# ====================================================================== migration markers (the copy script's record)
+# The one-time copy of a node's old Postgres rows (scripts/migrate_tables_to_nostr.py) writes a `_migrated` row per
+# table when it has verified the copy. NOTHING at runtime reads it: every table is relay-only from the first
+# request, on a fresh node and on a migrated one alike.
 MARKERS = "_migrated"
-_marked: set = set()            # tables this process has seen marked -- monotonic, never asked again
-_neg: dict = {}                 # table -> monotonic time of the last "not marked yet" answer from the relay
-_NEG_TTL = 2.0
 
 
 def is_marker(m) -> bool:
     return isinstance(m, dict) and (m.get("ok") is True or m.get("verified") is True)
 
 
-def _saw_marked(name: str) -> None:
-    if name in _marked:
-        return
-    _marked.add(name)
-    _neg.pop(name, None)
-    t = DocTable._registry.get(name)
-    if t is not None:
-        t._became_authoritative()
-
-
-async def amarked(name: str, *, fresh: bool = False) -> bool:
-    """Has `name` been copied from SQL and verified? Raises Unavailable when it cannot be asked -- "could not ask"
-    is neither "migrated" nor "not migrated". `fresh` always asks the relay (a write deciding who is authoritative)."""
-    if name in _marked:
-        return True
-    m_table = DocTable._registry.get(MARKERS)
-    if not fresh:
-        if m_table is not None and m_table.loaded:          # kept current by its live stream
-            with m_table._lock:
-                m = m_table._rows.get(name)
-            if is_marker(m):
-                _saw_marked(name)
-                return True
-            return False
-        if time.monotonic() - _neg.get(name, -1e9) < _NEG_TTL:
-            return False
-    m = await DocTable(MARKERS).aget_remote(name)
-    if is_marker(m):
-        _saw_marked(name)
-        return True
-    _neg[name] = time.monotonic()
-    return False
-
-
-def marked(name: str) -> bool:
-    """`amarked` for synchronous code. On an event-loop thread it can only answer from memory: unknown there is
-    Unavailable, never a guess."""
-    if name in _marked:
-        return True
-    if not _in_loop():
-        return _run(amarked(name))
-    m_table = DocTable._registry.get(MARKERS)
-    if m_table is not None and m_table.loaded:
-        with m_table._lock:
-            m = m_table._rows.get(name)
-        if is_marker(m):
-            _saw_marked(name)
-            return True
-        return False
-    if time.monotonic() - _neg.get(name, -1e9) < _NEG_TTL:
-        return False
-    raise Unavailable("the migration state of %s is not known in this process yet" % name)
-
-
 def reset_state() -> None:
-    """Forget every marker seen and the SQL session factory (tests: a fresh process)."""
-    _marked.clear()
-    _neg.clear()
-    set_session_factory(None)
+    """Tests: a fresh process (nothing is held outside the table registry any more)."""
 
 
 class DocTable:
@@ -276,7 +145,6 @@ class DocTable:
         self._load_lock = threading.Lock()
         self._live = None
         self._watchers: list = []
-        self.legacy = LEGACIES.get(name)    # SQL's side until the table's marker exists (None: relay only)
         self._bg = None                 # the background loader thread, when this process runs one
         self._bg_lock = threading.Lock()
         self._reload_wanted = False
@@ -293,9 +161,6 @@ class DocTable:
         """A background load is running and has not finished its first pass."""
         return not self._loaded_at and self._bg is not None and self._bg.is_alive()
 
-    def bind_legacy(self, legacy) -> None:
-        self.legacy = legacy
-
     def watch(self, fn) -> None:
         """Call `fn(key, row_or_None)` after every change this process sees (its own writes, the live stream),
         and `fn(None, None)` after a full (re)load. For callers that keep a secondary index (rows by owner);
@@ -308,19 +173,6 @@ class DocTable:
                 fn(k, row)
             except Exception as e:      # noqa: BLE001 -- an index bug must not fail the write that fed it
                 logger.warning("[doctable] %s watcher failed: %s", self.name, e)
-
-    # ------------------------------------------------------------------ who is authoritative
-    async def amigrated(self) -> bool:
-        """True when the relay is this table's store of record (no Legacy, or its marker exists)."""
-        return self.legacy is None or await amarked(self.name)
-
-    def migrated(self) -> bool:
-        return self.legacy is None or marked(self.name)
-
-    def _became_authoritative(self) -> None:
-        # Whatever this process held from before the marker was never the store of record: load afresh.
-        with self._lock:
-            self._loaded_at = 0.0
 
     # ------------------------------------------------------------------ loading
     async def aload(self, *, force: bool = False) -> None:
@@ -366,7 +218,7 @@ class DocTable:
     def start_background_load(self) -> None:
         """Load this table on a THREAD of its own and keep it loaded (the periodic backstop reload, and a reload
         after the live stream had a gap, happen there too -- never inside a request). Before the table's marker
-        exists there is nothing to load: SQL answers, and the thread waits for the marker. Idempotent."""
+        Idempotent."""
         with self._bg_lock:             # never _load_lock: that is held for the whole of a running load
             if self._bg is not None and self._bg.is_alive():
                 return
@@ -382,9 +234,6 @@ class DocTable:
         backoff = 1.0
         while not self._orphaned():
             try:
-                if (self.legacy is not None or self.name in GATED) and not _run(amarked(self.name)):
-                    time.sleep(2.0)
-                    continue
                 if not self._loaded_at or self._reload_wanted or time.time() - self._loaded_at > self.resync_s:
                     first = not self._loaded_at
                     self._reload_wanted = False
@@ -433,9 +282,10 @@ class DocTable:
                         pass
             return
         if self._bg_running():
-            raise self._loading_error()
+            raise self._loading_error()     # a big table loading on its thread: 503 + Retry-After, not a wait
         if _in_loop():
-            raise Unavailable("table %s is not loaded yet" % self.name)
+            self.start_background_load()
+            raise self._loading_error()
         self.load()
 
     # ------------------------------------------------------------------ reads
@@ -443,44 +293,32 @@ class DocTable:
         with self._lock:
             return {k: dict(v) for k, v in self._rows.items()}
 
-    def _legacy_rows(self) -> dict:
-        return {str(k): _norm(v) for k, v in _sql(self.legacy.rows).items()}
-
-    def _legacy_get(self, k):
-        row = _sql(lambda db: self.legacy.get(db, str(k)))
-        return _norm(row) if row is not None else None
-
     def all(self) -> dict:
         """{key: row} for the whole table. Raises Unavailable until a strict load has succeeded (Loading while a
-        background load runs); before the marker, the rows are SQL's."""
-        if not self.migrated():
-            return self._legacy_rows()
+        background load runs)."""
         self._ensure_sync()
         return self._snapshot()
 
     async def aall(self) -> dict:
-        if not await self.amigrated():
-            return await asyncio.to_thread(self._legacy_rows)
         await self._ensure()
         return self._snapshot()
 
     def get(self, k):
-        """One row by key (a copy), or None. While a background load runs, read from the relay (off the loop)."""
-        if not self.migrated():
-            return self._legacy_get(k)
-        if not self._loaded_at and self._bg_running():
+        """One row by key (a copy), or None. Before the table is loaded: that ONE document from the relay (off the
+        loop; on a loop it is Loading -- a socket is never awaited there), and the table loads on its own thread."""
+        if not self._loaded_at:
             if _in_loop():
+                self.start_background_load()
                 raise self._loading_error()
             return _run(self.aget_remote(k))
-        self._ensure_sync()
         with self._lock:
             row = self._rows.get(str(k))
             return dict(row) if row is not None else None
 
     async def aget(self, k):
-        if not await self.amigrated():
-            return await asyncio.to_thread(self._legacy_get, k)
-        if not self._loaded_at and self._bg_running():
+        """One row by key (a copy), or None. Before the table is loaded: that ONE document from the relay -- a
+        restart's load never turns a point lookup into a wait or a 503."""
+        if not self._loaded_at:
             return await self.aget_remote(k)
         await self._ensure()
         with self._lock:
@@ -495,25 +333,24 @@ class DocTable:
 
     def view(self) -> list:
         """[(key, row)] of the whole table WITHOUT copying the rows when they come from memory (read them, never
-        mutate them). Before the marker: SQL's rows. Synchronous code off the loop loads the table if it must; on
-        a loop an unloaded table is Unavailable rather than a blocked loop."""
-        if not self.migrated():
-            return list(self._legacy_rows().items())
+        mutate them). Synchronous code off the loop loads the table if it must; on a loop an unloaded table is
+        Unavailable rather than a blocked loop."""
         self._ensure_sync()
         with self._lock:
             return list(self._rows.items())
 
     async def aview(self) -> list:
-        if not await self.amigrated():
-            return list((await asyncio.to_thread(self._legacy_rows)).items())
         await self._ensure()
         with self._lock:
             return list(self._rows.items())
 
     def rows_view(self) -> list:
         """[(key, row)] WITHOUT copying the rows -- for a scan over a big table, where `all()` would copy every
-        row. The rows are this table's own memory: read them, never mutate them. Unavailable until loaded."""
+        row. The rows are this table's own memory: read them, never mutate them. Unavailable until loaded -- and
+        the table starts loading on its own thread, so the retry the caller is told to make finds it loaded (a
+        process that never ran the startup loader, the worker, would otherwise answer 503 for ever)."""
         if not self._loaded_at:
+            self.start_background_load()
             raise (self._loading_error() if self._bg_running() else
                    Unavailable("table %s is not loaded" % self.name))
         with self._lock:
@@ -537,9 +374,11 @@ class DocTable:
             raise Unavailable("could not read %s/%s: %s" % (self.name, k, e)) from e
         return value if isinstance(value, dict) else None
 
-    # ------------------------------------------------------------------ writes
-    # After the marker: relay first, memory after. Before it: SQL first (the store of record), then the relay.
-    async def _relay_put(self, k, payload: dict) -> None:
+    # ------------------------------------------------------------------ writes (relay first, memory after)
+    async def aput(self, k, row: dict) -> None:
+        if not isinstance(row, dict):
+            raise TypeError("a DocTable row is a dict")
+        payload = _compact(_norm(row))         # what is stored is exactly what is cached
         sk, _pk = _operator()
         ok = await nostr_store.put_doc(relay_port(), sk, self.prefix + key(k), payload)
         if not ok:
@@ -549,64 +388,13 @@ class DocTable:
             self._stamp[str(k)] = int(time.time())
         self._notify(str(k), payload)
 
-    async def _relay_delete(self, k) -> None:
-        sk, _pk = _operator()
-        try:
-            ok = await nostr_store.delete_doc(relay_port(), sk, self.prefix + key(k), strict=True)
-        except Exception as e:      # noqa: BLE001 -- "could not ask" is not "already gone"
-            raise Unavailable("could not delete %s/%s: %s" % (self.name, k, e)) from e
-        if not ok:
-            raise Unavailable("the relay did not delete %s/%s" % (self.name, k))
-        with self._lock:
-            self._rows.pop(str(k), None)
-            self._stamp[str(k)] = int(time.time())
-        self._notify(str(k), None)
-
-    async def _relay_half(self, coro, what: str) -> None:
-        """The relay half of a write SQL has already committed. SQL is the store of record until the marker, so a
-        relay that refused is not a failed write (the copy carries the row across) -- unless the marker was
-        written meanwhile, in which case SQL is no longer read and the write did not happen as far as anyone
-        will ever see: that, or a marker that cannot be asked about, raises."""
-        try:
-            await coro
-        except Unavailable as e:
-            try:
-                now_marked = await amarked(self.name, fresh=True)
-            except Unavailable:
-                now_marked = True
-            if now_marked:
-                raise
-            logger.warning("[doctable] %s %s: SQL has it, the relay did not take it yet (%s) -- the migration "
-                           "copies it", self.name, what, e)
-
-    async def aput(self, k, row: dict) -> None:
-        if not isinstance(row, dict):
-            raise TypeError("a DocTable row is a dict")
-        payload = _compact(_norm(row))         # what is stored is exactly what is cached
-        if not await self.amigrated():
-            await asyncio.to_thread(_sql, lambda db: self.legacy.put(db, str(k), payload), write=True)
-            await self._relay_half(self._relay_put(k, payload), "write %s" % k)
-            return
-        await self._relay_put(k, payload)
-
     def put(self, k, row: dict) -> None:
         _run(self.aput(k, row))
 
     async def ainsert(self, row: dict, mint) -> str:
-        """Store a NEW row and return its key. Before the marker an `int_ids` table takes SQL's own id -- the
-        Legacy writes it into the row's "id" field, and the relay copy carries that same id; after the marker the
-        key is `mint()`, and a row whose "id" is None gets the key as its id."""
+        """Store a NEW row under the key `mint()` returns (a row whose "id" is None gets the key as its id)."""
         if not isinstance(row, dict):
             raise TypeError("a DocTable row is a dict")
-        if self.legacy is not None and self.legacy.int_ids and not await self.amigrated():
-            payload = _norm(row)
-
-            def ins(db):
-                return str(self.legacy.insert(db, payload))
-            k = await asyncio.to_thread(_sql, ins, write=True)
-            payload = _compact(payload)
-            await self._relay_half(self._relay_put(k, payload), "insert %s" % k)
-            return k
         k = mint()
         if asyncio.iscoroutine(k):
             k = await k
@@ -620,11 +408,17 @@ class DocTable:
         return _run(self.ainsert(row, mint))
 
     async def adelete(self, k) -> None:
-        if not await self.amigrated():
-            await asyncio.to_thread(_sql, lambda db: self.legacy.delete(db, str(k)), write=True)
-            await self._relay_half(self._relay_delete(k), "delete %s" % k)
-            return
-        await self._relay_delete(k)
+        sk, _pk = _operator()
+        try:
+            ok = await nostr_store.delete_doc(relay_port(), sk, self.prefix + key(k), strict=True)
+        except Exception as e:      # noqa: BLE001 -- "could not ask" is not "already gone"
+            raise Unavailable("could not delete %s/%s: %s" % (self.name, k, e)) from e
+        if not ok:
+            raise Unavailable("the relay did not delete %s/%s" % (self.name, k))
+        with self._lock:
+            self._rows.pop(str(k), None)
+            self._stamp[str(k)] = int(time.time())
+        self._notify(str(k), None)
 
     def delete(self, k) -> None:
         _run(self.adelete(k))

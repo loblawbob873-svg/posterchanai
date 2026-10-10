@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services.relay_reader import Unavailable
 from app.schemas import (
     UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,

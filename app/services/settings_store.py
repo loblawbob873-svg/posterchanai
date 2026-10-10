@@ -371,11 +371,7 @@ def _operator_seckey(db):
     the keyfile on first use (so it survives the app DB being eliminated). None if not configured."""
     from app.services import keystore
     from app.services.nostr import nostr_service
-    nsec = keystore.get_operator_nsec()
-    if not nsec and db is not None:   # db may be None (e.g. the background relay-writer thread)
-        nsec = _legacy_admin_nsec(db)
-        if nsec:
-            keystore.set_operator_nsec(nsec)   # migrate into the keyfile
+    nsec = keystore.get_operator_nsec()       # the keyfile is the only source (#161: no SQL admin row to fall back on)
     if not nsec:
         # No operator key anywhere → mint one and persist it to the keyfile, so a fresh node is a
         # self-sufficient relay datastore (can sign its own settings/users/bots docs). This is what
@@ -397,24 +393,6 @@ def _operator_seckey(db):
     try:
         return nostr_service.decode_seckey(nsec)
     except Exception:
-        return None
-
-
-def _legacy_admin_nsec(db):
-    """BOOTSTRAP ONLY, a migration reader (#161 wave 3): before the keyfile existed the operator key lived in the
-    admin's SQL `users` row. It cannot be read through user_table -- the account documents are encrypted to the
-    very key being looked for -- so this one read stays on SQL, and a database that is not there answers None."""
-    try:
-        from app.models import User
-        op = (db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None))  # noqa: E712
-              .order_by(User.id.asc()).first())
-        return op.nostr_nsec if op and op.nostr_nsec else None
-    except Exception as e:      # noqa: BLE001
-        logger.debug("[settings-store] no legacy admin key to recover: %s", e)
-        try:
-            db.rollback()
-        except Exception:      # noqa: BLE001
-            pass
         return None
 
 
@@ -610,37 +588,9 @@ def hydrate_from_db(db) -> int:
 
 
 def migrate_legacy_table(db) -> int:
-    """ONE-TIME data-safety: if a pre-no-db node still has the old SQL `settings` table, copy any key
-    the relay does NOT already hold into the relay (via put → relay event), so the node's CUSTOM
-    values survive the table going away. Keys the relay already has (hydrated above) and local-only
-    keys are skipped. Idempotent; harmless when the table is gone. Returns rows migrated."""
-    from sqlalchemy import text as _text, inspect as _inspect
-    if not _HYDRATED:
-        # "Which keys does the relay already hold" is _HYDRATED_KEYS, and it is only an answer once a hydrate
-        # has read the relay. Before that it is EMPTY, and every stale legacy row would be written over the
-        # relay's newer value. The hydrate that runs once the relay answers runs this again.
-        logger.info("[settings-store] legacy settings-table migration deferred — relay not read yet")
-        return 0
-    try:
-        if not _inspect(db.bind).has_table("settings"):
-            return 0
-        rows = db.execute(_text("SELECT key, value FROM settings")).fetchall()
-    except Exception as e:
-        logger.warning("[settings-store] legacy table read failed: %s", e)
-        return 0
-    migrated = 0
-    for key, value in rows:
-        # Skip keys an authoritative source already provided: the relay (shareable) or the local JSON
-        # (plumbing/cursors). Everything else — including custom local-only values like a non-default
-        # nostr_relay_bind — is migrated (put routes it: shareable→relay, local-only→JSON).
-        if key in _HYDRATED_KEYS or key in _LOCAL_KEYS:
-            continue
-        put(key, value if value is not None else "")   # legacy value beats the code default
-        (_HYDRATED_KEYS if not _is_local_only(key) else _LOCAL_KEYS).add(key)
-        migrated += 1
-    if migrated:
-        logger.info("[settings-store] migrated %d legacy settings-table key(s) into the relay", migrated)
-    return migrated
+    """Gone with SQL (#161): there is no `settings` table to read. The two nodes that had one migrated it long
+    ago. Kept as a no-op for callers; returns 0."""
+    return 0
 
 
 async def hydrate(db) -> int:

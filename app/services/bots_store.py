@@ -1,14 +1,14 @@
 """Bot config read-path → Nostr relay (Phase 3 of the Nostr-as-datastore migration).
 
 SUPERSEDED by bot_table (#161, wave 2): the bots are now ONE operator DocTable keyed by id, and this
-per-name mirror is written (by bot_table) only until that table's migration marker exists; `hydrate`
-likewise only runs before it. What follows describes the pre-migration arrangement.
+per-name mirror is no longer written for new bots (relay-only, no SQL); what is left here is its sync/delete
+helpers (a renamed or deleted bot's old document is removed). What follows describes the pre-#161 arrangement.
 
 Mirrors `settings_store`/`users_store`: the relay becomes authoritative for each bot's config, while
 the SQLite `bots` table stays a fast local **read-through cache** (the bot_manager + admin UI keep
 reading it unchanged). Bot config is operator data, so docs are operator-signed (`pcai:bot:<name>`).
 
-  * `hydrate(db)`        — at startup: UPSERT a `Bot` row for every `pcai:bot:<name>` doc.
+  * (no hydrate: the bots are relay-only -- bot_table; these per-name docs are the DR backup copy)
   * `sync_bot(db, bot)`  — on create/update/toggle: write that bot's config through to the relay.
   * `delete_bot(db, n)`  — on delete (or rename): remove the relay doc.
 
@@ -21,7 +21,6 @@ import json
 import logging
 import re
 
-from app.models import Bot
 from app.services import nostr_store as store
 from app.services import settings_store as _ss  # reuse operator-key / port helpers
 
@@ -36,11 +35,11 @@ def enabled(db) -> bool:
     return True
 
 
-def _record(b: Bot) -> dict:
+def _record(b) -> dict:
     return {f: getattr(b, f, None) for f in BOT_FIELDS}
 
 
-async def sync_bot(db, bot: Bot, *, force: bool = False) -> bool:
+async def sync_bot(db, bot, *, force: bool = False) -> bool:
     """Write one bot's config through to the relay. No-op when disabled (unless `force`) / no
     operator key / no name. Returns True on success."""
     if bot is None or not bot.name or (not force and not enabled(db)):
@@ -114,57 +113,6 @@ def _vet(rec: dict) -> dict:
                    rec.get("name"), why)
     cfg.pop("concord_invite", None)
     return {**rec, "config": json.dumps(cfg)}
-
-
-def _apply(db, rec: dict) -> bool:
-    """UPSERT a Bot row from a relay config record (keyed by name). Returns True if changed."""
-    name = rec.get("name")
-    if not name:
-        return False
-    b = db.query(Bot).filter(Bot.name == name).first()
-    created = b is None
-    if created:
-        b = Bot(name=name)
-        db.add(b)
-    rec = _vet(rec)
-    changed = created
-    for f in BOT_FIELDS:
-        if f == "name":
-            continue
-        if f in rec and getattr(b, f, None) != rec[f]:
-            setattr(b, f, rec[f])
-            changed = True
-    return changed
-
-
-async def hydrate(db) -> int:
-    """relay → bots cache. UPSERT a Bot row for every operator-signed bot doc. No-op when there's no
-    operator key. Returns the number created-or-updated.
-
-    Only until the bots table's migration marker exists (#161): after it the bots are the `bots` DocTable
-    (bot_table) and SQL is not read, so seeding it would only revive a deleted bot in the copy an older
-    build reads."""
-    from app.services import bot_table, table_gate
-    if await table_gate.arelay_mode(bot_table.TABLE):
-        return 0
-    op_sk = _ss._operator_seckey(db)
-    if not op_sk:
-        logger.info("[bots-store] hydrate skipped — no operator key")
-        return 0
-    try:
-        docs = await store.list_docs(_ss._port(db), store.NS_BOT, seckey=op_sk)
-    except Exception as e:
-        logger.warning("[bots-store] hydrate failed to read relay: %s", e)
-        return 0
-    changed = 0
-    for _d, value in (docs or {}).items():
-        rec = value.get("value") if isinstance(value, dict) and "value" in value else value
-        if isinstance(rec, dict) and _apply(db, rec):
-            changed += 1
-    if changed:
-        db.commit()
-    logger.info("[bots-store] hydrated %d bot(s) from relay", changed)
-    return changed
 
 
 # ----- sync wrappers for the synchronous bot routes -----

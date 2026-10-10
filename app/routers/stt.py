@@ -5,7 +5,7 @@ Uses Whisper for local transcription - works in any browser.
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from app.auth import get_current_user
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import stt_service
 import logging
 

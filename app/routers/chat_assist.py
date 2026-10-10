@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user_optional
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import chat_assist_service as svc
 from app.services import texts_ai_service as texts
 

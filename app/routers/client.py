@@ -5931,15 +5931,18 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
             logger.warning("[client] delete-account relay purge (conv %s) failed: %s", c.id, e)
     await conversation_table.apurge_user(db, user.id)
     await user_settings_table.apurge_user(db, user.id)
-    conversation_table.delete_legacy_sql_rows(db, user.id)     # the FK, and the plaintext legacy transcript
-    user_settings_table.delete_legacy_sql_rows(db, user.id)
-    from app.services import exodus_tables
-    exodus_tables.delete_legacy_sql_rows(db, user.id)
     npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
     uid = user.id
-    db.commit()                                                # the legacy SQL rows above, first
-    await exodus_tables.apurge_user(db, user.id)               # the wallet backups (the old FK cascade)
-    await user_table.adelete(db, user.id)
+    # The account's other relay rows (#161: no FK cascade). Unreadable -> 503 and the account stays, so the
+    # delete is simply retried. The stores' purges are synchronous: run them off the event loop.
+    import asyncio as _aio
+    from app.services import (api_key_store, exodus_tables, external_storage_store, share_store,
+                              verification_store)
+    for _purge in (api_key_store.delete_for_user, verification_store.delete_for_user,
+                   share_store.delete_for_user, external_storage_store.forget_user):
+        await _aio.to_thread(_purge, uid)
+    await exodus_tables.apurge_user(db, uid)                   # the wallet backups (the old FK cascade)
+    await user_table.adelete(db, uid)
     try:
         from app.services import users_store
         await users_store.delete_user(db, npub)   # remove account docs so a rebuild won't resurrect it

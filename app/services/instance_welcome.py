@@ -3,31 +3,16 @@ import time
 import json
 import logging
 
-from sqlalchemy import Column, String, Integer, Text
 
-from app.database import Base
 from app.services import settings_store, system_dm
 from app.services.nostr.nostr_service import npub_of
 
 logger = logging.getLogger(__name__)
 
 
-class InstanceApplication(Base):
-    __tablename__ = 'instance_applications'
-    pubkey = Column(String(64), primary_key=True)
-    created_at = Column(Integer, nullable=False)
-    admin_notified = Column(Integer, nullable=False, default=0)
-    notified_admins = Column(Text, nullable=False, default='[]')
-    admin_retry_at = Column(Integer, nullable=False, default=0)
-    approval_retry_at = Column(Integer, nullable=False, default=0)
-    approved_address = Column(String(320), nullable=False, default='')
-    notified_address = Column(String(320), nullable=False, default='')
-
-
 # --------------------------------------------------------------------------- the store (#161 wave 3)
-# One application per pubkey: a DocTable row `pcai:t:instance_applications:<pubkey>` on this node's relay. Until the
-# table's `_migrated` marker exists SQL is authoritative (table_gate, the wave-2 rule): reads come from SQL, a write
-# goes to the relay first and then SQL. After the marker only the relay is used. "Could not ask" raises Unavailable
+# One application per pubkey: a DocTable row `pcai:t:instance_applications:<pubkey>` on this node's relay (relay-only;
+# the old SQL rows are copied once by scripts/migrate_tables_to_nostr.py). "Could not ask" raises Unavailable
 # everywhere -- never "no application" (which would offer a second one) and never "nobody to notify".
 #
 # The retry CLAIMS (admin_retry_at / approval_retry_at, so two passes do not DM twice) were one conditional UPDATE;
@@ -53,47 +38,22 @@ class Application:
         return {f: getattr(self, f) for f in FIELDS}
 
 
-def sql_rows(db) -> dict:
-    """{pubkey: row} for the whole SQL table -- the migration's source."""
-    return {r.pubkey: Application(r.pubkey, {f: getattr(r, f) for f in FIELDS}).row()
-            for r in db.query(InstanceApplication).all()}
-
-
-async def _sql_mode() -> bool:
-    from app.services import table_gate
-    return not await table_gate.arelay_mode(TABLE)
-
-
 async def application(db, pubkey):
     """The application for this key, or None (the store answered: there is none)."""
     from app.services import table_gate
     from app.services.doc_table import DocTable
-    if await _sql_mode():
-        r = db.get(InstanceApplication, pubkey)
-        return Application(pubkey, {f: getattr(r, f) for f in FIELDS}) if r is not None else None
     r = await table_gate.aget_row(DocTable(TABLE), pubkey)
     return Application(pubkey, r) if r is not None else None
 
 
 async def save(db, app_row) -> None:
     from app.services.doc_table import DocTable
-    sql = await _sql_mode()
     await DocTable(TABLE).aput(app_row.pubkey, app_row.row())
-    if sql:
-        r = db.get(InstanceApplication, app_row.pubkey)
-        if r is None:
-            r = InstanceApplication(pubkey=app_row.pubkey)
-            db.add(r)
-        for f in FIELDS:
-            setattr(r, f, getattr(app_row, f))
-        db.commit()
 
 
 async def _all(db) -> list:
     from app.services import table_gate
     from app.services.doc_table import DocTable
-    if await _sql_mode():
-        return [Application(r.pubkey, {f: getattr(r, f) for f in FIELDS}) for r in db.query(InstanceApplication).all()]
     return [Application(k, r) for k, r in await table_gate.arows(DocTable(TABLE))]
 
 

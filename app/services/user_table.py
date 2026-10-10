@@ -8,7 +8,7 @@ This is the AUTH PATH (sessions, API-key owners, Telegram, Nostr login, admin ch
 DocTable ones:
 
   * "COULD NOT ASK" IS NEVER "NO SUCH USER". Every reader raises `Unavailable` (the app answers 503 + Retry-After)
-    when the relay or the marker could not be read. A session is never logged out as "user not found", and no
+    when the relay could not be read. A session is never logged out as "user not found", and no
     login path ever creates an account because a lookup failed -- the exception reaches the caller instead of None.
   * A POINT LOOKUP NEVER WAITS FOR THE TABLE. While a restart is still loading it, a lookup by id reads that ONE
     document, and a lookup by username / npub / Telegram chat / Telegram link key / Google sub / email reads ONE
@@ -27,9 +27,8 @@ Ids are stable: a migrated account keeps its SQL id (sessions carry it, every ot
 gets `app_tables.new_id()` -- unique across processes, never reusing a deleted account's id (its files, drive and
 documents are keyed by it), far above every SQL id and inside a JavaScript number.
 
-Until the `users` migration marker exists SQL is authoritative (table_gate, the wave-2 rule): reads come from SQL;
-a write goes to the relay FIRST (index + account) and then commits in SQL (a create takes its id from the SQL
-sequence, flushed, committed only after the relay holds it). After the marker only the relay is used.
+Relay-only from the first request: there is no SQL side (a node's old Postgres accounts are copied ONCE, ids and
+all, by scripts/migrate_tables_to_nostr.py --table users).
 
 Callers get `UserRow` objects carrying the old ORM attributes, so `user.is_admin`, `UserResponse.model_validate(user)`
 and `user.theme = "x"; await user_table.asave(db, user)` read as before. The sync functions are for synchronous
@@ -69,22 +68,20 @@ class UserGone(LookupError):
     """The account being saved no longer exists."""
 
 
-def _columns():
-    from app.models import User
-    cols, dts, defaults = [], set(), {}
-    for c in User.__table__.columns:
-        if c.name == "id":
-            continue
-        cols.append(c.name)
-        if c.type.__class__.__name__ == "DateTime":
-            dts.add(c.name)
-        d = c.default
-        if d is not None and not callable(d.arg):
-            defaults[c.name] = d.arg
-    return tuple(cols), frozenset(dts), defaults
-
-
-COLUMNS, _DATETIMES, _DEFAULTS = _columns()
+# The old `users` table's columns (the copy script checks this list against the SQL model) and their defaults.
+COLUMNS = ("username", "email", "password_hash", "is_admin", "email_verified", "notification_email", "avatar",
+           "theme", "storage_quota", "can_image", "can_music", "can_video", "can_torrent", "can_media",
+           "can_blossom", "can_stream", "can_ai", "access_revoked", "telegram_enabled", "telegram_chat_id",
+           "telegram_notifications", "telegram_key", "telegram_key_expires_at", "nostr_enabled", "nostr_nsec",
+           "nostr_npub", "nostr_relays", "nostr_media_service", "nostr_media_endpoint", "google_sub",
+           "google_email", "stream_record", "pleroma_enabled", "pleroma_instance_url", "pleroma_acct",
+           "social_notif_enabled", "nostr_notif_since", "created_at")
+_DATETIMES = frozenset(("telegram_key_expires_at", "created_at"))
+_DEFAULTS = {"is_admin": False, "email_verified": False, "theme": "cyberpunk", "storage_quota": 0,
+             "can_image": True, "can_music": True, "can_video": True, "can_torrent": True, "can_media": False,
+             "can_blossom": False, "can_stream": False, "can_ai": False, "access_revoked": False,
+             "telegram_enabled": False, "telegram_notifications": "", "nostr_enabled": False,
+             "stream_record": False, "pleroma_enabled": False, "social_notif_enabled": False}
 _COLSET = frozenset(COLUMNS)
 
 
@@ -141,10 +138,6 @@ class UserRow:
     def from_row(cls, k, r: dict) -> "UserRow":
         return cls(int(k), r)
 
-    @classmethod
-    def from_sql(cls, u) -> "UserRow":
-        return cls(u.id, {name: getattr(u, name, None) for name in COLUMNS})
-
     def __eq__(self, other):
         return isinstance(other, UserRow) and other.id == self.id
 
@@ -171,30 +164,6 @@ def _values(field, value) -> list:
     if field == "id":
         return [int(v) for v in vals]
     return [str(v) for v in vals]
-
-
-# ---- SQL side (authoritative until the marker)
-def _sql_query(db):
-    from app.models import User
-    return db.query(User).order_by(User.id.asc())
-
-
-def _sql_by(db, field, values):
-    from app.models import User
-    if field == "id":
-        return _sql_query(db).filter(User.id.in_([int(v) for v in values])).first()
-    return _sql_query(db).filter(getattr(User, field).in_(list(values))).first()
-
-
-def _with_db(db, fn):
-    if db is not None:
-        return fn(db)
-    from app import database
-    s = database.SessionLocal()
-    try:
-        return fn(s)
-    finally:
-        s.close()
 
 
 # ---- relay side
@@ -256,9 +225,6 @@ async def _aby(db, field, value):
     values = _values(field, value)
     if not values:
         return None
-    if not await table_gate.arelay_mode(TABLE):
-        r = _with_db(db, lambda s: _sql_by(s, field, values))
-        return UserRow.from_sql(r) if r is not None else None
     if _t().loaded:
         return _mem_by(field, values)
     return await _aremote_by(field, values)
@@ -268,9 +234,6 @@ def _by(db, field, value):
     values = _values(field, value)
     if not values:
         return None
-    if not table_gate.relay_mode(TABLE):
-        r = _with_db(db, lambda s: _sql_by(s, field, values))
-        return UserRow.from_sql(r) if r is not None else None
     if _t().loaded:
         return _mem_by(field, values)
     if _in_loop():
@@ -354,14 +317,10 @@ def by_telegram_chat(db, chat_id, *, enabled_only: bool = True):
 # ---- whole-table reads
 async def aall(db) -> list:
     """Every account, by id. Unavailable when the table could not be read -- never an empty list."""
-    if not await table_gate.arelay_mode(TABLE):
-        return _with_db(db, lambda s: [UserRow.from_sql(u) for u in _sql_query(s).all()])
     return _wrap(await table_gate.arows(_t()))
 
 
 def all_users(db) -> list:
-    if not table_gate.relay_mode(TABLE):
-        return _with_db(db, lambda s: [UserRow.from_sql(u) for u in _sql_query(s).all()])
     return _wrap(table_gate.rows(_t()))
 
 
@@ -530,85 +489,8 @@ async def _w_relay(uid, changes: dict, *, create: bool = False, delete: bool = F
     return uid, merged
 
 
-# ---- SQL mode (relay first, then the SQL commit)
-def _sql_holders(s, field, value, exclude=None) -> set:
-    from app.models import User
-    q = s.query(User.id).filter(getattr(User, field) == value)
-    return {int(i) for (i,) in q.all() if i != exclude}
-
-
-def _bind_of(db):
-    """The engine the caller's session talks to: a SQL-mode write commits in the SAME database the caller reads
-    (never a default one), on a session of its own (the writer thread's)."""
-    try:
-        return db.get_bind() if db is not None else None
-    except Exception:      # noqa: BLE001
-        return None
-
-
-def _session(bind):
-    if bind is not None:
-        from sqlalchemy.orm import Session
-        return Session(bind=bind, autoflush=False)
-    from app import database
-    return database.SessionLocal()
-
-
-async def _w_sql(uid, changes: dict, *, create: bool = False, delete: bool = False, bind=None):
-    from app.models import User
-    s = _session(bind)
-    try:
-        if create:
-            for f in UNIQUE:
-                if not _empty(changes.get(f)) and _sql_holders(s, f, changes[f]):
-                    raise UserConflict(f)
-            u = User(**{k: (app_tables.from_iso(v) if k in _DATETIMES else v) for k, v in changes.items()})
-            s.add(u)
-            s.flush()                               # the SQL sequence gives the id; committed after the relay
-            uid = int(u.id)
-            cur = {}
-        else:
-            u = s.query(User).filter(User.id == int(uid)).first()
-            if u is None:
-                raise UserGone("no account %s" % uid)
-            cur = UserRow.from_sql(u).row()
-        merged = UserRow.from_sql(u).row() if create else dict(cur, **changes)
-        if delete:
-            await _t().adelete(str(uid))
-            s.delete(u)
-            s.commit()
-            for f in INDEXED:
-                if not _empty(cur.get(f)):
-                    await _put_index(f, cur[f], _sql_holders(s, f, cur[f], exclude=uid))
-            return uid, None
-        for f in UNIQUE:
-            v = merged.get(f)
-            if not _empty(v) and (create or cur.get(f) != v) and _sql_holders(s, f, v, exclude=uid):
-                raise UserConflict(f)
-        moved = [f for f in INDEXED if merged.get(f) != cur.get(f)]
-        for f in moved:
-            if not _empty(merged.get(f)):
-                await _put_index(f, merged[f], _sql_holders(s, f, merged[f], exclude=uid) | {uid})
-        await _t().aput(str(uid), merged)
-        if not create:
-            for k, v in changes.items():
-                setattr(u, k, app_tables.from_iso(v) if k in _DATETIMES else v)
-        s.commit()
-        for f in moved:
-            if not _empty(cur.get(f)):
-                await _put_index(f, cur[f], _sql_holders(s, f, cur[f], exclude=uid))
-        return uid, merged
-    except BaseException:
-        s.rollback()
-        raise
-    finally:
-        s.close()
-
-
-async def _write(uid, changes, *, bind=None, **kw):
-    if await table_gate.arelay_mode(TABLE):
-        return await _w_relay(uid, changes, **kw)
-    return await _w_sql(uid, changes, bind=bind, **kw)
+async def _write(uid, changes, **kw):
+    return await _w_relay(uid, changes, **kw)
 
 
 def _check_fields(fields: dict) -> dict:
@@ -630,13 +512,13 @@ def _done(user, uid, merged):
 async def acreate(db=None, **fields) -> UserRow:
     """A new account. Raises UserConflict when a unique field is already held, Unavailable when the relay could
     not be asked (nothing is created)."""
-    uid, merged = await _submit(_write(None, _check_fields(fields), create=True, bind=_bind_of(db)))
+    uid, merged = await _submit(_write(None, _check_fields(fields), create=True))
     logger.info("[user-table] created account %s", uid)
     return UserRow(uid, merged)
 
 
 def create(db=None, **fields) -> UserRow:
-    uid, merged = _submit_sync(_write(None, _check_fields(fields), create=True, bind=_bind_of(db)))
+    uid, merged = _submit_sync(_write(None, _check_fields(fields), create=True))
     logger.info("[user-table] created account %s", uid)
     return UserRow(uid, merged)
 
@@ -646,7 +528,7 @@ async def asave(db, user: UserRow) -> UserRow:
     ch = user.changes()
     if not ch:
         return user
-    uid, merged = await _submit(_write(user.id, ch, bind=_bind_of(db)))
+    uid, merged = await _submit(_write(user.id, ch))
     return _done(user, uid, merged)
 
 
@@ -654,37 +536,32 @@ def save(db, user: UserRow) -> UserRow:
     ch = user.changes()
     if not ch:
         return user
-    uid, merged = _submit_sync(_write(user.id, ch, bind=_bind_of(db)))
+    uid, merged = _submit_sync(_write(user.id, ch))
     return _done(user, uid, merged)
 
 
 async def aupdate(db, user_id, **fields) -> UserRow:
-    uid, merged = await _submit(_write(int(user_id), _check_fields(fields), bind=_bind_of(db)))
+    uid, merged = await _submit(_write(int(user_id), _check_fields(fields)))
     return UserRow(uid, merged)
 
 
 def update(db, user_id, **fields) -> UserRow:
-    uid, merged = _submit_sync(_write(int(user_id), _check_fields(fields), bind=_bind_of(db)))
+    uid, merged = _submit_sync(_write(int(user_id), _check_fields(fields)))
     return UserRow(uid, merged)
 
 
 async def adelete(db, user_id) -> None:
     """Remove the account row (its other rows are the caller's: the old FK cascade lives in the services)."""
-    await _submit(_write(int(user_id), {}, delete=True, bind=_bind_of(db)))
+    await _submit(_write(int(user_id), {}, delete=True))
     logger.info("[user-table] deleted account %s", user_id)
 
 
 def delete(db, user_id) -> None:
-    _submit_sync(_write(int(user_id), {}, delete=True, bind=_bind_of(db)))
+    _submit_sync(_write(int(user_id), {}, delete=True))
     logger.info("[user-table] deleted account %s", user_id)
 
 
-# ================================================================== migration source
-def sql_rows(db) -> dict:
-    """{id: row} for the whole SQL table -- the migration's source."""
-    return {str(u.id): UserRow.from_sql(u).row() for u in _sql_query(db).all()}
-
-
+# ================================================================== the copy script's index
 def index_rows(rows: dict) -> dict:
     """The index documents a set of account rows implies: {index_key: {"field", "ids"}}."""
     out = {}

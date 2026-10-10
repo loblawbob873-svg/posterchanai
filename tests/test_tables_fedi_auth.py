@@ -3,9 +3,9 @@ verification_tokens leave Postgres for operator DocTables -- run against the SHI
 socket with the real PosterChanDB store behind it (the harness from tests/test_doc_table.py).
 
 What is pinned, each the reason the rule exists:
-  * MIGRATION copies every SQL row, verifies by a STRICT re-read (count and content), writes the marker, is
-    idempotent, and REFUSES -- no marker -- when the relay's copy differs; until then the table is
-    Unavailable, never empty (an unmigrated api_keys read as "no keys" is a 401 for every real key);
+  * the one-time copy's SQL readers (scripts/nostr_migration/wave1_sources.py) produce exactly the rows these
+    stores read: a node's old rows, written as the copy writes them, are served unchanged (ids, inactive keys,
+    the ledger's first-row dedup and its retention window, a mount's allowed users);
   * "COULD NOT ASK" IS NEVER "NO ROWS": with the relay down an API key is neither accepted nor called
     invalid (503); a fediverse account gets NO puppet (nothing derived, nothing published); a DM is neither
     sent nor recorded (and the listener drops the subscription so the replay retries it);
@@ -18,7 +18,6 @@ What is pinned, each the reason the rule exists:
   * none of these paths opens a SQL session any more.
 """
 import asyncio
-import json
 import socket
 from datetime import datetime, timedelta
 
@@ -42,7 +41,6 @@ ALL = ("fedi_puppets", "fedi_bridge_delivered", "external_storage", "api_keys", 
 def _fresh_process():
     """What a second process (or this one after a restart) sees: no table held in memory."""
     doc_table.DocTable._registry.clear()
-    table_migrate._ready.clear()
 
 
 @pytest.fixture
@@ -102,31 +100,24 @@ def sql():
     db.close()
 
 
-async def _relay_has(k, row, table="api_keys"):
-    """Put a document on the relay directly (what an earlier, interrupted copy left there) -- not through the
-    table, which before its marker writes SQL first."""
+def _copy(db):
+    """What scripts/migrate_tables_to_nostr.py writes for these tables: the SQL readers' rows, as documents."""
+    import sys
+    import pathlib
     from app.services import doc_table_bulk
-    await doc_table_bulk.abulk_put(table, {k: row})
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from scripts.nostr_migration import wave1_sources as W
+    got = {name: W.SOURCES[name](db) for name in ALL}
+    got["api_key_index"] = W.DERIVED["api_key_index"](got)
+    for name, rows in got.items():
+        asyncio.run(doc_table_bulk.abulk_put(name, rows))
+    return got
 
 
-def _migrate(db, name):
-    from app.services import fedi_auth_tables
-    return asyncio.run(fedi_auth_tables.migrate_one(db, name))
+# ============================================================================ the copy's rows are the stores' rows
 
-
-# ============================================================================ migration
-
-def test_an_unmigrated_table_is_unavailable_not_empty(relay):
-    with pytest.raises(Unavailable):
-        api_key_store.lookup("sk-" + "a" * 64)
-    with pytest.raises(Unavailable):
-        fedi_tables.puppet_by_uri("https://m.example/users/carol")
-
-
-def test_every_table_is_copied_verified_and_marked(relay, sql):
-    for name in ALL:
-        res = _migrate(sql, name)
-        assert res["status"] == "migrated", res
+def test_every_copied_row_is_served_as_the_store_reads_it(relay, sql):
+    _copy(sql)
     _fresh_process()                                  # read back as a new process would
     k = api_key_store.lookup("sk-" + "a" * 64)
     assert (k.id, k.user_id, k.name, k.is_active) == (3, 1, "Default", True)
@@ -142,84 +133,9 @@ def test_every_table_is_copied_verified_and_marked(relay, sql):
     led = fedi_tables.delivered_by_uri("https://m.example/n/1")
     assert led.nostr_event_id == "e1" * 32, "duplicates collapse into the FIRST row (what dedup consulted)"
     assert fedi_tables.delivered_by_uri("https://m.example/old") is None, "past retention is not carried over"
-    marks = doc_table.DocTable(table_migrate.MARKERS).all()
-    assert {n: marks[n]["rows"] for n in ALL} == {"fedi_puppets": 1, "fedi_bridge_delivered": 1,
-                                                 "external_storage": 1, "api_keys": 2, "shared_files": 1,
-                                                 "verification_tokens": 1}
     # and SQL is untouched
     assert sql.query(APIKey).count() == 2 and sql.query(FediBridgeDelivered).count() == 3
 
-
-def test_migration_is_idempotent(relay, sql):
-    assert _migrate(sql, "api_keys")["status"] == "migrated"
-    assert _migrate(sql, "api_keys")["status"] == "already"
-    _fresh_process()
-    assert _migrate(sql, "api_keys")["status"] == "already"
-    assert len(api_key_store.for_user(1)) == 1
-
-
-def test_an_interrupted_migration_resumes(relay, sql):
-    """Half the rows already on the relay and no marker (the process died mid-copy): the rest are copied."""
-    rows = api_key_store.rows_from_sql(sql)
-    asyncio.run(_relay_has("3", rows["3"]))
-    res = _migrate(sql, "api_keys")
-    assert (res["status"], res["copied"], res["rows"]) == ("migrated", 1, 2)
-
-
-def test_a_relay_copy_that_differs_is_replaced_by_sql_s(relay, sql):
-    """#161 wave 1: until the marker exists SQL is the store of record (the app reads and writes it), so a relay
-    copy that differs -- a write that reached SQL while the relay half failed -- is overwritten with SQL's row."""
-    rows = api_key_store.rows_from_sql(sql)
-    asyncio.run(_relay_has("3", {**rows["3"], "is_active": False}))
-    res = _migrate(sql, "api_keys")
-    assert res["status"] == "migrated"
-    _fresh_process()
-    assert api_key_store.lookup("sk-" + "a" * 64).id == 3, "the stale relay copy won over SQL"
-
-
-def test_a_relay_that_keeps_holding_something_else_is_refused_and_not_marked(relay, sql, monkeypatch):
-    from app.services import doc_table_bulk
-    real_put = doc_table_bulk.abulk_put
-
-    async def lossy(table, rows, **kw):
-        if table == "api_keys" and "3" in rows:
-            rows = dict(rows, **{"3": {**rows["3"], "is_active": False}})
-        return await real_put(table, rows, **kw)
-    monkeypatch.setattr(doc_table_bulk, "abulk_put", lossy)
-    with pytest.raises(table_migrate.MigrationMismatch) as e:
-        _migrate(sql, "api_keys")
-    assert "sk-" not in str(e.value), "a refusal must not print key material"
-    _fresh_process()
-    assert doc_table.DocTable(table_migrate.MARKERS).get("api_keys") is None
-    with pytest.raises(Unavailable):
-        api_key_store.lookup("sk-" + "a" * 64)       # not marked, and this process has no SQL session: unknown
-
-
-def test_an_unexpected_extra_row_is_removed(relay, sql):
-    asyncio.run(_relay_has("99", {"id": 99, "user_id": 1, "key": "sk-x", "is_active": True}))
-    assert _migrate(sql, "api_keys")["status"] == "migrated"
-    _fresh_process()
-    assert api_key_store.lookup("sk-x") is None, "a row SQL never had survived the copy"
-
-
-def test_the_script_migrates_one_table(relay, sql, monkeypatch, capsys):
-    import importlib.util
-    import pathlib
-    spec = importlib.util.spec_from_file_location(
-        "mig", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "migrate_tables_to_nostr.py")
-    mig = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mig)
-    import app.database
-    monkeypatch.setattr(app.database, "SessionLocal", lambda: sql)
-    monkeypatch.setattr(sql, "close", lambda: None)
-    from app.services import settings_store
-    monkeypatch.setattr(settings_store, "hydrate_from_db", lambda db: 0)
-    assert mig.main(["--table", "shared_files"], session_factory=lambda: sql) == 0
-    out = capsys.readouterr().out
-    assert json.loads(out.strip())["status"] == "migrated" and "tok-share-1" not in out
-
-
-# ============================================================================ could not ask
 
 @pytest.fixture
 def down(tmp_path, monkeypatch):
@@ -229,7 +145,6 @@ def down(tmp_path, monkeypatch):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(port))
     _fresh_process()
-    table_migrate._ready.update(ALL)       # even a table known to be migrated: the READ is what fails
     yield
     _fresh_process()
 
@@ -308,8 +223,7 @@ def test_a_delete_the_relay_never_confirmed_is_an_error_not_a_success(down):
 
 @pytest.fixture
 def migrated(relay, sql):
-    for name in ALL:
-        _migrate(sql, name)
+    _copy(sql)
     return sql
 
 
@@ -457,8 +371,8 @@ def test_none_of_these_paths_opens_a_sql_session(migrated, monkeypatch):
 
 
 def test_no_app_code_queries_these_models_outside_their_migration():
-    """The SQL models stay (the rows are never dropped), but only the `*_from_sql` migration readers -- and the
-    `*Legacy` classes that read and write SQL until a table's marker exists (#161 wave 1) -- may touch them."""
+    """The SQL models stay (the rows are never dropped), but only the one-time copy's SQL readers
+    (scripts/nostr_migration/, scripts/migrate_tables_to_nostr.py) may touch them: the app is relay-only."""
     import ast
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1]
@@ -466,7 +380,7 @@ def test_no_app_code_queries_these_models_outside_their_migration():
     bad = []
     for path in list((root / "app").rglob("*.py")) + list((root / "botframework").rglob("*.py")) + \
             list((root / "scripts").rglob("*.py")):
-        if path.name == "models.py":
+        if path.name == "models.py" or "nostr_migration" in path.parts or path.name == "migrate_tables_to_nostr.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
         legacy_fns = {id(f) for c in ast.walk(tree) if isinstance(c, ast.ClassDef) and c.name.endswith("Legacy")

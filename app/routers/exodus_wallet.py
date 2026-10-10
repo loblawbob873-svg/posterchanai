@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.routers import auth
 from app.services import exodus_vault as V
 from app.services import exodus_collections as Collections

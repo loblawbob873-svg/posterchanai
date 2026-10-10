@@ -20,7 +20,7 @@ logging.basicConfig(
 
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool, monero_wallet, monero_user_wallet
@@ -647,13 +647,11 @@ async def startup():
             logging.info("[role] running as '%s' — supervising only this role's components", _role)
         if app_port == 3051:
             try:
-                # #161: the app tables that left Postgres for DocTables. Bind each table's SQL side (until its
-                # `_migrated` marker exists SQL is authoritative: reads from SQL, writes to SQL then the relay)
-                # and start loading every migrated table on a thread of its own -- FIRST, before anything can
-                # ask: while a big table loads its point reads go to the relay one document at a time, and
-                # only whole-table reads answer 503 + Retry-After. The copy itself runs after the hydrates.
-                from app.services import table_migration
-                table_migration.start_loading(SessionLocal)
+                # #161: every app table is a relay DocTable (no SQL at all). Start loading each one on a thread
+                # of its own FIRST, before anything can ask: while a big table loads, its point reads go to the
+                # relay one document at a time and only whole-table reads answer 503 + Retry-After.
+                from app.services import table_registry
+                table_registry.start_loading()
             except Exception as e:
                 logging.error(f"Error starting the app-table loads: {e}", exc_info=True)
             try:
@@ -853,40 +851,15 @@ async def startup():
                     try:
                         from app.services import users_store
                         await users_store.hydrate(_db)
-                        await users_store.hydrate_user_kv(_db)   # mail/caldav kv from relay
-                        # SQL→relay catch-all: mirror every account's record + non-exempt kv up to the
-                        # relay (closes gaps from auxiliary save paths — tz/caldav/webdav/music — that
-                        # don't write-through), then keep doing it periodically.
+                        # Mirror every account's record + non-exempt kv to the npub-keyed DR docs (the
+                        # upstream backup carries those), then keep doing it periodically.
                         await users_store.reconcile_all(_db)
                         users_store.start_users_reconcile()
                     except Exception as e:
                         logging.warning(f"Users hydrate from relay failed: {e}")
-                    try:
-                        from app.services import bots_store
-                        await bots_store.hydrate(_db)
-                    except Exception as e:
-                        logging.warning(f"Bots hydrate from relay failed: {e}")
-                    try:
-                        from app.services import chat_store
-                        await chat_store.hydrate_conversations(_db)
-                    except Exception as e:
-                        logging.warning(f"Conversations hydrate from relay failed: {e}")
-                    try:
-                        from app.services import record_store
-                        await record_store.hydrate(_db)
-                    except Exception as e:
-                        logging.warning(f"Records hydrate from relay failed: {e}")
-                    try:
-                        # #161: app tables leave Postgres for operator DocTables. One startup task copies
-                        # every registered table (verified, then a marker) and loads it, on threads of its
-                        # own; until a table's marker exists SQL stays authoritative (reads from SQL, writes
-                        # to both), so nothing here waits on it. Wave 2 (bots, per-user settings, conversations,
-                        # and the census of legacy chat messages -- never copied) is in the same registry and
-                        # runs after the bots/conversations hydrates above, so SQL is complete.
-                        from app.services import table_migration
-                        table_migration.start_background(SessionLocal)
-                    except Exception as e:
-                        logging.warning(f"App-table migration not started: {e}")
+                    # (#161: no SQL caches to rebuild -- bots, conversations, reminders and pins are relay
+                    # DocTables read directly; there is no startup copy either, the one-time move of a node's
+                    # old Postgres rows is scripts/migrate_tables_to_nostr.py, run by hand.)
                     try:
                         # Advertise the operator's Blossom server list (kind-10063 / BUD-03) now the
                         # relay is up + settings hydrated, so clients can fail over to the mirrors by

@@ -23,7 +23,7 @@ import asyncio
 from app.database import get_db
 from app.utils import lb_auth
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import external_storage_store as _es, share_store as _shares
 from app.services.relay_reader import Unavailable
 from app.services import settings_store, user_table

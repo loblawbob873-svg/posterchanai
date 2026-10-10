@@ -19,7 +19,7 @@ import time
 from fastapi import APIRouter, Depends
 
 from app.auth import get_current_user
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import settings_store
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])

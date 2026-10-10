@@ -10,9 +10,7 @@ Shared plumbing only -- each feature's service owns its own rows:
                          (Telegram's `rem:cancel:<id>` buttons, the Drafts list) keeps working.
   * `row_lock()`      -- serialises read-check-write on the event loop (a reminder claim against a cancel), the
                          job the conditional `UPDATE ... WHERE status='pending'` used to do inside one process.
-  * `table()`         -- the DocTable. Until its one-time SQL->DocTable migration has a marker, DocTable reads it
-                         from SQL and writes SQL then the relay (table_migration binds the Legacy), so no reader
-                         ever waits for the move and none is served a half-moved table.
+  * `table()`         -- the DocTable (relay-only from the first request).
   * `purge_user()`    -- the old `ON DELETE CASCADE`: a deleted account's rows go with it.
   * `to_iso()/from_iso()` -- naive-UTC datetimes as stored strings.
 """
@@ -81,23 +79,8 @@ def row_lock(table: str) -> asyncio.Lock:
 
 
 # --------------------------------------------------------------------------- the table
-from app.services import doc_table as _doc_table  # noqa: E402
-_pass_done = _doc_table._marked    # the markers this process has seen (marking here = "the relay is authoritative")
-
-
-def mark_pass_done(table: str) -> None:
-    _pass_done.add(table)
-
-
-async def ready(table: str) -> bool:
-    """Always True now: until a table's marker exists DocTable answers it from SQL (wave 1), so there is nothing
-    for a reader or a poller to wait for. Kept for callers that still ask."""
-    return True
-
-
 async def table(name: str) -> DocTable:
-    """The DocTable for `name`. Before its migration marker exists its reads come from SQL and its writes go to
-    SQL and the relay (doc_table.Legacy) -- never a half-moved table, and never refused for being mid-move."""
+    """The DocTable for `name` (relay-only: there is no half-moved state to wait for)."""
     return DocTable(name)
 
 

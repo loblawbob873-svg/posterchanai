@@ -24,7 +24,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.services.user_table import UserRow as User
 
 try:
     from zoneinfo import ZoneInfo
@@ -384,8 +384,7 @@ async def poll_once(db: Session) -> None:
     from app.services.app_tables import table, row_lock, from_iso, REMINDERS
     t = await table(REMINDERS)
     if _reload_before_claim:
-        if await t.amigrated():             # before the marker SQL answers: there is no copy to reload
-            await t.aload(force=True)
+        await t.aload(force=True)
         _reload_before_claim = False
     now = datetime.utcnow()
 
@@ -451,20 +450,3 @@ def stop_reminder_scheduler() -> None:
             pass
         _scheduler = None
         logger.info("reminder poller stopped")
-
-
-# --------------------------------------------------------------------------- the SQL side (#161 wave 1)
-# Until the `reminders` marker exists SQL is the store of record: DocTable reads it through this Legacy and writes
-# SQL first, then the relay. The rows are exactly what the migration copies.
-def _reminder_from_sql(r) -> dict:
-    return reminder_row(r.user_id, r.text, r.due_at, r.status, r.created_at, r.delivered_at)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    from app.services.app_tables import REMINDERS
-    from app.services.legacy_sql import ModelLegacy
-    table_migration.register(ModelLegacy(REMINDERS, "Reminder", _reminder_from_sql))
-
-
-_register_legacy()

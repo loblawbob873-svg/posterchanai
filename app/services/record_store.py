@@ -9,15 +9,13 @@ The relay is the only datastore (always on). Sync callers use the `*_blocking` w
 
 REMINDERS AND SAVED SEARCHES LEFT THIS MODULE (#161): their store of record is now a DocTable (operator
 documents; reminder_service / saved_search_service), and nothing calls the reminder/search mirrors any more.
-`hydrate` still rebuilds their SQL rows from these per-user documents until the table's one-time SQL->DocTable
-migration has written its marker -- those SQL rows are the migration's source -- and never after it.
+There is no SQL at all now: `hydrate` is a no-op.
 """
 
 import asyncio
 import logging
 from datetime import datetime
 
-from app.models import Reminder, SavedSearch
 from app.services import nostr_store as store
 from app.services.nostr_store import user_storage_seckey
 from app.services import settings_store as _ss
@@ -93,16 +91,16 @@ async def _delete(db, user, ns, row_id, *, force) -> bool:
 
 
 # ---- reminders ----
-def _reminder_rec(r: Reminder) -> dict:
+def _reminder_rec(r) -> dict:
     return {"text": r.text, "due_at": _iso(r.due_at), "status": r.status,
             "created_at": _iso(r.created_at), "delivered_at": _iso(r.delivered_at)}
 
 
-async def mirror_reminder(db, user, r: Reminder, *, force=False) -> bool:
+async def mirror_reminder(db, user, r, *, force=False) -> bool:
     return await _put(db, user, NS_REMINDER, r.id, _reminder_rec(r), force=force)
 
 
-def mirror_reminder_blocking(db, user, r: Reminder) -> None:
+def mirror_reminder_blocking(db, user, r) -> None:
     try:
         _run_blocking(mirror_reminder(db, user, r))
     except Exception as e:
@@ -110,11 +108,11 @@ def mirror_reminder_blocking(db, user, r: Reminder) -> None:
 
 
 # ---- saved searches ----
-def _search_rec(s: SavedSearch) -> dict:
+def _search_rec(s) -> dict:
     return {"query": s.query, "created_at": _iso(s.created_at)}
 
 
-def mirror_search_blocking(db, user, s: SavedSearch) -> None:
+def mirror_search_blocking(db, user, s) -> None:
     try:
         _run_blocking(_put(db, user, NS_SEARCH, s.id, _search_rec(s), force=False))
     except Exception as e:
@@ -137,59 +135,7 @@ def delete_apikey_blocking(db, user, key_id) -> None:
         logger.warning("[record-store] delete_apikey_blocking failed: %s", e)
 
 
-# ---- hydrate (relay → cache) ----
-async def _moved_to_doctable(table: str) -> bool:
-    """True once `table` has its SQL->DocTable migration marker. "Could not ask" reads as False here, which is
-    safe: the only consequence is the old additive SQL rebuild, whose rows are the migration's source."""
-    try:
-        from app.services import doc_table
-        return await doc_table.amarked(table)
-    except Exception:       # noqa: BLE001
-        return False
-
-
+# ---- hydrate: RETIRED. It rebuilt SQL Reminder / SavedSearch rows from these per-user documents; there is no SQL
+# any more (#161 -- reminders and pins are relay DocTables). Kept as a no-op for callers that still call it. ----
 async def hydrate(db) -> int:
-    """Recreate missing Reminder / SavedSearch rows (until those tables moved to DocTable) for every user from
-    their relay docs. Additive. (API keys are no longer hydrated into SQL: they live in the `api_keys` DocTable.)"""
-    made = 0
-    from app.services.app_tables import REMINDERS, SAVED_SEARCHES
-    from app.services import user_table
-    skip_rem = await _moved_to_doctable(REMINDERS)
-    skip_srch = await _moved_to_doctable(SAVED_SEARCHES)
-    for user in await user_table.afilter(db, lambda u: bool(u.nostr_npub)):
-        try:
-            sk = user_storage_seckey(db, user)
-            rem = {} if skip_rem else await store.list_docs(_ss._port(), NS_REMINDER, seckey=sk)
-            srch = {} if skip_srch else await store.list_docs(_ss._port(), NS_SEARCH, seckey=sk)
-        except Exception:
-            continue
-        for d_tag, rec in (rem or {}).items():
-            if not isinstance(rec, dict):
-                continue
-            try:
-                rid = int(d_tag[len(NS_REMINDER):])
-            except (TypeError, ValueError):
-                continue
-            if db.query(Reminder).filter(Reminder.id == rid).first():
-                continue
-            db.add(Reminder(id=rid, user_id=user.id, text=rec.get("text") or "",
-                            due_at=_dt(rec.get("due_at")) or datetime.utcnow(),
-                            status=rec.get("status") or "pending",
-                            created_at=_dt(rec.get("created_at")), delivered_at=_dt(rec.get("delivered_at"))))
-            made += 1
-        for d_tag, rec in (srch or {}).items():
-            if not isinstance(rec, dict):
-                continue
-            try:
-                sid = int(d_tag[len(NS_SEARCH):])
-            except (TypeError, ValueError):
-                continue
-            if db.query(SavedSearch).filter(SavedSearch.id == sid).first():
-                continue
-            db.add(SavedSearch(id=sid, user_id=user.id, query=rec.get("query") or "",
-                               created_at=_dt(rec.get("created_at"))))
-            made += 1
-    if made:
-        db.commit()
-    logger.info("[record-store] hydrated %d record(s) from relay", made)
-    return made
+    return 0

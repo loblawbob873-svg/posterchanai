@@ -12,7 +12,7 @@ import os
 import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import user_table
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image

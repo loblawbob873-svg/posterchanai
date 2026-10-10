@@ -11,7 +11,7 @@ from .system import _SystemMixin
 from .comms import _CommsMixin
 
 if TYPE_CHECKING:   # annotation-only; app.models imports would cycle at runtime
-    from app.models import User
+    from app.services.user_table import UserRow as User
 from .productivity import _ProductivityMixin
 from .effects1 import _Effects1Mixin
 from .effects2 import _Effects2Mixin

@@ -75,7 +75,7 @@ def issue(user_id: int, hours: int = 24) -> str:
         DocTable(TABLE).insert({"id": None, "user_id": int(user_id), "token": token,
                                 "created_at": tm.iso(datetime.utcnow()),
                                 "expires_at": tm.iso(datetime.utcnow() + timedelta(hours=hours))},
-                               lambda: tm.anext_id(TABLE))     # SQL's id until the marker exists
+                               lambda: tm.anext_id(TABLE))
         return token
 
 
@@ -90,28 +90,3 @@ def delete_for_user(user_id: int) -> int:
 
 def for_user(user_id: int) -> list:
     return [Row(r) for _k, r in tm.view(TABLE) if r.get("user_id") == user_id]
-
-
-# ------------------------------------------------------------------------------------ the SQL side (#161 wave 1)
-def _token_from_sql(v) -> dict:
-    return {"id": int(v.id), "user_id": int(v.user_id), "token": v.token,
-            "created_at": tm.iso(v.created_at), "expires_at": tm.iso(v.expires_at)}
-
-
-def rows_from_sql(db) -> dict:
-    from app.models import VerificationToken
-    return {str(v.id): _token_from_sql(v) for v in db.query(VerificationToken).all()}
-
-
-def _legacy_from_sql():
-    from app.services.legacy_sql import ModelLegacy
-    return ModelLegacy(TABLE, "VerificationToken", _token_from_sql)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    table_migration.register(_legacy_from_sql())
-
-
-_register_legacy()
-

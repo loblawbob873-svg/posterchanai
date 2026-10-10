@@ -88,7 +88,7 @@ async def acreate(*, user_id: int, token: str, file_path: str, filename: str, ex
     row = {"id": None, "user_id": int(user_id), "token": token, "file_path": file_path, "filename": filename,
            "created_at": tm.iso(datetime.utcnow()), "expires_at": tm.iso(expires_at), "access_count": 0,
            "max_accesses": max_accesses, "is_active": True}
-    sid = await DocTable(TABLE).ainsert(row, lambda: tm.anext_id(TABLE))   # SQL's id until the marker exists
+    sid = await DocTable(TABLE).ainsert(row, lambda: tm.anext_id(TABLE))
     row["id"] = int(sid)
     return _row(row)
 
@@ -112,32 +112,3 @@ def delete_for_user(user_id: int) -> int:
             DocTable(TABLE).delete(k)
             n += 1
     return n
-
-
-# ------------------------------------------------------------------------------------ the SQL side (#161 wave 1)
-def _share_from_sql(s) -> dict:
-    return {"id": int(s.id), "user_id": int(s.user_id), "token": s.token, "file_path": s.file_path,
-            "filename": s.filename, "created_at": tm.iso(s.created_at),
-            "expires_at": tm.iso(s.expires_at), "access_count": int(s.access_count or 0),
-            "max_accesses": s.max_accesses,
-            # NULL never matched `is_active == True`: it stays inactive
-            "is_active": s.is_active is True}
-
-
-def rows_from_sql(db) -> dict:
-    from app.models import SharedFile
-    return {str(s.id): _share_from_sql(s) for s in db.query(SharedFile).all()}
-
-
-def _legacy_from_sql():
-    from app.services.legacy_sql import ModelLegacy
-    return ModelLegacy(TABLE, "SharedFile", _share_from_sql)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    table_migration.register(_legacy_from_sql())
-
-
-_register_legacy()
-

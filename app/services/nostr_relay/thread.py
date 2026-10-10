@@ -243,6 +243,24 @@ def _pg_dsn() -> str:
     return os.environ.get("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")
 
 
+def _postgres_configured() -> bool:
+    """Did anybody point this node at a Postgres? A DSN in the local settings or the environment, or a
+    DATABASE_URL. A fresh install sets none of them (#161: the app needs no SQL database), and then the relay
+    runs on PosterChanDB alone."""
+    from app.services import settings_store
+    return bool(settings_store.get("nostr_relay_pg_dsn", None) or os.environ.get("NOSTR_RELAY_PG_DSN")
+                or os.environ.get("DATABASE_URL"))
+
+
+def _pcdb_mode(setting: str = "") -> str:
+    """POSTERCHANDB_MODE (env) wins, then the setting; with neither, a node with no Postgres configured is
+    `primary` -- PosterChanDB is its only store -- and one with Postgres keeps the old default (off)."""
+    mode = (os.environ.get("POSTERCHANDB_MODE") or setting or "").strip().lower()
+    if mode:
+        return mode
+    return "off" if _postgres_configured() else "primary"
+
+
 def open_store_for_settings(loop) -> RelayStore:
     """THE RELAY PROCESS, before its first _read_config: open its own store and make it the settings source.
 
@@ -256,7 +274,7 @@ def open_store_for_settings(loop) -> RelayStore:
     # Primary vs Postgres is decided HERE, before any setting can be read -- so from the environment
     # (POSTERCHANDB_MODE, which both nodes set; env always wins over the setting). The mirror of a Postgres
     # store starts in _main, once the settings that size it have been read.
-    mode = (os.environ.get("POSTERCHANDB_MODE") or "").strip().lower()
+    mode = _pcdb_mode()
     store = _open_store({"pcdb_mode": mode, "pg_dsn": _pg_dsn(), "max_events": 0, "retention_days": 0,
                          "pcdb_flush_s": 300, "pcdb_cache_mb": 0}, loop, start_mirror=False)
     settings_store.set_event_source(lambda filters: store._query_sync(filters, 5000))
@@ -385,7 +403,7 @@ def _read_config() -> dict:
             # PosterChanDB beside Postgres (posterchandb/mirror.py): off | shadow (mirror every write, compare a
             # sample of answers) | serve (answer queries from RAM; Postgres still written first) | primary (PosterChanDB
             # ALONE, no Postgres: nostr_relay/pcdb_store.py, after scripts/posterchandb_promote.py). Env wins.
-            "pcdb_mode": (os.environ.get("POSTERCHANDB_MODE") or g("posterchandb_mode", "off") or "off").strip().lower(),
+            "pcdb_mode": _pcdb_mode(g("posterchandb_mode", "") or ""),
             "pcdb_cache_mb": gi("posterchandb_read_cache_mb", 0),
             "pcdb_flush_s": gi("posterchandb_flush_seconds", 300),
             # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
@@ -618,7 +636,7 @@ def _bot_pubkeys(db) -> set:
     """Every bot's Nostr pubkey (from the nsec in its config). The bots table is a relay DocTable (#161) that
     this very relay serves, so on the relay's own loop -- and before the app has loaded it -- it may not be
     readable yet: then the LAST set this process read is used rather than none, and the app triggers a reload
-    once the table is loaded (table_migration's startup pass, wave2_migration). An operator set that silently lost every bot
+    once the table is loaded (table_registry.start_loading at startup). An operator set that silently lost every bot
     would refuse all of their posts."""
     from app.services import bot_table
     from app.services.relay_reader import Unavailable
@@ -920,14 +938,25 @@ def _open_store(cfg: dict, loop, start_mirror: bool = True):
     into two histories."""
     if (cfg.get("pcdb_mode") or "off") == "primary":
         from app.services import posterchandb
-        from .pcdb_store import PcdbRelayStore, PrimaryNotReady
-        store = PcdbRelayStore(os.path.join(posterchandb.data_dir(), "relay"),
+        from .pcdb_store import PcdbRelayStore, PrimaryNotReady, init_new, read_marker
+        path = os.path.join(posterchandb.data_dir(), "relay")
+        if not _postgres_configured() and read_marker(path) is None:
+            # NO Postgres anywhere (a fresh install, #161): PosterChanDB is the store from the first start. An
+            # empty directory becomes a new primary; one holding a mirror's events is refused by init_new.
+            try:
+                init_new(path)
+                logger.info("[nostr-relay] no Postgres configured: created a new PosterChanDB primary store")
+            except PrimaryNotReady as e:
+                logger.error("[nostr-relay] could not create a PosterChanDB primary store: %s", e)
+        store = PcdbRelayStore(path,
                                max_events=cfg["max_events"], retention_days=cfg["retention_days"],
                                flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
                                log=logger.info)
         try:
             store.open(loop)
         except PrimaryNotReady as e:
+            if not _postgres_configured():
+                raise                   # nothing to fall back to: say so loudly rather than dial a Postgres
             logger.error("[nostr-relay] POSTERCHANDB_MODE=primary REFUSED: %s -- running on Postgres (serve) "
                          "instead", e)
             store.close()

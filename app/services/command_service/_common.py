@@ -53,7 +53,7 @@ from app.services.youtube_service import (
     summarize_youtube,
 )
 if TYPE_CHECKING:
-    from app.models import User
+    from app.services.user_table import UserRow as User
 logger = logging.getLogger(__name__)
 def _find_firefox() -> Optional[str]:
     """Locate a Firefox binary, or None. Prefers PATH, then common install dirs."""

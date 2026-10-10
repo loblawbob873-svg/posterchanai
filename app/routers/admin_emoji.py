@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.auth import get_admin_user
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import emoji_service
 
 logger = logging.getLogger(__name__)

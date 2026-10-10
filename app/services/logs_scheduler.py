@@ -19,7 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.database import SessionLocal
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import user_table
 from app.services import node_service, settings_store
 from app.services.chat_service import ChatService

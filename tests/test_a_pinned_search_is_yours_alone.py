@@ -27,7 +27,7 @@ import pytest
 
 from app.services import saved_search_service as saved
 from app.services.relay_reader import Unavailable
-from tests.app_tables_harness import tables, shared_relay, no_relay, unmigrated, fresh_process_view  # noqa: F401
+from tests.app_tables_harness import tables, shared_relay, no_relay, fresh_process_view  # noqa: F401
 
 ME, THEM = SimpleNamespace(id=1), SimpleNamespace(id=2)
 
@@ -144,12 +144,3 @@ def test_an_unreachable_relay_is_unavailable_not_no_pins(no_relay):
     for call in (lambda: listing(ME), lambda: create(ME, "x"), lambda: delete(ME, 1)):
         with pytest.raises(Unavailable):
             call()
-
-
-def test_before_the_migration_has_a_verdict_nothing_is_answered(unmigrated):
-    """A pin list read before the one-time move from Postgres would be missing every old pin, and a
-    `pin` would duplicate one; both answer "unavailable" instead."""
-    with pytest.raises(Unavailable):
-        listing(ME)
-    with pytest.raises(Unavailable):
-        create(ME, "x")

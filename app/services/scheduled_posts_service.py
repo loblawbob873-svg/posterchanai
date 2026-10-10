@@ -24,7 +24,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import nostr_store as store
 from app.services import settings_store as _ss
 
@@ -250,19 +250,3 @@ def stop_scheduled_posts_scheduler() -> None:
         except Exception:
             pass
         _scheduler = None
-
-
-# ---- the SQL side (#161 wave 1): SQL is the store of record until the `scheduled_posts` marker exists ----
-def _post_from_sql(r) -> dict:
-    return post_row(r.user_id, r.event_id, r.event_json, r.scheduled_at, r.status, r.content_preview,
-                    r.attempts, r.created_at, r.sent_at)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    from app.services.app_tables import SCHEDULED_POSTS
-    from app.services.legacy_sql import ModelLegacy
-    table_migration.register(ModelLegacy(SCHEDULED_POSTS, "ScheduledPost", _post_from_sql))
-
-
-_register_legacy()
