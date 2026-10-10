@@ -559,44 +559,107 @@ async def mail_mark_read(request: Request, db: Session = Depends(get_db), curren
     return {"ok": ok}
 
 
+# THE TRASH FOLDER'S NAME, REMEMBERED. Every delete used to open a whole IMAP session (connect,
+# TLS, LOGIN, LIST) just to learn what this account calls its Trash, and then a SECOND session to
+# move the message there -- two logins per message, serially, for a name that does not change.
+# Remembered per (user, account) for a few minutes; only a FOUND name is remembered, so an account
+# whose LIST failed asks again next time rather than falling back to expunging for five minutes.
+_TRASH_TTL = 300.0
+_trash_cache: dict = {}
+
+
+def _trash_folder(user_id, db, email):
+    import time as _t
+    hit = _trash_cache.get((user_id, email))
+    if hit and _t.monotonic() - hit[0] < _TRASH_TTL:
+        return hit[1]
+    trash = (_list_special_folders(user_id, db, email) or {}).get("trash")
+    if trash:
+        _trash_cache[(user_id, email)] = (_t.monotonic(), trash)
+    return trash
+
+
+def _uids_of(d) -> list:
+    """`uids` (a batch, one IMAP session for all of them) or the single `uid` older clients send."""
+    raw = d.get("uids")
+    if raw is None:
+        raw = [d.get("uid")]
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="uids must be a list")
+    out = [str(u).strip() for u in raw if u is not None and str(u).strip()]
+    if not out:
+        raise HTTPException(status_code=400, detail="uid is required")
+    if len(out) > 500:
+        raise HTTPException(status_code=400, detail="too many messages in one request")
+    return out
+
+
 @router.post("/delete")
 async def mail_delete(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
+    """Delete one message (`uid`) or several from ONE folder (`uids`) -- to Trash when the account has
+    one, expunged otherwise.
+
+    A batch is ONE IMAP session: `UID COPY 1,2,3 Trash`, one STORE, one EXPUNGE -- a UID set is
+    ordinary IMAP. Bulk delete used to be a request per message, each opening two sessions.
+
+    A FAILURE IS SAID, AND THE MIRROR IS KEPT. This used to swallow every IMAP error, drop the local
+    copy and answer ok -- so the message vanished from the list and came back on the next sync,
+    which reads as "delete does not work". Now a delete the mail server refused answers 502 and the
+    client puts the message back and says so."""
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
-    folder, uid = d.get("folder", "INBOX"), d.get("uid")
+    folder, uids = d.get("folder", "INBOX"), _uids_of(d)
     if folder != "Drafts":   # Drafts are local-only (never on IMAP) — skip the round-trip
-        moved = False
-        try:   # prefer MOVE to Trash (recoverable) over a permanent expunge
-            meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
-            trash = meta.get("trash")
-            if trash and trash != folder:
-                moved = await _asyncio.to_thread(move_message, current_user.id, db, acc.email, uid, folder, trash)
-        except Exception as e:
-            logger.debug("[mail] trash move failed (%s): %s", uid, e)
-        if not moved:   # no Trash folder / already in Trash → fall back to expunge
-            try:
-                await _asyncio.to_thread(delete_message, current_user.id, db, acc.email, uid, folder)
+        # IMAP takes a UID SET only of numbers; anything else goes one at a time.
+        numeric = all(u.isdigit() for u in uids)
+        groups = [",".join(uids)] if numeric else uids
+        for uid in groups:
+            moved = False
+            try:   # prefer MOVE to Trash (recoverable) over a permanent expunge
+                trash = await _asyncio.to_thread(_trash_folder, current_user.id, db, acc.email)
+                if trash and trash != folder:
+                    moved = await _asyncio.to_thread(move_message, current_user.id, db, acc.email, uid, folder, trash)
             except Exception as e:
-                logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
-    await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
-    return {"ok": True}
+                logger.debug("[mail] trash move failed (%s): %s", uid, e)
+            if not moved:   # no Trash folder / already in Trash → fall back to expunge
+                ok = False
+                try:
+                    ok = await _asyncio.to_thread(delete_message, current_user.id, db, acc.email, uid, folder)
+                except Exception as e:
+                    logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
+                if not ok:
+                    raise HTTPException(status_code=502, detail="the mail server would not delete that message")
+    for uid in uids:
+        await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    return {"ok": True, "deleted": len(uids)}
 
 
 @router.post("/archive")
 async def mail_archive(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
+    """Archive one message (`uid`) or several from one folder (`uids`). Like delete, a refusal is a
+    502 and the local copy of what was NOT archived stays."""
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
-    folder, uid = d.get("folder", "INBOX"), d.get("uid")
-    try:
-        await _asyncio.to_thread(archive_message, current_user.id, db, acc.email, uid, folder)
-    except Exception as e:
-        logger.debug("[mail] IMAP archive failed (%s): %s", uid, e)
-    await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
-    return {"ok": True}
+    folder, uids = d.get("folder", "INBOX"), _uids_of(d)
+    done, failed = [], []
+    for uid in uids:
+        ok = False
+        try:
+            ok = await _asyncio.to_thread(archive_message, current_user.id, db, acc.email, uid, folder)
+        except Exception as e:
+            logger.debug("[mail] IMAP archive failed (%s): %s", uid, e)
+        (done if ok else failed).append(uid)
+    for uid in done:
+        await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    if failed and not done:
+        raise HTTPException(status_code=502, detail="the mail server would not archive that message")
+    if failed:   # a PARTIAL batch names what stayed, so the client puts back only those
+        return {"ok": False, "archived": len(done), "failed": failed}
+    return {"ok": True, "archived": len(done)}
 
 
 @router.post("/move")

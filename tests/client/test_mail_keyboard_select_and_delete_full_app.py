@@ -35,7 +35,7 @@ const reply=(v,s=200)=>Promise.resolve(new Response(JSON.stringify(v),{status:s,
 if(u.pathname.endsWith('/accounts'))return reply({accounts:[{email:'me@home.test'}]});
 if(u.pathname.endsWith('/folders'))return reply({folders:['INBOX','Sent','Archive'],sent:'Sent'});
 if(u.pathname.endsWith('/messages'))return reply({messages:u.searchParams.get('folder')==='INBOX'?__inbox.filter(x=>!__deleted.includes(x.uid)):[],next_until:0});
-if(u.pathname.endsWith('/delete')){const b=JSON.parse(opts.body);__deleted.push(String(b.uid));return reply({ok:true});}
+if(u.pathname.endsWith('/delete')){const b=JSON.parse(opts.body);(b.uids||[b.uid]).forEach(x=>__deleted.push(String(x)));return reply({ok:true});}
 return reply({ok:true});};
 __PC.switchView('mail');'''
 
