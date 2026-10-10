@@ -337,6 +337,8 @@ async def follows() -> dict:
         if len(got) >= _FOLLOW_CAP:
             raise RuntimeError("contact lists naming members hit the relay's cap -- incomplete")
         for ev in got:
+            if ev["pubkey"] not in member_set:
+                continue                      # only a LOCAL member's unfollow is this bot's business
             if ev["pubkey"] not in lists or int(ev["created_at"]) > lists[ev["pubkey"]]["at"]:
                 lists[ev["pubkey"]] = _contact_summary(ev, member_set)
     docs = await nostr_store.list_docs(_port(), state._FOLLOWER_PREFIX, seckey=state._seckey(), strict=True,

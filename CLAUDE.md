@@ -193,7 +193,8 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
   welcomed). Instance members only, by design. Both: first look announces nothing, "could not ask"
   writes nothing, and the welcome bot treats an EMPTY roll and a jump of >10 names (an import) as
   no newcomers. `--unfollowbot`/`--unfollows` dispatch the same way, to
-  `nostr_unfollowbot.py` (`/api/community/follows` + `/contact-lists`): a Nostr unfollow is the follower's NEWER
+  `nostr_unfollowbot.py` (`/api/community/follows` + `/contact-lists`), LOCAL MEMBERS ONLY on both sides (a
+  stranger or fediverse account is never named): an unfollow is the member's NEWER
   kind 3 without the member (proved from their own list -- a list gone from the relay is no evidence), a fediverse
   one is the AP server's Undo(Follow) tombstone; a contact-list wipe (<half, from 10+), >5 members dropped by one
   author and >20 in one pass announce nothing; the server refuses a capped page. `tests/test_nostr_unfollowbot.py`.

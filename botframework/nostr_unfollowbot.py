@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """The unfollow bot for a NOSTR bot (a Pleroma bot runs unfollowbot.py, against Pleroma's database).
 
-Who follows this instance's members, from both sides, read from the node (/api/community/follows):
-  * on Nostr, a follow is the follower's kind-3 contact list p-tagging a member; an UNFOLLOW is that author's
-    NEWER list no longer naming them;
-  * on the fediverse, an unfollow is an ActivityPub Undo(Follow), which the AP server records as a tombstone
-    with the time it arrived.
+LOCAL MEMBERS ONLY, on both sides: it announces one member of this instance (a NIP-05 name this node granted)
+unfollowing another. Strangers and fediverse accounts are never named in a post ("the unfollow bot should only
+work for local instance nip05 users"). Read from the node (/api/community/follows): a follow is the member's
+kind-3 contact list p-tagging another member; an UNFOLLOW is their NEWER list no longer naming them.
 
 Every rule below exists because the alternative announces somebody unfollowing who did not:
   * the FIRST look only remembers -- otherwise every existing follow is "new" next time;
@@ -61,7 +60,8 @@ def _save(state: dict) -> None:
     os.replace(tmp, _state_path())
 
 
-def diff(old: dict, picture: list, confirmed: list, bots: set, fedi: list, fedi_at: int, had_memory: bool):
+def diff(old: dict, picture: list, confirmed: list, bots: set, fedi: list, fedi_at: int, had_memory: bool,
+         members: set | None = None):
     """(unfollows [(follower, member, via)], new state). Pure: the whole decision, testable without a relay.
 
     old      -- {author: {at, size, follows}} from the last look
@@ -82,7 +82,7 @@ def diff(old: dict, picture: list, confirmed: list, bots: set, fedi: list, fedi_
         if n["at"] <= o["at"]:
             continue
         dropped = sorted(set(o.get("follows") or []) - set(n["follows"]))
-        if not dropped or author in bots:
+        if not dropped or author in bots or (members is not None and author not in members):
             continue
         if o.get("size", 0) >= WIPE_FROM and n["size"] < o["size"] / 2:
             logging.info("[UNFOLLOWBOT] a contact list shrank %d -> %d: a wipe, not %d unfollows"
@@ -91,11 +91,10 @@ def diff(old: dict, picture: list, confirmed: list, bots: set, fedi: list, fedi_
         if len(dropped) > PER_AUTHOR:
             logging.info("[UNFOLLOWBOT] one author dropped %d members at once: a clean-up, announcing none" % len(dropped))
             continue
-        found += [(author, m, "nostr") for m in dropped if m not in bots]
+        found += [(author, m, "nostr") for m in dropped if m not in bots and (members is None or m in members)]
     new_fedi_at = max([fedi_at] + [f["at"] for f in fedi])
-    if had_memory:
-        found += [(f["ref"], f["member"], "fediverse") for f in fedi
-                  if f["gone"] and f["at"] > fedi_at and f["member"] not in bots]
+    # A fediverse follower is never a local member, so its Undo(Follow) is never announced (members only);
+    # the watermark still moves, so switching that on later cannot replay history.
     state = {"nostr": state_nostr, "fedi_at": new_fedi_at}
     if not had_memory:
         return [], state
@@ -156,7 +155,8 @@ def unfollows(print_only=False):
         logging.warning(f"[UNFOLLOWBOT] could not read follows, trying again next round: {e}")
         return
     found, state = diff(old["nostr"], data["nostr"], confirmed, set(data.get("bots") or []),
-                        data.get("fedi") or [], old["fedi_at"], had_memory)
+                        data.get("fedi") or [], old["fedi_at"], had_memory,
+                        members=set((data.get("members") or {}).keys()))
     if not print_only:
         _save(state)
     if not had_memory:

@@ -90,13 +90,16 @@ def test_bots_are_never_announced_on_either_side(bot):
     assert found == []
 
 
-def test_a_fediverse_undo_follow_after_the_watermark_is_announced_once(bot):
-    fedi = [{"member": ALICE, "actor": "https://m.example/users/carol", "gone": True, "at": 500, "ref": "nostr:npub1carol"},
-            {"member": BOB, "actor": "https://m.example/users/dan", "gone": True, "at": 90, "ref": "@dan@m.example"},
-            {"member": BOB, "actor": "https://m.example/users/eve", "gone": False, "at": 600, "ref": "@eve@m.example"}]
-    found, state = _diff(bot, {}, [], fedi=fedi, fedi_at=100)
-    assert found == [("nostr:npub1carol", ALICE, "fediverse")]
-    assert _diff(bot, {}, [], fedi=fedi, fedi_at=state["fedi_at"])[0] == [], "announced twice"
+def test_only_a_local_member_unfollowing_a_local_member_is_announced(bot):
+    """"the unfollow bot should only work for local instance nip05 users": a stranger and a fediverse account
+    are never named, on either side."""
+    members = {ALICE, BOB}
+    old = {BOB: {"at": 100, "size": 3, "follows": [ALICE]}, F1: {"at": 100, "size": 3, "follows": [ALICE]}}
+    fedi = [{"member": ALICE, "actor": "https://m.example/users/carol", "gone": True, "at": 500, "ref": "@carol@m.example"}]
+    found, state = bot.diff(old, [_l(BOB, 200, [], size=2), _l(F1, 200, [], size=2)], [], set(), fedi, 100, True,
+                            members=members)
+    assert found == [(BOB, ALICE, "nostr")], found
+    assert state["fedi_at"] == 500, "the fediverse watermark must still move (no replay if that is ever switched on)"
 
 
 def test_the_post_tags_both_people_and_an_ai_rewording_must_keep_every_name(bot, monkeypatch):
@@ -115,7 +118,8 @@ def test_end_to_end_could_not_ask_changes_nothing_and_a_real_unfollow_posts_once
     posted = []
     monkeypatch.setattr(bot, "_post", lambda text, *a, **k: posted.append(text))
     pic = {"nostr": [_l(F1, 100, [ALICE, BOB])], "fedi": [], "bots": [], "names": {}, "refs": {F1: "nostr:npub1f1",
-           ALICE: "nostr:npub1alice", BOB: "nostr:npub1bob"}}
+           ALICE: "nostr:npub1alice", BOB: "nostr:npub1bob"}, "members": {F1: "@f1@poster.place",
+           ALICE: "@alice@poster.place", BOB: "@bob@poster.place"}}
     calls = {"fail": False}
 
     def get(path, **k):
@@ -140,9 +144,10 @@ def test_the_follows_endpoint_reads_contact_lists_and_fediverse_tombstones(world
     from app.services import community_stats, nostr_store
     from app.services.activitypub import state
     now = int(time.time())
-    world["relay"] += [_ev(1, F1, 3, [["p", ALICE], ["p", STRANGER]], created=now - 50),
+    world["relay"] += [_ev(1, BOB, 3, [["p", ALICE], ["p", STRANGER]], created=now - 50),
                        _ev(2, F2, 3, [["p", STRANGER]], created=now - 40),
-                       _ev(3, F1, 3, [["p", BOB]], created=now - 900)]          # an older list of the same author
+                       _ev(3, BOB, 3, [["p", ALICE], ["p", BOB]], created=now - 900),   # an older list of the same author
+                       _ev(4, F1, 3, [["p", ALICE]], created=now - 30)]   # a stranger following a member: not ours
 
     async def list_docs(port, prefix, **kw):
         return {prefix + ALICE + ":h1": {"actor": "https://m.example/users/carol", "gone": True, "at": now - 5},
@@ -150,7 +155,8 @@ def test_the_follows_endpoint_reads_contact_lists_and_fediverse_tombstones(world
     monkeypatch.setattr(nostr_store, "list_docs", list_docs)
     monkeypatch.setattr(state, "_seckey", lambda: b"\x01" * 32)
     out = run(community_stats.follows())
-    assert [(r["author"], r["follows"], r["size"]) for r in out["nostr"]] == [(F1, [ALICE], 2)]
+    assert [(r["author"], r["follows"], r["size"]) for r in out["nostr"]] == [(BOB, [ALICE], 2)], \
+        "a non-member's contact list was returned"
     assert [(f["member"], f["gone"]) for f in out["fedi"]] == [(ALICE, True)], "a non-member's follower leaked in"
     lists = run(community_stats.contact_lists([F2]))
     assert lists and lists[0]["follows"] == [] and lists[0]["size"] == 1
