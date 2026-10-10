@@ -2057,6 +2057,14 @@
     '__remote':        { view: '__remote',      label: 'Remote Desktop' },
     '__installer':     { view: '__installer',   label: 'Install PosterChanOS' },
     '__golive':        { view: '__golive',      label: 'Go Live' },
+    /* MUSIC, for the same reason ("Music player opening behind active windows"). Its frame was an
+     * in-page `doc:music` window on the desktop surface, which sits under every real toplevel — the
+     * shellFront publish that is meant to lift it passes against the test compositor and, like Go
+     * Live's, not on a real desk. As its own toplevel the compositor stacks and focuses it like any
+     * other app. Playback then lives in that window's page, so closing Music stops it — which is what
+     * closing the in-page frame already did whenever nothing else on the desk could pause it. */
+    'doc:music':       { view: '__music',       label: 'Music' },
+    '__music':         { view: '__music',       label: 'Music' },
   };
 
   /* …AND WHAT DRAWS IT. Declared HERE, beside the map it has to agree with, because
@@ -2074,7 +2082,10 @@
     '__remote':     () => _paintExtraInFeed('feed-remote',  paintRemoteDesktop),
     '__installer':  () => _loadInstaller().then(() => _paintExtraInFeed('feed-installer', paintInstaller)),
     '__golive':     () => _renderGoLiveWindow(),
+    '__music':      () => _renderMusicWindow(),
   };
+
+  function _renderMusicWindow(){ const P = PC(); if(P.renderMusicApp) P.renderMusicApp(); }
 
   /* Run one of the extracted painters against this window's own `#feed`.
    *
@@ -2308,6 +2319,12 @@
           return null;
         }
       }catch(_){ }
+    }
+    /* THE REAL WINDOW WAS REFUSED, so the EXTRA's own opener draws it after all. Falling through
+     * instead built a bare in-page frame named `__music` with no renderer, which repaints by
+     * switchView — and nothing routes an EXTRA's id, so it showed the default timeline. */
+    if(extra && _extraOpensAsWindow(view)){
+      try{ return extra.act() || null; }catch(_){ return null; }
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){
@@ -8150,12 +8167,12 @@
         if(bar){
           bar.onpointerdown = (ev) => {
             ev.stopPropagation();                       // the panel is draggable; the bar is not a grip
-            const P = (PC().music && PC().music()) || null; if(!P || !P.seek) return;
+            const P = _widgetPlayer(); if(!P || !P.seek) return;
             const r = bar.getBoundingClientRect();
             if(r.width) P.seek((ev.clientX - r.left) / r.width);
           };
           bar.onkeydown = (ev) => {
-            const P = (PC().music && PC().music()) || null; if(!P || !P.seek || !P.now) return;
+            const P = _widgetPlayer(); if(!P || !P.seek || !P.now) return;
             const n = P.now(); if(!n || !n.d) return;
             const step = ev.key === 'ArrowRight' ? 5 : ev.key === 'ArrowLeft' ? -5 : 0;
             if(!step) return;
@@ -8166,7 +8183,7 @@
         el.onclick = (ev) => {
           const b = ev.target.closest && ev.target.closest('[data-m]'); if(!b) return;
           ev.stopPropagation();
-          const P = (PC().music && PC().music()) || null;
+          const P = _widgetPlayer();
           try{
             if(b.dataset.m === 'open'){ openApp('__music'); return; }
             /* A MISSING BRIDGE MUST NOT LOOK LIKE A DEAD BUTTON.
@@ -8202,7 +8219,7 @@
         };
       },
       refresh(el){
-        const P = (PC().music && PC().music()) || null;
+        const P = _widgetPlayer();
         const t = $('.wgt-mtitle', el), main = $('[data-m="toggle"]', el);
         if(!t) return;
         const now = P && P.now ? P.now() : null;
@@ -9387,7 +9404,124 @@
   // The player has no event to subscribe to, so app.js calls this when its state changes — the same
   // shape as `syncPlayer`. Cheap: it touches two nodes of one widget.
   function musicChanged(){
+    if(_isMusicPage()) _musicSay();
     for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
+  }
+
+  /* A MUSIC WINDOW OF ITS OWN HAS ITS OWN PLAYER, AND THE NOW-PLAYING WIDGET MUST STILL WORK IT.
+   *
+   * On PosterChanOS Music is a real toplevel (EXTRA_WINDOWS), i.e. a different renderer: its
+   * MusicPlayer and its <audio> are in THAT page, and the widget on the desk reads this one's. Left
+   * alone the widget said "Nothing playing" over a song that was playing, and its ▶ started a SECOND
+   * song in the desktop page. So the Music window says what it is playing on a BroadcastChannel
+   * (every page here shares the app:// origin), the widget draws that and sends its presses back,
+   * and a press with no Music window anywhere OPENS Music and hands the press over once it has
+   * loaded, so there is only ever one player on a desk that gives Music its own window. Everywhere
+   * else (the web, a tablet, a desk without toplevels) nothing changes: the local player is used. */
+  const MUSIC_CH = 'pc-music-window';
+  let _musicCh = null, _remoteMusic = null, _musicPending = null;
+  function _isMusicPage(){
+    try{ return !!(window.PCOSWin && PCOSWin.isWindow() && PCOSWin.viewOf() === '__music'); }catch(_){ return false; }
+  }
+  function _musicChannel(){
+    if(_musicCh || typeof BroadcastChannel !== 'function') return _musicCh;
+    try{ _musicCh = new BroadcastChannel(MUSIC_CH); }catch(_){ _musicCh = null; return null; }
+    // Never the thing that keeps a process alive (node runs this file in the desktop sims).
+    try{ if(typeof _musicCh.unref === 'function') _musicCh.unref(); }catch(_){ }
+    _musicCh.onmessage = (e) => {
+      const d = (e && e.data) || {};
+      if(_isMusicPage()){
+        const P = (PC().music && PC().music()) || null;
+        if(!P) return;
+        if(d.cmd === 'ask'){ _musicSay(); return; }
+        let r = null;
+        try{
+          if(d.cmd === 'seek') P.seek(Math.max(0, Math.min(1, Number(d.arg) || 0)));
+          else if(['toggle', 'prev', 'next', 'shuffle'].includes(d.cmd)) r = P[d.cmd]();
+          else return;
+        }catch(_){ }
+        Promise.resolve(r).then(() => _musicSay(), () => _musicSay());
+        return;
+      }
+      if(d.hello){
+        // A Music window just loaded: give it the press that opened it, if it is still fresh.
+        const p = _musicPending; _musicPending = null;
+        if(p && Date.now() - p.at < 20000) _musicCh.postMessage({ cmd: p.cmd, arg: p.arg });
+        return;
+      }
+      if(d.state){
+        _remoteMusic = d.state.gone ? null : d.state;
+        for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
+      }
+    };
+    return _musicCh;
+  }
+  function _musicSay(gone){
+    const ch = _musicChannel(); if(!ch) return;
+    let state = { gone: true };
+    if(!gone){
+      const P = (PC().music && PC().music()) || null;
+      state = { now: (P && P.now) ? P.now() : null, shuffling: !!(P && P.shuffling && P.shuffling()) };
+    }
+    try{ ch.postMessage({ state }); }catch(_){ }
+  }
+  function _widgetPlayer(){
+    const local = (PC().music && PC().music()) || null;
+    try{ if(local && local.now && local.now()) return local; }catch(_){ }   // this page IS playing
+    const send = (cmd, arg) => { const ch = _musicChannel(); if(ch) ch.postMessage({ cmd, arg }); };
+    if(_remoteMusic) return {
+      now: () => (_remoteMusic && _remoteMusic.now) || null,
+      shuffling: () => !!(_remoteMusic && _remoteMusic.shuffling),
+      toggle: () => send('toggle'), prev: () => send('prev'), next: () => send('next'),
+      shuffle: () => send('shuffle'), seek: (f) => send('seek', f), close: () => {},
+    };
+    if(!_extraOpensAsWindow('__music') || !_musicChannel()) return local;
+    // Music would open as its own window and none is open: open it, and let IT play.
+    const viaWindow = (cmd, arg) => { _musicPending = { cmd, arg, at: Date.now() }; openApp('__music'); };
+    return {
+      now: () => null, shuffling: () => false,
+      toggle: () => viaWindow('toggle'), prev: () => viaWindow('toggle'), next: () => viaWindow('toggle'),
+      shuffle: () => viaWindow('shuffle'), seek: () => {}, close: () => {},
+    };
+  }
+  try{
+    if(_isMusicPage()){
+      _musicChannel();
+      try{ if(_musicCh) _musicCh.postMessage({ hello: true }); }catch(_){ }
+      window.addEventListener('pagehide', () => _musicSay(true));
+    } else if(_musicChannel()){
+      _musicCh.postMessage({ cmd: 'ask' });     // a desktop that loaded after the Music window did
+    }
+  }catch(_){ }
+
+  /* EVERY WAY INTO MUSIC LANDS ON THE MUSIC WINDOW — "Music player opening behind active windows".
+   *
+   * The launcher and the desktop icon open Music through the `__music` EXTRA (openDoc, or a real
+   * toplevel on PosterChanOS). Everything else — `openMusic()` (the Android launcher tile, a desk on
+   * a tablet), the widget-tap relaunch, `switchView('music')` — went straight to `renderMusicApp`,
+   * which paints into whatever window holds the one live #feed. Measured with Notes, Social and
+   * Calculator open: no Music window was created at all, and the library was drawn INSIDE the
+   * Calculator frame, under the Calculator title — in front only if Calculator happened to be, and
+   * behind every window otherwise.
+   *
+   * So on the desktop those entries ask for the Music window, through the very path the launcher
+   * uses, and that window's render paints the library. Answers false (= paint where you are) when
+   * the desktop is off, when a window is repainting itself (that IS the Music window's own render,
+   * or a doc window restoring), and when the feed is already in the Music window. */
+  function routeMusic(){
+    if(!on || repainting > 0) return false;
+    const holder = realFeed && wins.find(x => realFeed.parentElement === x.body);
+    if(holder && (holder.view === 'doc:music' || holder.view === '__music')) return false;
+    // A Music toplevel already open (this monitor's): openApp focuses it and answers null.
+    if(nativeTasks.some(r => r && r.own && r.view && sameAppWindow(String(r.view), '__music'))){
+      try{ openApp('__music'); }catch(_){ }
+      return true;
+    }
+    _openedReal = false;
+    let made = null;
+    try{ made = openApp('__music'); }catch(_){ made = null; }
+    const real = _openedReal; _openedReal = false;
+    return !!(made || real);
   }
 
   /* IS THERE ANYWHERE ON THIS DESKTOP TO PAUSE THE MUSIC?
@@ -13625,7 +13759,7 @@
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.
-                  musicChanged, noteView,
+                  musicChanged, routeMusic, noteView,
                   /* …and this one when the unread count moves. Same reason: the tray bell has
                    * nothing to subscribe to, and the taskbar otherwise repaints only on a window
                    * focus, the 30s clock tick and an arrival toast — none of which a follow, or

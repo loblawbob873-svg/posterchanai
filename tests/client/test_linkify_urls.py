@@ -91,7 +91,7 @@ const niceNip05 = () => '';
 """
     return "\n".join([stubs, m.group(0),
                       _fn(src, "_linkLabel", "function _linkLabel(u){"),
-                      _fn(src, "linkify", "function linkify(txt){")])
+                      _fn(src, "linkify", "function linkify(txt, ev){")])
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><pre id="out"></pre><script>

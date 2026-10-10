@@ -557,6 +557,7 @@ window.PCCardsFactory = function(dep){
       for(const part of t.slice(1)){ const s=String(part||''); if(s.startsWith('url ')) u=s.slice(4).trim(); else if(s.startsWith('m ')) m=s.slice(2).trim().toLowerCase(); else if(s.startsWith('alt ')) a=s.slice(4).trim(); }
       if(u && a) out.alts.set(u, a.slice(0, 500));
       if(u && /^(image|video)\//.test(m)) out.set(u, m.startsWith('video/') ? 'video' : 'image');
+      else if(u && /^audio\//.test(m)) out.set(u, 'audio');   // a track card in the text (linkify), never an <img>
     }
     return out;
   }
@@ -574,6 +575,7 @@ window.PCCardsFactory = function(dep){
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       const said=kinds.get(u);
+      if(said==='audio') return url;   // linkify draws it as a track, from this same imeta
       if(said==='video'){ media.push(_media(E,'video')); return tail; }
       if(said==='image'){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
@@ -816,7 +818,7 @@ window.PCCardsFactory = function(dep){
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${S.PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}${(window.Outbox&&Outbox.has(ev.id))?'<span class="pending-badge" data-pending="'+enc(ev.id)+'" title="Waiting to send — tap to send now or discard">Pending</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
         ${mp.mediaFirst?mp.gallery:''}
-        <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
+        <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt, ev), ev)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${xmrTipBadge(ev)}
         ${mp.mediaFirst?'':mp.gallery}
@@ -892,7 +894,7 @@ window.PCCardsFactory = function(dep){
       <div class="hd"><img alt="" class="qav" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
       ${mp.mediaFirst?mp.gallery:''}
-      <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
+      <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o), o), o)}</div>
       ${mp.mediaFirst?'':mp.gallery}
       ${cw?`</div></div>`:''}</div>`; }
   // The e-tag naming the post a reply ANSWERS. Returns the WHOLE tag so its relay hint (t[2]) can be

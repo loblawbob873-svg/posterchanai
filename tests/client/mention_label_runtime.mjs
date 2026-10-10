@@ -10,7 +10,7 @@ import { clientSource } from './client_source.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..', '..');
 const src = clientSource();
-const start = src.indexOf('function linkify(txt){');
+const start = src.indexOf('function linkify(txt, ev){');
 let depth = 0, end = -1;
 for (let i = src.indexOf('{', start); i < src.length; i++) {
   if (src[i] === '{') depth++; else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }

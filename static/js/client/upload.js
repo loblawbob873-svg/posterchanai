@@ -17,7 +17,7 @@ window.PCUploadFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.ME, S.VIEW, S._aiToken, S._blossomOK, S._uploadBatchAuth
   const {
     $, $$, FilesIdx, _MEDIA_META, _blobToB64, _blossomBuiltin, _fmtBytes, _fxFileGlyph, _hold,
-    _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus,
+    _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus, _withModule,
     checkBlossomAccess, copyValue, enc, isMutedView, isReply, mediaServer, needProfile, openThread,
     profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget,
   } = dep;
@@ -108,6 +108,69 @@ window.PCUploadFactory = function(dep){
       }
     }catch(_){}
     return '';
+  }
+  /* A SONG IN A POST CARRIES ITS TRACK INFO IN THE EVENT ("posting an mp3 on the timeline has no
+   * track info like Amethyst/Ditto"). What those two actually read for a kind-1 audio attachment
+   * (their source, 2026-10-10):
+   *   duration  Ditto writes it (src/lib/fileMetadata.ts audioMeta: seconds, String(round(s*1000)/1000))
+   *             and Amethyst reads it (RichTextParser.kt: `duration` -> toDoubleOrNull);
+   *   image     Amethyst's artwork for the player (RichTextParser.kt: artworkUri = imeta `image`) —
+   *             NIP-94's "url of preview image", so the cover is uploaded as its own blob;
+   *   alt       NIP-94's description, which Amethyst shows as the media's description.
+   * Neither client writes or reads title/artist/album in a kind-1 `imeta` (Ditto reads them from the
+   * FILE at play time; Amethyst shows the post's author as the artist), so those three ride along for
+   * THIS client's card, which then paints before (or without) a range read of the file.
+   * Only for something being POSTED — every composer uploads with `folder:'Posts'`; a DM, drive,
+   * archival or encrypted upload does not, and a cover upload there would be a second blob nobody
+   * asked for. Best effort throughout: a song whose tags cannot be read is still a song. */
+  const _AUDIO_EXT = /\.(mp3|mpga|ogg|oga|opus|flac|m4a|aac|wav)$/i;
+  function _isPostedAudio(file, opts){
+    if(!file || !opts || opts.folder !== 'Posts' || opts.noCompress || opts.keep || opts.ciphertext) return false;
+    return /^audio\//i.test(file.type || '') || _AUDIO_EXT.test(file.name || '');
+  }
+  function _audioDuration(file){
+    return new Promise(res => {
+      let u = '', done = false;
+      const fin = v => { if(done) return; done = true; try{ if(u) URL.revokeObjectURL(u); }catch(_){} res(v); };
+      try{
+        const a = document.createElement('audio'); a.preload = 'metadata'; u = URL.createObjectURL(file);
+        a.onloadedmetadata = () => fin(isFinite(a.duration) && a.duration > 0 ? a.duration : 0);
+        a.onerror = () => fin(0); a.src = u;
+        setTimeout(() => fin(0), 5000);
+      }catch(_){ fin(0); }
+    });
+  }
+  const _metaText = v => String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
+  async function _postedAudioMeta(file){
+    const out = {};
+    try{
+      const T = await _withModule('audiotags.js', 'PCAudioTags');
+      if(T){
+        let b = new Uint8Array(await file.slice(0, 262144).arrayBuffer());
+        const want = Math.min(T.needed(b), 2 * 1024 * 1024);
+        if(want > b.length) b = new Uint8Array(await file.slice(0, want).arrayBuffer());
+        const m = T.parse(b) || {};
+        for(const k of ['title', 'artist', 'album']) if(m[k]) out[k] = _metaText(m[k]);
+        if(m.picture && m.picture.data && m.picture.data.length){
+          const mime = /^image\/(jpeg|png|webp|gif)$/i.test(m.picture.mime || '') ? m.picture.mime : 'image/jpeg';
+          try{
+            const cover = new File([m.picture.data], 'cover.' + (mime.split('/')[1] === 'jpeg' ? 'jpg' : mime.split('/')[1]), { type: mime });
+            out.image = await uploadBlob(cover);
+          }catch(_){ }
+        }
+      }
+    }catch(_){ }
+    const d = await _audioDuration(file);
+    if(d > 0) out.duration = String(Math.round(d * 1000) / 1000);
+    if(out.title) out.alt = _metaText([out.title, out.artist].filter(Boolean).join(' — '));
+    return out;
+  }
+  async function _notePostedAudio(url, file, hash, opts){
+    if(!_isPostedAudio(file, opts)) return;
+    try{
+      const meta = await _postedAudioMeta(file);
+      _MEDIA_META.set(url, Object.assign({ m: file.type || 'audio/mpeg', x: hash || undefined, size: file.size || undefined }, meta));
+    }catch(_){ }
   }
   // Downscale + re-encode large images BEFORE they're uploaded or sent — keeps Blossom storage small
   // and, crucially, keeps base64 chat attachments under the size that made multi-image / big-image
@@ -230,6 +293,7 @@ window.PCUploadFactory = function(dep){
     const url=(tags.find(t=>t[0]==='url')||[])[1] || (d&&d.url) || '';
     if(!url) throw new Error('nostr.build: no URL in the upload response');
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ const x=(tags.find(t=>t[0]==='x')||[])[1]; _MEDIA_META.set(url,{ m:t, x:x||undefined, dim:await _mediaDim(file) }); } }catch(_){}
+    await _notePostedAudio(url, file, (tags.find(t=>t[0]==='x')||[])[1], opts);
     /* A NIP-96 UPLOAD MUST REPORT ITS CONTENT HASH, OR FILES THROWS THE FILE AWAY.
      *
      * uploadBlob's Blossom path ends with `opts.hashOut.sha = <the hash it computed>`, and every
@@ -403,6 +467,7 @@ window.PCUploadFactory = function(dep){
     if(ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0])) url+='.'+ext;
     // Record NIP-92 source metadata so a note carrying this URL gets an `imeta` tag (see imetaTagsFor).
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ _MEDIA_META.set(url, { m:t, x:hash, dim:await _mediaDim(file) }); } }catch(_){}
+    await _notePostedAudio(url, file, hash, opts);
     if(opts && opts.folder) _fileUnder(url, file, opts.folder, hash);
     /* Some Blossom servers return a CDN/signed URL whose path does not contain the content hash.
      * Files still needs that hash for its encrypted index; expose the value we already computed to
@@ -457,6 +522,9 @@ window.PCUploadFactory = function(dep){
       if(m['webxdc-topic']) parts.push('webxdc-topic '+m['webxdc-topic']);
       if(m.webxdc) parts.push('webxdc '+m.webxdc);
       if(m.summary) parts.push('summary '+m.summary);
+      // A song (see _postedAudioMeta for who reads which).
+      if(m.size) parts.push('size '+m.size);
+      for(const k of ['duration', 'image', 'alt', 'title', 'artist', 'album']) if(m[k]) parts.push(k+' '+m[k]);
       out.push(['imeta', ...parts]);
     }
     // One `t`, however many apps are in the post, and only when there is one.

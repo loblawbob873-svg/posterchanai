@@ -162,11 +162,11 @@
    * a window opening on something it cannot show — "System settings just loaded a social feed" —
    * and a prefix would re-open exactly that door. A name is added here only once `PCOS.renderExtra`
    * can draw it in a page with no desktop behind it. */
-  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote', '__installer', '__golive'];
+  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__remote', '__installer', '__golive', '__music'];
   /* What a person reads in the title bar when the opener did not hand a label over (a restored or
    * re-opened window): "__golive" is a route, not a name. */
   const EXTRA_LABELS = { __ossettings:'System Settings', __tasks:'Task Manager', __remote:'Remote Desktop',
-                         __installer:'Install PosterChanOS', __golive:'Go Live' };
+                         __installer:'Install PosterChanOS', __golive:'Go Live', __music:'Music' };
   // Renamed/merged views an older shell may still hand over (os.js LEGACY_VIEWS; app.js switchView maps it).
   const LEGACY_VIEWS = { __vms: 'vms' };
   /* A window that was opened (or restored) with no label handed over used to title itself with the
