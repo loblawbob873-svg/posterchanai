@@ -98,6 +98,23 @@ def search_words(text: str):
     return tsparser.search_set(text or "")
 
 
+def _grow(op, *args):
+    """Grow a column (bytearray / array.array) -- retrying for a moment while a reader's numpy view still exports it.
+
+    A column cannot be resized while any `np.frombuffer` view of it is alive, and a view can outlive the lock
+    that guarded its making by the few microseconds it takes its frame to end. One such race stopped the relay's
+    mirror 200,000 events into its first copy ("BufferError: Existing exports of data: object cannot be
+    re-sized"), the status thread's stats() against the copy's appends. Readers no longer keep views past the
+    lock (stats, query), and this is the net under that: each append retries on its own, so the columns can
+    never end up different lengths. tests/test_posterchandb_threads.py."""
+    for _ in range(4000):
+        try:
+            return op(*args)
+        except BufferError:
+            time.sleep(0.0005)
+    return op(*args)
+
+
 def _merge_runs(ka, sa, pa, kb, sb, pb, dead=None):
     """Merge two CSR runs (keys sorted unique, starts, postings). Every posting in run B is NEWER than
     every posting in run A (sequence numbers only grow), so per key the result is simply A's list then
@@ -423,8 +440,8 @@ class Store:
             self.seg_markers.setdefault(self._active, []).append(bytes(payload))
         arena = self.arenas[self._active]
         start = len(arena) + _FRAME.size
-        arena += _FRAME.pack(len(payload), zlib.crc32(payload) & 0xFFFFFFFF)
-        arena += payload
+        _grow(arena.extend, _FRAME.pack(len(payload), zlib.crc32(payload) & 0xFFFFFFFF))
+        _grow(arena.extend, payload)
         self.seg_size[self._active] = len(arena)
         self._pending_n += 1
         self._since_snap += 1
@@ -536,6 +553,10 @@ class Store:
         return sum(self.seg_size.values())
 
     def stats(self) -> dict:
+        with self._lock:
+            return self._stats_locked()
+
+    def _stats_locked(self) -> dict:
         dead = int(np.count_nonzero(np.frombuffer(self.dead, np.uint8))) if len(self.dead) else 0
         return {"events": len(self.off), "live": len(self.off) - dead, "dead": dead,
                 "disk_bytes": self.disk_bytes(),
@@ -791,23 +812,23 @@ class Store:
     def _apply_put(self, ev: dict, raw_id: bytes, n: int, off: int, origin: int, sid: int,
                    replay: bool = False, words: bool = True) -> None:
         seq = len(self.off)
-        self.seg.append(sid)
-        self.off.append(off)
-        self.length.append(n)
-        self.ids += raw_id
+        _grow(self.seg.append, sid)
+        _grow(self.off.append, off)
+        _grow(self.length.append, n)
+        _grow(self.ids.extend, raw_id)
         self.seg_bytes[sid] = self.seg_bytes.get(sid, 0) + n
-        self.created.append(ev["created_at"])
-        self.kind.append(ev["kind"])
+        _grow(self.created.append, ev["created_at"])
+        _grow(self.kind.append, ev["kind"])
         exp = None if int(ev["kind"]) in relay_rules._NEVER_EXPIRE_KINDS else _expiration(ev)
-        self.expires.append(exp if exp and exp > 0 else 0)
-        self.origin.append(origin)
+        _grow(self.expires.append, exp if exp and exp > 0 else 0)
+        _grow(self.origin.append, origin)
         pk = ev["pubkey"]
         aid = self._author_ix.get(pk)
         if aid is None:
             aid = self._author_ix[pk] = len(self._authors)
             self._authors.append(pk)
-        self.author.append(aid)
-        self.dead.append(0)
+        _grow(self.author.append, aid)
+        _grow(self.dead.append, 0)
         self._id_delta[int(ev["id"][:16], 16)] = seq
         k = ev["kind"]
         self.idx.add(_h("ak:%s:%d" % (pk, k)), seq)
@@ -976,6 +997,11 @@ class Store:
             return self._seq_of(eid)
 
     def query(self, flt: dict, now: int | None = None) -> list:
+        # The work runs in a helper so every numpy view it makes dies BEFORE the lock is released (see _grow).
+        with self._lock:
+            return self._query_locked(flt, now)
+
+    def _query_locked(self, flt: dict, now: int | None = None) -> list:
         """One NIP-01 filter (+ NIP-50 `search`), exactly as the relay's _query_one answers it:
         ORDER BY created_at DESC, id DESC, `limit or 500` clamped to 1..5000, dead and expired never returned.
 

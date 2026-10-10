@@ -308,7 +308,9 @@ class Mirror:
             n = len(st.off)
             dead = np.frombuffer(st.dead, dtype=np.uint8)[:n]
             exp = np.frombuffer(st.expires, dtype=np.uint64)[:n]
-            return int(((dead == 0) & ((exp == 0) | (exp > now))).sum())
+            live = int(((dead == 0) & ((exp == 0) | (exp > now))).sum())
+            del dead, exp                     # views must die under the lock (store._grow)
+        return live
 
     def _verify(self) -> bool:
         """Postgres's queryable count and the queue position, read at ONE instant on the relay's writer thread;
