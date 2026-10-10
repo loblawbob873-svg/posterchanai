@@ -377,13 +377,26 @@ jobs:
             > /tmp/cert.json 2>/tmp/cert.err || true
           pip install -q websockets
           python3 scripts/publish_cert_proof.py /tmp/cert.json /tmp/cert.err
-          if ! /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log; then
+          # RETRIED: 2026-10-10 a release (1.0.2505) missed Zapstore because relay.zapstore.dev and
+          # cdn.zapstore.dev both timed out for a few minutes, and one attempt was all it got. A publish is
+          # idempotent (the upload is content-addressed, the events are replaceable), so try again with
+          # backoff before calling it failed. Both failure shapes retry: zsp exiting non-zero, and the
+          # AppCatalog relay refusing the asset while a secondary relay took it.
+          published=''
+          for wait in 0 60 180 420; do
+            [ "$wait" = 0 ] || { echo "::warning title=Zapstore retry::retrying the publish in ${wait}s"; sleep "$wait"; }
+            if /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log \
+               && ! grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
+              published=1; break
+            fi
+          done
+          if [ -z "$published" ]; then
+            # A secondary relay accepting the event is not enough: Zapstore's current client resolves
+            # latestAsset directly from its AppCatalog relay. Never report success while that relay
+            # rejects the clean current-signer asset.
+            if grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
+              fail 'Zapstore AppCatalog rejected the clean APK asset'
+            fi
             fail 'zsp could not publish a complete release'
-          fi
-          # A secondary relay accepting the event is not enough: Zapstore's current client resolves
-          # latestAsset directly from its AppCatalog relay. Never report success while that relay
-          # rejects the clean current-signer asset.
-          if grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
-            fail 'Zapstore AppCatalog rejected the clean APK asset'
           fi
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
