@@ -277,6 +277,8 @@ class Store:
         # tokenizer is ~93% of the cost of storing a real event). A search catches them up first, so answers
         # stay exact; the mirror indexes them in the background and sends searches to Postgres meanwhile.
         self._unworded = collections.deque()
+        self._pm = np.zeros(0, dtype=np.uint64)    # running max of `created` by seq (the newest-first scan's proof)
+        self._pm_n = 0
         # per-event columns (index = sequence number)
         self.arenas: dict = {}                     # segment id -> its file's bytes (resident) or None (cold)
         self.seg_size: dict[int, int] = {}         # bytes of each segment (file + unflushed tail)
@@ -1001,6 +1003,75 @@ class Store:
         with self._lock:
             return self._query_locked(flt, now)
 
+    def _prefmax(self, n: int) -> np.ndarray:
+        """max(created[0..i]) for every seq i < n, kept incrementally in a growable buffer (append-only columns)."""
+        if self._pm_n > n:
+            self._pm_n = 0                          # a reset/reload shrank the store: rebuild
+        if self._pm_n < n:
+            created = np.frombuffer(self.created, dtype=np.uint64)[:n]
+            if len(self._pm) < n:
+                grown = np.zeros(max(n, 2 * len(self._pm), 1024), dtype=np.uint64)
+                grown[:self._pm_n] = self._pm[:self._pm_n]
+                self._pm = grown
+            tail = np.maximum.accumulate(created[self._pm_n:n])
+            if self._pm_n:
+                np.maximum(tail, self._pm[self._pm_n - 1], out=tail)
+            self._pm[self._pm_n:n] = tail
+            self._pm_n = n
+            del created
+        return self._pm[:n]
+
+    def _newest_first(self, flt: dict, kinds, n: int, now: int) -> np.ndarray:
+        """Candidate seqs for a filter with nothing selective, found newest-first. A superset of the answer: the
+        caller filters and orders as for any other plan. It stops once the `limit`-th newest match is STRICTLY newer
+        than everything not yet looked at (the running max proves it), so a tie on the timestamp -- which the id
+        decides -- can never be cut off."""
+        limit = max(1, min(int(flt.get("limit") or 500), 5000))
+        pm = self._prefmax(n)
+        created = np.frombuffer(self.created, dtype=np.uint64)[:n]
+        dead = np.frombuffer(self.dead, dtype=np.uint8)[:n]
+        expires = np.frombuffer(self.expires, dtype=np.uint64)[:n]
+        kind_col = np.frombuffer(self.kind, dtype=np.uint32)[:n]
+        kinds_arr = np.asarray([int(k) for k in kinds], dtype=np.uint32) if kinds else None
+        since = int(flt["since"]) if flt.get("since") is not None else None
+        until = int(flt["until"]) if flt.get("until") is not None else None
+        picks, total, hi = [], 0, n
+        while hi > 0:
+            lo = max(0, hi - _SCAN_CHUNK)
+            c = created[lo:hi]
+            m = dead[lo:hi] == 0
+            e = expires[lo:hi]
+            m &= (e == 0) | (e > now)
+            if kinds_arr is not None:
+                m &= np.isin(kind_col[lo:hi], kinds_arr)
+            if since is not None:
+                m &= c >= since
+            if until is not None:
+                m &= c <= until
+            got = np.nonzero(m)[0].astype(np.uint32) + np.uint32(lo)
+            if len(got):
+                picks.append(got)
+                total += len(got)
+            hi = lo
+            if hi and total >= limit:
+                allc = created[np.concatenate(picks)]
+                kth = int(np.partition(allc, len(allc) - limit)[len(allc) - limit])
+                bound = int(pm[hi - 1])
+                if until is not None:
+                    bound = min(bound, until)
+                if since is not None and bound < since:
+                    break                           # nothing older can match at all
+                if kth > bound:
+                    break
+            elif hi and since is not None and int(pm[hi - 1]) < since:
+                break
+        del created, dead, expires, kind_col, pm
+        if not picks:
+            return np.zeros(0, dtype=np.uint32)
+        out = np.concatenate(picks)
+        out.sort()
+        return out
+
     def _query_locked(self, flt: dict, now: int | None = None) -> list:
         """One NIP-01 filter (+ NIP-50 `search`), exactly as the relay's _query_one answers it:
         ORDER BY created_at DESC, id DESC, `limit or 500` clamped to 1..5000, dead and expired never returned.
@@ -1055,6 +1126,12 @@ class Store:
                     cand = _intersect(cand, other)
                 if kinds and not kinds_done and len(cand):
                     cand = cand[np.isin(kind_col[cand], np.asarray([int(k) for k in kinds], dtype=np.uint32))]
+            elif not isinstance(flt.get("_cursor"), list):
+                # Nothing selective (only `kinds`, or no filter at all): walk newest-first and stop as soon as the
+                # newest `limit` are certain. Building the union of every kind-1 and kind-6 posting and sorting it
+                # cost 465 ms at 2.6M events under the one store lock -- the global feed every client asks for --
+                # and starved the relay (2026-10-09, serve mode).
+                cand = self._newest_first(flt, kinds, n, now)
             elif kinds:
                 cand = _union([self.idx.get(_h("k:%d" % int(k))) for k in kinds])
             else:
@@ -1094,6 +1171,9 @@ class Store:
             idw = np.frombuffer(self.ids, dtype=">u8").reshape(-1, 4)[cand]
             order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
             return [self.get(int(s)) for s in cand[order]]
+
+
+_SCAN_CHUNK = 65536
 
 
 def _union(arrs) -> np.ndarray:

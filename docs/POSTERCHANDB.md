@@ -178,7 +178,7 @@ Postgres stays the source of truth until the last step; each step is one setting
    filter values).
 4. **Serve** (`serve`) on server1 — the node whose relay runs it, store at `/var/lib/posterchandb/relay`
    (NOCOW). A query is answered from RAM only while the mirror is ready, nothing it depends on is queued
-   (waits ≤0.5 s), and it does not throw; otherwise Postgres answers it.
+   (waits ≤0.05 s), and it does not throw; otherwise Postgres answers it.
 5. Retire the Postgres event tables once a node has run clean for an agreed period.
 
 A clean close writes `CLEAN`; without it (a crash, a run with the mirror off) the next start copies afresh.
@@ -187,6 +187,17 @@ A clean close writes `CLEAN`; without it (a crash, a run with the mirror off) th
 refused stale version could destroy versions depending on heap order — it now decides first, then deletes
 (PosterChanDB always did). And a long transaction on the relay DB plus any DDL froze every read (a waiting
 ACCESS EXCLUSIVE queues all later readers): the relay's startup housekeeping now uses `lock_timeout` and skips.
+
+**Serve starved the relay the first night** (2026-10-09, clients "not reconnecting"), and every single-threaded
+test passed: (1) a query with no selective set (the global feed, `kinds` + `limit`) intersected the whole
+kind posting list and sorted it — 465 ms on server1's data, under the store lock, so the relay's few query
+threads queued behind each other; it is now a newest-first backward scan that stops once the k-th newest is
+provably newer than anything earlier (a running max of `created_at`, since rows are in arrival order): 4 ms.
+(2) The background word indexer held the lock ~90 ms per 300-event batch; it takes 25. (3) A query waited up
+to 0.5 s for queued writes, and under a firehose the mirror is always a little behind, so most queries waited;
+the wait is 0.05 s and Postgres answers otherwise. `test_posterchandb_global_feed_at_scale.py` (300k events,
+exact against brute force, 4 concurrent clients) and `test_posterchandb_mirror_under_load.py` (lock hold of a
+word batch, served share, latency) each fail on the old code.
 
 Every data-safety rule the relay has learned keeps its test against the new store before it is trusted:
 a read that could not answer is never "empty", a replaceable document is never replaced on the strength

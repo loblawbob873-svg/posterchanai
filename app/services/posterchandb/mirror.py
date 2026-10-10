@@ -55,7 +55,7 @@ def clear_clean_marker(path: str) -> None:
 
 class Mirror:
     def __init__(self, path: str, mode: str, pg_connect, *, flush_interval: float = 300.0, cache_mb: float = 0,
-                 sample: float = 0.05, wait_s: float = 0.5, log=None, maintenance: bool = True):
+                 sample: float = 0.05, wait_s: float = 0.05, log=None, maintenance: bool = True):
         if mode not in ("shadow", "serve"):
             raise ValueError("mirror mode must be shadow or serve")
         self.path = path
@@ -154,7 +154,9 @@ class Mirror:
         maint_mod.lower_priority()
         st, t0, total = self.store, time.monotonic(), self.store.words_pending
         while not self._stop.is_set() and st.words_pending:
-            st.index_pending_words(300)
+            # Small batches: each holds the store lock, and a query waits behind it. 300 at a time held it ~90 ms
+            # (the Postgres-exact tokenizer is ~300 us an event); 25 is ~8 ms.
+            st.index_pending_words(25)
             self._stop.wait(0.01)
         if self._stop.is_set():
             return
