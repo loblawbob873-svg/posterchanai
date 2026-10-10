@@ -20,6 +20,7 @@ import asyncio
 import pytest
 
 from app.services import exodus_vault as V
+from tests.doc_table_mem import mem_tables
 from app.services import exodus_wallet_service as W
 
 VECTOR = ("abandon abandon abandon abandon abandon abandon "
@@ -29,21 +30,6 @@ VECTOR = ("abandon abandon abandon abandon abandon abandon "
 class _User:
     id = 77
     nostr_npub = "a" * 64
-
-
-class _Row:
-    def __init__(self): self.seed_enc = None; self.label = None; self.address_index = 0
-    backed_up_at = None
-    created_at = None
-
-
-class _DB:
-    def __init__(self): self.row = None
-    def query(self, *_a): return self
-    def filter(self, *_a, **_k): return self
-    def first(self): return self.row
-    def add(self, r): self.row = r
-    def commit(self): pass
 
 
 def _run(coro):
@@ -70,7 +56,15 @@ def vault(monkeypatch):
     monkeypatch.setattr("app.services.nostr_store.put_doc", put_doc, raising=False)
     monkeypatch.setattr("app.services.nostr_store.user_storage_seckey",
                         lambda _db, _u: bytes(range(32)), raising=False)
-    return {"docs": docs, "state": state, "db": _DB(), "user": _User()}
+    # The encrypted backup is an operator DocTable row (#161: exodus_tables), held apart from the wallet
+    # document -- which is the whole point of it.
+    mem = mem_tables(monkeypatch)
+    return {"docs": docs, "state": state, "db": None, "user": _User(), "backups": mem}
+
+
+def _backup(vault):
+    from app.services import exodus_tables
+    return _run(exodus_tables.awallet(None, vault["user"].id))
 
 
 # ── rule 1: an unreachable relay is never "no wallet" ─────────────────────────────────────────
@@ -143,7 +137,7 @@ def test_a_lost_document_is_restored_from_the_encrypted_backup(vault):
 
 def test_the_backup_is_ciphertext_not_words(vault):
     _run(V.save_new(vault["db"], vault["user"], VECTOR, None))
-    blob = bytes(vault["db"].row.seed_enc)
+    blob = bytes(_backup(vault).seed_enc)
     assert VECTOR.encode() not in blob
     for word in ("abandon", "about"):
         assert word.encode() not in blob

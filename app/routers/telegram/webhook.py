@@ -2,6 +2,7 @@
 from .messages import _handle_message
 from .callbacks import _handle_callback
 from app.services import settings_store
+from app.services.relay_reader import Unavailable
 from ._common import BackgroundTasks, Session, SessionLocal, User, _MAX_SEEN_IDS, _configure_telegram, logger, router, telegram_service, time
 
 
@@ -132,6 +133,11 @@ async def _from_blocked_account(update: dict, db: Session) -> bool:
             return False
         user = await user_table.aby_telegram_chat(db, str(chat), enabled_only=False)
         return relay_blocklist.is_user_blocked(user)
+    except Unavailable:
+        # The accounts could not be read: whether this sender is blocked is unknown, and "unknown" must not let
+        # a blocked account through (#161). The update is not processed; nothing else can be asked either.
+        logger.warning("[telegram] update dropped: the account table could not be read")
+        return True
     except Exception:
         return False
 

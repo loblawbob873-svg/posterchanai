@@ -36,12 +36,16 @@ _dependencies = {
     'app.services.nostr_store':_module('app.services.nostr_store', user_storage_seckey=lambda *_:None),
     'app.services.settings_store':_module('app.services.settings_store'),
     'app.services.caldav_subscribe':_module('app.services.caldav_subscribe'),
+    # accounts are user_table rows now (#161); the router only names the class in annotations
+    'app.services.user_table':_module('app.services.user_table', UserRow=type('UserRow',(),{})),
+    'app.services.user_settings_table':_module('app.services.user_settings_table'),
 }
 with patch.dict(sys.modules, _dependencies):
     with patch.object(app.services, 'nostr_store', _dependencies['app.services.nostr_store'], create=True), \
          patch.object(app.services, 'settings_store', _dependencies['app.services.settings_store'], create=True):
         _store=_load('app.services._calendar_move_test_store', ROOT/'app/services/caldav_store.py')
     with patch.object(app.services, 'caldav_store', _store, create=True), \
+         patch.object(app.services, 'user_settings_table', _dependencies['app.services.user_settings_table'], create=True), \
          patch.object(app.services, 'caldav_subscribe', _dependencies['app.services.caldav_subscribe'], create=True):
         routes=_load('_calendar_move_test_router', ROOT/'app/routers/calendar.py')
 

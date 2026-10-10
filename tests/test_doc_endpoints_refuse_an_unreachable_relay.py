@@ -79,24 +79,6 @@ class _LiveRelay(_DeadRelay):
         return {}
 
 
-class _Db:
-    class _Q:
-        def __init__(self, u):
-            self._u = u
-
-        def filter(self, *a, **k):
-            return self
-
-        def first(self):
-            return self._u
-
-    def __init__(self, u):
-        self._u = u
-
-    def query(self, *a):
-        return _Db._Q(self._u)
-
-
 class _User:
     id = 1
     nostr_npub = "npub1test"
@@ -117,10 +99,12 @@ class _Base(unittest.TestCase):
             mock.patch.object(client_router.nostr_service, "to_pubkey_hex", lambda x: "f" * 64),
             mock.patch.object(client_router.nostr_service, "npub_of", lambda x: "npub1test"),
             mock.patch.object(client_router, "_setting", lambda db, k, dflt=None: "3052"),
+            # the account itself (#161: a user_table row) -- what is under test is the DOCUMENT read
+            mock.patch.object(client_router.user_table, "aby_npub", mock.AsyncMock(return_value=_User())),
         ]
         for p in self.patches:
             p.start()
-        self.db = _Db(_User())
+        self.db = None      # no SQL behind the routes
 
     def tearDown(self):
         for p in self.patches:

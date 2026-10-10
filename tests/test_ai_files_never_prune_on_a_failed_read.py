@@ -56,9 +56,12 @@ def _run(route, relay, blobs, sha=""):
         deleted.append(sha)
         return True
     user = SimpleNamespace(id=1, nostr_npub="npub1x")
-    db = mock.MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = user
-    with mock.patch.object(store, "_ws_query", relay.query), \
+    db = None                       # no SQL behind the routes (#161); the account comes from user_table
+
+    async def by_npub(_db, _npub):
+        return user
+    with mock.patch.object(C.user_table, "aby_npub", by_npub), \
+         mock.patch.object(store, "_ws_query", relay.query), \
          mock.patch.object(store, "_decode", lambda c, sk, enc: json.loads(c) if c else None), \
          mock.patch.object(store, "user_storage_seckey", lambda db, u: SK), \
          mock.patch.object(store, "delete_doc", mock.AsyncMock(return_value=True)), \

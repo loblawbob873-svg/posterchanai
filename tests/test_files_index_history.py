@@ -11,10 +11,8 @@ class _User:
     nostr_npub = "npub1fake"
 
 
-class _DB:
-    def query(self, *_a, **_k): return self
-    def filter(self, *_a, **_k): return self
-    def first(self): return _User()
+def _DB():
+    return None             # no SQL behind the routes (#161); the account comes from user_table (patched below)
 
 
 class _HistoryStore:
@@ -71,6 +69,7 @@ def test_restore_keeps_the_live_version_elsewhere_and_preserves_the_canonical_ke
             mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda _p: "a" * 64), \
             mock.patch.object(C.nostr_service, "npub_of", lambda _p: "npub1fake"), \
             mock.patch.object(C, "_verify_self_auth", lambda *_: True), \
+            mock.patch.object(C.user_table, "aby_npub", mock.AsyncMock(return_value=_User())), \
             mock.patch.object(C, "_setting", lambda *_: "3052"):
         response = asyncio.run(C.files_index(req, db=_DB()))
 
@@ -93,6 +92,7 @@ def test_restore_rejects_an_invalid_slot_before_reading_the_relay():
             mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda _p: "a" * 64), \
             mock.patch.object(C.nostr_service, "npub_of", lambda _p: "npub1fake"), \
             mock.patch.object(C, "_verify_self_auth", lambda *_: True), \
+            mock.patch.object(C.user_table, "aby_npub", mock.AsyncMock(return_value=_User())), \
             mock.patch.object(C, "_setting", lambda *_: "3052"):
         response = asyncio.run(C.files_index(req, db=_DB()))
     assert response.status_code == 400
@@ -115,6 +115,7 @@ def test_restore_never_replaces_live_state_if_safeguarding_it_fails():
             mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda _p: "a" * 64), \
             mock.patch.object(C.nostr_service, "npub_of", lambda _p: "npub1fake"), \
             mock.patch.object(C, "_verify_self_auth", lambda *_: True), \
+            mock.patch.object(C.user_table, "aby_npub", mock.AsyncMock(return_value=_User())), \
             mock.patch.object(C, "_setting", lambda *_: "3052"):
         response = asyncio.run(C.files_index(req, db=_DB()))
     assert response.status_code == 503

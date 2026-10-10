@@ -32,6 +32,7 @@ def _load(name, path):
 _services = {
     'nostr_store': _module('nostr_store', user_storage_seckey=_blocked),
     'settings_store': _module('settings_store'),
+    'user_table': _module('user_table', UserRow=type('UserRow', (), {})),   # accounts: a relay DocTable (#161)
     'mail_sync': _module('mail_sync'),
     'instance_membership': _module('instance_membership', require_user=_blocked),
     'mail_service': _module('mail_service', **dict.fromkeys((

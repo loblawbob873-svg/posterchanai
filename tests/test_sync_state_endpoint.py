@@ -79,6 +79,10 @@ class _Db:
         return _Db._Q(self._u)
 
 
+async def _by_npub(db, npub):
+    return db._u
+
+
 class _User:
     id = 1
     nostr_npub = "npub1test"
@@ -101,6 +105,8 @@ class SyncStateEndpoint(unittest.TestCase):
             mock.patch.object(client_router.nostr_service, "to_pubkey_hex", lambda x: "f" * 64),
             mock.patch.object(client_router.nostr_service, "npub_of", lambda x: "npub1test"),
             mock.patch.object(client_router, "_setting", lambda db, k, dflt=None: "3052"),
+            # the account behind the key (#161: accounts are user_table rows; the fake db carries it)
+            mock.patch.object(client_router.user_table, "aby_npub", _by_npub),
         ]
         for p in self.patches:
             p.start()

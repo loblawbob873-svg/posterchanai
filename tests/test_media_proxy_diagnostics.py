@@ -30,7 +30,7 @@ def _load_proxy_methods():
         urlsplit=urlsplit, _proxy_client=None, media_user_optional=lambda: None, get_db=lambda: None,
         settings_store=SimpleNamespace(get=lambda *_: ''),
         lb_auth=SimpleNamespace(shared_secret=lambda: '', headers=lambda h: h, is_internal=lambda _r: False),
-        instance_membership=SimpleNamespace(require_user=None), ticket_user=lambda *_: None)
+        instance_membership=SimpleNamespace(require_user=None), ticket_user=None)
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), 'exec'), module.__dict__)
     return module
 
@@ -48,7 +48,9 @@ def proxy(monkeypatch):
     monkeypatch.setattr(routes.settings_store, 'get', lambda *args: 'http://' + SECRET)
     monkeypatch.setattr(routes.lb_auth, 'shared_secret', lambda: SECRET)
     monkeypatch.setattr(routes.lb_auth, 'headers', lambda h: h)
-    monkeypatch.setattr(routes, 'ticket_user', lambda *args: SimpleNamespace(is_admin=False, can_media=True))
+    async def ticket_user(*args):          # async since accounts are a relay DocTable (#161)
+        return SimpleNamespace(is_admin=False, can_media=True)
+    monkeypatch.setattr(routes, 'ticket_user', ticket_user)
     monkeypatch.setattr(routes.media, 'identity', lambda _: SECRET)
     async def allowed(_): pass
     monkeypatch.setattr(routes.instance_membership, 'require_user', allowed)
