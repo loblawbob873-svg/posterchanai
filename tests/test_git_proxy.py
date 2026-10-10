@@ -34,6 +34,12 @@ from app.services.nostr import bip340, nostr_service
 from app.services.nostr.event import build_event
 from app.routers.git import smart_router
 
+# Run as a script, conftest's isolation never loads -- and git_server_proxy_url is a LOCAL-ONLY key, so every
+# put below went into the node's live local_settings.json (2026-10-10: blanked server1's proxy URL and took
+# poster.place/git down). Point the file at a throwaway before anything can write it.
+_LOCAL_TMP = tempfile.mkdtemp(prefix="pc-git-proxy-settings-")
+settings_store._LOCAL_PATH = os.path.join(_LOCAL_TMP, "local_settings.json")
+
 _results = []
 
 
