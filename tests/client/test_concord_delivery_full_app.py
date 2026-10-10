@@ -22,7 +22,7 @@ def test_concord_rejected_room_send_is_visible_and_retry_does_not_sign_again(wid
         await b.js(r'''(()=>{
           const room={name:'Delivery fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
             channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
           inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),
           createChatWrap:async(_bundle,_wraps,_channel,text,owner,sign,tags,kind)=>{
@@ -82,7 +82,7 @@ def test_concord_sends_after_its_database_connection_was_closed():
         await b.js(r'''(()=>{
           const room={name:'Delivery fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
             channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
           inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),
           createChatWrap:async(_bundle,_wraps,_channel,text,owner,sign,tags,kind)=>{

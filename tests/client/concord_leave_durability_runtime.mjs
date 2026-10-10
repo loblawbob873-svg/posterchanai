@@ -64,7 +64,8 @@ function boot() {
       inspectControl: () => ({ name: 'Soapbox', channels: [{ id: 'gen', name: 'general', private: false }] }),
     },
   };
-  window.__PC = { isView: () => false, toast: noop, $: () => null };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: OWNER }), isView: () => false, toast: noop, $: () => null };
   const context = {
     window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop },
@@ -112,43 +113,43 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 
 /* ---- Device A: join, then leave. -------------------------------------------------------- */
 const a = boot();
-a.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+a.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
 if (!(await a.PC.persistArmadaMembership(api(), room))) fail('device A could not publish its membership');
 await a.PC.leaveArmadaMembership(api(), room);
 if (!relay.length) fail('leaving published nothing to the membership vault');
 /* What the Leave button does after the publish returns. */
-a.localStorage.setItem('pc.concord.invites',
-  JSON.stringify(a.PC.removeCommunityByIdentity(JSON.parse(a.localStorage.getItem('pc.concord.invites')), COMMUNITY).rooms));
-if (JSON.parse(a.localStorage.getItem('pc.concord.invites')).length) fail('leave did not remove the room locally');
+a.localStorage.setItem('pc.concord.rooms.v1.'+OWNER,
+  JSON.stringify(a.PC.removeCommunityByIdentity(JSON.parse(a.localStorage.getItem('pc.concord.rooms.v1.'+OWNER)), COMMUNITY).rooms));
+if (JSON.parse(a.localStorage.getItem('pc.concord.rooms.v1.'+OWNER)).length) fail('leave did not remove the room locally');
 
 /* Device A itself must stay out, including against its own replayed announcement. */
 a.PC.recoverOwnedInvite(api(), { ...announcement });
-if (JSON.parse(a.localStorage.getItem('pc.concord.invites')).some(r => r.naddr === NADDR))
+if (JSON.parse(a.localStorage.getItem('pc.concord.rooms.v1.'+OWNER)).some(r => r.naddr === NADDR))
   fail('device A re-joined from its own announcement after leaving');
 
 /* ---- Device B: a second device on the same account, empty local storage. ----------------- */
 const b = boot();
 await b.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
-let rooms = JSON.parse(b.localStorage.getItem('pc.concord.invites') || '[]');
+let rooms = JSON.parse(b.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
 if (rooms.length) fail('the vault tombstone did not keep the left community off a fresh device');
 
 /* Discovery replays the owner's own kind-1 announcement. THIS is the resurrection. */
 b.PC.recoverOwnedInvite(api(), { ...announcement });
-rooms = JSON.parse(b.localStorage.getItem('pc.concord.invites') || '[]');
+rooms = JSON.parse(b.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
 if (rooms.length) fail('the owner\'s own announcement re-joined a community the account had left');
 
 /* …and a membership pass after it must not leave one behind either. */
 await b.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
-rooms = JSON.parse(b.localStorage.getItem('pc.concord.invites') || '[]');
+rooms = JSON.parse(b.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
 if (rooms.length) fail('a membership sync kept a room resurrected from an announcement (' + JSON.stringify(rooms.map(r => r.naddr)) + ')');
 
 /* ---- Rejoining must still work, and must survive the tombstone that is still in the vault. */
 const c = boot();
-c.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+c.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
 if (!(await c.PC.persistArmadaMembership(api(), room))) fail('re-joining could not publish membership');
 const d = boot();
 await d.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
-rooms = JSON.parse(d.localStorage.getItem('pc.concord.invites') || '[]');
+rooms = JSON.parse(d.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
 if (!rooms.some(r => r.communityId === COMMUNITY))
   fail('a deliberate re-join was swallowed by the old tombstone');
 
@@ -157,16 +158,16 @@ if (!rooms.some(r => r.communityId === COMMUNITY))
 {
   relay.splice(0, relay.length);
   const e = boot();
-  e.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+  e.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
   if (!(await e.PC.persistArmadaMembership(api(), room))) fail('stale scenario: could not join');
   const stale = relay.slice();
   await e.PC.leaveArmadaMembership(api(), room);
-  e.localStorage.setItem('pc.concord.invites',
-    JSON.stringify(e.PC.removeCommunityByIdentity(JSON.parse(e.localStorage.getItem('pc.concord.invites')), COMMUNITY).rooms));
+  e.localStorage.setItem('pc.concord.rooms.v1.'+OWNER,
+    JSON.stringify(e.PC.removeCommunityByIdentity(JSON.parse(e.localStorage.getItem('pc.concord.rooms.v1.'+OWNER)), COMMUNITY).rooms));
   relay.splice(0, relay.length, ...stale);
   await e.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
   e.PC.recoverOwnedInvite(api(), { ...announcement });
-  if (JSON.parse(e.localStorage.getItem('pc.concord.invites') || '[]').length)
+  if (JSON.parse(e.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]').length)
     fail('a relay that had not seen the leave yet put the community straight back');
 }
 

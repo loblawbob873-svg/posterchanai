@@ -25,7 +25,7 @@ const p=__PC,api=await p.cordInviteLinksModule(),context=p.cordDirectContext();
 const made=await PosterCord.createCommunity({owner:context.pubkey,name:'Creator fixture',relays:['wss://fixture.invalid'],base:location.origin,signEvent:context.sign});
 const bundle=PosterCord.openInvite(made.url,made.events).bundle;
 const room={communityId:bundle.community_id,name:'Creator fixture',cord:{bundle:{...bundle,control_root:made.secrets.controlRoot}},channels:[]};
-localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
+localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
 const minted=await api.create(bundle,context,{base:location.origin,label:'<img src=x onerror=alert(1)> creator'});
 window.__creatorSecret=minted.entry.signer_sk;
 const event=await context.sign({kind:13303,created_at:Math.floor(Date.now()/1000),tags:[],content:await context.encrypt(context.pubkey,JSON.stringify({entries:[minted.entry],tombstones:[]}))});

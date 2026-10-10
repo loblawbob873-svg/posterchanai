@@ -21,7 +21,8 @@ const room={name:'Politics',communityId:'2e26f107',naddr:'naddr-politics',url:''
   channels:[{name:'general',id:'chan-1'}],cord:{bundle:{relays:['wss://a.example','wss://b.example']}}};
 
 const ctx={console,setTimeout,clearTimeout,setInterval,clearInterval,JSON,Date,Math,URL,Promise,Error,
-  localStorage:store({'pc.concord.invites':JSON.stringify([room]),'pc.concord.active':'0'}),
+  // Rooms and the open room are kept PER ACCOUNT, keyed on the viewer below.
+  localStorage:store({['pc.concord.rooms.v1.'+'a'.repeat(64)]:JSON.stringify([room]),['pc.concord.active.v1.'+'a'.repeat(64)]:'0'}),
   sessionStorage:store({}),
   document:{body:{classList:{contains:()=>false,add(){},remove(){}}},head:el('head'),documentElement:el('html'),
     querySelector:()=>null,querySelectorAll:()=>[],createElement:el,addEventListener(){},removeEventListener(){}},

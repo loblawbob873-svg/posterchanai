@@ -25,13 +25,18 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
   head:{appendChild:noop}, documentElement:{appendChild:noop}, addEventListener:noop,
   body:{classList:{add:noop, remove:noop, contains:c=>c==='concord-view'}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 // THE SAVED ROOM NAMES A CHANNEL THE COMMUNITY NO LONGER HAS.
 const STALE = {name:'general', id:'chan-OLD', streamPubkeys:['b'.repeat(64)]};
 const ROOM = {protocol:'cord', name:'PosterChan', communityId:'cid-1', naddr:'cid-1',
   channels:[STALE], cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 
 vm.runInNewContext(src, {window, document, console, setTimeout:()=>0, clearTimeout:noop,
   URL, atob, crypto:{}, localStorage, sessionStorage:{getItem:()=>null, setItem:noop}});
@@ -66,7 +71,7 @@ if (!asked.includes('chan-NEW'))
  * control read is often PARTIAL — some events back, not all, the ordinary case on a slow relay — so
  * one stale id was enough to delete every channel that read did not mention. Those channels then
  * reported "channel is not readable with this membership" for ever and the community looked empty. */
-const after = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+const after = JSON.parse(localStorage.getItem(CC_ROOMS))[0];
 if ((after.channels || []).length !== 1 || after.channels[0].id !== 'chan-OLD')
   throw new Error('the repair rewrote the saved channel list: ' + JSON.stringify(after.channels));
 
@@ -77,7 +82,7 @@ if ((after.channels || []).length !== 1 || after.channels[0].id !== 'chan-OLD')
               {name:'random',  id:'r1', streamPubkeys:['b'.repeat(64)]},
               {name:'dev',     id:'d1', streamPubkeys:['b'.repeat(64)]}],
     cord:{bundle:BUNDLE}};
-  store['pc.concord.invites'] = JSON.stringify([many]);
+  store[CC_ROOMS] = JSON.stringify([many]);
   const partial = {
     /* Only ONE channel came back this time. */
     inspectControl: () => ({name:'Big', channels:[{id:'g2', name:'general', streamPubkeys:['b'.repeat(64)]}],
@@ -88,7 +93,7 @@ if ((after.channels || []).length !== 1 || after.channels[0].id !== 'chan-OLD')
     },
   };
   await api.readChat(p, partial, BUNDLE, [{id:'ctrl-1'}], many, many.channels[0], []);
-  const kept = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+  const kept = JSON.parse(localStorage.getItem(CC_ROOMS))[0];
   if ((kept.channels || []).length !== 3)
     throw new Error('a partial control read deleted channels: ' + JSON.stringify(kept.channels));
 }
@@ -103,7 +108,7 @@ catch (e) { threw = e; }
 if (!threw) throw new Error('an unreadable community was reported as fine');
 
 /* …and it did NOT overwrite the channel list on the way past. */
-const after2 = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+const after2 = JSON.parse(localStorage.getItem(CC_ROOMS))[0];
 if (!(after2.channels || []).length)
   throw new Error('a control set that could not be read emptied the saved channel list');
 

@@ -55,7 +55,7 @@ const originalWrap=JSON.stringify(sentPackets[0].packet[1]);
 
 // Re-evaluate actual Concord module with only durable encrypted cache retained. No implicit send.
 vm.runInThisContext(fs.readFileSync(concordSource,'utf8').replace('window.PCConcord={','window.__deliveryTest={recover:recoverDeliveries,controls:roomControls};window.__concordStore={get:testMessages,set:saveTestMessages};window.PCConcord={'));
-const reloadedRoom=JSON.parse(data.get('pc.concord.invites'))[0],channel=reloadedRoom.channels.find(c=>c.name==='general');
+const reloadedRoom=JSON.parse(data.get('pc.concord.rooms.v1.'+owner))[0],channel=reloadedRoom.channels.find(c=>c.name==='general');
 PosterCordReader.inspectControl=()=>({name:reloadedRoom.name,controlPubkeys:['8'.repeat(64)],channels:reloadedRoom.channels.map(c=>({...c,streamPubkeys:['6'.repeat(64)]}))});
 window.__deliveryTest.controls.set(reloadedRoom.communityId||reloadedRoom.naddr,[{id:'control'}]);
 window.__PC.viewer=()=>({...originalViewer(),pubkey:other});

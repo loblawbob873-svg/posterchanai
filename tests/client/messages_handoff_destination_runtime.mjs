@@ -10,9 +10,15 @@ const sourcePath=process.argv[2]
   : new URL('../../static/js/client/concord.js',import.meta.url);
 const source=fs.readFileSync(sourcePath,'utf8');
 const rooms=[{communityId:'community:armada',name:'Armada'}];
-const local=new Map([['pc.concord.invites',JSON.stringify(rooms)]]),session=new Map();
+/* Rooms are kept PER ACCOUNT (pc.concord.rooms.v1.<pubkey>). Run twice: once with the account
+ * already known when the handoff lands, once before any session is restored -- the handoff must then
+ * be held, not matched against nobody's (empty) room list and dropped. */
+for(const signedIn of [true,false]){
+const PK='a'.repeat(64);
+const local=new Map([['pc.concord.rooms.v1.'+PK,JSON.stringify(rooms)]]),session=new Map();
 const window={__pcConcordHandoff:{room:'community:armada',channel:'support',
   mobileChatOpen:true,mobileDrawerOpen:false,scroll:{top:417,height:1200,pinned:false}}};
+if(signedIn)window.__PC={viewer:()=>({pubkey:PK})};
 const document={querySelector:()=>null,createElement:()=>({dataset:{}}),
   head:{appendChild(){}},documentElement:{appendChild(){}}};
 const context={window,document,
@@ -28,4 +34,5 @@ if(adopted.room!=='community:armada'||adopted.channel!=='support')
   throw Error('destination reset the selected community/channel: '+JSON.stringify(adopted));
 if(adopted.scroll.top!==417||adopted.scroll.pinned!==false)
   throw Error('destination reset Communities scroll state: '+JSON.stringify(adopted.scroll));
+}
 console.log('messages handoff destination runtime: ok');

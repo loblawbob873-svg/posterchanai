@@ -26,12 +26,17 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
   head:{appendChild:noop}, documentElement:{appendChild:noop}, addEventListener:noop,
   body:{classList:{add:noop, remove:noop, contains:()=>true}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 
 const ROOM = {protocol:'cord', name:'PosterChan', communityId:'cid-1', naddr:'cid-1',
   url:'https://armada.buzz/invite/naddr1#frag',
   channels:[{name:'general', id:'chan-general'}],
   cord:{bundle:{community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']}}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 
 vm.runInNewContext(src, {window, document, console, setTimeout:(f)=>{return 0;}, clearTimeout:noop,
   URL, atob, crypto:{}, localStorage, sessionStorage:{getItem:()=>null, setItem:noop}});
@@ -58,7 +63,7 @@ try { await api.hydrateRoomStreams(p, 0, 'cid-1'); } catch (e) { threw = e; }
 
 /* THE ROOM SURVIVES. Not "the room loaded" — it could not, and that is honest — but it is still
    in the list, so the next attempt can reach it and the person can still see their community. */
-const after = JSON.parse(localStorage.getItem('pc.concord.invites') || '[]');
+const after = JSON.parse(localStorage.getItem(CC_ROOMS) || '[]');
 if (!after.length)
   throw new Error('a community that could not be read was removed from the saved list' +
                   (threw ? ' (threw: ' + threw.message + ')' : ''));

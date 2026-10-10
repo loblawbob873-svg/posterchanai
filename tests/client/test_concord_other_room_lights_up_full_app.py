@@ -24,8 +24,8 @@ SETUP = r"""(()=>{
   const me=__PC.me().pubkey, A='a'.repeat(64), B='b'.repeat(64);
   const room=(name,id,stream)=>({name,communityId:id.repeat(64),naddr:'fixture-'+id,url:'https://fixture.invalid/invite/'+id+'#s',
     channels:[{id:id+'-general',name:'general',streamPubkeys:[stream]}],cord:{bundle:{owner:me,relays:['wss://fixture.invalid']},hydrated:true}});
-  localStorage.setItem('pc.concord.invites',JSON.stringify([room('Room A','c','a'.repeat(64)),room('Room B','d','b'.repeat(64))]));
-  localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room('Room A','c','a'.repeat(64)),room('Room B','d','b'.repeat(64))]));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   window.__subs=[];
   window.PCConcordCache={get:async k=>String(k).includes('control')?[{id:'ctl',kind:1059,pubkey:'9'.repeat(64),created_at:1,tags:[],content:''}]:[],
     put:async()=>{},page:async()=>[],sweepExpired:async()=>0};

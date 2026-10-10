@@ -48,7 +48,7 @@ def test_owner_can_open_and_cancel_rotation_from_actual_settings(width):
         await desktop.login(b)
         await b.js("""(()=>{
           const room={name:'Rotation fixture',communityId:'c'.repeat(64),naddr:'rotation-fixture',channels:[{id:'a'.repeat(64),name:'staff'}],cord:{bundle:{owner:__PC.me().pubkey,channels:[{id:'a'.repeat(64),name:'staff'}],relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'a'.repeat(64),name:'staff',streamPubkeys:[]}]}),inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};
           __PC.switchMessagesTab('concord');
         })()""")
@@ -58,6 +58,6 @@ def test_owner_can_open_and_cancel_rotation_from_actual_settings(width):
         await b.until("!!document.querySelector('[aria-label=\"Review community access\"]')")
         await click(b, '[aria-label="Review community access"] .btn-ghost')
         await b.until("!document.querySelector('[aria-label=\"Review community access\"]')")
-        assert await b.js("!JSON.parse(localStorage.getItem('pc.concord.invites'))[0].cord.refounding")
+        assert await b.js("!JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0].cord.refounding")
     extra="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online','',check,extra))

@@ -56,7 +56,8 @@ function boot() {
       inspectControl: () => ({ name: 'Soapbox', channels: [{ id: 'gen', name: 'general', private: false }] }),
     },
   };
-  window.__PC = { isView: () => false, toast: noop, $: () => null };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: OWNER }), isView: () => false, toast: noop, $: () => null };
   const context = {
     window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop },
@@ -106,7 +107,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 {
   const x = boot();
   const bare = { url: '', naddr: 'naddr1neveropened', communityId: 'naddr1neveropened', name: 'Monero', channels: [], local: false };
-  x.localStorage.setItem('pc.concord.invites', JSON.stringify([bare]));
+  x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([bare]));
   const before = relay.length;
   let ok;
   try { ok = await x.PC.leaveArmadaMembership(api(), bare); }
@@ -119,7 +120,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 /* ---- 2. ONE malformed entry in the stored list must not hide or block every other room. ----- */
 {
   const a = boot();
-  a.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+  a.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
   if (!(await a.PC.persistArmadaMembership(api(), room))) fail('could not publish the membership');
   // Corrupt the newest membership document the way an older/other client might: add an entry whose
   // community_id is not a 32-byte key.
@@ -134,7 +135,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
   const b = boot();
   try { await b.PC.syncArmadaMemberships(api(), { pubkey: OWNER }); }
   catch (e) { fail('a membership sync threw on one malformed entry: ' + (e && e.message)); }
-  const rooms = JSON.parse(b.localStorage.getItem('pc.concord.invites') || '[]');
+  const rooms = JSON.parse(b.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
   if (!rooms.some(r => r.communityId === COMMUNITY)) fail('one malformed entry hid every joined community from a fresh device');
   try { await b.PC.leaveArmadaMembership(api(), rooms.find(r => r.communityId === COMMUNITY)); }
   catch (e) { fail('one malformed entry blocked leaving a valid community: ' + (e && e.message)); }

@@ -24,12 +24,17 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
      here would only mean stubbing the whole DOM to watch a store write. */
   body:{classList:{add:noop, remove:noop, contains:()=>false}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const CH = {name:'general', id:'chan-1', streamPubkeys:['b'.repeat(64)]};
 const ROOM = {protocol:'cord', name:'PosterChan', communityId:'cid-1', naddr:'cid-1',
               channels:[CH], cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 
 const timers = [];
 vm.runInNewContext(src, {window, document, console,
@@ -138,20 +143,20 @@ for(const reason of ['account','membership']){
   for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
   const viewer=p.viewer;
   if(reason==='account')p.viewer=()=>({pubkey:'d'.repeat(64),profile:{}});
-  else store['pc.concord.invites']='[]';
+  else store[CC_ROOMS]='[]';
   deferred.at(-1)();
   for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
   if(api.__testMessages('cid-1').some(m=>m.id==='overlap-stale-'+reason))
     throw new Error('stale '+reason+' decryption committed');
   p.viewer=viewer;
-  store['pc.concord.invites']=JSON.stringify([ROOM]);
+  store[CC_ROOMS]=JSON.stringify([ROOM]);
 }
 
 /* NIP-29 uses public group events rather than encrypted kind-1059 wraps, but it needs the same
    managed+invite-relay lifecycle and must update without leaving and re-entering the room. */
 const NIP={protocol:'nip29',name:'Public group',naddr:'nip-room',groupId:'group-1',relay:'wss://groups.example',
            nip29Hydrated:true,channels:[{name:'general',id:'general'}]};
-store['pc.concord.invites']=JSON.stringify([NIP]);
+store[CC_ROOMS]=JSON.stringify([NIP]);
 api.__testState({community:0,channel:'general'});
 api.startChatLive(p,NIP,NIP.channels[0]);
 const nipFilter=subFilters[0];

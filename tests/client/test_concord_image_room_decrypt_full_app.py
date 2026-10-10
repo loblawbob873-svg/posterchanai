@@ -157,7 +157,7 @@ def _run(store, port, messages, repaints=True):
         await b.js(r'''(()=>{
           const room={name:'Photos',communityId:'c'.repeat(64),naddr:'fixture-community',
             channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           localStorage.setItem('pc.concord.test.fixture-community',JSON.stringify(%s));
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
             inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};

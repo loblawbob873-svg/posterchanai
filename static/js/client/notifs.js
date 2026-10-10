@@ -399,7 +399,9 @@ window.PCNotifsFactory = function(dep){
    * right on a page that never loaded Communities ("i got tagged twice in a concord room today but
    * never got notification"). One entry per room+channel; it leaves when that channel is read. */
   function _concordMentions(){
-    let l; try{ l=JSON.parse(localStorage.getItem('pc.concord.mentions.v1')||'{}'); }catch(_){ l={}; }
+    // Per account (concord.js MENTION_LEDGER + pubkey): the bell of one account never counts another's.
+    const pk=S.ME&&S.ME.pubkey; if(!pk||S.GUEST) return [];
+    let l; try{ l=JSON.parse(localStorage.getItem('pc.concord.mentions.v1.'+pk)||'{}'); }catch(_){ l={}; }
     if(!l||typeof l!=='object'||Array.isArray(l)) return [];
     return Object.values(l).filter(r=>r&&Array.isArray(r.ids)&&r.ids.length&&r.room)
       .map(r=>({room:String(r.room),name:String(r.name||''),channel:String(r.channel||'general'),
@@ -407,7 +409,7 @@ window.PCNotifsFactory = function(dep){
       .sort((a,b)=>b.at-a.at);
   }
   // Read in another window (another monitor, a popped-out Communities) is read here too.
-  try{ window.addEventListener('storage', e => { if(e.key==='pc.concord.mentions.v1') try{ bumpNotif(); }catch(_){} }); }catch(_){}
+  try{ window.addEventListener('storage', e => { if(String(e.key||'').startsWith('pc.concord.mentions.v1.')) try{ bumpNotif(); }catch(_){} }); }catch(_){}
   function bumpNotif(){ const n=notifUnread();
     // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.

@@ -69,7 +69,9 @@ if (notes.length !== before + 1)
 /* A ROOM WITH AN naddr KEEPS ITS EXISTING CURSOR, so changing the key does not re-announce
    history somebody has already read. */
 const ROOMN = {protocol:'cord', naddr:'naddr1x', communityId:'cid-x', channels:[{name:'general', id:'c1'}]};
-store['pc.concord.seen.cid-x:general'] = '5000';
+// The cursor is this ACCOUNT's (pc.concord.seen.v2.<pubkey>.<room>:<channel>): another account's reading
+// of a shared room must never bury this one's mentions.
+store['pc.concord.seen.v2.'+ME+'.cid-x:general'] = '5000';
 const n0 = notes.length;
 api.notifyMentions(p, ROOMN, [msg(4000, 'old @verita', [['p', ME]])], viewer, 'verita', 'general');
 if (notes.length !== n0) throw new Error('a message older than the cursor was announced');

@@ -21,6 +21,11 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
   head:{appendChild:noop}, documentElement:{appendChild:noop}, addEventListener:noop,
   body:{classList:{add:noop, remove:noop, contains:()=>false}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 /* A REAL setTimeout, not queueMicrotask: the prefetch yields between channels so the renderer can
    paint, and collapsing that to a microtask would let the whole loop run before hydration returns —
    the harness would then agree with the bug. */
@@ -34,7 +39,7 @@ const CHANNELS = [CH(0), CH(1), CH(2), CH(3), CH(4), CH(5), CH(6), CH(7)];
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const ROOM = {protocol:'cord', name:'Armada Room', communityId:'cid-1', naddr:'cid-1',
               channels:CHANNELS, cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 api.__testState({community:0, channel:'c0'});
 
 /* Every channel has a full cached page, so nothing here is skipped for being empty. */

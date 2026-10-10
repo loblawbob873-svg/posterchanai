@@ -35,7 +35,13 @@ def test_two_mentions_light_the_bell_and_open_the_room():
         assert not any(int(t or 0) >= 2 for t in await b.js(BELL)), "lit before any mention"
         # Another window (a monitor, a popped-out Communities) records the mentions.
         val = json.dumps(json.dumps(LEDGER))
+        # The ledger is PER ACCOUNT. One an older build wrote at the shared key -- possibly about the
+        # OTHER account on this device -- is not this account's and must light nothing.
         await b.js(f"""(()=>{{const k='pc.concord.mentions.v1',nv={val};localStorage.setItem(k,nv);
+            window.dispatchEvent(new StorageEvent('storage',{{key:k,oldValue:null,newValue:nv,storageArea:localStorage}}));}})()""")
+        await asyncio.sleep(.5)
+        assert not any(int(t or 0) >= 2 for t in await b.js(BELL)), "another account's (pre-separation) mentions lit this bell"
+        await b.js(f"""(()=>{{const k='pc.concord.mentions.v1.'+__PC.me().pubkey,nv={val};localStorage.setItem(k,nv);
             window.dispatchEvent(new StorageEvent('storage',{{key:k,oldValue:null,newValue:nv,storageArea:localStorage}}));}})()""")
         await b.until(BELL + ".some(t=>Number(t)>=2)")
         await b.js("__PC.switchView('notifications')")

@@ -38,7 +38,7 @@ SETUP = r"""(()=>{
      text:'message number '+i+(i%5?'':' with a longer line that wraps so rows differ in height, twice over, twice over'),at:1000+i,kind:9,tags:(window.__imeta&&i%4===1)?[__imeta]:[]});
   const room={name:'Scroll room',communityId:'c'.repeat(64),naddr:'fixture-community',url:'https://fixture.invalid/invite/x#s',
     channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{owner:me,relays:['wss://fixture.invalid']},hydrated:true}};
-  localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:['6'.repeat(64)]}]}),
     inspectChat:async()=>({messages:window.__msgs.slice(),reactions:[],reactionIds:[]}),
     createChatWrap:async(_b,_w,_c,text,_a,_s,tags,kind)=>({rumorId:'f'.repeat(64),wrap:{kind:1059,pubkey:'5'.repeat(64),id:'w'.repeat(64)},ms:Date.now(),tags})};

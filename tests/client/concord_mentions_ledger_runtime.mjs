@@ -21,7 +21,8 @@ function boot(viewing = false) {
     head: { appendChild: noop }, documentElement: { appendChild: noop }, addEventListener: noop };
   let bumps = 0;
   const window = { document, addEventListener: noop, PosterCordReader: { inspectControl: () => ({}) } };
-  window.__PC = { isView: () => false, toast: noop, $: () => null, bumpNotif: () => { bumps++; } };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: ME }), isView: () => false, toast: noop, $: () => null, bumpNotif: () => { bumps++; } };
   const context = { window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop }, setTimeout: () => 0, clearTimeout: noop, setInterval: () => 0, clearInterval: noop,
     TextEncoder, indexedDB: undefined, location: { href: 'https://poster.place/client' }, AbortController };
@@ -34,7 +35,7 @@ const room = { url: '', naddr: 'naddr1lounge', communityId: 'c'.repeat(64), name
 const viewer = { pubkey: ME, npub: 'npub1me', profile: { name: 'verita84' } };
 const now = Date.now();
 const msg = (id, at, tagged) => ({ id, at, pubkey: OTHER, by: 'mozgus', text: tagged ? 'hey @verita84' : 'hello', tags: tagged ? [['p', ME]] : [] });
-const ledger = x => JSON.parse(x.localStorage.getItem('pc.concord.mentions.v1') || '{}');
+const ledger = x => JSON.parse(x.localStorage.getItem('pc.concord.mentions.v1.'+ME) || '{}');
 const count = x => x.C.mentionsUnread();
 
 /* 1. THE REPORT: first read of the channel after being tagged twice while away. */
