@@ -768,6 +768,7 @@ def _start_mirror(store, cfg: dict) -> None:
 
 
 _mirror_ref: dict = {}
+_WS_CLOSE_WAIT = 3.0       # seconds the stop waits for clients' closing handshakes (systemd allows the whole stop 10)
 
 
 def mirror_stats() -> dict:
@@ -1574,7 +1575,11 @@ async def _main(cfg: dict) -> None:
             private.stop()      # or its worker and retry tasks outlive store.close()
         ws.close()
         try:
-            await ws.wait_closed()
+            # BOUNDED. A client that vanished without a closing handshake (a phone, Tor: code 1006) costs
+            # websockets' own 10 s close timeout, so an unbounded wait ran into systemd's TimeoutStopSec=10 and
+            # the relay was SIGKILLed on EVERY stop (measured: all five stops on 2026-10-09) -- before the
+            # PosterChanDB mirror's clean close, the store close and the status cleanup below ever ran.
+            await asyncio.wait_for(ws.wait_closed(), _WS_CLOSE_WAIT)
         except Exception:
             pass
         try:
