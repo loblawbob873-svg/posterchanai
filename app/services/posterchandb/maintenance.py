@@ -137,7 +137,7 @@ class Maintainer:
 
     def __init__(self, store, policy=None, *, interval: float = 600.0, io_mb_s: float = 8.0,
                  cpu_pct: float = 10.0, busy_load: float = 0.75, log=None, now=None, throttle=None,
-                 disk_usage=None):
+                 disk_usage=None, snapshot_hours: float = 24.0):
         self.store = store
         self.policy = policy or (lambda: Policy())
         self.interval = float(interval)
@@ -146,6 +146,7 @@ class Maintainer:
         self.log = log or (lambda *a: None)
         self.now = now or (lambda: int(time.time()))
         self.disk_usage = disk_usage or (lambda: shutil.disk_usage(store.path))
+        self.snapshot_hours = float(snapshot_hours)
         self._thread = None
         self.last = {}
 
@@ -274,7 +275,23 @@ class Maintainer:
         res["guard"] = self.disk_guard(pol)
         c = self.store.compact(pace=self.throttle)
         res["compacted"] = c.get("compacted")
+        res["snapshot"] = self._maybe_snapshot(after_compaction=bool(res["compacted"]))
         return res
+
+    def _maybe_snapshot(self, after_compaction: bool) -> bool:
+        """A compaction makes the last snapshot unusable (it lists the segment that was just deleted), so take
+        one right after; otherwise only every `snapshot_hours`, and only when something was written."""
+        st = self.store
+        if not getattr(st, "snapshots", False) or st._since_snap <= 0:
+            return False
+        age_h = (time.time() - getattr(st, "last_snapshot", 0.0)) / 3600.0
+        if not after_compaction and (self.snapshot_hours <= 0 or age_h < self.snapshot_hours):
+            return False
+        try:
+            return st.snapshot() is not None
+        except OSError as e:
+            self.log("[posterchandb] snapshot failed: %r" % (e,))
+            return False
 
     def _cap_mask(self, pol: Policy) -> np.ndarray:
         """The relay's count cap: prunable + preserve-ok events beyond the newest `max_events` overall."""

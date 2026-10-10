@@ -357,3 +357,58 @@ def test_derived_tags_and_deletions_survive_a_restart(tmp_path):
     assert ids(s2.query({"#p": [author], "_include_quotes": True})) == [quote["id"]]
     assert s2.query({"ids": [gone["id"]]}) == []
     s2.close()
+
+
+# ---------------------------------------------------------------- planner helpers and insert cost
+def test_set_helpers_equal_pythons_sets():
+    import numpy as np
+    from app.services.posterchandb.store import _intersect, _union, _Postings
+    r = random.Random(4)
+    for _ in range(300):
+        a = sorted(set(r.randrange(5000) for _ in range(r.randint(0, 300))))
+        b = sorted(set(r.randrange(5000) for _ in range(r.randint(0, 300))))
+        A, B = np.array(a, dtype=np.uint32), np.array(b, dtype=np.uint32)
+        assert list(_intersect(A, B)) == sorted(set(a) & set(b))
+        assert list(_union([A, B])) == sorted(set(a) | set(b))
+        dup = np.array(sorted(a + a[: len(a) // 2]), dtype=np.uint32)
+        assert list(_union([dup])) == a
+    p = _Postings()
+    seqs = list(range(0, 4000, 3))
+    for s in seqs[:900]:
+        p.add(7, s)
+    p.merge()
+    for s in seqs[900:]:
+        p.add(7, s)
+    p.add(7, 5)            # a derived tag added later for an OLD event: out of order in the delta
+    probe = np.array(range(0, 4000), dtype=np.uint32)
+    assert set(np.nonzero(p.member(7, probe))[0]) == set(seqs) | {5}
+
+
+def test_an_insert_never_reads_a_whole_kind(tmp_path, monkeypatch):
+    """With tens of thousands of notes stored, storing one more must touch only small posting lists — the
+    quote back-fill once fetched EVERY kind-1 id per kind-1 insert, so ingest slowed as the store grew."""
+    from app.services.posterchandb import store as S
+    s = Store(str(tmp_path / "db"), flush_interval=3600, direct_durable=False)
+    pk = hx()
+    base = int(time.time()) - 10000
+    for i in range(20000):
+        s.put(mk(kind=1, pubkey=pk if i % 2 else None, created_at=base + i % 5000, content="n"), origin="wot")
+    for i in range(200):
+        s.put(mk(kind=30078, pubkey=pk, created_at=base + i, tags=[["d", ""]], content="d"), origin="wot")
+    s.flush()
+    seen = []
+    real = S._Postings.get
+
+    def spy(self, key):
+        out = real(self, key)
+        seen.append(len(out))
+        return out
+    monkeypatch.setattr(S._Postings, "get", spy)
+    for ev in (mk(kind=1, pubkey=pk, tags=[["q", hx()], ["e", hx()]], content="quote"),
+               mk(kind=30078, pubkey=pk, tags=[["d", ""]], content="doc"),
+               mk(kind=5, pubkey=pk, tags=[["a", "30078:%s:" % pk], ["e", hx()]]),
+               mk(kind=1, pubkey=pk, content="plain")):
+        seen.clear()
+        s.put(ev, origin="direct")
+        assert max(seen or [0]) <= 400, ("an insert read a posting list of %d entries" % max(seen), ev["kind"])
+    s.close()

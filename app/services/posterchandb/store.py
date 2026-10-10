@@ -33,13 +33,14 @@ import struct
 import threading
 import time
 import zlib
+from functools import lru_cache
 
 import numpy as np
 
 from app.services.nostr.quotes import quote_pubkeys, quoted_ids_without_author, remember_quote_authors
 from app.services.nostr_relay import store as relay_rules   # the relay's own rule constants: one source
 
-from . import tsparser
+from . import snapshot, tsparser
 from .codec import Codec
 
 MAGIC = b"PCDB1\n"
@@ -47,6 +48,7 @@ OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3   # OP_PUT payload: op, origin byte, codec
 _FRAME = struct.Struct("<II")
 
 
+@lru_cache(maxsize=1 << 17)    # index keys repeat constantly (k:1, an author's au:/ak:): hashing was ~10% of ingest
 def _h(s: str) -> int:
     return int.from_bytes(hashlib.blake2b(s.encode("utf-8"), digest_size=8).digest(), "little")
 
@@ -145,6 +147,28 @@ class _Postings:
             return np.zeros(0, dtype=np.uint32)
         return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
+    def member(self, key: int, seqs: np.ndarray) -> np.ndarray:
+        """Boolean mask: which of `seqs` carry `key` — binary search inside each run's slice for the key,
+        no copy of the posting list (a common key like an empty `d` can hold millions)."""
+        seqs = np.asarray(seqs, dtype=np.uint32)
+        out = np.zeros(len(seqs), dtype=bool)
+        if not len(seqs):
+            return out
+        k = np.uint64(key)
+        for keys, starts, post in self.runs:
+            i = int(np.searchsorted(keys, k))
+            if i < len(keys) and keys[i] == k:
+                sl = post[starts[i]:starts[i + 1]]
+                if len(sl) > 1 and not bool(np.all(sl[1:] >= sl[:-1])):
+                    sl = np.sort(sl)
+                pos = np.searchsorted(sl, seqs)
+                pos[pos >= len(sl)] = len(sl) - 1
+                out |= sl[pos] == seqs
+        d = self.delta.get(key)
+        if d:
+            out |= np.isin(seqs, np.asarray(d, dtype=np.uint32))
+        return out
+
     def merge(self, dead=None) -> None:
         if self.delta:
             items = sorted(self.delta.items())
@@ -204,7 +228,8 @@ class Store:
 
     def __init__(self, path: str, *, zdict: bytes = b"", flush_interval: float = 300.0,
                  direct_durable: bool = True, segment_bytes: int = SEGMENT_BYTES,
-                 compact_dead_pct: float = 40.0, admit=None, log=None):
+                 compact_dead_pct: float = 40.0, admit=None, log=None, snapshots: bool = True,
+                 snapshot_min_events: int = 20000):
         self.path = path
         self.codec = Codec(zdict)
         self.flush_interval = float(flush_interval)
@@ -214,7 +239,22 @@ class Store:
         self.log = log or (lambda *a: None)
         # admit(nbytes) -> bool: may a closed segment stay resident after it is read at startup? (cache.py)
         self.admit = admit or (lambda n: True)
+        self.snapshots = bool(snapshots)
+        self.snapshot_min_events = int(snapshot_min_events)
+        self._since_snap = 0          # log records written since the last snapshot (what a restart would replay)
+        self.last_open = {}
         self._lock = threading.RLock()
+        self._reset_state()
+        self._flushed = 0        # bytes of the active segment's arena that are on disk
+        self._pending_n = 0
+        self._last_flush = time.monotonic()
+        self._active = 0
+        self._file = None
+        os.makedirs(path, exist_ok=True)
+        self._open()
+
+    def _reset_state(self) -> None:
+        """Every index and column, empty — used before a full replay (and after a snapshot that failed part-way)."""
         # per-event columns (index = sequence number)
         self.arenas: dict = {}                     # segment id -> its file's bytes (resident) or None (cold)
         self.seg_size: dict[int, int] = {}         # bytes of each segment (file + unflushed tail)
@@ -247,13 +287,6 @@ class Store:
         self.idx = _Postings()       # author+kind, author, kind, single-letter tags
         self.words = _Postings()     # search
         self.dprefix = _Prefix()     # `#d~` prefix reads
-        self._flushed = 0        # bytes of the active segment's arena that are on disk
-        self._pending_n = 0
-        self._last_flush = time.monotonic()
-        self._active = 0
-        self._file = None
-        os.makedirs(path, exist_ok=True)
-        self._open()
 
     # ---------------------------------------------------------------- disk
     def _seg_path(self, sid: int) -> str:
@@ -286,10 +319,20 @@ class Store:
             pass
 
     def _open(self) -> None:
+        t0 = time.monotonic()
         sids = self._segments()
         if not sids:
             self._new_segment(1)
             sids = [1]
+        meta = None
+        if self.snapshots:
+            ok, why, meta = snapshot.load(self)
+            if not ok:
+                if meta is None and why != "no snapshot":
+                    self.log("[posterchandb] snapshot not used: %s — replaying the whole log" % why)
+                self._reset_state()
+                meta = None
+        replayed = 0
         for sid in sids:
             p = self._seg_path(sid)
             with open(p, "rb") as f:
@@ -297,7 +340,13 @@ class Store:
             self.seg_bytes.setdefault(sid, 0)
             self.seg_dead.setdefault(sid, 0)
             self.seg_markers.setdefault(sid, [])
-            good = self._replay(sid, data)
+            if meta is not None and sid < meta["active"]:
+                good = len(data)                       # closed and covered by the snapshot: nothing to parse
+            else:
+                start = meta["flushed"] if (meta is not None and sid == meta["active"]) else None
+                n0 = len(self.off)
+                good = self._replay(sid, data, start)
+                replayed += len(self.off) - n0
             if good < len(data):
                 # Only the LAST segment can legitimately have a torn tail; an earlier one means a
                 # crash mid-compaction left a partial copy — its records are also in a later segment.
@@ -314,12 +363,19 @@ class Store:
         self._flushed = self.seg_size[self._active]
         self._file = open(self._seg_path(self._active), "ab")
         self._merge_all()
+        self._since_snap = replayed if meta is not None else len(self.off)
+        try:
+            self.last_snapshot = os.path.getmtime(os.path.join(self.path, snapshot.NAME))
+        except OSError:
+            self.last_snapshot = 0.0
+        self.last_open = {"snapshot": meta is not None, "events": len(self.off), "replayed": replayed,
+                          "seconds": round(time.monotonic() - t0, 3)}
 
-    def _replay(self, sid: int, data) -> int:
+    def _replay(self, sid: int, data, start=None) -> int:
         if not data.startswith(MAGIC):
             raise ValueError("not a PosterChanDB segment: %s" % self._seg_path(sid))
         mv = memoryview(data)
-        i = len(MAGIC)
+        i = start if start else len(MAGIC)
         while i + _FRAME.size <= len(data):
             n, crc = _FRAME.unpack_from(data, i)
             j = i + _FRAME.size
@@ -363,6 +419,7 @@ class Store:
         arena += payload
         self.seg_size[self._active] = len(arena)
         self._pending_n += 1
+        self._since_snap += 1
         return start
 
     def _merge_all(self) -> None:
@@ -419,11 +476,28 @@ class Store:
             return self.flush()
         return 0
 
+    def snapshot(self):
+        """Write an index snapshot now (flushes first). None while a compaction is running."""
+        with self._lock:
+            if self._file is None or self._compacting:
+                return None
+            self.flush()
+            res = snapshot.save(self)
+            self._since_snap = 0
+            self.last_snapshot = time.time()
+            return res
+
     def close(self) -> None:
         with self._lock:
             if self._file is None:
                 return
             self.flush()
+            if self.snapshots and self._since_snap >= self.snapshot_min_events:
+                try:
+                    snapshot.save(self)          # a clean stop: the next start loads instead of re-indexing
+                    self._since_snap = 0
+                except OSError as e:
+                    self.log("[posterchandb] snapshot at close failed (%s) — the next start replays" % e)
             self._file.close()
             self._file = None
             for fd in self._fds.values():
@@ -509,6 +583,20 @@ class Store:
             o = np.argsort(k, kind="stable")
             self._id_runs.append((k[o], v[o]))
 
+    def _merge_ids_once_more(self) -> None:
+        """Merge the two newest id runs regardless of size (snapshot: one run)."""
+        if len(self._id_runs) < 2:
+            return
+        seg = np.frombuffer(self.seg, dtype=np.uint32) if len(self.seg) else None
+        kb, vb = self._id_runs.pop()
+        ka, va = self._id_runs.pop()
+        k = np.concatenate([ka, kb]); v = np.concatenate([va, vb])
+        if seg is not None:
+            keep = seg[v] != DROPPED
+            k, v = k[keep], v[keep]
+        o = np.argsort(k, kind="stable")
+        self._id_runs.append((k[o], v[o]))
+
     def _seq_of(self, eid: str):
         if not isinstance(eid, str) or len(eid) != 64:
             return None
@@ -553,11 +641,12 @@ class Store:
             return self._live(rows)
         d = _first_d(ev.get("tags") or [])
         d = d if isinstance(d, str) else str(d)
+        rows = np.asarray(rows, dtype=np.uint32)
         if d:     # a stored version matches if ANY of its d tags is this value (the relay joins event_tags)
-            return self._live(np.intersect1d(rows, self.idx.get(_h("t:d:%s" % d))))
+            return self._live(rows[self.idx.member(_h("t:d:%s" % d), rows)])
         # empty d = no d tag at all OR an explicit ["d", ""]
-        return self._live(np.union1d(np.intersect1d(rows, self.idx.get(_h("nod:%s:%d" % (pk, kind)))),
-                                     np.intersect1d(rows, self.idx.get(_h("t:d:")))))
+        m = self.idx.member(_h("nod:%s:%d" % (pk, kind)), rows) | self.idx.member(_h("t:d:"), rows)
+        return self._live(rows[m])
 
     def put(self, ev: dict, *, direct: bool = False, origin: str | None = None) -> str:
         """Store a (signature-verified) event, by EXACTLY the rules of the relay's _insert_one, which
@@ -620,7 +709,8 @@ class Store:
         for recipient in quote_pubkeys(ev, resolved):
             self.add_derived_tag(eid, "_quote_author", recipient)
         if int(ev["kind"]) == 1:
-            for s in self._live(np.intersect1d(self.idx.get(_h("t:q:%s" % eid)), self.idx.get(_h("k:1")))):
+            quoting = np.asarray(self.idx.get(_h("t:q:%s" % eid)), dtype=np.uint32)
+            for s in self._live(quoting[np.frombuffer(self.kind, dtype=np.uint32)[quoting] == 1] if len(quoting) else []):
                 q = self.get(s)
                 if eid in quoted_ids_without_author({"kind": 1, "tags": q["tags"]}):
                     self.add_derived_tag(q["id"], "_quote_author", ev["pubkey"])
@@ -694,8 +784,8 @@ class Store:
             elif t[0] == "a":
                 parts = str(t[1]).split(":", 2)
                 if len(parts) == 3 and parts[1] == pk and parts[0].isdigit():
-                    hit = np.intersect1d(self.idx.get(_h("t:d:%s" % parts[2])),
-                                         self.idx.get(_h("ak:%s:%d" % (pk, int(parts[0])))))
+                    rows = np.asarray(self.idx.get(_h("ak:%s:%d" % (pk, int(parts[0])))), dtype=np.uint32)
+                    hit = rows[self.idx.member(_h("t:d:%s" % parts[2]), rows)] if len(rows) else rows
                     for s in hit:
                         s = int(s)
                         if s < len(self.dead) and not self.dead[s] and self.created[s] <= ev["created_at"]:
@@ -706,11 +796,11 @@ class Store:
         the retained kind-5 naming it (`e`) is the record, even when the deletion arrived first."""
         if ev["kind"] in (5, 1059):
             return False
-        for s in np.intersect1d(self.idx.get(_h("t:e:%s" % ev["id"])),
-                                self.idx.get(_h("ak:%s:5" % ev["pubkey"]))):
-            if not self.dead[int(s)]:
-                return True
-        return False
+        naming = np.asarray(self.idx.get(_h("t:e:%s" % ev["id"])), dtype=np.uint32)
+        if not len(naming):
+            return False
+        mine = naming[self.idx.member(_h("ak:%s:5" % ev["pubkey"]), naming)]
+        return any(not self.dead[int(s)] for s in mine)
 
     def kill(self, seqs) -> int:
         """Auto-clean: mark events dead durably (an OP_DEAD marker each). Returns how many changed.
@@ -823,31 +913,36 @@ class Store:
             return self._seq_of(eid)
 
     def query(self, flt: dict, now: int | None = None) -> list:
-        """One NIP-01 filter (+ NIP-50 `search`), newest first, `limit` applied. Dead and expired
-        events are never returned."""
+        """One NIP-01 filter (+ NIP-50 `search`), exactly as the relay's _query_one answers it:
+        ORDER BY created_at DESC, id DESC, `limit or 500` clamped to 1..5000, dead and expired never returned.
+
+        Planning: only the SELECTIVE parts of a filter (ids, authors, tags, `#d~`, search words) are turned
+        into posting lists, intersected smallest-first by binary search; `kinds` with anything selective is
+        a column check on what is left, never the union of every event of those kinds. Ordering uses the
+        created_at column and the in-RAM ids, so only the events actually returned are decoded."""
         now = int(time.time()) if now is None else now
         with self._lock:
+            n = len(self.off)
+            if not n:
+                return []
             sets = []
-            if flt.get("ids"):
-                s = [self._seq_of(i) for i in flt["ids"] if isinstance(i, str) and len(i) == 64]
-                sets.append(np.array(sorted(x for x in s if x is not None), dtype=np.uint32))
+            ids = flt.get("ids")
+            if ids:
+                got = [self._seq_of(i) for i in ids if isinstance(i, str) and len(i) == 64]
+                sets.append(np.unique(np.array([x for x in got if x is not None], dtype=np.uint32)))
             authors, kinds = flt.get("authors"), flt.get("kinds")
+            kinds_done = False
             if authors and kinds:
-                sets.append(np.unique(np.concatenate([self.idx.get(_h("ak:%s:%d" % (a, k)))
-                                                      for a in authors for k in kinds] or [np.zeros(0, np.uint32)])))
+                sets.append(_union([self.idx.get(_h("ak:%s:%d" % (a, int(k)))) for a in authors for k in kinds]))
+                kinds_done = True
             elif authors:
-                sets.append(np.unique(np.concatenate([self.idx.get(_h("au:%s" % a)) for a in authors]
-                                                     or [np.zeros(0, np.uint32)])))
-            elif kinds:
-                sets.append(np.unique(np.concatenate([self.idx.get(_h("k:%d" % k)) for k in kinds]
-                                                     or [np.zeros(0, np.uint32)])))
+                sets.append(_union([self.idx.get(_h("au:%s" % a)) for a in authors]))
             for key, vals in flt.items():
                 if not (isinstance(key, str) and key.startswith("#") and vals):
                     continue
                 if len(key) == 2:
                     tags = [key[1]] + (["_quote_author"] if key == "#p" and flt.get("_include_quotes") is True else [])
-                    sets.append(np.unique(np.concatenate([self.idx.get(_h("t:%s:%s" % (tg, v)))
-                                                          for tg in tags for v in vals])))
+                    sets.append(_union([self.idx.get(_h("t:%s:%s" % (tg, v))) for tg in tags for v in vals]))
                 elif len(key) == 3 and key.endswith("~"):
                     if key[1] != "d":
                         return []          # prefix matching is indexed for `d` only — the app's one use
@@ -856,49 +951,78 @@ class Store:
             if flt.get("search"):
                 words = search_words(flt["search"])
                 if not words:
-                    return []
+                    return []              # plainto_tsquery with no lexemes matches nothing
                 for w in words:
-                    sets.append(np.unique(self.words.get(_h(w))))
-            n = len(self.off)
+                    sets.append(_union([self.words.get(_h(w))]))
+            kind_col = np.frombuffer(self.kind, dtype=np.uint32)
             if sets:
+                sets.sort(key=len)
                 cand = sets[0]
-                for s in sets[1:]:
-                    cand = np.intersect1d(cand, s, assume_unique=True)
+                for other in sets[1:]:
+                    if not len(cand):
+                        break
+                    cand = _intersect(cand, other)
+                if kinds and not kinds_done and len(cand):
+                    cand = cand[np.isin(kind_col[cand], np.asarray([int(k) for k in kinds], dtype=np.uint32))]
+            elif kinds:
+                cand = _union([self.idx.get(_h("k:%d" % int(k))) for k in kinds])
             else:
                 cand = np.arange(n, dtype=np.uint32)
             if not len(cand):
                 return []
-            created = np.frombuffer(self.created, dtype=np.uint64) if n else np.zeros(0, np.uint64)
-            expires = np.frombuffer(self.expires, dtype=np.uint64) if n else np.zeros(0, np.uint64)
-            dead = np.frombuffer(self.dead, dtype=np.uint8) if n else np.zeros(0, np.uint8)
+            created = np.frombuffer(self.created, dtype=np.uint64)
+            expires = np.frombuffer(self.expires, dtype=np.uint64)
+            dead = np.frombuffer(self.dead, dtype=np.uint8)
             keep = dead[cand] == 0
             exp = expires[cand]
             keep &= (exp == 0) | (exp > now)
-            if "since" in flt:
+            if "since" in flt and flt["since"] is not None:
                 keep &= created[cand] >= int(flt["since"])
-            if "until" in flt:
+            if "until" in flt and flt["until"] is not None:
                 keep &= created[cand] <= int(flt["until"])
             cur = flt.get("_cursor")
             if isinstance(cur, list) and len(cur) == 2:
                 c0, c1 = int(cur[0]), str(cur[1])
                 cc = created[cand]
                 keep &= cc <= c0
-                same = np.nonzero(keep & (cc == c0))[0]
-                for j in same:              # equal timestamps: page on the id (`e.id < cursor id`)
+                for j in np.nonzero(keep & (cc == c0))[0]:   # equal timestamps: page on the id (`e.id < cursor`)
                     if not self._id_hex(int(cand[j])) < c1:
                         keep[j] = False
             cand = cand[keep]
-            # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
-            limit = max(1, min(int(flt.get("limit") or 500), 5000))
             if not len(cand):
                 return []
+            # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
+            limit = max(1, min(int(flt.get("limit") or 500), 5000))
             c = created[cand]
             if len(cand) > limit:
                 # keep every event at the cut-off timestamp: the id decides among them below
                 cut = np.partition(c, len(c) - limit)[len(c) - limit]
                 sel = c >= cut
                 cand, c = cand[sel], c[sel]
-            evs = [self.get(int(s)) for s in cand]
-            # ORDER BY created_at DESC, id DESC — exactly the relay's order
-            evs.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
-            return evs[:limit]
+            # ORDER BY created_at DESC, id DESC — the id as four big-endian words is its exact hex order
+            idw = np.frombuffer(self.ids, dtype=">u8").reshape(-1, 4)[cand]
+            order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
+            return [self.get(int(s)) for s in cand[order]]
+
+
+def _union(arrs) -> np.ndarray:
+    """Sorted unique union of posting lists. A single list that is already ascending (the usual case:
+    postings are appended in sequence order) is de-duplicated in one pass instead of sorted."""
+    arrs = [a for a in arrs if len(a)]
+    if not arrs:
+        return np.zeros(0, dtype=np.uint32)
+    a = arrs[0] if len(arrs) == 1 else np.concatenate(arrs)
+    if len(arrs) == 1 and (len(a) < 2 or bool(np.all(a[1:] >= a[:-1]))):
+        return a if len(a) < 2 else a[np.concatenate(([True], a[1:] != a[:-1]))]
+    return np.unique(a)
+
+
+def _intersect(small: np.ndarray, big: np.ndarray) -> np.ndarray:
+    """Both sorted and unique: binary-search the smaller in the larger (m log n, no sort of either)."""
+    if len(small) > len(big):
+        small, big = big, small
+    if not len(small) or not len(big):
+        return small[:0]
+    pos = np.searchsorted(big, small)
+    pos[pos >= len(big)] = len(big) - 1
+    return small[big[pos] == small]
