@@ -1423,6 +1423,20 @@ class RelayStore:
     async def wot_members(self) -> set:
         return await self._r(self._wot_members_sync)
 
+    def _wot_row_sync(self, pubkey: str):
+        """(depth, added_at) of one member, or None -- the relay trace (nostr_relay/aggregates.py)."""
+        r = self._conn().execute("SELECT depth, added_at FROM wot WHERE pubkey=?", (pubkey,)).fetchone()
+        return (int(r[0]), int(r[1])) if r else None
+
+    def _wot_among_sync(self, pubkeys: list) -> list:
+        """Which of `pubkeys` are members."""
+        pks = [p for p in pubkeys if _is_hex64(p)]
+        if not pks:
+            return []
+        rows = self._conn().execute("SELECT pubkey FROM wot WHERE pubkey IN (%s)" % ",".join("?" * len(pks)),
+                                    pks).fetchall()
+        return [r[0] for r in rows]
+
     def _wot_missing_metadata_sync(self) -> list:
         # Pubkeys lacking lookup metadata (kind-0 profile and/or kind-10002 relay list).
         # Computed with SET MATH over a few indexed kind-scans — NOT per-member correlated

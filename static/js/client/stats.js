@@ -161,6 +161,9 @@
       // key yet) renders an empty card instead of throwing on cm.meme.series.
       const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank, meme:blank}, CT.metrics||{});
       const chat = (_data.chat||{}).series || [];
+      // The relay counts these figures itself; when it could not be asked they are UNKNOWN ("—"), never 0.
+      const unknown = !!_data.relay_unavailable;
+      const rsum = a => (a ? nf(sum(a)) : '—');
       // Per-game bars follow the selected range too (the last section that didn't). Fall back to the
       // all-time breakdown only if an older server hasn't got per-window figures.
       const gm = (W.by_game && Object.keys(W.by_game).length) ? W.by_game : (G.by_game || {});
@@ -170,15 +173,17 @@
                         connect4:'🔴 Connect Four', blackjack:'🃏 Blackjack', holdem:'🂡 Hold’em'};
 
       return `
+        ${unknown ? `<p class="st-note muted small">The relay could not be asked for its numbers just now, so
+          they show as unknown (—) rather than zero. This page retries on its next refresh.</p>` : ''}
         <div class="st-ranges">${RANGES.map(([k,l])=>
           `<button class="st-range${_range===k?' on':''}" data-range="${k}">${enc(l)}</button>`).join('')}</div>
 
         <div class="st-hero" style="--acc:${M.notes[0]}">
           <div class="st-herohd">
             <div><div class="st-lbl">🖊️ Notes ${enc(rateLabel())}</div>
-              <div class="st-hnum">${nf(sum(notes))}</div>
+              <div class="st-hnum">${rsum(S.notes)}</div>
               <div class="muted small">in the last ${_range==='minute'?'hour':_range==='hour'?'24 hours':'30 days'}</div></div>
-            <div class="st-peak muted small">peak ${nf(Math.max(0,...notes))}</div>
+            <div class="st-peak muted small">peak ${S.notes ? nf(Math.max(0,...notes)) : '—'}</div>
           </div>
           <div class="st-herochart">${barChart(notes, M.notes[0], 150)}</div>
         </div>
@@ -191,8 +196,8 @@
           ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published to this server in the selected range. '
             + 'Excludes the throwaway keys NIP-17 signs every DM with, and zap-receipt services \u2014 counting those '
             + 'reported 19,347 \u201cpeople\u201d over 30 days on a node with 128 names, of which 16,590 were gift wraps.')}
-          ${tile('notes '+rangeWord(), nf(sum(S.notes||[])))}
-          ${tile('Lightning zaps '+rangeWord(), nf(sum(S.zaps||[])))}
+          ${tile('notes '+rangeWord(), rsum(S.notes))}
+          ${tile('Lightning zaps '+rangeWord(), rsum(S.zaps))}
           ${tile('Monero zaps '+rangeWord(), S.monero_zaps ? nf(sum(S.monero_zaps)) : '—', 'Public Monero tip notes published directly to this server; private payments are not counted')}
         </div>
         <div class="muted small st-hint">All time:</div>
@@ -205,7 +210,7 @@
 
         <h3 class="st-sec">🤖 AI &amp; media <span class="st-rangelbl">${enc(counterRangeWord())}</span></h3>
         <div class="st-grid">
-          ${seriesCard('chat','💬','AI chat','#22d3ee', chat, inRange(chat), T.ai_requests, false)}
+          ${seriesCard('chat','💬','AI chat','#22d3ee', chat, (_data.chat||{}).series ? inRange(chat) : null, T.ai_requests, false)}
           ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, inRange(cm.image), cm.image.total, isNew)}
           ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, inRange(cm.music), cm.music.total, isNew)}
           ${seriesCard('video','🎬','Video','#34d399', cm.video.series, inRange(cm.video), cm.video.total, isNew)}
@@ -217,7 +222,7 @@
         <h3 class="st-sec">🎮 Games &amp; streams <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-tiles">
           ${tile('games played '+rangeWord(), nf(W.games))}
-          ${tile('streams '+rangeWord(), nf(sum(S.streams||[])))}
+          ${tile('streams '+rangeWord(), rsum(S.streams))}
           ${tile('games all time', nf(G.total))}
           ${tile('streams all time', nf(T.streams))}
         </div>
@@ -226,7 +231,8 @@
           <div class="st-grow"><span class="st-glbl">${enc(GAME_LBL[k]||k)}</span>
             <span class="st-gbar"><i style="width:${Math.round((gm[k]/gmax)*100)}%"></i></span>
             <span class="st-gnum">${nf(gm[k])}</span></div>`).join('')
-          : `<div class="muted small">No games in the ${enc(rangeWord())} — try a longer range.</div>`}</div>
+          : (W.games == null ? `<div class="muted small">Unknown — the relay could not be asked.</div>`
+             : `<div class="muted small">No games in the ${enc(rangeWord())} — try a longer range.</div>`)}</div>
 
         ${isNew ? `<div class="st-note muted small">Items marked <span class="st-new">new</span> are counted
           from when this feature shipped: generated media isn't stored server-side, and call signaling is
@@ -392,7 +398,8 @@
               <span class="st-gbar"><i style="width:${Math.round(((org[k].total|0)/omax)*100)}%"></i></span>
               <span class="st-gnum">${nf(org[k].total)}</span>
               <span class="st-gday muted small">+${nf(org[k].day)}/24h</span></div>`;
-          }).join('')}</div>` : `<p class="muted">No stored events yet.</p>`}
+          }).join('')}</div>` : (R.origins == null && _data.relay_unavailable
+            ? `<p class="muted">Unknown — the relay could not be asked.</p>` : `<p class="muted">No stored events yet.</p>`)}
 
         <h3 class="st-sec">🧹 Housekeeping</h3>
         <div class="st-tiles">

@@ -98,10 +98,21 @@ def test_events_are_not_filtered_only_the_headcount_is(db):
 def test_no_headcount_in_this_module_may_skip_the_rule():
     """A new metric is exactly how this comes back: `count(DISTINCT pubkey)` reads like the obvious
     way to count people and is wrong everywhere in this file. Pins the RULE (every distinct-pubkey
-    count goes through _PERSON_PUBKEY), not any particular call."""
+    count goes through _PERSON_PUBKEY), not any particular call. The counting moved into the relay
+    process (nostr_relay/aggregates.py, #161), so both modules are held to it."""
     import inspect
-    src = inspect.getsource(st)
+    from app.services.nostr_relay import aggregates
+    src = inspect.getsource(st) + inspect.getsource(aggregates)
     bare = [ln.strip() for ln in src.splitlines()
             if re.search(r"count\(DISTINCT\s+pubkey\s*\)", ln, re.I) and "SELECT" in ln.upper()]
     assert not bare, "a distinct-pubkey headcount that does not exclude one-time keys: %r" % bare
     assert src.count("_PERSON_PUBKEY") >= 4      # the definition + every place it is used
+
+
+def test_posterchandb_counts_people_by_the_same_rule(tmp_path):
+    """The relay counts from PosterChanDB when it serves; the same rows must give the same 3 people there."""
+    from tests.relay_agg_fixture import ev, pcdb_source, sql_source
+    evs = [ev(r["pubkey"], r["kind"], r["created_at"], origin=r["origin"]) for r in ROWS]
+    for src in (sql_source(evs), pcdb_source(evs, tmp_path / "p", 2_000_000)):
+        assert src.people_since(0) == 3
+        assert src.window_totals(0, 2_000_000)[1] == 3
