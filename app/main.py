@@ -838,6 +838,8 @@ async def startup():
                         # then push any default settings the relay doesn't yet hold UP to it (Nostr
                         # events) so the relay is the authoritative store of the out-of-box config.
                         settings_store.hydrate_from_db(_db)
+                        if not settings_store.is_hydrated():
+                            settings_store.ensure_hydrated_background(SessionLocal)
                         # The legacy-table migration needs a relay read behind it (it skips the keys the
                         # relay holds); the early one is deferred when the relay was not up yet, and runs
                         # here. Idempotent, so a node that already migrated early migrates nothing.

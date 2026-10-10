@@ -19,6 +19,7 @@ import logging
 import os
 import fcntl
 import json
+import time
 import threading
 
 from app.services import nostr_store as store
@@ -597,6 +598,39 @@ def hydrate_from_db(db) -> int:
     _HYDRATED = True   # the relay answered to the end (even 0 docs) → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay events (sync)", changed)
     return changed
+
+
+def ensure_hydrated_background(db_factory, *, first_delay: float = 2.0, max_delay: float = 30.0):
+    """Keep re-reading settings from the relay until one read lands. A deploy restarts the relay and the app
+    together; both startup hydrates can run while the relay is still coming up ("relay not readable yet"), and
+    without this nothing tried again -- settings stayed unloaded, membership read as unknown, and every
+    member-only app (Office, Mail, Files) refused people until a manual restart (2026-10-10)."""
+    import threading
+    if _HYDRATED:
+        return None
+
+    def _loop():
+        delay = first_delay
+        while not _HYDRATED:
+            time.sleep(delay)
+            db = None
+            try:
+                db = db_factory()
+                if hydrate_from_db(db):
+                    logger.info("[settings-store] settings loaded after a startup retry")
+            except Exception as e:      # noqa: BLE001 -- keep trying; a failure here is only "not yet"
+                logger.info("[settings-store] retrying settings load: %s", type(e).__name__)
+            finally:
+                try:
+                    if db is not None:
+                        db.close()
+                except Exception:
+                    pass
+            delay = min(delay * 2, max_delay)
+
+    t = threading.Thread(target=_loop, name="settings-hydrate-retry", daemon=True)
+    t.start()
+    return t
 
 
 def migrate_legacy_table(db) -> int:
