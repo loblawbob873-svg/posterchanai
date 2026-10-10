@@ -370,8 +370,10 @@ def test_the_overlay_bump_runs_before_the_gate_fingerprints_the_source():
     """
     from pathlib import Path as _Path
     src = (_Path(__file__).resolve().parents[1] / "sync.sh").read_text(encoding="utf-8")
+    import re as _re
     bump = src.index("bump_desktop_overlay.py --check")
-    gate = src.index("deploy_regression_gate.py --full")
+    # the gate call that writes the receipt (its args may come from a variable, e.g. $_gate_args)
+    gate = _re.search(r"deploy_regression_gate\.py[^\n]*--receipt", src).start()
     verify = src.index("deploy_regression_gate.py --verify")
     assert bump < gate, (
         "the overlay bump runs after the regression gate fingerprints the source, so a new desktop "
