@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """The unfollow bot for a NOSTR bot (a Pleroma bot runs unfollowbot.py, against Pleroma's database).
 
-LOCAL MEMBERS ONLY, on both sides: it announces one member of this instance (a NIP-05 name this node granted)
-unfollowing another. Strangers and fediverse accounts are never named in a post ("the unfollow bot should only
-work for local instance nip05 users"). Read from the node (/api/community/follows): a follow is the member's
-kind-3 contact list p-tagging another member; an UNFOLLOW is their NEWER list no longer naming them.
+WHO COUNTS: the one unfollowed is always a member of this instance (a NIP-05 name this node granted). The
+unfollower is another member on Nostr, or a fediverse account; a Nostr stranger is never named ("only work for
+local instance nip05 users" + "fediverse accounts that unfollow local nip05 accounts should count as well").
+Read from the node (/api/community/follows):
+  * Nostr: a member's kind-3 contact list p-tags another member; an UNFOLLOW is their NEWER list without them;
+  * fediverse: an Undo(Follow) of a member, recorded by the ActivityPub server as a tombstone with its time.
 
 Every rule below exists because the alternative announces somebody unfollowing who did not:
   * the FIRST look only remembers -- otherwise every existing follow is "new" next time;
@@ -93,8 +95,10 @@ def diff(old: dict, picture: list, confirmed: list, bots: set, fedi: list, fedi_
             continue
         found += [(author, m, "nostr") for m in dropped if m not in bots and (members is None or m in members)]
     new_fedi_at = max([fedi_at] + [f["at"] for f in fedi])
-    # A fediverse follower is never a local member, so its Undo(Follow) is never announced (members only);
-    # the watermark still moves, so switching that on later cannot replay history.
+    if had_memory:   # a fediverse account unfollowing a LOCAL member counts too (its Undo(Follow) tombstone)
+        found += [(f["ref"], f["member"], "fediverse") for f in fedi
+                  if f["gone"] and f["at"] > fedi_at and f["member"] not in bots
+                  and (members is None or f["member"] in members)]
     state = {"nostr": state_nostr, "fedi_at": new_fedi_at}
     if not had_memory:
         return [], state

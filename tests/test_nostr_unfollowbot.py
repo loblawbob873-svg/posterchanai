@@ -90,16 +90,20 @@ def test_bots_are_never_announced_on_either_side(bot):
     assert found == []
 
 
-def test_only_a_local_member_unfollowing_a_local_member_is_announced(bot):
-    """"the unfollow bot should only work for local instance nip05 users": a stranger and a fediverse account
-    are never named, on either side."""
+def test_members_and_fediverse_accounts_count_nostr_strangers_do_not(bot):
+    """"only work for local instance nip05 users" + "fediverse accounts that unfollow local nip05 accounts should
+    count as well": the unfollowed is always a member; the unfollower a member or a fediverse account."""
     members = {ALICE, BOB}
     old = {BOB: {"at": 100, "size": 3, "follows": [ALICE]}, F1: {"at": 100, "size": 3, "follows": [ALICE]}}
-    fedi = [{"member": ALICE, "actor": "https://m.example/users/carol", "gone": True, "at": 500, "ref": "@carol@m.example"}]
+    fedi = [{"member": ALICE, "actor": "https://m.example/users/carol", "gone": True, "at": 500, "ref": "@carol@m.example"},
+            {"member": STRANGER, "actor": "https://m.example/users/dan", "gone": True, "at": 500, "ref": "@dan@m.example"},
+            {"member": BOB, "actor": "https://m.example/users/old", "gone": True, "at": 90, "ref": "@old@m.example"},
+            {"member": BOB, "actor": "https://m.example/users/eve", "gone": False, "at": 600, "ref": "@eve@m.example"}]
     found, state = bot.diff(old, [_l(BOB, 200, [], size=2), _l(F1, 200, [], size=2)], [], set(), fedi, 100, True,
                             members=members)
-    assert found == [(BOB, ALICE, "nostr")], found
-    assert state["fedi_at"] == 500, "the fediverse watermark must still move (no replay if that is ever switched on)"
+    assert sorted(found) == sorted([(BOB, ALICE, "nostr"), ("@carol@m.example", ALICE, "fediverse")]), found
+    again, _ = bot.diff({}, [], [], set(), fedi, state["fedi_at"], True, members=members)
+    assert again == [], "a fediverse unfollow was announced twice"
 
 
 def test_the_post_tags_both_people_and_an_ai_rewording_must_keep_every_name(bot, monkeypatch):
