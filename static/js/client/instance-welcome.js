@@ -7,6 +7,14 @@
      is not a reason to ask (or to show this dialog) again. */
   const profileKey=()=>window.__PC?.viewer()?.pubkey||'';
   const endpoint = path => (window.__PC_API_BASE__ || '') + '/api/instance-welcome/' + path;
+  /* SHOWN ONCE, REMEMBERED ON THE DEVICE. `checked` lives in memory, and Android rebuilds the app's page when
+     you leave and come back — so the welcome popped up again over whatever you were doing ("I was in the
+     settings taking a screen shot … when I hit back it just popped up"). Shown = remembered per account for a
+     week; applying is still one tap away from every app that needs the name (PCInstanceAccess). */
+  const REMIND_MS = 7 * 86400e3;
+  const seenKey = pk => 'pc_iw_seen_' + pk;
+  const seenRecently = pk => { try { const t = +localStorage.getItem(seenKey(pk)); return !!t && Date.now() - t < REMIND_MS; } catch (_) { return false; } };
+  const markSeen = pk => { try { localStorage.setItem(seenKey(pk), String(Date.now())); } catch (_) {} };
   async function request(action, pk, refresh=false) {
     const pc = window.__PC;
     const event = await pc.signTemplate({kind: 27235, pubkey: pk,
@@ -58,6 +66,7 @@
     };
     node.addEventListener('close', () => { node.remove(); if (dialog === node) dialog = null; });
     document.body.append(node); dialog = node; node.showModal(); button.focus();
+    markSeen(pk);
   }
   async function check() {
     const pc = window.__PC;
@@ -72,7 +81,7 @@
       if (pc.viewer().pubkey !== pk || profileKey()!==marker || desktopOrSetup()) return;
       window.PCInstanceAccess?.accept(data,pk);
       checked = marker;
-      if (data.eligible && !data.pending) show(data, pk);
+      if (data.eligible && !data.pending && !seenRecently(pk)) show(data, pk);
       else close();
     } catch (_) { retryAt = Date.now() + 300000; /* Avoid repeated signer prompts while offline. */ }
     finally { checking = false; }
