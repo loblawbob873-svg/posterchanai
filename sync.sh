@@ -22,7 +22,16 @@ fi
 
 _regression_receipt=$(mktemp) || exit 1
 trap 'rm -f "$_regression_receipt"' EXIT
-if ! venv-unified/bin/python scripts/deploy_regression_gate.py --full --receipt "$_regression_receipt"; then
+# PC_GATE_REQUIRED_ONLY=1: the REQUIRED checks only (~8 min), for a deploy the owner chose to ship before the
+# full suite runs (2026-10-09: "after you finish the backlog, you can run the full suite"). Said out loud, and
+# never the default: a plain ./sync.sh always runs everything.
+if [ -n "$PC_GATE_REQUIRED_ONLY" ]; then
+    echo "[sync] PC_GATE_REQUIRED_ONLY set: required checks ONLY -- the full suite is NOT run for this deploy"
+    _gate_args=""
+else
+    _gate_args="--full"
+fi
+if ! venv-unified/bin/python scripts/deploy_regression_gate.py $_gate_args --receipt "$_regression_receipt"; then
     echo "[sync] ABORT: required regression checks did not pass; nothing was deployed"
     exit 1
 fi

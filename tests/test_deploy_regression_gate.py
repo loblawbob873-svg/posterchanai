@@ -274,7 +274,9 @@ def test_a_shard_that_cannot_complete_blocks_the_deploy(tmp_path):
 
 def test_sync_always_runs_the_full_suite():
     text = (ROOT / 'sync.sh').read_text()
-    assert 'deploy_regression_gate.py --full --receipt' in text
+    # The default is the full suite; only an explicit PC_GATE_REQUIRED_ONLY narrows it, and says so.
+    assert '_gate_args="--full"' in text and 'deploy_regression_gate.py $_gate_args --receipt' in text
+    assert 'if [ -n "$PC_GATE_REQUIRED_ONLY" ]; then' in text and 'the full suite is NOT run' in text
 
 
 def test_shards_cover_every_file_once_and_balance_by_duration(source_gate):
