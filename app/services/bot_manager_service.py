@@ -1070,6 +1070,8 @@ def _monitor_loop():
     logger.info("[BOTS] manager monitor started (host=%s)", get_hostname())
     _wait_for_relay()   # don't spawn bots into a not-yet-listening relay (startup-race noise)
     while not _stop_event.is_set():
+        if _seed["pending"]:
+            seed_from_export()
         _reconcile()
         _stop_event.wait(RECONCILE_INTERVAL)
     logger.info("[BOTS] manager monitor stopped")
@@ -1096,13 +1098,28 @@ _SEED_GLOBALS = {
 _COLUMN_KEYS = {"name", "platform", "host", "bot_type", "modes"}
 
 
+_seed = {"pending": False}
+
+
 def seed_from_export():
-    """If the bots table is empty and a recovered export exists, import bots + globals once."""
+    """If the bots table is empty and a recovered export exists, import bots + globals once.
+
+    A bots table that is still loading cannot say whether it is empty: that is a one-line "later", not an error
+    (no traceback), and the monitor loop asks again until the table answers."""
     if not _EXPORT_PATH.exists():
+        _seed["pending"] = False
         return
     db = SessionLocal()
     try:
-        if bot_table.all_bots(db):
+        try:
+            have = bot_table.all_bots(db)
+        except Unavailable as e:
+            if not _seed["pending"]:
+                logger.info("[BOTS] seed check deferred, table bots still loading: %s", e)
+            _seed["pending"] = True
+            return
+        _seed["pending"] = False
+        if have:
             return
         try:
             data = json.loads(_EXPORT_PATH.read_text())

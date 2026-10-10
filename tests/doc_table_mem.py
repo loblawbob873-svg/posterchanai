@@ -83,6 +83,16 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
         row = mem.rows.get((self.name, str(k)))
         return json.loads(json.dumps(row)) if row is not None else None
 
+    async def aget_many_remote(self, keys):
+        if mem.down:
+            raise Unavailable("relay down (test)")
+        out = {}
+        for k in keys:
+            row = mem.rows.get((self.name, str(k)))
+            if row is not None:
+                out[str(k)] = json.loads(json.dumps(row))
+        return out
+
     async def bulk_put(table, rows, **_kw):
         if mem.down or mem.writes_fail:
             raise Unavailable("relay did not store (test)")
@@ -102,6 +112,7 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
     monkeypatch.setattr(DocTable, "aput", aput)
     monkeypatch.setattr(DocTable, "adelete", adelete)
     monkeypatch.setattr(DocTable, "aget_remote", aget_remote)
+    monkeypatch.setattr(DocTable, "aget_many_remote", aget_many_remote, raising=False)
     monkeypatch.setattr(DocTable, "_start_live", lambda self, pk: None)
     monkeypatch.setattr(doc_table, "_operator", lambda: (b"\x01" * 32, "00" * 32))
     from app.services import doc_table_bulk

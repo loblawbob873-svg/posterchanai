@@ -242,7 +242,9 @@ class DocTable:
                                 len(self._rows), self.load_seconds or 0.0)
                 backoff = 1.0
                 time.sleep(1.0)
-            except Exception as e:      # noqa: BLE001 -- retried; readers meanwhile get Loading / a point read
+            except (Exception, asyncio.CancelledError) as e:  # noqa: BLE001 -- retried; readers get Loading meanwhile
+                # CancelledError is a BaseException: a relay read cancelled by a timeout inside the load must not
+                # end this thread (that would leave the table unloaded for good, with nothing left to retry it).
                 logger.warning("[doctable] %s not loaded yet: %s", self.name, e)
                 time.sleep(backoff)
                 # never loaded: retry soon (the relay is usually just starting -- every second here is a second
@@ -268,7 +270,14 @@ class DocTable:
             return
         if self._bg_running():
             raise self._loading_error()
-        await self.aload()
+        try:
+            await self.aload()
+        except BaseException:
+            # A failed first load must not be the last attempt: the loader thread retries it with backoff until it
+            # succeeds, so a caller that never asks again (a scheduler, a process that ran no startup loader) still
+            # ends up with the table.
+            self.start_background_load()
+            raise
 
     def _ensure_sync(self):
         if self._loaded_at:
@@ -286,7 +295,11 @@ class DocTable:
         if _in_loop():
             self.start_background_load()
             raise self._loading_error()
-        self.load()
+        try:
+            self.load()
+        except BaseException:
+            self.start_background_load()        # retried on the loader thread (see _ensure)
+            raise
 
     # ------------------------------------------------------------------ reads
     def _snapshot(self) -> dict:
@@ -373,6 +386,31 @@ class DocTable:
         except Exception as e:      # noqa: BLE001
             raise Unavailable("could not read %s/%s: %s" % (self.name, k, e)) from e
         return value if isinstance(value, dict) else None
+
+    async def aget_many(self, keys) -> dict:
+        """{key: row (a copy)} for the rows among `keys` that exist. Before the table is loaded: those documents read
+        from the relay in one strict bulk read -- a missing key is simply absent; "could not ask" raises."""
+        ks = [str(k) for k in dict.fromkeys(keys or []) if k is not None and str(k) != ""]
+        if not ks:
+            return {}
+        if not self._loaded_at:
+            return await self.aget_many_remote(ks)
+        await self._ensure()
+        with self._lock:
+            return {k: dict(self._rows[k]) for k in ks if k in self._rows}
+
+    async def aget_many_remote(self, keys) -> dict:
+        """`aget_remote` for many keys at once (one REQ per 200), strictly."""
+        ks = [str(k) for k in dict.fromkeys(keys or [])]
+        if not ks:
+            return {}
+        sk, _pk = _operator()
+        tags = {self.prefix + key(k): k for k in ks}
+        try:
+            docs = await nostr_store.get_docs(relay_port(), list(tags), seckey=sk, strict=True)
+        except Exception as e:      # noqa: BLE001
+            raise Unavailable("could not read %d row(s) of %s: %s" % (len(ks), self.name, e)) from e
+        return {tags[d]: v for d, v in docs.items() if d in tags and isinstance(v, dict)}
 
     # ------------------------------------------------------------------ writes (relay first, memory after)
     async def aput(self, k, row: dict) -> None:

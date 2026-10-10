@@ -652,6 +652,10 @@ async def startup():
                 # relay one document at a time and only whole-table reads answer 503 + Retry-After.
                 from app.services import table_registry
                 table_registry.start_loading()
+                # Index the delivered-notes ledger's older rows once, so its lookups are point reads (the inbox
+                # then never waits for the whole ledger to load). A no-op after the first success on a node.
+                from app.services import fedi_tables
+                fedi_tables.start_index_backfill()
             except Exception as e:
                 logging.error(f"Error starting the app-table loads: {e}", exc_info=True)
             try:

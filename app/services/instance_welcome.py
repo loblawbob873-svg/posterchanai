@@ -166,8 +166,12 @@ def start_instance_welcome_scheduler():
     from app.database import SessionLocal
 
     async def job():
+        from app.services.relay_reader import Unavailable
         with SessionLocal() as db:
-            await retry_notifications(db)
+            try:
+                await retry_notifications(db)
+            except Unavailable as e:      # the applications table is loading: next minute, one line
+                logger.info('Instance application retries skipped, table not readable yet: %s', e)
 
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(job, 'interval', minutes=1, id='instance_welcome', max_instances=1, coalesce=True)

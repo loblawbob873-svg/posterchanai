@@ -14,9 +14,9 @@ second row). It is the dedup key that stops a note being stored twice, and it is
 (`aprune`, the relay's retention window). A ledger that cannot be read is `Unavailable`: the caller must
 neither deliver (it may be a duplicate) nor record anything; it retries.
 
-Relay-only (no SQL side; a node's old rows are copied once by scripts/migrate_tables_to_nostr.py). Lookups
-scan the in-memory table -- the indexes the SQL table had are what these scans replace -- and a point read
-(`apuppet_by_uri`, `adelivered`) reads one document while a restart's load is still running.
+Relay-only (no SQL side; a node's old rows are copied once by scripts/migrate_tables_to_nostr.py). Puppet
+lookups scan the in-memory table; the LEDGER is read by point (see "ledger" below), never loaded in whole by a
+request, because at ~390k rows that load takes many minutes after a restart.
 """
 from __future__ import annotations
 
@@ -136,47 +136,156 @@ async def aput_puppet(row: dict) -> None:
 
 
 # ============================================================================================ ledger
+# THE LEDGER IS READ BY POINT, NEVER BY LOADING IT (2026-10-10). It holds ~390k rows on a busy node and a whole
+# load took 20 minutes after a restart -- and the inbox asked for it in whole, so every POST /ap/inbox answered
+# 503 for as long as that took. Every lookup now names the documents it needs:
+#   * by note URI: the row the inbox writes for a URI has a DETERMINISTIC key (`_ap_key`); a row recorded under
+#     any other key (the retired Pleroma bridge's) is named by the index document `u:<sha256(uri)>`;
+#   * by event id: the index document `e:<event id>` names the rows of mirrored notes (rows WITH a note URI --
+#     a DM's row is bookkeeping about a wrap, never "a note from the fediverse");
+#   * by (platform, instance, note id): the row's own key, as before.
+# Index documents (`fedi_ledger_index`) are written BEFORE the row and dropped BEFORE it, so an index entry can
+# name a row that is not there (harmless: the row is read and found absent) but a row can never be missing from
+# the index -- which would be a duplicate delivery. Rows from before the index are indexed once by
+# `abackfill_index` (started at app startup), which writes `_complete` last; until that marker exists every
+# lookup falls back to the whole table (Loading while it loads), exactly the old behaviour.
+
+INDEX = "fedi_ledger_index"
+_INDEX_DONE = "_complete"
+
 
 def ledger_key(platform: str, instance_url: str, note_id: str) -> str:
     raw = "\x1f".join([platform or "", instance_url or "", (note_id or "")[:255]])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
 
 
-def _by_uri(rows, uri):
-    hits = [r for _k, r in rows if r.get("note_uri") == uri]
-    r = min(hits, key=lambda r: r.get("created_at") or "") if hits else None
+def _origin(uri: str) -> str:
+    """The same origin activitypub.inbox records a note under."""
+    from urllib.parse import urlparse
+    p = urlparse(uri or "")
+    return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else ""
+
+
+def _ap_key(uri: str) -> str:
+    """The key the inbox records a fediverse object's row under (inbox._record)."""
+    return ledger_key("activitypub", _origin(uri), (uri or "")[:255])
+
+
+def _uri_ikey(uri: str) -> str:
+    return "u:" + hashlib.sha256((uri or "")[:512].encode("utf-8")).hexdigest()[:40]
+
+
+def _event_ikey(eid: str) -> str:
+    return "e:" + str(eid)
+
+
+def _index_entries(k: str, row: dict) -> list:
+    """The index documents that must name row `k`."""
+    uri = row.get("note_uri")
+    if not uri:
+        return []
+    out = []
+    if k != _ap_key(uri):
+        out.append(_uri_ikey(uri))
+    if row.get("nostr_event_id"):
+        out.append(_event_ikey(row["nostr_event_id"]))
+    return out
+
+
+async def _aindex_ready(*, fresh: bool = False) -> bool:
+    """Whether every ledger row is in the index (the backfill's `_complete` marker). Raises Unavailable when the
+    relay cannot be asked. Remembered once seen (per table instance); `fresh` re-reads it -- which is also a
+    liveness check that the relay answers point reads at all."""
+    t = DocTable(INDEX)
+    if not fresh and getattr(t, "_ledger_index_complete", False):
+        return True
+    m = await t.aget(_INDEX_DONE)
+    ok = bool(m and m.get("ok") is True)
+    if ok:
+        t._ledger_index_complete = True
+    return ok
+
+
+async def _aindex_add(k: str, row: dict) -> None:
+    t = DocTable(INDEX)
+    for ik in _index_entries(k, row):
+        cur = await t.aget(ik)
+        keys = list((cur or {}).get("keys") or [])
+        if k not in keys:
+            await t.aput(ik, {"keys": keys + [k]})
+
+
+async def _aindex_drop(k: str, row: dict) -> None:
+    t = DocTable(INDEX)
+    for ik in _index_entries(k, row):
+        cur = await t.aget(ik)
+        if cur is None:
+            continue
+        old = list(cur.get("keys") or [])
+        keys = [x for x in old if x != k]
+        if not keys:
+            await t.adelete(ik)
+        elif keys != old:
+            await t.aput(ik, {"keys": keys})
+
+
+async def _arows_by_uri(uri: str) -> list:
+    want = (uri or "")[:512]
+    if await _aindex_ready():
+        idx = await DocTable(INDEX).aget(_uri_ikey(uri))
+        keys = [_ap_key(uri)] + list((idx or {}).get("keys") or [])
+        items = (await DocTable(LEDGER).aget_many(keys)).items()
+    else:
+        items = await tm.aview(LEDGER)
+    return [(k, r) for k, r in items if r.get("note_uri") == want]
+
+
+async def _arows_by_events(eids) -> list:
+    ids = {e for e in eids if e}
+    if not ids:
+        return []
+    if await _aindex_ready():
+        idx = await DocTable(INDEX).aget_many([_event_ikey(e) for e in ids])
+        keys = [k for d in idx.values() for k in (d.get("keys") or [])]
+        items = (await DocTable(LEDGER).aget_many(keys)).items()
+    else:
+        items = await tm.aview(LEDGER)
+    return [(k, r) for k, r in items if r.get("nostr_event_id") in ids and r.get("note_uri") is not None]
+
+
+def _earliest(items):
+    rows = [r for _k, r in items]
+    r = min(rows, key=lambda r: r.get("created_at") or "") if rows else None
     return _lrow(r) if r is not None else None
 
 
-def _ledger_rows(col: str, values) -> list:
-    """[(key, row)] to scan for `col` in `values`: the table in memory."""
-    return tm.view(LEDGER)
-
-
-async def _aledger_rows(col: str, values) -> list:
-    return await tm.aview(LEDGER)
-
-
-def delivered_by_uri(uri: str) -> Row | None:
-    return _by_uri(_ledger_rows("note_uri", [uri]), uri) if uri else None
+def _blocking(coro):
+    """A synchronous lookup (the inbox's worker threads). Point reads are async, so on an event loop there is
+    nothing a sync call may wait on: Unavailable, never a blocked loop."""
+    from app.services import doc_table
+    from app.services.relay_reader import Unavailable
+    if doc_table._in_loop():
+        coro.close()
+        raise Unavailable("the delivered-notes ledger is read with its async API on an event loop")
+    return doc_table._run(coro)
 
 
 async def adelivered_by_uri(uri: str) -> Row | None:
-    return _by_uri(await _aledger_rows("note_uri", [uri]), uri) if uri else None
+    """The first ledger row for a note URI, or None. Raises Unavailable ("could not ask" is never "new")."""
+    return _earliest(await _arows_by_uri(uri)) if uri else None
 
 
-def _by_event(rows, eid):
-    hits = [r for _k, r in rows if r.get("nostr_event_id") == eid]
-    r = min(hits, key=lambda r: r.get("created_at") or "") if hits else None
-    return _lrow(r) if r is not None else None
-
-
-def delivered_by_event(eid: str) -> Row | None:
-    return _by_event(_ledger_rows("nostr_event_id", [eid]), eid) if eid else None
+def delivered_by_uri(uri: str) -> Row | None:
+    return _blocking(adelivered_by_uri(uri)) if uri else None
 
 
 async def adelivered_by_event(eid: str) -> Row | None:
-    return _by_event(await _aledger_rows("nostr_event_id", [eid]), eid) if eid else None
+    """The row of the mirrored fediverse note stored as event `eid` (rows with a note URI only), or None."""
+    return _earliest(await _arows_by_events([eid])) if eid else None
+
+
+def delivered_by_event(eid: str) -> Row | None:
+    return _blocking(adelivered_by_event(eid)) if eid else None
 
 
 async def adelivered(platform: str, instance_url: str, note_id: str) -> bool:
@@ -184,28 +293,27 @@ async def adelivered(platform: str, instance_url: str, note_id: str) -> bool:
     return await t.aget(ledger_key(platform, instance_url, note_id)) is not None
 
 
-def mirrored_among(event_ids) -> set:
-    """Which of these event ids are notes mirrored from the fediverse (a ledger row WITH a note URI)."""
-    ids = set(event_ids)
-    return {r.get("nostr_event_id") for _k, r in _ledger_rows("nostr_event_id", ids)
-            if r.get("nostr_event_id") in ids and r.get("note_uri") is not None}
-
-
 async def amirrored_among(event_ids) -> set:
-    ids = set(event_ids)
-    return {r.get("nostr_event_id") for _k, r in await _aledger_rows("nostr_event_id", ids)
-            if r.get("nostr_event_id") in ids and r.get("note_uri") is not None}
+    """Which of these event ids are notes mirrored from the fediverse (a ledger row WITH a note URI)."""
+    return {r.get("nostr_event_id") for _k, r in await _arows_by_events(event_ids)}
+
+
+def mirrored_among(event_ids) -> set:
+    return _blocking(amirrored_among(list(event_ids)))
 
 
 async def arecord(*, platform: str, instance_url: str, note_id: str, nostr_event_id: str,
                   note_uri: str | None = None, author_acct: str | None = None,
                   nostr_pubkey: str | None = None) -> None:
-    """Record a handled note/DM. Raises Unavailable when it was not stored."""
+    """Record a handled note/DM. Raises Unavailable when it was not stored. The index first: a row the index
+    does not name would be invisible to the point lookups, i.e. delivered again."""
     row = {"platform": platform, "instance_url": instance_url or "", "note_id": (note_id or "")[:255],
            "note_uri": note_uri[:512] if note_uri else None, "author_acct": author_acct or None,
            "nostr_event_id": nostr_event_id or "", "nostr_pubkey": nostr_pubkey or None,
            "created_at": tm.iso(datetime.utcnow()), "deleted_at": None}
-    await DocTable(LEDGER).aput(ledger_key(platform, instance_url, note_id), row)
+    k = ledger_key(platform, instance_url, note_id)
+    await _aindex_add(k, row)
+    await DocTable(LEDGER).aput(k, row)
 
 
 def record(**kw) -> None:
@@ -219,32 +327,105 @@ def forget_uri(uri: str) -> int:
     return _run(aforget_uri(uri))
 
 
+async def _adrop(k: str, row: dict) -> None:
+    await _aindex_drop(k, row)
+    await DocTable(LEDGER).adelete(k)
+
+
 async def aforget_uri(uri: str) -> int:
     """Drop every ledger row for a note URI (its event was deleted). Raises Unavailable."""
     n = 0
-    for k, r in (await _aledger_rows("note_uri", [uri]) if uri else []):
-        if r.get("note_uri") == uri:
-            await DocTable(LEDGER).adelete(k)
-            n += 1
+    for k, r in (await _arows_by_uri(uri) if uri else []):
+        await _adrop(k, r)
+        n += 1
     return n
 
 
 async def aprune(keep_days: int) -> int:
-    """Delete rows older than `keep_days` (0 keeps everything). Raises Unavailable."""
+    """Delete rows older than `keep_days` (0 keeps everything) -- the one whole-table read left, on the worker's
+    daily job. Raises Unavailable."""
     if keep_days <= 0:
         return 0
     cutoff = tm.iso(datetime.utcnow() - timedelta(days=keep_days))
     n = 0
     for k, r in await tm.aview(LEDGER):
         if (r.get("created_at") or "") < cutoff:
-            await DocTable(LEDGER).adelete(k)
+            await _adrop(k, r)
             n += 1
     return n
 
 
+async def abackfill_index() -> int:
+    """Index every row recorded before the index existed (once per node; idempotent). Reads the WHOLE ledger
+    (Unavailable/Loading until it can), merges into whatever index documents writes have made since, and writes
+    `_complete` LAST -- until then lookups use the whole table. Returns the index documents written."""
+    if await _aindex_ready(fresh=True):
+        return 0
+    rows = await tm.aview(LEDGER)
+    want: dict = {}
+    for k, r in rows:
+        for ik in _index_entries(k, r):
+            want.setdefault(ik, set()).add(k)
+    have = await DocTable(INDEX).aget_many(list(want))
+    put = {}
+    for ik, ks in want.items():
+        cur = list((have.get(ik) or {}).get("keys") or [])
+        merged = cur + sorted(k for k in ks if k not in cur)
+        if merged != cur:
+            put[ik] = {"keys": merged}
+    if put:
+        from app.services import doc_table_bulk
+        await doc_table_bulk.abulk_put(INDEX, put)
+    await DocTable(INDEX).aput(_INDEX_DONE, {"ok": True, "rows": len(rows), "entries": len(want),
+                                             "at": tm.iso(datetime.utcnow())})
+    DocTable(INDEX)._ledger_index_complete = True
+    return len(put)
+
+
+_backfill = {"thread": None}
+
+
+def start_index_backfill() -> None:
+    """Run `abackfill_index` on a thread of its own until it has succeeded once (port-3051 startup). Idempotent."""
+    import asyncio
+    import logging
+    import threading
+    import time
+    log = logging.getLogger(__name__)
+    th = _backfill["thread"]
+    if th is not None and th.is_alive():
+        return
+
+    def loop():
+        delay = 10.0
+        while True:
+            try:
+                n = asyncio.run(abackfill_index())
+                if n:
+                    log.info("[fedi-ledger] index backfilled: %d document(s) written", n)
+                return
+            except Exception as e:      # noqa: BLE001 -- the ledger is loading or the relay is busy: try later
+                log.info("[fedi-ledger] index backfill waits: %s", e)
+            time.sleep(delay)
+            delay = min(delay * 2, 300.0)
+
+    th = threading.Thread(target=loop, name="fedi-ledger-index", daemon=True)
+    _backfill["thread"] = th
+    th.start()
+
+
+async def aledger_ready() -> None:
+    """The ledger can answer lookups: its index is complete (checked FRESH -- a relay that cannot be asked one
+    document raises Unavailable here, before anything is accepted), or else the whole table is loaded."""
+    if await _aindex_ready(fresh=True):
+        return
+    await DocTable(LEDGER)._ensure()
+
+
 async def aready() -> None:
-    """Both tables readable in WHOLE -- raises Unavailable otherwise (Loading while a restart's load runs).
-    An entry point that will make decisions from them (the inbox, the DM listener) asks this FIRST and
-    refuses or waits, so that the lookups below it cannot fail half-way through a delivery."""
-    for name in (PUPPETS, LEDGER):
-        await DocTable(name)._ensure()
+    """The puppet registry readable in WHOLE and the ledger able to answer -- raises Unavailable otherwise
+    (Loading while a restart's load runs). An entry point that will make decisions from them (the inbox, the DM
+    listener) asks this FIRST and refuses or waits, so that the lookups below it cannot fail half-way through a
+    delivery. The ledger is NOT loaded in whole once its index is complete: its lookups are point reads."""
+    await DocTable(PUPPETS)._ensure()
+    await aledger_ready()

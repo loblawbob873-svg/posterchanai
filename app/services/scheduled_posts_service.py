@@ -27,6 +27,7 @@ from types import SimpleNamespace
 from app.services.user_table import UserRow as User
 from app.services import nostr_store as store
 from app.services import settings_store as _ss
+from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger("scheduled_posts")
 
@@ -213,6 +214,10 @@ async def _publish_due_once() -> None:
                 # it: a published note is re-broadcast (the same signed event — relays dedupe it by id),
                 # never lost.
                 await t.aput(rid, fresh)
+    except Unavailable as e:
+        # The table is loading (after a restart) or the relay could not be asked: nothing was touched, and the
+        # next pass tries again. A routine condition -- one line, never a traceback every 30 s.
+        logger.info("[scheduled] table scheduled_posts not readable yet, skipping this pass: %s", e)
     except Exception as e:
         logger.error("[scheduled] poll pass failed: %s", e, exc_info=True)
 

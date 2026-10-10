@@ -523,6 +523,8 @@ async def _receive(request: Request) -> Response:
     # The puppet registry and the delivered-notes ledger decide identity and dedup for everything this
     # activity will do. Unreadable, 503 -- the sender retries -- rather than a 202 for work that would
     # mint a second identity or store a note twice (or be dropped after the 202, with no retry).
+    # The ledger is NOT loaded in whole for this: once its index is complete its lookups are point reads,
+    # and aready() asks the relay one document -- "could not ask" is still a 503.
     from app.services import fedi_tables
     from app.services.relay_reader import Unavailable
     try:

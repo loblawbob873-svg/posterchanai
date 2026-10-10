@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.services import settings_store as settings, users_store, blossom_service, user_table
+from app.services.relay_reader import Unavailable
 from app.services.nostr import nostr_service as ns
 
 log = logging.getLogger(__name__)
@@ -194,6 +195,9 @@ def start():
                 if cfg['enabled']:
                     result = await run(db, cfg['exempt_fediverse'])
                     log.info('Relay access policy cleanup completed: %s', result)
+            except Unavailable as e:
+                # A table it plans from (accounts, bots, puppets) is still loading: skipped, one line.
+                log.info('Relay access policy cleanup skipped, a table is not readable yet: %s', e)
             except Exception:
                 log.exception('Relay access policy cleanup failed')
     _scheduler = AsyncIOScheduler()

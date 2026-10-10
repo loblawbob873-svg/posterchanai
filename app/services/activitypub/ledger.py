@@ -9,9 +9,14 @@ auto-deleted". This job used to live in the Pleroma bridge; without it, nothing 
 from __future__ import annotations
 
 import logging
+import time
+
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
+
+_DAY = 86400
+_state = {"ok_at": 0.0}
 
 
 def prune() -> int:
@@ -26,7 +31,17 @@ def prune() -> int:
     if keep_days <= 0:
         return 0
     try:
-        return asyncio.run(fedi_tables.aprune(keep_days))
+        n = asyncio.run(fedi_tables.aprune(keep_days))
     except Exception as e:      # noqa: BLE001
-        logger.warning("[activitypub] ledger prune failed: %s", type(e).__name__)
+        logger.warning("[activitypub] ledger prune not run (retried within the hour): %s: %s", type(e).__name__, e)
         return 0
+    _state["ok_at"] = time.time()
+    return n
+
+
+def prune_if_due() -> int:
+    """`prune` once a day -- asked HOURLY, so a prune that could not run (the ledger still loading after a
+    restart, a busy relay) is retried within the hour instead of waiting a whole day."""
+    if time.time() - _state["ok_at"] < _DAY - 1800:
+        return 0
+    return prune()

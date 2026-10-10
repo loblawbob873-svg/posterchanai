@@ -1294,10 +1294,10 @@ def start_activitypub_delivery() -> None:
 
     def _prune():
         from app.services.activitypub import ledger
-        n = ledger.prune()
+        n = ledger.prune_if_due()
         if n:
             logger.info("[activitypub] pruned %d delivered-note record(s) past retention", n)
-    _scheduler.add_job(_prune, "interval", hours=24, id="activitypub_ledger_prune",
+    _scheduler.add_job(_prune, "interval", hours=1, id="activitypub_ledger_prune",
                        max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info("[activitypub] delivery loop started (every %ss; off until activitypub_enabled)", _TICK_SECONDS)

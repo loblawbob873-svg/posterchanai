@@ -175,3 +175,18 @@ def test_a_delete_during_an_outage_is_unavailable_not_done(relay, monkeypatch):
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(relay.port))
     t.delete("1")
     assert _fresh("pushq").get("1") is None
+
+
+def test_many_rows_by_key_before_the_table_is_loaded(relay):
+    """`aget_many` (the fediverse ledger's point lookups): before a load, ONE strict bulk read of exactly the named
+    documents -- a missing key is absent, and the table is not loaded by it."""
+    import asyncio
+    t = doc_table.DocTable("rowsm")
+    t.put("a", {"n": 1})
+    t.put("b:c", {"n": 2})
+    other = _fresh("rowsm")
+    got = asyncio.run(other.aget_many(["a", "b:c", "missing"]))
+    assert got == {"a": {"n": 1}, "b:c": {"n": 2}}
+    assert not other.loaded
+    other.all()
+    assert asyncio.run(other.aget_many(["b:c", "missing"])) == {"b:c": {"n": 2}}
