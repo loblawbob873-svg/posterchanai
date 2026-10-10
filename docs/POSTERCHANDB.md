@@ -130,22 +130,18 @@ index dirtied per event).
 
 ## Settings (Admin → Nostr Relay → PosterChanDB)
 
-All three are ordinary admin settings: declared in `SettingsResponse` (or they never hydrate — see
-CLAUDE.md), an input on the Nostr Relay tab, stored like every other setting, and applied LIVE (no
-restart) by the store when the value changes.
+Declared in `SettingsResponse` (or they never hydrate — see CLAUDE.md), inputs on the Nostr Relay tab. The
+store is opened once at relay start, so saving any of them restarts the relay (`_relay_topology_keys`).
+`POSTERCHANDB_MODE` in the environment overrides the mode.
 
 | setting | default | what it does |
 |---|---|---|
-| `posterchandb_read_cache_mb` | **auto** (the whole store if it fits in 50% of RAM, else 25% of RAM) | RAM for event CONTENT. Indexes are always fully in RAM (~340 MB here). Above the budget, the content of the oldest, least-read, unpinned events is evicted and read back from the log on demand. `0` = everything in RAM. |
-| `posterchandb_flush_interval` | **300 s** | The write delay: seconds between flushes of buffered writes to disk. Anything since the last flush survives a clean stop (always flushed first) but not a power cut. |
-| `posterchandb_direct_durable` | **on** | Flush this server's own users' writes before answering OK (group-committed, ~1–5 ms), whatever the interval. Off = they wait for the timer too. |
-| `posterchandb_snapshot_hours` | **24** | How often the in-RAM indexes are snapshotted (plus always on a clean stop). Rarer = fewer SSD writes, a slightly longer startup after a crash (the log tail is replayed). |
-| `posterchandb_compact_dead_pct` | **40** | Rewrite a log file only when this much of it is deleted/superseded — the knob between disk space and SSD writes. |
+| `posterchandb_mode` | **off** | `off` = Postgres only. `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
+| `posterchandb_flush_seconds` | **300** | The write delay. A clean stop flushes first; a crash loses at most this window from PosterChanDB only — Postgres has every event, and the next start copies again. |
+| `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older segments; drains by itself when the machine runs low (MemAvailable + PSI, cache.py). |
 
-The tab shows the live numbers beside them — content in RAM vs on disk, cache hit rate, events waiting
-to be flushed, seconds since the last flush — so the trade being made is visible, not inferred.
-Pinned and never evicted: every replaceable/addressable document (profiles, follow lists, `pcai:` app
-data) and anything published here, so the content that matters most is never a disk read.
+The field's status line reads `posterchandb` from the relay's status file: mode, state, the two counts it
+was proven against, queries served from RAM vs fallen back, and sampled answers identical vs different.
 
 ## PosterChanOS
 
@@ -167,14 +163,30 @@ Everything that reads the relay's event tables directly needs the store's API in
 (`nostr_relay/store.py`), the auto-clean and paid-retention rules, admin and community stats, the git
 `pre-receive` hook, and the bots' community queries.
 
-## Rollout (no flag day)
+## Rollout (no flag day) — `posterchandb/mirror.py`
 
-1. Prototype: load a snapshot of the real data, answer the relay's real filter mix, compare every answer
-   to Postgres byte for byte; publish size/RAM/latency.
-2. Shadow writes: every event goes to both stores; reads still from Postgres.
-3. Shadow reads: every query runs on both and mismatches are logged (no content, counts and ids only).
-4. Switch reads, one node at a time, starting with server1 — the node whose relay runs it, with the store at `/var/lib/posterchandb` on its NVMe (NOCOW; Postgres itself is on nas.lan). Postgres stays as the fallback.
+Postgres stays the source of truth until the last step; each step is one setting away from off.
+
+1. **Copy.** `RelayStore.attach_mirror` runs on the relay's single WRITER thread: it fixes a repeatable-read
+   snapshot and, in the same step, starts handing every write to the mirror's queue. So each write is in the
+   snapshot or in the queue — exactly once, no clock involved. The snapshot is copied with `copy_put`
+   (Postgres's rows exactly as they are; the ingest rules depend on ARRIVAL order, which a copy cannot replay
+   — re-deciding them oldest-first reached a different state). Then the queue is applied with the rules.
+2. **Prove.** On the writer thread again: Postgres's queryable count and the queue position at one instant;
+   the queue is applied up to it and the counts must be EQUAL. Only then is the mirror `ready`.
+3. **Shadow** (`shadow`): every write mirrored; a sample of answers compared (keys and counts only — never
+   filter values).
+4. **Serve** (`serve`) on server1 — the node whose relay runs it, store at `/var/lib/posterchandb/relay`
+   (NOCOW). A query is answered from RAM only while the mirror is ready, nothing it depends on is queued
+   (waits ≤0.5 s), and it does not throw; otherwise Postgres answers it.
 5. Retire the Postgres event tables once a node has run clean for an agreed period.
+
+A clean close writes `CLEAN`; without it (a crash, a run with the mirror off) the next start copies afresh.
+
+**Two production lessons** (2026-10-09): the Postgres side deleted older versions WHILE comparing, so a
+refused stale version could destroy versions depending on heap order — it now decides first, then deletes
+(PosterChanDB always did). And a long transaction on the relay DB plus any DDL froze every read (a waiting
+ACCESS EXCLUSIVE queues all later readers): the relay's startup housekeeping now uses `lock_timeout` and skips.
 
 Every data-safety rule the relay has learned keeps its test against the new store before it is trusted:
 a read that could not answer is never "empty", a replaceable document is never replaced on the strength

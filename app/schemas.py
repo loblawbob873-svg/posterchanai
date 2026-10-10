@@ -711,6 +711,9 @@ class SettingsResponse(BaseModel):
     # is a permanent per-user metadata trail (pubkey + stable d-tag + timestamp) wherever it lands.
     nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
+    posterchandb_mode: Optional[str] = None  # off | shadow | serve (posterchandb/mirror.py)
+    posterchandb_flush_seconds: Optional[int] = None  # write delay before new events reach disk (default 300)
+    posterchandb_read_cache_mb: Optional[int] = None  # RAM for older segments (0 = automatic, 30% of RAM)
     nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
     # Pay-to-stay: an OPTIONAL paid retention tier for authors with no account here. All five are
     # inert until `_enabled` is on AND `_free_retention_days` is a non-zero number — see

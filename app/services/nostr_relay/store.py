@@ -20,6 +20,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+import uuid
 import psycopg2
 import psycopg2.extras
 import psycopg2.errors
@@ -93,6 +94,7 @@ class _PgConn:
 # should serve. NOTE: code older than this reads `raw` alone, so rolling back below it hides every
 # event stored after it.
 EVENT_COLUMNS = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig"
+MIRROR_TOKEN_KEY = "posterchandb_clean_token"   # posterchandb/mirror.py: which directory state matches Postgres
 
 
 def event_from_row(r) -> dict:
@@ -566,6 +568,12 @@ class RelayStore:
             return False
         if True:
             # Replaceable-event handling: drop older versions so only the newest survives.
+            # DECIDE, THEN DELETE. Older versions are collected and deleted only once no stored version beats
+            # this one. Deleting inside the loop kept every older version deleted BEFORE the loop met a newer
+            # one -- in heap order, i.e. at random -- so whether a stale event destroyed versions depended on
+            # where Postgres had put the rows (possible whenever a coordinate holds versions on both sides, as
+            # with several `d` tags). PosterChanDB decides the same way; tests/test_posterchandb_mirror.py.
+            losers: list = []
             if _REPLACEABLE(kind):
                 cur = conn.execute(
                     "SELECT id, created_at, origin FROM events WHERE pubkey=? AND kind=?",
@@ -584,9 +592,11 @@ class RelayStore:
                     _tie_direct = (kind != 10133 and row["created_at"] == created and origin == "direct"
                                    and str(row["origin"] or "") == "direct")
                     if row["created_at"] < created or (row["created_at"] == created and eid < row["id"]) or _tie_direct:
-                        self._delete_sync(conn, row["id"])
+                        losers.append(row["id"])
                     else:
-                        return False  # a newer (or tie-winning) version already stored
+                        return False  # a newer (or tie-winning) version already stored -- and NOTHING deleted
+                for lid in losers:
+                    self._delete_sync(conn, lid)
             elif _PARAM_REPLACEABLE(kind):
                 d = next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), "")
                 # JOIN on the `d` tag — do NOT walk this author's events asking for each one's tag.
@@ -644,9 +654,11 @@ class RelayStore:
                                   and row["created_at"] == created and origin == "direct"
                                   and str(row["origin"] if "origin" in row.keys() else "") == "direct")
                     if older or tie_lost or tie_direct:
-                        self._delete_sync(conn, row["id"])
+                        losers.append(row["id"])
                     else:
                         return False
+                for lid in losers:
+                    self._delete_sync(conn, lid)
 
             conn.execute(
                 "INSERT INTO events "
@@ -808,6 +820,13 @@ class RelayStore:
         to copy), so each write is either in that snapshot or in the mirror's queue, exactly once."""
         def _on_writer():
             conn = None
+            # A CLEAN directory is trusted only if its token is the one Postgres holds: a btrfs snapshot or a
+            # backup of the directory taken at an EARLIER clean stop (or a restored pg_dump) carries a stale one.
+            if not m.needs_copy() and self._kv_get_sync(MIRROR_TOKEN_KEY) != m.clean_token:
+                m.distrust("its clean-stop token is not Postgres's (an older copy of the directory, or a restored "
+                           "database)")
+            # From now on no other copy of the directory can match: the token Postgres holds is new.
+            self._kv_set_sync(MIRROR_TOKEN_KEY, "open:" + uuid.uuid4().hex)
             if m.needs_copy():
                 conn = m.pg_connect()
                 conn.set_session(isolation_level="REPEATABLE READ", readonly=True, autocommit=False)
@@ -826,6 +845,16 @@ class RelayStore:
         m.sync_point = _sync_point
         conn = self._write_exec.submit(_on_writer).result(timeout=60)
         m.start(conn)
+
+    def detach_mirror(self):
+        """Stop handing writes to the mirror -- on the WRITER thread, after the last write -- and return the token a
+        clean close writes into CLEAN (the same token is stored in Postgres in the same step)."""
+        def _on_writer():
+            token = "clean:" + uuid.uuid4().hex
+            self._kv_set_sync(MIRROR_TOKEN_KEY, token)
+            m, self.mirror = self.mirror, None
+            return m, token
+        return self._write_exec.submit(_on_writer).result(timeout=60)
 
     def _mirror_gone(self, ids) -> None:
         if self.mirror is not None and ids:
@@ -1128,7 +1157,7 @@ class RelayStore:
 
     def _query_sync(self, filters: list, hard_cap: int) -> list:
         """NIP-01 filter set (OR across filters); returns raw event dicts, newest-first."""
-        m = self.mirror
+        m = getattr(self, "mirror", None)
         if m is not None:
             served = m.query(filters, hard_cap)      # None = not ready / would have to wait / failed: ask Postgres
             if served is not None:

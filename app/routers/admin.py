@@ -863,6 +863,8 @@ def update_settings(
             "nostr_relay_mirror_feeds", "nostr_relay_disable_proxy",
             "nostr_relay_bind", "nostr_relay_port",
             "nostr_relay_posterchan_clients_only", "nostr_relay_posterchan_origins",
+            # PosterChanDB is opened (or left off) once, at relay start
+            "posterchandb_mode", "posterchandb_flush_seconds", "posterchandb_read_cache_mb",
         )
         _relay_will_restart = any(k in changed_keys for k in _relay_topology_keys)
         # The trust-graph settings are re-read by every rebuild (thread._build_wot), so saving one starts a

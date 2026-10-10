@@ -273,3 +273,31 @@ def test_an_event_purged_then_received_again_is_stored_again_like_postgres(pair,
         assert not _compare(rs, db2, gen, 200)
     finally:
         db2.close()
+
+
+# ---------------------------------------------------------------- a stale version deletes nothing
+@pytest.mark.parametrize("kind", [30078, 30617])
+def test_a_stale_version_deletes_nothing_even_when_an_older_one_shares_its_d(pair, kind):
+    """A coordinate can hold versions on BOTH sides of an incoming event when documents carry several `d` tags:
+    L (first d "x", older) was stored, then W (first d "z", ALSO tagged "x", newer) was stored beside it -- its
+    own coordinate is "z", so it replaced nothing. Now E (first d "x", between them) arrives. W beats it, so E is
+    refused; the relay used to have DELETED L on the way (it deleted while it compared, in heap order), so
+    whether L survived depended on where Postgres had put the rows. Decide first, then delete: L survives in
+    both stores."""
+    rs, db, _ = pair
+    pk = "%064x" % 7
+    now = int(time.time())
+
+    def ev(created, tags):
+        e = {"pubkey": pk, "created_at": created, "kind": kind, "tags": tags, "content": "", "sig": "0" * 128}
+        e["id"] = ev_id(e)
+        return e
+    older = ev(now - 300, [["d", "x"]])
+    newer = ev(now - 100, [["d", "z"], ["d", "x"]])
+    stale = ev(now - 200, [["d", "x"]])
+    for e in (older, newer):
+        assert rs._add_event_sync(dict(e), "wot") and db.put(dict(e), origin="wot") == "stored"
+    assert rs._add_event_sync(dict(stale), "wot") is False
+    assert db.put(dict(stale), origin="wot") == "superseded"
+    assert _survivors_relay(rs) == _survivors_pcdb(db) == {older["id"], newer["id"]}, \
+        "a refused stale version deleted the older one"

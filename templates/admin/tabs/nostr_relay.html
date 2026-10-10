@@ -522,6 +522,52 @@
     </fieldset>
 
     <fieldset>
+        <legend>PosterChanDB (RAM event store)</legend>
+        <p class="muted" style="margin:0 0 12px">PosterChanDB keeps the relay's events in RAM beside PostgreSQL.
+        <strong>PostgreSQL is still written first and stays the source of truth</strong>; every write and delete is
+        mirrored here in order. In <em>Serve</em> mode the relay answers queries from RAM, falling back to
+        PostgreSQL for any query the mirror cannot answer (still loading, behind, or an error). Saving restarts the relay.</p>
+        <div class="form-group">
+            <label for="posterchandb_mode">Mode</label>
+            <select id="posterchandb_mode" name="posterchandb_mode">
+                <option value="off">Off — PostgreSQL only</option>
+                <option value="shadow">Shadow — mirror writes, compare a sample of answers</option>
+                <option value="serve">Serve — answer queries from RAM</option>
+            </select>
+            <small id="pcdb-status" class="muted" aria-live="polite"></small>
+        </div>
+        <div class="form-group">
+            <label for="posterchandb_flush_seconds">Write delay (seconds)</label>
+            <input type="number" id="posterchandb_flush_seconds" name="posterchandb_flush_seconds" placeholder="300" min="1">
+            <small>How long new events wait in RAM before being written to disk together. A clean stop (systemd) writes them
+            first; a crash or power loss can lose this window from PosterChanDB only — PostgreSQL has every event, and the
+            next start reloads from it.</small>
+            <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
+            <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0">
+            <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
+            when the machine runs low on memory.</small>
+        </div>
+        <script>
+        (function(){
+            var el=document.getElementById('pcdb-status'); if(!el) return;
+            function paint(){
+                fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
+                    var p=(s&&s.posterchandb)||null;
+                    if(!p||p.mode==='off'){ el.textContent='Off.'; return; }
+                    var bits=[p.mode, p.state];
+                    if(p.why) bits.push(p.why);
+                    if(p.mirror_count!=null) bits.push(p.mirror_count+' events (PostgreSQL '+p.pg_count+')');
+                    if(p.served||p.fallback) bits.push(p.served+' queries served from RAM, '+p.fallback+' fell back');
+                    if(p.shadow_ok||p.shadow_diff) bits.push(p.shadow_ok+' sampled answers identical, '+p.shadow_diff+' different');
+                    el.textContent=bits.join(' · ');
+                }).catch(function(){ el.textContent='Status unavailable.'; });
+            }
+            paint(); setInterval(function(){ if(!document.hidden && el.offsetParent) paint(); }, 15000);
+        })();
+        </script>
+    </fieldset>
+
+    <fieldset>
         <legend>Auto-clean (feed retention)</legend>
         <p class="muted" style="margin:0 0 12px">The relay store is <strong>PostgreSQL</strong> — it tunes its own
         buffers/WAL, so there are no SQLite cache/mmap/DB-path knobs. Auto-clean only ever trims

@@ -352,6 +352,11 @@ def _read_config() -> dict:
             # pruned after N days. Registered users' notes + direct-published events are ALWAYS
             # preserved (never pruned), so a user's own history is safe. 0 = keep everything.
             "retention_days": gi("nostr_relay_retention_days", 30),
+            # PosterChanDB beside Postgres (posterchandb/mirror.py): off | shadow (mirror every write, compare a
+            # sample of answers) | serve (answer queries from RAM; Postgres still written first). Env wins.
+            "pcdb_mode": (os.environ.get("POSTERCHANDB_MODE") or g("posterchandb_mode", "off") or "off").strip().lower(),
+            "pcdb_cache_mb": gi("posterchandb_read_cache_mb", 0),
+            "pcdb_flush_s": gi("posterchandb_flush_seconds", 300),
             # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
@@ -739,6 +744,37 @@ async def _refresh_preserve(store) -> None:
         store.extend_preserve_pubkeys(pks)
 
 
+def _start_mirror(store, cfg: dict) -> None:
+    """PosterChanDB beside Postgres -- or, when it is off, make sure a later start reloads it: everything the
+    relay writes while the mirror is off is missing from its directory."""
+    from app.services import posterchandb
+    from app.services.posterchandb import mirror as pcdb_mirror
+    path = os.path.join(posterchandb.data_dir(), "relay")
+    mode = cfg.get("pcdb_mode") or "off"
+    if mode not in ("shadow", "serve"):
+        pcdb_mirror.clear_clean_marker(path)
+        return
+    try:
+        import psycopg2
+        dsn = cfg["pg_dsn"]
+        m = pcdb_mirror.Mirror(path, mode, lambda: psycopg2.connect(dsn, connect_timeout=10),
+                               flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
+                               log=logger.info)
+        store.attach_mirror(m)
+        _mirror_ref["m"] = m
+        logger.info("[nostr-relay] PosterChanDB mirror starting in %s mode at %s", mode, path)
+    except Exception as e:      # the relay runs on Postgres alone rather than not at all
+        logger.warning("[nostr-relay] PosterChanDB mirror not started: %s", e)
+
+
+_mirror_ref: dict = {}
+
+
+def mirror_stats() -> dict:
+    m = _mirror_ref.get("m")
+    return m.stats() if m is not None else {"mode": "off"}
+
+
 # --- async main -------------------------------------------------------------
 
 async def _main(cfg: dict) -> None:
@@ -751,6 +787,7 @@ async def _main(cfg: dict) -> None:
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_relay_loop_exception_handler)
     store.open(loop)
+    _start_mirror(store, cfg)
     gate = WotGate()
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
@@ -1289,6 +1326,7 @@ async def _main(cfg: dict) -> None:
                            "started": _started,
                            "block_purge": dict(_purge_state),
                            "prune": dict(_prune_state),
+                           "posterchandb": mirror_stats(),
                            **_activity()}, f)
             os.replace(tmp, _paths["status"])
         except Exception:
@@ -1543,6 +1581,14 @@ async def _main(cfg: dict) -> None:
             await store.checkpoint()             # fold WAL into the main DB on clean shutdown
         except Exception as e:
             logger.warning("[nostr-relay] final checkpoint failed: %s", e)
+        if store.mirror is not None:
+            try:
+                # On the writer thread, after the last write: nothing enqueues after this, and Postgres and the
+                # CLEAN marker get the same token (a stale copy of the directory can never be mistaken for this one).
+                m, token = await asyncio.get_running_loop().run_in_executor(None, store.detach_mirror)
+                await asyncio.get_running_loop().run_in_executor(None, lambda: m.close(clean_token=token))
+            except Exception as e:
+                logger.warning("[nostr-relay] PosterChanDB mirror close failed: %s", e)
         store.close()
         try:
             os.remove(_paths["status"])           # don't leave a stale "running" status behind

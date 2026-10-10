@@ -490,12 +490,14 @@ class Store:
             self.last_snapshot = time.time()
             return res
 
-    def close(self) -> None:
+    def close(self, take_snapshot: bool = True) -> None:
+        """Flush (fsync) and close. `snapshot=False` for a stop with a deadline (the relay has systemd's 10 s):
+        the snapshot is the slow part, and the log alone is complete -- the next start replays its tail."""
         with self._lock:
             if self._file is None:
                 return
             self.flush()
-            if self.snapshots and self._since_snap >= self.snapshot_min_events:
+            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events:
                 try:
                     snapshot.save(self)          # a clean stop: the next start loads instead of re-indexing
                     self._since_snap = 0
@@ -712,6 +714,22 @@ class Store:
                 self._apply_deletion(ev)
             if o == 0 and self.direct_durable:
                 self.flush()
+            return "stored"
+
+    def copy_put(self, ev: dict, origin: str = "wot") -> str:
+        """Store an event EXACTLY as another store holds it -- no rule is re-decided. For copying the relay's
+        Postgres (mirror.py): its rows are the result of the rules applied in ARRIVAL order, and re-running
+        them in another order (a load goes oldest-first) does not reach the same state -- which version of a
+        multi-d document survives, whether a deletion arrived before or after its target. Derived tags are
+        copied separately (add_derived_tag)."""
+        with self._lock:
+            s0 = self._seq_of(ev["id"])
+            if s0 is not None and not self.dead[s0]:
+                return "duplicate"
+            o = ORIGINS.get(origin or "wot", 4)
+            rec = self.codec.encode(ev)
+            start = self._frame(bytes([OP_PUT, o]) + rec)
+            self._apply_put(ev, rec[:32], len(rec), start + 2, o, self._active)
             return "stored"
 
     def _index_quotes(self, ev: dict) -> None:
