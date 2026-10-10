@@ -829,13 +829,14 @@ window.PCFilesFactory = function(dep){
         /* NEVER OFFER DELETION WHILE A SYNC RUNS. The fresh-blob guard already protects the
          * bytes; this protects the PERSON — a reclaim button during a seed is a decision nobody
          * should be handed mid-flight. */
-        if(window.PCSync && PCSync.busyNow && PCSync.busyNow()){
+        /* A sync running = no reclaim offer, but the REST of the check still shows (it used to write into `r`,
+           the dialog's callback argument, which does not exist here yet: "r is not defined", no result at all). */
+        const syncBusy = !!(window.PCSync && PCSync.busyNow && PCSync.busyNow());
+        if(syncBusy){
           lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
             + `but not named by this index. A sync is running — reclaim is disabled until it `
             + `finishes.</div>`);
-          r.innerHTML = lines.join('');
-          return;
-        }
+        }else{
         let refs = await _syncRefIds();
         if(refs){ const dm = await _dmCacheRef(); if(dm === null) refs = null; else if(dm) refs.add(dm); }
         /* THE INDEX'S OWN CONTAINER IS LOAD-BEARING AND INVISIBLE. The drive index lives in an
@@ -869,6 +870,7 @@ window.PCFilesFactory = function(dep){
         if(reclaim.length){
           lines.push(`<div class="row" style="margin-top:6px"><button class="btn btn-red small" `
             + `id="fx-ck-reclaim">Reclaim ${_fxBytes(gb)} (${reclaim.length} blobs)</button></div>`);
+        }
         }
       }
       /* "nothing was found missing" and "nothing could be asked" are not the same sentence —

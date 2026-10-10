@@ -5470,7 +5470,7 @@
      * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
      * except that it is reached by a deliberate press. */
     const directInbox=$('#cc-direct-inbox');if(directInbox)directInbox.onclick=()=>showDirectInvitations().catch(e=>p.toast(e.message||String(e)));
-    const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(current);
+    const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(saved()[state.community]);   // the room open NOW — `current` is the header renderer's, not in scope here
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
     const acceptInvite=async(raw,room,direct=false)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
       /* ANNOUNCE THE JOIN. Only the Discover list published the guestbook Join (CORD-02 §5), so

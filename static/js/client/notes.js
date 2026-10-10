@@ -1885,6 +1885,12 @@
     }
     const beforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; return ''; };
     window.addEventListener('beforeunload', beforeUnload);
+    // Declared OUTSIDE the try: the summary after `finally` reads them (inside, it threw 'reused is not defined').
+    let reused = 0;
+    const failed = [];    // {id,name} — reported by NAME and retryable, never just a count
+    const tooBig = [];
+    let done = 0, noteFail = 0, queued = 0;
+    const failedNotes = [];
     try{
     await load();
 
@@ -1924,10 +1930,7 @@
     const known = new Map();
     for(const n of _lib.notes.values())
       for(const r of (n.res || [])) if(r && r.sha && r.name) known.set(r.name + '|' + (r.size||0), r);
-    let reused = 0;
     let rdone = 0;
-    const failed = [];    // {id,name} — reported by NAME and retryable, never just a count
-    const tooBig = [];
     // Ask the server what it will actually accept rather than hardcoding a number: the cap is an
     // admin setting (blossom_max_upload_mb), so a node on a LAN can be set far higher than one
     // behind a CDN. BUD-06 answers a HEAD with the reason, and the endpoint exposes it to JS.
@@ -2026,8 +2029,6 @@
     const bySrc = new Map();
     for(const n of _lib.notes.values()) if(n.src && n.src.id) bySrc.set(n.src.id, n);
 
-    let done = 0, noteFail = 0, queued = 0;
-    const failedNotes = [];
     for(const jn of parsed.notes){
       if(_cancel) break;
       const key = jn.id || ('md:' + jn.title);
