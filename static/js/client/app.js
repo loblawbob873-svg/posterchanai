@@ -390,6 +390,16 @@
     }catch(_){ return false; }
   }
   function _standalone(){ return BUNDLED && !_instanceBase(); }
+  let _instanceNotPc = false;   // the configured instance answered, but not as a PosterChan server (_isPcConfig)
+  let _instanceNotPcWarned = false;
+  async function _warnInstanceNotPc(){
+    if(_instanceNotPcWarned) return; _instanceNotPcWarned = true;
+    const host = _instanceBase().replace(/^https?:\/\//, '');
+    if(await uiConfirm(host + ' is set as your PosterChan server, but it is not one — it looks like a Nostr relay or another site, so Files, Mail, AI and the other server features cannot work. Relays belong under Relays. Run without a server instead? (Notes, posts and messages keep working on your relays.)')){
+      if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__('');
+      else { try{ localStorage.setItem('pc_instance',''); }catch(_){} location.reload(); }
+    }
+  }
   /* The desktop app ships its own tor and proxies the whole session through it, so Tor there is a
    * switch and a country, not an errand. Android can only ASK Orbot (a separate app) — a different
    * control surface, which is why Settings draws one or the other and never both. `pcShell` is the
@@ -2724,9 +2734,14 @@
       let _cfgTimer;
       try{
         const _cfgRequest = fetch('/client/config')
-          .then(r=>r.ok ? r.json() : null)
-          .then(c=>{ if(c) _cfgCache(c); return c; })
+          .then(r=>{ if(BUNDLED && r.status === 404) _instanceNotPc = true; return r.ok ? r.json() : null; })
+          .then(c=>{
+            // A relay (or any other site) named as the instance answers, but not as a PosterChan server:
+            // never cache that as the config, and tell the person once (_warnInstanceNotPc).
+            if(c && BUNDLED && !_isPcConfig(c)){ _instanceNotPc = true; return null; }
+            if(c) _cfgCache(c); return c; })
           .catch(()=>null);
+        _cfgRequest.then(()=>{ if(_instanceNotPc) setTimeout(_warnInstanceNotPc, 1500); });
         _bootCfg = await Promise.race([
           _cfgRequest,
           new Promise(resolve=>{ _cfgTimer=setTimeout(()=>resolve(null), 2500); }),
@@ -3258,12 +3273,17 @@
       if(on){ _fillAuthConnFields(); } };
     { const b=$('#btn-auth-conn'); if(b) b.onclick=()=>show(true); }
     { const b=$('#btn-conn-back'); if(b) b.onclick=()=>{ _connErr(''); show(false); }; }
-    { const b=$('#btn-conn-instance'); if(b) b.onclick=()=>{
+    { const b=$('#btn-conn-instance'); if(b) b.onclick=async()=>{
         const raw=(($('#conn-instance')||{}).value||'').trim();
         if(!raw){ _connErr('enter a server address, or choose “Use no server”'); return; }
         const u=_normInstance(raw);
         if(!u){ _connErr('that doesn’t look like a server address'); return; }
-        _connErr(''); _setInstanceFromAuth(u);
+        _connErr('');
+        // Relays are a separate setting: what was typed in the relay box is kept whatever the server check
+        // says, and before it -- it must not wait on a 30 s probe of a server that may never answer.
+        _persistAuthRelays();
+        if(!(await _instanceAcceptable(u, _connErr))) return;
+        _setInstanceFromAuth(u);
       }; }
     { const b=$('#btn-conn-none'); if(b) b.onclick=async()=>{
         /* Dropping the server is independent of the relay list — the two are separate settings and this
@@ -3287,6 +3307,35 @@
     let host=''; try{ host=new URL(u).hostname; }catch(_){ return ''; }
     const ok = host==='localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
     return ok ? u : '';
+  }
+  /* IS THIS A POSTERCHAN SERVER? A relay is not one, and naming a relay as the instance breaks every server
+   * feature at once ("Vyram set his instance to his own relay": Files 'couldn't load files from http://…onion',
+   * every app 'could not establish your app session') -- while the relay list, where it belonged, worked.
+   * Every PosterChan server's /client/config is a JSON object carrying relay_url and nostr_only; a relay or any
+   * other site answers something else. 'down' (no answer at all) is NOT 'not': servers go offline and Tor
+   * takes a while, so that one is asked about, never refused. */
+  function _isPcConfig(c){ return !!(c && typeof c === 'object' && !Array.isArray(c) && ('relay_url' in c) && ('nostr_only' in c)); }
+  async function _probeInstance(u){
+    const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const t = ctl ? setTimeout(() => ctl.abort(), 30000) : 0;
+    try{
+      const r = await fetch(String(u).replace(/\/+$/, '') + '/client/config', { cache:'no-store', signal: ctl ? ctl.signal : undefined });
+      if(!r.ok) return 'not';
+      let c = null; try{ c = await r.json(); }catch(_){ return 'not'; }
+      return _isPcConfig(c) ? 'ok' : 'not';
+    }catch(_){ return 'down'; }
+    finally{ if(t) clearTimeout(t); }
+  }
+  const _NOT_PC_MSG = h => h + ' is not a PosterChan server — it looks like a Nostr relay or another site. Add relays under Relays; to run without a server choose “Use no server”.';
+  /* The one gate both pickers use (Settings and the sign-in screen). true = go ahead and switch. */
+  async function _instanceAcceptable(u, say){
+    const host = String(u).replace(/^https?:\/\//, '');
+    say('checking ' + host + '…');
+    const v = await _probeInstance(u);
+    if(v === 'ok'){ say(''); return true; }
+    if(v === 'not'){ say(_NOT_PC_MSG(host)); return false; }
+    say('');
+    return !!(await uiConfirm('Couldn’t reach ' + host + ' to check that it is a PosterChan server (it may be offline, or Tor may still be connecting). Use it anyway?'));
   }
   function _paintAuthConn(){
     const l=$('#auth-conn-label'); if(!l) return;
@@ -12364,7 +12413,7 @@
     _applyAutoMuteToView, _applyMediaCacheBudget, _autoMuteDocLoad, _autoMuteDocReady,
     _autoMuteDocSave, _autoMuteStored, _cacheAutoMute, _capPlugin, _clientBuild, _deleteAllMyNotes,
     _fillMediaCacheStat, _fillMusicOfflineStat, _flushPending, _fmtBytes, _hasNativeTor,
-    _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
+    _instanceAcceptable, _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
     _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
