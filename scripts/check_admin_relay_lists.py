@@ -264,6 +264,23 @@ async def run():
                 p = out["prune"]
                 if p["exists"] or p["offered"]:
                     fails.append((where, "a bulk 'remove all not in profile' is still offered", p))
+                # 2026-10-10 "IDENTITIES is formatted really bad, checkboxes are far right and barely can see the
+                # account info": `.form-group input{width:100%}` stretched each row's select checkbox into a wide
+                # flex item, squeezing the name/profile/activity column. Measured, not read: the box is box-sized
+                # and the account text gets most of the row.
+                z = await call("Runtime.evaluate", {"expression": """(async()=>{for(let i=0;i<50&&!document.querySelector('#ids_list .ids-row');i++)
+                    await new Promise(r=>setTimeout(r,100));
+                    return [...document.querySelectorAll('#ids_list .ids-row')].map(r=>{const c=r.querySelector('.ids-pick').getBoundingClientRect(),
+                      who=r.querySelector('.blk-who').getBoundingClientRect(),row=r.getBoundingClientRect();
+                      return {box:Math.round(c.width),left:Math.round(c.left-row.left),who:Math.round(who.width),row:Math.round(row.width)}})})()""",
+                    "awaitPromise": True, "returnByValue": True})
+                ids = z.get("result", {}).get("value") or []
+                if not ids:
+                    fails.append((where, "Identities drew no rows"))
+                for r in ids:
+                    if r["box"] > 28 or r["left"] > 16 or r["who"] < r["row"] * (0.4 if mobile else 0.6):
+                        fails.append((where, "Identities row: the checkbox is stretched or the account info is squeezed", r))
+                        break
             # A backend older than the page (no list endpoint): the text box is open and editable,
             # and no "Could not load the list" is left standing over a closed box.
             await load("/old", 360, 780, True)
