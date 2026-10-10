@@ -24,7 +24,7 @@ session (or clears a stale marker that produced no footage). `_process()` then j
 segments (`_prepare_upload` — the same `media_service.compress_video*` pass every other upload gets; the
 raw source is what OBS happened to send, which is both huge and higher quality than any viewer was served)
 and uploads — kill-switch + opt-in re-checked, concurrency-capped, and holding NO DB transaction across the
-multi-GB transcode/hash/upload — then indexes a StreamVOD row, retrying failed jobs until `_MAX_JOB_AGE_S`.
+multi-GB transcode/hash/upload — then indexes a recording (stream_vod_store), retrying failed jobs until `_MAX_JOB_AGE_S`.
 Never raises into the end path.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ import time
 from typing import Optional
 
 from app.database import SessionLocal
-from app.models import User, StreamVOD
+from app.models import User
 from app.services import blossom_service, stream_service, media_service, settings_store
 from app.services.nostr import nostr_service
 
@@ -379,7 +379,10 @@ async def _process(staging: str) -> None:
                 logger.warning("[stream-vod] user %s opted in but has no usable nostr pubkey — leaving VOD "
                                "job %s for retry", user_id, os.path.basename(staging))
                 return
-            if db.query(StreamVOD).filter_by(token=token, started_at=started_at).first():
+            # Unavailable (index unreadable / not yet migrated) propagates to the outer handler, which
+            # leaves the job for retry — "could not ask" is never "not saved yet" (a duplicate upload).
+            from app.services import stream_vod_store
+            if await stream_vod_store.aexists(token, started_at):
                 shutil.rmtree(staging, ignore_errors=True)   # already saved this session
                 return
         finally:
@@ -399,12 +402,9 @@ async def _process(staging: str) -> None:
                 if not sha:
                     raise RuntimeError("Blossom upload returned no sha256")
                 size = int(desc.get("size") or os.path.getsize(out))
-                db2.add(StreamVOD(
+                await stream_vod_store.aadd(
                     user_id=user_id, pubkey=pub, token=token, sha256=sha, mime="video/mp4",
-                    size=size, duration_s=duration, title=None,
-                    started_at=started_at, created_at=int(time.time()),
-                ))
-                db2.commit()
+                    size=size, duration_s=duration, title=None, started_at=started_at)
             finally:
                 db2.close()
 

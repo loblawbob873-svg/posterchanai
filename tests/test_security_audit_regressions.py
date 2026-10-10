@@ -106,14 +106,18 @@ def test_screenshot_validates_each_redirect(monkeypatch, destination, expected_c
 
 
 @pytest.mark.parametrize('web_page', [False, True])
-def test_admin_email_verification_never_creates_a_login_cookie(web_page):
+def test_admin_email_verification_never_creates_a_login_cookie(web_page, monkeypatch):
     from datetime import datetime, timedelta
     from app.main import verify_email_page
     from app.routers.auth import verify_email
+    from tests.doc_table_mem import mem_tables
+    # Verification tokens are a DocTable now (#161): the token lives there, the user in SQL.
+    mem = mem_tables(monkeypatch)
+    mem.put('verification_tokens', '1', {'id': 1, 'user_id': 4, 'token': 'synthetic', 'created_at': None,
+                                         'expires_at': (datetime.utcnow() + timedelta(minutes=5)).isoformat()})
     user = SimpleNamespace(id=4, is_admin=True, email_verified=False)
-    verification = SimpleNamespace(user_id=4, expires_at=datetime.utcnow() + timedelta(minutes=5))
     class DB:
-        def __init__(self): self.rows = iter([verification, user]); self.deleted = []
+        def __init__(self): self.rows = iter([user]); self.deleted = []
         def query(self, *args): return self
         def filter(self, *args): return self
         def first(self): return next(self.rows)
@@ -127,7 +131,7 @@ def test_admin_email_verification_never_creates_a_login_cookie(web_page):
         result = verify_email('synthetic', response, db)
         assert 'Nostr' in result['message']
     assert 'set-cookie' not in response.headers
-    assert user.email_verified and db.deleted == [verification]
+    assert user.email_verified and mem.table('verification_tokens') == {}, "the token is single-use"
 
 
 def test_stream_application_uses_its_own_request_fields():

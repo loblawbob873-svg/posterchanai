@@ -520,6 +520,15 @@ async def _receive(request: Request) -> Response:
         return Response(status_code=429, headers={"Retry-After": "60"})
     if config.is_own_host(host) or config.host_blocked(host):
         return Response(status_code=202)          # blocked instances: accepted and dropped, so they stop
+    # The puppet registry and the delivered-notes ledger decide identity and dedup for everything this
+    # activity will do. Unreadable, 503 -- the sender retries -- rather than a 202 for work that would
+    # mint a second identity or store a note twice (or be dropped after the 202, with no retry).
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
+    try:
+        await fedi_tables.aready()
+    except Unavailable:
+        return _relay_down()
     if convert.id_of(activity.get("actor")) != signer:
         # A FORWARDED reply (Mastodon relays its users' replies, signed by itself). Refusing it made
         # the forwarder retry for days; it is taken as a pointer and fetched from its own server.
@@ -646,14 +655,21 @@ def _addresses(raw) -> list | None:
     return out[:_MAX_LISTED]
 
 
-async def _import_list(accts: list) -> dict:
-    from app.database import SessionLocal
-    from app.services.activitypub import importer
-    db = SessionLocal()
+async def _puppet_registry_ready() -> None:
+    """An import provisions puppets: with the registry unreadable it would mint identities blind, so it
+    is refused as "try again" (503), never answered as "0 more"."""
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
     try:
-        people = await importer.puppets_for(db, [{"acct": a} for a in accts], "")
-    finally:
-        db.close()
+        await fedi_tables.aready()
+    except Unavailable:
+        raise HTTPException(503, "The fediverse account registry could not be read; try again shortly")
+
+
+async def _import_list(accts: list) -> dict:
+    from app.services.activitypub import importer
+    await _puppet_registry_ready()
+    people = await importer.puppets_for(None, [{"acct": a} for a in accts], "")
     return {"following": len(accts), "people": people}
 
 
@@ -676,18 +692,19 @@ async def export_following(request: Request, user=Depends(get_current_user)):
         pk = str(pk or "").strip().lower()
         if re.fullmatch(r"[0-9a-f]{64}", pk) and pk not in pks:
             pks.append(pk)
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
+    want = set(pks)
     try:
-        found = {}
-        for i in range(0, len(pks), 500):
-            for row in db.query(FediPuppet).filter(FediPuppet.pubkey_hex.in_(pks[i:i + 500])).all():
-                acct = str(row.acct or "").lstrip("@")
-                if _ADDRESS.match(acct) and row.pubkey_hex not in found:
-                    found[row.pubkey_hex] = {"pubkey": row.pubkey_hex, "acct": acct, "actor": row.actor_uri}
-    finally:
-        db.close()
+        rows = [r for r in await fedi_tables.aall_puppets() if r.pubkey_hex in want]
+    except Unavailable:
+        # "Could not ask" must not export as "none of these are fediverse accounts".
+        raise HTTPException(503, "The fediverse account registry could not be read; try again shortly")
+    found = {}
+    for row in sorted(rows, key=lambda r: (r.created_at or "", r.actor_uri)):
+        acct = str(row.acct or "").lstrip("@")
+        if _ADDRESS.match(acct) and row.pubkey_hex not in found:
+            found[row.pubkey_hex] = {"pubkey": row.pubkey_hex, "acct": acct, "actor": row.actor_uri}
     # In the order the member's list has them, so the file reads like their follow list.
     accounts = [found[pk] for pk in pks if pk in found]
     logger.info("[activitypub] export-following: %d of %d followed key(s) are fediverse accounts",
@@ -696,7 +713,6 @@ async def export_following(request: Request, user=Depends(get_current_user)):
 
 
 async def _import(handle: str) -> dict:
-    from app.database import SessionLocal
     from app.services.activitypub import importer
     try:
         accounts, instance_url = await importer.public_following(handle)
@@ -705,11 +721,8 @@ async def _import(handle: str) -> dict:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(502, f"Could not read who that account follows: {type(e).__name__}")
-    db = SessionLocal()
-    try:
-        people = await importer.puppets_for(db, accounts, instance_url)
-    finally:
-        db.close()
+    await _puppet_registry_ready()
+    people = await importer.puppets_for(None, accounts, instance_url)
     return {"following": len(accounts), "people": people}
 
 

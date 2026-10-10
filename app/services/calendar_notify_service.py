@@ -19,7 +19,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from app.models import Reminder, User
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -214,10 +214,17 @@ async def due_alarms(db, user, now=None) -> list:
 
 
 async def poll_once(db) -> int:
-    """Schedule reminders for alarms coming due. Returns how many were created."""
+    """Schedule reminders for alarms coming due. Returns how many were created.
+
+    The dedup below reads the reminders table, so a table that cannot be read (Unavailable) ends the pass
+    before anything is written: guessing "not there yet" would file the same alarm twice and the phone would
+    buzz twice. (Mid-move off Postgres the table is read from SQL -- the whole table, never part of it.)"""
     from app.services import caldav_store
+    from app.services import reminder_service
+    from app.services.app_tables import table, new_id, from_iso, REMINDERS
     if not caldav_store.enabled():
         return 0
+    t = await table(REMINDERS)          # Unavailable propagates: the caller skips this pass
     made = 0
     # Every account, because there is no cheap way to ask "does this user have a calendar?" without
     # reading their documents — each user's are encrypted under their OWN key, so there is no single
@@ -231,20 +238,21 @@ async def poll_once(db) -> int:
         except Exception as e:
             logger.debug("[cal-notify] %s: %s", getattr(user, "username", "?"), e)
             continue
+        if not alarms:
+            continue
+        # Dedup on (user, text, due_at): the poller runs every few minutes and sees the same
+        # alarm each time until it fires. Without this, an event an hour away collects a dozen
+        # identical reminders and the phone buzzes a dozen times.
+        rows = await t.aall()
+        have = {(r.get("text"), from_iso(r.get("due_at"))) for r in rows.values() if r.get("user_id") == user.id}
         for when, text in alarms:
-            # Dedup on (user, text, due_at): the poller runs every few minutes and sees the same
-            # alarm each time until it fires. Without this, an event an hour away collects a dozen
-            # identical reminders and the phone buzzes a dozen times.
-            exists = (db.query(Reminder.id)
-                      .filter(Reminder.user_id == user.id, Reminder.text == text,
-                              Reminder.due_at == when)
-                      .first())
-            if exists:
+            if (text, when) in have:
                 continue
-            db.add(Reminder(user_id=user.id, text=text, due_at=when, status="pending"))
+            row = reminder_service.reminder_row(user.id, text, when, "pending", datetime.utcnow(), None)
+            rid = await t.ainsert(row, lambda: new_id(rows))
+            rows[str(rid)] = row
+            have.add((text, when))
             made += 1
-        if made:
-            db.commit()
     if made:
         logger.info("[cal-notify] scheduled %s calendar reminder(s)", made)
     return made

@@ -14,8 +14,10 @@ Design notes (scales to many concurrent users without pegging a CPU):
   * Content-addressed → identical bytes uploaded by N users are stored ONCE (the row is
     keyed by sha256); the first uploader owns it.
   * Storage backend is pluggable: `proxy` (the shared PosterChanAI storage server, the
-    default) or `local` (a blob dir on this node). Metadata always lives in the local
-    `blossom_blobs` table.
+    default) or `local` (a blob dir on this node). Metadata lives in the blob index -- one
+    encrypted operator document per blob on THIS node's relay (`blob_index`, #161; it was the
+    `blossom_blobs`/`blossom_blob_owners` SQL tables). "Could not ask" the index is never "no
+    such blob": it raises `Unavailable`, which the routes answer with 503.
   * Per-blob expiry (`blossom_blob_ttl_days`) is swept by a single low-frequency daemon
     thread (`start_blossom_cleanup`), not per-request.
 """
@@ -31,12 +33,12 @@ import time
 import base64
 
 import httpx
-from sqlalchemy import func
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
-from app.models import BlossomBlob, User
+from app.models import User
+from app.services import blob_index
+from app.services.relay_reader import Unavailable
 from app.utils import lb_auth
 from app.services import settings_store, keystore
 from app.services.nostr import nostr_service, event as nostr_event
@@ -199,12 +201,11 @@ def _cache_drop(sha256: str) -> None:
 
 
 # --- blob metadata cache ----------------------------------------------------
-# The app DB is POSTGRES (shared with the relay), so every GET's `db.query(BlossomBlob)` is a
-# round-trip over the local socket + a connection out of the shared pool — the ceiling at high
-# read RPS. A blob row is IMMUTABLE once written (content-addressed: sha256/size/mime/storage/path
-# never change), so cache the small metadata tuple and skip Postgres entirely on hot reads. Combined
-# with the byte cache, a hot blob GET touches neither the DB nor the network. Invalidated only on
-# delete. Bounded entry count (each entry is a few hundred bytes → a full cache is a few MB).
+# Once the blob index is loaded a lookup is a dict read; this cache is what keeps a hot GET off the
+# RELAY while the index is still loading (a point read per miss) and off SQL during the one-time
+# copy. A blob row is IMMUTABLE in the fields cached here (content-addressed: sha256/size/mime/
+# storage/path never change), so it is invalidated only on delete and on an expiry change.
+# Bounded entry count (each entry is a few hundred bytes → a full cache is a few MB).
 from collections import namedtuple  # noqa: E402
 
 # `expires_at` is carried because a READ has to be able to say the blob is on its way out: folder
@@ -217,7 +218,7 @@ _meta_cache: "OrderedDict[str, BlobMeta]" = OrderedDict()
 _meta_lock = threading.Lock()
 
 
-def _meta_from_row(blob: BlossomBlob) -> BlobMeta:
+def _meta_from_row(blob) -> BlobMeta:
     return BlobMeta(blob.sha256, blob.pubkey, blob.size, blob.mime, blob.created_at, blob.storage,
                     blob.path, blob.expires_at)
 
@@ -236,27 +237,28 @@ def _meta_drop(sha256: str) -> None:
 
 
 def drop_meta(sha256: str) -> None:
-    """Public metadata-cache eviction. Call AFTER a delete commits (a drop BEFORE commit can be
-    re-poisoned by a concurrent GET that re-queries the still-visible row under MVCC)."""
+    """Public metadata-cache eviction. Call AFTER the index delete landed (a drop BEFORE it can be
+    re-poisoned by a concurrent GET that re-reads the still-present row)."""
     _meta_drop(sha256)
 
 
-def revalidate_meta(db: Session, sha256: str) -> None:
+async def revalidate_meta(db: Session, sha256: str) -> None:
     """Self-heal for the read path: when a read finds the bytes gone, evict the cached metadata ONLY
-    if the DB row is actually gone (a delete we raced). A transient storage outage returns the same
-    'no bytes' but the row is still present — evicting then would cold-wipe the hot cache and stampede
-    Postgres on recovery (every GET re-querying get_blob_meta), so leave valid entries in place."""
+    if the index row is actually gone (a delete we raced). A transient storage outage returns the same
+    'no bytes' but the row is still present — evicting then would cold-wipe the hot cache on recovery
+    — and an index that cannot be asked is not an answer either, so leave valid entries in place."""
     try:
-        if db.query(BlossomBlob.sha256).filter(BlossomBlob.sha256 == sha256).first() is None:
+        if await blob_index.aget(sha256) is None:
             _meta_drop(sha256)
     except Exception:
         pass
 
 
-def get_blob_meta(db: Session, sha256: str):
-    """Return a blob's metadata (BlobMeta) for reads WITHOUT hitting Postgres when it's hot. Serves
-    from the metadata cache; on a miss, queries the row ONCE, caches it, and returns. None if unknown.
-    Use for GET/HEAD only — DELETE needs the live ORM row (`db.delete`), so it keeps its own query."""
+async def get_blob_meta(db: Session, sha256: str):
+    """A blob's metadata (BlobMeta) for reads: the metadata cache, else the blob index (memory once
+    loaded, one relay document before that). None ONLY when the index answered that there is no such
+    blob; an index that could not be asked raises Unavailable (→ 503, never a 404 for a file that may
+    well be there)."""
     m = None
     with _meta_lock:
         m = _meta_cache.get(sha256)
@@ -264,10 +266,10 @@ def get_blob_meta(db: Session, sha256: str):
             _meta_cache.move_to_end(sha256)
     if m is not None:
         return m
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-    if not blob:
+    blob = await blob_index.aget(sha256)        # SQL until the index's marker exists (#161 wave 1)
+    m = _meta_from_row(blob) if blob else None
+    if m is None:
         return None
-    m = _meta_from_row(blob)
     _meta_put(m)
     return m
 
@@ -666,48 +668,27 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     cfg = _cfg(db)
     sha256 = await asyncio.to_thread(compute_sha256, data)
     size = len(data)
+    _want = (int(time.time()) + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
 
-    existing = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    # Unavailable propagates: an index that cannot be asked must not be read as "new bytes" (that would
+    # re-store them and REPLACE the row, owners and keep flag included) — the route answers 503.
+    existing = await blob_index.aget(sha256)
     if existing:
         # Already stored (possibly by another user) — content-addressed, so nothing to write.
         # Retention is governed live by the admin TTL setting (see _cleanup_once), keyed off
-        # created_at, so re-uploads don't need to re-stamp anything.
-        # The one thing that DOES need re-stamping is the explicit per-blob TTL: dedup means these
-        # identical bytes may now be referenced by something with a different lifetime. A save that
-        # wants the blob KEPT (expires_days=0 — a chat image) must clear a TTL a transient artifact
-        # stamped earlier, or the permanent reference is swept out from under it; a save that wants a
-        # TTL only ever pushes the expiry LATER, never sooner.
-        _want = (int(time.time()) + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
-        _cur = existing.expires_at or None
-        _dirty = False
-        if _cur and (_want is None or _want > _cur):
-            existing.expires_at = _want
-            _dirty = True
-        # `keep` only ever goes False→True, never back: dedup means one set of bytes can be both a
-        # throwaway chat image and a Notes attachment, and the reference that must survive wins. The
-        # same asymmetry as the TTL re-stamp above, for the same reason.
-        if keep and not existing.keep:
-            existing.keep = True
-            _dirty = True
-        if _dirty:
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
-        # These bytes already exist, but THIS user may not have referenced them before — without this
-        # their upload would 200 and the file would never show up in their own drive.
-        add_owner(db, sha256, pubkey, filename)
-        _meta_put(_meta_from_row(existing))
-        return _descriptor_fields(existing)
+        # created_at, so re-uploads don't need to re-stamp anything — only the merge below.
+        blob = await blob_index.aupdate(sha256, lambda row: _merge_reference(row, pubkey, filename, _want, keep))
+        _meta_put(_meta_from_row(blob))
+        return _descriptor_fields(blob)
 
-    # End the read transaction BEFORE the upload — the same reason save_blob_file does it below, and
-    # this variant is the one the CHAT ATTACHMENT path uses (artifact_store.save_bytes). A video
-    # attached to `extractaudio` held this connection idle-in-transaction past Postgres'
-    # idle_in_transaction_session_timeout (60s); Postgres killed it, and the next statement after the
-    # upload died with "server closed the connection unexpectedly", taking the websocket down so the
-    # command produced no result and no error. pool_pre_ping can't catch it — the connection is
-    # already checked out and held. Reads above are done; a fresh txn opens on the insert.
-    db.rollback()
+    # End any read transaction the CALLER holds BEFORE the upload: this variant is the one the CHAT
+    # ATTACHMENT path uses (artifact_store.save_bytes), and a connection left idle-in-transaction past
+    # Postgres' idle_in_transaction_session_timeout (60s) is killed under it — the next statement after
+    # the upload then dies with "server closed the connection unexpectedly".
+    try:
+        db.rollback()
+    except Exception:
+        pass
 
     if cfg["backend"] == "proxy":
         path = await _proxy_put(cfg["storage_url"], sha256, data, mime)
@@ -717,7 +698,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
 
         def _write():
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = path + ".tmp"
+            tmp = path + ".tmp" + os.urandom(4).hex()   # unique: two first uploads of the same bytes race here
             with open(tmp, "wb") as f:
                 f.write(data)
             os.replace(tmp, path)
@@ -728,30 +709,14 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     now = int(time.time())
     # expires_at: an explicit per-blob TTL when expires_days>0 (transient artifacts); else NULL, and
     # ordinary retention is driven live by the admin `blossom_blob_ttl_days` setting against created_at.
-    _exp = (now + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
-    blob = BlossomBlob(
-        sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=_exp, storage=storage, path=path, private=bool(private), keep=bool(keep),
-    )
-    db.add(blob)
-    try:
-        db.commit()
-    except IntegrityError:
-        # Two concurrent first-uploads of the SAME new bytes race on the sha256 primary key — one
-        # commit wins, the other hits a duplicate-key IntegrityError. The bytes are content-addressed
-        # and already stored (identical), so this is just a dedup hit: roll back, re-query the row the
-        # winner committed, and return its descriptor (same as the pre-existing-blob path above).
-        db.rollback()
-        winner = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-        if winner is not None:
-            add_owner(db, sha256, pubkey, filename)   # the race loser still owns a reference
-            _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)   # bytes are identical + in RAM — seed the cache like the normal path
-            _meta_put(_meta_from_row(winner))
-            return _descriptor_fields(winner)
-        raise
+    fresh = blob_index.new_row(pubkey=pubkey, size=size, mime=mime, created_at=now, expires_at=_want,
+                               storage=storage, path=path, private=private, keep=keep)
+    # Created under the per-blob lock: two concurrent first-uploads of the SAME new bytes both get here,
+    # and the second must find the first's row and merge into it (a dedup hit — the bytes are
+    # identical) rather than replace it, which would drop the first uploader's ownership.
+    blob = await blob_index.aupdate(sha256, lambda row: _create_or_merge(row, fresh, pubkey, filename, _want, keep))
     # Seed the read + metadata caches — the bytes are already in RAM and the row is immutable, so a
-    # fetch right after upload (the common case) touches neither disk/proxy nor Postgres.
-    add_owner(db, sha256, pubkey, filename)      # first owner of these bytes
+    # fetch right after upload (the common case) touches neither disk/proxy nor the index.
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
     _meta_put(_meta_from_row(blob))
     # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
@@ -771,18 +736,21 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
     sha256 = await asyncio.to_thread(compute_sha256_file, path)
     size = await asyncio.to_thread(os.path.getsize, path)
 
-    existing = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    existing = await blob_index.aget(sha256)
     if existing:
         # These bytes already exist, but THIS user may not have referenced them before — without this
         # their upload would 200 and the file would never show up in their own drive.
-        add_owner(db, sha256, pubkey)
-        _meta_put(_meta_from_row(existing))
-        return _descriptor_fields(existing)
+        blob = await blob_index.aupdate(sha256, lambda row: _merge_reference(row, pubkey, "", None, False,
+                                                                             retime=False))
+        _meta_put(_meta_from_row(blob))
+        return _descriptor_fields(blob)
 
-    # End the read transaction BEFORE the (minutes-long, multi-GB) upload — otherwise the connection sits
-    # idle-in-transaction and Postgres' idle_in_transaction_session_timeout (60s) kills it, so the commit
-    # below fails and the blob is never recorded. Reads above are done; a fresh txn opens on the insert.
-    db.rollback()
+    # End any read transaction the CALLER holds BEFORE the (minutes-long, multi-GB) upload — a
+    # connection idle-in-transaction past Postgres' timeout is killed under it.
+    try:
+        db.rollback()
+    except Exception:
+        pass
 
     if cfg["backend"] == "proxy":
         stored_path = await _proxy_put_file(cfg["storage_url"], sha256, path, mime)
@@ -792,7 +760,7 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
 
         def _copy():
             os.makedirs(os.path.dirname(stored_path), exist_ok=True)
-            tmp = stored_path + ".tmp"
+            tmp = stored_path + ".tmp" + os.urandom(4).hex()
             # Stream copy (tmpfs → blob dir are different filesystems, so os.link would EXDEV).
             with open(path, "rb") as src, open(tmp, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
@@ -802,18 +770,64 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
         storage = "local"
 
     now = int(time.time())
-    blob = BlossomBlob(
-        sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=None, storage=storage, path=stored_path,
-    )
-    db.add(blob)
-    db.commit()
-    add_owner(db, sha256, pubkey)      # first owner of these bytes
+    fresh = blob_index.new_row(pubkey=pubkey, size=size, mime=mime, created_at=now, expires_at=None,
+                               storage=storage, path=stored_path)
+    blob = await blob_index.aupdate(sha256, lambda row: _create_or_merge(row, fresh, pubkey, "", None, False,
+                                                                         retime=False))
     _meta_put(_meta_from_row(blob))
     return _descriptor_fields(blob)
 
 
-async def read_blob(db: Session, blob: BlossomBlob):
+def _add_owner_to(row: dict, pubkey_hex: str, name: str = "") -> bool:
+    """Record `pubkey_hex` as referencing the blob in `row`. A re-upload only ever FILLS IN a missing
+    name — it never renames a file the user already has. True if the row changed."""
+    if not pubkey_hex:
+        return False
+    name = safe_filename(name)
+    owners = row.setdefault("owners", {})
+    cur = owners.get(pubkey_hex)
+    if cur is None:
+        owners[pubkey_hex] = [int(time.time()), name or None]
+        return True
+    if name and not (cur[1] if len(cur) > 1 else None):
+        owners[pubkey_hex] = [cur[0], name]
+        return True
+    return False
+
+
+def _merge_reference(row, pubkey, filename, want_exp, keep, retime=True):
+    """A new reference to bytes that are already stored. None = nothing to write.
+
+    The one thing that DOES need re-stamping is the explicit per-blob TTL: dedup means these identical
+    bytes may now be referenced by something with a different lifetime. A save that wants the blob KEPT
+    (no TTL — a chat image) must clear a TTL a transient artifact stamped earlier, or the permanent
+    reference is swept out from under it; a save that wants a TTL only ever pushes the expiry LATER,
+    never sooner. `keep` only ever goes False→True, never back: one set of bytes can be both a
+    throwaway chat image and a Notes attachment, and the reference that must survive wins."""
+    if row is None:
+        return None
+    dirty = False
+    if retime:
+        cur = row.get("expires_at") or None
+        if cur and (want_exp is None or want_exp > cur):
+            row["expires_at"] = want_exp
+            dirty = True
+        if keep and not row.get("keep"):
+            row["keep"] = True
+            dirty = True
+    if _add_owner_to(row, pubkey, filename):
+        dirty = True
+    return row if dirty else None
+
+
+def _create_or_merge(row, fresh, pubkey, filename, want_exp, keep, retime=True):
+    if row is not None:                    # the race: another upload of these bytes recorded them first
+        return _merge_reference(row, pubkey, filename, want_exp, keep, retime=retime)
+    _add_owner_to(fresh, pubkey, filename)   # first owner of these bytes
+    return fresh
+
+
+async def read_blob(db: Session, blob):
     """Return (async-byte-iterator, mime, size) for a stored blob, or None if the bytes
     are gone. Serves from the in-RAM cache when possible; otherwise reads from the storage
     server (proxy) or disk (local) — small blobs are buffered into the cache, large ones
@@ -961,7 +975,10 @@ async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict
            "missing": [], "corrupt": [], "unknown": 0, "orphans": 0, "orphan_bytes": 0,
            "deep": bool(deep), "truncated": False, "unreadable_store": False, "cannot": ""}
 
-    out["rows"] = db.query(func.count()).select_from(BlossomBlob).scalar() or 0
+    # The WHOLE table or Unavailable (still loading / relay down) — a scan of part of the index would
+    # report every row it did not see as an orphan's bytes, and its verdict feeds a delete.
+    every = blob_index.rows()
+    out["rows"] = len(every)
 
     # A local backend whose directory is not there at all is not a store full of missing files — it
     # is a store nobody can read, and saying otherwise is how an unmounted disk becomes a mass delete.
@@ -972,14 +989,11 @@ async def scan_store(db: Session, *, limit: int = 0, deep: bool = False) -> dict
             out["unknown"] = out["rows"]
             return out
 
-    q = db.query(BlossomBlob).order_by(BlossomBlob.created_at.desc())
+    rows = sorted(every, key=lambda b: b.created_at, reverse=True)
     if limit:
-        q = q.limit(limit)
+        rows = rows[:limit]
         if out["rows"] > limit:
             out["truncated"] = True
-    # Streamed rather than materialised: `all()` on a media node with hundreds of thousands of blobs
-    # is hundreds of megabytes of ORM objects in the one worker that also serves every request.
-    rows = q.yield_per(500) if hasattr(q, "yield_per") else q.all()
 
     seen = set()
     n = 0
@@ -1092,7 +1106,9 @@ async def forget_missing(db: Session, shas: list) -> dict:
     if not want:
         return out
 
-    total = db.query(func.count()).select_from(BlossomBlob).scalar() or 0
+    # The complete index or Unavailable: the "most of the store" refusal below is only a guard if the
+    # total it compares against is the real one.
+    total = blob_index.count()
     # A SHORT LIST IS A DELETE ORDER — the rule the folder sync and the phone book both use. If most
     # of the store looks missing, the store is unreachable, not empty.
     if len(want) >= 20 and total and len(want) > total / 2:
@@ -1104,7 +1120,7 @@ async def forget_missing(db: Session, shas: list) -> dict:
     cfg = _cfg(db)
     doomed = []
     for sha in want:
-        row = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+        row = blob_index.get(sha)
         if not row:
             continue
         state = (await _probe_proxy(cfg, row.path)) if row.storage == "proxy" \
@@ -1117,25 +1133,29 @@ async def forget_missing(db: Session, shas: list) -> dict:
             continue
         doomed.append(sha)
 
-    # Batched, and committed once: forty thousand single deletes hold a write transaction open for
-    # the whole run, which is the long-transaction failure this codebase has already been bitten by.
-    for i in range(0, len(doomed), 500):
-        chunk = doomed[i:i + 500]
-        db.query(BlossomBlob).filter(BlossomBlob.sha256.in_(chunk)).delete(synchronize_session=False)
-        out["removed"] += len(chunk)
-    if out["removed"]:
-        db.commit()
-        # AFTER the commit: dropping the cached metadata before it can be re-poisoned by a GET that
-        # re-queries the still-visible row under MVCC. drop_meta says so itself.
-        for sha in doomed:
-            drop_meta(sha)
-            _cache_drop(sha)
+    # One document each. A refused delete stops the run where it is and says so: what was removed is
+    # removed, what was not is still there, and the count reports exactly that — never more.
+    removed = []
+    for sha in doomed:
+        try:
+            await blob_index.adelete(sha)
+        except Unavailable as e:
+            out["refused"] = "the index refused a delete after %d of %d: %s" % (len(removed), len(doomed), e)
+            logger.warning("[blossom] forget_missing stopped: %s", out["refused"])
+            break
+        removed.append(sha)
+        # AFTER the delete landed: a drop before it can be re-poisoned by a GET that re-reads the
+        # still-present row. drop_meta says so itself.
+        drop_meta(sha)
+        _cache_drop(sha)
+    out["removed"] = len(removed)
+    if removed:
         logger.info("[blossom] forget_missing dropped %d row(s): %s", out["removed"],
-                    ",".join(x[:12] for x in doomed[:20]))
+                    ",".join(x[:12] for x in removed[:20]))
     return out
 
 
-async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:
+async def read_full(db: Session, blob) -> bytes | None:
     """Return the blob's full bytes (cache-aware). Used for HTTP Range responses — browsers need
     range support to play many MP4s (moov atom at the end) and to seek."""
     cached = _cache_get(blob.sha256)
@@ -1160,7 +1180,7 @@ async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:
     return data
 
 
-async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
+async def read_range(db: Session, blob, start: int, end: int):
     """Async-iterate ONLY bytes [start, end] (inclusive) of a blob, without buffering the whole thing.
     Serves from the RAM cache (slice) when hot; otherwise forwards the Range to the storage proxy (nas
     returns 206 via FileResponse) or seeks the local file. This is what makes video seeking O(range)
@@ -1242,7 +1262,7 @@ async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
     return _local_range()
 
 
-async def delete_blob_bytes(db: Session, blob: BlossomBlob, fresh_client: bool = False) -> None:
+async def delete_blob_bytes(db: Session, blob, fresh_client: bool = False) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller).
 
     `fresh_client=True` MUST be passed when this runs off the app's main event loop (the cleanup
@@ -1373,7 +1393,7 @@ def safe_filename(name: str) -> str:
     return n[:120]
 
 
-def _descriptor_fields(blob: BlossomBlob) -> dict:
+def _descriptor_fields(blob) -> dict:
     return {
         "sha256": blob.sha256,
         "size": blob.size,
@@ -1383,7 +1403,7 @@ def _descriptor_fields(blob: BlossomBlob) -> dict:
     }
 
 
-def descriptor(blob: BlossomBlob, base_url: str, name: str = "") -> dict:
+def descriptor(blob, base_url: str, name: str = "") -> dict:
     # `url` carries the extension (BUD-02) — the server ignores the suffix when serving
     # (`_strip_ext`), but it's what makes a download save as `.pdf`/`.png` instead of a bare hash,
     # and what lets other clients recognise the media type of a link we hand them. The uploader's
@@ -1413,81 +1433,80 @@ def descriptor(blob: BlossomBlob, base_url: str, name: str = "") -> dict:
     return d
 
 
+def _owner_name(blob, pubkey_hex: str) -> str:
+    v = (blob.owners or {}).get(pubkey_hex) if blob else None
+    return (v[1] if v and len(v) > 1 else None) or ""
+
+
 def names_for_pubkey(db: Session, pubkey_hex: str) -> dict:
     """sha256 → the uploader's original filename, for the blobs this pubkey owns ('' when unknown)."""
-    from app.models import BlossomBlobOwner
     try:
-        rows = (db.query(BlossomBlobOwner.sha256, BlossomBlobOwner.name)
-                  .filter(BlossomBlobOwner.pubkey == pubkey_hex,
-                          BlossomBlobOwner.name.isnot(None)).all())
-        return {sha: nm for sha, nm in rows if nm}
+        out = {}
+        for b in blob_index.owned_by(pubkey_hex):
+            nm = _owner_name(b, pubkey_hex)
+            if nm:
+                out[b.sha256] = nm
+        return out
     except Exception as e:
         logger.warning("[blossom] could not read blob names: %s", e)
         return {}
 
 
-def name_for(db: Session, sha256: str, pubkey_hex: str = "") -> str:
+async def name_for(db: Session, sha256: str, pubkey_hex: str = "") -> str:
     """The stored filename for a blob. Prefers `pubkey_hex`'s own name, else any owner's."""
-    from app.models import BlossomBlobOwner
     try:
-        q = db.query(BlossomBlobOwner.name).filter(BlossomBlobOwner.sha256 == sha256,
-                                                   BlossomBlobOwner.name.isnot(None))
-        if pubkey_hex:
-            row = q.filter(BlossomBlobOwner.pubkey == pubkey_hex).first()
-            if row and row[0]:
-                return row[0]
-        row = q.first()
-        return (row[0] if row else "") or ""
+        blob = await blob_index.aget(sha256)
     except Exception:
         return ""
+    if not blob:
+        return ""
+    if pubkey_hex:
+        nm = _owner_name(blob, pubkey_hex)
+        if nm:
+            return nm
+    # "any owner's" — the earliest reference's, so the answer does not depend on dict order
+    for _pk, v in sorted((blob.owners or {}).items(), key=lambda kv: (kv[1][0] if kv[1] else 0, kv[0])):
+        if v and len(v) > 1 and v[1]:
+            return v[1]
+    return ""
 
 
-def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False) -> list[BlossomBlob]:
+def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False) -> list:
     """BUD-02 listing. Private (AI-chat) blobs are EXCLUDED unless the caller proved ownership.
 
     This listing is unauthenticated by design (BUD-02 makes auth optional) and that was fine while
     every blob was public media. It stopped being fine once AI-chat artifacts were stored here: the
     listing published their sha256, and /client/file hands back the DECRYPTED bytes to anyone holding
     that sha256 — so `GET /blossom/list/<storage-pubkey>` was an unauthenticated dump of every user's
-    private chat files. The sha256 is the capability, so it must not be listed to strangers."""
-    from app.models import BlossomBlobOwner
-    # Join the OWNERS table, not blossom_blobs.pubkey. Dedup means the blob row is owned by whoever
-    # uploaded these bytes first, so listing by it hid the file from everyone who uploaded it after —
-    # their upload succeeded and then simply wasn't in their drive.
-    q = (db.query(BlossomBlob)
-           .join(BlossomBlobOwner, BlossomBlobOwner.sha256 == BlossomBlob.sha256)
-           .filter(BlossomBlobOwner.pubkey == pubkey_hex))
+    private chat files. The sha256 is the capability, so it must not be listed to strangers.
+
+    By OWNER, not by the blob's first uploader: dedup means the blob row is owned by whoever uploaded
+    these bytes first, so listing by it hid the file from everyone who uploaded it after.
+
+    Complete or Unavailable (the index still loading / the relay down) — an empty drive is an answer a
+    client acts on, so it is never given for "could not ask"."""
+    blobs = blob_index.owned_by(pubkey_hex)
     if not include_private:
-        q = q.filter(BlossomBlob.private.is_(False))
-    return q.order_by(BlossomBlob.created_at.desc()).all()
+        blobs = [b for b in blobs if not b.private]
+    blobs.sort(key=lambda b: (b.created_at, b.sha256), reverse=True)
+    return blobs
 
 
-def add_owner(db: Session, sha256: str, pubkey_hex: str, name: str = "") -> None:
+async def add_owner(db: Session, sha256: str, pubkey_hex: str, name: str = "") -> None:
     """Record `pubkey_hex` as referencing `sha256`. Idempotent; never raises into the upload path.
 
     `name` is the uploader's original filename (optional). A re-upload only ever FILLS IN a missing
     name — it never renames a file the user already has."""
-    from app.models import BlossomBlobOwner
     if not sha256 or not pubkey_hex:
         return
-    name = safe_filename(name)
     try:
-        exists = db.query(BlossomBlobOwner).filter(
-            BlossomBlobOwner.sha256 == sha256, BlossomBlobOwner.pubkey == pubkey_hex).first()
-        if exists:
-            if name and not (exists.name or ""):
-                exists.name = name
-                db.commit()
-            return
-        db.add(BlossomBlobOwner(sha256=sha256, pubkey=pubkey_hex, created_at=int(time.time()),
-                                name=name or None))
-        db.commit()
+        await blob_index.aupdate(sha256, lambda row: row if row is not None and _add_owner_to(row, pubkey_hex, name)
+                                 else None)
     except Exception as e:
-        db.rollback()
         logger.warning("[blossom] could not record owner %s/%s: %s", sha256[:12], pubkey_hex[:12], e)
 
 
-def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
+async def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
     """Give `sha256` a TTL of `days` from now, so the existing cleanup sweep reclaims it later.
 
     Used for SUPERSEDED Files-index blobs. Deleting them immediately is what left a wiped index with
@@ -1497,51 +1516,55 @@ def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
     something else that happens to share these bytes."""
     if not sha256 or days <= 0:
         return False
+    want = int(time.time()) + days * 86400
+    changed = {"v": False}
+
+    def fn(row):
+        if row is None:
+            return None
+        if row.get("expires_at") and row["expires_at"] >= want:
+            return None                      # already expiring at or after that — leave it alone
+        row["expires_at"] = want
+        changed["v"] = True
+        return row
     try:
-        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-        if blob is None:
-            return False
-        want = int(time.time()) + days * 86400
-        if blob.expires_at and blob.expires_at >= want:
-            return False                     # already expiring at or after that — leave it alone
-        blob.expires_at = want
-        db.commit()
-        _meta_drop(sha256)
-        return True
+        await blob_index.aupdate(sha256, fn)
     except Exception as e:
-        db.rollback()
         logger.warning("[blossom] could not stamp TTL on %s: %s", sha256[:12], e)
         return False
+    if changed["v"]:
+        _meta_drop(sha256)
+    return changed["v"]
 
 
-def clear_blob_expiry(db: Session, sha256: str) -> bool:
+async def clear_blob_expiry(db: Session, sha256: str) -> bool:
     """Remove a blob's TTL — it has become permanently referenced (e.g. a refused index save that was
     later accepted). The inverse of expire_blob_in; both are needed or a retry inherits the expiry."""
     if not sha256:
         return False
+    changed = {"v": False}
+
+    def fn(row):
+        if row is None or row.get("expires_at") is None:
+            return None
+        row["expires_at"] = None
+        changed["v"] = True
+        return row
     try:
-        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-        if blob is None or blob.expires_at is None:
-            return False
-        blob.expires_at = None
-        db.commit()
-        _meta_drop(sha256)
-        return True
+        await blob_index.aupdate(sha256, fn)
     except Exception as e:
-        db.rollback()
         logger.warning("[blossom] could not clear TTL on %s: %s", sha256[:12], e)
         return False
+    if changed["v"]:
+        _meta_drop(sha256)
+    return changed["v"]
 
 
 def usage_for_pubkey(db: Session, pubkey_hex: str) -> int:
-    """Total bytes this pubkey references, counted through the owners table so a shared blob is
-    charged to everyone holding it (dedup saves the DISK, it shouldn't hand out free quota)."""
-    from app.models import BlossomBlobOwner
-    from sqlalchemy import func
-    v = (db.query(func.coalesce(func.sum(BlossomBlob.size), 0))
-           .join(BlossomBlobOwner, BlossomBlobOwner.sha256 == BlossomBlob.sha256)
-           .filter(BlossomBlobOwner.pubkey == pubkey_hex).scalar())
-    return int(v or 0)
+    """Total bytes this pubkey references, counted through its owner references so a shared blob is
+    charged to everyone holding it (dedup saves the DISK, it shouldn't hand out free quota).
+    Complete or Unavailable — a quota decided on part of the index would grant or refuse on fake data."""
+    return sum(int(b.size or 0) for b in blob_index.owned_by(pubkey_hex))
 
 
 def quota_exceeded(db: Session, pubkey_hex: str, incoming: int) -> tuple[bool, int, int]:
@@ -1558,21 +1581,33 @@ def quota_exceeded(db: Session, pubkey_hex: str, incoming: int) -> tuple[bool, i
     return (used + max(0, incoming)) > limit, used, limit
 
 
-def is_owner(db: Session, sha256: str, pubkey_hex: str) -> bool:
-    """Does `pubkey_hex` hold a reference to `sha256`?"""
-    from app.models import BlossomBlobOwner
-    return db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256,
-                                             BlossomBlobOwner.pubkey == pubkey_hex).first() is not None
+async def is_owner(db: Session, sha256: str, pubkey_hex: str) -> bool:
+    """Does `pubkey_hex` hold a reference to `sha256`? Raises Unavailable when it cannot be asked."""
+    blob = await blob_index.aget(sha256)
+    return bool(blob and pubkey_hex in (blob.owners or {}))
 
 
-def release_owner(db: Session, sha256: str, pubkey_hex: str) -> int:
+async def release_owner(db: Session, sha256: str, pubkey_hex: str) -> int:
     """Drop one owner's reference. Returns how many owners REMAIN — the caller deletes the bytes only
-    at zero, so one user removing a shared file can no longer delete it out from under the others."""
-    from app.models import BlossomBlobOwner
-    db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256,
-                                      BlossomBlobOwner.pubkey == pubkey_hex).delete()
-    db.flush()
-    return db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256).count()
+    at zero, so one user removing a shared file can no longer delete it out from under the others.
+    Raises Unavailable when the release did not land (the caller then deletes nothing)."""
+    def fn(row):
+        if row is None or pubkey_hex not in (row.get("owners") or {}):
+            return None
+        row["owners"].pop(pubkey_hex, None)
+        return row
+    blob = await blob_index.aupdate(sha256, fn)
+    return len(blob.owners) if blob else 0
+
+
+async def delete_blob(db: Session, blob, fresh_client: bool = False) -> None:
+    """Remove a blob entirely — its index document (and with it every owner reference) FIRST, then the
+    bytes. In that order so a failure leaves orphan bytes (reported by the store scan, harmless) and never
+    a row pointing at bytes that are gone. Raises Unavailable when the index refused the delete, in which
+    case the bytes are left alone."""
+    await blob_index.adelete(blob.sha256)
+    await delete_blob_bytes(db, blob, fresh_client=fresh_client)
+    drop_meta(blob.sha256)
 
 
 # --- expiry cleanup (daemon thread) -----------------------------------------
@@ -1602,12 +1637,18 @@ def _cleanup_once() -> int:
     manifest two generations stale). Sweeping `keep` out of that path did not protect anything; it
     only meant those callers reclaimed NOTHING, for ever, while looking like they did.
     """
-    from sqlalchemy import or_, and_
     db = SessionLocal()
     removed = 0
     try:
         cfg = _cfg(db)
         now = int(time.time())
+        # THE WHOLE INDEX, or nothing happens: `rows()` raises until a strict load has succeeded, so a
+        # sweep can never act on a table it only partly read (before the copy: the SQL table, whole).
+        try:
+            every = blob_index.rows()
+        except Unavailable as e:
+            logger.info("[blossom] cleanup skipped — the blob index is not readable: %s", e)
+            return 0
         # An EXPLICIT per-blob expiry applies to every blob, `keep` included. The exemption below is
         # about the ADMIN'S AGE SETTING, which is a blanket rule nobody set per blob — turning it on
         # must not retroactively eat an encrypted drive. An `expires_at` is the opposite: it is only
@@ -1615,30 +1656,28 @@ def _cleanup_once() -> int:
         # files-index blob that fell out of backup retention, a superseded folder-sync manifest), and
         # while `keep` also swallowed those, that code was reclaiming nothing at all — a TTL that
         # could never fire, quietly leaking every superseded index and manifest for ever.
-        explicit = and_(BlossomBlob.expires_at.isnot(None),
-                        BlossomBlob.expires_at > 0,
-                        BlossomBlob.expires_at <= now)
+        def explicit(b):
+            return b.expires_at is not None and b.expires_at > 0 and b.expires_at <= now
         conds = [explicit]
         if cfg["ttl_days"] > 0:
-            conds.append(and_(BlossomBlob.keep.is_(False),
-                              BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400))
-        expired = db.query(BlossomBlob).filter(or_(*conds)).limit(500).all()
-        gone = []
+            def aged(b):
+                return (not b.keep) and b.created_at <= now - cfg["ttl_days"] * 86400
+            conds.append(aged)
+        expired = [b for b in every if any(c(b) for c in conds)][:500]
         for blob in expired:
             try:
                 # This runs in the cleanup daemon thread on a throwaway loop (asyncio.run), so the
                 # delete MUST use a fresh httpx client — the shared _client() belongs to the main
                 # loop and cross-loop reuse fails silently, orphaning the bytes on the storage node.
-                asyncio.run(delete_blob_bytes(db, blob, fresh_client=True))
-            except Exception:
-                pass
-            gone.append(blob.sha256)
-            db.delete(blob)
+                asyncio.run(delete_blob(db, blob, fresh_client=True))
+            except Unavailable as e:
+                logger.warning("[blossom] cleanup stopped, the index refused a delete: %s", e)
+                break
+            except Exception as e:
+                logger.warning("[blossom] cleanup could not remove %s: %s", blob.sha256[:12], e)
+                continue
             removed += 1
         if removed:
-            db.commit()
-            for sha in gone:
-                _meta_drop(sha)   # evict metadata AFTER the commit (see drop_meta)
             logger.info("[blossom] cleanup removed %d expired blob(s)", removed)
     except Exception as e:
         logger.warning("[blossom] cleanup error: %s", e)

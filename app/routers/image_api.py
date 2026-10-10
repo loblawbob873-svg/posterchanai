@@ -48,10 +48,10 @@ async def get_image_auth(
     # Check API key first (for external integrations and user API keys)
     if x_api_key:
         x_api_key = str(x_api_key).strip()  # Trim whitespace
-        # Check user API keys from api_keys table
+        # Check user API keys (the api_keys DocTable, via api_key_store)
         try:
-            from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
-            api_key, user_id = query_api_key_with_retry(db, x_api_key)
+            from app.utils.auth_utils import aquery_api_key, get_user_from_api_key
+            api_key, user_id = await aquery_api_key(x_api_key)
             if api_key and user_id:
                 user = get_user_from_api_key(db, user_id)
                 if user:
@@ -64,10 +64,10 @@ async def get_image_auth(
     # Check for API key in Authorization header (Bearer format)
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
-        # Check user API keys from api_keys table
+        # Check user API keys (the api_keys DocTable, via api_key_store)
         try:
-            from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
-            api_key, user_id = query_api_key_with_retry(db, token)
+            from app.utils.auth_utils import aquery_api_key, get_user_from_api_key
+            api_key, user_id = await aquery_api_key(token)
             if api_key and user_id:
                 user = get_user_from_api_key(db, user_id)
                 if user:

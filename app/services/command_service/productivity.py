@@ -21,9 +21,17 @@ class _ProductivityMixin:
         Same shape as `bill` — OCR plus one small extraction call joining two things that already
         exist, rather than any new machinery."""
         from app.services import reminder_service
+        from app.services.relay_reader import Unavailable
 
         if self.user is None:
             return {"type": "text", "content": "Sign in to set reminders."}
+        try:
+            return await self._remind_inner(arg, attachments)
+        except Unavailable:
+            return {"type": "text", "content": reminder_service.UNAVAILABLE_TEXT}
+
+    async def _remind_inner(self, arg: str, attachments=None) -> dict:
+        from app.services import reminder_service
         arg = (arg or "").strip()
         low = arg.lower()
 
@@ -34,7 +42,7 @@ class _ProductivityMixin:
         if low.startswith("cancel"):
             rest = arg[len("cancel"):].strip()
             if rest.isdigit():
-                ok = reminder_service.cancel_reminder(self.db, self.user, int(rest))
+                ok = await reminder_service.acancel_reminder(self.db, self.user, int(rest))
                 return {"type": "text", "content": ("🗑️ Reminder cancelled." if ok
                                                     else "No matching pending reminder for that id.")}
             return {"type": "text", "content": "Usage: `remind cancel <id>` — see ids with `reminders`."}
@@ -43,7 +51,7 @@ class _ProductivityMixin:
         parsed = await reminder_service.parse_reminder(arg, self.chat_service, tz=tz)
         if not parsed.get("ok"):
             return {"type": "text", "content": parsed.get("error", "Couldn't set that reminder.")}
-        r = reminder_service.create_reminder(self.db, self.user, parsed["text"], parsed["due_at"])
+        r = await reminder_service.acreate_reminder(self.db, self.user, parsed["text"], parsed["due_at"])
         human = reminder_service.humanize_due(r.due_at, tz=tz)
         return {"type": "text", "content": (
             f"⏰ Reminder set: **{r.text}** — {human}.\n_id {r.id} · `reminders` to view or cancel._")}
@@ -118,7 +126,7 @@ class _ProductivityMixin:
         # silently shifted a 3:00 PM appointment by the host's UTC offset.
         from datetime import timezone as _tzutc
         due_utc = due.astimezone(_tzutc.utc).replace(tzinfo=None)
-        r = reminder_service.create_reminder(self.db, self.user, what, due_utc)
+        r = await reminder_service.acreate_reminder(self.db, self.user, what, due_utc)
         human = reminder_service.humanize_due(r.due_at, tz=tz)
         return {"type": "text", "content": (
             f"⏰ Reminder set from the image: **{r.text}** — {human}.\n"
@@ -129,9 +137,14 @@ class _ProductivityMixin:
         button per item (Telegram builds an inline keyboard from the same list)."""
         from app.services import reminder_service
 
+        from app.services.relay_reader import Unavailable
+
         if self.user is None:
             return {"type": "text", "content": "Sign in to view reminders."}
-        items = reminder_service.list_reminders(self.db, self.user)
+        try:
+            items = await reminder_service.alist_reminders(self.db, self.user)
+        except Unavailable:
+            return {"type": "text", "content": reminder_service.UNAVAILABLE_TEXT}
         if not items:
             return {"type": "text", "content": (
                 "You have no pending reminders. Set one with `remind <what> <when>` — "
@@ -157,8 +170,17 @@ class _ProductivityMixin:
         that command verbatim)."""
         from app.services import saved_search_service
 
+        from app.services.relay_reader import Unavailable
+
         if self.user is None:
             return {"type": "text", "content": "Sign in to save pins."}
+        try:
+            return await self._pin_inner(arg)
+        except Unavailable:
+            return {"type": "text", "content": saved_search_service.UNAVAILABLE_TEXT}
+
+    async def _pin_inner(self, arg: str) -> dict:
+        from app.services import saved_search_service
         arg = (arg or "").strip()
         low = arg.lower()
         if not arg or low == "list":
@@ -167,12 +189,12 @@ class _ProductivityMixin:
             rest = arg.split(maxsplit=1)
             rid = rest[1].strip() if len(rest) > 1 else ""
             if rid.isdigit():
-                ok = saved_search_service.delete_saved_search(self.db, self.user, int(rid))
+                ok = await saved_search_service.adelete_saved_search(self.db, self.user, int(rid))
                 return {"type": "text", "content": ("🗑️ Pin deleted." if ok
                                                     else "No matching pin.")}
             return {"type": "text", "content": "Usage: `pin delete <id>` — see ids with `pins`."}
 
-        s = saved_search_service.create_saved_search(self.db, self.user, arg)
+        s = await saved_search_service.acreate_saved_search(self.db, self.user, arg)
         if not s:
             return {"type": "text", "content": (
                 "Give me something to pin, e.g. `pin latest xrp news` or "
@@ -190,9 +212,14 @@ class _ProductivityMixin:
         right thing instead of always searching."""
         from app.services import saved_search_service
 
+        from app.services.relay_reader import Unavailable
+
         if self.user is None:
             return {"type": "text", "content": "Sign in to view your pins."}
-        items = saved_search_service.list_saved_searches(self.db, self.user)
+        try:
+            items = await saved_search_service.alist_saved_searches(self.db, self.user)
+        except Unavailable:
+            return {"type": "text", "content": saved_search_service.UNAVAILABLE_TEXT}
         if not items:
             return {"type": "text", "content": (
                 "You have no pins yet. Save one with `pin <query>` or `pin <command>` — "

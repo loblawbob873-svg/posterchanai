@@ -23,7 +23,9 @@ import asyncio
 from app.database import get_db
 from app.utils import lb_auth
 from app.auth import get_current_user, get_current_user_optional
-from app.models import User, SharedFile, ExternalStorage
+from app.models import User
+from app.services import external_storage_store as _es, share_store as _shares
+from app.services.relay_reader import Unavailable
 from app.services import settings_store
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
@@ -1200,6 +1202,15 @@ async def get_all_images(
         raise HTTPException(status_code=500, detail=error_msg)
 
 
+async def _active_mount(mount_point: str):
+    """The ACTIVE external-storage mount at this mount point, or None. An unreadable mount table is a
+    503: answered as "no mount", the path would be served from the user's own folder instead."""
+    try:
+        return await _es.aactive_by_mount_point(mount_point)
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="External storage cannot be read right now; try again shortly")
+
+
 @router.get("/list")
 async def list_files(
     path: str = Query("", description="Directory path relative to user root or external storage mount point"),
@@ -1223,10 +1234,7 @@ async def list_files(
                     path_parts = path.split('/')
                     if path_parts and path_parts[0]:
                         mount_point = path_parts[0]
-                        external_storage = db.query(ExternalStorage).filter(
-                            ExternalStorage.mount_point == mount_point,
-                            ExternalStorage.is_active == True
-                        ).first()
+                        external_storage = await _active_mount(mount_point)
                         if external_storage:
                             is_external = True
                 
@@ -1253,13 +1261,10 @@ async def list_files(
         # Check if first part is an external storage mount point
         if path_parts and path_parts[0]:
             mount_point = path_parts[0]
-            external_storage = db.query(ExternalStorage).filter(
-                ExternalStorage.mount_point == mount_point,
-                ExternalStorage.is_active == True
-            ).first()
+            external_storage = await _active_mount(mount_point)
             
             # Check if user has access to this external storage
-            if external_storage and current_user in external_storage.allowed_users:
+            if external_storage and _es.allows(external_storage, current_user):
                 # This is an external storage path
                 # Build path relative to mount
                 if len(path_parts) > 1:
@@ -1540,16 +1545,17 @@ async def get_external_storage_mounts(
 ):
     """Get list of active external storage mounts that the current user has access to."""
     # Get all active mounts
-    all_mounts = db.query(ExternalStorage).filter(
-        ExternalStorage.is_active == True
-    ).order_by(ExternalStorage.name).all()
+    try:
+        all_mounts = await _es.aactive_mounts()
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="External storage cannot be read right now; try again shortly")
     
     # Filter mounts where user is in allowed_users list
     # If allowed_users is empty, no one has access (admin must explicitly grant access)
     accessible_mounts = []
     for mount in all_mounts:
         # Check if user is in allowed_users
-        if current_user in mount.allowed_users:
+        if _es.allows(mount, current_user):
             accessible_mounts.append({
                 "id": mount.id,
                 "name": mount.name,
@@ -1606,11 +1612,8 @@ async def view_file(
     is_external = False
     if file_path_parts and file_path_parts[0]:
         mount_point = file_path_parts[0]
-        external_storage = db.query(ExternalStorage).filter(
-            ExternalStorage.mount_point == mount_point,
-            ExternalStorage.is_active == True
-        ).first()
-        if external_storage and current_user in external_storage.allowed_users:
+        external_storage = await _active_mount(mount_point)
+        if external_storage and _es.allows(external_storage, current_user):
             is_external = True
     
     # Check if storage server is configured - proxy request if so (for user storage only, not external)
@@ -1715,13 +1718,10 @@ async def view_file(
     
     if path_parts and path_parts[0]:
         mount_point = path_parts[0]
-        external_storage = db.query(ExternalStorage).filter(
-            ExternalStorage.mount_point == mount_point,
-            ExternalStorage.is_active == True
-        ).first()
+        external_storage = await _active_mount(mount_point)
         
         # Check if user has access to this external storage
-        if external_storage and current_user in external_storage.allowed_users:
+        if external_storage and _es.allows(external_storage, current_user):
             # This is an external storage file
             if len(path_parts) > 1:
                 relative_parts = path_parts[1:]
@@ -1797,11 +1797,8 @@ async def get_thumbnail(
     is_external = False
     if path_parts and path_parts[0]:
         mount_point = path_parts[0]
-        external_storage = db.query(ExternalStorage).filter(
-            ExternalStorage.mount_point == mount_point,
-            ExternalStorage.is_active == True
-        ).first()
-        if external_storage and current_user in external_storage.allowed_users:
+        external_storage = await _active_mount(mount_point)
+        if external_storage and _es.allows(external_storage, current_user):
             is_external = True
     
     storage = get_storage_service(db)
@@ -1832,11 +1829,8 @@ async def get_thumbnail(
         path_parts = file_path.split('/')
         if path_parts and path_parts[0]:
             mount_point = path_parts[0]
-            external_storage = db.query(ExternalStorage).filter(
-                ExternalStorage.mount_point == mount_point,
-                ExternalStorage.is_active == True
-            ).first()
-            if external_storage and current_user in external_storage.allowed_users:
+            external_storage = await _active_mount(mount_point)
+            if external_storage and _es.allows(external_storage, current_user):
                 if len(path_parts) > 1:
                     relative_parts = path_parts[1:]
                     external_file_path = Path(external_storage.mount_path) / Path(*relative_parts)
@@ -2192,18 +2186,13 @@ async def create_share(
         expires_at = datetime.utcnow() + timedelta(hours=request.expires_hours)
     
     # Create share record
-    share = SharedFile(
-        user_id=current_user.id,
-        token=token,
-        file_path=request.file_path,
-        filename=full_path.name,
-        expires_at=expires_at,
-        max_accesses=request.max_accesses,
-        is_active=True
-    )
-    db.add(share)
-    db.commit()
-    
+    try:
+        await _shares.acreate(user_id=current_user.id, token=token, file_path=request.file_path,
+                              filename=full_path.name, expires_at=expires_at,
+                              max_accesses=request.max_accesses)
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="Sharing is unavailable right now; try again shortly")
+
     # Generate share URL (frontend will construct full URL)
     share_url = f"/api/files/shared/{token}"
     
@@ -2215,32 +2204,49 @@ async def create_share(
     }
 
 
+async def _deactivate_share(share) -> None:
+    try:
+        await _shares.adeactivate(share)
+    except Unavailable:
+        pass            # the expiry/limit check refuses it on every request regardless
+
+
+async def _count_share_access(share) -> None:
+    """Count this download before it is served. A LIMITED share whose count cannot be stored is not
+    served (503) -- otherwise the limit could be exceeded; reaching the limit meanwhile is a 404."""
+    try:
+        ok = await _shares.acount_access(share)
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="Shared files are unavailable right now; try again shortly")
+    if not ok:
+        raise HTTPException(status_code=404, detail="Share access limit reached")
+
+
 @router.get("/shared/{token}")
 async def get_shared_file(
     token: str,
     db: Session = Depends(get_db)
 ):
     """Get a shared file by token."""
-    share = db.query(SharedFile).filter(
-        SharedFile.token == token,
-        SharedFile.is_active == True
-    ).first()
-    
+    try:
+        share = await _shares.aactive_by_token(token)
+    except Unavailable:
+        # "Could not ask" is not "no such share": the link is retried, not reported dead.
+        raise HTTPException(status_code=503, detail="Shared files are unavailable right now; try again shortly")
+
     if not share:
         raise HTTPException(status_code=404, detail="Share not found or expired")
-    
+
     # Check expiration
-    if share.expires_at and share.expires_at < datetime.utcnow():
-        share.is_active = False
-        db.commit()
+    if _shares.expired(share):
+        await _deactivate_share(share)
         raise HTTPException(status_code=404, detail="Share has expired")
-    
+
     # Check access limit
-    if share.max_accesses and share.access_count >= share.max_accesses:
-        share.is_active = False
-        db.commit()
+    if _shares.limit_reached(share):
+        await _deactivate_share(share)
         raise HTTPException(status_code=404, detail="Share access limit reached")
-    
+
     # Get user and file
     user = db.query(User).filter(User.id == share.user_id).first()
     if not user:
@@ -2253,15 +2259,14 @@ async def get_shared_file(
         if url.startswith(('http://', 'https://')):
             try:
                 response = await _proxy_view_file(url, user.username, share.file_path, db)
-                share.access_count += 1
-                db.commit()
-                # Override Content-Disposition to use stored filename for download (ASCII-safe for headers)
-                safe_name = ascii_safe_header_filename(share.filename)
-                response.headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
-                return response
             except Exception as e:
                 logger.warning(f"[FILES] Shared file proxy failed, file may not exist on storage: {e}")
                 raise HTTPException(status_code=404, detail="File not found")
+            await _count_share_access(share)       # its own 503/404, not "file not found"
+            # Override Content-Disposition to use stored filename for download (ASCII-safe for headers)
+            safe_name = ascii_safe_header_filename(share.filename)
+            response.headers["Content-Disposition"] = f'inline; filename="{safe_name}"'
+            return response
         else:
             raise HTTPException(status_code=500, detail="Invalid storage_server_url configuration")
     
@@ -2279,9 +2284,8 @@ async def get_shared_file(
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         
-        share.access_count += 1
-        db.commit()
-        
+        await _count_share_access(share)
+
         # Determine media type
         suffix = full_path.suffix.lower()
         media_types = {
@@ -2310,24 +2314,24 @@ async def list_shares(
     current_user: User = Depends(get_current_user)
 ):
     """List all active shares for current user."""
-    shares = db.query(SharedFile).filter(
-        SharedFile.user_id == current_user.id,
-        SharedFile.is_active == True
-    ).order_by(SharedFile.created_at.desc()).all()
-    
+    try:
+        shares = await _shares.aactive_for_user(current_user.id)
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="Shares cannot be read right now; try again shortly")
+
     result = []
     for share in shares:
         # Check if expired
-        is_expired = share.expires_at and share.expires_at < datetime.utcnow()
-        is_limit_reached = share.max_accesses and share.access_count >= share.max_accesses
+        is_expired = _shares.expired(share)
+        is_limit_reached = _shares.limit_reached(share)
         
         result.append({
             "id": share.id,
             "token": share.token,
             "file_path": share.file_path,
             "filename": share.filename,
-            "created_at": share.created_at.isoformat(),
-            "expires_at": share.expires_at.isoformat() if share.expires_at else None,
+            "created_at": share.created_at,
+            "expires_at": share.expires_at or None,
             "access_count": share.access_count,
             "max_accesses": share.max_accesses,
             "is_expired": is_expired,
@@ -2345,17 +2349,14 @@ async def revoke_share(
     current_user: User = Depends(get_current_user)
 ):
     """Revoke a share (deactivate it)."""
-    share = db.query(SharedFile).filter(
-        SharedFile.id == share_id,
-        SharedFile.user_id == current_user.id
-    ).first()
-    
-    if not share:
-        raise HTTPException(status_code=404, detail="Share not found")
-    
-    share.is_active = False
-    db.commit()
-    
+    try:
+        share = await _shares.aget_for_user(share_id, current_user.id)
+        if not share:
+            raise HTTPException(status_code=404, detail="Share not found")
+        await _shares.adeactivate(share)
+    except Unavailable:
+        raise HTTPException(status_code=503, detail="Shares cannot be changed right now; try again shortly")
+
     return {"message": "Share revoked"}
 
 

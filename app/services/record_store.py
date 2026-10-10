@@ -6,13 +6,18 @@ chats), keyed by `<ns><row_id>`. The SQLite tables stay the fast cache (the remi
 its frequent `due_at <=` query local); a fresh node reconstructs the rows from the relay.
 
 The relay is the only datastore (always on). Sync callers use the `*_blocking` wrappers.
+
+REMINDERS AND SAVED SEARCHES LEFT THIS MODULE (#161): their store of record is now a DocTable (operator
+documents; reminder_service / saved_search_service), and nothing calls the reminder/search mirrors any more.
+`hydrate` still rebuilds their SQL rows from these per-user documents until the table's one-time SQL->DocTable
+migration has written its marker -- those SQL rows are the migration's source -- and never after it.
 """
 
 import asyncio
 import logging
 from datetime import datetime
 
-from app.models import Reminder, SavedSearch, APIKey, User
+from app.models import Reminder, SavedSearch, User
 from app.services import nostr_store as store
 from app.services.nostr_store import user_storage_seckey
 from app.services import settings_store as _ss
@@ -123,18 +128,8 @@ def delete_search_blocking(db, user, search_id) -> None:
         logger.warning("[record-store] delete_search_blocking failed: %s", e)
 
 
-# ---- API keys (last_used_at deliberately NOT mirrored — it churns on every API call) ----
-def _apikey_rec(k: APIKey) -> dict:
-    return {"key": k.key, "name": k.name, "is_active": k.is_active, "created_at": _iso(k.created_at)}
-
-
-def mirror_apikey_blocking(db, user, k: APIKey) -> None:
-    try:
-        _run_blocking(_put(db, user, NS_APIKEY, k.id, _apikey_rec(k), force=False))
-    except Exception as e:
-        logger.warning("[record-store] mirror_apikey_blocking failed: %s", e)
-
-
+# ---- API keys: RETIRED mirror. Keys live in the operator's `api_keys` DocTable (api_key_store, #161);
+# this only removes a deleted key's old per-user copy so nothing stale is left under the user's key. ----
 def delete_apikey_blocking(db, user, key_id) -> None:
     try:
         _run_blocking(_delete(db, user, NS_APIKEY, key_id, force=False))
@@ -143,31 +138,30 @@ def delete_apikey_blocking(db, user, key_id) -> None:
 
 
 # ---- hydrate (relay → cache) ----
+async def _moved_to_doctable(table: str) -> bool:
+    """True once `table` has its SQL->DocTable migration marker. "Could not ask" reads as False here, which is
+    safe: the only consequence is the old additive SQL rebuild, whose rows are the migration's source."""
+    try:
+        from app.services import doc_table
+        return await doc_table.amarked(table)
+    except Exception:       # noqa: BLE001
+        return False
+
+
 async def hydrate(db) -> int:
-    """Recreate missing Reminder + SavedSearch rows for every user from their relay docs. Additive."""
+    """Recreate missing Reminder / SavedSearch rows (until those tables moved to DocTable) for every user from
+    their relay docs. Additive. (API keys are no longer hydrated into SQL: they live in the `api_keys` DocTable.)"""
     made = 0
+    from app.services.app_tables import REMINDERS, SAVED_SEARCHES
+    skip_rem = await _moved_to_doctable(REMINDERS)
+    skip_srch = await _moved_to_doctable(SAVED_SEARCHES)
     for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
         try:
             sk = user_storage_seckey(db, user)
-            rem = await store.list_docs(_ss._port(), NS_REMINDER, seckey=sk)
-            srch = await store.list_docs(_ss._port(), NS_SEARCH, seckey=sk)
-            keys = await store.list_docs(_ss._port(), NS_APIKEY, seckey=sk)
+            rem = {} if skip_rem else await store.list_docs(_ss._port(), NS_REMINDER, seckey=sk)
+            srch = {} if skip_srch else await store.list_docs(_ss._port(), NS_SEARCH, seckey=sk)
         except Exception:
             continue
-        for d_tag, rec in (keys or {}).items():
-            if not isinstance(rec, dict) or not rec.get("key"):
-                continue
-            try:
-                kid = int(d_tag[len(NS_APIKEY):])
-            except (TypeError, ValueError):
-                continue
-            if db.query(APIKey).filter(APIKey.id == kid).first():
-                continue
-            if db.query(APIKey).filter(APIKey.key == rec["key"]).first():
-                continue  # key value is UNIQUE — don't violate the constraint on a re-key collision
-            db.add(APIKey(id=kid, user_id=user.id, key=rec["key"], name=rec.get("name") or "Default",
-                          is_active=bool(rec.get("is_active", True)), created_at=_dt(rec.get("created_at"))))
-            made += 1
         for d_tag, rec in (rem or {}).items():
             if not isinstance(rec, dict):
                 continue

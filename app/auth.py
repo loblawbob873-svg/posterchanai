@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+from app.services.relay_reader import Unavailable
 import os
 import urllib.parse
 import warnings
@@ -110,55 +111,19 @@ def get_current_user(
 
     # Check if this is an API key (starts with sk-)
     if token.startswith("sk-"):
-        # Get api_key AND user_id together to avoid lazy loading issues
-        api_key, user_id = query_api_key_with_retry(db, token)
-        
+        from app.services import api_key_store
+        try:
+            api_key, user_id = query_api_key_with_retry(db, token)
+        except Unavailable:
+            # The key table could not be read: neither a pass nor "invalid" -- try again.
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="API keys cannot be checked right now; try again shortly")
         if api_key and user_id:
-            # Get user using the already-fetched user_id (no lazy loading needed)
             user = get_user_from_api_key(db, user_id)
-            
             if user:
-                # Now update last used timestamp (after we've already fetched user)
-                try:
-                    # Update last_used_at using direct SQL to avoid SQLite parameter binding issues
-                    # SQLite can have issues with ORM updates, so use raw SQL
-                    try:
-                        from sqlalchemy import text
-                        now_utc = datetime.now(timezone.utc)
-                        # Use parameterized query but with explicit parameter names to avoid SQLite issues
-                        db.execute(
-                            text("UPDATE api_keys SET last_used_at = :last_used_at WHERE id = :id"),
-                            {"last_used_at": now_utc, "id": api_key.id}
-                        )
-                        db.commit()
-                    except Exception:
-                        # If direct SQL update fails, try ORM method as fallback
-                        try:
-                            db.rollback()
-                            # Fallback: try refreshing and updating via ORM
-                            try:
-                                db.refresh(api_key)
-                            except Exception:
-                                pass
-                            api_key.last_used_at = datetime.now(timezone.utc)
-                            db.commit()
-                        except Exception as fallback_error:
-                            # If both methods fail, rollback but we already have the user
-                            try:
-                                db.rollback()
-                            except Exception:
-                                pass
-                            logger.warning(f"Failed to update API key last_used_at (both methods): {fallback_error}")
-                except Exception as e:
-                    # If commit fails, rollback but we already have the user
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass  # Ignore rollback errors
-                    logger.warning(f"Failed to update API key last_used_at: {e}")
-                
+                api_key_store.touch(api_key)       # last_used_at, throttled; never fails the request
                 return _refuse_blocked(user)
-        
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key"

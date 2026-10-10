@@ -43,10 +43,15 @@ async def get_bot_auth(request: Request, x_api_key: Optional[str] = Header(None)
     bot_keys.discard("")
     if key in bot_keys:
         return True
-    from app.utils.auth_utils import get_user_from_api_key, query_api_key_with_retry
+    from app.utils.auth_utils import get_user_from_api_key, aquery_api_key
+    from app.services.relay_reader import Unavailable
     try:
-        api_key, user_id = query_api_key_with_retry(db, key)
+        api_key, user_id = await aquery_api_key(key)
         user = get_user_from_api_key(db, user_id) if api_key and user_id else None
+    except Unavailable:
+        # "Could not check the key" is not "not an admin's key": the bot retries a 503, and reads a
+        # 403 as a configuration error.
+        raise HTTPException(503, "API keys cannot be checked right now; try again shortly")
     except Exception:
         user = None
     if user is not None and user.is_admin:

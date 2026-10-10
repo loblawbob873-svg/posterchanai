@@ -29,7 +29,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import BlossomBlob, APIKey, User, UserSetting, StreamVOD
+from app.models import User, UserSetting
+from app.services.relay_reader import Unavailable
 from app.services import settings_store, stream_end_service, stream_service, users_store
 from app.services.nostr.event import verify_event
 
@@ -189,15 +190,21 @@ def _user_token(db, user: User) -> str:
 
 
 def _obs_key(db, user: User) -> str:
-    """Return the user's OBS stream API key, creating a dedicated one on first use."""
-    row = db.query(APIKey).filter(APIKey.user_id == user.id, APIKey.name == _OBS_KEY_NAME,
-                                  APIKey.is_active == True).first()  # noqa: E712
+    """Return the user's OBS stream API key, creating a dedicated one on first use (sync routes).
+    Raises relay_reader.Unavailable when the key table cannot be read or written."""
+    from app.services import api_key_store
+    row = api_key_store.active_named(user.id, _OBS_KEY_NAME)
     if row:
         return row.key
-    key = f"sk-{secrets.token_hex(32)}"
-    db.add(APIKey(user_id=user.id, key=key, name=_OBS_KEY_NAME))
-    db.commit()
-    return key
+    return api_key_store.create(user.id, _OBS_KEY_NAME).key
+
+
+async def _aobs_key(db, user: User) -> str:
+    from app.services import api_key_store
+    row = await api_key_store.aactive_named(user.id, _OBS_KEY_NAME)
+    if row:
+        return row.key
+    return (await api_key_store.acreate(user.id, _OBS_KEY_NAME)).key
 
 
 def _cache_control(path: str) -> str:
@@ -466,7 +473,13 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     key = (key or body.get("password") or "").strip()
     if not key:
         return JSONResponse({"error": "missing key"}, status_code=401)
-    row = db.query(APIKey).filter(APIKey.key == key, APIKey.is_active == True).first()  # noqa: E712
+    from app.services import api_key_store
+    try:
+        row = await api_key_store.alookup(key)
+    except Unavailable:
+        # MediaMTX retries a refused publish; a 401 here would read as "wrong key" in the encoder.
+        logger.info("[stream] publish refused for now: key table unavailable")
+        return JSONResponse({"error": "try again"}, status_code=503)
     if not row:
         logger.info("[stream] publish denied (bad/inactive key) path=%s", body.get("path"))
         return JSONResponse({"error": "invalid key"}, status_code=401)
@@ -588,7 +601,10 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     host = (cfg.get("stream_domain", "") or "").strip() or (cfg.get("turn_public_ip", "") or "").strip() \
         or (request.url.hostname or "")
     token = _user_token(db, current_user)
-    api_key = _obs_key(db, current_user)
+    try:
+        api_key = _obs_key(db, current_user)
+    except Unavailable:
+        return JSONResponse({"error": "stream keys cannot be read right now; try again shortly"}, status_code=503)
 
     # HLS playback URL: a configured direct base (grey-clouded stream subdomain, scales best) or the
     # app's reverse-proxy path (zero-config — rides the existing tunnel).
@@ -709,7 +725,10 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
         offer = _prefer_h264(offer.decode("utf-8", "ignore")).encode("utf-8")
     except Exception:
         pass
-    key = _obs_key(db, current_user)
+    try:
+        key = await _aobs_key(db, current_user)
+    except Unavailable:
+        return JSONResponse({"error": "stream keys cannot be read right now; try again shortly"}, status_code=503)
     webrtc_port = (settings_store.get("stream_webrtc_port", "8889") or "8889").strip()
     upstream = f"http://127.0.0.1:{webrtc_port}/{token}/whip?key={key}"
     import httpx
@@ -866,24 +885,24 @@ def _vod_url(sha256: str) -> str:
     return f"{base}/{sha256}" if base else f"/blossom/{sha256}"
 
 
-def _vod_json(v: StreamVOD) -> dict:
+def _vod_json(v: dict) -> dict:
     return {
-        "id": v.id,
-        "token": v.token,
-        "url": _vod_url(v.sha256),
-        "sha256": v.sha256,
-        "size": v.size,
-        "duration_s": v.duration_s,
-        "title": v.title,
-        "started_at": v.started_at,
-        "created_at": v.created_at,
+        "id": v.get("id"),
+        "token": v.get("token"),
+        "url": _vod_url(v.get("sha256") or ""),
+        "sha256": v.get("sha256"),
+        "size": v.get("size"),
+        "duration_s": v.get("duration_s"),
+        "title": v.get("title"),
+        "started_at": v.get("started_at"),
+        "created_at": v.get("created_at"),
     }
 
 
 def _playable(db, rows: list) -> list:
     """Drop VODs whose Blossom blob is gone, because their URL is a guaranteed 404.
 
-    A StreamVOD row outlives its bytes in two ordinary ways: the streamer deletes the recording
+    A recording row (stream_vod_store) outlives its bytes in two ordinary ways: the streamer deletes the recording
     (nothing removes the row), and an upload that never stored the blob still indexes one. Measured on
     the live node: 43 rows for one token, 42 of them dead. Serving those is not cosmetic — the client
     picks a recording out of this list and STAMPS IT onto the NIP-53 `recording` tag, so a dead row
@@ -893,26 +912,36 @@ def _playable(db, rows: list) -> list:
     """
     if not rows:
         return []
-    have = {r[0] for r in db.query(BlossomBlob.sha256)
-            .filter(BlossomBlob.sha256.in_([v.sha256 for v in rows])).all()}
-    return [v for v in rows if v.sha256 in have]
+    from app.services import blob_index
+    # From the loaded blob index — "is this blob gone" must be answered by the whole index, never by a
+    # partial one (that would hide a playable recording); the caller turns Unavailable into a 503.
+    return [v for v in rows if blob_index.get(v.get("sha256") or "") is not None]
+
+
+def _vod_answer(fetch):
+    """{"vods": [...]} — or a 503 when the recordings or the blob index could not be asked. Never an
+    empty list for "could not ask": the client stamps its pick onto the NIP-53 `recording` tag."""
+    from app.services.relay_reader import Unavailable
+    try:
+        return {"vods": [_vod_json(v) for v in fetch()]}
+    except Unavailable:
+        return JSONResponse({"error": "recordings are temporarily unavailable"}, status_code=503,
+                            headers={"Retry-After": "30"})
 
 
 @router.get("/vods")
 def stream_vods(current_user: User = Depends(get_current_user), db=Depends(get_db)):
     """The signed-in user's saved past streams, newest first."""
-    rows = (db.query(StreamVOD).filter(StreamVOD.user_id == current_user.id)
-            .order_by(StreamVOD.started_at.desc()).limit(200).all())
-    return {"vods": [_vod_json(v) for v in _playable(db, rows)]}
+    from app.services import stream_vod_store
+    return _vod_answer(lambda: _playable(db, stream_vod_store.for_user(current_user.id)))
 
 
 @router.get("/vods/by-token/{token}")
 def stream_vods_by_token(token: str, db=Depends(get_db)):
     """A streamer's past streams by publish token — PUBLIC, like HLS playback (the bytes are already
     public on the Blossom server). Lets a viewer watch streams that ended without needing an account."""
-    rows = (db.query(StreamVOD).filter(StreamVOD.token == token)
-            .order_by(StreamVOD.started_at.desc()).limit(200).all())
-    return {"vods": [_vod_json(v) for v in _playable(db, rows)]}
+    from app.services import stream_vod_store
+    return _vod_answer(lambda: _playable(db, stream_vod_store.for_token(token)))
 
 
 @router.post("/quality")

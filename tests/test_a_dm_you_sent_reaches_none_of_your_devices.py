@@ -43,14 +43,36 @@ def test_the_watcher_asks_before_it_sends():
         "the check runs after the devices are gathered; it must come first so nothing is sent")
 
 
-def test_the_lookup_fails_open():
+def test_the_lookup_fails_open(monkeypatch):
     """Every guard in this subsystem fails open, for one reason: a duplicate notification is a
-    nuisance, a suppressed one is a message somebody never learns about."""
-    fn = WATCHER[WATCHER.index("def _sent_by_own_device("):WATCHER.index("def _subs_for(")]
-    assert "return set()" in fn and "except Exception" in fn, (
-        "an unreachable database must answer 'nobody sent this' and let the push through")
-    assert "created_at >=" in fn.replace(" ", "") or "created_at >=" in fn, (
-        "the lookup has no freshness bound, so a stale row could silence a real message for ever")
+    nuisance, a suppressed one is a message somebody never learns about. The ledger is documents on
+    the relay now (#161), so "could not ask" is a dead relay -- run, not grepped."""
+    from app.services import nostr_push_service as nps
+    from tests import push_relay_harness as H
+    H.dead_relay(monkeypatch)
+    assert nps._sent_by_own_device({"a" * 64}, "c" * 64) == set(), (
+        "an unreachable ledger must answer 'nobody sent this' and let the push through")
+
+
+def test_the_lookup_has_a_freshness_bound(tmp_path, monkeypatch):
+    """A row older than the window must not silence a real message for ever."""
+    import time
+    from app.services import nostr_push_service as nps, push_store
+    from tests import push_relay_harness as H
+    r = H.start(tmp_path, monkeypatch)
+    try:
+        me, wid = "a" * 64, "c" * 64
+        push_store.sent().put("%s:%s" % (me, wid), {"pubkey": me, "wrap": wid,
+                                                     "at": int(time.time()) - push_store.SENT_TTL_SECONDS - 5})
+        H.reset()
+        assert nps._sent_by_own_device({me}, wid) == set(), (
+            "the lookup has no freshness bound, so a stale row could silence a real message for ever")
+        push_store.sent().put("%s:%s" % (me, wid), {"pubkey": me, "wrap": wid, "at": int(time.time())})
+        H.reset()                                               # another process reads it
+        assert nps._sent_by_own_device({me, "b" * 64}, wid.upper()) == {me}
+    finally:
+        H.reset()
+        r.close()
 
 
 def test_the_endpoint_proves_who_is_asking():
@@ -63,13 +85,33 @@ def test_the_endpoint_proves_who_is_asking():
     assert "_SENT_MAX_IDS" in fn, "an unbounded list of ids can be posted in one call"
 
 
-def test_the_record_expires():
+def test_the_record_expires(tmp_path, monkeypatch):
     """A send is followed by its push within seconds. Rows that outlive that are bookkeeping, and a
-    table that only grows is its own outage."""
-    fn = ROUTER[ROUTER.index('@router.post("/sent")'):ROUTER.index('@router.post("/direct/register")')]
-    assert "delete(" in fn, "nothing ever removes old rows"
-    assert "_SENT_TTL_SECONDS" in fn
-    assert "push_sent_wraps" in MODELS, "the model is gone"
+    table that only grows is its own outage -- the /sent write path prunes them."""
+    import asyncio
+    import time
+    from app.routers import push as push_router
+    from app.services import push_store
+    from app.services.nostr import event as nostr_event
+    from tests import push_relay_harness as H
+    r = H.start(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setattr(nostr_event, "verify_self_auth", lambda *a: True)
+        me = "a" * 64
+        push_store.sent().put("%s:%s" % (me, "d" * 64),
+                              {"pubkey": me, "wrap": "d" * 64, "at": int(time.time()) - 3600})
+
+        class Req:
+            async def json(self):
+                return {"pubkey": me, "auth": "x", "ids": ["e" * 64, "e" * 64, "not-an-id"]}
+        assert asyncio.run(push_router.note_sent_wraps(Req())) == {"ok": True, "noted": 1}
+        H.reset()
+        assert sorted(push_store.sent().all()) == ["%s:%s" % (me, "e" * 64)], "nothing ever removes old rows"
+        assert asyncio.run(push_router.note_sent_wraps(Req()))["noted"] == 0, "a repeat is not news"
+    finally:
+        H.reset()
+        r.close()
+    assert "push_sent_wraps" in MODELS, "the SQL model is kept (the table is not dropped, #161)"
 
 
 def test_the_client_tells_the_account_as_well_as_the_device():

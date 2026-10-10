@@ -21,11 +21,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, FediBridgeDelivered, FediPuppet
+from app.models import FediBridgeDelivered, FediPuppet
 from app.services import settings_store
 from app.services.activitypub import actors, config, convert, httpsig, inbox, outbox, remote, state
 from app.services import fedi_bridge_identity as ident
@@ -157,14 +154,18 @@ def world(monkeypatch):
     monkeypatch.setattr(remote, "public_key", public_key)
     monkeypatch.setattr(remote, "fetch_object", fetch_object)
 
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine, tables=[FediBridgeDelivered.__table__, FediPuppet.__table__])
-    Session = sessionmaker(bind=engine)
-    import app.database
-    monkeypatch.setattr(app.database, "SessionLocal", Session)
+    # The puppet registry and the delivered-notes ledger are DocTables (#161): in memory here, read and
+    # written by the shipped fedi_tables code; `Session` keeps the tests' seed/inspect idiom.
+    from tests.doc_table_mem import FakeSession, mem_tables
+    mem = mem_tables(monkeypatch)
+    from app.services.activitypub import dm as _dm
+    _dm._puppets.update(at=0.0, set=frozenset())
+
+    def Session():
+        return FakeSession(mem)
 
     monkeypatch.setattr(settings_store, "is_hydrated", lambda: True)
-    return {"settings": settings, "docs": docs, "relay": relay, "sent": sent, "Session": Session,
+    return {"settings": settings, "docs": docs, "relay": relay, "sent": sent, "Session": Session, "mem": mem,
             "objects": objects, "actors": actor_docs}
 
 
@@ -1912,8 +1913,14 @@ def test_the_community_api_is_for_the_bots_and_admins_only(monkeypatch):
     settings = {"bots_posterchanai_api_key": "bots-key"}
     monkeypatch.setattr(settings_store, "get", lambda k, d=None: settings.get(k, d))
     users = {"member-key": SimpleUser(False), "admin-key": SimpleUser(True)}
-    monkeypatch.setattr(auth_utils, "query_api_key_with_retry",
-                        lambda db, key: (key, key) if key in users else (None, None))
+    key_table = {"down": False}
+
+    async def aquery(key):
+        if key_table["down"]:
+            from app.services.relay_reader import Unavailable
+            raise Unavailable("api_keys unreadable (test)")
+        return (key, key) if key in users else (None, None)
+    monkeypatch.setattr(auth_utils, "aquery_api_key", aquery)
     monkeypatch.setattr(auth_utils, "get_user_from_api_key", lambda db, uid: users.get(uid))
 
     class Q:
@@ -1930,6 +1937,11 @@ def test_the_community_api_is_for_the_bots_and_admins_only(monkeypatch):
         assert c.get("/api/community/blocks", headers={"X-API-Key": "member-key"}).status_code == 403
         assert c.get("/api/community/blocks?since=3", headers={"X-API-Key": "bots-key"}).json() == {"blocks": [{"at": 5}]}
         assert c.get("/api/community/blocks", headers={"X-API-Key": "admin-key"}).status_code == 200
+        # #161: a key table that cannot be read is "try again" (503), never "not an admin's key" (403)
+        key_table["down"] = True
+        assert c.get("/api/community/blocks", headers={"X-API-Key": "admin-key"}).status_code == 503
+        assert c.get("/api/community/blocks", headers={"X-API-Key": "bots-key"}).status_code == 200
+        key_table["down"] = False
 
         async def down(*a, **k):
             raise RuntimeError("relay down")

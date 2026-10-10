@@ -1156,6 +1156,25 @@ would have handled it fine).
   **Java sweep** (NativeSweep) mirrors all of it: same state read w/ file-backed cache + era clear,
   same CAS batching in its Journal (stale → path struck), never passes `confirmed` (no person
   present), still defers conflicts to the foreground. See `docs/FOLDER_SYNC.md`.
+- **APP TABLES MOVE OFF POSTGRES WITHOUT AN OUTAGE (#161 wave 1)** (`app/services/doc_table.py`,
+  `table_migration.py` = the ONE registry + startup task, `doc_table_bulk.py` = the ONE copy engine,
+  `legacy_sql.py`; `scripts/migrate_tables_to_nostr.py --table <name>|--all|--list`). Moved: reminders,
+  scheduled_posts, saved_searches, social_reply_map, push_subs/direct_push_msgs/push_follow_seen/push_sent_wraps,
+  blossom_blobs(+owners, ONE document per sha256 with its owners inside), stream_vods, fedi_puppets,
+  fedi_bridge_delivered, external_storage(+users), api_keys (+`api_key_index`, d-tag = sha256 of the key),
+  shared_files, verification_tokens. Each store registers a `Legacy` (its SQL side) at import, so EVERY process
+  that imports it reads SQL until the table's `_migrated` marker exists -- and writes SQL FIRST, then the
+  relay; a new int-id row takes SQL's own id (`ainsert`), since a minted 2.4e12 id does not fit an INTEGER.
+  A process with no SQL session (`table_migration.bind(SessionLocal)`: main, worker, role_runner, the script)
+  answers Unavailable for an unmigrated table -- never the relay's incomplete copy, never a default DB URL.
+  The copy verifies against a FRESH SQL read and settles each differing key with point reads (a write that
+  lands mid-copy is not lost); SQL's value always wins before the marker. After a restart every migrated
+  table loads on its OWN THREAD (`start_background_load`, started first thing on 3051): point reads
+  (`get`/`aget`: an API key via its index, a blob, a reminder by id) read one document from the relay
+  meanwhile; whole-table reads raise `Loading` (an Unavailable with `retry_after`) -> 503 + Retry-After at
+  once. That remaining window is the strict load (measured in `tests/test_tables_no_outage.py`). The SQL
+  tables are kept, unread after the marker. "Could not ask" is still never "no rows".
+  `tests/test_tables_no_outage.py`, `tests/test_blob_index.py`, `tests/test_app_tables_on_relay.py`.
 - **Files → Blossom has a drive check, and Admin → Blossom has a STORE scan** — the two halves of
   "does the drive hold what it says it holds", asked from the two ends. The client one
   (`driveCheck`) compares the encrypted index against a FRESH server listing; the admin one

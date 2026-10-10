@@ -6,7 +6,6 @@ these rows to deliver mentions/zaps/replies as OS notifications when the app is 
 """
 import asyncio
 import base64
-from datetime import datetime, timedelta
 import json
 import logging
 import re
@@ -17,10 +16,11 @@ from fastapi import APIRouter, Depends, Request, WebSocket
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import PushSubscription, PushSentWrap
 from app.services import push_service
 from app.services import direct_push_service
 from app.services import push_prefs
+from app.services import push_store
+from app.services.relay_reader import Unavailable
 from app.services.nostr import event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ async def vapid_key(db: Session = Depends(get_db)):
 
 
 @router.post("/subscribe")
-async def subscribe(request: Request, db: Session = Depends(get_db)):
+async def subscribe(request: Request):
     """Store (or refresh) a browser push subscription for a Nostr pubkey. Idempotent by endpoint.
 
     `auth` is a base64 Nostr event signed by `pubkey` — proof the caller holds that key. It is NOT
@@ -92,19 +92,24 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
     # subscribing outright on this deployment, because the LAN DNS here answers fcm.googleapis.com with
     # 0.0.0.0 — which the guard correctly reads as unroutable, and which is every Chrome and Android
     # Chrome user. A protection that rejects the single most common push endpoint is a bug, not safety.
-    row = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
-    if row:
-        row.pubkey, row.p256dh, row.auth = pubkey, p256dh, auth   # device re-subscribed / rotated keys
-        row.transport, row.device_id, row.token_hash = "webpush", None, None
-    else:
-        db.add(PushSubscription(pubkey=pubkey, endpoint=endpoint, transport="webpush",
-                                p256dh=p256dh, auth=auth))
-    db.commit()
+    try:
+        found = await push_store.subs_where(lambda r: r.get("endpoint") == endpoint)
+        if found:
+            row = found[0]                                        # device re-subscribed / rotated keys
+            row.update(pubkey=pubkey, p256dh=p256dh, auth=auth, transport="webpush",
+                       device_id=None, token_hash=None)
+        else:
+            row = {"pubkey": pubkey, "endpoint": endpoint, "transport": "webpush",
+                   "device_id": None, "token_hash": None, "last_seen": None,
+                   "p256dh": p256dh, "auth": auth, "prefs": None}
+        await push_store.put_sub(row)
+    except Unavailable:
+        return {"ok": False, "error": "the server could not save this device right now; try again"}
     return {"ok": True}
 
 
 @router.post("/prefs")
-async def set_prefs(request: Request, db: Session = Depends(get_db)):
+async def set_prefs(request: Request):
     """Mirror the app's notification toggles onto this account's push devices.
 
     The toggles themselves live in a kind-30078 document encrypted to the user's own key, so this
@@ -119,31 +124,39 @@ async def set_prefs(request: Request, db: Session = Depends(get_db)):
     if not nostr_event.verify_self_auth(body.get("auth") or "", pubkey, "push-prefs"):
         return {"ok": False, "error": "auth required"}
     prefs = push_prefs.clean(body.get("prefs"))
-    rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pubkey)
     # NAMING THE DEVICE IS THE WHOLE POINT. These preferences are per-device on purpose — a phone
     # set to mentions-only must not silence the same events on a desktop — so a caller says which
     # of its owner's devices it is: `device_id` for the native transport, `endpoint` for Web Push
     # (whose rows carry no device id). Neither given is an explicit "all my devices".
     device_id = (body.get("device_id") or "").strip()
     endpoint = (body.get("endpoint") or "").strip()
-    if device_id:
-        if not _DEVICE_ID.fullmatch(device_id):
-            return {"ok": False, "error": "invalid device_id"}
-        rows = rows.filter(PushSubscription.device_id == device_id)
-    elif endpoint:
-        rows = rows.filter(PushSubscription.endpoint == endpoint)
+    if device_id and not _DEVICE_ID.fullmatch(device_id):
+        return {"ok": False, "error": "invalid device_id"}
+
+    def mine(r):
+        if r.get("pubkey") != pubkey:
+            return False
+        if device_id:
+            return r.get("device_id") == device_id
+        if endpoint:
+            return r.get("endpoint") == endpoint
+        return True
     updated = 0
-    for row in rows.all():
-        row.prefs = json.dumps(prefs)
-        updated += 1
-    db.commit()
+    try:
+        for row in await push_store.subs_where(mine):
+            row["prefs"] = json.dumps(prefs)
+            await push_store.put_sub(row)
+            updated += 1
+    except Unavailable:
+        # Not "0 devices": the client retries a failed mirror, and an answer of 0 would read as done.
+        return {"ok": False, "error": "the server could not save these preferences right now", "devices": updated}
     return {"ok": True, "devices": updated}
 
 
 #: A send is followed by its push within seconds. Anything unclaimed after this never will be, and
 #: keeping it longer would start silencing real messages that happen to reuse an id (they cannot,
 #: but the window is the thing that bounds the damage if anything else here is ever wrong).
-_SENT_TTL_SECONDS = 600
+_SENT_TTL_SECONDS = push_store.SENT_TTL_SECONDS
 
 #: How many wrap ids one call may report. A NIP-17 message is two wraps; a generous ceiling still
 #: makes this useless as a way to fill the table.
@@ -152,7 +165,7 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @router.post("/sent")
-async def note_sent_wraps(request: Request, db: Session = Depends(get_db)):
+async def note_sent_wraps(request: Request):
     """These gift wraps are MINE — do not push me about them.
 
     Reported as "if I send a DM, i do not want a push notification saying that somebdy sent a DM —
@@ -178,22 +191,17 @@ async def note_sent_wraps(request: Request, db: Session = Depends(get_db)):
     ids = [i for i in ids if _HEX64.match(i)]
     if not ids:
         return {"ok": True, "noted": 0}
-    # Housekeeping on the write path: a send is followed by its push within seconds, so anything
-    # older than the window is bookkeeping rather than evidence. Keeps the table from ever growing.
-    cutoff = datetime.utcnow() - timedelta(seconds=_SENT_TTL_SECONDS)
-    db.query(PushSentWrap).filter(PushSentWrap.created_at < cutoff).delete(synchronize_session=False)
-    have = {r.wrap_id for r in db.query(PushSentWrap.wrap_id)
-            .filter(PushSentWrap.pubkey == pubkey, PushSentWrap.wrap_id.in_(ids)).all()}
-    for wid in ids:
-        if wid in have:
-            continue
-        db.add(PushSentWrap(pubkey=pubkey, wrap_id=wid))
-    db.commit()
-    return {"ok": True, "noted": len(set(ids) - have)}
+    # Housekeeping on the write path (inside note_sent): a send is followed by its push within seconds,
+    # so anything older than the window is bookkeeping rather than evidence. Keeps the table from growing.
+    try:
+        noted = await push_store.note_sent(pubkey, ids)
+    except Unavailable:
+        return {"ok": False, "error": "could not record these right now"}
+    return {"ok": True, "noted": noted}
 
 
 @router.post("/direct/register")
-async def register_direct(request: Request, db: Session = Depends(get_db)):
+async def register_direct(request: Request):
     """Create/rotate one first-party Android device token after a device-bound Nostr proof."""
     body = await request.json()
     pubkey = (body.get("pubkey") or "").strip().lower()
@@ -205,36 +213,32 @@ async def register_direct(request: Request, db: Session = Depends(get_db)):
 
     token = secrets.token_urlsafe(32)
     digest = direct_push_service.token_digest(token)
-    row = db.query(PushSubscription).filter(
-        PushSubscription.pubkey == pubkey,
-        PushSubscription.device_id == device_id,
-        PushSubscription.transport == direct_push_service.TRANSPORT,
-    ).first()
-    if row:
-        old_id = row.id
-        row.token_hash = digest
-        row.last_seen = datetime.utcnow()
-    else:
-        old_id = None
-        row = PushSubscription(pubkey=pubkey,
-                               endpoint=f"direct:{pubkey}:{device_id}",
-                               transport=direct_push_service.TRANSPORT,
-                               device_id=device_id, token_hash=digest,
-                               last_seen=datetime.utcnow())
-        db.add(row)
-        db.flush()
+    now = int(time.time())
+    try:
+        mine = await push_store.subs_where(
+            lambda r: r.get("pubkey") == pubkey and r.get("transport") == direct_push_service.TRANSPORT)
+        row = next((r for r in mine if r.get("device_id") == device_id), None)
+        if row:
+            old_id = row["id"]
+            row.update(token_hash=digest, last_seen=now)
+        else:
+            old_id = None
+            # The endpoint is unique: a row for it under another transport would be a second device.
+            row = {"pubkey": pubkey, "endpoint": f"direct:{pubkey}:{device_id}",
+                   "transport": direct_push_service.TRANSPORT, "device_id": device_id,
+                   "token_hash": digest, "last_seen": now, "p256dh": None, "auth": None, "prefs": None}
+        row = await push_store.put_sub(row)
 
-    # A signed owner may register several phones/tablets, but not grow this table without bound.
-    stale = db.query(PushSubscription).filter(
-        PushSubscription.pubkey == pubkey,
-        PushSubscription.transport == direct_push_service.TRANSPORT,
-        PushSubscription.id != row.id,
-    ).order_by(PushSubscription.last_seen.desc().nullslast(),
-               PushSubscription.created_at.desc()).offset(9).all()
-    stale_ids = [s.id for s in stale]
-    for s in stale:
-        db.delete(s)
-    db.commit()
+        # A signed owner may register several phones/tablets, but not grow this table without bound.
+        others = [r for r in mine if r["id"] != row["id"]]
+        others.sort(key=lambda r: (r.get("last_seen") is not None, r.get("last_seen") or 0,
+                                   r.get("created_at") or 0), reverse=True)
+        stale_ids = []
+        for s in others[9:]:
+            await push_store.delete_sub(s["id"])
+            stale_ids.append(s["id"])
+    except Unavailable:
+        return {"ok": False, "error": "the server could not register this device right now; try again"}
     if old_id is not None:
         direct_push_service.disconnect(old_id)
     for sid in stale_ids:
@@ -246,7 +250,7 @@ async def register_direct(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/direct/unregister")
-async def unregister_direct(request: Request, db: Session = Depends(get_db)):
+async def unregister_direct(request: Request):
     body = await request.json()
     pubkey = (body.get("pubkey") or "").strip().lower()
     device_id = (body.get("device_id") or "").strip()
@@ -254,16 +258,15 @@ async def unregister_direct(request: Request, db: Session = Depends(get_db)):
         return {"ok": False, "error": "invalid device_id"}
     if not _direct_auth(body.get("auth") or "", pubkey, "unregister", device_id):
         return {"ok": False, "error": "auth required"}
-    row = db.query(PushSubscription).filter(
-        PushSubscription.pubkey == pubkey,
-        PushSubscription.device_id == device_id,
-        PushSubscription.transport == direct_push_service.TRANSPORT,
-    ).first()
-    if row:
-        sid = row.id
-        db.delete(row)
-        db.commit()
-        direct_push_service.disconnect(sid)
+    try:
+        rows = await push_store.subs_where(
+            lambda r: r.get("pubkey") == pubkey and r.get("device_id") == device_id
+            and r.get("transport") == direct_push_service.TRANSPORT)
+        for row in rows:
+            await push_store.delete_sub(row["id"])
+            direct_push_service.disconnect(row["id"])
+    except Unavailable:
+        return {"ok": False, "error": "the server could not remove this device right now; try again"}
     return {"ok": True}
 
 
@@ -278,22 +281,25 @@ async def direct_socket(websocket: WebSocket):
             await websocket.close(code=4401)
             return
         digest = direct_push_service.token_digest(token)
-        from app.database import SessionLocal
-        db = SessionLocal()
         try:
-            row = db.query(PushSubscription).filter(
-                PushSubscription.token_hash == digest,
-                PushSubscription.transport == direct_push_service.TRANSPORT,
-            ).first()
-            if not row:
-                await websocket.close(code=4401)
-                return
-            sid = row.id
-            device_id = row.device_id
-            row.last_seen = datetime.utcnow()
-            db.commit()
-        finally:
-            db.close()
+            found = await push_store.subs_where(
+                lambda r: r.get("token_hash") == digest and r.get("transport") == direct_push_service.TRANSPORT)
+        except Unavailable:
+            # COULD NOT ASK is not "this token is unknown": 4401 makes the phone FORGET its token and
+            # report notifications off. A plain close makes it reconnect and try again.
+            await websocket.close(code=1013)
+            return
+        if not found:
+            await websocket.close(code=4401)
+            return
+        row = found[0]
+        sid = row["id"]
+        device_id = row.get("device_id")
+        row["last_seen"] = int(time.time())
+        try:
+            await push_store.put_sub(row)
+        except Unavailable:
+            pass                    # last_seen is bookkeeping; the device is real and may connect
         await websocket.send_json({"type": "ready", "device_id": device_id})
         await direct_push_service.serve(websocket, sid)
     except Exception:
@@ -304,7 +310,7 @@ async def direct_socket(websocket: WebSocket):
 
 
 @router.post("/test")
-async def test_push(request: Request, db: Session = Depends(get_db)):
+async def test_push(request: Request):
     """Send a real notification through the real path, and report exactly what happened.
 
     "Notifications don't work" is unactionable — for the user and for whoever they ask. Every way this
@@ -323,11 +329,13 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
     device_id = body.get("device_id")
     if device_id is not None and (not isinstance(device_id, str) or not _DEVICE_ID.fullmatch(device_id)):
         return {"ok": False, "error": "invalid device_id"}
-    query = db.query(PushSubscription).filter(PushSubscription.pubkey == pubkey)
-    if device_id:
-        query = query.filter(PushSubscription.device_id == device_id,
-                             PushSubscription.transport == direct_push_service.TRANSPORT)
-    rows = query.all()
+    try:
+        rows = await push_store.subs_where(
+            lambda r: r.get("pubkey") == pubkey and (not device_id or (
+                r.get("device_id") == device_id and r.get("transport") == direct_push_service.TRANSPORT)))
+    except Unavailable:
+        return {"ok": False, "devices": None,
+                "error": "The server could not look up your devices right now. Try again shortly."}
     if not rows:
         return {"ok": False, "devices": 0,
                 "error": "This device is not registered on this server. Turn notifications off and on again."}
@@ -349,9 +357,10 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
         else:
             failed += 1
     for row in dead:
-        db.delete(row)
-    if dead:
-        db.commit()
+        try:
+            await push_store.delete_sub(row["id"])
+        except Unavailable:
+            pass                    # still expired next time; never fatal to the report
     error = ""
     if not accepted and not queued:
         error = ("The server could not send the test. Your registration was kept; try again shortly."
@@ -363,11 +372,14 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/unsubscribe")
-async def unsubscribe(request: Request, db: Session = Depends(get_db)):
+async def unsubscribe(request: Request):
     """Drop a subscription (user turned notifications off / the browser revoked it)."""
     body = await request.json()
     endpoint = (body.get("endpoint") or "").strip()
     if endpoint:
-        db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).delete()
-        db.commit()
+        try:
+            for row in await push_store.subs_where(lambda r: r.get("endpoint") == endpoint):
+                await push_store.delete_sub(row["id"])
+        except Unavailable:
+            return {"ok": False, "error": "could not remove this device right now; try again"}
     return {"ok": True}

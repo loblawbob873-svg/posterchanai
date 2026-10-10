@@ -1,14 +1,14 @@
 """First-party PosterChan Direct notification transport.
 
 Android keeps one authenticated WebSocket to its PosterChan node. Notification payloads are queued
-briefly in Postgres and removed only after the device ACKs them, so a radio handoff or process restart
+briefly (push_store's `direct_push_msgs` documents on this node's relay) and removed only after the device
+ACKs them, so a radio handoff or process restart
 does not silently lose a notification. Bearer tokens are never stored: only SHA-256 digests are.
 """
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -25,7 +25,7 @@ TRANSPORT = "posterchan-direct"
 # Cloudflare's 100s idle window): the APK's (which is how it notices a dead link) and uvicorn's
 # (run.py; how this end notices one). This loop sends NOTHING on its own. It still wakes every
 # POLL_S, because a notification queued by ANOTHER process (the worker) cannot set this process's
-# event — that read is a database query and costs the phone nothing.
+# event — that read is an in-memory table (kept current from the relay) and costs the phone nothing.
 POLL_S = 20
 _MAX_PENDING = 100
 _MAX_PAYLOAD_BYTES = 16 * 1024
@@ -57,13 +57,17 @@ def subscription_dict(row) -> dict:
     switched DMs off went on buzzing for them with the row in the database saying otherwise.
     Carrying the column here is what lets the filter be asked at all. pywebpush reads only
     `endpoint` and `keys`, so the extra key costs nothing on the Web Push path.
+
+    A row is a push_store dict (the table left Postgres, #161); an object with the same attributes is
+    still accepted.
     """
+    get = row.get if isinstance(row, dict) else (lambda k, d=None: getattr(row, k, d))
     return {
-        "id": row.id,
-        "transport": getattr(row, "transport", None) or "webpush",
-        "endpoint": row.endpoint,
-        "keys": {"p256dh": row.p256dh, "auth": row.auth},
-        "prefs": getattr(row, "prefs", None),
+        "id": get("id"),
+        "transport": get("transport") or "webpush",
+        "endpoint": get("endpoint"),
+        "keys": {"p256dh": get("p256dh"), "auth": get("auth")},
+        "prefs": get("prefs"),
     }
 
 
@@ -73,9 +77,10 @@ def enqueue(subscription_id: int, payload: dict) -> bool:
 
 
 def enqueue_result(subscription_id: int, payload: dict) -> str:
-    """Persist a small notification and wake a connected device. Called from worker threads."""
-    from app.database import SessionLocal
-    from app.models import DirectPushMessage, PushSubscription
+    """Persist a small notification and wake a connected device. Called from worker threads.
+
+    "Could not ask" (the relay) is "failed", NEVER "expired": only "expired" makes a caller delete the device."""
+    from app.services import push_store
 
     try:
         wire = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -86,34 +91,17 @@ def enqueue_result(subscription_id: int, payload: dict) -> str:
         logger.warning("[direct-push] refused notification larger than %d bytes", _MAX_PAYLOAD_BYTES)
         return "failed"
 
-    db = SessionLocal()
     try:
-        sub = db.query(PushSubscription).filter(
-            PushSubscription.id == int(subscription_id),
-            PushSubscription.transport == TRANSPORT,
-        ).first()
-        if not sub:
+        sub = push_store.get_sub_sync(subscription_id)
+        if not sub or sub.get("transport") != TRANSPORT:
             return "expired"
-        now = datetime.utcnow()
-        db.query(DirectPushMessage).filter(DirectPushMessage.expires_at <= now).delete(
-            synchronize_session=False)
+        push_store.drop_expired()
         # Bound each device independently. Calls should never sit behind a hundred old social cards.
-        ids = [r[0] for r in db.query(DirectPushMessage.id).filter(
-            DirectPushMessage.subscription_id == sub.id
-        ).order_by(DirectPushMessage.id.desc()).offset(_MAX_PENDING - 1).all()]
-        if ids:
-            db.query(DirectPushMessage).filter(DirectPushMessage.id.in_(ids)).delete(
-                synchronize_session=False)
         ttl = 90 if payload.get("type") == "call" else 6 * 60 * 60
-        db.add(DirectPushMessage(subscription_id=sub.id, payload=wire,
-                                 expires_at=now + timedelta(seconds=ttl)))
-        db.commit()
+        push_store.enqueue_message(sub["id"], wire, ttl, _MAX_PENDING)
     except Exception as e:
-        db.rollback()
         logger.warning("[direct-push] queue failed: %s", e)
         return "failed"
-    finally:
-        db.close()
     wake(subscription_id)
     return "queued"
 
@@ -134,49 +122,39 @@ def disconnect(subscription_id: int) -> None:
 
 
 def _pending(subscription_id: int) -> list[dict]:
-    from app.database import SessionLocal
-    from app.models import DirectPushMessage, PushSubscription
+    """The device's queue, oldest first. "Could not ask" is [] for THIS pass only -- nothing is deleted, and
+    the loop asks again within POLL_S."""
+    from app.services import push_store
+    from app.services.relay_reader import Unavailable
 
-    db = SessionLocal()
     try:
-        exists = db.query(PushSubscription.id).filter(
-            PushSubscription.id == subscription_id,
-            PushSubscription.transport == TRANSPORT,
-        ).first()
-        if not exists:
+        sub = push_store.get_sub_sync(subscription_id)
+        if not sub or sub.get("transport") != TRANSPORT:
             return []
-        now = datetime.utcnow()
-        db.query(DirectPushMessage).filter(DirectPushMessage.expires_at <= now).delete(
-            synchronize_session=False)
-        rows = db.query(DirectPushMessage).filter(
-            DirectPushMessage.subscription_id == subscription_id
-        ).order_by(DirectPushMessage.id.asc()).limit(_MAX_PENDING).all()
-        db.commit()
-        out = []
-        for row in rows:
-            try:
-                payload = json.loads(row.payload)
-            except Exception:
-                payload = {}
-            out.append({"type": "notification", "id": row.id, "payload": payload})
-        return out
-    finally:
-        db.close()
+        push_store.drop_expired()
+        rows = push_store.queue_for(subscription_id)[:_MAX_PENDING]
+    except Unavailable as e:
+        logger.info("[direct-push] queue unreadable this pass: %s", e)
+        return []
+    out = []
+    for mid, row in rows:
+        try:
+            payload = json.loads(row.get("payload") or "")
+        except Exception:
+            payload = {}
+        out.append({"type": "notification", "id": mid, "payload": payload})
+    return out
 
 
 def _ack(subscription_id: int, message_id: int) -> None:
-    from app.database import SessionLocal
-    from app.models import DirectPushMessage
+    from app.services import push_store
+    from app.services.relay_reader import Unavailable
 
-    db = SessionLocal()
     try:
-        db.query(DirectPushMessage).filter(
-            DirectPushMessage.id == int(message_id),
-            DirectPushMessage.subscription_id == subscription_id,
-        ).delete(synchronize_session=False)
-        db.commit()
-    finally:
-        db.close()
+        push_store.ack_message(subscription_id, message_id)
+    except Unavailable as e:
+        # The card stays queued and is replayed; the phone recognises the id and does not draw it twice.
+        logger.info("[direct-push] ack not recorded: %s", e)
 
 
 async def serve(websocket: WebSocket, subscription_id: int) -> None:

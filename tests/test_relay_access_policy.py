@@ -12,7 +12,7 @@ from app.services.nostr import nostr_service as ns
 def world(monkeypatch):
     from sqlalchemy.pool import StaticPool
     engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool)
-    Base.metadata.create_all(engine,tables=[User.__table__,FediPuppet.__table__,Bot.__table__])
+    Base.metadata.create_all(engine,tables=[User.__table__,Bot.__table__])
     db=Session(engine)
     keys=[('%064x'%i) for i in range(1,7)]
     config={'nostr_relay_nip05_domain':'poster.place','nostr_relay_nip05_names':'local '+ns.npub_of(keys[0])}
@@ -31,9 +31,12 @@ def world(monkeypatch):
         u=User(username='user'+str(i),password_hash='unused',nostr_npub=ns.npub_of(key),can_ai=True,can_blossom=True,can_stream=True,
                is_admin=i==3,pleroma_acct='person@fedi.test' if i==1 else None)
         db.add(u);users.append(u)
-    db.add(FediPuppet(actor_uri='https://fedi.test/user',acct='puppet@fedi.test',pubkey_hex=keys[5],nip05_name='puppet'))
+    # The puppet registry and API keys are DocTables now (#161), in memory here.
+    from tests.doc_table_mem import FakeSession, mem_tables
+    mem = mem_tables(monkeypatch)
+    FakeSession(mem).add(FediPuppet(actor_uri='https://fedi.test/user',acct='puppet@fedi.test',pubkey_hex=keys[5],nip05_name='puppet'))
     db.commit()
-    yield SimpleNamespace(db=db,users=users,keys=keys,config=config)
+    yield SimpleNamespace(db=db,users=users,keys=keys,config=config,mem=mem)
     db.close();engine.dispose()
 
 
@@ -143,13 +146,14 @@ def test_scheduler_runs_every_fifteen_minutes_and_obeys_config(world, monkeypatc
 
 
 def test_existing_obs_key_is_denied_after_cleanup_but_public_read_stays_open(world, monkeypatch):
-    from app.models import APIKey, UserSetting
+    from app.models import UserSetting
     from app.routers import streams
     from starlette.requests import Request
-    for table in (APIKey.__table__, UserSetting.__table__):
+    for table in (UserSetting.__table__,):
         table.create(world.db.get_bind(), checkfirst=True)
     user = world.users[2]
-    world.db.add(APIKey(user_id=user.id, key='test-publisher-key', is_active=True))
+    world.mem.put('api_keys', '1', {'id': 1, 'user_id': user.id, 'key': 'test-publisher-key', 'name': 'Default',
+                                    'created_at': None, 'last_used_at': None, 'is_active': True})
     world.db.add(UserSetting(user_id=user.id, key='stream_token', value='test-stream'))
     world.db.commit()
     world.config['stream_auth_secret'] = 'test-hook'
