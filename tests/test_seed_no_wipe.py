@@ -5,8 +5,8 @@ Run: venv/bin/python -m unittest tests.test_seed_no_wipe
 The wipe: seed_relay_defaults read "what the relay already has" over the relay WebSocket, which under
 startup load returned a PARTIAL set, so ~119 real settings looked "missing" and got overwritten by
 defaults (with fresh timestamps, so they won — the LLM/bots/LB all broke). These tests pin the fix:
-seeding now reads existing keys via a RACE-FREE direct DB path and REFUSES to seed when that read
-isn't authoritative — so a transient short read can never again clobber the durable Nostr store.
+seeding now reads existing keys with a COMPLETE-or-raise relay read (relay_reader: EOSE, paged to the end)
+and REFUSES to seed when that read isn't authoritative — so a transient short read can never again clobber the durable Nostr store.
 """
 import asyncio
 import unittest
@@ -100,22 +100,24 @@ class TestDirectKeyReadGuards(unittest.TestCase):
         self.assertEqual(keys, set())
         self.assertFalse(ok)                # no key → cannot trust → do not seed
 
-    def test_missing_event_tables_is_fresh_node_authoritative(self):
-        db = mock.Mock()
-        db.execute.side_effect = Exception('relation "events" does not exist')
+    def test_a_fresh_relay_that_answers_nothing_is_authoritative(self):
+        from app.services import relay_reader
         with mock.patch.object(S, "_OP_SK", b"\x01" * 32), \
-             mock.patch("app.services.nostr.nostr_service.derive_pubkey", return_value="ab" * 32):
-            keys, ok = S._relay_setting_keys_from_db(db=db)
+             mock.patch("app.services.nostr.nostr_service.derive_pubkey", return_value="ab" * 32), \
+             mock.patch.object(S, "_port", return_value=1), \
+             mock.patch.object(relay_reader, "query", return_value=[]):
+            keys, ok = S._relay_setting_keys_from_db(db=None)
         self.assertEqual(keys, set())
-        self.assertTrue(ok)                 # fresh node: empty but trustworthy → first-boot seed is OK
+        self.assertTrue(ok)                 # fresh node: the relay answered, empty → first-boot seed is OK
 
-    def test_other_db_error_is_not_authoritative(self):
-        db = mock.Mock()
-        db.execute.side_effect = Exception("connection reset")
+    def test_a_relay_that_could_not_be_asked_is_not_authoritative(self):
+        from app.services import relay_reader
         with mock.patch.object(S, "_OP_SK", b"\x01" * 32), \
-             mock.patch("app.services.nostr.nostr_service.derive_pubkey", return_value="ab" * 32):
-            keys, ok = S._relay_setting_keys_from_db(db=db)
-        self.assertFalse(ok)                # unknown failure → refuse to seed
+             mock.patch("app.services.nostr.nostr_service.derive_pubkey", return_value="ab" * 32), \
+             mock.patch.object(S, "_port", return_value=1), \
+             mock.patch.object(relay_reader, "query", side_effect=relay_reader.Unavailable("connection reset")):
+            keys, ok = S._relay_setting_keys_from_db(db=None)
+        self.assertFalse(ok)                # could not ask → refuse to seed
 
 
 if __name__ == "__main__":

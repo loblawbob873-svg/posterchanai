@@ -1,6 +1,6 @@
 """Global settings store — Nostr relay is the ONLY datastore (no SQL `Setting` table).
 
-Settings live as operator-signed `pcai:setting:` events in the relay's Postgres event store. The
+Settings live as operator-signed `pcai:setting:` events in this node's relay event store. The
 app keeps an **in-process cache** (`_CACHE`) hydrated from the relay at startup, so the many
 synchronous readers (`settings_store.get(...)`) are fast — no SQL `Setting` table, no per-read WS
 round-trip. Writes go to the cache and are mirrored to the relay (`put`/`put_many`, via a
@@ -23,6 +23,7 @@ import threading
 
 from app.services import nostr_store as store
 from app.services import nostr_migrate as _mig
+from app.services import relay_reader
 
 logger = logging.getLogger(__name__)
 
@@ -488,59 +489,112 @@ def apply_defaults(defaults: dict) -> None:
         _save_local_file()
 
 
+# WHERE A PROCESS READS ITS SETTINGS FROM (#161: no SQL against the relay's tables any more).
+#
+# Every process asks THIS node's relay over its loopback websocket (relay_reader) -- except the relay itself.
+# The relay process needs its settings to configure itself BEFORE its websocket server listens (nobody to ask
+# yet), and it re-reads them on the control poller INSIDE its own event loop (a blocking websocket call to
+# itself from there would wait on a loop that cannot answer until it times out). So relay_main registers its
+# own store here, in-process, before the first read: `fn(filters) -> events`, the very answer the relay would
+# give over the socket (PosterChanDB when the mirror serves, Postgres otherwise). None everywhere else.
+_EVENT_SOURCE = None
+
+
+def set_event_source(fn) -> None:
+    """The relay process: read settings from its own, already-open store instead of over its own socket."""
+    global _EVENT_SOURCE
+    _EVENT_SOURCE = fn
+
+
+_SETTINGS_PAGE = 1000
+
+
+def _operator_setting_events(op_sk, op_hex: str) -> dict:
+    """{d_tag: newest event} for every OPERATOR-signed `pcai:setting:` document, read to its END.
+
+    Raises relay_reader.Unavailable when the relay could not be asked or the namespace could not be read to
+    its end -- never a short answer, because a short answer here reads as "the relay does not hold this key"
+    and the seed then writes a default over the real value (the 2026-06-23 wipe)."""
+    base = {"authors": [op_hex], "kinds": [store.APP_KIND], "#d~": [store.NS_SETTING]}
+    best: dict = {}
+    cursor = None
+    while True:
+        flt = dict(base, limit=_SETTINGS_PAGE)
+        if cursor is not None:
+            flt["_cursor"] = [cursor[0], cursor[1]]
+        if _EVENT_SOURCE is not None:
+            try:
+                evs = list(_EVENT_SOURCE([flt]) or [])
+            except Exception as e:      # noqa: BLE001 -- the store could not answer: could not ask
+                raise relay_reader.Unavailable("%s: %s" % (type(e).__name__, e)) from e
+        else:
+            evs = relay_reader.query([flt], port=_port(), auth_seckey=op_sk, timeout=15)
+        for ev in evs:
+            if ev.get("pubkey") != op_hex or int(ev.get("kind", -1)) != store.APP_KIND:
+                continue        # operator-signed documents only, whatever a relay hands back
+            d = relay_reader.d_tag(ev)
+            if not d.startswith(store.NS_SETTING):
+                continue
+            if d not in best or int(ev.get("created_at", 0)) > int(best[d].get("created_at", 0)):
+                best[d] = ev
+        if len(evs) < _SETTINGS_PAGE:
+            return best
+        nxt = min((int(e.get("created_at", 0)), str(e.get("id") or "")) for e in evs)
+        if cursor is not None and nxt >= cursor:
+            raise relay_reader.Unavailable("the settings namespace could not be read to its end")
+        cursor = nxt
+
+
+def _operator_hex(op_sk) -> str:
+    import binascii
+    from app.services.nostr import nostr_service
+    pk = nostr_service.derive_pubkey(op_sk)
+    return pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
+
+
 def hydrate_from_db(db) -> int:
-    """relay events → cache, SYNCHRONOUSLY, by reading the relay's `events` table directly (it's in
-    the same Postgres) + NIP-44-decrypting each `pcai:setting:` doc. No WebSocket — so this works
-    before the relay's WS is up AND inside the relay subprocess itself (which reads its own config).
-    Authoritative for shareable keys; local-only keys are left to the JSON file. Caches the operator
-    key for the background relay-writer. Returns the number of keys updated."""
+    """relay events → cache, SYNCHRONOUSLY: the operator's `pcai:setting:` docs read from THIS node's relay
+    (relay_reader over the loopback socket; in the relay process, its own store -- see set_event_source) and
+    NIP-44-decrypted. The name is historical: it read the relay's Postgres tables directly until #161, and
+    `db` is only where the operator key may still be found.
+
+    Authoritative for shareable keys; local-only keys are left to the JSON file. Caches the operator key for
+    the background relay-writer. Returns the number of keys updated.
+
+    A relay that could not be asked changes NOTHING: the cache keeps what it had (defaults on a cold start),
+    `is_hydrated()` stays as it was, and nothing is written anywhere -- so no caller can mistake "could not
+    ask" for "the relay holds no settings"."""
     global _OP_SK, _HYDRATED
     op_sk = _operator_seckey(db)
     if not op_sk:
         return 0
     _OP_SK = op_sk
     try:
-        from app.services.nostr import nostr_service, nip44
-        import binascii, json as _json
-        from sqlalchemy import text as _text
-        pk = nostr_service.derive_pubkey(op_sk)
-        op_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
-        rows = db.execute(_text(
-            "SELECT DISTINCT ON (t.value) t.value AS d, e.content "
-            "FROM events e JOIN event_tags t ON t.event_id = e.id "
-            "WHERE e.kind = 30078 AND e.pubkey = :pk AND t.tag = 'd' AND t.value LIKE 'pcai:setting:%' "
-            "ORDER BY t.value, e.created_at DESC"
-        ), {"pk": op_hex}).fetchall()
+        from app.services.nostr import nip44
+        import json as _json
+        docs = _operator_setting_events(op_sk, _operator_hex(op_sk))
+    except relay_reader.Unavailable as e:
+        # Expected on a cold start where this process brings the relay up after this first read (role `all`):
+        # defaults apply until the hydrate that runs once the relay answers.
+        logger.info("[settings-store] relay not readable yet (%s) — keeping current values", type(e).__name__)
+        return 0
     except Exception as e:
-        # Roll back so the session leaves no aborted transaction for the caller's next query
-        # (e.g. migrate_legacy_table reuses this same session right after).
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        # FRESH NODE: the relay hasn't created its `events`/`event_tags` tables yet (it owns that
-        # schema and does it on first start), so the EARLY hydrate runs before they exist. Harmless —
-        # there are no settings to read yet; defaults apply and the deferred hydrate (after the relay
-        # is up) picks them up. Quietly note it instead of a scary warning.
-        if "does not exist" in str(e) or "UndefinedTable" in type(e).__name__:
-            logger.info("[settings-store] relay event store not initialized yet — using defaults for now")
-            return 0
-        logger.warning("[settings-store] hydrate_from_db failed: %s", e)
+        logger.warning("[settings-store] hydrate_from_db failed: %s", type(e).__name__)
         return 0
     changed = 0
-    for d, content in rows:
+    for d, ev in docs.items():
         key = d[len(store.NS_SETTING):]
         if _is_local_only(key):
             continue
         try:
-            data = _json.loads(nip44.decrypt_self(op_sk, content))
+            data = _json.loads(nip44.decrypt_self(op_sk, ev.get("content", "")))
             val = data.get("value") if isinstance(data, dict) else data
             _HYDRATED_KEYS.add(key)   # the relay holds an authoritative value for this key
             if _set_local(key, "" if val is None else str(val)):
                 changed += 1
         except Exception:
             continue
-    _HYDRATED = True   # relay event store read successfully (even 0 rows) → cache reflects the relay
+    _HYDRATED = True   # the relay answered to the end (even 0 docs) → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay events (sync)", changed)
     return changed
 
@@ -551,6 +605,12 @@ def migrate_legacy_table(db) -> int:
     values survive the table going away. Keys the relay already has (hydrated above) and local-only
     keys are skipped. Idempotent; harmless when the table is gone. Returns rows migrated."""
     from sqlalchemy import text as _text, inspect as _inspect
+    if not _HYDRATED:
+        # "Which keys does the relay already hold" is _HYDRATED_KEYS, and it is only an answer once a hydrate
+        # has read the relay. Before that it is EMPTY, and every stale legacy row would be written over the
+        # relay's newer value. The hydrate that runs once the relay answers runs this again.
+        logger.info("[settings-store] legacy settings-table migration deferred — relay not read yet")
+        return 0
     try:
         if not _inspect(db.bind).has_table("settings"):
             return 0
@@ -728,40 +788,25 @@ async def write_through(db, changes: dict) -> int:
 
 
 def _relay_setting_keys_from_db(db):
-    """Race-free: the operator's existing `pcai:setting:` keys read DIRECTLY from the relay's Postgres
-    `events` table (same source as hydrate_from_db). Returns (keys:set, authoritative:bool).
+    """The operator's existing `pcai:setting:` keys, as THIS node's relay holds them (the same read as
+    hydrate_from_db). Returns (keys:set, authoritative:bool).
 
-    Why not _mig.settings_all(): that queries the relay over the WebSocket, which under startup load
-    can return a PARTIAL result — and seed_relay_defaults treating a falsely-"missing" key as absent is
-    how real settings got overwritten by defaults (the 2026-06-23 wipe: "seeded 119 default setting(s)"
-    while the events table actually held 288). A direct SQL read can't be raced by relay sync/load.
-    authoritative=False means the read could not be trusted → the caller MUST NOT seed."""
+    Why not _mig.settings_all(): its websocket read SWALLOWS a timeout into whatever it had collected, so under
+    startup load it could answer PART of the namespace -- and seed_relay_defaults treating a falsely-"missing"
+    key as absent is how real settings got overwritten by defaults (the 2026-06-23 wipe: "seeded 119 default
+    setting(s)" while the relay actually held 288). This read only answers once the relay has finished (EOSE)
+    and has been paged to the END of the namespace; anything less raises. authoritative=False means the read
+    could not be trusted → the caller MUST NOT seed. (A fresh node's relay answers, with nothing: authoritative.)"""
     op_sk = _OP_SK or _operator_seckey(db)
     if not op_sk:
         return set(), False
     try:
-        from app.services.nostr import nostr_service
-        from sqlalchemy import text as _text
-        import binascii
-        pk = nostr_service.derive_pubkey(op_sk)
-        op_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
-        rows = db.execute(_text(
-            "SELECT DISTINCT t.value AS d FROM events e JOIN event_tags t ON t.event_id = e.id "
-            "WHERE e.kind = 30078 AND e.pubkey = :pk AND t.tag = 'd' AND t.value LIKE 'pcai:setting:%'"
-        ), {"pk": op_hex}).fetchall()
-        pfx = store.NS_SETTING
-        return {r[0][len(pfx):] for r in rows if r[0].startswith(pfx)}, True
+        docs = _operator_setting_events(op_sk, _operator_hex(op_sk))
     except Exception as e:
-        try:
-            db.rollback()   # leave no aborted txn for the caller's next query
-        except Exception:
-            pass
-        # The relay hasn't created its event tables yet → GENUINE fresh node: empty + trustworthy,
-        # so first-boot seeding is correct. Any other error is NOT trustworthy → refuse to seed.
-        if "does not exist" in str(e) or "UndefinedTable" in type(e).__name__:
-            return set(), True
-        logger.warning("[settings-store] seed: direct key read failed: %s", e)
+        logger.warning("[settings-store] seed: relay key read failed: %s", type(e).__name__)
         return set(), False
+    pfx = store.NS_SETTING
+    return {d[len(pfx):] for d in docs if d.startswith(pfx)}, True
 
 
 async def seed_relay_defaults(db, defaults: dict) -> int:
@@ -770,7 +815,7 @@ async def seed_relay_defaults(db, defaults: dict) -> int:
     so keys the relay already has are skipped (never overwritten). Writes nothing on an established
     node. `defaults` is the canonical default_settings dict (NOT a table).
 
-    FAIL-SAFE: determines what the relay already holds via a RACE-FREE direct Postgres read, and if
+    FAIL-SAFE: determines what the relay already holds via a COMPLETE-or-raise relay read, and if
     that read is not authoritative it seeds NOTHING — overwriting the durable Nostr store with defaults
     because a transient read came back short is exactly the data-loss this whole design must prevent."""
     op_sk = _OP_SK or _operator_seckey(db)

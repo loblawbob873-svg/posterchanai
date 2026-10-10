@@ -233,14 +233,41 @@ def _parse_nip05(names_raw: str, relays_raw: str):
     return names, relays
 
 
+def _pg_dsn() -> str:
+    """The relay store's libpq DSN -- a LOCAL-ONLY setting (local_settings.json), so it is readable before any
+    hydrate, which is what lets the relay process open its store first and read its settings from it."""
+    from app.services import settings_store
+    v = settings_store.get("nostr_relay_pg_dsn", None)
+    if v not in (None, ""):
+        return v
+    return os.environ.get("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")
+
+
+def open_store_for_settings(loop) -> RelayStore:
+    """THE RELAY PROCESS, before its first _read_config: open its own store and make it the settings source.
+
+    Settings are read from the relay (#161: never from its tables by SQL). Every other process asks over the
+    loopback socket; this one cannot -- it reads its settings BEFORE its websocket server listens, and again on
+    its control poller inside its own event loop, where a blocking call to its own socket would wait on a loop
+    that cannot answer it. So it answers itself, through the same query path a REQ takes. max_events and
+    retention_days are settings, so _main applies them once they have been read."""
+    from app.services import settings_store
+    settings_store.load_local()
+    store = RelayStore(_pg_dsn())
+    store.open(loop)
+    settings_store.set_event_source(lambda filters: store._query_sync(filters, 5000))
+    return store
+
+
 def _read_config() -> dict:
     from app.database import SessionLocal
     from app.services import settings_store
     db = SessionLocal()
     try:
         # The relay reads its OWN config from the Nostr datastore — no SQL Setting table. Plumbing
-        # keys (port/bind/pg_dsn) come from the local JSON; the rest are decrypted straight from the
-        # relay's event store (same Postgres). Populate this process's settings cache, then read it.
+        # keys (port/bind/pg_dsn) come from the local JSON; the rest are read from the relay: over its
+        # socket from any other process, from its own store inside the relay process (open_store_for_settings).
+        # Populate this process's settings cache, then read it.
         settings_store.load_local()
         settings_store.hydrate_from_db(db)
 
@@ -346,8 +373,7 @@ def _read_config() -> dict:
             # streams + filters in real time; the sweep is the laggy "mirror their feeds" crawl.
             "mirror_feeds": gb("nostr_relay_mirror_feeds", False),
             # Postgres is the relay's store (no SQLite). libpq DSN; tunable in Admin → Relay.
-            "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get("NOSTR_RELAY_PG_DSN",
-                        "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
+            "pg_dsn": _pg_dsn(),
             # Age retention for high-volume FEED content only (notes/reposts/reactions/comments):
             # pruned after N days. Registered users' notes + direct-published events are ALWAYS
             # preserved (never pruned), so a user's own history is safe. 0 = keep everything.
@@ -778,16 +804,21 @@ def mirror_stats() -> dict:
 
 # --- async main -------------------------------------------------------------
 
-async def _main(cfg: dict) -> None:
+async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     # Public port → scanners/probes will hit it; the websockets server logs each failed
     # handshake with a full traceback, which would flood the journal. Quiet it.
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
-    store = RelayStore(
-        cfg["pg_dsn"],
-        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_relay_loop_exception_handler)
-    store.open(loop)
+    if store is None:
+        store = RelayStore(
+            cfg["pg_dsn"],
+            max_events=cfg["max_events"], retention_days=cfg["retention_days"])
+        store.open(loop)
+    else:
+        # Opened by relay_main before the settings could be read (open_store_for_settings).
+        store.max_events = cfg["max_events"]
+        store.retention_days = cfg["retention_days"]
     _start_mirror(store, cfg)
     gate = WotGate()
     gate.set_operator(cfg["operator"])

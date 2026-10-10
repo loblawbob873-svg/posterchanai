@@ -327,7 +327,7 @@ def _global_enabled() -> bool:
     # The per-process settings cache can be stuck unhydrated (0 settings) in the reaper/worker process even
     # though the relay authoritatively holds stream_record_enabled=true — and when that happens EVERY ended
     # stream is silently dropped instead of saved. Before concluding recording is off, force a fresh
-    # hydrate_from_db (reads the relay's Postgres directly — cheap + authoritative) and re-check. A flaky
+    # hydrate_from_db (a complete relay read — cheap + authoritative) and re-check. A flaky
     # cache must never cost the user their recordings.
     try:
         db = SessionLocal()
