@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import re
 import time
 import xml.etree.ElementTree as ET
 
@@ -212,6 +213,92 @@ DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / '
 HANG_DUMP_S = 600
 
 
+# ---------------------------------------------------------------- server-only deploys skip browser tests
+# A deploy that changes nothing a browser loads cannot be caught by a browser test, and those tests are about
+# half the gate's time. "Server-only" is decided from the DIFF (what production runs = origin/master, plus
+# whatever sync.sh is about to commit), and every doubt resolves to running them: an unreadable diff, an empty
+# one, a path outside the list below, or PC_GATE_FULL_BROWSER=1. Routers, app/main.py, static/, templates/,
+# desktop/, mobile/ and os/ are NOT on the list -- they shape what the client receives -- and neither are
+# browser tests themselves, scripts/check_*, nor this gate's own files.
+SERVER_ONLY = ('app/services/', 'app/models.py', 'app/database.py', 'app/schemas.py', 'app/worker.py',
+               'botframework/', 'docs/', 'requirements', 'scripts/install/', 'install.sh', 'Dockerfile',
+               'docker-entrypoint.sh', 'docker-compose.yml')
+GATE_FILES = ('scripts/deploy_regression_gate.py', 'scripts/checkall.py', 'scripts/private_tmp.py', 'sync.sh')
+# A test is a BROWSER test if it starts Chrome itself, runs a scripts/check_* browser check, or imports a test
+# module that does (followed transitively). Read from the files, never a typed list, so a new one is classified
+# by being written. "chromium" alone is NOT a marker: package names and prose use it.
+_LAUNCH = re.compile(r"--remote-debugging-port|DevToolsActivePort|webSocketDebuggerUrl|/opt/google/chrome|"
+                     r"google-chrome|--headless|scripts/check_\w+\.py|check_\w+\.py['\"]")
+_IMPORT = re.compile(r"^\s*from\s+(tests(?:\.\w+)+)\s+import|^\s*import\s+(tests(?:\.\w+)+)", re.M)
+
+
+def browser_test_files(root):
+    """Every file under tests/ that drives a browser, directly or through a test module it imports."""
+    root = Path(root)
+    src = {}
+    for p in (root / 'tests').rglob('*.py'):
+        if any(part in ('data', 'node_modules', '__pycache__') for part in p.parts):
+            continue
+        try:
+            src[str(p.relative_to(root))] = p.read_text(errors='replace')
+        except OSError:
+            continue
+    browser = {f for f, s in src.items() if _LAUNCH.search(s)}
+    deps = {f: {(m[0] or m[1]).replace('.', '/') + '.py' for m in _IMPORT.findall(s)} for f, s in src.items()}
+    grew = True
+    while grew:
+        grew = False
+        for f, d in deps.items():
+            if f not in browser and d & browser:
+                browser.add(f)
+                grew = True
+    return browser
+
+
+def is_server_only_path(path):
+    if path in GATE_FILES or path.startswith('scripts/check_'):
+        return False
+    if path.startswith('tests/'):
+        return not path.startswith('tests/client/')
+    if path.endswith('.md'):
+        return True
+    if path.startswith('scripts/'):
+        return True
+    return path.startswith(SERVER_ONLY)
+
+
+def deploy_changes(root, base='origin/master'):
+    """Paths this deploy changes (committed since `base` + not yet committed), or None when that cannot be told."""
+    try:
+        committed = subprocess.run(['git', 'diff', '--name-only', base + '...HEAD'], cwd=root, check=True,
+                                   capture_output=True, text=True, timeout=60).stdout.split()
+        pending = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root, check=True,
+                                 capture_output=True, text=True, timeout=60).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    paths = set(committed)
+    for line in pending:
+        name = line[3:].split(' -> ')[-1].strip()
+        if name:
+            paths.add(name)
+    return sorted(paths)
+
+
+def browser_skip_decision(root):
+    """(skip, why). Skip browser tests only for a deploy that provably changes no client-facing file."""
+    if (os.environ.get('PC_GATE_FULL_BROWSER') or '').strip() not in ('', '0'):
+        return False, 'PC_GATE_FULL_BROWSER is set'
+    paths = deploy_changes(root)
+    if paths is None:
+        return False, 'could not read what this deploy changes'
+    if not paths:
+        return False, 'this deploy changes nothing (nothing to narrow)'
+    client = [p for p in paths if not is_server_only_path(p)]
+    if client:
+        return False, '%d client-facing file(s) changed, e.g. %s' % (len(client), ', '.join(client[:3]))
+    return True, 'server-only deploy (%d file(s): %s)' % (len(paths), ', '.join(paths[:4]) + (' …' if len(paths) > 4 else ''))
+
+
 def discover_test_files(root):
     tests = Path(root) / 'tests'
     return sorted(str(p.relative_to(root)) for p in tests.rglob('test_*.py')
@@ -267,9 +354,15 @@ def _env_jobs():
     return max(0, min(64, int(raw)))
 
 
-def run_full_suite(root, env, directory, jobs=None):
-    """Every test file, in parallel shards. Returns (ok, message)."""
+def run_full_suite(root, env, directory, jobs=None, skip_browser=False):
+    """Every test file, in parallel shards (browser tests left out of a server-only deploy). Returns (ok, message)."""
     files = discover_test_files(root)
+    skipped = 0
+    if skip_browser:
+        browser = browser_test_files(root)
+        kept = [f for f in files if f not in browser]
+        skipped = len(files) - len(kept)
+        files = kept
     if not files:
         return False, 'no test files discovered'
     try:
@@ -289,11 +382,14 @@ def run_full_suite(root, env, directory, jobs=None):
     # One suite at a time per checkout (shared with ./test.sh): two would fight over the same CPU,
     # ports and browser profiles and report each other's timeouts as failures.
     # A gate started FROM a gate shard (this file's own tests) runs under the lock its parent holds.
+    note = (' (%d browser test file(s) skipped: server-only deploy)' % skipped) if skipped else ''
     if os.environ.get('PC_GATE_MANAGED_PROCESSES') == '1':
-        return _run_shards(root, env, directory, files, shards, durations, captured)
+        ok, message = _run_shards(root, env, directory, files, shards, durations, captured)
+        return ok, message + note
     try:
         with checkall['_runner_lock']():
-            return _run_shards(root, env, directory, files, shards, durations, captured)
+            ok, message = _run_shards(root, env, directory, files, shards, durations, captured)
+            return ok, message + note
     except checkall['RunnerBusy'] as busy:
         return False, str(busy)
 
@@ -403,8 +499,15 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
                      'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
                      'PC_MMS_SOURCE_ROOT', 'PC_SMS_TEST_SOURCE'):
             env.pop(name, None)
+        skip_browser, why = browser_skip_decision(root) if full else (False, '')
+        if full:
+            print('[regressions] browser tests: ' + ('SKIPPED — ' if skip_browser else 'run — ') + why)
+        required = TESTS
+        if skip_browser:
+            browser = browser_test_files(root)
+            required = tuple(t for t in TESTS if t.split('::')[0] not in browser)
         command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
-                   '-q', '-ra', '--durations=20', '--junitxml=' + str(report), *TESTS]
+                   '-q', '-ra', '--durations=20', '--junitxml=' + str(report), *required]
         try:
             code, output = _run_required_tests(command, root, env, Path(directory) / 'pytest.log')
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -438,7 +541,7 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
             return 1
         print('[regressions] PASS: ' + str(len(cases)) + ' required cases, none skipped')
         if full:
-            ok, message = run_full_suite(root, env, directory, jobs=jobs)
+            ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser)
             if not ok:
                 if receipt:
                     Path(receipt).unlink(missing_ok=True)   # the required pass wrote it; this run failed

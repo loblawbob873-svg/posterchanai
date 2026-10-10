@@ -34,7 +34,11 @@ that **publishes no ports**, so it is safe on a node already serving 3051. `--br
 report between markers for the node agent to paste verbatim — the format is rendered in Python, for
 the same reason `/logs` is: a small model gathers reliably and retells badly.
 
-**`sync.sh` gates on the WHOLE pytest suite** (`deploy_regression_gate.py --full`: the required list, then every `tests/**/test_*.py` in parallel shards; any failure blocks the deploy). A hand-typed list let unlisted tests fail for days against shipped code while deploys passed. **The list of checks is DISCOVERED, not typed** — a new `scripts/check_*.py` joins the suite the
+**`sync.sh` gates on the WHOLE pytest suite** (`deploy_regression_gate.py --full`: the required list, then every `tests/**/test_*.py` in parallel shards; any failure blocks the deploy). **Except the browser tests on a SERVER-ONLY deploy**: when every changed file (origin/master...HEAD + uncommitted)
+is under `app/services/`, `app/models.py`/`database.py`/`schemas.py`/`worker.py`, `botframework/`, `docs/`, the installers or
+non-browser tests/scripts, the ~460 files that start Chrome (recognised from their source, transitively) are left out and the
+gate says so. A router, `app/main.py`, `static/`, `templates/`, `desktop/`, `mobile/`, `os/`, a browser test, `scripts/check_*`,
+the gate itself, an unreadable or empty diff, or `PC_GATE_FULL_BROWSER=1` runs them all. `tests/test_gate_skips_browser_for_server_only.py`. A hand-typed list let unlisted tests fail for days against shipped code while deploys passed. **The list of checks is DISCOVERED, not typed** — a new `scripts/check_*.py` joins the suite the
 moment it is written, and one that is unregistered runs anyway and says so. **Exit 2 means "could
 not run"** and is reported as a SKIP with its reason, never as a pass. Two rules for a new check,
 both because they run concurrently: read the chrome port from `PC_CHECK_PORT` and the profile from

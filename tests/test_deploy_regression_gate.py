@@ -235,6 +235,9 @@ raise SystemExit(1 if (full and fail in files) else 0)
 
 def _full_env(tmp_path, **extra):
     (tmp_path / 'pytest.py').write_text(FULL_STANDIN)
+    # These tests are about running EVERYTHING; what a server-only deploy may skip is
+    # tests/test_gate_skips_browser_for_server_only.py (the real repo's diff must not decide it here).
+    extra.setdefault('PC_GATE_FULL_BROWSER', '1')
     return dict(os.environ, PYTHONPATH=str(tmp_path), XDG_CACHE_HOME=str(tmp_path / 'cache'),
                 FULL_SEEN=str(tmp_path / 'seen'), **extra)
 
