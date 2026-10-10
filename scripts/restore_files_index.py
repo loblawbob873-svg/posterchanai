@@ -72,12 +72,11 @@ def main():
     from app.services import settings_store as S
     S.load_local()
     from app.database import SessionLocal
-    from app.models import User
-    from app.services import nostr_store as store
+    from app.services import nostr_store as store, user_table
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.id == args.user).first()
+        user = user_table.get(db, args.user)
         if not user:
             sys.exit(f"no user with id {args.user}")
         sk = store.user_storage_seckey(db, user)

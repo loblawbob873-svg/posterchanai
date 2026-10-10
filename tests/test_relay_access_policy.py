@@ -2,18 +2,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from app.models import Base,User,FediPuppet,Bot
+from app.models import FediPuppet
 from app.services import relay_access_policy as policy,nostr_dvm
 from app.services.nostr import nostr_service as ns
 
 @pytest.fixture
 def world(monkeypatch):
-    from sqlalchemy.pool import StaticPool
-    engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool)
-    Base.metadata.create_all(engine,tables=[User.__table__,Bot.__table__])
-    db=Session(engine)
     keys=[('%064x'%i) for i in range(1,7)]
     config={'nostr_relay_nip05_domain':'poster.place','nostr_relay_nip05_names':'local '+ns.npub_of(keys[0])}
     monkeypatch.setattr(policy.settings,'hydrate_from_db',lambda db:None)
@@ -26,18 +20,28 @@ def world(monkeypatch):
     monkeypatch.setattr(policy.blossom_service,'_whitelist_pubkeys',lambda db:set(keys))
     from app.services import instance_membership
     monkeypatch.setattr(instance_membership, "status", AsyncMock(return_value={"qualified":True}))
-    users=[]
-    for i,key in enumerate(keys[:4]):
-        u=User(username='user'+str(i),password_hash='unused',nostr_npub=ns.npub_of(key),can_ai=True,can_blossom=True,can_stream=True,
-               is_admin=i==3,pleroma_acct='person@fedi.test' if i==1 else None)
-        db.add(u);users.append(u)
-    # The puppet registry and API keys are DocTables now (#161), in memory here.
+    # Accounts, the puppet registry and API keys are relay DocTables (#161), in memory here.
     from tests.doc_table_mem import FakeSession, mem_tables
+    from tests.user_fixtures import FakeDB, LiveUsers, seed_user
     mem = mem_tables(monkeypatch)
+    for i,key in enumerate(keys[:4]):
+        seed_user(mem, i+1, username='user'+str(i), nostr_npub=ns.npub_of(key), can_ai=True, can_blossom=True,
+                  can_stream=True, is_admin=i==3, pleroma_acct='person@fedi.test' if i==1 else None)
     FakeSession(mem).add(FediPuppet(actor_uri='https://fedi.test/user',acct='puppet@fedi.test',pubkey_hex=keys[5],nip05_name='puppet'))
-    db.commit()
-    yield SimpleNamespace(db=db,users=users,keys=keys,config=config,mem=mem)
-    db.close();engine.dispose()
+    db = FakeDB()
+    yield SimpleNamespace(db=db,users=LiveUsers(db, range(1,5)),keys=keys,config=config,mem=mem)
+
+
+def fail_account_write(monkeypatch, uid):
+    """The account store (user_table -- the authority now, #161) refuses this account's write."""
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+    real = user_table.asave
+    async def asave(db, u):
+        if u.id == uid:
+            raise Unavailable("the relay did not store users/%s (test)" % uid)
+        return await real(db, u)
+    monkeypatch.setattr(user_table, 'asave', asave)
 
 
 def test_preview_preserves_local_fediverse_admin_and_peer(world):
@@ -67,7 +71,7 @@ def test_run_persists_revocations_and_preserves_exempt_users(world):
 
 
 def test_failed_authority_write_does_not_claim_or_commit_success(world,monkeypatch):
-    monkeypatch.setattr(policy.users_store,'sync_user',AsyncMock(return_value=False))
+    fail_account_write(monkeypatch, world.users[2].id)
     with pytest.raises(RuntimeError):asyncio.run(policy.run(world.db))
     assert world.users[2].can_ai and world.users[2].can_blossom and world.users[2].can_stream
     assert 'relay_access_policy_last_run' not in world.config
@@ -111,11 +115,13 @@ def test_streaming_only_account_is_selected_and_auth_is_revoked(world, monkeypat
     user = world.users[2]
     user.can_ai = user.can_blossom = False
     user.access_revoked = True
+    world.db.commit()
     monkeypatch.setattr(policy.blossom_service, '_whitelist_pubkeys', lambda db: set())
     assert _may_stream(user)
     result = asyncio.run(policy.plan(world.db))[2]
     assert result['streaming'] == 1 and result['ai'] == 0 and result['blossom'] == 0
     asyncio.run(policy.run(world.db))
+    world.db.expire_all()
     assert not _may_stream(user)
     assert asyncio.run(policy.plan(world.db))[2]['accounts'] == 0
 
@@ -146,16 +152,15 @@ def test_scheduler_runs_every_fifteen_minutes_and_obeys_config(world, monkeypatc
 
 
 def test_existing_obs_key_is_denied_after_cleanup_but_public_read_stays_open(world, monkeypatch):
-    from app.models import UserSetting
     from app.routers import streams
+    from app.services import user_settings_table
     from starlette.requests import Request
-    for table in (UserSetting.__table__,):
-        table.create(world.db.get_bind(), checkfirst=True)
     user = world.users[2]
     world.mem.put('api_keys', '1', {'id': 1, 'user_id': user.id, 'key': 'test-publisher-key', 'name': 'Default',
                                     'created_at': None, 'last_used_at': None, 'is_active': True})
-    world.db.add(UserSetting(user_id=user.id, key='stream_token', value='test-stream'))
-    world.db.commit()
+    from app.services import api_key_store
+    world.mem.put('api_key_index', api_key_store.key_hash('test-publisher-key'), {'id': 1})
+    user_settings_table.set(world.db, user.id, 'stream_token', 'test-stream')
     world.config['stream_auth_secret'] = 'test-hook'
     monkeypatch.setattr(streams.stream_end_service, 'mark_publishing', lambda *args: None)
     async def auth(action):
@@ -272,8 +277,7 @@ def test_failed_authoritative_grant_restores_previous_permissions(world, monkeyp
     user.can_ai = user.can_blossom = user.can_stream = False
     user.access_revoked = True
     world.db.commit()
-    async def sync(db, row, force=False): return row.id != user.id
-    monkeypatch.setattr(policy.users_store, 'sync_user', sync)
+    fail_account_write(monkeypatch, user.id)
     with pytest.raises(RuntimeError): asyncio.run(policy.run(world.db))
     world.db.expire_all()
     assert not user.can_ai and not user.can_blossom and not user.can_stream and user.access_revoked
@@ -314,10 +318,7 @@ def test_raised_authority_failure_does_not_leave_granted_cache(world, monkeypatc
     user.can_ai = user.can_blossom = False
     user.access_revoked = True
     world.db.commit()
-    async def sync(db, row, force=False):
-        if row.id == user.id: raise RuntimeError('Relay unavailable')
-        return True
-    monkeypatch.setattr(policy.users_store, 'sync_user', sync)
+    fail_account_write(monkeypatch, user.id)
     with pytest.raises(RuntimeError): asyncio.run(policy.run(world.db))
     world.db.expire_all()
     assert not user.can_ai and not user.can_blossom and user.access_revoked

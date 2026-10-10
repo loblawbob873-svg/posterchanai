@@ -6,12 +6,9 @@ from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
-
-from app.database import Base, get_db
-from app.models import User, ExodusWallet, ExodusWalletRecord
+from app.database import NoSQL, get_db
+from app.services import exodus_tables
+from app.services.user_table import UserRow
 from app.routers import auth, exodus_wallet as routes
 from app.services import exodus_collections as C, exodus_wallet_service as W, exodus_vault as V
 
@@ -21,14 +18,14 @@ VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abando
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     monkeypatch.setenv("EXODUS_TRANSFER_DIR", str(tmp_path / "transfers"))
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[User.__table__, ExodusWallet.__table__, ExodusWalletRecord.__table__])
-    db = Session(engine)
-    users = [User(id=i, username=f'user{i}', password_hash='unused', nostr_npub=f'{i:064x}') for i in [1, 2]]
-    db.add_all(users); db.commit()
+    # The wallet backups are relay DocTables (#161), in memory here; accounts are plain UserRows.
+    from tests.doc_table_mem import mem_tables
+    mem = mem_tables(monkeypatch)
+    db = NoSQL()
+    users = [UserRow(i, {'username': f'user{i}', 'password_hash': 'unused', 'nostr_npub': f'{i:064x}'}) for i in [1, 2]]
     from tests.member_fixtures import allow_keys
     allow_keys(monkeypatch, *(u.nostr_npub for u in users))
-    state = SimpleNamespace(db=db, users=users, user=users[0], docs={}, reachable=True, publish=True, writes=0)
+    state = SimpleNamespace(db=db, mem=mem, users=users, user=users[0], docs={}, reachable=True, publish=True, writes=0)
     async def get(port, tag, *, seckey=None, kind=30078, strict=False, **kwargs):
         assert strict
         if not state.reachable:
@@ -66,7 +63,16 @@ def world(monkeypatch, tmp_path):
     with TestClient(app) as client:
         state.client = client
         yield state
-    db.close(); engine.dispose()
+
+
+def _one(rows):
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def records(world) -> list:
+    """The wallet backup records, as the store holds them."""
+    return [exodus_tables._record_obj(r) for r in world.mem.table(exodus_tables.RECORDS).values()]
 
 
 def test_new_wallet_and_portfolio_preserve_original_addresses_and_seed(world):
@@ -122,7 +128,7 @@ def test_unknown_recovery_format_cannot_create_a_wallet(world):
     response = world.client.post('/api/wallet/exodus/create',
         json={'mnemonic': VECTOR, 'derivation': 'unsupported'})
     assert response.status_code == 422
-    assert world.db.query(ExodusWalletRecord).count() == 0
+    assert len(records(world)) == 0
 
 
 def test_strict_read_failure_does_not_rewrite_wallet_or_offer_an_empty_list(world):
@@ -137,7 +143,7 @@ def test_failed_publish_keeps_an_encrypted_discoverable_backup(world):
     world.publish = False
     response = world.client.post('/api/wallet/exodus/wallets', json={'mnemonic': VECTOR})
     assert response.status_code == 503
-    row = world.db.query(ExodusWalletRecord).one()
+    row = _one(records(world))
     assert VECTOR.encode() not in row.document_enc
     world.publish = True
     listed = world.client.get('/api/wallet/exodus/wallets').json()['wallets']
@@ -243,7 +249,7 @@ def test_imported_monero_backup_is_independent_and_survives_relay_recovery(world
     assert addresses['XMR'] == expected
     assert addresses['BTC'] == 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'
     assert words not in str(world.docs)
-    assert words.encode() not in world.db.query(ExodusWalletRecord).one().document_enc
+    assert words.encode() not in _one(records(world)).document_enc
     world.docs.clear()
     restored = world.client.get('/api/wallet/exodus/addresses', params=params)
     assert restored.json()['addresses'] == addresses
@@ -259,7 +265,7 @@ def test_invalid_monero_backup_does_not_create_any_wallet(world):
     response = world.client.post('/api/wallet/exodus/wallets', json={
         'mnemonic':VECTOR, 'moneroMnemonic':'not valid recovery words'})
     assert response.status_code >= 400
-    assert world.db.query(ExodusWalletRecord).count() == 0
+    assert len(records(world)) == 0
     assert not world.docs
 
 

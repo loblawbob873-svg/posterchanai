@@ -498,7 +498,6 @@ class TestRunLogsForAdmin(unittest.IsolatedAsyncioTestCase):
     async def test_persists_report_and_returns_text(self):
         admin = mock.Mock(id=1, telegram_enabled=False, telegram_chat_id=None)
         fake_db = mock.Mock()
-        fake_db.query.return_value.filter.return_value.first.return_value = admin
 
         # The report is no longer a `Message` row — it goes through chat_history.append as an
         # ENCRYPTED relay event (the nostr-datastore migration). Asserting on db.add still passed as
@@ -508,7 +507,9 @@ class TestRunLogsForAdmin(unittest.IsolatedAsyncioTestCase):
         from app.services import chat_history, conversation_table
         append = mock.AsyncMock()
         touch = mock.AsyncMock()
+        # The admin is account 1 of the accounts table (user_table, #161), read through its async lookup.
         with mock.patch.object(L, "SessionLocal", return_value=fake_db), \
+             mock.patch.object(L.user_table, "aget", mock.AsyncMock(return_value=admin)), \
              mock.patch.object(L, "build_health_report", mock.AsyncMock(return_value="REPORT")), \
              mock.patch.object(chat_history, "append", append), \
              mock.patch.object(conversation_table, "atouch", touch), \
@@ -523,8 +524,8 @@ class TestRunLogsForAdmin(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_admin_returns_none(self):
         fake_db = mock.Mock()
-        fake_db.query.return_value.filter.return_value.first.return_value = None
-        with mock.patch.object(L, "SessionLocal", return_value=fake_db):
+        with mock.patch.object(L, "SessionLocal", return_value=fake_db), \
+             mock.patch.object(L.user_table, "aget", mock.AsyncMock(return_value=None)):
             text = await L.run_logs_for_admin(return_text=True)
         self.assertIsNone(text)
 

@@ -1,15 +1,14 @@
 from types import SimpleNamespace
-from app.services import blossom_service as bs, users_store
-from app.models import User
+from app.services import blossom_service as bs, bot_table, user_table, users_store
+from app.database import NoSQL
 
 
 def test_stored_key_does_not_bypass_revocation(monkeypatch):
     user=SimpleNamespace(nostr_nsec='key',access_revoked=True,is_admin=False,can_blossom=False)
-    class Query:
-        def __init__(self,model): self.model=model
-        def filter(self,*args): return self
-        def all(self): return [user] if self.model is User else []
-    db=SimpleNamespace(query=Query)
+    # the accounts and bots tables (relay DocTables, #161): this one account, no bots
+    monkeypatch.setattr(user_table,'filter_users',lambda db,pred:[u for u in [user] if pred(u)])
+    monkeypatch.setattr(bot_table,'all_bots',lambda db:[])
+    db=NoSQL()
     monkeypatch.setattr(bs,'_operator_cache',{'ts':0,'set':frozenset()})
     monkeypatch.setattr(bs.nostr_service,'decode_seckey',lambda _: b'key')
     monkeypatch.setattr(bs.nostr_service,'derive_pubkey',lambda _: 'pubkey')

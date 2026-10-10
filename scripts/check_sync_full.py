@@ -287,16 +287,12 @@ async def drive(url):
         from app.services.nostr import bip340 as _b340
         pk_hex = _b340.pubkey_from_seckey(_b32.decode_key(nsec)).hex() if hasattr(_b32, "decode_key") else None
         try:
-            from app.database import SessionLocal
-            from app.models import User
+            from app.services import user_table
             from app.services.nostr import nostr_service as _ns
-            db = SessionLocal()
-            u = db.query(User).filter(User.nostr_npub == _ns.npub_of(
-                _b340.pubkey_from_seckey(__import__("app.services.nostr.bech32", fromlist=["decode"]).decode("nsec", nsec) if False else _nsec_sk).hex())).first()
+            u = user_table.by_npub(None, _ns.npub_of(_b340.pubkey_from_seckey(_nsec_sk).hex()))
             if u:
                 u.can_blossom = True
-                db.commit()
-            db.close()
+                user_table.save(None, u)
         except Exception as e:
             print(f"SKIP  could not grant upload privilege: {e}")
             return 2
@@ -306,14 +302,10 @@ async def drive(url):
         from app.services.nostr_relay.thread import trigger_block_reload
         from app.services import nostr_store as _nstore
         from app.services.nostr_store import user_storage_seckey as _ussk
-        from app.database import SessionLocal as _SL
-        from app.models import User as _User
+        from app.services import user_table as _ut
         from app.services.nostr import nostr_service as _ns2
-        _db = _SL()
-        _u = _db.query(_User).filter(_User.nostr_npub == _ns2.npub_of(
-            _b340.pubkey_from_seckey(_nsec_sk).hex())).first()
-        _sk2 = _ussk(_db, _u)
-        _db.close()
+        _u = _ut.by_npub(None, _ns2.npub_of(_b340.pubkey_from_seckey(_nsec_sk).hex()))
+        _sk2 = _ussk(None, _u)
         admitted = False
         trigger_block_reload()          # once — hammering it only builds a control backlog
         for _try in range(20):

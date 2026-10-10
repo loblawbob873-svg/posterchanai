@@ -31,10 +31,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-
-from app.models import User
 from scripts.client_module_harness import factory_harness_js
 
 from app.routers import media_center as routes, jellyfin
@@ -219,18 +215,18 @@ async def main():
         app.dependency_overrides[routes.media_user_optional] = user
         # Redeeming a TV secret rechecks a registered account independently of browser auth.
         # Keep that lookup isolated too; no request in this harness should touch real users.
-        engine = create_engine('sqlite:///' + str(temp / 'users.db'))
-        User.__table__.create(engine)
-        with Session(engine) as db:
-            for name, key in [('owner', OWNER), ('viewer', VIEWER)]:
-                db.add(User(username=name, password_hash='fixture-not-a-password', nostr_npub=key,
-                            is_admin=key == OWNER, can_media=True))
-            db.commit()
-        def database():
-            with Session(engine) as db:
-                yield db
-        app.dependency_overrides[routes.get_db] = database
-        nas.dependency_overrides[routes.get_db] = database
+        # (accounts are a relay DocTable now, #161: the two fixture accounts are answered in memory)
+        from app.services import user_table as _ut
+        _fixture_users = {key: _ut.UserRow(i + 1, {'username': name, 'password_hash': 'fixture-not-a-password',
+                                                    'nostr_npub': key, 'is_admin': key == OWNER, 'can_media': True})
+                          for i, (name, key) in enumerate([('owner', OWNER), ('viewer', VIEWER)])}
+
+        async def _by_npub(db, value):
+            for v in (value if isinstance(value, (list, tuple, set)) else [value]):
+                if v in _fixture_users:
+                    return _fixture_users[v]
+            return None
+        _ut.aby_npub = _by_npub
 
         # The Media Center is a module split out of app.js (mediacenter.js, a factory app.js builds
         # on first use); it is built here the same way, from the bootstrap's stubs below.
@@ -623,7 +619,6 @@ async def main():
             await server_task
             await nas_task
             await routes.close_proxy()
-            engine.dispose()
 
 
 if __name__ == "__main__":

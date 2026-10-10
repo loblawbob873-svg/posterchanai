@@ -4934,10 +4934,11 @@ async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_d
     # from being future-dated (which strict upstream relays reject) once it's published at its due time.
     if abs(int(ev.get("created_at", 0)) - when) > 120:
         return JSONResponse({"ok": False, "error": "event time must match the scheduled time"}, status_code=400)
-    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
-    if not user:
-        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
     try:
+        # the account lookup too: an unreadable accounts table is this route's 503, never "no account"
+        user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
+        if not user:
+            return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
         pending = await sched.count_open(db, user)
         if pending >= _MAX_PENDING_SCHEDULES:
             return JSONResponse({"ok": False, "error": f"too many scheduled posts (max {_MAX_PENDING_SCHEDULES})"}, status_code=429)
@@ -4955,10 +4956,10 @@ async def scheduled_list(data: ScheduledAuthReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
-    if not user:
-        return JSONResponse({"ok": True, "posts": []})
     try:
+        user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
+        if not user:
+            return JSONResponse({"ok": True, "posts": []})
         posts = await sched.list_for_user(db, user)
     except Unavailable:
         return _scheduled_unavailable()
@@ -4973,10 +4974,10 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
-    if not user:
-        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
     try:
+        user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
+        if not user:
+            return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
         ok = await sched.cancel(db, user, int(data.id))
     except Unavailable:
         return _scheduled_unavailable()

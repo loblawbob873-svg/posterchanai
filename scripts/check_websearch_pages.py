@@ -78,15 +78,10 @@ def _token():
     if tok:
         return tok
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from app.database import SessionLocal
-    from app.models import User
+    from app.services import user_table
     from app.auth import create_access_token
-    db = SessionLocal()
-    try:
-        u = db.query(User).filter(User.is_admin == True).first()  # noqa: E712
-        return create_access_token({"sub": str(u.id)}) if u else ""
-    finally:
-        db.close()
+    admins = user_table.admins(None)
+    return create_access_token({"sub": str(admins[0].id)}) if admins else ""
 
 
 async def drive(base, urls, token):

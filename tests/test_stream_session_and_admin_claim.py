@@ -139,7 +139,21 @@ def test_the_first_login_admin_claim_locks_on_any_admin():
     assert "nostr_npub.isnot(None)" not in claim, (
         "counting only admins WITH an npub leaves the claim open on any node whose admin signs in "
         "with a password — the next stranger to hit this public endpoint becomes an admin")
-    assert "User.is_admin == True" in claim
+    # #161: accounts are user_table rows; the lock is `aany_admin`, which counts EVERY admin (no npub clause)
+    assert "user_table.aany_admin(db)" in claim
+    from app.services import user_table
+    from app.services.user_table import UserRow
+    import asyncio
+    rows = [UserRow(1, {"username": "pw-admin", "password_hash": "x", "is_admin": True, "nostr_npub": None})]
+
+    async def aall(db):
+        return rows
+    orig = user_table.aall
+    user_table.aall = aall
+    try:
+        assert asyncio.run(user_table.aany_admin(None)) is True, "an admin with no npub must close the claim"
+    finally:
+        user_table.aall = orig
 
 
 def test_no_login_ui_exists_for_the_password_endpoint():

@@ -377,20 +377,12 @@ def api(world, monkeypatch):
     from app.auth import get_current_user_optional
     app.dependency_overrides[get_current_user_optional] = lambda: None
 
-    class _Q:
-        def __init__(self, users):
-            self.users = users
+    # The accounts are a relay DocTable (user_table, #161): the ticket's account is read through it.
+    users = {1: U(1), 2: U(2)}
 
-        def filter(self, *a):
-            return self
-
-        def first(self):
-            return self.users.get(R._TICKETS and list(R._TICKETS.values())[-1][1])
-
-    class _DB:
-        def query(self, model):
-            return _Q({1: U(1), 2: U(2)})
-    app.dependency_overrides[R.get_db] = lambda: _DB()
+    async def aget(db, uid):
+        return users.get(int(uid))
+    monkeypatch.setattr(R.user_table, "aget", aget)
     login(mgr, U(1), tgs[1])
     return TestClient(app), R, who, tgs
 
@@ -785,6 +777,11 @@ def test_the_live_socket_gives_its_database_session_back_after_setup(api, monkey
             self.closed = True
             raise RuntimeError("server closed the connection unexpectedly")   # what a dropped one does
     monkeypatch.setattr(R, "SessionLocal", _S)
+
+    async def aget(db, uid):
+        assert not db.closed, "the session was used after it was given back"
+        return U(1)
+    monkeypatch.setattr(R.user_table, "aget", aget)
     import app.auth as auth
     monkeypatch.setattr(auth, "decode_token", lambda t: {"sub": "1"})
 

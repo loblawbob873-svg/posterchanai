@@ -16,33 +16,27 @@ import os
 import sys
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, Bot
-from app.services import bot_manager_service as mgr
+from app.services import bot_manager_service as mgr, bot_table
+from tests.doc_table_mem import mem_tables
 
 SHARED = "nsec1shared-key-for-tests"
 
 
 @pytest.fixture
 def bots(monkeypatch):
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine, tables=[Bot.__table__])
-    Session = sessionmaker(bind=engine)
-    monkeypatch.setattr(mgr, "SessionLocal", Session)
+    # The bots are a relay DocTable (bot_table, #161): seeded as the relay would hold them.
+    m = mem_tables(monkeypatch)
     mgr._PROFILE_OWNER_CACHE.update(ts=0.0, map={})
-    s = Session()
     rows = [("Nostr", True, {"nostr_nsec": SHARED, "nostr_profile_name": "PosterChan AI", "nostr_profile_nip05": "posterchan"}),
             ("lounge", True, {"nostr_nsec": SHARED, "nostr_profile_name": "PosterChan"}),
             ("nostr-image", False, {"nostr_nsec": SHARED, "nostr_profile_nip05": "posterchan"}),
             ("chesstr", True, {"nostr_nsec": "nsec1other", "nostr_profile_name": "chesstr"})]
-    for name, enabled, cfg in rows:
-        s.add(Bot(name=name, platform="nostr", bot_type="text", enabled=enabled, host="", modes="nostr",
-                  config=json.dumps(cfg)))
-    s.commit()
-    return {n: mgr.bot_to_dict(b) for n, b in ((b.name, b) for b in s.query(Bot).all())}
+    for i, (name, enabled, cfg) in enumerate(rows, start=1):
+        m.put(bot_table.TABLE, str(i), bot_table.BotRow(i, name=name, platform="nostr", bot_type="text",
+                                                       enabled=enabled, host="", modes="nostr",
+                                                       config=json.dumps(cfg)).row())
+    return {b.name: mgr.bot_to_dict(b) for b in bot_table.all_bots()}
 
 
 def test_one_bot_owns_a_shared_keys_profile(bots):

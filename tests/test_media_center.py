@@ -466,35 +466,29 @@ def test_permission_revocation_blocks_proxy_before_network(api, monkeypatch):
     assert client.get('/api/media-center').status_code == 403
 
 
-def test_cookie_free_ticket_checks_persisted_permission(api):
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-    from app.models import User
+def test_cookie_free_ticket_checks_persisted_permission(api, monkeypatch):
+    from app.services import user_table
+    from tests.doc_table_mem import mem_tables
     client, docs, user, folder = api
     seed(docs, folder)
     user.nostr_npub, user.is_admin = VIEWER, False
     url = client.post('/api/media-center/abc/play/movie').json()['url']
-    engine = create_engine('sqlite:///' + str(folder / 'users.db'))
-    User.__table__.create(engine)
-    with Session(engine) as db:
-        account = User(username='viewer', password_hash='unused', nostr_npub=VIEWER, can_media=True)
-        db.add(account)
-        db.commit()
-        client.app.dependency_overrides[routes.media_user_optional] = lambda: None
-        client.app.dependency_overrides[routes.get_db] = lambda: db
-        assert client.get(url).status_code == 200
-        account.can_media = False
-        db.commit()
-        assert client.get(url).status_code == 403
-    engine.dispose()
+    # The account is a relay DocTable row (user_table, #161), read afresh on every ticket.
+    m = mem_tables(monkeypatch)
+    row = user_table.UserRow(5, {'username': 'viewer', 'password_hash': 'unused', 'nostr_npub': VIEWER,
+                                 'can_media': True}).row()
+    m.put(user_table.TABLE, '5', row)
+    user_table.all_users(None)                          # loaded, as on a running node
+    client.app.dependency_overrides[routes.media_user_optional] = lambda: None
+    assert client.get(url).status_code == 200
+    m.put(user_table.TABLE, '5', dict(row, can_media=False))
+    assert client.get(url).status_code == 403
 
 
 def test_media_permission_encrypted_roundtrip_and_cold_hydration(monkeypatch):
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-    from app.models import User
-    from app.services import users_store, nostr_store
+    from app.services import users_store, nostr_store, user_table
     from app.services.nostr import nip44
+    from tests.doc_table_mem import mem_tables
     key = bytes.fromhex('01' * 32)
     events = []
     async def publish(port, event, **kwargs):
@@ -503,28 +497,21 @@ def test_media_permission_encrypted_roundtrip_and_cold_hydration(monkeypatch):
     monkeypatch.setattr(nostr_store, '_ws_publish', publish)
     monkeypatch.setattr(users_store._ss, '_operator_seckey', lambda db: key)
     monkeypatch.setattr(users_store._ss, '_port', lambda db: 7777)
-    engine = create_engine('sqlite://')
-    User.__table__.create(engine)
-    with Session(engine) as db:
-        account = User(username='viewer', password_hash='unused', nostr_npub=VIEWER, can_media=True)
-        db.add(account)
-        db.commit()
-        assert asyncio.run(users_store.sync_user(db, account))
-        assert 'can_media' not in events[-1]['content']
-        record = json.loads(nip44.decrypt_self(key, events[-1]['content']))
-        async def list_docs(*args, **kwargs):
-            return {'user': record}
-        monkeypatch.setattr(users_store.store, 'list_docs', list_docs)
-        db.execute(User.__table__.delete())
-        db.commit()
-        db.expunge_all()
-        assert asyncio.run(users_store.hydrate(db)) == 1
-        restored = db.query(User).one()
-        assert restored.can_media is True
-        record['can_media'] = False
-        assert asyncio.run(users_store.hydrate(db)) == 1
-        assert restored.can_media is False
-    engine.dispose()
+    mem_tables(monkeypatch)                 # the account table (#161): empty, as on a relay rebuilt from backup
+    account = user_table.UserRow(3, {'username': 'viewer', 'password_hash': 'unused', 'nostr_npub': VIEWER,
+                                     'can_media': True})
+    assert asyncio.run(users_store.sync_user(None, account))
+    assert 'can_media' not in events[-1]['content']
+    record = json.loads(nip44.decrypt_self(key, events[-1]['content']))
+    async def list_docs(*args, **kwargs):
+        return {'user': record}
+    monkeypatch.setattr(users_store.store, 'list_docs', list_docs)
+    # Cold hydration: an EMPTY account table is refilled from the mirror, can_media included. (A table that
+    # holds accounts is never overwritten from the mirror any more -- it is the store, the mirror a backup.)
+    assert asyncio.run(users_store.hydrate(None)) == 1
+    restored = user_table.by_npub(None, VIEWER)
+    assert restored.can_media is True
+    assert asyncio.run(users_store.hydrate(None)) == 0
 
 
 def test_browser_auth_recovery_executes_real_helper():
@@ -573,22 +560,6 @@ async function fetch(url,opts){calls.push({url,opts,token:_aiToken});return {sta
 """
     result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
-
-
-def test_upgrade_adds_media_permission_default_denied(tmp_path, monkeypatch):
-    from sqlalchemy import create_engine, text
-    from app import database
-    engine = create_engine('sqlite:///' + str(tmp_path / 'upgrade.db'))
-    routes.User.__table__.create(engine)
-    with engine.begin() as conn:
-        conn.execute(text('ALTER TABLE users DROP COLUMN can_media'))
-        conn.execute(text("INSERT INTO users (username,password_hash,nostr_npub) VALUES ('old','unused',:key)"), {'key': VIEWER})
-    monkeypatch.setattr(database, 'engine', engine)
-    database._run_migrations()
-    database._run_migrations()  # upgrades remain idempotent
-    with engine.connect() as conn:
-        assert conn.execute(text('SELECT can_media FROM users')).scalar_one() == 0
-    engine.dispose()
 
 
 def test_admin_can_inspect_allowed_roots_but_viewers_cannot(api):

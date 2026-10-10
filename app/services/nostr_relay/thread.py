@@ -258,7 +258,21 @@ def _pcdb_mode(setting: str = "") -> str:
     mode = (os.environ.get("POSTERCHANDB_MODE") or setting or "").strip().lower()
     if mode:
         return mode
-    return "off" if _postgres_configured() else "primary"
+    if _postgres_configured():
+        return "off"
+    # No DSN anywhere. A PosterChanDB directory that already holds a MIRROR's data (unpromoted) belongs to a
+    # node that has a Postgres -- the DSN default just was never written down -- so that node keeps its old
+    # default rather than refusing to start on an unpromoted mirror. Only a node with no such directory (or a
+    # promoted one) is a fresh, Postgres-less install.
+    try:
+        from app.services import posterchandb
+        from .pcdb_store import read_marker
+        path = os.path.join(posterchandb.data_dir(), "relay")
+        if read_marker(path) is None and os.path.isdir(path) and os.listdir(path):
+            return "off"
+    except Exception:      # noqa: BLE001 -- unreadable: the safe answer is the old default
+        return "off"
+    return "primary"
 
 
 def open_store_for_settings(loop) -> RelayStore:

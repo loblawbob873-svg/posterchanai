@@ -252,17 +252,13 @@ async def drive(url):
         # weather, which makes the check unable to say anything about it. Granted directly: this
         # runs on the node, and the privilege gate is its own feature, not what is under test.
         try:
-            from app.database import SessionLocal
-            from app.models import User
+            from app.services import user_table
             from app.services.nostr import bip340 as _b340
             from app.services.nostr import nostr_service as _ns
-            db = SessionLocal()
-            u = db.query(User).filter(User.nostr_npub == _ns.npub_of(
-                _b340.pubkey_from_seckey(_sk).hex())).first()
+            u = user_table.by_npub(None, _ns.npub_of(_b340.pubkey_from_seckey(_sk).hex()))
             if u:
                 u.can_blossom = True
-                db.commit()
-            db.close()
+                user_table.save(None, u)
         except Exception as e:
             print("  note: could not grant upload privilege (%s) — the store chip may not appear" % e)
         if not await t.js(f"({OPEN})()", aw=True):

@@ -12,6 +12,7 @@ from the SQL read and each has a test that fails without it:
   * the RELAY PROCESS reads its own settings from its own store (it reads them before its websocket server
     listens, and from inside its own event loop), so relay_main opens the store FIRST.
 """
+import asyncio
 import json
 import socket
 
@@ -178,9 +179,41 @@ def test_open_store_for_settings_makes_the_store_the_settings_source(monkeypatch
             return [{"filters": filters, "cap": cap}]
     monkeypatch.setattr(T, "RelayStore", Store)
     monkeypatch.setattr(T, "_pg_dsn", lambda: "dbname=x")
+    # A node that HAS a Postgres (#161: one without runs on PosterChanDB, below) and no POSTERCHANDB_MODE.
+    monkeypatch.delenv("POSTERCHANDB_MODE", raising=False)
+    monkeypatch.setattr(T, "_postgres_configured", lambda: True)
     st = T.open_store_for_settings("LOOP")
     assert isinstance(st, Store) and seen == {"dsn": "dbname=x", "open": "LOOP"}
     assert S._EVENT_SOURCE([{"a": 1}]) == [{"filters": [{"a": 1}], "cap": 5000}]
+
+
+def test_a_node_with_no_postgres_opens_a_new_posterchandb_primary(monkeypatch, tmp_path):
+    """#161: no DSN, no DATABASE_URL, no POSTERCHANDB_MODE -> the relay's store is a PosterChanDB PRIMARY,
+    created on the first start, and Postgres is never dialled."""
+    from app.services.nostr_relay import thread as T
+    from app.services.nostr_relay import pcdb_store
+    monkeypatch.setattr(S, "_EVENT_SOURCE", None)
+    monkeypatch.setattr(S, "load_local", lambda: None)
+    for k in ("POSTERCHANDB_MODE", "NOSTR_RELAY_PG_DSN", "DATABASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(S, "get", lambda k, d=None: d)
+    monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
+
+    class NoPostgres:
+        def __init__(self, *a, **k):
+            raise AssertionError("dialled Postgres on a node that has none")
+    monkeypatch.setattr(T, "RelayStore", NoPostgres)
+    loop = asyncio.new_event_loop()
+    try:
+        st = T.open_store_for_settings(loop)
+        try:
+            assert isinstance(st, pcdb_store.PcdbRelayStore)
+            assert pcdb_store.read_marker(str(tmp_path / "relay")) is not None
+        finally:
+            st.close()
+            T._mirror_ref.pop("primary", None)
+    finally:
+        loop.close()
 
 
 # --- against the SHIPPED relay server ---------------------------------------------------------------------

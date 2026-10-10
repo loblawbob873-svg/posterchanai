@@ -10,12 +10,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-
-from app.models import User
 from app.routers import jellyfin as jf, media_center as native
-from app.services import media_center as media
+from app.services import media_center as media, user_table
+from tests.doc_table_mem import mem_tables
 
 OWNER, VIEWER, STRANGER = '11' * 32, '22' * 32, '33' * 32
 
@@ -46,16 +43,13 @@ def api(request, monkeypatch, tmp_path):
     monkeypatch.setattr(native.settings_store, 'get', lambda key, default=None:
                         'http://nas.lan' if proxied and node.get() == 'edge' and key == 'media_center_server_url' else default)
     monkeypatch.setattr(native.lb_auth, 'shared_secret', lambda: 'jellyfin-test-peer-secret')
-    engine = create_engine('sqlite:///' + str(tmp_path / 'users.db'))
-    User.__table__.create(engine)
-    with Session(engine) as db:
-        for name, key in [('owner', OWNER), ('viewer', VIEWER), ('stranger', STRANGER)]:
-            db.add(User(username=name, password_hash='not-an-app-password', nostr_npub=key,
-                        is_admin=key == OWNER, can_media=True))
-        db.commit()
-    def database():
-        with Session(engine) as db:
-            yield db
+    # The accounts are a relay DocTable (user_table, #161), held in memory here and read afresh per request.
+    mem = mem_tables(monkeypatch)
+    for i, (name, key) in enumerate([('owner', OWNER), ('viewer', VIEWER), ('stranger', STRANGER)], start=1):
+        mem.put(user_table.TABLE, str(i), user_table.UserRow(i, {'username': name, 'password_hash': 'not-an-app-password',
+                                                                 'nostr_npub': key, 'is_admin': key == OWNER,
+                                                                 'can_media': True}).row())
+    user_table.all_users(None)              # loaded, as on a running node
     state = {'user': VIEWER, 'membership': True}
     # Protocol fixtures model registered users; signed-profile decisions are tested separately.
     async def member(user):
@@ -67,11 +61,9 @@ def api(request, monkeypatch, tmp_path):
     def signed_in():
         if state['user'] is None:
             return None
-        with Session(engine) as db:
-            return db.query(User).filter(User.nostr_npub == state['user']).first()
+        return user_table.by_npub(None, state['user'])
     nas = FastAPI()
     nas.include_router(native.router)
-    nas.dependency_overrides[native.get_db] = database
     @nas.middleware('http')
     async def nas_node(request, call_next):
         token = node.set('nas')
@@ -87,12 +79,17 @@ def api(request, monkeypatch, tmp_path):
     app.include_router(jf.router)
     app.add_middleware(jf.ClientCORS)
     app.dependency_overrides[native.media_user_optional] = signed_in
-    app.dependency_overrides[native.get_db] = database
     with TestClient(app) as client:
-        yield SimpleNamespace(client=client, catalog=catalog, edge=edge, engine=engine,
+        yield SimpleNamespace(client=client, catalog=catalog, edge=edge, mem=mem,
                               state=state, library=library, entries=entries, proxied=proxied)
     asyncio.run(upstream.aclose())
-    engine.dispose()
+
+
+def set_can_media(api, npub, value):
+    """An admin changing the account's Media Center permission (the stored row, as every request reads it)."""
+    u = user_table.by_npub(None, npub)
+    row = dict(u.row(), can_media=value)
+    api.mem.put(user_table.TABLE, str(u.id), row)
 
 
 def connect(api):
@@ -210,16 +207,10 @@ def test_revoking_permission_or_app_token_stops_existing_playback(api):
     login = connect(api)
     item, info = playable(api, login)
     url = '/jellyfin/' + info['MediaSources'][0]['TranscodingUrl']
-    with Session(api.engine) as db:
-        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
-        user.can_media = False
-        db.commit()
+    set_can_media(api, VIEWER, False)
     assert c.get(url).status_code == 401
     assert c.get('/jellyfin/Users/Me', headers=headers(login)).status_code == 401
-    with Session(api.engine) as db:
-        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
-        user.can_media = True
-        db.commit()
+    set_can_media(api, VIEWER, True)
     assert c.delete('/api/media-center/jellyfin-account').status_code == 204
     assert c.get(url).status_code == 401
 
@@ -844,28 +835,16 @@ def test_progress_persists_per_user_and_resume_can_restart(api):
 
 
 def test_media_permission_denied_by_default_and_revokes_app_access(api):
-    with Session(api.engine) as db:
-        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
-        user.can_media = False
-        db.commit()
+    set_can_media(api, VIEWER, False)
     pending = api.client.post('/jellyfin/QuickConnect/Initiate').json()
     assert api.client.post('/api/media-center/jellyfin-account/authorize', json={'code':pending['Code']}).status_code == 403
-    with Session(api.engine) as db:
-        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
-        user.can_media = True
-        db.commit()
+    set_can_media(api, VIEWER, True)
     login = connect(api)
     assert api.client.get('/jellyfin/UserViews', headers=headers(login)).status_code == 200
-    with Session(api.engine) as db:
-        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
-        user.can_media = False
-        db.commit()
+    set_can_media(api, VIEWER, False)
     assert api.client.get('/jellyfin/UserViews', headers=headers(login)).status_code == 401
     api.state['user'] = OWNER
-    with Session(api.engine) as db:
-        owner = db.query(User).filter(User.nostr_npub == OWNER).first()
-        owner.can_media = False
-        db.commit()
+    set_can_media(api, OWNER, False)
     assert connect(api)['User']['Id']
 
 
@@ -927,14 +906,9 @@ def test_tv_folder_open_preferences_and_private_image_ticket(api, monkeypatch):
     assert c.get(url, params={'tag':tag}).status_code == 404
     api.catalog['library:'+api.library['id']]['shared_with'] = [VIEWER]
     assert c.get(url, params={'tag':tag}).status_code == 200
-    with Session(api.engine) as db:
-        viewer = db.query(User).filter(User.nostr_npub == VIEWER).one()
-        viewer.can_media = False
-        db.commit()
+    set_can_media(api, VIEWER, False)
     assert c.get(url, params={'tag':tag}).status_code == 401
-    with Session(api.engine) as db:
-        db.query(User).filter(User.nostr_npub == VIEWER).one().can_media = True
-        db.commit()
+    set_can_media(api, VIEWER, True)
     real_time = jf.time.time
     with monkeypatch.context() as patch:
         patch.setattr(jf.time, 'time', lambda: real_time()+7201)

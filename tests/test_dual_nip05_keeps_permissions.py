@@ -20,10 +20,7 @@ import asyncio
 import json
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.models import Bot, User
+from app.services import user_table
 from app.services import (blossom_service, instance_membership, nip05_registry, relay_access_policy,
                           relay_blocklist, settings_store, users_store)
 from app.services.instance_membership import MembershipChecker
@@ -42,19 +39,14 @@ def run(c):
 
 @pytest.fixture
 def world(monkeypatch):
-    engine = create_engine("sqlite://")
-    for t in (User, Bot):
-        t.__table__.create(engine)
+    # Accounts, bots and the puppet registry are relay DocTables (#161), in memory here.
     from tests.doc_table_mem import mem_tables
-    mem_tables(monkeypatch)                  # the puppet registry is a DocTable now (#161): empty here
-    db = sessionmaker(bind=engine)()
-    for name, pk in PK.items():
-        u = User(username=name, email=f"{name}@x.example", password_hash="x",
-                 nostr_npub=nostr_service.npub_of(pk), access_revoked=False)
-        for f in FIELDS:
-            setattr(u, f, True)
-        db.add(u)
-    db.commit()
+    from tests.user_fixtures import FakeDB, seed_user
+    mem = mem_tables(monkeypatch)
+    for i, (name, pk) in enumerate(PK.items()):
+        seed_user(mem, i + 1, username=name, email=f"{name}@x.example", nostr_npub=nostr_service.npub_of(pk),
+                  access_revoked=False, **{f: True for f in FIELDS})
+    db = FakeDB()
     vals = {
         "nostr_relay_nip05_domain": DOMAIN,
         nip05_registry.KEY: "\n".join([f"dual {PK['dual']}", f"dual2 {PK['dual']}", f"solo {PK['solo']}",
@@ -93,12 +85,10 @@ def world(monkeypatch):
     monkeypatch.setattr(relay_blocklist, "profiles", profiles)
     vals["_published"] = published               # a test may change what a profile says
     yield db, vals
-    db.close()
 
 
 def perms(db, name):
-    db.expire_all()
-    u = db.query(User).filter(User.username == name).one()
+    u = user_table.by_username(db, name)
     return {f: getattr(u, f) for f in FIELDS}, u.access_revoked
 
 
@@ -142,7 +132,9 @@ def test_removing_one_of_their_names_takes_no_permission(world, which):
 def test_the_permissions_modal_adds_and_removes_a_name_without_touching_access(world, monkeypatch):
     db, vals = world
     from app.routers import client
-    monkeypatch.setattr(client, "_verify_admin_auth", lambda db_, auth, target, action: True)
+    async def admin_ok(db_, auth, target, action):
+        return True
+    monkeypatch.setattr(client, "_verify_admin_auth", admin_ok)
     monkeypatch.setattr(client, "_nip05_domain", lambda request, db_: DOMAIN)
 
     async def no_welcome(*a, **k):
@@ -168,11 +160,11 @@ def test_a_member_revoked_over_letter_case_gets_everything_back_at_the_next_clea
     restore every permission and their Blossom line -- not merely stop revoking."""
     db, vals = world
     vals["_published"]["solo"] = "SOLO@Poster.Place"
-    u = db.query(User).filter(User.username == "solo").one()
+    u = user_table.by_username(db, "solo")
     for f in FIELDS:
         setattr(u, f, False)
     u.access_revoked = True
-    db.commit()
+    user_table.save(db, u)
     vals["blossom_whitelist"] = "\n".join(nostr_service.npub_of(PK[n]) for n in ("dual", "own"))
     run(relay_access_policy.run(db))
     granted, revoked = perms(db, "solo")
