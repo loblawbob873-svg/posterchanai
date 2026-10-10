@@ -315,14 +315,14 @@ _QUIET_EVERY = 6 * 3600
 
 async def _tick() -> None:
     from app.database import SessionLocal
-    from app.models import User
+    from app.services import user_table
 
     db = SessionLocal()
     try:
         if not caldav_store.enabled():
             return
         try:
-            users = db.query(User).all()
+            users = await user_table.aall(db)
         except Exception as e:
             logger.warning("[calsub] could not list users: %s", e)
             return

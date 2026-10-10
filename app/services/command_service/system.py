@@ -67,8 +67,7 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     returns an encrypted summary) — SSH is gone. `stop` is an asyncio.Event a delete/kill sets to end the
     run cooperatively (reliable even when task.cancel() is swallowed by run_to_completion's shield, §3)."""
     from app.database import SessionLocal
-    from app.models import User as _User
-    from app.services import node_service
+    from app.services import node_service, user_table
     db = SessionLocal()
     sections = []
     backups = []        # (name, tar.gz bytes) — a sandbox's /workspace, auto-archived so the user gets what it built
@@ -76,7 +75,7 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     npub = ""           # the launcher's npub, captured below for the completion DM
     _stopped = (lambda: bool(stop and stop.is_set()))
     try:
-        u = db.query(_User).filter(_User.id == uid).first() if uid else None
+        u = await user_table.aget(db, uid) if uid else None
         # Capture the npub NOW, while the session is alive: the completion DM fires after this session is
         # closed (a multi-minute run outlives it), so it can't go back to the ORM for it.
         npub = (getattr(u, "nostr_npub", "") or "").strip() if u else ""

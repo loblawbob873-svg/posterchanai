@@ -873,6 +873,17 @@ async def startup():
                     except Exception as e:
                         logging.warning(f"Wave-2 table migration not started: {e}")
                     try:
+                        # #161 wave 3: the Exodus wallet backups, then the ACCOUNTS (users + their lookup
+                        # index). `users` waits until every table holding a foreign key to it carries its
+                        # marker (wave 1's and 2's included) -- a relay-only account would otherwise be
+                        # refused by a table still taking SQL writes. Same copy/verify/marker engine.
+                        from app.services import wave3_migration
+                        _w3 = _aio.create_task(wave3_migration.run_at_startup(SessionLocal))
+                        _BACKGROUND_TASKS.add(_w3)
+                        _w3.add_done_callback(_BACKGROUND_TASKS.discard)
+                    except Exception as e:
+                        logging.warning(f"Wave-3 table migration not started: {e}")
+                    try:
                         from app.services import record_store
                         await record_store.hydrate(_db)
                     except Exception as e:
@@ -1610,7 +1621,8 @@ async def verify_email_page(
         """, status_code=400)
 
     # Get the user
-    user = db.query(User).filter(User.id == verification.user_id).first()
+    from app.services import user_table
+    user = await user_table.aget(db, verification.user_id)
     if not user:
         db.delete(verification)
         db.commit()
@@ -1627,8 +1639,9 @@ async def verify_email_page(
         </div></body></html>
         """, status_code=400)
 
-    # Mark email as verified
+    # Mark email as verified (the account first: a token is only spent once its effect is stored)
     user.email_verified = True
+    await user_table.asave(db, user)
     db.delete(verification)  # Token is single-use
     db.commit()
 

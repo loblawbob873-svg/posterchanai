@@ -434,12 +434,12 @@ async def _tell_admin(text: str) -> None:
     the admin's npub, plus Telegram when the admin has one linked — the channel they actually watch.
     No new settings: this fires only on a real payment, on a node that turned the feature on."""
     from app.database import SessionLocal
-    from app.models import User
+    from app.services import user_table
     npub, chat_id, tg_on = "", None, False
     try:
         db = SessionLocal()
         try:
-            admin = db.query(User).filter(User.id == 1).first()
+            admin = await user_table.aget(db, 1)
             npub = (getattr(admin, "nostr_npub", "") or "").strip() if admin else ""
             chat_id = getattr(admin, "telegram_chat_id", None) if admin else None
             tg_on = bool(admin and getattr(admin, "telegram_enabled", False) and chat_id)

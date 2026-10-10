@@ -19,7 +19,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from app.models import Reminder, User
+from app.models import Reminder
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,8 @@ async def poll_once(db) -> int:
     # query across them. The cost is bounded instead by _NO_CALENDARS: the first pass pays for one
     # (small) metadata scan per account and every pass after that skips the ones with nothing, for
     # hours at a time.
-    users = db.query(User).all()
+    from app.services import user_table
+    users = await user_table.aall(db)     # Unavailable: this pass is skipped, never "no accounts"
     for user in users:
         try:
             alarms = await due_alarms(db, user)

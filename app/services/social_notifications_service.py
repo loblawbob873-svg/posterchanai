@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 import json
 from app.models import User, SocialReplyMap
-from app.services import settings_store
+from app.services import settings_store, user_table
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
 
@@ -221,15 +221,22 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
     # for a single account; accepted over the duplicate-flood the inclusive alternative causes.
     if since is None:
         # First poll: establish the cursor without forwarding the backlog.
-        user.nostr_notif_since = str(newest)
-        db.commit()
+        await _set_cursor(db, user, newest)
         return
     for ev in sorted(raw, key=lambda e: e.get("created_at", 0)):  # oldest-first
         label = await _nostr_actor_label(ev.get("pubkey", ""), relays)
         await _deliver(db, tg, user, chat_id, _norm_nostr(ev, actor_label=label))
-    user.nostr_notif_since = str(newest)
     _prune(db)
     db.commit()
+    await _set_cursor(db, user, newest)
+
+
+async def _set_cursor(db: Session, user: User, newest: int) -> None:
+    """Store the per-user cursor as ONE field merged onto the newest account row (#161: the accounts table is
+    a relay DocTable this worker shares with the app -- writing the whole row from this poller's copy could
+    put back a field the app changed meanwhile)."""
+    await user_table.aupdate(db, user.id, nostr_notif_since=str(newest))
+    object.__setattr__(user, "nostr_notif_since", str(newest))
 
 
 
@@ -250,11 +257,7 @@ async def poll_once(db: Session) -> None:
     tg = _build_telegram(db)
     if not tg:
         return
-    users = (
-        db.query(User)
-        .filter(User.social_notif_enabled == True, User.telegram_chat_id.isnot(None))  # noqa: E712
-        .all()
-    )
+    users = await user_table.afilter(db, lambda u: bool(u.social_notif_enabled and u.telegram_chat_id))
     for user in users:
         try:
             await _poll_user(db, tg, user)
@@ -280,7 +283,7 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
     )
     if not row:
         return None
-    user = db.query(User).filter(User.id == row.user_id).first()
+    user = await user_table.aget(db, row.user_id)
     if not user:
         return None
     try:

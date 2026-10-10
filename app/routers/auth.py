@@ -70,7 +70,8 @@ def _set_auth_cookie(response: Response, token: str, request: Request = None) ->
 
 @router.post("/login", response_model=Token)
 def login(user_data: UserLogin, response: Response, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == user_data.username).first()
+    from app.services import user_table
+    user = user_table.by_username(db, user_data.username)
     if user and user.is_admin:
         raise HTTPException(status_code=403, detail="Administrators must sign in with their Nostr identity")
     if not user or not verify_password(user_data.password, user.password_hash):
@@ -136,29 +137,34 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
     # settings documents and the relay's own events — so recognising it grants nothing new. Any
     # duplicate holding the npub is UNLINKED rather than deleted: it may own posts, drafts and
     # chats, and this endpoint is no place to delete an account.
+    # Every account lookup below RAISES when the account table could not be read (Unavailable -> 503): an
+    # outage must never read as "no account with this key" and mint a second one (#161 wave 3).
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
     user = None
     try:
-        op = db.query(User).filter(User.is_admin == True,  # noqa: E712
-                                   User.nostr_nsec.isnot(None)).first()
+        op = await user_table.aoperator(db)
         if op:
             op_pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
             if op_pk and op_pk == pk:
-                dupes = db.query(User).filter(User.nostr_npub == npub,
-                                              User.id != op.id).all()
+                dupes = [d for d in await user_table.afilter(db, lambda u: u.nostr_npub == npub) if d.id != op.id]
                 for d in dupes:
                     d.nostr_npub = None
+                    await user_table.asave(db, d)
                     logger.info("[auth] unlinked duplicate npub account %s from the operator's key",
                                 d.username)
-                if op.nostr_npub != npub or dupes:
+                if op.nostr_npub != npub:
                     op.nostr_npub = npub
-                    db.commit()
+                    await user_table.asave(db, op)
                 user = op
                 logger.info("[auth] operator signed in with the node's own key")
+    except Unavailable:
+        raise
     except Exception as e:
         logger.warning("[auth] operator-key match failed: %s", e)
 
     if user is None:
-        user = db.query(User).filter(User.nostr_npub == npub).first()
+        user = await user_table.aby_npub(db, npub)
 
     created = False
     if not user:
@@ -166,23 +172,22 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
         if not registration_service.enabled():
             raise HTTPException(status_code=403, detail=registration_service.closed_message())
         # derive a unique username from the npub; AI stays off until an admin grants it
-        base = "npub_" + npub[4:16]
-        username = base
-        for i in range(2, 100):
-            if not db.query(User).filter(User.username == username).first():
-                break
-            username = f"{base}{i}"
-        user = User(
-            username=username, email=None,
-            password_hash=get_password_hash(secrets.token_urlsafe(32)),  # unusable (Nostr-only)
-            is_admin=False, email_verified=True, nostr_npub=npub,
-            can_image=True, can_music=True, can_video=False, can_torrent=False,
-            can_blossom=False, can_ai=False,   # gated — request → admin approves
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        created = True
+        try:
+            user = await user_table.acreate(
+                db, username=await user_table.afree_username(db, "npub_" + npub[4:16], limit=100),
+                email=None,
+                password_hash=get_password_hash(secrets.token_urlsafe(32)),  # unusable (Nostr-only)
+                is_admin=False, email_verified=True, nostr_npub=npub,
+                can_image=True, can_music=True, can_video=False, can_torrent=False,
+                can_blossom=False, can_ai=False,   # gated — request → admin approves
+            )
+            created = True
+        except user_table.UserConflict:
+            # a second sign-in for the same new key won the race: that account IS this person's
+            user = await user_table.aby_npub(db, npub)
+            if user is None:
+                raise
+        username = user.username
         # The relay's allow set is read from the DB at startup and on reload ONLY — a user created
         # after that had every server-signed write (calendar, contacts, the drive index) refused
         # "not in web of trust" until an unrelated reload happened to run. Registration is the
@@ -220,12 +225,12 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
         # stranger to POST a signed event to this public endpoint became a full admin, which includes the
         # `node` command's deliberate OS-command execution. The seeded row is gone (see database.py), so a
         # genuinely fresh node still has zero admins and the owner's first sign-in still claims it.
-        if not db.query(User).filter(User.is_admin == True).first():  # noqa: E712
+        if not await user_table.aany_admin(db):
             user.is_admin = True
             user.can_ai = True
             user.can_image = True
             user.can_blossom = True
-            db.commit()
+            await user_table.asave(db, user)
             logger.info("[auth] first-login admin auto-claimed by %s", npub[:16])
             try:
                 from app.services import settings_store as _ss
@@ -274,8 +279,8 @@ async def _notify_admins_ai_request(db: Session, requester: User, npub: str) -> 
     node operator's key via the local relay (kind-4 NIP-04 — shows in their client's Messages)."""
     from app.services.nostr import nostr_service, nip04
     from app.services.nostr.event import build_event
-    from app.services import nostr_store
-    op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
+    from app.services import nostr_store, user_table
+    op = await user_table.aoperator(db)
     if not op:
         return
     try:
@@ -286,7 +291,7 @@ async def _notify_admins_ai_request(db: Session, requester: User, npub: str) -> 
     port = settings_store.get_int("nostr_relay_port", 3052)
     text = (f"🤖 AI access requested by {requester.username} ({npub}). "
             f"Approve from their profile ☰ menu or Admin → Users.")
-    admins = db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()  # noqa: E712
+    admins = [a for a in await user_table.aadmins(db) if a.nostr_npub]
     for a in admins:
         apk = nostr_service.to_pubkey_hex(a.nostr_npub)
         if not apk:
@@ -310,7 +315,8 @@ async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
     if not _verify_nostr_auth(data.auth, pk, "ai-request"):
         raise HTTPException(status_code=403, detail="invalid or stale Nostr signature")
     npub = nostr_service.npub_of(pk)
-    user = db.query(User).filter(User.nostr_npub == npub).first()
+    from app.services import user_table
+    user = await user_table.aby_npub(db, npub)
     if not user:
         raise HTTPException(status_code=404, detail="log in with your Nostr key first")
     if user.is_admin or user.can_ai:
@@ -363,7 +369,8 @@ def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
         )
 
     # Get the user
-    user = db.query(User).filter(User.id == verification.user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, verification.user_id)
     if not user:
         db.delete(verification)
         db.commit()
@@ -372,8 +379,9 @@ def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
             detail="User not found"
         )
 
-    # Mark email as verified
+    # Mark email as verified (the account first: a token is only spent once its effect is stored)
     user.email_verified = True
+    user_table.save(db, user)
     db.delete(verification)  # Token is single-use
     db.commit()
 
@@ -730,10 +738,10 @@ def update_user_settings(
 
 
     try:
-        # Flush changes to database before commit
-        db.flush()
-        
-        # Commit the transaction - ensure this succeeds
+        # The account's own columns (#161 wave 3: user_table -- relay, and SQL until the marker), then anything
+        # else this session holds. Unavailable propagates: 503, never a reported save that did not happen.
+        from app.services import user_table
+        user_table.save(db, current_user)
         db.commit()
         logger.info(f"[Auth] Successfully saved user settings for user {current_user.username}")
         # Mirror per-user config to the relay (the authoritative datastore). Sync handler → drive the
@@ -822,7 +830,6 @@ async def upload_avatar(
             else:
                 # If it's a Response object, try to parse JSON
                 try:
-                    import json
                     result_json = await result.json() if hasattr(result, 'json') else {}
                     filename = result_json.get("filename", "avatar.png")
                 except Exception:
@@ -832,7 +839,8 @@ async def upload_avatar(
             
             # Update user record with avatar filename
             current_user.avatar = filename
-            db.commit()
+            from app.services import user_table
+            await user_table.asave(db, current_user)
             try:
                 from app.services import users_store
                 await users_store.sync_user(db, current_user)   # avatar → relay (fresh-node rebuild)
@@ -872,7 +880,8 @@ def delete_avatar(
             avatar_path.unlink()
 
         current_user.avatar = None
-        db.commit()
+        from app.services import user_table
+        user_table.save(db, current_user)
         try:
             from app.services import users_store
             users_store.sync_user_blocking(db, current_user)   # avatar removal → relay
@@ -938,8 +947,8 @@ async def get_avatar(
     
     # If not found via glob, check database for specific filename (if user exists in this DB)
     if not avatar_path or not avatar_path.exists():
-        from app.models import User
-        user = db.query(User).filter(User.username == username).first()
+        from app.services import user_table
+        user = await user_table.aby_username(db, username)
         if user and user.avatar:
             user_path = storage.get_user_path(username)
             avatar_path = user_path / user.avatar

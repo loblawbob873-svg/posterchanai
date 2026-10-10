@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+from app.services.relay_reader import Unavailable
 import os
 import urllib.parse
 import warnings
@@ -187,7 +188,10 @@ def get_current_user(
             detail="Invalid token format"
         )
 
-    user = db.query(User).filter(User.id == user_id_int).first()
+    # "User not found" only when the store ANSWERED that there is no such account; a relay that could not be
+    # asked raises Unavailable (503 + Retry-After) -- a session is never logged out by an outage (#161 wave 3).
+    from app.services import user_table
+    user = user_table.get(db, user_id_int)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -214,15 +218,17 @@ def _operator_pubkey(db: Session) -> Optional[str]:
     global _OPERATOR_PK
     if _OPERATOR_PK is not _UNSET:
         return _OPERATOR_PK
-    _OPERATOR_PK = None
     try:
+        from app.services import user_table
         from app.services.nostr import nostr_service
-        op = db.query(User).filter(User.is_admin == True,  # noqa: E712
-                                   User.nostr_nsec.isnot(None)).first()
-        if op:
-            _OPERATOR_PK = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
+        op = user_table.operator(db)
+        _OPERATOR_PK = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec)) if op else None
+    except Unavailable:
+        raise                   # "could not ask" -> 503, never "this is not the operator" (403)
     except Exception as e:                                  # pragma: no cover - never fatal
+        # NOT cached: an account table that could not be read this time is asked again next time
         logger.warning("[auth] could not derive the operator pubkey: %s", e)
+        return None
     return _OPERATOR_PK
 
 
@@ -252,12 +258,14 @@ def get_admin_user(current_user: User = Depends(get_current_user),
             from app.services.nostr import nostr_service
             op_pk = _operator_pubkey(db)
             if op_pk and nostr_service.to_pubkey_hex(npub) == op_pk:
-                operator = db.query(User).filter(User.is_admin == True,  # noqa: E712
-                                                 User.nostr_nsec.isnot(None)).first()
+                from app.services import user_table
+                operator = user_table.operator(db)
                 if operator:
                     logger.info("[auth] session on %s carries the operator's own key — serving it "
                                 "as the operator", current_user.username)
                     return operator
+    except Unavailable:
+        raise
     except Exception as e:                                  # pragma: no cover - never fatal
         logger.warning("[auth] operator-session repair failed: %s", e)
 
@@ -317,6 +325,8 @@ async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional
     except (ValueError, TypeError):
         return None
 
-    user = db.query(User).filter(User.id == user_id_int).first()
-    from app.services import relay_blocklist
+    # None only when the store answered "no such account"; "could not ask" raises (the socket is then closed
+    # as an error the client retries, never answered as a signed-out user).
+    from app.services import relay_blocklist, user_table
+    user = await user_table.aget(db, user_id_int)
     return None if relay_blocklist.is_user_blocked(user) else user

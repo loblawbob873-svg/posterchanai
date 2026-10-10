@@ -79,7 +79,7 @@ async def load(db, user) -> dict[str, Any] | None:
 
     # The document is genuinely absent. Only now is the row consulted — it is the backup for exactly
     # this case, and restoring from it republishes the document.
-    row = _row(db, user)
+    row = await _row(db, user)
     if not row or not row.seed_enc:
         return None
     logger.warning("[exodus] wallet document absent for user %s — restoring from the local backup",
@@ -92,9 +92,15 @@ async def load(db, user) -> dict[str, Any] | None:
     return doc
 
 
-def _row(db, user):
-    from app.models import ExodusWallet
-    return db.query(ExodusWallet).filter(ExodusWallet.user_id == user.id).first()
+async def _row(db, user):
+    """The seed's backup row (#161: an operator-encrypted DocTable row, see exodus_tables). Strict: a backup that
+    could not be read raises -- it is never "no backup"."""
+    from app.services import exodus_tables
+    from app.services.relay_reader import Unavailable
+    try:
+        return await exodus_tables.awallet(db, user.id)
+    except Unavailable as exc:
+        raise VaultUnavailable("this account's wallet backup could not be read") from exc
 
 
 async def _publish(db, user, doc: dict[str, Any]) -> None:
@@ -108,21 +114,15 @@ async def _publish(db, user, doc: dict[str, Any]) -> None:
         raise VaultUnavailable("the wallet could not be saved to the relay")
 
 
-def _mirror(db, user, doc: dict[str, Any]) -> None:
+async def _mirror(db, user, doc: dict[str, Any]) -> None:
     """Keep the encrypted backup row in step. Never read unless the document is absent."""
     from datetime import datetime, timezone
-    from app.models import ExodusWallet
-    blob = bytes.fromhex(str(doc["seed"]))
-    row = _row(db, user)
-    if not row:
-        row = ExodusWallet(user_id=user.id, seed_enc=blob)
-        db.add(row)
-    row.seed_enc = blob
-    row.label = doc.get("label") or None
-    row.address_index = int(doc.get("addressIndex") or 0)
+    from app.services import exodus_tables
     stamp = int(doc.get("backedUpAt") or 0)
-    row.backed_up_at = datetime.fromtimestamp(stamp, tz=timezone.utc).replace(tzinfo=None) if stamp else None
-    db.commit()
+    await exodus_tables.aput_wallet(
+        db, user.id, seed_enc=bytes.fromhex(str(doc["seed"])), label=doc.get("label") or None,
+        address_index=int(doc.get("addressIndex") or 0),
+        backed_up_at=datetime.fromtimestamp(stamp, tz=timezone.utc).replace(tzinfo=None) if stamp else None)
 
 
 async def save_new(db, user, mnemonic: str, label: str | None) -> dict[str, Any]:
@@ -138,7 +138,7 @@ async def save_new(db, user, mnemonic: str, label: str | None) -> dict[str, Any]
     doc = {"seed": W.seal(mnemonic, sk).hex(), "label": (label or None),
            "addressIndex": 0, "backedUpAt": 0, "createdAt": int(time.time())}
     await _publish(db, user, doc)
-    _mirror(db, user, doc)
+    await _mirror(db, user, doc)
     return doc
 
 
@@ -158,7 +158,7 @@ async def update(db, user, **fields) -> dict[str, Any]:
             doc[key] = fields[key]
     doc["seed"] = seed
     await _publish(db, user, doc)
-    _mirror(db, user, doc)
+    await _mirror(db, user, doc)
     return doc
 
 

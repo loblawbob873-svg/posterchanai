@@ -403,6 +403,17 @@ passes both clip times in the arg (`clip <start> <end>`); the media tools are no
   on the loop use the `a*` versions (a sync read there is memory-only). Chat MESSAGES were never in this move --
   they have been relay-only, per conversation, under the user's key since c3ed195a2 -- and the legacy SQL rows
   are COUNTED, never copied: they cannot be told from history deleted on the relay. `tests/test_wave2_tables.py`.
+- **WAVE 3 OF #161: THE ACCOUNTS ARE A RELAY DOCTABLE -- NEVER `db.query(User)`, use `user_table`** (also the
+  Exodus wallet BACKUP rows, `exodus_tables`, and `instance_welcome`'s applications). It is the auth path, so:
+  every reader RAISES `Unavailable` (503) for "could not ask" -- a session is never logged out as "user not
+  found" and no sign-in mints an account because a lookup failed; a POINT lookup (id, username, npub, Telegram
+  chat/key, Google sub, email) during a restart's load reads ONE document (by id, or a hashed
+  `pcai:t:user_index:` entry + the account, verified -- d-tags are plaintext); EVERY write goes through one
+  writer thread (uniqueness of username/email/npub/Telegram chat/Google sub -> `UserConflict`, index updates, and
+  a save carries only the CHANGED columns merged onto the newest row). Mutate then `user_table.save/asave` --
+  `db.commit()` stores nothing. New ids are `app_tables.new_id()` (never reused); migrated ids are kept.
+  `wave3_migration` marks `users` LAST, only once every table with a FK to users.id (read from the metadata)
+  has its marker. `tests/test_wave3_users.py` (incl. a static scan for queries of converted models).
 
 ### Schedulers
 

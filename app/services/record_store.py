@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from app.models import Reminder, SavedSearch, APIKey, User
+from app.models import Reminder, SavedSearch, APIKey
 from app.services import nostr_store as store
 from app.services.nostr_store import user_storage_seckey
 from app.services import settings_store as _ss
@@ -146,7 +146,8 @@ def delete_apikey_blocking(db, user, key_id) -> None:
 async def hydrate(db) -> int:
     """Recreate missing Reminder + SavedSearch rows for every user from their relay docs. Additive."""
     made = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+    from app.services import user_table
+    for user in await user_table.afilter(db, lambda u: bool(u.nostr_npub)):
         try:
             sk = user_storage_seckey(db, user)
             rem = await store.list_docs(_ss._port(), NS_REMINDER, seckey=sk)

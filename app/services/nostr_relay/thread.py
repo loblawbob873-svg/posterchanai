@@ -578,7 +578,7 @@ def _node_pubkey() -> str:
         return ""
 
 
-_last_known: dict = {"bots": set(), "storage": set()}
+_last_known: dict = {"bots": set(), "storage": set(), "users": set()}
 _heal = {"running": False}
 
 
@@ -595,13 +595,14 @@ def _reload_when_readable() -> None:
         import time as _time
         try:
             from app.database import SessionLocal
-            from app.services import bot_table, user_settings_table
+            from app.services import bot_table, user_settings_table, user_table
             for _ in range(240):                     # ~20 minutes, then the periodic reloads take over
                 _time.sleep(5)
                 db = SessionLocal()
                 try:
                     bot_table.all_bots(db)
                     user_settings_table.by_key(db, "storage_nsec")
+                    user_table.all_users(db)
                 except Exception:      # noqa: BLE001 -- still not readable: try again
                     continue
                 finally:
@@ -665,45 +666,64 @@ def _legacy_storage_pubkeys(db) -> set:
     return out
 
 
+def _user_pubkeys(db) -> set:
+    """Every account's keys: a linked nsec's pubkey, the login npub, and (npub accounts) the server-held
+    storage key. The accounts table is a relay DocTable (#161, wave 3) that this very relay serves, so on the
+    relay's own loop -- and before the table is loaded -- it may not be readable yet: then the LAST set this
+    process read is used rather than none (an operator set that silently lost every user would refuse their
+    posts), and a healer re-reads it off the loop and triggers a reload."""
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+    try:
+        users = user_table.all_users(db)
+    except (Unavailable, RuntimeError) as e:
+        logger.info("[nostr-relay] accounts not readable yet (%s) -- keeping the last known set", type(e).__name__)
+        _reload_when_readable()
+        return set(_last_known["users"])
+    out: set = set()
+    for u in users:
+        nsec = getattr(u, "nostr_nsec", None)
+        if nsec:
+            try:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+            except Exception:
+                pass
+        # A registered user's POSTING identity (login npub). Including it preserves their own
+        # notes from the age-prune — a registered account's history is their data, not
+        # reconstructable feed content — and lets them publish through the relay.
+        npub = getattr(u, "nostr_npub", None)
+        if npub:
+            try:
+                h = nostr_service.to_pubkey_hex(npub)
+                if h:
+                    out.add(h)
+            except Exception:
+                pass
+        # The per-user STORAGE key — the author of everything the SERVER writes for this user
+        # (calendar, contacts, mail, the drive index). It was never in this set, so a fresh
+        # account's writes were refused ("not in web of trust") until something else happened to
+        # admit it — measured: a new account's drive-key save answered "relay rejected the
+        # write", which is the root of the fresh-pair key fork. Registration must be enough.
+        # Only for npub accounts (their key is the keyfile's; minting one is local). A no-npub legacy
+        # account's key lives in the user-settings table -- a relay DocTable this relay serves -- so minting
+        # one HERE would wait on the relay from the relay's own loop; those are read by _legacy_storage_pubkeys.
+        if npub:
+            try:
+                from app.services.nostr_store import user_storage_seckey
+                from app.services.nostr import bip340
+                out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
+            except Exception:
+                pass
+    _last_known["users"] = set(out)
+    return out
+
+
 def _collect_operator_pubkeys(db) -> list:
     """Pubkeys that may always publish through the relay: every linked user's and bot's
     Nostr key. So our own bots/users can point their relay list here and still be accepted."""
     out: set = set()
     try:
-        from app.models import User
-        for u in db.query(User).all():
-            nsec = getattr(u, "nostr_nsec", None)
-            if nsec:
-                try:
-                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
-                except Exception:
-                    pass
-            # A registered user's POSTING identity (login npub). Including it preserves their own
-            # notes from the age-prune — a registered account's history is their data, not
-            # reconstructable feed content — and lets them publish through the relay.
-            npub = getattr(u, "nostr_npub", None)
-            if npub:
-                try:
-                    h = nostr_service.to_pubkey_hex(npub)
-                    if h:
-                        out.add(h)
-                except Exception:
-                    pass
-            # The per-user STORAGE key — the author of everything the SERVER writes for this user
-            # (calendar, contacts, mail, the drive index). It was never in this set, so a fresh
-            # account's writes were refused ("not in web of trust") until something else happened to
-            # admit it — measured: a new account's drive-key save answered "relay rejected the
-            # write", which is the root of the fresh-pair key fork. Registration must be enough.
-            # Only for npub accounts (their key is the keyfile's; minting one is local). A no-npub legacy
-            # account's key lives in the user-settings table -- a relay DocTable this relay serves -- so minting
-            # one HERE would wait on the relay from the relay's own loop; those are read by _legacy_storage_pubkeys.
-            if npub:
-                try:
-                    from app.services.nostr_store import user_storage_seckey
-                    from app.services.nostr import bip340
-                    out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
-                except Exception:
-                    pass
+        out |= _user_pubkeys(db)
         out |= _bot_pubkeys(db)
         # The DATASTORE OPERATOR/SIGNER key: settings/users/bots/chat docs (kind-30078 `pcai:`) are
         # signed with it. On a fresh node with no linked users this is the ONLY operator pubkey, so

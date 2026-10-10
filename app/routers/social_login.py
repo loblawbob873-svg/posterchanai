@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
+from app.services import user_table
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +124,12 @@ def _mint_keypair() -> tuple[str, str]:
     raise RuntimeError("could not generate a keypair")
 
 
-def _unique_username(db: Session, base: str) -> str:
+async def _unique_username(db: Session, base: str) -> str:
     base = ("".join(c for c in (base or "user") if c.isalnum() or c in "._-") or "user")[:24]
-    name = base
-    for i in range(2, 200):
-        if not db.query(User).filter(User.username == name).first():
-            return name
-        name = f"{base}{i}"
-    return f"{base}{secrets.token_hex(3)}"
+    try:
+        return await user_table.afree_username(db, base, limit=200)
+    except user_table.UserConflict:
+        return f"{base}{secrets.token_hex(3)}"
 
 
 async def _ensure_identity(db: Session, user: User) -> str:
@@ -151,7 +150,7 @@ async def _ensure_identity(db: Session, user: User) -> str:
         user.nostr_nsec = nsec
         user.nostr_npub = npub
         user.nostr_enabled = True
-        db.commit()
+        await user_table.asave(db, user)
         minted = npub
     try:
         from app.services.nostr import nostr_service
@@ -280,22 +279,27 @@ async def google_callback(request: Request, code: str = None, state: str = None,
     # Linking Google to a key the user already has: the account is known, Google only says who is
     # attaching. No handoff code — they are already signed in in the tab that started this.
     if pending["p"] == "google-link":
-        user = db.query(User).filter(User.id == pending["user_id"]).first()
+        user = await user_table.aget(db, pending["user_id"])
         if not user:
             return _error_page("That account no longer exists.")
-        taken = db.query(User).filter(User.google_sub == sub, User.id != user.id).first()
-        if taken:
+        taken = await user_table.aby_google_sub(db, sub)
+        if taken and taken.id != user.id:
             return _error_page("That Google account is already linked to a different identity here.")
         user.google_sub = sub
         user.google_email = email or None
         if pending.get("nsec"):
             user.nostr_nsec = pending["nsec"]
             user.nostr_enabled = True
-        db.commit()
+        try:
+            await user_table.asave(db, user)
+        except user_table.UserConflict:
+            return _error_page("That Google account is already linked to a different identity here.")
         logger.info("[social-login] google linked to %s", user.username)
         return RedirectResponse("/client?linked=google", status_code=302)
 
-    user = db.query(User).filter(User.google_sub == sub).first()
+    # A lookup that could not be answered RAISES (503) -- it never reads as "no account", so a relay
+    # outage cannot mint a second identity for somebody who already has one.
+    user = await user_table.aby_google_sub(db, sub)
     created = False
     if not user:
         from app.services import registration_service
@@ -304,24 +308,28 @@ async def google_callback(request: Request, code: str = None, state: str = None,
         # Deliberately NOT matched on email: addresses are re-assignable and a match would hand an
         # existing identity to whoever holds the address today. A user who wants their existing key
         # reachable by Google links it themselves (see /google/link).
-        user = User(
-            username=_unique_username(db, (email.split("@")[0] if email else "google")),
-            email=None, password_hash="",
-            is_admin=False, email_verified=True,
-            google_sub=sub, google_email=email or None,
-            can_image=True, can_music=True, can_video=False, can_torrent=False,
-            can_blossom=False, can_ai=False,   # gated, same as a Nostr signup — an admin grants AI
-        )
         from app.auth import get_password_hash
-        user.password_hash = get_password_hash(secrets.token_urlsafe(32))   # unusable: OAuth-only
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        created = True
-        logger.info("[social-login] google signup: %s", user.username)
+        try:
+            user = await user_table.acreate(
+                db,
+                username=await _unique_username(db, (email.split("@")[0] if email else "google")),
+                email=None,
+                password_hash=get_password_hash(secrets.token_urlsafe(32)),   # unusable: OAuth-only
+                is_admin=False, email_verified=True,
+                google_sub=sub, google_email=email or None,
+                can_image=True, can_music=True, can_video=False, can_torrent=False,
+                can_blossom=False, can_ai=False,   # gated, same as a Nostr signup — an admin grants AI
+            )
+            created = True
+            logger.info("[social-login] google signup: %s", user.username)
+        except user_table.UserConflict as e:
+            # A concurrent callback for the same Google account won the create: sign in as that account.
+            user = await user_table.aby_google_sub(db, sub) if e.field == "google_sub" else None
+            if user is None:
+                return _error_page("That sign-in collided with another — please try again.")
     elif email and user.google_email != email:
         user.google_email = email
-        db.commit()
+        await user_table.asave(db, user)
 
     await _ensure_identity(db, user)
     return RedirectResponse(f"/client?login={_handoff(user, 'google', email or 'Google', created)}",
@@ -352,7 +360,7 @@ def google_link_start(data: GoogleLinkStart, request: Request, db: Session = Dep
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
     npub = nostr_service.npub_of(pk)
-    user = db.query(User).filter(User.nostr_npub == npub).first()
+    user = user_table.by_npub(db, npub)
     if not user:
         raise HTTPException(status_code=404, detail="sign in on this server first")
     nsec = (data.nsec or "").strip()

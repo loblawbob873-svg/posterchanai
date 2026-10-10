@@ -373,10 +373,8 @@ def _operator_seckey(db):
     from app.services.nostr import nostr_service
     nsec = keystore.get_operator_nsec()
     if not nsec and db is not None:   # db may be None (e.g. the background relay-writer thread)
-        from app.models import User
-        op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
-        if op and op.nostr_nsec:
-            nsec = op.nostr_nsec
+        nsec = _legacy_admin_nsec(db)
+        if nsec:
             keystore.set_operator_nsec(nsec)   # migrate into the keyfile
     if not nsec:
         # No operator key anywhere → mint one and persist it to the keyfile, so a fresh node is a
@@ -402,6 +400,24 @@ def _operator_seckey(db):
         return None
 
 
+def _legacy_admin_nsec(db):
+    """BOOTSTRAP ONLY, a migration reader (#161 wave 3): before the keyfile existed the operator key lived in the
+    admin's SQL `users` row. It cannot be read through user_table -- the account documents are encrypted to the
+    very key being looked for -- so this one read stays on SQL, and a database that is not there answers None."""
+    try:
+        from app.models import User
+        op = (db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None))  # noqa: E712
+              .order_by(User.id.asc()).first())
+        return op.nostr_nsec if op and op.nostr_nsec else None
+    except Exception as e:      # noqa: BLE001
+        logger.debug("[settings-store] no legacy admin key to recover: %s", e)
+        try:
+            db.rollback()
+        except Exception:      # noqa: BLE001
+            pass
+        return None
+
+
 def ensure_admin(db) -> str | None:
     """Turnkey: on a fresh node with NO admin yet, make the auto-minted OPERATOR key the admin so AI
     works immediately — no manual web 'claim admin' click (which otherwise blocks testing the AI
@@ -413,11 +429,12 @@ def ensure_admin(db) -> str | None:
     if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() not in ("1", "true", "yes", "on"):
         return None
     try:
-        from app.models import User
+        from app.services import user_table
         from app.services.nostr import nostr_service
         import secrets, binascii
-        # An admin with an npub already exists → instance is set up; don't override it.
-        if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+        # An admin with an npub already exists → instance is set up; don't override it. (A table that could
+        # not be read raises -- caught below -- and nothing is provisioned on the strength of it.)
+        if any(a.nostr_npub for a in user_table.admins(db)):
             return None
         op_sk = _operator_seckey(db)
         if not op_sk:
@@ -425,24 +442,17 @@ def ensure_admin(db) -> str | None:
         pk = nostr_service.derive_pubkey(op_sk)
         pk_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
         npub = nostr_service.npub_of(pk_hex)
-        u = db.query(User).filter(User.nostr_npub == npub).first()
+        u = user_table.by_npub(db, npub)
         if not u:
             from app.auth import get_password_hash
-            base = "npub_" + npub[4:16]
-            username = base
-            for i in range(2, 100):
-                if not db.query(User).filter(User.username == username).first():
-                    break
-                username = f"{base}{i}"
-            u = User(username=username, email=None,
-                     password_hash=get_password_hash(secrets.token_urlsafe(32)),
-                     email_verified=True, nostr_npub=npub)
-            db.add(u)
+            u = user_table.create(db, username=user_table.free_username(db, "npub_" + npub[4:16], limit=100),
+                                  email=None, password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                                  email_verified=True, nostr_npub=npub)
         u.is_admin = True
         u.can_ai = True
         u.can_image = True
         u.can_blossom = True
-        db.commit()
+        user_table.save(db, u)
         # Seed the WoT with the admin's own npub via the relay-authoritative settings store.
         val = get("nostr_relay_wot_seeds", "") or ""
         if npub not in val:

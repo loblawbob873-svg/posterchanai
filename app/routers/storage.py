@@ -13,6 +13,7 @@ import time
 from app.database import get_db
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User
+from app.services import user_table
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, ensure_serializable_image
 from app.utils import lb_auth
@@ -47,7 +48,7 @@ async def save_image(
         # For load-balanced requests, only verify user exists. Do not create Conversation rows:
         # conversation_id is from the client node's DB; inserting it here can violate primary key
         # (storage server has its own conversation ids). File path only needs username + conversation_id.
-        user = db.query(User).filter(User.username == username).first()
+        user = await user_table.aby_username(db, username)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
     else:
@@ -573,8 +574,8 @@ async def list_files(
         current_usage = await asyncio.to_thread(calculate_directory_size, user_path)
         
         # Get user quota from database
-        from app.models import User
-        user = db.query(User).filter(User.username == username).first()
+        from app.services import user_table as _ut
+        user = await _ut.aby_username(db, username)
         user_quota = user.storage_quota if user else 0
         
         return {

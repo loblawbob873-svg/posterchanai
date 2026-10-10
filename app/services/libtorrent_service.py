@@ -879,19 +879,19 @@ class LibtorrentService:
         try:
             from datetime import datetime
             from app.database import SessionLocal
-            from app.models import User
+            from app.services import user_table
             from app.services.reminder_service import create_reminder
             db = SessionLocal()
             try:
                 owner_id = self._owners.get(info_hash)
                 recipients = []
                 if owner_id is not None:
-                    u = db.query(User).filter(User.id == owner_id).first()
+                    u = user_table.get(db, owner_id)      # Unavailable -> the except: never "owner unknown"
                     if u:
                         recipients = [u]
                 if not recipients:
                     # Unknown owner (e.g. added before this feature) → notify admins.
-                    recipients = db.query(User).filter(User.is_admin == True).all()  # noqa: E712
+                    recipients = user_table.admins(db)
                 if not recipients:
                     return
                 text = f"🎉 Torrent finished downloading: {name}"

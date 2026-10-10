@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, get_current_user_optional
 from app.database import SessionLocal, get_db
 from app.models import User
-from app.services import instance_membership
+from app.services import instance_membership, user_table
+from app.services.relay_reader import Unavailable
 from app.services.telegram_client.manager import TGError, manager
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ async def media_user(t: str = "", db: Session = Depends(get_db), user=Depends(ge
     """The account a media request is for: a valid ticket, else an ordinary session."""
     hit = _TICKETS.get(t or "")
     if hit and hit[0] > _time.time():
-        u = db.query(User).filter(User.id == hit[1]).first()
+        u = await user_table.aget(db, hit[1])
         if u is not None:
             return u
     if user is None:
@@ -264,7 +265,11 @@ async def events(ws: WebSocket):
             return
         payload = decode_token(str(first.get("token") or "")) if isinstance(first, dict) else None
         uid = payload.get("sub") if payload else None
-        user = db.query(User).filter(User.id == int(uid)).first() if str(uid or "").isdigit() else None
+        try:
+            user = await user_table.aget(db, int(uid)) if str(uid or "").isdigit() else None
+        except Unavailable:
+            await ws.close(code=1013)        # "try again later" -- never 4401: the session is not invalid
+            return
         if user is None:
             await ws.close(code=4401)
             return
@@ -338,7 +343,11 @@ async def call_media(ws: WebSocket):
             return
         payload = decode_token(str(first.get("token") or "")) if isinstance(first, dict) else None
         uid = payload.get("sub") if payload else None
-        user = db.query(User).filter(User.id == int(uid)).first() if str(uid or "").isdigit() else None
+        try:
+            user = await user_table.aget(db, int(uid)) if str(uid or "").isdigit() else None
+        except Unavailable:
+            await ws.close(code=1013)        # "try again later" -- never 4401: the session is not invalid
+            return
         if user is None:
             await ws.close(code=4401)
             return

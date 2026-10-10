@@ -24,7 +24,7 @@ from app.database import get_db
 from app.utils import lb_auth
 from app.auth import get_current_user, get_current_user_optional
 from app.models import User, SharedFile, ExternalStorage
-from app.services import settings_store
+from app.services import settings_store, user_table
 from app.services.storage_service import get_storage_service, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
 from app.utils.image_validation import validate_and_clean_image_data, validate_and_filter_images, ensure_serializable_image
 
@@ -196,7 +196,7 @@ async def search_files(
     if current_user is not None:
         effective_username = current_user.username
     elif load_balanced and username:
-        user = db.query(User).filter(User.username == username).first()
+        user = await user_table.aby_username(db, username)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         effective_username = username
@@ -2242,7 +2242,7 @@ async def get_shared_file(
         raise HTTPException(status_code=404, detail="Share access limit reached")
     
     # Get user and file
-    user = db.query(User).filter(User.id == share.user_id).first()
+    user = await user_table.aget(db, share.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     

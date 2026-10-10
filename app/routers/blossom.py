@@ -591,8 +591,8 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
     if not owns:
         if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
             return _err(403, "not authorized to delete this blob")
-        from app.models import User
-        u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pubkey)).first()
+        from app.services import user_table
+        u = await user_table.aby_npub(db, nostr_service.npub_of(pubkey))
         is_admin = bool(u and getattr(u, "is_admin", False))
         if not is_admin:
             return _err(403, "only an owner or an admin may delete this blob")

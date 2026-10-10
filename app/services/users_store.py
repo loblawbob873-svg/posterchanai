@@ -119,7 +119,8 @@ def delete_user_blocking(db, npub: str) -> None:
 
 
 def _apply(db, rec: dict) -> bool:
-    """UPSERT a User row from a relay account record (keyed by npub). Returns True if changed."""
+    """UPSERT a SQL User row from a relay account record (keyed by npub). Returns True if changed. Only while SQL
+    is the account store (before the `users` migration marker, #161 wave 3) -- this is the legacy hydrate."""
     npub = rec.get("nostr_npub")
     if not npub:
         return False
@@ -154,11 +155,21 @@ def _apply(db, rec: dict) -> bool:
 
 async def hydrate(db) -> int:
     """relay → users cache. UPSERT a User row for every operator-signed account doc. No-op when
-    there's no operator key. Returns the number of accounts created-or-updated."""
+    there's no operator key. Returns the number of accounts created-or-updated.
+
+    Once the accounts are a relay DocTable (#161 wave 3, `user_table`) these mirror documents are NOT a second
+    source of truth: they hold a subset of the columns, are written AFTER the table, and replaying one over the
+    table would undo any change whose mirror write failed (a revoked can_ai granted back on the next restart).
+    They are kept for one job only -- disaster recovery: they are what the upstream backup carries
+    (`_BACKUP_NS`; the table's own documents never leave this node), so when the account table is EMPTY (a
+    relay rebuilt from that backup) the accounts are recreated from them, as the SQL hydrate always did."""
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         logger.info("[users-store] hydrate skipped — no operator key")
         return 0
+    from app.services import table_gate, user_table
+    if await table_gate.arelay_mode(user_table.TABLE):
+        return await _hydrate_into_table(db, op_sk)
     try:
         docs = await store.list_docs(_ss._port(db), store.NS_USER, seckey=op_sk)
     except Exception as e:
@@ -173,6 +184,40 @@ async def hydrate(db) -> int:
         db.commit()
     logger.info("[users-store] hydrated %d account(s) from relay", changed)
     return changed
+
+
+async def _hydrate_into_table(db, op_sk) -> int:
+    """Disaster recovery only: an EMPTY account table (the store answered, strictly) is refilled from the mirror
+    documents. A table holding any account is never touched."""
+    from app.services import user_table
+    if await user_table.aall(db):
+        return 0
+    try:
+        docs = await store.list_docs(_ss._port(db), store.NS_USER, seckey=op_sk, strict=True)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("[users-store] could not read the account mirror documents: %s", e)
+        return 0
+    from app.auth import get_password_hash
+    made = 0
+    for _d, value in (docs or {}).items():
+        rec = value.get("value") if isinstance(value, dict) and "value" in value else value
+        if not isinstance(rec, dict) or not rec.get("nostr_npub"):
+            continue
+        if await user_table.aby_npub(db, rec["nostr_npub"]) is not None:
+            continue
+        fields = {f: rec[f] for f in _SYNCED if f in rec and f != "username"}
+        fields.update(nostr_npub=rec["nostr_npub"],
+                      username=await user_table.afree_username(
+                          db, (rec.get("username") or ("npub_" + rec["nostr_npub"][4:16]))[:50]),
+                      password_hash=get_password_hash(secrets.token_urlsafe(32)))
+        try:
+            await user_table.acreate(db, **fields)
+            made += 1
+        except user_table.UserConflict as e:
+            logger.warning("[users-store] DR restore skipped an account whose %s is taken", e.field)
+    if made:
+        logger.warning("[users-store] the account table was empty: recreated %d account(s) from the mirror", made)
+    return made
 
 
 # ---- UserSetting key/value (mail accounts, caldav/webdav/music configs, etc.) ----
@@ -221,8 +266,9 @@ async def hydrate_user_kv(db) -> int:
     if not op_sk:
         return 0
     from app.models import UserSetting
+    from app.services import user_table
     made = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+    for user in [u for u in await user_table.aall(db) if u.nostr_npub]:
         try:
             doc = await store.get_doc(_ss._port(db), store.NS_USERCFG + user.nostr_npub, seckey=op_sk)
         except Exception:
@@ -295,7 +341,8 @@ async def _seed_hashes(db) -> int:
     if not op_sk:
         return 0
     import json as _json
-    users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
+    from app.services import user_table
+    users = [u for u in await user_table.aall(db) if u.nostr_npub]
     if not users:
         return 0
     try:
@@ -334,8 +381,9 @@ async def reconcile_all(db, *, force: bool = False) -> int:
     # rewritten (and re-broadcast to every upstream relay) just because this process is new.
     if not force and not _last_synced_hash:
         await _seed_hashes(db)
+    from app.services import user_table
     synced = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+    for user in [u for u in await user_table.aall(db) if u.nostr_npub]:
         kv = await _user_kv(db, user)
         h = _hash(_record(user), kv)
         if not force and _last_synced_hash.get(user.nostr_npub) == h:

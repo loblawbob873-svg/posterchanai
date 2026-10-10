@@ -105,6 +105,34 @@ def _validate_mount_point(mount_point: str) -> bool:
     return True
 
 
+# Who may use a mount: the `external_storage_users` junction (user ids) + the accounts table (#161: accounts are
+# user_table rows, not ORM objects a relationship could load).
+def _mount_user_ids(db, mount_id) -> list:
+    from app.models import external_storage_users as J
+    return sorted(int(r[0]) for r in db.execute(J.select().with_only_columns(J.c.user_id)
+                                               .where(J.c.external_storage_id == mount_id)).all())
+
+
+def _set_mount_users(db, mount_id, user_ids) -> None:
+    """Replace the mount's allowed users with the EXISTING accounts among `user_ids` (in the caller's
+    transaction -- the caller commits)."""
+    from app.models import external_storage_users as J
+    from app.services import user_table
+    want = {int(i) for i in user_ids or []}
+    keep = sorted(u.id for u in user_table.filter_users(db, lambda u: u.id in want)) if want else []
+    db.execute(J.delete().where(J.c.external_storage_id == mount_id))
+    for uid in keep:
+        db.execute(J.insert().values(external_storage_id=mount_id, user_id=uid))
+
+
+def _mount_users_info(db, mount_id) -> dict:
+    from app.services import user_table
+    ids = set(_mount_user_ids(db, mount_id))
+    users = user_table.filter_users(db, lambda u: u.id in ids) if ids else []
+    return {"allowed_user_ids": [u.id for u in users],
+            "allowed_users": [{"id": u.id, "username": u.username, "email": u.email} for u in users]}
+
+
 @router.get("/external-storage", response_model=List[ExternalStorageResponse])
 def get_external_storage(
     db: Session = Depends(get_db),
@@ -123,11 +151,7 @@ def get_external_storage(
             "is_active": mount.is_active,
             "created_at": mount.created_at,
             "updated_at": mount.updated_at,
-            "allowed_user_ids": [user.id for user in mount.allowed_users],
-            "allowed_users": [
-                {"id": user.id, "username": user.username, "email": user.email}
-                for user in mount.allowed_users
-            ]
+            **_mount_users_info(db, mount.id),
         }
         result.append(mount_dict)
     return result
@@ -173,12 +197,11 @@ def create_external_storage(
         is_active=data.is_active
     )
     
+    db.add(mount)
+    db.flush()                                  # the mount's id, for its allowed-users rows
     # Set allowed users if provided
     if data.allowed_user_ids:
-        users = db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()
-        mount.allowed_users = users
-    
-    db.add(mount)
+        _set_mount_users(db, mount.id, data.allowed_user_ids)
     db.commit()
     db.refresh(mount)
     
@@ -194,11 +217,7 @@ def create_external_storage(
         "is_active": mount.is_active,
         "created_at": mount.created_at,
         "updated_at": mount.updated_at,
-        "allowed_user_ids": [user.id for user in mount.allowed_users],
-        "allowed_users": [
-            {"id": user.id, "username": user.username, "email": user.email}
-            for user in mount.allowed_users
-        ]
+        **_mount_users_info(db, mount.id),
     }
 
 
@@ -254,8 +273,7 @@ def update_external_storage(
     
     # Update allowed users if provided
     if data.allowed_user_ids is not None:
-        users = db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()
-        mount.allowed_users = users
+        _set_mount_users(db, mount.id, data.allowed_user_ids)
     
     db.commit()
     db.refresh(mount)
@@ -272,11 +290,7 @@ def update_external_storage(
         "is_active": mount.is_active,
         "created_at": mount.created_at,
         "updated_at": mount.updated_at,
-        "allowed_user_ids": [user.id for user in mount.allowed_users],
-        "allowed_users": [
-            {"id": user.id, "username": user.username, "email": user.email}
-            for user in mount.allowed_users
-        ]
+        **_mount_users_info(db, mount.id),
     }
 
 
@@ -291,10 +305,14 @@ def delete_external_storage(
     if not mount:
         raise HTTPException(status_code=404, detail="External storage mount not found")
     
-    db.delete(mount)
+    name = mount.name
+    # Core deletes, not db.delete(mount): the ORM would load the `allowed_users` relationship (account rows)
+    # just to remove the junction rows.
+    _set_mount_users(db, mount_id, [])
+    db.execute(ExternalStorage.__table__.delete().where(ExternalStorage.__table__.c.id == mount_id))
     db.commit()
     
-    logger.info(f"Deleted external storage mount: {mount.name}")
+    logger.info(f"Deleted external storage mount: {name}")
     return {"message": "External storage mount deleted"}
 
 
@@ -442,8 +460,9 @@ async def relay_identities_retire(data: RelayIdentitiesRetireReq, db: Session = 
     pks = list(dict.fromkeys(pks))
     if not pks or len(pks) > 500:
         raise HTTPException(status_code=400, detail="choose between 1 and 500 accounts")
+    from app.services import user_table
     admins = set()
-    for u in db.query(User).filter(User.is_admin == True).all():  # noqa: E712
+    for u in await user_table.aadmins(db):
         try:
             admins.add(nostr_service.to_pubkey_hex(u.nostr_npub or "") or "")
         except Exception:
@@ -1090,7 +1109,8 @@ def list_users(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    return db.query(User).all()
+    from app.services import user_table
+    return user_table.all_users(db)
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -1101,8 +1121,9 @@ def create_user(
 ):
     if user_data.is_admin:
         raise HTTPException(status_code=400, detail="An administrator must first sign in with a Nostr identity")
+    from app.services import user_table
     # Check if username already exists
-    existing = db.query(User).filter(User.username == user_data.username).first()
+    existing = user_table.by_username(db, user_data.username)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1111,21 +1132,21 @@ def create_user(
 
     # New users default to chat + image + music only; video and torrents stay off until
     # the admin grants them via the per-user toggles (matches the self-signup default).
-    user = User(
-        username=user_data.username,
-        password_hash=get_password_hash(user_data.password),
-        is_admin=user_data.is_admin,
-        can_image=True,
-        can_music=True,
-        can_video=False,
-        can_torrent=False,
-        can_blossom=False,
-        can_stream=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    try:
+        return user_table.create(
+            db,
+            username=user_data.username,
+            password_hash=get_password_hash(user_data.password),
+            is_admin=user_data.is_admin,
+            can_image=True,
+            can_music=True,
+            can_video=False,
+            can_torrent=False,
+            can_blossom=False,
+            can_stream=False,
+        )
+    except user_table.UserConflict:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
 
 
 @router.delete("/users/{user_id}")
@@ -1140,7 +1161,9 @@ def delete_user(
             detail="Cannot delete yourself"
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1171,11 +1194,18 @@ def delete_user(
         
         # 9. Delete verification tokens
         db.query(VerificationToken).filter(VerificationToken.user_id == user_id).delete(synchronize_session=False)
-        
-        
-        # 11. Finally, delete the user
-        db.delete(user)
+
+        # 10. Legacy SQL Exodus wallet backup rows (the FK), committed with the rows above
+        from app.services import exodus_tables
+        exodus_tables.delete_legacy_sql_rows(db, user_id)
         db.commit()
+
+        # ... and their relay copies (#161: the FK cascade cannot reach a DocTable). This route is a sync def,
+        # i.e. on a threadpool thread, where running a coroutine to completion is fine.
+        asyncio.run(exodus_tables.apurge_user(db, user_id))
+
+        # 11. Finally, delete the user
+        user_table.delete(db, user_id)
 
         # Remove the account's relay docs too, or a fresh-node rebuild would resurrect it.
         if npub:
@@ -1184,7 +1214,10 @@ def delete_user(
 
         logger.info(f"User {user_id} ({user.username}) deleted by admin {admin.id}")
         return {"message": "User deleted"}
-        
+
+    except Unavailable:
+        db.rollback()
+        raise                                   # "could not ask" -> 503, retry; never a 500
     except IntegrityError as e:
         db.rollback()
         logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}", exc_info=True)
@@ -1211,7 +1244,8 @@ def update_user_password(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1222,7 +1256,7 @@ def update_user_password(
         raise HTTPException(status_code=400, detail="Administrators authenticate with Nostr, not passwords")
 
     user.password_hash = get_password_hash(data.password)
-    db.commit()
+    user_table.save(db, user)
     return {"message": "Password updated"}
 
 
@@ -1234,14 +1268,15 @@ def update_user_storage_quota(
     admin: User = Depends(get_admin_user)
 ):
     """Update user storage quota."""
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Convert MB to bytes (0 = unlimited)
     quota_bytes = int(quota_mb * 1024 * 1024) if quota_mb > 0 else 0
     user.storage_quota = quota_bytes
-    db.commit()
+    user_table.save(db, user)
     from app.services import users_store
     users_store.sync_user_blocking(db, user)   # storage_quota → relay
 
@@ -1264,7 +1299,8 @@ def update_user_capabilities(
 ):
     """Set a user's per-feature access (image/music/video/torrent/blossom/ai). Admins are always
     allowed regardless of these flags."""
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.can_image = can_image
@@ -1285,8 +1321,7 @@ def update_user_capabilities(
         user.access_revoked = True
     elif (can_ai and not _was_ai) or (can_blossom and not _was_blossom):
         user.access_revoked = False
-    db.commit()
-    db.refresh(user)
+    user_table.save(db, user)
     from app.services import users_store
     users_store.sync_user_blocking(db, user)   # caps → relay (authoritative)
     # DM the user about anything newly GRANTED (not revoked, not re-saved unchanged).
@@ -1477,7 +1512,8 @@ async def rescan_storage(
     # Run scan in thread pool to avoid blocking
     if user_id:
         # Scan specific user
-        user = db.query(User).filter(User.id == user_id).first()
+        from app.services import user_table
+        user = await user_table.aget(db, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -1489,7 +1525,8 @@ async def rescan_storage(
         }
     else:
         # Scan all users - extract primitive values before passing to threads
-        users = [(u.id, u.username) for u in db.query(User).all()]
+        from app.services import user_table
+        users = [(u.id, u.username) for u in await user_table.aall(db)]
         results = []
         
         # Scan all users in parallel (but in thread pool)

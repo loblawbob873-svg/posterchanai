@@ -241,7 +241,8 @@ def notification_record(reminder: Reminder) -> dict:
 
 async def deliver(db: Session, reminder: Reminder) -> None:
     """Deliver a fired reminder: always to the web UI, plus Telegram if configured."""
-    user = db.query(User).filter(User.id == reminder.user_id).first()
+    from app.services import user_table
+    user = await user_table.aget(db, reminder.user_id)
     if not user:
         return
     body = f"⏰ Reminder: {reminder.text}"
@@ -323,6 +324,12 @@ async def poll_once(db: Session) -> None:
                               .order_by(Reminder.due_at.asc())
                               .limit(50)
                               .all())]
+    if due_ids:
+        # A claim is final (at-most-once), so the accounts it will be delivered to must be readable FIRST:
+        # the accounts table is a relay DocTable (#161) and "could not ask" must cost a retry on the next tick,
+        # never a reminder marked done and dropped. Unavailable propagates before anything is claimed.
+        from app.services import user_table
+        await user_table.aall(db)
     for rid in due_ids:
         claimed = (db.query(Reminder)
                    .filter(Reminder.id == rid, Reminder.status == "pending")
@@ -335,7 +342,8 @@ async def poll_once(db: Session) -> None:
         try:
             from app.services import record_store
             if record_store.enabled(db):
-                u = db.query(User).filter(User.id == r.user_id).first()
+                from app.services import user_table
+                u = await user_table.aget(db, r.user_id)
                 if u:
                     await record_store.mirror_reminder(db, u, r)   # persist the done/delivered state
         except Exception as e:

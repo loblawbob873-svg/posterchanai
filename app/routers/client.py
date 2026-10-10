@@ -34,8 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
-from app.services import emoji_service, settings_store, tor_service
+from app.services import emoji_service, settings_store, tor_service, user_table
 from app.services.nostr import nostr_service, event as nostr_event
 from app.services.text_utils import strip_preamble
 
@@ -108,11 +107,14 @@ def _blossom_url(request: Request, db: Session) -> str:
     return f"{proto}://{host}/blossom"
 
 
-def _operator(db: Session) -> User | None:
+async def _operator(db: Session):
     """The node's signing operator: prefer an admin with a linked Nostr secret, else any user
     with one. Used to auto-follow new signups into the web of trust."""
-    q = db.query(User).filter(User.nostr_nsec.isnot(None))
-    return q.filter(User.is_admin == True).first() or q.first()  # noqa: E712
+    op = await user_table.aoperator(db)
+    if op is not None:
+        return op
+    held = await user_table.afilter(db, lambda u: bool(u.nostr_nsec))
+    return held[0] if held else None
 
 
 _BUILD_SHA = ("", 0.0)
@@ -278,13 +280,13 @@ def _vmhost_card(request: Request, db: Session):
 @router.get("/config")
 async def client_config(request: Request, db: Session = Depends(get_db)):
     from app.services import registration_service
-    op = _operator(db)
+    op = await _operator(db)
     op_npub = None
     if op and op.nostr_npub:
         op_npub = op.nostr_npub
     # npubs of admin accounts — the client shows admin-only controls (block) for these. The
     # block endpoint still verifies a signed request server-side, so this list isn't a trust gate.
-    admin_npubs = [u.nostr_npub for u in db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()]  # noqa: E712
+    admin_npubs = [u.nostr_npub for u in await user_table.aadmins(db) if u.nostr_npub]
     # Relays to OFFER when someone turns on "use my own relays". The point of that switch is to stop
     # depending on this instance, so handing them an empty box is the least useful possible answer —
     # they have to already know which relays exist. This node's own relay first (it is the one their
@@ -3747,7 +3749,7 @@ async def operator_unfollow(db: Session, pubkeys: list) -> dict:
     """The operator stops following `pubkeys` -- the other half of follow_and_admit. The new contact list is
     the list READ, minus exactly these keys: never written from a read that did not answer, never shorter by
     anything else. {"ok", "removed"} or {"ok": False, "error"}."""
-    op = _operator(db)
+    op = await _operator(db)
     if not op or not op.nostr_nsec:
         return {"ok": True, "removed": 0, "note": "no operator account"}
     try:
@@ -3791,7 +3793,7 @@ async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
         trigger_wot_add([new_pk])
     except Exception as e:
         logger.warning("[client] wot-add failed: %s", e)
-    op = _operator(db)
+    op = await _operator(db)
     if not op or not op.nostr_nsec:
         return True, "admitted (no operator to follow you)"
     try:
@@ -3851,22 +3853,21 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
     # instance can't be taken over). IDEMPOTENT for the SAME key: on a turnkey node POSTERCHANAI_AUTO_ADMIN
     # already promoted this npub at login, so the client's (stale-config) first-run claim by that same key
     # must succeed — otherwise it 409s with the confusing "an admin already exists" right after first login.
-    admins = db.query(User).filter(User.is_admin == True).all()  # noqa: E712
+    admins = await user_table.aadmins(db)
     if admins and all(a.nostr_npub != npub for a in admins):
         return JSONResponse({"ok": False, "error": "an admin already exists"}, status_code=409)
-    u = db.query(User).filter(User.nostr_npub == npub).first()
+    u = await user_table.aby_npub(db, npub)
     if not u:
         from app.auth import get_password_hash
-        base = "npub_" + npub[4:16]
-        username = base
-        for i in range(2, 100):
-            if not db.query(User).filter(User.username == username).first():
-                break
-            username = f"{base}{i}"
-        u = User(username=username, email=None,
-                 password_hash=get_password_hash(secrets.token_urlsafe(32)),
-                 email_verified=True, nostr_npub=npub)
-        db.add(u)
+        username = await user_table.afree_username(db, "npub_" + npub[4:16], limit=100)
+        try:
+            u = await user_table.acreate(db, username=username, email=None,
+                                         password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                                         email_verified=True, nostr_npub=npub)
+        except user_table.UserConflict:
+            u = await user_table.aby_npub(db, npub)     # a concurrent sign-in made it first
+            if u is None:
+                raise
     u.is_admin = True
     u.can_ai = True
     u.can_image = True
@@ -3877,7 +3878,7 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
     if npub not in seeds_val:
         new_seeds = (seeds_val.rstrip() + "\n" + npub).strip() if seeds_val.strip() else npub
         settings_store.put("nostr_relay_wot_seeds", new_seeds)
-    db.commit()
+    await user_table.asave(db, u)
     logger.info("[client] first-run admin claimed by %s (%s)", u.username, npub[:16])
     try:
         await follow_and_admit(db, pk)
@@ -3899,7 +3900,7 @@ class BlockReq(BaseModel):
     auth: str            # base64 of a signed Nostr event proving the requester holds an admin key
 
 
-def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str, purpose: str | None = None) -> str | None:
+async def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str, purpose: str | None = None) -> str | None:
     """Verify a base64 signed Nostr auth event and return the signer's hex pubkey IFF: the
     signature is valid, created_at is within a 300s anti-replay window, the event p-tags exactly
     `target_hex` (so the signature authorizes THIS block, not any replayed admin event), and the
@@ -3920,11 +3921,11 @@ def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str, purpose: str
         npub = nostr_service.npub_of(ev["pubkey"])
     except Exception:
         return None
-    u = db.query(User).filter(User.nostr_npub == npub, User.is_admin == True).first()  # noqa: E712
-    return ev["pubkey"] if u else None
+    u = await user_table.aby_npub(db, npub)
+    return ev["pubkey"] if u is not None and u.is_admin else None
 
 
-def _verify_admin_signer(db: Session, auth_b64: str, expect_content: str) -> str | None:
+async def _verify_admin_signer(db: Session, auth_b64: str, expect_content: str) -> str | None:
     """Like `_verify_admin_auth` but for admin LIST endpoints that have no single target. With no target
     p-tag to bind to, the proof is bound instead to a FIXED action string in the event content
     (`expect_content`) — so a generic admin signature (a kind-1 note, a Blossom upload-auth, etc.) can't
@@ -3944,8 +3945,8 @@ def _verify_admin_signer(db: Session, auth_b64: str, expect_content: str) -> str
         npub = nostr_service.npub_of(ev["pubkey"])
     except Exception:
         return None
-    u = db.query(User).filter(User.nostr_npub == npub, User.is_admin == True).first()  # noqa: E712
-    return ev["pubkey"] if u else None
+    u = await user_table.aby_npub(db, npub)
+    return ev["pubkey"] if u is not None and u.is_admin else None
 
 
 @router.post("/block")
@@ -3955,7 +3956,7 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     # An unblock is signed as "unblock": a captured block proof cannot be replayed to undo it.
-    if not _verify_admin_auth(db, data.auth, target, "unblock" if data.remove else "block"):
+    if not await _verify_admin_auth(db, data.auth, target, "unblock" if data.remove else "block"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import relay_blocklist
     r = await relay_blocklist.set_blocked(db, target, not data.remove)
@@ -3988,7 +3989,7 @@ async def block_many(data: BlockManyReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "nothing to block"}, status_code=400)
     if len(targets) > BLOCK_MANY_MAX:
         return JSONResponse({"ok": False, "error": f"at most {BLOCK_MANY_MAX} at a time"}, status_code=400)
-    if not _verify_admin_signer(db, data.auth, "block-many"):
+    if not await _verify_admin_signer(db, data.auth, "block-many"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     try:
         named = {t[1].lower() for t in json.loads(base64.b64decode(data.auth)).get("tags", [])
@@ -4012,7 +4013,7 @@ class BlockedListReq(BaseModel):
 async def blocked_list(data: BlockedListReq, db: Session = Depends(get_db)):
     """Admin-only: the relay's blocked pubkeys (hex), so the ⋯ menu can offer Unblock for a blocked
     author. Who is blocked is moderation state, so it takes the same admin proof as /block."""
-    if not _verify_admin_signer(db, data.auth, "blocked-list"):
+    if not await _verify_admin_signer(db, data.auth, "blocked-list"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import relay_blocklist
     return JSONResponse({"ok": True, "pubkeys": relay_blocklist.blocked_hex()})
@@ -4067,7 +4068,7 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "blossom"):
+    if not await _verify_admin_auth(db, data.auth, target, "blossom"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     # This is a read-modify-write of the SHARED replaceable whitelist. Refresh the cache from the relay's
     # own event store FIRST so `cur` reflects reality — otherwise a stale/empty cache (e.g. a grant on a
@@ -4115,7 +4116,7 @@ async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "blossom-purge"):
+    if not await _verify_admin_auth(db, data.auth, target, "blossom-purge"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import blossom_service
     blobs = blossom_service.list_for_pubkey(db, target)
@@ -4138,7 +4139,7 @@ class AdminAuthReq(BaseModel):
 async def admin_blossom_usage(data: AdminAuthReq, db: Session = Depends(get_db)):
     """Admin-only: Blossom storage used per uploader (bytes + blob count), biggest first. Powers the
     Files → Admin tab so admins can see who's using storage and drill into a user's files."""
-    if not _verify_admin_signer(db, data.auth, "blossom-usage"):
+    if not await _verify_admin_signer(db, data.auth, "blossom-usage"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.models import BlossomBlob
     from sqlalchemy import func
@@ -4172,7 +4173,7 @@ async def relay_sync(data: RelaySyncReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "relay-sync"):
+    if not await _verify_admin_auth(db, data.auth, target, "relay-sync"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     try:
         from app.services.nostr_relay.thread import trigger_backfill
@@ -4192,7 +4193,7 @@ async def relay_trace(data: RelaySyncReq, db: Session = Depends(get_db)):
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     target = target.lower()
-    if not _verify_admin_auth(db, data.auth, target, "relay-trace"):
+    if not await _verify_admin_auth(db, data.auth, target, "relay-trace"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import instance_membership, relay_blocklist, relay_trace as _trace
     ups = (nostr_service.relay.normalize_relays(settings_store.get("nostr_relay_upstream_relays", ""))
@@ -4206,7 +4207,7 @@ async def relay_trace(data: RelaySyncReq, db: Session = Depends(get_db)):
         member = await instance_membership.status(target)
     except Exception:
         member = None
-    local = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first() is not None
+    local = await user_table.aby_npub(db, nostr_service.npub_of(target)) is not None
     return JSONResponse(_trace.explain(facts, blocked=relay_blocklist.is_blocked(target),
                                        member=member, local_user=local))
 
@@ -4234,7 +4235,7 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    u = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not u:
         return JSONResponse({"ok": False, "error": "sign in first"}, status_code=404)
     if u.is_admin or getattr(u, "can_stream", False):
@@ -4250,7 +4251,7 @@ async def stream_requests(db: Session = Depends(get_db)):
     from app.services import user_settings_table
     out = []
     for uid, ts in (await user_settings_table.aby_key(db, "stream_requested")).items():
-        u = db.query(User).filter(User.id == uid).first()
+        u = await user_table.aget(db, uid)
         if u and u.nostr_npub and not (u.is_admin or getattr(u, "can_stream", False)):
             out.append({"npub": u.nostr_npub, "name": u.username, "ts": ts})
     out.sort(key=lambda x: x.get("ts") or "", reverse=True)
@@ -4264,7 +4265,7 @@ async def ai_requests(db: Session = Depends(get_db)):
     from app.services import user_settings_table
     out = []
     for uid, ts in (await user_settings_table.aby_key(db, "ai_requested")).items():
-        u = db.query(User).filter(User.id == uid).first()
+        u = await user_table.aget(db, uid)
         if u and u.nostr_npub and not (u.is_admin or u.can_ai):
             out.append({"npub": u.nostr_npub, "name": u.username, "ts": ts})
     out.sort(key=lambda x: x.get("ts") or "", reverse=True)
@@ -4287,7 +4288,7 @@ async def user_caps_status(pubkey: str, db: Session = Depends(get_db)):
     h = nostr_service.to_pubkey_hex(pubkey)
     if not h:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    u = await user_table.aby_npub(db, nostr_service.npub_of(h))
     if not u:
         return JSONResponse({"ok": True, "exists": False})
     return JSONResponse({"ok": True, "exists": True, "is_admin": bool(u.is_admin),
@@ -4299,24 +4300,22 @@ async def _find_or_create_user(db, hex_pk: str):
     (before the person has ever signed in). New accounts are admitted to the WoT + get a storage key,
     same as a fresh nostr-login. Returns the User."""
     npub = nostr_service.npub_of(hex_pk)
-    u = db.query(User).filter(User.nostr_npub == npub).first()
+    u = await user_table.aby_npub(db, npub)
     if u:
         return u
     from app.auth import get_password_hash
-    base = "npub_" + npub[4:16]
-    username = base
-    for i in range(2, 1000):
-        if not db.query(User).filter(User.username == username).first():
-            break
-        username = f"{base[:46]}{i}"
-    u = User(username=username, email=None,
-             password_hash=get_password_hash(secrets.token_urlsafe(32)),
-             email_verified=True, nostr_npub=npub,
-             can_image=True, can_music=True, can_video=False, can_torrent=False,
-             can_blossom=False, can_ai=False)
-    db.add(u)
-    db.commit()
-    db.refresh(u)
+    username = await user_table.afree_username(db, "npub_" + npub[4:16], limit=1000, width=50)
+    try:
+        u = await user_table.acreate(db, username=username, email=None,
+                                     password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                                     email_verified=True, nostr_npub=npub,
+                                     can_image=True, can_music=True, can_video=False, can_torrent=False,
+                                     can_blossom=False, can_ai=False)
+    except user_table.UserConflict:
+        u = await user_table.aby_npub(db, npub)       # a concurrent sign-in made it first
+        if u is None:
+            raise
+        return u
     try:
         from app.services import nostr_store
         nostr_store.user_storage_seckey(db, u)
@@ -4333,13 +4332,13 @@ async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "user-caps"):
+    if not await _verify_admin_auth(db, data.auth, target, "user-caps"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)
     for c in _USER_CAPS:
         if c in data.caps:
             setattr(u, c, bool(data.caps[c]))
-    db.commit()
+    await user_table.asave(db, u)
     logger.info("[client] caps for %s set: %s", u.username, {c: getattr(u, c) for c in _USER_CAPS})
     try:
         from app.services import users_store
@@ -4361,7 +4360,7 @@ async def stream_access_status(pubkey: str, db: Session = Depends(get_db)):
     h = nostr_service.to_pubkey_hex(pubkey)
     if not h:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    u = await user_table.aby_npub(db, nostr_service.npub_of(h))
     return JSONResponse({"ok": True, "exists": bool(u),
                          "enabled": bool(u and (u.is_admin or getattr(u, "can_stream", False)))})
 
@@ -4372,12 +4371,12 @@ async def stream_access(data: StreamAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "stream-access"):
+    if not await _verify_admin_auth(db, data.auth, target, "stream-access"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)
     _was = bool(getattr(u, "can_stream", False))
     u.can_stream = bool(data.grant)
-    db.commit()
+    await user_table.asave(db, u)
     logger.info("[client] streaming access %s for %s", "granted" if data.grant else "revoked", u.username)
     if bool(data.grant) and not _was:
         from app.services.access_notify_service import notify_access_granted
@@ -4396,7 +4395,7 @@ async def ai_access_status(pubkey: str, db: Session = Depends(get_db)):
     h = nostr_service.to_pubkey_hex(pubkey)
     if not h:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    u = await user_table.aby_npub(db, nostr_service.npub_of(h))
     return JSONResponse({"ok": True, "exists": bool(u),
                          "enabled": bool(u and (u.is_admin or u.can_ai))})
 
@@ -4408,7 +4407,7 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "ai-access"):
+    if not await _verify_admin_auth(db, data.auth, target, "ai-access"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)   # pre-grant: create the account if it doesn't exist
     _was = bool(u.can_ai)
@@ -4416,7 +4415,7 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     # Same marker the admin capability form sets: without it a revoked user could restore their own
     # AI access simply by signing in with their fediverse account again.
     u.access_revoked = not bool(data.grant)
-    db.commit()
+    await user_table.asave(db, u)
     logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
     # Tell them straight away. Only on the 0->1 transition: re-saving the same permission shouldn't
     # re-DM, and a revoke certainly shouldn't.
@@ -4444,14 +4443,13 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
     decrypting /api/files route. Lets the client show + manage them (they live under the storage key,
     so they don't appear in the normal Blossom Files list)."""
     import re
-    from urllib.parse import quote
     from app.services import nostr_store as store
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": True, "files": []})
     sk = store.user_storage_seckey(db, user)
@@ -4543,7 +4541,7 @@ async def ai_files_prune(data: AiFileReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": True, "deleted": 0, "bytes": 0})
     sk = store.user_storage_seckey(db, user)
@@ -4691,7 +4689,7 @@ async def client_file(npub: str, conv: str, name: str, request: Request, db: Ses
     _tok = request.cookies.get(_FILE_COOKIE, "") or request.query_params.get("t", "")
     if _file_cookie_pubkey(_tok) != pk:
         return JSONResponse({"error": "not authorized"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     m = re.match(r'^enc_([0-9a-fA-F]{64})\.(\w+)$', name or "")
     if not user or not m:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -4727,7 +4725,7 @@ async def ai_file_delete(data: AiFileReq, db: Session = Depends(get_db)):
     from app.services import artifact_store
     # The references are read FIRST and completely: deleting the bytes and then failing to find the
     # reference leaves a card that 404s for ever -- the "I deleted it and it still shows" bug.
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     uploads, msgs = {}, {}
     if user:
         sk = store.user_storage_seckey(db, user)
@@ -4783,7 +4781,7 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if user:
         sk = store.user_storage_seckey(db, user)
     else:
@@ -4898,7 +4896,7 @@ async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_d
     # from being future-dated (which strict upstream relays reject) once it's published at its due time.
     if abs(int(ev.get("created_at", 0)) - when) > 120:
         return JSONResponse({"ok": False, "error": "event time must match the scheduled time"}, status_code=400)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
     pending = (db.query(ScheduledPost)
@@ -4918,7 +4916,7 @@ async def scheduled_list(data: ScheduledAuthReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": True, "posts": []})
     return JSONResponse({"ok": True, "posts": sched.list_for_user(db, user)})
@@ -4932,7 +4930,7 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
     ok = sched.cancel(db, user, int(data.id))
@@ -5073,7 +5071,7 @@ async def sync_folders(data: SyncFoldersReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     from app.services.instance_membership import require_pubkey
     await require_pubkey(pk)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": True, "folders": []})
     sk = store.user_storage_seckey(db, user)
@@ -5254,7 +5252,7 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         # Never an empty success — "I don't know who you are" must be distinguishable from "you
         # have no folders", because the caller decides things from absence.
@@ -5507,7 +5505,7 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     if sum((data.index is not None, bool(data.history), data.restore is not None)) > 1:
         return JSONResponse({"ok": False, "error": "choose load, save, history, or restore"}, status_code=400)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         # A READ from an unknown key is honestly empty. A WRITE from one must FAIL, loudly — the
         # old "ok" here made a client believe its drive-key save landed when nothing was stored,
@@ -5870,7 +5868,7 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if not user:
         return JSONResponse({"ok": True, "already": True})
     if user.is_admin:
@@ -5889,9 +5887,12 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
     await user_settings_table.apurge_user(db, user.id)
     conversation_table.delete_legacy_sql_rows(db, user.id)     # the FK, and the plaintext legacy transcript
     user_settings_table.delete_legacy_sql_rows(db, user.id)
+    from app.services import exodus_tables
+    exodus_tables.delete_legacy_sql_rows(db, user.id)
     npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
-    db.delete(user)
-    db.commit()
+    db.commit()                                                # the legacy SQL rows above, first
+    await exodus_tables.apurge_user(db, user.id)               # the wallet backups (the old FK cascade)
+    await user_table.adelete(db, user.id)
     try:
         from app.services import users_store
         await users_store.delete_user(db, npub)   # remove account docs so a rebuild won't resurrect it
@@ -5929,7 +5930,7 @@ async def sync_posts(data: SyncPostsReq, db: Session = Depends(get_db)):
     # the client-written libraries (Notes, vault, Budget) and silently none of the server-written
     # ones. Resolved HERE because it needs a DB session; the relay process has none.
     storage_pk = None
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    u = await user_table.aby_npub(db, nostr_service.npub_of(pk))
     if u:
         try:
             from app.services.nostr import bip340
@@ -6449,7 +6450,7 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target, "nip05"):
+    if not await _verify_admin_auth(db, data.auth, target, "nip05"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services.nostr_relay.thread import trigger_nip05_reload
     raw = settings_store.get("nostr_relay_nip05_names", "") or ""
@@ -6516,11 +6517,8 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
         from app.services.instance_welcome import notify_approval
         await notify_approval(db, target, f"{granted_name}@{domain}")
     elif data.remove and not (only and mine):     # their LAST name went, not one of several
-        from app.services.instance_welcome import application
-        pending = application(db, target)
-        if pending:
-            pending.approved_address = ''
-            db.commit()
+        from app.services.instance_welcome import clear_approval
+        await clear_approval(db, target)
     names_now = sorted(mine | ({granted_name.lower()} if granted_name else set()))
     return JSONResponse({"ok": True, "granted": not data.remove, "name": granted_name,
                          "nip05": (f"{granted_name}@{domain}" if granted_name else None), "names": names_now})

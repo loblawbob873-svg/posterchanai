@@ -99,12 +99,12 @@ async def hydrate_conversations(db) -> int:
     authoritative: SQL is not read after that, and filling it would only bring deleted chats back into
     the copy an older build reads."""
     from datetime import datetime
-    from app.models import Conversation, User
-    from app.services import conversation_table, table_gate
+    from app.models import Conversation
+    from app.services import conversation_table, table_gate, user_table
     if await table_gate.arelay_mode(conversation_table.TABLE):
         return 0
     made = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+    for user in await user_table.afilter(db, lambda u: bool(u.nostr_npub)):
         try:
             sk = user_storage_seckey(db, user)
             docs = await store.list_docs(_port(db), store.NS_CONV, seckey=sk)

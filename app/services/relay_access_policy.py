@@ -4,8 +4,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.models import User, FediPuppet
-from app.services import settings_store as settings, users_store, blossom_service
+from app.models import FediPuppet
+from app.services import settings_store as settings, users_store, blossom_service, user_table
 from app.services.nostr import nostr_service as ns
 
 log = logging.getLogger(__name__)
@@ -23,11 +23,12 @@ def configuration():
 
 
 
-def _infrastructure_keys(db, users=None) -> set:
+def _infrastructure_keys(db, users) -> set:
     """Admins, this node's bots and its GPU-sharing peers: infrastructure, not consumer grants.
-    Nothing in this module ever revokes them."""
+    Nothing in this module ever revokes them. `users` is the WHOLE accounts table (user_table.aall: an
+    unreadable table raised before this is reached -- a plan is never made from a missing admin)."""
     keep = set()
-    for u in (users if users is not None else db.query(User).all()):
+    for u in users:
         if u.is_admin and u.nostr_npub:
             keep.add(ns.to_pubkey_hex(u.nostr_npub))
     from app.services import nostr_dvm
@@ -57,7 +58,7 @@ async def _plan(db, exempt_fediverse=True):
         raise ValueError("Configure a NIP-05 domain and registered names before running this policy")
     registered = {pk.lower() for pk in names.values()}
     qualified_keys = set()
-    users = db.query(User).all()
+    users = await user_table.aall(db)       # Unavailable aborts the plan: never plan from no accounts
     keep = _infrastructure_keys(db, users)
     if exempt_fediverse:
         keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
@@ -112,6 +113,22 @@ async def _plan(db, exempt_fediverse=True):
 GRANT_FIELDS = ("can_ai", "can_blossom", "can_image", "can_music", "can_stream")
 
 
+async def _store(db, u, previous: dict, message: str) -> None:
+    """Persist one account's changed grants to the accounts table (#161: a relay DocTable -- the write lands
+    on the relay or raises, nothing half-done). On failure the object is put back and the pass stops."""
+    try:
+        await user_table.asave(db, u)
+    except Exception as e:
+        for field, value in previous.items():
+            object.__setattr__(u, field, value)
+        u._dirty.clear()
+        raise RuntimeError(message) from e
+    try:
+        await users_store.sync_user(db, u, force=True)     # the npub-keyed account mirror (best effort)
+    except Exception as e:      # noqa: BLE001 -- the reconcile sweep re-mirrors it
+        log.warning("account mirror for %s not refreshed: %s", u.id, e)
+
+
 async def plan(db, exempt_fediverse=True):
     targets, whitelist, summary, _, _ = await _plan(db, exempt_fediverse)
     return targets, whitelist, summary
@@ -135,36 +152,17 @@ async def run(db, exempt_fediverse=True):
         # A failed write leaves a visible error and is retried on the next run.
         for u in targets:
             verify_config()
-            previous = u.can_ai, u.can_blossom, u.can_stream, u.access_revoked
+            previous = {f: getattr(u, f) for f in ("can_ai", "can_blossom", "can_stream", "access_revoked")}
             u.can_ai = u.can_blossom = u.can_stream = False
             u.access_revoked = True
-            try:
-                with db.no_autoflush:
-                    ok = await users_store.sync_user(db, u, force=True)
-            except Exception:
-                ok = False
-            if not ok:
-                u.can_ai, u.can_blossom, u.can_stream, u.access_revoked = previous
-                db.rollback()
-                raise RuntimeError("Account synchronization failed; some revocations may have completed")
-            db.commit()
+            await _store(db, u, previous, "Account synchronization failed; some revocations may have completed")
         for u in grants:
             verify_config()
-            previous = tuple(getattr(u, field) for field in GRANT_FIELDS) + (u.access_revoked,)
+            previous = {f: getattr(u, f) for f in GRANT_FIELDS + ("access_revoked",)}
             for field in GRANT_FIELDS:
                 setattr(u, field, True)
             u.access_revoked = False
-            try:
-                with db.no_autoflush:
-                    ok = await users_store.sync_user(db, u, force=True)
-            except Exception:
-                ok = False
-            if not ok:
-                for field, value in zip(GRANT_FIELDS + ("access_revoked",), previous):
-                    setattr(u, field, value)
-                db.rollback()
-                raise RuntimeError("Account synchronization failed; some access changes may have completed")
-            db.commit()
+            await _store(db, u, previous, "Account synchronization failed; some access changes may have completed")
         verify_config()
         if summary['whitelist'] or summary['whitelist_added']:
             value = '\n'.join(ns.npub_of(pk) for pk in sorted(keep))
@@ -231,7 +229,8 @@ async def revoke_identities(db, pubkeys) -> dict:
     if not keys:
         return {"accounts": 0, "whitelist": 0, "protected": []}
     async with _lock:
-        protected = keys & _infrastructure_keys(db)
+        all_users = await user_table.aall(db)     # Unavailable: nothing revoked, the caller says so
+        protected = keys & _infrastructure_keys(db, all_users)
         targets = keys - protected
         out = {"accounts": 0, "whitelist": 0, "protected": sorted(protected)}
         npubs = {}
@@ -240,23 +239,13 @@ async def revoke_identities(db, pubkeys) -> dict:
                 npubs[ns.npub_of(pk)] = pk
             except Exception:
                 continue
-        users = db.query(User).filter(User.nostr_npub.in_(list(npubs))).all() if npubs else []
+        users = [u for u in all_users if u.nostr_npub in npubs]
         for u in users:
             previous = {f: getattr(u, f) for f in REVOKE_FIELDS + ("access_revoked",)}
             for f in REVOKE_FIELDS:
                 setattr(u, f, False)
             u.access_revoked = True
-            try:
-                with db.no_autoflush:
-                    ok = await users_store.sync_user(db, u, force=True)
-            except Exception:
-                ok = False
-            if not ok:
-                for f, v in previous.items():
-                    setattr(u, f, v)
-                db.rollback()
-                raise RuntimeError("account synchronization failed; some permissions were not revoked")
-            db.commit()
+            await _store(db, u, previous, "account synchronization failed; some permissions were not revoked")
             out["accounts"] += 1
         # The shared Blossom whitelist: drop only these keys' lines; every other line stays verbatim.
         raw = settings.get("blossom_whitelist", "") or ""

@@ -30,7 +30,7 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
     Example:
         >>> api_key, user_id = query_api_key_with_retry(db, "sk-...")
         >>> if api_key and user_id:
-        ...     user = db.query(User).filter(User.id == user_id).first()
+        ...     user = get_user_from_api_key(db, user_id)
     """
     # ORM query — DB-agnostic (the old raw `WHERE key = ? AND is_active = 1` was SQLite-only and
     # errored on PostgreSQL: `?` isn't a PG placeholder and `is_active = 1` isn't a boolean compare).
@@ -54,41 +54,8 @@ def query_api_key_with_retry(db: Session, token: str, max_retries: int = 1) -> t
 
 
 def get_user_from_api_key(db: Session, user_id: int) -> Optional[User]:
-    """
-    Get the User object associated with an API key user_id.
-    
-    This function takes the user_id directly (already eagerly fetched) to avoid
-    lazy loading issues that can cause SQLite session errors.
-    
-    Args:
-        db: SQLAlchemy database session
-        user_id: The user ID from the API key (already fetched)
-    
-    Returns:
-        The User object if found, None otherwise
-    
-    Example:
-        >>> api_key, user_id = query_api_key_with_retry(db, "sk-...")
-        >>> if api_key and user_id:
-        ...     user = get_user_from_api_key(db, user_id)
-    """
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        return user
-    except (IndexError, Exception) as e:
-        # Handle tuple index out of range and other SQLite errors
-        logger.warning(f"Error accessing user for API key (attempt 1): {e}")
-        try:
-            # Check if session is active before rollback
-            if db.is_active:
-                try:
-                    db.rollback()
-                except Exception as rollback_error:
-                    logger.debug(f"Could not rollback during user query retry (database may be closed): {rollback_error}")
-            
-            # Retry query
-            user = db.query(User).filter(User.id == user_id).first()
-            return user
-        except Exception as retry_e:
-            logger.error(f"Error accessing user for API key (retry failed): {retry_e}")
-            return None
+    """The account an API key belongs to (`user_table`, #161 wave 3), or None when the store answered that there
+    is no such account. "Could not ask" RAISES (relay_reader.Unavailable -> 503): it used to be swallowed here
+    into None, which every caller answers as "Invalid API key" -- a relay blip read as a revoked key."""
+    from app.services import user_table
+    return user_table.get(db, user_id)
