@@ -127,7 +127,28 @@
   // always apply (pc_theme only ever holds SAVED themes; preview never persists). MUST establish the
   // session first: /api/auth/settings needs the nostr-login cookie, else it 401s and the saved theme
   // never applies — the "logged in but the default theme loaded despite my saved one" bug.
+  /* A THEME PICKED IS A THEME KEPT. Settings says "applies instantly; saved to your account", but a pick was only
+     a PREVIEW until Save was pressed — so when Android rebuilt the page (leave the app, come back) the pick was
+     gone: "my appearance reset to default". Now a pick is saved on the device at once and sent to the account
+     in the background; if that cannot happen yet (offline, an unreachable instance) the device remembers that
+     its theme is newer, and the next start pushes it instead of letting the account's older one win. */
+  const _THEME_UNSYNCED = 'pc_theme_unsynced';
+  async function _pushTheme(slug){
+    try{
+      await ensureAiSession();
+      const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:slug})});
+      if(r.ok){ try{ if(localStorage.getItem('pc_theme')===slug) localStorage.removeItem(_THEME_UNSYNCED); }catch(_){} return true; }
+    }catch(_){}
+    return false;
+  }
+  function pickTheme(slug){
+    applyTheme(slug);                                            // saved on this device now
+    try{ localStorage.setItem(_THEME_UNSYNCED, '1'); }catch(_){}
+    if(!_standalone()) _pushTheme(localStorage.getItem('pc_theme')||slug);   // and to the account, when it can be reached
+  }
   async function loadThemeFromServer(){
+    let unsynced=false; try{ unsynced=localStorage.getItem(_THEME_UNSYNCED)==='1'; }catch(_){}
+    if(unsynced){ let t=''; try{ t=localStorage.getItem('pc_theme')||''; }catch(_){} if(t){ _pushTheme(t); return; } }
     try{ await ensureAiSession(); }
     catch(e){ console.warn('theme sync skipped: '+((e&&e.message)||e)); return; }
     try{
@@ -12347,7 +12368,7 @@
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
     _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
-    _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
+    _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme, pickTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,

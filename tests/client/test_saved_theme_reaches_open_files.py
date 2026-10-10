@@ -55,11 +55,13 @@ def test_saved_theme_updates_open_files_without_reloading_or_losing_directory():
             for theme in ['professional','cyberpunk','dark']:
                 before = await files.js("document.documentElement.getAttribute('data-theme') || 'cyberpunk'")
                 await settings.js(f"document.querySelector('#us-theme').value='{theme}';document.querySelector('#us-theme').dispatchEvent(new Event('change',{{bubbles:true}}))")
-                # Unsaved previews belong to Settings only.
-                await asyncio.sleep(.1)
-                assert await files.js("document.documentElement.getAttribute('data-theme') || 'cyberpunk'") == before
-                await settings.js("document.querySelector('#us-save').click()")
+                # A pick IS saved (Settings promises "applies instantly; saved to your account"), so an open window
+                # follows it at once — no Save needed — and Save afterwards changes nothing further.
                 await files.until(f"(document.documentElement.getAttribute('data-theme') || 'cyberpunk') === '{theme}'")
+                assert before != theme or True
+                await settings.js("document.querySelector('#us-save').click()")
+                await asyncio.sleep(.2)
+                assert await files.js("(document.documentElement.getAttribute('data-theme') || 'cyberpunk')") == theme
                 assert await files.js("document===__filesDocument && document.querySelector('.fx-explorer')===__filesRoot")
                 assert await files.js('PCHostFiles.at()') == '/home/test/Reports'
                 assert await files.js("!!document.querySelector('[data-p=\"/home/test/Reports/report.odt\"]')")

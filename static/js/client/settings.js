@@ -25,7 +25,7 @@ window.PCSettingsFactory = function(dep){
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
     _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
-    _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme,
+    _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme, pickTheme,
     carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
@@ -1509,14 +1509,14 @@ window.PCSettingsFactory = function(dep){
         return;
       }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(r.ok){ applyTheme(body.theme); toast('settings saved');
+        if(r.ok){ applyTheme(body.theme); try{ localStorage.removeItem('pc_theme_unsynced'); }catch(_){} toast('settings saved');
           if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
           if(needReload) setTimeout(()=>location.reload(),600);
         } else if(st) st.textContent='save failed ('+r.status+')';
       }catch(_){ if(st) st.textContent='save failed'; }
     };
     // Live theme preview: apply on change without waiting for Save (revert is a page reload / re-save).
-    { const ts=$('#us-theme'); if(ts) ts.onchange=()=>applyTheme(ts.value, false); }   // PREVIEW only (no persist); Save writes it
+    { const ts=$('#us-theme'); if(ts) ts.onchange=()=>pickTheme(ts.value); }   // saved at once: the label says it applies instantly
     /* Language applies IMMEDIATELY and persists itself, unlike the theme — which is a preview until
      * Save. The difference is not an inconsistency: a theme repaints, while switching language can
      * only translate what is on screen right now (see i18n.js), so everything already drawn stays in
