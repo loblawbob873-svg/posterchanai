@@ -56,6 +56,24 @@ def verify_event(event: dict) -> bool:
         return False
 
 
+def invalid_reason(event: dict) -> str | None:
+    """None for a valid event, else a NIP-01 `invalid:` message naming WHICH part is wrong: an id that does
+    not match the content (the event was changed after signing -- re-serialized on its way here) is a
+    different fault, in different software, from a signature that does not verify. No content is included."""
+    try:
+        serialized = _canonical(
+            event["pubkey"], int(event["created_at"]), int(event["kind"]),
+            event["tags"], event["content"],
+        )
+        if hashlib.sha256(serialized).hexdigest() != event["id"]:
+            return "invalid: event id does not match its content (changed after it was signed)"
+        if not bip340.verify(bytes.fromhex(event["id"]), bytes.fromhex(event["pubkey"]), bytes.fromhex(event["sig"])):
+            return "invalid: bad signature"
+        return None
+    except (KeyError, ValueError, TypeError):
+        return "invalid: malformed event"
+
+
 def verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None) -> bool:
     """Does `auth_b64` prove the caller holds the key for `pubkey_hex`, right now?
 

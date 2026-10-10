@@ -19,7 +19,7 @@ from collections import deque
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from app.services.nostr.event import verify_event
+from app.services.nostr.event import invalid_reason, verify_event
 from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, is_encoded_payload, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
@@ -1453,8 +1453,9 @@ class RelayServer:
         if not isinstance(ev, dict) or "id" not in ev:
             return
         eid = ev.get("id", "")
-        if not verify_event(ev):
-            self._refuse(conn, eid, ev, "invalid: bad id or signature")
+        _bad = invalid_reason(ev)
+        if _bad:
+            self._refuse(conn, eid, ev, _bad)
             return
         # A BLOCKED AUTHOR IS REFUSED FOR EVERY KIND, before any per-kind branch. The block used to be
         # enforced only by `is_member` at the WoT gate, and the branches that accept from ANY author by
