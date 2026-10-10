@@ -10950,7 +10950,7 @@ html.pc-oswin .pv-sheet{top:38px}
 /* Startup apps: one row per ~/.config/autostart entry; the add rows wrap on a narrow window. */
 .os-startup-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .os-startup-row,.os-startup-pc{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
-.os-startup-pc{cursor:pointer}
+.os-startup-pc .switch{cursor:pointer}
 .os-startup-pc .os-startup-nm{flex:1;min-width:0}
 .os-startup-mon{width:auto;max-width:55%;min-width:0;flex:0 1 auto;text-overflow:ellipsis}
 .os-startup-tilerow{cursor:default}

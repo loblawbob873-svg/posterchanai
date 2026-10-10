@@ -1254,19 +1254,19 @@
       <div class="search-section-title" style="margin-top:14px">Sidebar rows</div>
       <div class="row" style="justify-content:flex-end;margin:6px 0 10px"><button type="button" class="btn btn-ghost small" id="nav-show-all">Show all</button></div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
-        <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;align-items:center;gap:8px">
+        <div class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;align-items:center;gap:8px">
           ${r.sub?'<span class="nav-ord"></span>':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
           ${r.locked?'<span class="nav-lock muted small" title="Always shown — it is how you get back here">\ud83d\udd12</span>'
                     :`<label class="switch"><input type="checkbox" data-navkey="${enc(r.key)}"${r.off?'':' checked'}><span class="slider"></span></label>`}
           <span style="flex:1;min-width:0">${enc(r.label)}${r.group?' <span class="muted small">(whole group)</span>':''}</span>
           ${r.group||r.key==='__bug'?'':`<button type="button" class="mini" data-grpkey="${enc(r.key)}" title="Move into a group (or out of one)">▦</button>`}
-        </label>${r.key === 'global' ? (() => { const off = tlHiddenSet(); return [['home','Home timeline'],['global','Nostrverse timeline'],['trending','Trending timeline']]
+        </div>${r.key === 'global' ? (() => { const off = tlHiddenSet(); return [['home','Home timeline'],['global','Nostrverse timeline'],['trending','Trending timeline']]
           .map(([t,l]) => `
-        <label class="fld nav-hide-row sub" style="flex-direction:row;align-items:center;gap:8px">
+        <div class="fld nav-hide-row sub" style="flex-direction:row;align-items:center;gap:8px">
           <span class="nav-ord"></span>
           <label class="switch"><input type="checkbox" data-tltab="${t}"${off.has(t)?'':' checked'}><span class="slider"></span></label>
           <span style="flex:1;min-width:0">${l}</span>
-        </label>`).join(''); })() : ''}`).join('')}</div>`;
+        </div>`).join(''); })() : ''}`).join('')}</div>`;
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;

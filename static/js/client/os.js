@@ -4004,8 +4004,11 @@
       host.innerHTML=apps().filter(a=>!a.off).map(a=>{
         const sel = many && on.has(a.view) ? `<select class="input os-startup-mon" data-startup-monitor="${enc(a.view)}" aria-label="Monitor for ${enc(a.label)}">
             <option value="">Main monitor</option>${monitors.map(m=>`<option value="${enc(m.name)}" ${placement[a.view]===m.name?'selected':''}>${enc(_monitorLabel(m))}</option>`).join('')}</select>` : '';
-        return `<label class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>${sel}
-          <span class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></span></label>`; }).join('');
+        /* The row is NOT a <label>: a click inside a label activates its FIRST control, and with two monitors an
+           app that is on draws its monitor picker before its switch -- so the switch could be turned on and never
+           off ("I still can't uncheck enabled startup apps"). The switch is its own label. */
+        return `<div class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>${sel}
+          <label class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></label></div>`; }).join('');
       if(tileHost){
         tileHost.hidden = !monitors.length;
         tileHost.querySelector('[data-startup-tiling-list]').innerHTML = monitors.map(m=>`<div class="os-startup-pc os-startup-tilerow"><span class="os-startup-nm"><b>${enc(_monitorLabel(m))}</b></span>
