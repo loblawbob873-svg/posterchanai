@@ -1,6 +1,6 @@
 """Auto-split from messages.py: _msg_chat."""
-from ._common import _LINK_MENU, User, _link_action_cache, asyncio, datetime, logger, telegram_service
-from app.services import conversation_table
+from ._common import _LINK_MENU, _link_action_cache, asyncio, datetime, logger, telegram_service
+from app.services import conversation_table, user_table
 
 from .senders import asyncio, logger, telegram_service
 
@@ -386,7 +386,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                             from app.services import chat_history as _ch2
                             _s = SessionLocal()
                             try:
-                                _u = _s.query(User).filter(User.id == _uid).first()
+                                _u = await user_table.aget(_s, _uid)
                                 if _u is None:
                                     raise RuntimeError(f"user {_uid} is gone")
                                 _c = await conversation_table.aget_or_create(_s, _u.id, "📱 Telegram")

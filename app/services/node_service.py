@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.services import settings_store
 
 if TYPE_CHECKING:
-    from app.models import User
+    from app.services.user_table import UserRow as User
     from app.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)

@@ -294,79 +294,6 @@ def test_creating_a_bot_with_an_invite_gives_it_the_listener():
     assert _concord_default("--nostr,--concord", invite) == "--nostr,--concord"
 
 
-def test_the_backfill_actually_persists_its_marker(monkeypatch):
-    """A backfill that ran on every boot WOULD BE the spawn-time forcing, one layer down: an
-    operator who unticks Concord on a bot that still holds an invite must find it unticked after
-    the next restart. So the marker is written even when the sweep changed nothing.
-
-    THE TEST THAT USED TO BE HERE PINNED THE BUG IT WAS WRITTEN TO CATCH. It asserted the literal
-    string `settings_store.set("bots_concord_mode_backfilled", "1")` appeared in the source — and
-    `settings_store` has no `set`, it has `put`. The AttributeError was raised INSIDE the
-    function's own try, caught, and logged as "[INIT] concord mode backfill skipped"; the UPDATEs
-    had already committed (the `with engine.begin()` block exits first) but the marker never did,
-    so the sweep re-ran on every single start for as long as it existed. The old assertion did not
-    merely fail to see that — correcting the call would have made the test go RED.
-
-    Which is why this one RUNS the backfill against a recording store instead of reading its
-    source: a function name that does not exist cannot be written.
-    """
-    import contextlib
-    import app.services
-    from app import database
-
-    written = {}
-
-    class _Store:
-        @staticmethod
-        def get(key, default=None):
-            return default              # marker absent → the sweep runs
-
-        @staticmethod
-        def put(key, value, *a, **k):
-            written[key] = value
-
-    class _Result:
-        @staticmethod
-        def fetchall():
-            return []                   # no bot holds an invite → the sweep changes nothing
-
-    class _Conn:
-        def execute(self, *a, **k):
-            return _Result()
-
-    class _Engine:
-        @contextlib.contextmanager
-        def begin(self):
-            yield _Conn()
-
-    # The function does `from app.services import settings_store` INSIDE its own body — precisely
-    # so a caller cannot pin it — so the substitution has to be made on the PACKAGE.
-    monkeypatch.setattr(app.services, "settings_store", _Store)
-    monkeypatch.setattr(database, "engine", _Engine())
-
-    database._backfill_concord_modes()
-
-    assert written.get("bots_concord_mode_backfilled") == "1", (
-        "the backfill did not persist its marker, so it re-runs on every start and re-adds "
-        "--concord to a bot whose operator deliberately unticked it")
-
-
-def test_the_backfill_only_calls_settings_store_functions_that_exist():
-    """The same failure one layer up, generalised: EVERY settings_store call in that function sits
-    inside a try whose except logs "backfill skipped", so a misspelt name turns the whole sweep
-    into a no-op that reports itself as a considered decision."""
-    import inspect as _inspect
-    from app import database
-    from app.services import settings_store
-
-    src = _inspect.getsource(database._backfill_concord_modes)
-    for attr in sorted(set(re.findall(r"settings_store\.(\w+)", src))):
-        assert hasattr(settings_store, attr), (
-            "_backfill_concord_modes calls settings_store.%s(), which does not exist — the "
-            "AttributeError is swallowed by its own except and logged as 'backfill skipped'"
-            % attr)
-
-
 def test_a_relay_doc_cannot_re_seed_a_private_key_into_the_invite_field():
     """`bots.py:_vet_config` guards the two routes. The relay hydrate is a THIRD writer and it had
     no guard at all: `bots_store._apply` writes whatever the operator-signed doc says straight onto
@@ -393,27 +320,8 @@ def test_a_relay_doc_cannot_re_seed_a_private_key_into_the_invite_field():
             "config": json.dumps({"concord_invite": "https://vectorapp.io/invite/naddr1abc#secret"})}
     assert bots_store._vet(good) == good, "a real invite must pass through byte-identical"
 
-    # And it is actually WIRED: _apply is the only caller, so the guard must run there.
-    class _Q:
-        def filter(self, *a, **k):
-            return self
-
-        def first(self):
-            return None
-
-    class _Db:
-        added = []
-
-        def query(self, *a, **k):
-            return _Q()
-
-        def add(self, obj):
-            self.added.append(obj)
-
-    db = _Db()
-    bots_store._apply(db, dict(bad))
-    assert "concord_invite" not in json.loads(db.added[0].config), (
-        "_vet exists but _apply does not call it, so the hydrate still writes the key")
+    # (The SQL hydrate that called it is gone with Postgres, #161 -- the bots are relay-only, so there is no
+    # longer a third writer to wire it into; the vet itself stays for any restore that replays these docs.)
 
 
 def test_the_listener_says_so_when_it_has_no_room():

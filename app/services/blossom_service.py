@@ -36,7 +36,6 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import User
 from app.services import blob_index
 from app.services.relay_reader import Unavailable
 from app.utils import lb_auth
@@ -347,8 +346,9 @@ def _operator_pubkeys(db: Session) -> frozenset:
         return _operator_cache["set"]
     out = set()
     try:
-        from app.services import bot_table
-        for u in db.query(User).filter(User.nostr_nsec.isnot(None)).all():
+        from app.services import bot_table, user_table
+        # Unavailable (the users table could not be read) -> the except below: no partial set is cached
+        for u in user_table.filter_users(db, lambda x: bool(x.nostr_nsec)):
             # A stored signing key must not override an explicit upload revocation.
             if u.access_revoked and not (u.is_admin or u.can_blossom):
                 continue
@@ -416,8 +416,28 @@ def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
         npub = nostr_service.npub_of(pubkey_hex)
     except Exception:
         return False
-    u = db.query(User).filter(User.nostr_npub == npub).first()
+    from app.services import user_table
+    return _user_may_upload(user_table.by_npub(db, npub))
+
+
+def _user_may_upload(u) -> bool:
     return bool(u and (getattr(u, "is_admin", False) or getattr(u, "can_blossom", False)))
+
+
+def _static_allowed(db: Session, pubkey_hex: str):
+    """The checks of `is_pubkey_allowed` that need no account lookup: True / False, or None = ask the account."""
+    from app.services import relay_blocklist
+    if relay_blocklist.is_blocked(pubkey_hex):
+        return False
+    if pubkey_hex in _operator_pubkeys(db) or pubkey_hex in _whitelist_pubkeys(db):
+        return True
+    try:
+        from app.services import nostr_dvm
+        if pubkey_hex in nostr_dvm.peer_pubkeys():
+            return True
+    except Exception:
+        pass
+    return None
 
 
 async def is_pubkey_allowed_async(db: Session, pubkey_hex: str) -> bool:
@@ -435,8 +455,21 @@ async def is_pubkey_allowed_async(db: Session, pubkey_hex: str) -> bool:
 
     Every caller must keep the sync check as the primary; this only ever ADDS.
     """
-    if is_pubkey_allowed(db, pubkey_hex):
+    # `is_pubkey_allowed`, with the account read ASYNC (#161: the users table is a relay DocTable -- on the
+    # event loop a sync lookup could only answer from memory, and must not fail while the table loads).
+    static = _static_allowed(db, pubkey_hex)
+    if static is False:
+        return False
+    if static:
         return True
+    try:
+        npub = nostr_service.npub_of(pubkey_hex)
+    except Exception:
+        npub = None
+    if npub:
+        from app.services import user_table
+        if _user_may_upload(await user_table.aby_npub(db, npub)):
+            return True
     from app.services import relay_blocklist
     if relay_blocklist.is_blocked(pubkey_hex):
         return False

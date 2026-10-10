@@ -46,6 +46,11 @@ class _FakeDB:
         return self._user
 
 
+async def _by_npub(db, npub):
+    """The account behind the key (#161: accounts are user_table rows; the fake db carries it)."""
+    return db._user
+
+
 def _call(docs=None, raises=None):
     """Drive sync_folders with the relay and the account stubbed out.
 
@@ -64,7 +69,8 @@ def _call(docs=None, raises=None):
             mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda p: "a" * 64), \
             mock.patch.object(C.nostr_service, "npub_of", lambda p: "npub1fake"), \
             mock.patch.object(C, "_verify_self_auth", lambda a, p: True), \
-            mock.patch.object(C, "_setting", lambda db, k, d=None: "3052"):
+            mock.patch.object(C, "_setting", lambda db, k, d=None: "3052"), \
+            mock.patch.object(C.user_table, "aby_npub", _by_npub):
         resp = asyncio.run(C.sync_folders(req, db=_FakeDB(_FakeUser())))
         # strict=True is what makes the 503 below possible at all: without it an unreachable relay
         # answers {} and this endpoint reports an empty account.

@@ -1,22 +1,19 @@
-"""The SQL -> DocTable move for one app table (#161), and the small row helpers its stores share.
+"""Small row helpers the relay-only app tables share (#161), and their integer ids.
 
-A table converted to DocTable is answered FROM SQL until its rows were copied and verified (#161 wave 1: its
-`doc_table.Legacy`; writes go to SQL first, then the relay) -- an unmigrated relay copy is never read as the
-table, because empty is the most dangerous answer these tables can give: an API key that "does not exist" is a
-refused user, a puppet that "does not exist" gets a second identity minted beside the real one, a delivered-note
-ledger that "is empty" delivers everything twice.
-
-Migration runs through the one engine (doc_table_bulk.amigrate_rows, registry in table_migration): copy, re-read
-strictly, compare with SQL, settle, marker. The SQL rows are never dropped or changed.
+Every one of these tables is a DocTable on this node's relay from the first request (no SQL side; a node's old
+Postgres rows are copied once by scripts/migrate_tables_to_nostr.py). "Could not ask" raises Unavailable --
+never an empty answer: an API key that "does not exist" is a refused user, a puppet that "does not exist" gets a
+second identity minted beside the real one, a delivered-note ledger that "is empty" delivers everything twice.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 from datetime import datetime
 
 from app.services.doc_table import DocTable
-from app.services.doc_table_bulk import MigrationMismatch  # noqa: F401 -- the name this batch's callers catch
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +64,7 @@ def canon(row: dict) -> dict:
 
 
 # ------------------------------------------------------------------------------------ reads
-# There is no readiness gate any more (#161 wave 1): until a table's marker exists DocTable answers it from SQL
-# (its Legacy) and writes SQL then the relay, so "not migrated yet" is never "could not ask". These helpers keep
-# the names this batch's stores were written against.
+# Names this batch's stores were written against (there is no readiness gate: the relay is the only store).
 
 def require(name: str) -> None:
     return None
@@ -80,15 +75,14 @@ async def arequire(name: str) -> None:
 
 
 def view(name: str) -> list:
-    """[(key, row)] of the WHOLE table without copying the rows (callers read, never mutate them): SQL's rows
-    before the marker, memory after. Sync code off the loop loads the table if it must; on an event loop -- or
-    while the background load runs -- an unloaded table is Unavailable (Loading), never a blocked loop."""
+    """[(key, row)] of the WHOLE table without copying the rows (callers read, never mutate them). Sync code off
+    the loop loads the table if it must; on an event loop -- or while the background load runs -- an unloaded
+    table is Unavailable (Loading), never a blocked loop."""
     return DocTable(name).view()
 
 
 def row(name: str, k) -> dict | None:
-    """ONE row by key (a copy): SQL before the marker, memory once loaded, the relay's one document while the
-    table loads (off the loop)."""
+    """ONE row by key (a copy): memory once loaded, the relay's one document while the table loads (off the loop)."""
     return DocTable(name).get(k)
 
 
@@ -101,17 +95,32 @@ async def arow(name: str, k) -> dict | None:
 
 
 # ------------------------------------------------------------------------------------ ids
-def next_id(name: str) -> int:
-    """A fresh integer id once the relay is authoritative (table_migration.next_id); before the marker a new
-    row takes SQL's id through `DocTable.insert`."""
-    from app.services import table_migration
-    return table_migration.next_id(name)
+_seq_locks: dict = {}
+_seq_thread_lock = threading.Lock()
 
 
 async def anext_id(name: str) -> int:
-    from app.services import table_migration
-    return await table_migration.anext_id(name)
+    """A fresh integer id for a table keyed by integer ids: above every id the table holds (its high-water mark in
+    `_seq`, and the loaded rows when this process has them), persisted BEFORE it is handed out, and confirmed free
+    with a point read -- so it never collides, even while the table is still loading. Migrated rows keep their old
+    SQL ids; the copy script leaves no mark, so the first id is decided by the whole table."""
+    lock = _seq_locks.setdefault((id(asyncio.get_running_loop()), name), asyncio.Lock())
+    async with lock:
+        cur = await DocTable(SEQ).aget(name)
+        t = DocTable(name)
+        if t.loaded or cur is None:
+            rows = t.rows_view() if t.loaded else await t.aview()
+            n = max([int((cur or {}).get("n") or 0)] + [int(k) for k, _r in rows if str(k).isdigit()])
+        else:
+            n = int(cur.get("n") or 0)
+        n += 1
+        while await t.aget(str(n)) is not None:
+            n += 1
+        await DocTable(SEQ).aput(name, {"n": n})
+        return n
 
 
-from app.services import doc_table as _doc_table  # noqa: E402
-_ready = _doc_table._marked      # the markers this process has seen
+def next_id(name: str) -> int:
+    from app.services import doc_table
+    with _seq_thread_lock:
+        return doc_table._run(anext_id(name))

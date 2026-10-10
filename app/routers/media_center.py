@@ -22,10 +22,9 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_optional
 from app.database import get_db
-from app.models import User
 from app.services.nostr.nostr_service import npub_of
 from app.services import media_center as media
-from app.services import settings_store, instance_membership
+from app.services import settings_store, instance_membership, user_table
 from app.utils import lb_auth
 
 PRIVATE = {"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"}
@@ -78,13 +77,13 @@ def media_allowed(user):
     return bool(user and (user.is_admin or getattr(user, "can_media", False)))
 
 
-def ticket_user(viewer, user, db):
+async def ticket_user(viewer, user, db):
     try:
         viewer = media.normalize_pubkey(viewer)
     except ValueError as error:
         raise HTTPException(403, "Invalid viewer") from error
     if not user or media.identity(user) != viewer:
-        user = db.query(User).filter(User.nostr_npub.in_([viewer, npub_of(viewer)])).first()
+        user = await user_table.aby_npub(db, [viewer, npub_of(viewer)])
     if not media_allowed(user):
         raise HTTPException(403, "An admin must enable your Media Center permission")
     return user
@@ -152,7 +151,7 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
         raise HTTPException(503, "Set the node-to-node shared secret on both Media Center nodes")
     headers = lb_auth.headers({"X-PC-Media-Hop": "1", "Accept-Encoding": "identity"})
     if "/hls/" in request.url.path:
-        user = ticket_user(request.query_params.get("viewer", ""), user, db)
+        user = await ticket_user(request.query_params.get("viewer", ""), user, db)
     else:
         if user is None:
             raise HTTPException(401, "Sign in to use Media Center")
@@ -912,7 +911,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
               audio: int = Query(default=-1, ge=-1, le=1024),
               subtitle: int = Query(default=-1, ge=-1, le=1024),
               request: Request = None, user=Depends(media_user_optional), db=Depends(get_db)):
-    await require_membership(ticket_user(viewer, user, db))
+    await require_membership(await ticket_user(viewer, user, db))
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):

@@ -12,8 +12,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.auth import get_current_user
+from app.services import user_table
 from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,10 @@ async def connect_nostr(
     current_user.nostr_relays = "\n".join(relays) if relays else None
     current_user.nostr_media_service = media_service
     current_user.nostr_media_endpoint = (data.media_endpoint or "").strip() or None
-    db.commit()
+    try:
+        await user_table.asave(db, current_user)
+    except user_table.UserConflict:
+        raise HTTPException(status_code=409, detail="That Nostr key is already linked to another account.")
 
     return NostrConnectResponse(npub=npub, relays=relays or nostr_service.DEFAULT_RELAYS)
 
@@ -75,7 +79,7 @@ async def disconnect_nostr(
     current_user.nostr_media_service = None
     current_user.nostr_media_endpoint = None
     current_user.nostr_notif_since = None
-    db.commit()
+    await user_table.asave(db, current_user)
     return {"ok": True, "message": "Nostr account disconnected"}
 
 

@@ -32,7 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
+from app.services import user_table
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.search_service import get_search_service
 from app.services.text_utils import strip_preamble, strip_thinking_tags
@@ -389,7 +390,7 @@ def _page_viewer(request: Request, t: str = Query(""), db: Session = Depends(get
     """Who is asking for this frame: a ticket, else an ordinary session (cookie / header / ?token=)."""
     uid = _ticket_user(t)
     if uid:
-        user = db.query(User).filter(User.id == uid).first()
+        user = user_table.get(db, uid)
         if user:
             return user
     # No ticket → an ordinary session. The Authorization header has to be handed over explicitly:

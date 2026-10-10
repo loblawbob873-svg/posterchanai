@@ -416,6 +416,8 @@ def test_an_unpromoted_directory_is_refused_and_postgres_serves(tmp_path, monkey
     authors. The relay falls back to Postgres in serve mode instead -- which, here, is the connection attempt."""
     from app.services.nostr_relay import thread
     monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
+    # A node WITH a Postgres (here: a DSN in the environment) keeps the fallback (#161).
+    monkeypatch.setenv("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=9 dbname=nothing")
     st = Store(str(tmp_path / "relay"), flush_interval=3600)
     st.put(_mk("a" * 64))
     st.close()
@@ -436,6 +438,29 @@ def test_an_unpromoted_directory_is_refused_and_postgres_serves(tmp_path, monkey
 
 async def _async(fn, *a):
     return fn(*a)
+
+
+def test_an_unpromoted_directory_with_no_postgres_configured_refuses_to_start(tmp_path, monkeypatch):
+    """#161: a node with NO Postgres configured has nothing to fall back to. An unpromoted mirror directory
+    there must stop the relay loudly -- never dial a Postgres that was never set up, never serve the stale copy."""
+    from app.services import settings_store
+    from app.services.nostr_relay import thread
+    monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
+    for var in ("NOSTR_RELAY_PG_DSN", "DATABASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+    real_get = settings_store.get
+    monkeypatch.setattr(settings_store, "get", lambda k, d=None: None if k == "nostr_relay_pg_dsn" else real_get(k, d))
+    st = Store(str(tmp_path / "relay"), flush_interval=3600)
+    st.put(_mk("a" * 64))
+    st.close()
+    with open(tmp_path / "relay" / "CLEAN", "w") as f:
+        f.write("clean:abc\n")
+    tried = []
+    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: tried.append(1))
+    with pytest.raises(P.PrimaryNotReady):
+        _run(lambda loop: _async(thread._open_store, _cfg(), loop))
+    assert not tried, "a node with no Postgres configured dialled one"
+    assert os.path.exists(tmp_path / "relay" / "CLEAN"), "a refused start must change nothing"
 
 
 def test_a_mirror_run_after_promotion_retires_it(tmp_path):

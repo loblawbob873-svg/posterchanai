@@ -15,7 +15,7 @@ from app.database import get_db
 from app.utils import lb_auth
 from app.auth import get_current_user
 from app.services import instance_membership
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import settings_store
 from app.services.torrent_service import scrape_torrents, search_torrents
 from app.services.nyaa_service import search_nyaa

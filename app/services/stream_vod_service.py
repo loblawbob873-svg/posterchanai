@@ -39,7 +39,6 @@ import time
 from typing import Optional
 
 from app.database import SessionLocal
-from app.models import User
 from app.services import blossom_service, stream_service, media_service, settings_store
 from app.services.nostr import nostr_service
 
@@ -365,8 +364,10 @@ async def _process(staging: str) -> None:
         try:
             from app.services.stream_end_service import user_by_token
             user_id = user_by_token(db, token) if token else None
-            user = db.query(User).filter(User.id == user_id).first() if user_id else None
-            # user.stream_record is a LIVE Postgres read (not the settings cache), so it's authoritative.
+            from app.services import user_table
+            # Unavailable propagates (the job stays staged for the next pass) -- never read as "opted out".
+            user = await user_table.aget(db, user_id) if user_id else None
+            # user.stream_record is a STRICT read of the accounts table (not the settings cache), so it's authoritative.
             if not (user and getattr(user, "stream_record", False)):
                 shutil.rmtree(staging, ignore_errors=True)   # opted out → discard
                 return

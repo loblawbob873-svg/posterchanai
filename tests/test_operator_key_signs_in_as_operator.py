@@ -84,6 +84,14 @@ def _keypair(seed=None):
     return sk, nostr_service.derive_pubkey(nostr_service.decode_seckey(sk))
 
 
+@pytest.fixture(autouse=True)
+def _accounts_from_the_fake_db(monkeypatch):
+    """The operator account is looked up through user_table (#161: accounts are a relay DocTable); here it
+    is whatever the fake session in the test carries."""
+    from app.services import user_table
+    monkeypatch.setattr(user_table, "operator", lambda db: getattr(db, "operator", None))
+
+
 @pytest.fixture
 def operator():
     sk, pk = _keypair()
@@ -110,13 +118,13 @@ def test_the_route_actually_contains_the_operator_match():
     """This file models the branch; that is only worth anything while the branch is in the route."""
     src = (auth_router.__file__).replace(".pyc", ".py")
     text = open(src, encoding="utf-8").read()
-    block = text[text.index("async def nostr_login"):text.index("        base = \"npub_\"")]
+    block = text[text.index("async def nostr_login"):text.index("user_table.acreate(")]
     assert "derive_pubkey" in block and "nostr_nsec" in block, (
         "nostr_login no longer recognises the node's own operator key")
     assert "op_pk == pk" in block
     # ORDER IS THE FIX. The operator comparison must come before the npub lookup, or a duplicate
     # account that already holds the npub wins and the branch never runs.
-    assert block.index("op_pk == pk") < block.index("User.nostr_npub == npub).first()"), (
+    assert block.index("op_pk == pk") < block.index("await user_table.aby_npub(db, npub)"), (
         "the npub lookup runs before the operator check again — that is the version that helps "
         "nobody who has ever signed in on a phone")
     # The duplicate must be UNLINKED, or it keeps the npub and the next sign-in is ambiguous —
@@ -204,7 +212,7 @@ def test_a_corrupt_operator_nsec_cannot_break_sign_in(operator):
         got = None                     # the route swallows it; the model may not
     assert got is None or got is op
     src = open(auth_router.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
-    block = src[src.index("async def nostr_login"):src.index("        base = \"npub_\"")]
+    block = src[src.index("async def nostr_login"):src.index("user_table.acreate(")]
     assert "except Exception" in block, "the operator lookup is not guarded"
 
 

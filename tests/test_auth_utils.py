@@ -30,10 +30,9 @@ kind of decision a later "simplification" undoes, so it is stated here too.
 import asyncio
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, User
+from app.database import NoSQL
+from app.services import api_key_store, user_table
 from app.services.relay_reader import Unavailable
 from app.utils import auth_utils
 from tests.doc_table_mem import mem_tables
@@ -47,46 +46,24 @@ def _key(kid, user_id, key, name="Default", active=True):
             "last_used_at": None, "is_active": active}
 
 
+def put_key(m, kid, user_id, key, **kw):
+    """A key as the store holds it: the row, and its index entry (what a lookup before the load reads)."""
+    m.put("api_keys", str(kid), _key(kid, user_id, key, **kw))
+    m.put("api_key_index", api_key_store.key_hash(key), {"id": kid})
+
+
 @pytest.fixture
 def mem(monkeypatch):
     m = mem_tables(monkeypatch)
-    m.put("api_keys", "1", _key(1, 1, TOKEN))
+    put_key(m, 1, 1, TOKEN)
+    for uid, name in ((1, "alice"), (2, "bob")):
+        m.put(user_table.TABLE, str(uid), user_table.UserRow(uid, {"username": name, "password_hash": "x"}).row())
     return m
 
 
 @pytest.fixture
 def db(mem):
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine, tables=[User.__table__])
-    session = sessionmaker(bind=engine)()
-    session.add(User(id=1, username="alice", password_hash="x"))
-    session.add(User(id=2, username="bob", password_hash="x"))
-    session.commit()
-    yield session
-    session.close()
-
-
-class Boom:
-    """A session that fails a given number of times before behaving. `is_active` is real, because
-    the retry checks it before rolling back."""
-
-    def __init__(self, real, fail_times, is_active=True, rollback_raises=False):
-        self._real = real
-        self._left = fail_times
-        self.is_active = is_active
-        self.rollbacks = 0
-        self.rollback_raises = rollback_raises
-
-    def query(self, *a, **kw):
-        if self._left > 0:
-            self._left -= 1
-            raise RuntimeError("InterfaceError: connection already closed")
-        return self._real.query(*a, **kw)
-
-    def rollback(self):
-        self.rollbacks += 1
-        if self.rollback_raises:
-            raise RuntimeError("cannot rollback, connection is gone")
+    return NoSQL()          # the `db` the app hands around: there is no SQL behind it (#161)
 
 
 # --------------------------------------------------------------------------- the happy path
@@ -156,7 +133,7 @@ def test_a_row_with_no_active_flag_is_not_active(db, mem):
 def test_only_the_matching_key_resolves(db, mem):
     """One user's token must never resolve to another's row."""
     other = "sk-" + "b" * 40
-    mem.put("api_keys", "2", _key(2, 2, other, name="Bob"))
+    put_key(mem, 2, 2, other, name="Bob")
     assert auth_utils.query_api_key_with_retry(db, TOKEN)[1] == 1
     assert auth_utils.query_api_key_with_retry(db, other)[1] == 2
 
@@ -206,15 +183,6 @@ def test_an_unreadable_key_table_denies_rather_than_grants(db, mem):
         asyncio.run(auth_utils.aquery_api_key(TOKEN))
 
 
-def test_an_unmigrated_key_table_is_unavailable_not_empty(monkeypatch):
-    """Before the SQL rows were copied and verified the table is EMPTY on the relay; read as "no
-    keys" every user would be refused with a 401 for a key that exists."""
-    m = mem_tables(monkeypatch, migrated=())
-    m.put("api_keys", "1", _key(1, 1, TOKEN))
-    with pytest.raises(Unavailable):
-        auth_utils.query_api_key_with_retry(None, TOKEN)
-
-
 def test_a_transient_outage_recovers_on_the_next_call(db, mem):
     """The reason the old retry was there at all -- one flaky read must not leave a good key failing."""
     mem.down = True
@@ -224,17 +192,11 @@ def test_a_transient_outage_recovers_on_the_next_call(db, mem):
     assert auth_utils.query_api_key_with_retry(db, TOKEN)[1] == 1
 
 
-def test_the_user_lookup_also_fails_closed(db):
-    """Same rule one step later: a user that cannot be read is not a user."""
-    broken = Boom(db, fail_times=99)
-    assert auth_utils.get_user_from_api_key(broken, 1) is None
-
-
-def test_the_user_lookup_retries_once(db):
-    flaky = Boom(db, fail_times=1)
-    assert auth_utils.get_user_from_api_key(flaky, 1).username == "alice"
-
-
-def test_a_rollback_that_itself_fails_does_not_escape_the_user_lookup(db):
-    broken = Boom(db, fail_times=99, rollback_raises=True)
-    assert auth_utils.get_user_from_api_key(broken, 1) is None
+def test_an_unreadable_account_is_unavailable_never_an_unknown_user(db, mem):
+    """Same rule one step later: an account that could not be read is neither a user nor "no such user" -- the
+    latter is a 401 that logs a perfectly good key out during an outage."""
+    mem.down = True
+    with pytest.raises(Unavailable):
+        auth_utils.get_user_from_api_key(db, 1)
+    mem.down = False
+    assert auth_utils.get_user_from_api_key(db, 1).username == "alice"

@@ -294,10 +294,10 @@ async def _alert(rec: dict, kind: str) -> None:
     else:
         try:
             from app.database import SessionLocal
-            from app.models import User
+            from app.services import user_table
             db = SessionLocal()
             try:
-                admin = db.query(User).filter(User.id == 1).first()
+                admin = await user_table.aget(db, 1)
                 chat_id = getattr(admin, "telegram_chat_id", None) if admin else None
                 enabled = bool(admin and admin.telegram_enabled and chat_id)
                 if not enabled:
@@ -342,8 +342,7 @@ async def _alert_nostr(text: str) -> None:
     uptime alert that silently fails to alert is worse than none, so it goes out from a distinct
     sender. Published to the LOCAL relay only — it federates outward from there."""
     from app.database import SessionLocal
-    from app.models import User
-    from app.services import settings_store, system_dm
+    from app.services import settings_store, system_dm, user_table
 
     targets = [x.strip() for x in
                (settings_store.get("uptime_alert_npubs", "") or "").replace(",", "\n").splitlines()
@@ -351,7 +350,7 @@ async def _alert_nostr(text: str) -> None:
     if not targets:
         db = SessionLocal()
         try:
-            admin = db.query(User).filter(User.id == 1).first()
+            admin = await user_table.aget(db, 1)     # Unavailable propagates: never "no admin to alert"
             npub = (getattr(admin, "nostr_npub", "") or "").strip() if admin else ""
         finally:
             db.close()

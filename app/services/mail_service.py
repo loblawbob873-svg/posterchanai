@@ -1724,8 +1724,7 @@ def _mirror_sent_locally(account, msg, to: str, subject: str) -> None:
         import asyncio as _aio
         import hashlib
         from app.database import SessionLocal
-        from app.models import User
-        from app.services import mail_store, nostr_store
+        from app.services import mail_store, nostr_store, user_table
 
         mid = (msg.get("Message-ID") or "").strip()
         uid = "local-" + hashlib.sha256((mid or f"{to}{subject}{time.time()}").encode()).hexdigest()[:16]
@@ -1750,7 +1749,7 @@ def _mirror_sent_locally(account, msg, to: str, subject: str) -> None:
         }
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.id == account.user_id).first()
+            user = user_table.get(db, account.user_id)
             if not user:
                 return
             seckey = nostr_store.user_storage_seckey(db, user)

@@ -32,6 +32,9 @@ class FakeTable:
     def peek(self, k):
         return None
 
+    def start_background_load(self):
+        self.load_started = True
+
 
 def test_a_row_is_read_from_the_relay_while_the_table_loads():
     t = FakeTable({"u1:mail_accounts": {"value": "[]"}})

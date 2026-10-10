@@ -20,7 +20,7 @@ from pydantic import BaseModel
 import httpx
 
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import bot_table
 from app.services.bot_table import BotRow as Bot
 from app.auth import get_admin_user

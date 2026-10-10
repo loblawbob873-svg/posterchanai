@@ -24,10 +24,7 @@ import json
 import time
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.models import User
+from app.database import NoSQL
 from app.routers import client
 from app.services import scheduled_posts_service as sched
 from app.services.nostr import event as nostr_event, nostr_service
@@ -55,21 +52,24 @@ def note(sk, when, kind=1, content="later, world"):
     return nostr_event.build_event(sk, kind, content, tags=[], created_at=when)
 
 
-def _accounts():
-    engine = create_engine("sqlite://")
-    User.__table__.create(engine)
-    s = sessionmaker(bind=engine)()
-    for pk, name in ((PK_A, "alice"), (PK_B, "bob")):
-        s.add(User(username=name, email=f"{name}@x.example", password_hash="x", nostr_npub=nostr_service.npub_of(pk)))
-    s.commit()
-    return s
+def _accounts(seed=True):
+    """alice and bob, as user_table rows on the relay (#161: accounts are a DocTable, written here as the copy
+    script writes migrated accounts -- the row and its index entries)."""
+    from app.services import user_table
+    from app.services.doc_table import DocTable
+    if seed:
+        for uid, (pk, name) in enumerate(((PK_A, "alice"), (PK_B, "bob")), 1):
+            row = user_table.UserRow(uid, {"username": name, "email": f"{name}@x.example", "password_hash": "x",
+                                           "nostr_npub": nostr_service.npub_of(pk)}).row()
+            DocTable(user_table.TABLE).put(str(uid), row)
+            for k, v in user_table.index_rows({str(uid): row}).items():
+                DocTable(user_table.INDEX).put(k, v)
+    return NoSQL()
 
 
 @pytest.fixture
 def db(tables):
-    s = _accounts()
-    yield s
-    s.close()
+    yield _accounts()
 
 
 def create(db, sk, pk, ev, when, auth=None):
@@ -184,7 +184,7 @@ def test_list_and_cancel_belong_to_the_owner(db):
 
 
 def test_a_relay_that_cannot_be_asked_is_a_503_never_an_empty_list(no_relay):
-    db = _accounts()
+    db = _accounts(seed=False)          # nothing can be written to a relay that is not there
     try:
         when = int(time.time()) + 3600
         code, j = create(db, SK_A, PK_A, note(SK_A, when), when)

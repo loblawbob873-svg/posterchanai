@@ -65,7 +65,7 @@ _DEFAULT_TOOL_GUIDANCE = (
 
 from app.database import get_db
 from app.utils import lb_auth
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import settings_store
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 from app.schemas import ChatCompletionRequest, ModelInfo, ModelsResponse

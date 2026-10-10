@@ -22,10 +22,9 @@ from fastapi.responses import FileResponse, Response
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.requests import Request as InternalRequest
 
-from app.services import instance_membership
+from app.services import instance_membership, user_table
 from app.auth import SECRET_KEY
 from app.database import get_db
-from app.models import User
 from app.routers import media_center as native
 from app.services import media_center as media
 from app.services.nostr.nostr_service import npub_of
@@ -90,8 +89,9 @@ def account_key(uid):
     return 'jellyfin-account:' + uid
 
 
-def find_user(db, pubkey):
-    return db.query(User).filter(User.nostr_npub.in_([pubkey, npub_of(pubkey)])).first()
+async def find_user(db, pubkey):
+    # Unavailable (the account store could not be asked) propagates as a 503 -- never "no such user".
+    return await user_table.aby_npub(db, [pubkey, npub_of(pubkey)])
 
 
 def query(request, key, default=None):
@@ -124,7 +124,7 @@ async def authenticate(request: Request, db=Depends(get_db)):
         raise HTTPException(503, 'Media Center could not check your session just now') from error
     session = next((s for s in record.get('sessions', []) if
                     s['expires'] > time.time() and hmac.compare_digest(s['hash'], digest(token))), None)
-    user = find_user(db, record['pubkey']) if session else None
+    user = (await find_user(db, record['pubkey'])) if session else None
     if not native.media_allowed(user):
         raise HTTPException(401, 'Jellyfin login expired, disabled, or Media Center access revoked')
     requested_user = request.path_params.get('user_id') or query(request, 'UserId')
@@ -175,7 +175,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
         record = await media.read_account(account_key(grant['uid'])) or {}
         session = next((s for s in record.get('sessions', [])
                         if s['id'] == grant['sid'] and s['expires'] > time.time()), None)
-        user = find_user(db, record['pubkey']) if session else None
+        user = (await find_user(db, record['pubkey'])) if session else None
         if session and native.media_allowed(user):
             await instance_membership.require_user(user)
             return SimpleNamespace(user=user, uid=grant['uid'], token='', session=session)
@@ -188,7 +188,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
     item = request.path_params['uid'].replace('-', '').lower()
     payload = f"{uid}.{sid}.{expires}"
     expected = hmac.new(SECRET_KEY.encode(), (item + '.Primary.' + payload + '.' + session['hash']).encode(), hashlib.sha256).hexdigest() if session else ''
-    user = find_user(db, record['pubkey']) if session else None
+    user = (await find_user(db, record['pubkey'])) if session else None
     if int(expires) <= time.time() or not hmac.compare_digest(signature, expected) or not native.media_allowed(user):
         raise HTTPException(401, 'Private artwork authorization expired or revoked')
     await instance_membership.require_user(user)
@@ -433,7 +433,7 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         expire_quick()
         key = digest(body.Secret)
         entry = _quick.get(key)
-        user = find_user(db, entry['pubkey']) if entry and entry.get('pubkey') else None
+        user = (await find_user(db, entry['pubkey'])) if entry and entry.get('pubkey') else None
         if not native.media_allowed(user):
             raise HTTPException(401, 'Quick Connect is not approved or Media Center access was revoked')
         await instance_membership.require_user(user)

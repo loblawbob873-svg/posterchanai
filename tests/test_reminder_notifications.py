@@ -7,8 +7,6 @@ import pytest
 from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 from app.services.app_tables import new_id
 from app.services.doc_table import DocTable
 from tests.reminder_api_harness import reminder_modules
@@ -68,7 +66,6 @@ def test_reminder_history_authenticated_owner_status_limit_and_repeat_identity()
 
 def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch):
     import asyncio
-    from app.models import User
     from app.services import reminder_service, chat_history, push_service, direct_push_service, push_store
     from app.services.nostr import nostr_service
     from app.routers.chat import manager
@@ -78,8 +75,6 @@ def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch)
         return {'a'*64:[{'id':1,'pubkey':'a'*64,'endpoint':'private-fixture','p256dh':'fixture',
                          'auth':'fixture','prefs':None}]} if 'a'*64 in pks else {}
     monkeypatch.setattr(push_store,'subs_for',subs_for)
-    engine=create_engine('sqlite://')
-    for table in (User.__table__,):table.create(engine)
     archived=[];live=[];pushed=[]
     async def archive(db,user,conversation,role,body):archived.append((user.id,conversation,body))
     async def socket(owner,data):live.append((owner,data))
@@ -93,16 +88,17 @@ def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch)
     monkeypatch.setattr(nostr_service,'to_pubkey_hex',lambda value:'a'*64)
     monkeypatch.setattr(direct_push_service,'subscription_dict',lambda row:{'endpoint':'private-fixture'})
     monkeypatch.setattr(push_service,'send',lambda sub,payload:pushed.append(payload) or True)
-    with Session(engine) as db:
-        user=User(username='fixture',password_hash='unused',nostr_npub='fixture',telegram_enabled=False)
-        db.add(user);db.flush()
-        db.commit()
+    # the account is a user_table row on the relay (#161), stored as a migrated account (its id kept)
+    from app.services import user_table
+    user=user_table.UserRow(1,{'username':'fixture','password_hash':'unused','nostr_npub':'fixture','telegram_enabled':False})
+    DocTable(user_table.TABLE).put('1',user.row())
+    if True:
+        db=SimpleNamespace()            # nothing here is SQL any more
         rid,row=Reminder(user_id=user.id,text='📅 Calendar appointment',due_at=datetime(2026,9,8),delivered_at=datetime(2026,9,8),status='done')
         reminder=service.as_reminder(rid,row);asyncio.run(reminder_service.deliver(db,reminder))
         assert archived==[(user.id,88,'⏰ Reminder: 📅 Calendar appointment')]
         assert live[0][1]['route']=='calendar' and live[0][1]['reminder_id']==reminder.id
         assert pushed[0]['view']=='calendar' and pushed[0]['due_at']==live[0][1]['due_at']
-    engine.dispose()
 
 
 def test_isolated_modules_restore_existing_imports_and_model_registry(isolated_reminder_modules):

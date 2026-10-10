@@ -14,8 +14,7 @@ second row). It is the dedup key that stops a note being stored twice, and it is
 (`aprune`, the relay's retention window). A ledger that cannot be read is `Unavailable`: the caller must
 neither deliver (it may be a duplicate) nor record anything; it retries.
 
-Until each table's migration marker exists SQL is still its store of record (#161 wave 1): DocTable answers
-it through the Legacies at the bottom of this module and writes SQL first, then the relay. After that, lookups
+Relay-only (no SQL side; a node's old rows are copied once by scripts/migrate_tables_to_nostr.py). Lookups
 scan the in-memory table -- the indexes the SQL table had are what these scans replace -- and a point read
 (`apuppet_by_uri`, `adelivered`) reads one document while a restart's load is still running.
 """
@@ -150,19 +149,11 @@ def _by_uri(rows, uri):
 
 
 def _ledger_rows(col: str, values) -> list:
-    """[(key, row)] to scan for `col` in `values`: before the marker SQL's matching rows (by its own index --
-    never the whole ledger per lookup), after it the table in memory."""
-    if not DocTable(LEDGER).migrated():
-        from app.services import doc_table
-        return doc_table._sql(lambda db: _LEDGER_LEGACY.where_in(db, col, values))
+    """[(key, row)] to scan for `col` in `values`: the table in memory."""
     return tm.view(LEDGER)
 
 
 async def _aledger_rows(col: str, values) -> list:
-    if not await DocTable(LEDGER).amigrated():
-        import asyncio
-        from app.services import doc_table
-        return await asyncio.to_thread(doc_table._sql, lambda db: _LEDGER_LEGACY.where_in(db, col, values))
     return await tm.aview(LEDGER)
 
 
@@ -190,11 +181,6 @@ async def adelivered_by_event(eid: str) -> Row | None:
 
 async def adelivered(platform: str, instance_url: str, note_id: str) -> bool:
     t = DocTable(LEDGER)
-    if not await t.amigrated():             # SQL, by its own index -- never a scan of the whole ledger
-        import asyncio
-        from app.services import doc_table
-        return await asyncio.to_thread(doc_table._sql, lambda db: _LEDGER_LEGACY.has_note(
-            db, platform, instance_url, note_id))
     return await t.aget(ledger_key(platform, instance_url, note_id)) is not None
 
 
@@ -256,158 +242,9 @@ async def aprune(keep_days: int) -> int:
     return n
 
 
-# ============================================================================================ the SQL side
-# (#161 wave 1) Until a table's marker exists SQL is its store of record; these are how it is read and written.
-
-def _puppet_from_sql(p) -> dict:
-    return {"actor_uri": p.actor_uri, "acct": p.acct, "instance_host": p.instance_host,
-            "pubkey_hex": p.pubkey_hex, "nip05_name": p.nip05_name,
-            "display_name": p.display_name, "avatar_url": p.avatar_url,
-            "profile_sig": p.profile_sig, "last_seen": tm.iso(p.last_seen),
-            "created_at": tm.iso(p.created_at)}
-
-
-def puppets_from_sql(db) -> dict:
-    from app.models import FediPuppet
-    return {p.actor_uri: _puppet_from_sql(p) for p in db.query(FediPuppet).all()}
-
-
-def _ledger_row_from_sql(r) -> dict:
-    return {"platform": r.platform, "instance_url": r.instance_url or "", "note_id": (r.note_id or "")[:255],
-            "note_uri": r.note_uri, "author_acct": r.author_acct, "nostr_event_id": r.nostr_event_id or "",
-            "nostr_pubkey": r.nostr_pubkey, "created_at": tm.iso(r.created_at),
-            "deleted_at": tm.iso(r.deleted_at)}
-
-
-def ledger_from_sql(db, keep_days: int) -> dict:
-    """The ledger rows the prune would keep (rows past retention are about events the relay no longer
-    holds and would be deleted by the next daily prune). Rows sharing a (platform, instance, note) collapse
-    into the FIRST one recorded, which is the one dedup ever consulted."""
-    from app.models import FediBridgeDelivered as F
-    q = db.query(F)
-    if keep_days > 0:
-        q = q.filter(F.created_at >= datetime.utcnow() - timedelta(days=keep_days))
-    out = {}
-    for r in q.order_by(F.id.asc()).all():
-        k = ledger_key(r.platform, r.instance_url, r.note_id)
-        if k in out:
-            continue
-        out[k] = _ledger_row_from_sql(r)
-    return out
-
-
-def _keep_days() -> int:
-    from app.services import settings_store
-    try:
-        return int(settings_store.get("nostr_relay_retention_days", "30") or "30")
-    except ValueError:
-        return 30
-
-
-from app.services.doc_table import Legacy as _Legacy  # noqa: E402
-
-
-class LedgerLegacy(_Legacy):
-    """`fedi_bridge_delivered`, keyed by sha256(platform, instance_url, note_id) -- a key SQL cannot look up, so a
-    point read by key finds the row through those three columns, which every document carries."""
-    name = LEDGER
-
-    def rows(self, db) -> dict:
-        return ledger_from_sql(db, _keep_days())
-
-    @staticmethod
-    def _matching(db, platform, instance_url, note_id):
-        from app.models import FediBridgeDelivered as F
-        return db.query(F).filter(F.platform == platform, F.instance_url == (instance_url or ""),
-                                  F.note_id == (note_id or "")[:255]).order_by(F.id.asc())
-
-    def where_in(self, db, col: str, values) -> list:
-        """[(key, row)] of the rows whose `col` is one of `values` -- the same rows `rows()` holds for them."""
-        from app.models import FediBridgeDelivered as F
-        values = [v for v in values if v]
-        if not values:
-            return []
-        q = db.query(F).filter(getattr(F, col).in_(values))
-        keep = _keep_days()
-        if keep > 0:
-            q = q.filter(F.created_at >= datetime.utcnow() - timedelta(days=keep))
-        out = {}
-        for r in q.order_by(F.id.asc()).all():
-            out.setdefault(ledger_key(r.platform, r.instance_url, r.note_id), _ledger_row_from_sql(r))
-        return list(out.items())
-
-    def has_note(self, db, platform, instance_url, note_id) -> bool:
-        return self._matching(db, platform, instance_url, note_id).first() is not None
-
-    def _by_key(self, db, k):
-        # the key is a hash: find the row by reading only the three columns it is made of
-        from app.models import FediBridgeDelivered as F
-        for rid, p, i, n in db.query(F.id, F.platform, F.instance_url, F.note_id).order_by(F.id.asc()):
-            if ledger_key(p, i, n) == k:
-                return db.get(F, rid)
-        return None
-
-    def get(self, db, k):
-        r = self._by_key(db, k)
-        if r is None:
-            return None
-        keep = _keep_days()
-        if keep > 0 and r.created_at is not None and r.created_at < datetime.utcnow() - timedelta(days=keep):
-            return None
-        return _ledger_row_from_sql(r)
-
-    def put(self, db, k, row) -> None:
-        from app.models import FediBridgeDelivered as F
-        from app.services.legacy_sql import to_datetime
-        r = self._matching(db, row.get("platform"), row.get("instance_url"), row.get("note_id")).first()
-        if r is None:
-            r = F()
-            db.add(r)
-        r.platform = row.get("platform") or ""
-        r.instance_url = row.get("instance_url") or ""
-        r.note_id = (row.get("note_id") or "")[:255]
-        r.note_uri = row.get("note_uri")
-        r.author_acct = row.get("author_acct")
-        r.nostr_event_id = row.get("nostr_event_id") or ""
-        r.nostr_pubkey = row.get("nostr_pubkey")
-        r.created_at = to_datetime(row.get("created_at"))
-        r.deleted_at = to_datetime(row.get("deleted_at"))
-        db.flush()
-
-    def delete(self, db, k) -> None:
-        first = self._by_key(db, k)
-        if first is not None:
-            for r in self._matching(db, first.platform, first.instance_url, first.note_id).all():
-                db.delete(r)
-            db.flush()
-
-
-_LEDGER_LEGACY = LedgerLegacy()
-
-
-def _legacies_from_sql():
-    from app.services.legacy_sql import ModelLegacy
-    return (ModelLegacy(PUPPETS, "FediPuppet", _puppet_from_sql, key_of=lambda p: p.actor_uri, int_ids=False),
-            _LEDGER_LEGACY)
-
-
-def _register_legacy():
-    from app.services import table_migration
-    for lg in _legacies_from_sql():
-        table_migration.register(lg)
-
-
-_register_legacy()
-
-
-
-
 async def aready() -> None:
     """Both tables readable in WHOLE -- raises Unavailable otherwise (Loading while a restart's load runs).
     An entry point that will make decisions from them (the inbox, the DM listener) asks this FIRST and
-    refuses or waits, so that the lookups below it cannot fail half-way through a delivery. Before a table's
-    marker SQL answers it, so there is nothing to wait for."""
+    refuses or waits, so that the lookups below it cannot fail half-way through a delivery."""
     for name in (PUPPETS, LEDGER):
-        t = DocTable(name)
-        if await t.amigrated():
-            await t._ensure()
+        await DocTable(name)._ensure()

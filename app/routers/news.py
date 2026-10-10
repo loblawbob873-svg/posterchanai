@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.auth import get_current_user
 from app.services import instance_membership
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm

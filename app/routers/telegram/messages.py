@@ -1,7 +1,7 @@
 """Auto-split from webhook.py: the message half of _handle_telegram_update."""
 from .messages_command import _msg_command
 from .messages_chat import _msg_chat
-from ._common import ChatService, CommandService, User, _MEDIA_GROUP_CACHE, asyncio, datetime, logger, re, telegram_service, time
+from ._common import ChatService, CommandService, _MEDIA_GROUP_CACHE, asyncio, datetime, logger, re, telegram_service, time
 
 from .senders import _send_png_as_document, _send_screenshot, asyncio, logger, re, telegram_service, time
 
@@ -146,17 +146,25 @@ async def _handle_message(update, db):
 
             # --- Authorization check ---
             # Allow /start <key> for account linking; block all other messages from unlinked users.
-            _auth_user = db.query(User).filter(
-                User.telegram_chat_id == chat_id,
-                User.telegram_enabled == True
-            ).first()
+            # "Could not ask" is NOT "not linked" (#161: accounts are relay documents): a linked user must not be
+            # told to re-link, and no key is consumed, while the datastore is not answering.
+            from app.services import user_table
+            from app.services.relay_reader import Unavailable
+            try:
+                _auth_user = await user_table.aby_telegram_chat(db, chat_id)
+                keyed_user = None
+                if not _auth_user and text.startswith("/start "):
+                    keyed_user = await user_table.aby_telegram_key(db, text.replace("/start ", "").strip())
+            except Unavailable:
+                logger.warning("[telegram] account lookup unavailable -- asking chat to retry")
+                await telegram_service.send_message(
+                    chat_id, "⏳ The server's datastore is not answering right now. Please try again in a moment.")
+                return {"ok": True}
 
             if not _auth_user:
                 if text.startswith("/start "):
                     import hmac
-                    from sqlalchemy.exc import IntegrityError
                     key = text.replace("/start ", "").strip()
-                    keyed_user = db.query(User).filter(User.telegram_key == key).first()
                     # Constant-time compare as defense-in-depth (DB already did the lookup)
                     key_valid = (
                         keyed_user is not None
@@ -175,17 +183,19 @@ async def _handle_message(update, db):
                             )
                             return {"ok": True}
                         try:
-                            keyed_user.telegram_chat_id = chat_id
+                            keyed_user.telegram_chat_id = str(chat_id)
                             keyed_user.telegram_enabled = True
                             keyed_user.telegram_key = None
                             keyed_user.telegram_key_expires_at = None
-                            db.commit()
+                            await user_table.asave(db, keyed_user)
                             await telegram_service.send_message(
                                 chat_id,
                                 f"Your Telegram account has been linked to {keyed_user.username}! You can now use the bot."
                             )
-                        except IntegrityError:
-                            db.rollback()
+                        except Unavailable:
+                            await telegram_service.send_message(
+                                chat_id, "⏳ The server's datastore is not answering right now. Please send /start <key> again in a moment.")
+                        except user_table.UserConflict:
                             await telegram_service.send_message(
                                 chat_id,
                                 "This Telegram chat is already linked to a different user. Unlink it first from that account's settings."

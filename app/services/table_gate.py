@@ -1,86 +1,31 @@
-"""Which store answers for a table that is being moved off Postgres while the app keeps running (#161, wave 2:
-bots, user_settings, conversations).
+"""Read helpers shared by the relay-only app tables (#161).
 
-A wave-2 table lives in TWO stores during the move, and the `_migrated` marker (doc_table_bulk) decides which one
-is the truth:
+Every app table is a DocTable on this node's relay from the first request -- there is no SQL side and no marker
+gate any more (the one-time copy of a node's old Postgres rows is scripts/migrate_tables_to_nostr.py). What is left
+here is the one rule the tables share for reading while a restart is still loading them:
 
-  * NO MARKER -- SQL is authoritative. Reads come from SQL; every write goes to BOTH, the relay document FIRST and
-    the SQL commit after it. Relay-first is what makes the copy safe to run beside live traffic: a write either
-    lands on the relay before SQL commits (so a copy that read the older SQL row sees SQL change underneath it
-    and refuses -- `doc_table_bulk.amigrate_rows(before_mark=...)`), or it fails before SQL is touched.
-  * MARKER -- the relay is authoritative. SQL is never read or written again (the table is kept, not dropped).
-
-`arelay_mode()` answers which, and it answers it STRICTLY: a marker that cannot be read raises Unavailable. "Could
-not ask" is neither "not migrated" (that would serve a stale SQL row after the move) nor "migrated" (that would
-serve an empty DocTable before it). Once a process has seen the marker it never asks again (doc_table's `_marked`
-is monotonic). The marker is wave 1's -- one `_migrated` DocTable, one shape, one engine (table_migration) for every
-#161 table; these tables are registered there as GATED (no Legacy bound to the DocTable: this module gates).
-
-The point reads below are the other half of "never empty for could-not-ask": while a big table is still loading
-after a restart, a lookup by key reads that ONE document from the relay instead of failing or waiting for the load.
+  * a POINT read (`aget_row` / `get_row`) answers from memory once the table is loaded, and before that reads the
+    ONE document from the relay -- a lookup never waits for, or fails on, a big table's load;
+  * a WHOLE-TABLE read (`arows` / `rows`) needs the table: it loads it (strictly) or raises Unavailable/Loading,
+    never answers from part of it.
 """
 import asyncio
 import logging
 
-from app.services import doc_table
-from app.services.doc_table import DocTable, _in_loop
+from app.services.doc_table import DocTable, _in_loop, _run
 from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 
-MARKER_TABLE = doc_table.MARKERS
-
-
-_loading: set = set()
-
 
 def _load_soon(t: DocTable) -> None:
-    """Start a strict load of `t` on the running loop (once at a time), for a synchronous caller on the loop
-    that could only be told "not yet": the next call is then answered from memory."""
-    import asyncio
-    if t.name in _loading:
-        return
-
-    async def _go():
-        try:
-            await t.aload()
-        except Exception as e:      # noqa: BLE001 -- the caller already got Unavailable; the next one retries
-            logger.debug("[table-gate] background load of %s failed: %s", t.name, e)
-        finally:
-            _loading.discard(t.name)
-    _loading.add(t.name)
-    task = asyncio.get_running_loop().create_task(_go())
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+    """Start loading `t` on its own thread (a synchronous caller on the loop could only be told "not yet")."""
+    t.start_background_load()
 
 
-_tasks: set = set()
-
-
-async def arelay_mode(table: str) -> bool:
-    """True once `table` has a verified `_migrated` marker (wave 1's marker, doc_table.is_marker). Raises
-    Unavailable when the marker cannot be read."""
-    return await doc_table.amarked(table)
-
-
-def relay_mode(table: str) -> bool:
-    """`arelay_mode` for synchronous code. Off the event loop it asks the relay; ON the loop it can only answer
-    from memory (the marker table, held and kept current once loaded), and raises Unavailable until then -- the
-    load is started here so the next call can answer."""
-    try:
-        return doc_table.marked(table)
-    except Unavailable:
-        if _in_loop():
-            markers = DocTable(MARKER_TABLE)
-            if not markers.loaded:
-                _load_soon(markers)
-        raise
-
-
-# ------------------------------------------------------------------ relay-mode reads
 async def aget_row(t: DocTable, k):
-    """One row by key: from memory once the table is loaded, otherwise ONE strict relay read (a restart's load
-    of a big table must not turn a lookup into a failure). None = the relay answered and holds no such row."""
+    """One row by key: from memory once the table is loaded, otherwise ONE strict relay read. None = the relay
+    answered and holds no such row."""
     if t.loaded:
         row = t.peek(k)
         return dict(row) if row is not None else None
@@ -94,9 +39,9 @@ def get_row(t: DocTable, k):
         return dict(row) if row is not None else None
     if _in_loop():
         # ONE ROW NEEDS ONE RELAY READ, not the whole table (2026-10-10: mail sync answered 503 for 10+ minutes
-        # while the whole-table load kept timing out behind wave 1's copy). Read just this document on a helper
-        # thread, bounded; "could not ask" still raises Unavailable. The background load still starts.
-        _load_soon(t)
+        # while the whole-table load kept timing out). Read just this document on a helper thread, bounded;
+        # "could not ask" still raises Unavailable. The background load still starts.
+        t.start_background_load()
         import concurrent.futures
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fut = ex.submit(lambda: asyncio.run(t.aget_remote(k)))
@@ -106,12 +51,12 @@ def get_row(t: DocTable, k):
             raise Unavailable("table %s is still loading" % t.name)
         finally:
             ex.shutdown(wait=False)         # never hold the loop past the bound for a slow read
-    return t.get(k)
+    return _run(t.aget_remote(k))
 
 
 async def arows(t: DocTable) -> list:
     """[(key, row)] for the whole table, loading it (strictly) when this process has not yet. Rows are COPIES."""
-    await t._ensure()               # the strict first load, and the periodic resync after it
+    await t._ensure()
     return [(k, dict(r)) for k, r in t.rows_view()]
 
 

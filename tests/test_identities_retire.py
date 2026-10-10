@@ -59,7 +59,11 @@ def world(monkeypatch):
         return True, ""
     monkeypatch.setattr(client, "_fetch_kind3_strict", fetch)
     monkeypatch.setattr(client, "_publish_to_relay", publish)
-    monkeypatch.setattr(client, "_operator", lambda db: mock.Mock(nostr_nsec=OP_SK.hex()))
+    monkeypatch.setattr(client, "_operator", mock.AsyncMock(return_value=mock.Mock(nostr_nsec=OP_SK.hex())))
+    # the admin accounts (#161: user_table rows on the relay)
+    from app.services import user_table
+    monkeypatch.setattr(user_table, "aadmins",
+                        mock.AsyncMock(return_value=[mock.Mock(nostr_npub=nostr_service.npub_of(ADMIN))]))
     monkeypatch.setattr(client, "_setting", lambda db, k, d=None: d)
     orig_block = relay_blocklist.set_blocked_many
 
@@ -70,14 +74,8 @@ def world(monkeypatch):
     return vals, state, calls
 
 
-class _DB:
-    def query(self, _m): return self
-    def filter(self, *a): return self
-    def all(self): return [mock.Mock(nostr_npub=nostr_service.npub_of(ADMIN))]
-
-
 def _retire(pks):
-    return asyncio.run(admin.relay_identities_retire(admin.RelayIdentitiesRetireReq(pubkeys=pks), db=_DB(), admin=None))
+    return asyncio.run(admin.relay_identities_retire(admin.RelayIdentitiesRetireReq(pubkeys=pks), db=None, admin=None))
 
 
 def test_block_first_then_every_name_then_the_operator_unfollows_exactly_those_keys(world):

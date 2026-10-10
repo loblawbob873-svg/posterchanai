@@ -3,13 +3,12 @@
 `blossom_blobs` and `blossom_blob_owners` left Postgres. These pin what that move must not break, each one a
 way users lose files:
 
-  * "could not ask" is never "no rows": an index that is unreachable, still loading or not yet migrated makes
-    the upload, listing, quota, delete, sweep and repair paths REFUSE (Unavailable → 503) — the sweep and the
-    repair delete nothing;
-  * the migration copies BOTH tables (owners merged into their blob), re-reads the relay and compares row for
-    row before it writes a marker; it is idempotent, removes only its own stale copies, and refuses (no
-    marker) on any mismatch — and before the marker the code serves blob metadata from SQL, read-only;
-  * after the marker, none of these paths touches the SQL models at all;
+  * "could not ask" is never "no rows": an index that is unreachable or still loading makes the upload,
+    listing, quota, delete, sweep and repair paths REFUSE (Unavailable → 503) — the sweep and the repair delete
+    nothing;
+  * the one-time copy's reader merges BOTH old tables (owners into their blob) into exactly the rows the index
+    serves;
+  * none of these paths touches SQL at all (relay-only);
   * a write made while the big table is still loading is not lost from memory (DocTable's load merge).
 """
 import asyncio
@@ -19,9 +18,9 @@ from unittest import mock
 
 import pytest
 
-from app.services import blob_index, blob_index_migrate, blossom_service, doc_table, doc_table_bulk
+from app.services import blob_index, blossom_service, doc_table, doc_table_bulk
 from app.services.relay_reader import Unavailable
-from tests.blob_index_harness import (alive, bind_sql, idx, idx_own, load, put, relay, reset_process_state,
+from tests.blob_index_harness import (alive, idx, idx_own, load, put, relay, reset_process_state,
                                       shared_relay, sql_blob, sql_session)
 _FIXTURES = (idx, idx_own, relay, shared_relay)   # pytest finds fixtures by module name
 
@@ -49,105 +48,32 @@ def sha(i):
     return "%064x" % i
 
 
-# ------------------------------------------------------------------ migration
-def test_migration_copies_both_tables_verifies_marks_and_is_idempotent(relay):  # noqa: F811
-    reset_process_state()
+# ------------------------------------------------------------------ the one-time copy's reader
+def test_the_copy_reader_merges_both_old_tables_into_what_the_index_serves(idx, cfg):  # noqa: F811
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from scripts.nostr_migration import wave1_sources as W
     db = sql_session(
-        blobs=[sql_blob(A, keep=True), sql_blob(B, expires_at=1234567890, private=True), sql_blob(C)],
+        blobs=[sql_blob(A, keep=True, size=77), sql_blob(B, expires_at=1234567890, private=True), sql_blob(C)],
         owners=[dict(sha256=A, pubkey="1" * 64, created_at=5, name="cat.jpg"),
                 dict(sha256=A, pubkey="2" * 64, created_at=6, name=None),
-                dict(sha256=B, pubkey="1" * 64, created_at=7, name="b.bin")])
-    out = asyncio.run(blob_index_migrate.amigrate(db))
-    assert out["verified"] and out["rows"] == 3 and out["owners"] == 3 and out["written"] == 3
-    got = alive()
-    assert got == {A, B, C}
-    rows = asyncio.run(doc_table_bulk.aread_all(blob_index.TABLE))
-    assert rows[A]["keep"] is True and rows[A]["owners"] == {"1" * 64: [5, "cat.jpg"], "2" * 64: [6, None]}
-    assert rows[B]["expires_at"] == 1234567890 and rows[B]["private"] is True
-    assert rows[C]["owners"] == {}
-    marker = asyncio.run(doc_table_bulk.amarker(blob_index.TABLE))
-    assert marker["verified"] and marker["rows"] == 3
-    # idempotent: a second run (a restart) neither rewrites nor re-verifies
+                dict(sha256=B, pubkey="1" * 64, created_at=7, name="b.bin"),
+                dict(sha256="d" * 64, pubkey="1" * 64, created_at=8, name="dangling")])
+    rows = W.blossom_blobs(db)
+    assert set(rows) == {A, B, C}, "a dangling owner row became a blob"
+    assert rows[A]["owners"] == {"1" * 64: [5, "cat.jpg"], "2" * 64: [6, None]}
+    assert rows[A]["keep"] is True and rows[B]["private"] is True and rows[B]["expires_at"] == 1234567890
+    asyncio.run(doc_table_bulk.abulk_put(blob_index.TABLE, rows))
     reset_process_state()
-    again = asyncio.run(blob_index_migrate.amigrate(db))
-    assert again["skipped"]
-    # and SQL was never written to
-    from app.models import BlossomBlob, BlossomBlobOwner
-    assert db.query(BlossomBlob).count() == 3 and db.query(BlossomBlobOwner).count() == 3
+    assert asyncio.run(blossom_service.get_blob_meta(_NoSQL(), A)).size == 77
+    load()
+    assert {b.sha256 for b in blossom_service.list_for_pubkey(_NoSQL(), "1" * 64)} == {A}      # B is private
+    assert {b.sha256 for b in blossom_service.list_for_pubkey(_NoSQL(), "1" * 64, include_private=True)} == {A, B}
+    assert blossom_service.names_for_pubkey(_NoSQL(), "1" * 64) == {A: "cat.jpg", B: "b.bin"}
 
 
-def test_an_interrupted_copy_is_finished_and_its_stale_copies_removed(relay):  # noqa: F811
-    reset_process_state()
-    # an earlier run copied A and a row that SQL no longer holds, then died before the marker
-    asyncio.run(doc_table_bulk.abulk_put(blob_index.TABLE, {
-        A: blob_index.new_row(pubkey=A, size=10, mime=None, created_at=1, expires_at=None, storage="local",
-                              path="/x"),
-        "f" * 64: blob_index.new_row(pubkey=A, size=1, mime=None, created_at=1, expires_at=None,
-                                     storage="local", path="/y")}))
-    db = sql_session(blobs=[sql_blob(A), sql_blob(B)])
-    out = asyncio.run(blob_index_migrate.amigrate(db))
-    assert out["verified"] and out["removed_stale"] == 1 and out["written"] == 2   # A differed (created_at)
-    assert alive() == {A, B}
-
-
-def test_a_copy_that_does_not_verify_writes_no_marker(relay):  # noqa: F811
-    """The relay keeps losing one row: every settle round finds it missing again, so no marker -- and the index
-    stays on SQL (its store of record), never on the incomplete copy."""
-    reset_process_state()
-    db = sql_session(blobs=[sql_blob(A), sql_blob(B)])
-    bind_sql(db)
-    real = doc_table_bulk.abulk_put
-
-    async def drops_b(table, rows, **kw):
-        return await real(table, {k: v for k, v in rows.items() if k != B}, **kw)
-    with mock.patch.object(doc_table_bulk, "abulk_put", drops_b):
-        with pytest.raises(doc_table_bulk.MigrationMismatch):
-            asyncio.run(blob_index_migrate.amigrate(db))
-    assert asyncio.run(doc_table_bulk.amarker(blob_index.TABLE)) is None, "a marker after a failed verify"
-    assert not asyncio.run(blob_index.amigrated())
-    assert asyncio.run(blob_index.aget(B)) is not None, "the row the relay lost is still served, from SQL"
-
-
-def test_a_copy_whose_content_differs_writes_no_marker(relay):  # noqa: F811
-    reset_process_state()
-    db = sql_session(blobs=[sql_blob(A)])
-    real = doc_table_bulk.abulk_put
-
-    async def altered(table, rows, **kw):
-        return await real(table, {k: (dict(v, keep=True) if k == A else v) for k, v in rows.items()}, **kw)
-    with mock.patch.object(doc_table_bulk, "abulk_put", altered):
-        with pytest.raises(doc_table_bulk.MigrationMismatch):
-            asyncio.run(blob_index_migrate.amigrate(db))
-    assert asyncio.run(doc_table_bulk.amarker(blob_index.TABLE)) is None
-
-
-def test_before_the_marker_sql_answers_and_writes_land_in_both(relay, cfg):  # noqa: F811
-    """#161 wave 1: before the index's marker exists SQL is its store of record. Uploads, listings and serving
-    keep working (they used to answer 503 for the whole copy -- ~5.5 min per 100k blobs): reads come from
-    SQL, and a write goes to SQL AND the relay, so the copy that follows loses nothing."""
-    from app.models import BlossomBlob, BlossomBlobOwner
-    reset_process_state()
-    db = sql_session(blobs=[sql_blob(A, size=77)], owners=[dict(sha256=A, pubkey=A, created_at=1, name="a")])
-    bind_sql(db)
-    m = asyncio.run(blossom_service.get_blob_meta(db, A))
-    assert m is not None and m.size == 77, "a blob that is in SQL was not served"
-    assert [b.sha256 for b in blossom_service.list_for_pubkey(db, A)] == [A]
-    data = b"hello"
-    s = blossom_service.compute_sha256(data)
-    with mock.patch.object(blossom_service, "_cache_put", lambda *a: None):
-        asyncio.run(blossom_service.save_blob(db, B, data, "text/plain", filename="h.txt"))
-    db.expire_all()
-    assert db.get(BlossomBlob, s) is not None and \
-        db.query(BlossomBlobOwner).filter_by(sha256=s, pubkey=B).one().name == "h.txt", "the upload skipped SQL"
-    assert s in alive(), "the upload skipped the relay"
-    assert {b.sha256 for b in blossom_service.list_for_pubkey(db, B)} == {s}
-    out = asyncio.run(blob_index_migrate.amigrate(db))
-    assert out["verified"] and out["rows"] == 2
-    reset_process_state()                                   # a fresh process: the relay is authoritative now
-    assert asyncio.run(blossom_service.get_blob_meta(None, s)).size == len(data)
-
-
-# ------------------------------------------------------------------ after the marker: no SQL at all
+# ------------------------------------------------------------------ no SQL at all
 def test_every_converted_path_runs_without_sql(idx, cfg):  # noqa: F811
     db = _NoSQL()
     data = b"some bytes"
@@ -217,7 +143,6 @@ def test_an_unreachable_relay_deletes_nothing_and_answers_nothing(idx_own, cfg):
     put(B, owners=(A,), expires_at=int(time.time()) - 60)
     idx_own.close()                                  # the relay goes away; this process never loaded the table
     reset_process_state()
-    doc_table_bulk._seen.add(blob_index.TABLE)   # even with the marker already seen
     db = _NoSQL()
     deleted = []
     with mock.patch.object(blossom_service, "SessionLocal", lambda: db), \
@@ -253,7 +178,6 @@ def test_a_write_made_while_the_table_loads_is_not_lost(idx, cfg):  # noqa: F811
     for i in range(5):
         put(sha(i), owners=(A,))
     reset_process_state()
-    assert asyncio.run(blob_index.amigrated())
     t = blob_index.table()
     real = doc_table.nostr_store.list_all_docs
 
@@ -335,7 +259,6 @@ def test_the_routes_answer_503_when_the_index_cannot_be_asked(idx_own, cfg):  # 
     put(A, owners=(A,))
     idx_own.close()
     reset_process_state()
-    doc_table_bulk._seen.add(blob_index.TABLE)
     with mock.patch.object(blossom_service, "is_enabled", lambda db: True):
         got = asyncio.run(R._serve_blob(A, _request(), _NoSQL()))
         assert got.status_code == 503, "a blob that may well be there was answered %d" % got.status_code
@@ -344,47 +267,14 @@ def test_the_routes_answer_503_when_the_index_cannot_be_asked(idx_own, cfg):  # 
         assert listing.status_code == 503, "an unreadable index was listed as a drive"
 
 
-def test_a_blob_get_before_the_marker_is_served_from_sql(relay, cfg):  # noqa: F811
-    from app.routers import blossom as R
-    reset_process_state()
-    db = sql_session(blobs=[sql_blob(A, size=5, mime="image/png")])
-    bind_sql(db)
-    with mock.patch.object(blossom_service, "is_enabled", lambda d: True):
-        got = asyncio.run(R._serve_blob(A, _request("HEAD"), db))
-    assert got.status_code == 200 and got.headers["content-length"] == "5"
-
-
-# ------------------------------------------------------------------ the startup path
-def test_startup_migrates_then_loads_in_the_background(relay, cfg):  # noqa: F811
-    reset_process_state()
-    db = sql_session(blobs=[sql_blob(A), sql_blob(B)],
-                     owners=[dict(sha256=A, pubkey=C, created_at=1, name="x.txt")])
-
-    bind_sql(db)
-    blob_index.start_background()                   # waits for the marker: SQL answers meanwhile
-    time.sleep(0.5)
-    assert not blob_index.table().loaded, "loaded an index that was not copied yet"
-    assert [b.sha256 for b in blossom_service.list_for_pubkey(None, C)] == [A]      # from SQL
-    asyncio.run(blob_index_migrate.amigrate(db))
-    end = time.monotonic() + 30
-    while time.monotonic() < end and not blob_index.table().loaded:
-        time.sleep(0.2)
-    assert blob_index.table().loaded, "the index never loaded after the copy"
-    doc_table.set_session_factory(None)             # from here nothing may need SQL
-    assert [b.sha256 for b in blossom_service.list_for_pubkey(None, C)] == [A]
-    assert blob_index.count() == 2
-
-
 # ------------------------------------------------------------------ nothing reads the old tables any more
 def test_no_code_path_queries_the_old_tables():
-    """Only the one-time copy, and blob metadata DURING the copy, may read them; nothing may write them."""
+    """Only the one-time copy's readers may read them; nothing at runtime touches them."""
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parents[1]
-    allowed = {"app/models.py", "app/database.py", "app/services/blob_index_migrate.py",
-               "app/services/stream_vod_store.py",
-               # BlobLegacy: the SQL side DocTable reads and writes until the marker exists (#161 wave 1)
-               "app/services/blob_index.py"}
+    allowed = {"app/models.py", "app/database.py", "scripts/nostr_migration/wave1_sources.py",
+               "scripts/migrate_tables_to_nostr.py"}
     bad = []
     for p in list((root / "app").rglob("*.py")) + list((root / "scripts").rglob("*.py")) \
             + list((root / "botframework").rglob("*.py")):
@@ -401,9 +291,6 @@ def test_no_code_path_queries_the_old_tables():
                 continue
             bad.append("%s:%d: %s" % (rel, line, text))
     assert not bad, "the old tables are still used:\n" + "\n".join(bad)
-    src = (root / "app/services/blob_index.py").read_text()
-    legacy = src[src.index("class BlobLegacy("):src.index("_LEGACY = BlobLegacy()")]
-    assert "commit" not in legacy, "the Legacy commits on its own: DocTable commits, SQL first, then the relay"
 
 
 def test_an_incomplete_read_leaves_the_index_unloaded_and_the_sweep_idle(idx, cfg):  # noqa: F811

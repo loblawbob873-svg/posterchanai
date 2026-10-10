@@ -9,9 +9,9 @@ Everything here runs against the SHIPPED RelayServer over the real PosterChanDB 
   * COULD NOT ASK is never "no devices": the poll skips and retries the same window, the queue answers
     "failed" (never "expired", the only answer that deletes a device), the Direct socket is not told its
     token is unknown, and the own-sent-DM dedup FAILS OPEN;
-  * nothing is read before the migration finished (the gate);
-  * the migration copies, verifies by re-reading, marks, is idempotent and REFUSES on a mismatch;
-  * none of these paths touches the SQL models any more.
+  * the one-time copy's readers give the rows these paths serve (ids the phone ACKs kept, expired cards dropped,
+    the follow ledger sharded);
+  * none of these paths touches SQL (relay-only).
 """
 import asyncio
 import json
@@ -210,48 +210,11 @@ def test_an_expired_endpoint_is_pruned_by_the_poll(push_relay, monkeypatch):
     assert dead["id"] not in {r["id"] for r in H.fresh_subs()}
 
 
-# ------------------------------------------------------------------ the gate
-def test_before_the_migration_sql_answers_and_a_new_device_lands_in_both(tmp_path, monkeypatch):
-    """#161 wave 1: before the push tables' markers exist SQL is still their store of record. A device that is
-    only in SQL must be READ (it used to be "unavailable" -- every push refused until the copy ran), and a
-    device registered meanwhile goes to SQL AND the relay, so the copy that follows loses nothing."""
-    from app.models import PushSubscription
-    from app.services import table_migration
-    r = H.start(tmp_path, monkeypatch, migrate=False)
-    try:
-        S = H.empty_sql()
-        db = S()
-        db.add(PushSubscription(id=7, pubkey=ME, endpoint="https://push.example/old", transport="webpush",
-                                p256dh="p", auth="a"))
-        db.commit()
-        db.close()
-        table_migration.bind(S)
-        assert [x["id"] for x in asyncio.run(push_store.all_subs())] == [7], "SQL's device was not read"
-        from app.services.nostr import event as nostr_event
-        monkeypatch.setattr(nostr_event, "verify_self_auth", lambda *a: True)
-        res = asyncio.run(push_router.subscribe(_Req({"pubkey": ME, "auth": "x", "subscription": {
-            "endpoint": "https://push.example/p", "keys": {"p256dh": "p", "auth": "a"}}})))
-        assert res == {"ok": True}, "a device could not register while the table was being moved"
-        db = S()
-        assert {x.endpoint for x in db.query(PushSubscription)} == {"https://push.example/old",
-                                                                   "https://push.example/p"}
-        new_id = db.query(PushSubscription).filter_by(endpoint="https://push.example/p").one().id
-        db.close()
-        assert new_id < 1 << 31, "a new device took an id SQL cannot hold"
-        push_store.migrate_all(S)
-        H.reset()                                    # a fresh process, the relay now authoritative
-        assert {x["endpoint"] for x in push_store.all_subs_sync()} == {"https://push.example/old",
-                                                                       "https://push.example/p"}
-    finally:
-        H.reset()
-        r.close()
-
-
-# ------------------------------------------------------------------ the migration
+# ------------------------------------------------------------------ the one-time copy's readers
 @pytest.fixture
 def unmigrated(tmp_path, monkeypatch):
-    """A real relay on which no migration has run yet (the state every node is in at the cutover)."""
-    r = H.start(tmp_path, monkeypatch, migrate=False)
+    """A real, empty relay (the state a node is in before its old rows are copied)."""
+    r = H.start(tmp_path, monkeypatch)
     try:
         yield r
     finally:
@@ -291,13 +254,29 @@ def _sql_with_rows():
     return S
 
 
-def test_the_migration_copies_verifies_marks_and_the_converted_paths_see_it(unmigrated, monkeypatch):
+def _copy(S):
+    """What scripts/migrate_tables_to_nostr.py writes for the push tables: the SQL readers' rows, as documents."""
+    import pathlib
+    import sys
+    from app.services import doc_table_bulk
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+    from scripts.nostr_migration import wave1_sources as W
+    db = S()
+    got = {n: W.SOURCES[n](db) for n in (push_store.SUBS, push_store.DIRECT, push_store.FOLLOWS)}
+    db.close()
+    for name, rows in got.items():
+        asyncio.run(doc_table_bulk.abulk_put(name, rows))
+    return got
+
+
+def test_the_copied_rows_are_what_the_converted_paths_serve(unmigrated, monkeypatch):
     S = _sql_with_rows()
-    res = push_store.migrate_all(S)
-    assert res["push_subscriptions"]["rows"] == 2
-    assert res["direct_push_messages"]["rows"] == 1, "an already-expired card was copied"
-    # 3 followers in 2 shards ("00…"/"0f…" share none: "00", "0f", "cc") + the seeded mark
-    assert res["push_follow_seen"]["rows"] == 4
+    got = _copy(S)
+    assert len(got[push_store.SUBS]) == 2
+    assert len(got[push_store.DIRECT]) == 1, "an already-expired card was copied"
+    assert push_store.SENT not in got, "the 10-minute sent-wrap ledger is not copied"
+    # 3 followers in 3 shards ("00", "0f", "cc") + the seeded mark
+    assert len(got[push_store.FOLLOWS]) == 4
     H.reset()
     _forbid_sql(monkeypatch)
     rows = {r["id"]: r for r in push_store.all_subs_sync()}
@@ -310,58 +289,6 @@ def test_the_migration_copies_verifies_marks_and_the_converted_paths_see_it(unmi
     for f in ("0" * 64, "0f" + "1" * 62, "c" * 64):
         assert asyncio.run(push_store.follow_known(ME, f)), f
     assert not asyncio.run(push_store.follow_known(ME, "e" * 64))
-    assert doc_table.DocTable(push_store.MIGRATED).get(push_store.SENT)["skipped"]
-
-
-def test_the_migration_is_idempotent_and_never_overwrites_later_writes(unmigrated):
-    S = _sql_with_rows()
-    push_store.migrate_all(S)
-    H.reset()
-    row = push_store.get_sub_sync(7)
-    row["prefs"] = '{"email": false}'                        # the user changed it after the cutover
-    asyncio.run(push_store.put_sub(row))
-    again = push_store.migrate_all(S)
-    assert all(r.get("skipped") for r in again.values()), again
-    H.reset()
-    assert push_store.get_sub_sync(7)["prefs"] == '{"email": false}'
-
-
-def test_the_migration_refuses_on_a_mismatch_and_marks_nothing(unmigrated, monkeypatch):
-    from app.services import doc_table_bulk, table_migration
-    S = _sql_with_rows()
-    real_put = doc_table_bulk.abulk_put
-
-    async def lossy(table, rows, **kw):
-        if table == push_store.SUBS and "9" in rows:
-            rows = dict(rows, **{"9": dict(rows["9"], prefs=None)})     # the relay "stored" something else
-        return await real_put(table, rows, **kw)
-    monkeypatch.setattr(doc_table_bulk, "abulk_put", lossy)
-    with pytest.raises(push_store.MigrationMismatch):
-        push_store.migrate_push_subscriptions(S)
-    H.reset()
-    assert doc_table.DocTable(push_store.MIGRATED).get(push_store.SUBS) is None
-    # ...and the table stays on SQL, its store of record: the device's prefs are SQL's, not the relay's copy
-    table_migration.bind(S)
-    rows = {r["id"]: r for r in push_store.all_subs_sync()}
-    assert rows[9]["prefs"] == '{"likes": false}'
-
-
-def test_the_script_runs_one_table(unmigrated, monkeypatch):
-    import importlib.util
-    from pathlib import Path
-    S = _sql_with_rows()
-    for t in ("direct_push_messages", "push_follow_seen", "push_sent_wraps"):
-        push_store.MIGRATIONS[t](S)
-    H.reset()
-    monkeypatch.setattr("app.database.SessionLocal", S)
-    spec = importlib.util.spec_from_file_location(
-        "migrate_tables_to_nostr", Path(__file__).resolve().parents[1] / "scripts/migrate_tables_to_nostr.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert mod.main(["--table", "push_subscriptions"]) == 0
-    H.reset()
-    assert {r["id"] for r in push_store.all_subs_sync()} == {7, 9}
-    assert mod.main(["--table", "push_subscriptions"]) == 0      # idempotent
 
 
 # ------------------------------------------------------------------ no SQL on the converted paths

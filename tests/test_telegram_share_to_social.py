@@ -68,15 +68,11 @@ def test_the_button_posts_that_link_through_the_post_command(monkeypatch):
             return {"type": "text", "content": "📣 **Post**\n✅ Nostr"}
 
     class Q:
-        def query(self, *_a):
-            return self
+        """The `db` (no SQL behind it: the linked account comes from user_table, below)."""
 
-        def filter(self, *_a):
-            return self
-
-        def first(self):
-            return "the-user"
-
+    async def linked(db, chat_id, **_k):      # #161: accounts are user_table rows on the relay
+        return "the-user"
+    monkeypatch.setattr(callbacks_misc.user_table, "aby_telegram_chat", linked)
     monkeypatch.setattr(callbacks_misc, "telegram_service", TS())
     monkeypatch.setattr(callbacks_misc, "CommandService", CS)
     _common._link_action_cache["77"] = URL

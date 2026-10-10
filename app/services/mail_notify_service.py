@@ -16,7 +16,6 @@ subject, which is what the message doc already holds, and nothing else leaves th
 import asyncio
 import logging
 
-from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +167,8 @@ async def poll_once(db) -> int:
     if not enabled():
         return 0
     total = 0
-    for user in db.query(User).all():
+    from app.services import user_table
+    for user in await user_table.aall(db):
         try:
             total += await poll_user(db, user)
         except Exception as e:

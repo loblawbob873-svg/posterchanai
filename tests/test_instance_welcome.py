@@ -6,12 +6,8 @@ import json
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
-
-from app.database import Base, get_db
-from app.models import User
+from app.database import get_db
+from tests.user_fixtures import seed_user
 from app.routers import instance_welcome as routes
 from app.services import instance_welcome as service, settings_store, system_dm, instance_membership
 from app.services.nostr.event import build_event
@@ -24,11 +20,13 @@ def proof(action='apply', key='21', **kw):
 
 @pytest.fixture
 def setup(monkeypatch):
-    engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
-    Base.metadata.create_all(engine)
-    db = Session(engine)
-    admin = User(username='admin', password_hash='unused', is_admin=True, nostr_npub=proof(key='22')['pubkey'])
-    db.add(admin); db.commit()
+    # Accounts and applications are relay DocTables (#161), in memory here.
+    from tests.doc_table_mem import mem_tables
+    from tests.user_fixtures import FakeDB
+    mem = mem_tables(monkeypatch)
+    seed_user(mem, 1, username='admin', is_admin=True, nostr_npub=proof(key='22')['pubkey'])
+    db = FakeDB()
+    db.mem = mem
     values = {'site_name': 'Example', 'nostr_relay_nip05_domain': 'example.test'}
     monkeypatch.setattr(settings_store, 'get', lambda key, default='': values.get(key, default))
     checker=instance_membership.MembershipChecker(configuration=lambda:(values.get('nostr_relay_nip05_names',''),'example.test',''))
@@ -40,7 +38,6 @@ def setup(monkeypatch):
     app = FastAPI(); app.include_router(routes.router)
     app.dependency_overrides[get_db] = lambda: db
     yield app, db, sent, values
-    db.close(); engine.dispose()
 
 
 def call(app, path, body):
@@ -78,7 +75,7 @@ def test_application_is_durable_idempotent_and_not_an_automatic_grant(setup):
     first = call(app, 'apply', proof()).json()
     second = call(app, 'apply', proof()).json()
     assert first['created'] and not second['created']
-    assert db.query(service.InstanceApplication).count() == 1
+    assert len(db.mem.table(service.TABLE)) == 1
     assert len(sent) == 1 and 'Permissions' in sent[0][1]
     from app.services.nostr import nostr_service
     mention = sent[0][1].split('\n\n')[1]
@@ -93,14 +90,14 @@ def test_application_is_durable_idempotent_and_not_an_automatic_grant(setup):
 def test_invalid_wrong_action_stale_and_other_identity_proofs_cannot_apply(setup, body):
     app, db, sent, _ = setup
     assert call(app, 'apply', body).status_code == 403
-    assert db.query(service.InstanceApplication).count() == 0 and not sent
+    assert len(db.mem.table(service.TABLE)) == 0 and not sent
 
 
 def test_existing_member_does_not_create_application(setup):
     app, db, sent, values = setup
     values['nostr_relay_nip05_names'] = 'alice ' + proof()['pubkey']
     assert call(app, 'apply', proof()).json()['already']
-    assert db.query(service.InstanceApplication).count() == 0 and not sent
+    assert len(db.mem.table(service.TABLE)) == 0 and not sent
 
 
 def test_approval_dm_contains_address_and_setup_steps_and_is_not_duplicated(setup):
@@ -123,27 +120,26 @@ def test_failed_approval_dm_can_be_retried_without_losing_approval(setup, monkey
     original = system_dm.send
     monkeypatch.setattr(system_dm, 'send', fail)
     assert not asyncio.run(service.notify_approval(db, pk, 'alice@example.test'))
-    row = service.application(db, pk)
+    row = asyncio.run(service.application(db, pk))
     assert row.approved_address == 'alice@example.test' and not row.notified_address
     monkeypatch.setattr(system_dm, 'send', original)
-    row.approval_retry_at = 0; db.commit()
+    row.approval_retry_at = 0; asyncio.run(service.save(db, row))
     assert asyncio.run(service.notify_approval(db, pk, 'alice@example.test'))
-    assert row.notified_address == 'alice@example.test'
+    assert asyncio.run(service.application(db, pk)).notified_address == 'alice@example.test'
 
 
 def test_partial_admin_delivery_retries_only_the_missing_recipient(setup, monkeypatch):
     app, db, sent, _ = setup
-    second = User(username='second', password_hash='unused', is_admin=True,
-                  nostr_npub=proof(key='24')['pubkey'])
-    db.add(second); db.commit()
+    seed_user(db.mem, 2, username='second', is_admin=True, nostr_npub=proof(key='24')['pubkey'])
+    second = db.user(2)
     original = system_dm.send
     async def partial(to, text):
         if to == second.nostr_npub: return False
         return await original(to, text)
     monkeypatch.setattr(system_dm, 'send', partial)
     assert not call(app, 'apply', proof()).json()['admin_notified']
-    row = service.application(db, proof()['pubkey'])
-    row.admin_retry_at = 0; db.commit()
+    row = asyncio.run(service.application(db, proof()['pubkey']))
+    row.admin_retry_at = 0; asyncio.run(service.save(db, row))
     monkeypatch.setattr(system_dm, 'send', original)
     assert call(app, 'apply', proof()).json()['admin_notified']
     assert len(sent) == 2 and len({to for to, text in sent}) == 2
@@ -156,18 +152,19 @@ def test_background_retry_delivers_without_user_reopening_app(setup, monkeypatch
     monkeypatch.setattr(system_dm, 'send', fail)
     call(app, 'apply', proof())
     pk = proof()['pubkey']
-    row = service.application(db, pk)
-    row.admin_retry_at = 0; db.commit()
+    row = asyncio.run(service.application(db, pk))
+    row.admin_retry_at = 0; asyncio.run(service.save(db, row))
     monkeypatch.setattr(system_dm, 'send', original)
     asyncio.run(service.retry_notifications(db))
-    assert row.admin_notified and len(sent) == 1
+    assert asyncio.run(service.application(db, pk)).admin_notified and len(sent) == 1
     monkeypatch.setattr(system_dm, 'send', fail)
     asyncio.run(service.notify_approval(db, pk, 'alice@example.test'))
-    row.approval_retry_at = 0; db.commit()
+    row = asyncio.run(service.application(db, pk))
+    row.approval_retry_at = 0; asyncio.run(service.save(db, row))
     monkeypatch.setattr(system_dm, 'send', original)
     asyncio.run(service.retry_notifications(db))
     asyncio.run(service.retry_notifications(db))
-    assert row.notified_address == 'alice@example.test' and len(sent) == 2
+    assert asyncio.run(service.application(db, pk)).notified_address == 'alice@example.test' and len(sent) == 2
 
 
 def test_real_admin_grant_requires_admin_signature_and_sends_approval(setup, monkeypatch):
@@ -179,7 +176,7 @@ def test_real_admin_grant_requires_admin_signature_and_sends_approval(setup, mon
     monkeypatch.setattr(settings_store, 'put', lambda key, value: values.__setitem__(key, value))
     monkeypatch.setattr(settings_store, 'hydrate_from_db', lambda db: None)
     monkeypatch.setattr(thread, 'trigger_nip05_reload', lambda: None)
-    admin = db.query(User).filter(User.is_admin == True).first()
+    admin = db.user(1)
     admin.nostr_npub = nostr_service.npub_of(proof(key='22')['pubkey']); db.commit()
     call(app, 'apply', proof())
     pk = proof()['pubkey']

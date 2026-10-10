@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user_optional
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import texts_ai_service as svc
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class TextsAiReplyReq(BaseModel):
     auth: Optional[str] = None       # native: base64 kind-27235, content == AUTH_PURPOSE
 
 
-def _who(req: TextsAiReplyReq, session_user, db):
+async def _who(req: TextsAiReplyReq, session_user, db):
     """(user or None, pubkey hex or "", authenticated?)"""
     if session_user is not None:
         return session_user, "", True
@@ -49,7 +49,8 @@ def _who(req: TextsAiReplyReq, session_user, db):
         from app.services.nostr import nostr_service, event as nostr_event
         pk = nostr_service.to_pubkey_hex(req.pubkey) or ""
         if pk and nostr_event.verify_self_auth(req.auth, pk, AUTH_PURPOSE):
-            user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first() if db else None
+            from app.services import user_table
+            user = await user_table.aby_npub(db, nostr_service.npub_of(pk))
             return user, pk, True
     return None, "", False
 
@@ -58,7 +59,7 @@ def _who(req: TextsAiReplyReq, session_user, db):
 async def texts_ai_reply(req: TextsAiReplyReq, db: Session = Depends(get_db),
                          session_user: Optional[User] = Depends(get_current_user_optional)):
     """✨ in a Texts conversation: a suggested reply to the last message, for the composer."""
-    user, pk, ok = _who(req, session_user, db)
+    user, pk, ok = await _who(req, session_user, db)
     if not ok:
         return JSONResponse({"ok": False, "error": "Sign in to PosterChan to use AI replies."}, status_code=401)
     may = await svc.allowed(user, pk)

@@ -10,7 +10,7 @@ from app.services.inference_factory import get_inference_service
 from app.services.load_balancer import LoadBalancer, NoHealthyServersError, parse_server_urls
 
 if TYPE_CHECKING:
-    from app.models import User
+    from app.services.user_table import UserRow as User
 
 logger = logging.getLogger(__name__)
 

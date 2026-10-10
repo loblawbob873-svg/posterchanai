@@ -5,8 +5,7 @@ import re
 import time
 import uuid
 
-from app.models import ExodusWalletRecord
-from app.services import exodus_vault as legacy, exodus_wallet_service as wallet, nostr_store
+from app.services import exodus_tables, exodus_vault as legacy, exodus_wallet_service as wallet, nostr_store
 
 # Existing private, non-expiring application document kind; do not use a public kind.
 KIND = 30078
@@ -24,19 +23,13 @@ def _key(db, user):
     return nostr_store.user_storage_seckey(db, user)
 
 
-def _row(db, user, wallet_id):
-    return db.query(ExodusWalletRecord).filter(
-        ExodusWalletRecord.user_id == user.id,
-        ExodusWalletRecord.wallet_id == wallet_id).first()
+async def _row(db, user, wallet_id):
+    """The wallet's encrypted backup record (#161: an operator-encrypted DocTable row, see exodus_tables)."""
+    return await exodus_tables.arecord(db, user.id, wallet_id)
 
 
-def _mirror(db, user, wallet_id, doc):
-    row = _row(db, user, wallet_id)
-    if row is None:
-        row = ExodusWalletRecord(user_id=user.id, wallet_id=wallet_id)
-        db.add(row)
-    row.document_enc = wallet.seal(json.dumps(doc), _key(db, user))
-    db.commit()
+async def _mirror(db, user, wallet_id, doc):
+    await exodus_tables.aput_record(db, user.id, wallet_id, wallet.seal(json.dumps(doc), _key(db, user)))
 
 
 async def _publish(db, user, wallet_id, doc):
@@ -58,13 +51,13 @@ async def load(db, user, wallet_id='default'):
                                        seckey=_key(db, user), kind=KIND, strict=True)
         if doc is not None:
             doc = _validate(doc)
-            backup = _row(db, user, wallet_id)
+            backup = await _row(db, user, wallet_id)
             if getattr(backup, 'document_enc', None):
                 saved = _validate(json.loads(wallet.unseal(bytes(backup.document_enc), _key(db, user))))
                 if any(saved.get(field) != doc.get(field) for field in ('seed', 'derivation', 'moneroRecovery')):
                     raise legacy.VaultUnavailable('the wallet seed does not match its encrypted backup')
         else:
-            row = _row(db, user, wallet_id)
+            row = await _row(db, user, wallet_id)
             if getattr(row, 'document_enc', None):
                 doc = _validate(json.loads(wallet.unseal(bytes(row.document_enc), _key(db, user))))
                 await _publish(db, user, wallet_id, doc)
@@ -120,8 +113,7 @@ async def list_wallets(db, user):
             if cursor is not None and next_cursor >= cursor:
                 raise legacy.VaultUnavailable('the wallet list could not be completely read')
             cursor = next_cursor
-        ids.update(row.wallet_id for row in db.query(ExodusWalletRecord).filter(
-            ExodusWalletRecord.user_id == user.id).all())
+        ids.update(await exodus_tables.arecord_ids(db, user.id))
         ids.add('default')
         result = []
         for wallet_id in sorted(ids, key=lambda item: (item != 'default', item)):
@@ -155,14 +147,11 @@ async def create(db, user, phrase, label, *, default=False, imported=False, mone
     if monero_recovery:
         doc['moneroRecovery'] = wallet.seal(monero_recovery, _key(db, user)).hex()
     # Keep a discoverable encrypted backup even if publication fails after key generation.
-    # INSERT, never upsert: the unique constraint arbitrates concurrent default creation.
-    from sqlalchemy.exc import IntegrityError
-    db.add(ExodusWalletRecord(user_id=user.id, wallet_id=wallet_id,
-                             document_enc=wallet.seal(json.dumps(doc), _key(db, user))))
+    # INSERT, never upsert: an existence check under the row lock arbitrates concurrent default creation
+    # (the unique constraint did, while this was a SQL row).
     try:
-        db.commit()
-    except IntegrityError as error:
-        db.rollback()
+        await exodus_tables.ainsert_record(db, user.id, wallet_id, wallet.seal(json.dumps(doc), _key(db, user)))
+    except exodus_tables.Exists as error:
         raise wallet.WalletError('this wallet already exists') from error
     await _publish(db, user, wallet_id, doc)
     return summary(wallet_id, doc)
@@ -190,7 +179,7 @@ async def update(db, user, wallet_id='default', *, label=None, backed_up_at=None
                 raise wallet.WalletError('this wallet already has 16 portfolios')
             doc['portfolios'] = entries + [{'id': number, 'name': new_portfolio}]
         await _publish(db, user, wallet_id, doc)
-        _mirror(db, user, wallet_id, doc)
+        await _mirror(db, user, wallet_id, doc)
         if wallet_id == 'default' and (label is not None or backed_up_at is not None) and await legacy.load(db, user):
             fields = {}
             if label is not None:

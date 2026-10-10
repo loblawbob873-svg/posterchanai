@@ -19,45 +19,6 @@ import unittest
 from app.services import users_store as US
 
 
-class FakeQuery:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def filter(self, *a, **k):
-        return self
-
-    def order_by(self, *a, **k):
-        return self
-
-    def all(self):
-        return list(self._rows)
-
-    def count(self):
-        return len(self._rows)
-
-
-class FakeDb:
-    """Enough session for the sweep: users by model, and each user's kv rows."""
-    def __init__(self, users, kv_rows):
-        self.users, self.kv_rows = users, kv_rows
-        self._last_user = None
-
-    def query(self, model):
-        from app.models import User, UserSetting
-        if model is User:
-            return FakeQuery(self.users)
-        if model is UserSetting:
-            # The sweep queries kv per user inside the loop; every user here has the same rows,
-            # which is all these tests need.
-            return FakeQuery(self.kv_rows)
-        return FakeQuery([])
-
-
-class Row:
-    def __init__(self, key, value):
-        self.key, self.value = key, value
-
-
 def _user(npub, **extra):
     """A stand-in with the columns _record reads, including a DATETIME — the field that makes a
     naive comparison against a stored (JSON) doc fail."""
@@ -82,23 +43,26 @@ class SeedFromRelay(unittest.TestCase):
     def setUp(self):
         US._last_synced_hash.clear()
         self.npub = "npub1" + "a" * 58
-        self.kv_rows = [Row("timezone", "America/Denver"), Row("storage_nsec", "SECRET")]
+        self.kv_all = {"timezone": "America/Denver", "storage_nsec": "SECRET"}
         self.kv = {"timezone": "America/Denver"}          # storage_nsec is exempt
         self.user = _user(self.npub)
-        self.db = FakeDb([self.user], self.kv_rows)
+        self.db = None
         self._patch()
-        # The kv is read through user_settings_table (#161). These tests are about the SQL-era sweep, so pin
-        # the table to "not yet migrated" -- and never let it go and ask a real relay which one it is.
-        from app.services import table_gate
+        # The accounts and their kv are relay DocTables now (user_table / user_settings_table, #161): the sweep
+        # reads them through those, never a real relay here.
+        from app.services import user_settings_table, user_table
 
-        async def _sql_authoritative(table):
-            return False
-        self._real_mode = table_gate.arelay_mode
-        table_gate.arelay_mode = _sql_authoritative
+        async def aall(db):
+            return [self.user]
+
+        async def afor_user(db, user_id):
+            return dict(self.kv_all)
+        self._real_all, self._real_kv = user_table.aall, user_settings_table.afor_user
+        user_table.aall, user_settings_table.afor_user = aall, afor_user
 
     def tearDown(self):
-        from app.services import table_gate
-        table_gate.arelay_mode = self._real_mode
+        from app.services import user_settings_table, user_table
+        user_table.aall, user_settings_table.afor_user = self._real_all, self._real_kv
         US._ss._operator_seckey = self._real_key
         US.store.get_docs = self._real_get
         US._last_synced_hash.clear()

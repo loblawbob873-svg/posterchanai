@@ -19,7 +19,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.database import SessionLocal
-from app.models import User
+from app.services.user_table import UserRow as User
+from app.services import user_table
 from app.services import node_service, settings_store
 from app.services.chat_service import ChatService
 
@@ -833,7 +834,7 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
     posted back to whatever channel invoked it (so it'd otherwise arrive twice on Telegram)."""
     db = SessionLocal()
     try:
-        admin = db.query(User).filter(User.id == 1).first()
+        admin = await user_table.aget(db, 1)
         if not admin:
             logger.warning("Admin user not found")
             return None
@@ -854,7 +855,7 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
         except Exception:
             pass
         db = SessionLocal()
-        admin = db.query(User).filter(User.id == 1).first()
+        admin = await user_table.aget(db, 1)
         if not admin:
             logger.warning("Admin user not found after report build")
             return message_text if return_text else None

@@ -54,14 +54,14 @@ class Auth(BaseAuth):
         if not login or not password:
             return ""
         from app.database import SessionLocal
-        from app.models import User
-        from app.services import user_settings_table
+        from app.services import user_settings_table, user_table
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.username == login).first()
+            # Unavailable lands in the except below and refuses this one request (Radicale has no 503).
+            user = user_table.by_username(db, login)
             if not user:
                 # Also accept the email, which is what people type into a phone without thinking.
-                user = db.query(User).filter(User.email == login).first()
+                user = user_table.by_email(db, login)
             if not user:
                 return ""
             # Unavailable lands in the except below: a password that could not be read refuses the login

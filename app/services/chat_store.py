@@ -89,50 +89,8 @@ async def delete_conversation(db, user, conv_id: int) -> int:
 
 
 # ---- the conversation LIST is conversation_table (a relay DocTable, #161). The per-user `pcai:conv:<id>`
-# documents written here before were its earlier mirror: nothing writes them any more, delete_conversation
-# above still removes one when it exists, and `hydrate_conversations` reads them only until the
-# conversations table's migration marker exists (it seeds SQL, and SQL is what that migration copies). ----
-async def hydrate_conversations(db) -> int:
-    """relay → conversations cache. Recreate missing Conversation rows for every user from their
-    NS_CONV docs (so a fresh node restores the chat list). Additive only — never edits existing rows.
-    Returns the number of conversations recreated. A no-op once the conversations table is relay-
-    authoritative: SQL is not read after that, and filling it would only bring deleted chats back into
-    the copy an older build reads."""
-    from datetime import datetime
-    from app.models import Conversation, User
-    from app.services import conversation_table, table_gate
-    if await table_gate.arelay_mode(conversation_table.TABLE):
-        return 0
-    made = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
-        try:
-            sk = user_storage_seckey(db, user)
-            docs = await store.list_docs(_port(db), store.NS_CONV, seckey=sk)
-        except Exception:
-            continue
-        for d_tag, rec in (docs or {}).items():
-            if not isinstance(rec, dict):
-                continue
-            try:
-                conv_id = int(d_tag[len(store.NS_CONV):])
-            except (TypeError, ValueError):
-                continue
-            if db.query(Conversation).filter(Conversation.id == conv_id).first():
-                continue
-            def _dt(v):
-                try:
-                    return datetime.fromisoformat(v) if v else None
-                except (TypeError, ValueError):
-                    return None
-            db.add(Conversation(id=conv_id, user_id=user.id, title=rec.get("title") or "New Chat",
-                                created_at=_dt(rec.get("created_at")), updated_at=_dt(rec.get("updated_at"))))
-            made += 1
-    if made:
-        db.commit()
-    logger.info("[chat-store] hydrated %d conversation(s) from relay", made)
-    return made
-
-
+# documents written here before were its earlier mirror: nothing writes them any more, and delete_conversation
+# above still removes one when it exists. ----
 # The after_commit hook that mirrored every committed SQL `Message` row to the relay is gone with the
 # rows themselves: since c3ed195a2 nothing inserts one (chat_history.append writes the encrypted
 # event directly and awaits it), and the conversations a row would hang off are relay documents now.

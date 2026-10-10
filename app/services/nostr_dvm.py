@@ -624,8 +624,8 @@ async def _exec_agent(db, params: dict, ctx: Optional[dict] = None) -> dict:
     _node = "sandbox" if _sbx_uid else "local"
     _target = f"sandbox:{_sbx_uid}" if _sbx_uid else "local"
     if mode == "agent":
-        from app.models import User
-        u = db.query(User).filter(User.id == 1).first()   # admin owns worker-run jobs
+        from app.services import user_table
+        u = await user_table.aget(db, 1)   # admin owns worker-run jobs (a plain row: nothing to detach)
         # The agent loop runs for MINUTES (LLM steps) and touches NO DB — but the query above opens a
         # transaction that would hold this pooled connection open across the whole run. Postgres closes
         # the idle-in-transaction connection, so the trailing db.close() then throws OperationalError
@@ -633,8 +633,6 @@ async def _exec_agent(db, params: dict, ctx: Optional[dict] = None) -> dict:
         # though every command succeeded. The slow 30B reliably trips this; the fast 9B finished first.
         # Detach the user (keeps u.id; run_agent only reads that) and END the transaction now so no
         # connection is held during the run — the pool re-checks-out (pool_pre_ping) if anything needs it.
-        if u is not None:
-            db.expunge(u)
         db.rollback()
         # report=True → the model's final summary only (no ## header) — used by the health report.
         _report = bool(params.get("report"))

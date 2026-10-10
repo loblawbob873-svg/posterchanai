@@ -151,17 +151,6 @@ def test_the_retired_set_is_explicit_not_a_catch_all():
     assert "--typoflag" in cmd, "an unknown flag must still reach the CLI and fail loudly"
 
 
-def test_the_migration_strips_the_dead_mode_without_emptying_the_column():
-    """The other half of the fix: `_cmd_for` un-breaks a RUNNING node, the migration takes the dead
-    flag out of the stored value so the Bots UI stops offering a feature that is gone. Asserted on
-    the SQL, since running it needs Postgres."""
-    src = _read("app/database.py")
-    assert "array_remove" in src and "--nitter" in src
-    assert "NULLIF" in src, ("the UPDATE must not leave an empty-string modes column — `_cmd_for` "
-                             "reads empty as 'default to this bot's platform', which is a different "
-                             "bot from one with no modes at all")
-
-
 # ---------------------------------------------------------------- deliberately kept
 
 

@@ -2,6 +2,7 @@
 from .messages import _handle_message
 from .callbacks import _handle_callback
 from app.services import settings_store
+from app.services.relay_reader import Unavailable
 from ._common import BackgroundTasks, Session, SessionLocal, User, _MAX_SEEN_IDS, _configure_telegram, logger, router, telegram_service, time
 
 
@@ -119,20 +120,24 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     return {"ok": True}
 
 
-def _from_blocked_account(update: dict, db: Session) -> bool:
+async def _from_blocked_account(update: dict, db: Session) -> bool:
     """A linked account whose Nostr key is blocked on the relay gets nothing from the bot either. Every
     command, chat and button lookup is by telegram_chat_id, deep inside the handlers, so the one place
     to ask is here, before any of them runs."""
     try:
-        from app.models import User
-        from app.services import relay_blocklist
+        from app.services import relay_blocklist, user_table
         msg = update.get("message") or update.get("edited_message") or {}
         cq = update.get("callback_query") or {}
         chat = (msg.get("chat") or {}).get("id") or ((cq.get("message") or {}).get("chat") or {}).get("id")
         if chat is None:
             return False
-        user = db.query(User).filter(User.telegram_chat_id == str(chat)).first()
+        user = await user_table.aby_telegram_chat(db, str(chat), enabled_only=False)
         return relay_blocklist.is_user_blocked(user)
+    except Unavailable:
+        # The accounts could not be read: whether this sender is blocked is unknown, and "unknown" must not let
+        # a blocked account through (#161). The update is not processed; nothing else can be asked either.
+        logger.warning("[telegram] update dropped: the account table could not be read")
+        return True
     except Exception:
         return False
 
@@ -142,7 +147,7 @@ async def _process_telegram_update(update: dict):
     from app.database import SessionLocal
     db = SessionLocal()
     try:
-        if _from_blocked_account(update, db):
+        if await _from_blocked_account(update, db):
             return
         await _handle_telegram_update(update, db)
     except Exception as e:

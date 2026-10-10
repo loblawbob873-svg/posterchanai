@@ -118,12 +118,13 @@ class VmHostError(Exception):
 def db_admin_pubkeys() -> set:
     """Pubkeys of admin accounts with a linked npub. Short-lived session, released immediately."""
     from app.database import SessionLocal
-    from app.models import User
+    from app.services import user_table
     from app.services.nostr import nostr_service
     out = set()
     db = SessionLocal()
     try:
-        for u in db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all():  # noqa: E712
+        # Unavailable propagates: an unreadable account table is never "no admins" (that would refuse them)
+        for u in user_table.filter_users(db, lambda a: bool(a.is_admin and a.nostr_npub)):
             try:
                 pk = nostr_service.to_pubkey_hex(u.nostr_npub)
                 if pk:

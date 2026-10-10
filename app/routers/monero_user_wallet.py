@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.routers import auth
 from app.services.monero_user_wallets import user_wallets, zap_fee_percent
 from app.services.monero_wallet_service import WalletError, explorer_tx_base, xmr_to_atomic

@@ -372,13 +372,7 @@ def _operator_seckey(db):
     the keyfile on first use (so it survives the app DB being eliminated). None if not configured."""
     from app.services import keystore
     from app.services.nostr import nostr_service
-    nsec = keystore.get_operator_nsec()
-    if not nsec and db is not None:   # db may be None (e.g. the background relay-writer thread)
-        from app.models import User
-        op = db.query(User).filter(User.is_admin == True, User.nostr_nsec.isnot(None)).first()  # noqa: E712
-        if op and op.nostr_nsec:
-            nsec = op.nostr_nsec
-            keystore.set_operator_nsec(nsec)   # migrate into the keyfile
+    nsec = keystore.get_operator_nsec()       # the keyfile is the only source (#161: no SQL admin row to fall back on)
     if not nsec:
         # No operator key anywhere → mint one and persist it to the keyfile, so a fresh node is a
         # self-sufficient relay datastore (can sign its own settings/users/bots docs). This is what
@@ -414,11 +408,12 @@ def ensure_admin(db) -> str | None:
     if os.environ.get("POSTERCHANAI_AUTO_ADMIN", "1").strip().lower() not in ("1", "true", "yes", "on"):
         return None
     try:
-        from app.models import User
+        from app.services import user_table
         from app.services.nostr import nostr_service
         import secrets, binascii
-        # An admin with an npub already exists → instance is set up; don't override it.
-        if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
+        # An admin with an npub already exists → instance is set up; don't override it. (A table that could
+        # not be read raises -- caught below -- and nothing is provisioned on the strength of it.)
+        if any(a.nostr_npub for a in user_table.admins(db)):
             return None
         op_sk = _operator_seckey(db)
         if not op_sk:
@@ -426,24 +421,17 @@ def ensure_admin(db) -> str | None:
         pk = nostr_service.derive_pubkey(op_sk)
         pk_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
         npub = nostr_service.npub_of(pk_hex)
-        u = db.query(User).filter(User.nostr_npub == npub).first()
+        u = user_table.by_npub(db, npub)
         if not u:
             from app.auth import get_password_hash
-            base = "npub_" + npub[4:16]
-            username = base
-            for i in range(2, 100):
-                if not db.query(User).filter(User.username == username).first():
-                    break
-                username = f"{base}{i}"
-            u = User(username=username, email=None,
-                     password_hash=get_password_hash(secrets.token_urlsafe(32)),
-                     email_verified=True, nostr_npub=npub)
-            db.add(u)
+            u = user_table.create(db, username=user_table.free_username(db, "npub_" + npub[4:16], limit=100),
+                                  email=None, password_hash=get_password_hash(secrets.token_urlsafe(32)),
+                                  email_verified=True, nostr_npub=npub)
         u.is_admin = True
         u.can_ai = True
         u.can_image = True
         u.can_blossom = True
-        db.commit()
+        user_table.save(db, u)
         # Seed the WoT with the admin's own npub via the relay-authoritative settings store.
         val = get("nostr_relay_wot_seeds", "") or ""
         if npub not in val:
@@ -634,37 +622,9 @@ def ensure_hydrated_background(db_factory, *, first_delay: float = 2.0, max_dela
 
 
 def migrate_legacy_table(db) -> int:
-    """ONE-TIME data-safety: if a pre-no-db node still has the old SQL `settings` table, copy any key
-    the relay does NOT already hold into the relay (via put → relay event), so the node's CUSTOM
-    values survive the table going away. Keys the relay already has (hydrated above) and local-only
-    keys are skipped. Idempotent; harmless when the table is gone. Returns rows migrated."""
-    from sqlalchemy import text as _text, inspect as _inspect
-    if not _HYDRATED:
-        # "Which keys does the relay already hold" is _HYDRATED_KEYS, and it is only an answer once a hydrate
-        # has read the relay. Before that it is EMPTY, and every stale legacy row would be written over the
-        # relay's newer value. The hydrate that runs once the relay answers runs this again.
-        logger.info("[settings-store] legacy settings-table migration deferred — relay not read yet")
-        return 0
-    try:
-        if not _inspect(db.bind).has_table("settings"):
-            return 0
-        rows = db.execute(_text("SELECT key, value FROM settings")).fetchall()
-    except Exception as e:
-        logger.warning("[settings-store] legacy table read failed: %s", e)
-        return 0
-    migrated = 0
-    for key, value in rows:
-        # Skip keys an authoritative source already provided: the relay (shareable) or the local JSON
-        # (plumbing/cursors). Everything else — including custom local-only values like a non-default
-        # nostr_relay_bind — is migrated (put routes it: shareable→relay, local-only→JSON).
-        if key in _HYDRATED_KEYS or key in _LOCAL_KEYS:
-            continue
-        put(key, value if value is not None else "")   # legacy value beats the code default
-        (_HYDRATED_KEYS if not _is_local_only(key) else _LOCAL_KEYS).add(key)
-        migrated += 1
-    if migrated:
-        logger.info("[settings-store] migrated %d legacy settings-table key(s) into the relay", migrated)
-    return migrated
+    """Gone with SQL (#161): there is no `settings` table to read. The two nodes that had one migrated it long
+    ago. Kept as a no-op for callers; returns 0."""
+    return 0
 
 
 async def hydrate(db) -> int:

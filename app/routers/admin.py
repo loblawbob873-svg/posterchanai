@@ -8,8 +8,9 @@ from datetime import datetime
 import logging
 from app.database import get_db
 from app.utils import lb_auth
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services.relay_reader import Unavailable
+from app.services import user_table
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
@@ -109,7 +110,8 @@ def _validate_mount_point(mount_point: str) -> bool:
 def _mount_out(db, mount) -> dict:
     """A mount as Admin → Storage shows it, with the users allowed on it (only accounts that still exist)."""
     ids = list(mount.allowed_user_ids or [])
-    users = db.query(User).filter(User.id.in_(ids)).order_by(User.id).all() if ids else []
+    want = {int(i) for i in ids}
+    users = user_table.filter_users(db, lambda u: u.id in want) if want else []
     return {
         "id": mount.id,
         "name": mount.name,
@@ -176,7 +178,7 @@ def create_external_storage(
             )
         allowed = []
         if data.allowed_user_ids:
-            allowed = [u.id for u in db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()]
+            _want = {int(i) for i in data.allowed_user_ids}; allowed = [u.id for u in user_table.filter_users(db, lambda u: u.id in _want)]
         mount = es.save({"name": data.name, "mount_path": data.mount_path, "mount_point": data.mount_point,
                          "description": data.description, "is_active": data.is_active,
                          "allowed_user_ids": allowed})
@@ -240,7 +242,8 @@ def update_external_storage(
 
         # Update allowed users if provided
         if data.allowed_user_ids is not None:
-            mount.allowed_user_ids = [u.id for u in db.query(User).filter(User.id.in_(data.allowed_user_ids)).all()]
+            want = {int(i) for i in data.allowed_user_ids}
+            mount.allowed_user_ids = [u.id for u in user_table.filter_users(db, lambda u: u.id in want)]
 
         mount = es.save(dict(mount))
     except Unavailable:
@@ -414,8 +417,9 @@ async def relay_identities_retire(data: RelayIdentitiesRetireReq, db: Session = 
     pks = list(dict.fromkeys(pks))
     if not pks or len(pks) > 500:
         raise HTTPException(status_code=400, detail="choose between 1 and 500 accounts")
+    from app.services import user_table
     admins = set()
-    for u in db.query(User).filter(User.is_admin == True).all():  # noqa: E712
+    for u in await user_table.aadmins(db):
         try:
             admins.add(nostr_service.to_pubkey_hex(u.nostr_npub or "") or "")
         except Exception:
@@ -1062,7 +1066,8 @@ def list_users(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    return db.query(User).all()
+    from app.services import user_table
+    return user_table.all_users(db)
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -1073,8 +1078,9 @@ def create_user(
 ):
     if user_data.is_admin:
         raise HTTPException(status_code=400, detail="An administrator must first sign in with a Nostr identity")
+    from app.services import user_table
     # Check if username already exists
-    existing = db.query(User).filter(User.username == user_data.username).first()
+    existing = user_table.by_username(db, user_data.username)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1083,21 +1089,21 @@ def create_user(
 
     # New users default to chat + image + music only; video and torrents stay off until
     # the admin grants them via the per-user toggles (matches the self-signup default).
-    user = User(
-        username=user_data.username,
-        password_hash=get_password_hash(user_data.password),
-        is_admin=user_data.is_admin,
-        can_image=True,
-        can_music=True,
-        can_video=False,
-        can_torrent=False,
-        can_blossom=False,
-        can_stream=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    try:
+        return user_table.create(
+            db,
+            username=user_data.username,
+            password_hash=get_password_hash(user_data.password),
+            is_admin=user_data.is_admin,
+            can_image=True,
+            can_music=True,
+            can_video=False,
+            can_torrent=False,
+            can_blossom=False,
+            can_stream=False,
+        )
+    except user_table.UserConflict:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
 
 
 @router.delete("/users/{user_id}")
@@ -1112,7 +1118,9 @@ def delete_user(
             detail="Cannot delete yourself"
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1145,14 +1153,13 @@ def delete_user(
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                                 detail="The account's keys and links cannot be removed right now; the account was not deleted")
 
-        # 1-2. Legacy SQL conversations + their plaintext transcript rows, 7. legacy SQL user settings
-        conversation_table.delete_legacy_sql_rows(db, user_id)
-        user_settings_table.delete_legacy_sql_rows(db, user_id)
-        
-        
+        # The Exodus wallet backups (#161: relay rows; the FK cascade is gone). This route is a sync def, i.e.
+        # on a threadpool thread, where running a coroutine to completion is fine.
+        from app.services import exodus_tables
+        asyncio.run(exodus_tables.apurge_user(db, user_id))
+
         # 11. Finally, delete the user
-        db.delete(user)
-        db.commit()
+        user_table.delete(db, user_id)
 
         # Remove the account's relay docs too, or a fresh-node rebuild would resurrect it.
         if npub:
@@ -1172,15 +1179,9 @@ def delete_user(
 
     except HTTPException:
         raise
-    except IntegrityError as e:
-        db.rollback()
-        logger.error(f"Failed to delete user {user_id}: IntegrityError - {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user due to database constraints: {str(e)}"
-        )
+    except Unavailable:
+        raise                                   # "could not ask" -> 503, retry; never a 500
     except Exception as e:
-        db.rollback()
         logger.error(f"Failed to delete user {user_id}: {type(e).__name__} - {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1198,7 +1199,8 @@ def update_user_password(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1209,7 +1211,7 @@ def update_user_password(
         raise HTTPException(status_code=400, detail="Administrators authenticate with Nostr, not passwords")
 
     user.password_hash = get_password_hash(data.password)
-    db.commit()
+    user_table.save(db, user)
     return {"message": "Password updated"}
 
 
@@ -1221,14 +1223,15 @@ def update_user_storage_quota(
     admin: User = Depends(get_admin_user)
 ):
     """Update user storage quota."""
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Convert MB to bytes (0 = unlimited)
     quota_bytes = int(quota_mb * 1024 * 1024) if quota_mb > 0 else 0
     user.storage_quota = quota_bytes
-    db.commit()
+    user_table.save(db, user)
     from app.services import users_store
     users_store.sync_user_blocking(db, user)   # storage_quota → relay
 
@@ -1251,7 +1254,8 @@ def update_user_capabilities(
 ):
     """Set a user's per-feature access (image/music/video/torrent/blossom/ai). Admins are always
     allowed regardless of these flags."""
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = user_table.get(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.can_image = can_image
@@ -1272,8 +1276,7 @@ def update_user_capabilities(
         user.access_revoked = True
     elif (can_ai and not _was_ai) or (can_blossom and not _was_blossom):
         user.access_revoked = False
-    db.commit()
-    db.refresh(user)
+    user_table.save(db, user)
     from app.services import users_store
     users_store.sync_user_blocking(db, user)   # caps → relay (authoritative)
     # DM the user about anything newly GRANTED (not revoked, not re-saved unchanged).
@@ -1464,7 +1467,8 @@ async def rescan_storage(
     # Run scan in thread pool to avoid blocking
     if user_id:
         # Scan specific user
-        user = db.query(User).filter(User.id == user_id).first()
+        from app.services import user_table
+        user = await user_table.aget(db, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -1476,7 +1480,8 @@ async def rescan_storage(
         }
     else:
         # Scan all users - extract primitive values before passing to threads
-        users = [(u.id, u.username) for u in db.query(User).all()]
+        from app.services import user_table
+        users = [(u.id, u.username) for u in await user_table.aall(db)]
         results = []
         
         # Scan all users in parallel (but in thread pool)

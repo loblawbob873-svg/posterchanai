@@ -37,7 +37,7 @@ def address_for(db, request, pk):
 async def status(data: Proof, request: Request, db: Session = Depends(get_db)):
     pk = verify(data, 'instance-welcome-status')
     address = address_for(db, request, pk)
-    row = service.application(db, pk)
+    row = await service.application(db, pk)
     if row:
         if address:
             await service.notify_approval(db, pk, address)
@@ -58,7 +58,7 @@ async def apply(data: Proof, request: Request, db: Session = Depends(get_db)):
     address = address_for(db, request, pk)
     if address:
         return {'ok': True, 'already': True, 'address': address}
-    row, created = service.apply(db, pk)
+    row, created = await service.apply(db, pk)
     notified = await service.notify_admins(db, row)
     return {'ok': True, 'pending': True, 'created': created, 'admin_notified': notified}
 

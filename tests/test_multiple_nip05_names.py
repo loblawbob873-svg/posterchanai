@@ -13,7 +13,6 @@ import json
 import httpx
 import pytest
 
-from app.models import User
 from app.services import nip05_registry, relay_blocklist, settings_store
 from app.services.nostr.event import build_event
 from tests import test_instance_welcome as welcome
@@ -34,7 +33,7 @@ def _client(app, values, monkeypatch, db):
     monkeypatch.setattr(settings_store, 'put', lambda key, value: values.__setitem__(key, value))
     monkeypatch.setattr(settings_store, 'hydrate_from_db', lambda db: None)
     monkeypatch.setattr(thread, 'trigger_nip05_reload', lambda: None)
-    admin = db.query(User).filter(User.is_admin == True).first()  # noqa: E712
+    admin = db.user(1)
     admin.nostr_npub = nostr_service.npub_of(proof(key='22')['pubkey']); db.commit()
 
     def post(target, **body):

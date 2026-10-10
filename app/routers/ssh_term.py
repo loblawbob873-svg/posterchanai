@@ -25,22 +25,25 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user, get_user_from_websocket
 from app.database import SessionLocal, get_db
 from app.services import ssh_keeper, ssh_service
+from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 
-def _user_from_token(token: str, db: Session):
+async def _user_from_token(token: str, db: Session):
     """Resolve a bearer exactly as get_user_from_websocket does — same decoder, same lookup — so the
     two cannot drift into disagreeing about who someone is."""
     if not token:
         return None
     try:
         from app.auth import decode_token
-        from app.models import User
+        from app.services import user_table
         payload = decode_token(token)
         if not payload:
             return None
         uid = payload.get("sub")
-        return db.query(User).filter(User.id == int(uid)).first() if uid else None
+        return await user_table.aget(db, uid) if uid else None
+    except Unavailable:
+        raise           # the account store could not be asked: not "log in again"
     except Exception:
         return None
 
@@ -310,9 +313,13 @@ async def websocket_ssh(websocket: WebSocket):
         if (first or {}).get("t") != "open":
             await websocket.send_json({"t": "err", "m": "expected an open frame"})
             return
-        user = await get_user_from_websocket(websocket, db)
-        if not user:
-            user = _user_from_token(str((first or {}).get("token") or ""), db)
+        try:
+            user = await get_user_from_websocket(websocket, db)
+            if not user:
+                user = await _user_from_token(str((first or {}).get("token") or ""), db)
+        except Unavailable:
+            await websocket.send_json({"t": "err", "m": "the server's datastore is not answering -- try again shortly"})
+            return
         if not user:
             await websocket.send_json({"t": "err", "m": "please log in again"})
             return

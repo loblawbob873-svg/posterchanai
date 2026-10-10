@@ -104,10 +104,10 @@ def _with_user(username: str, fn):
     request's own session — that one belongs to the HTTP request and is closed by the time a storage
     call runs."""
     from app.database import SessionLocal
-    from app.models import User
+    from app.services import user_table
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.username == username).first()
+        user = user_table.by_username(db, username)   # threadpool: a strict read; Unavailable propagates
         if not user:
             return None
         return fn(db, user)

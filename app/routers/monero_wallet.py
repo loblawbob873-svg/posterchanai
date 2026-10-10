@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import get_admin_user
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services.monero_user_wallets import zap_fee_percent
 from app.services.monero_wallet_service import (
     MoneroWallet, WalletError, atomic_to_xmr, explorer_tx_base, transfer_gate, xmr_to_atomic,

@@ -17,8 +17,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from app.database import get_db, SessionLocal
-from app.models import User
-from app.services import conversation_table
+from app.services.user_table import UserRow as User
+from app.services import conversation_table, user_table
 from app.services.relay_reader import Unavailable
 from app.services import settings_store
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages
@@ -156,10 +156,9 @@ async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: s
     AND re-fetch the user on it (user.id, a PK, never expires) so nothing lazy-loads off the dead conn.
     `expires_days` > 0 sets a TTL — for transient agent workspace backups, so they don't fill storage."""
     from app.database import SessionLocal
-    from app.models import User
     s = SessionLocal()
     try:
-        u = s.get(User, user_id)
+        u = await user_table.aget(s, user_id)
         if not u:
             return None
         return await artifact_store.save_bytes(s, u, conv_id, data, ext, expires_days=expires_days)
@@ -1265,7 +1264,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 async def _persist_uploads(items, uid=user.id, cid=conversation_id):
                                     _db = SessionLocal()
                                     try:
-                                        _u = _db.query(User).filter(User.id == uid).first()
+                                        _u = await user_table.aget(_db, uid)
                                         for name, b, mime in items:
                                             await upload_store.store_encrypted(_db, _u, cid, name, b, mime)
                                     finally:
@@ -1639,7 +1638,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                 # Only persist to an EXISTING conversation — a progress line must never
                                                 # resurrect a deleted/never-made chat (that's the final-result's job).
                                                 if await conversation_table.aget(_pdb, _conv) is not None:
-                                                    _pu = _pdb.query(User).filter(User.id == _uid).first()
+                                                    _pu = await user_table.aget(_pdb, _uid)
                                                     await chat_history.append(_pdb, _pu, _conv, "assistant", job)
                                             except Exception as _e:
                                                 logger.warning(f"[node] webui step persist failed: {_e}")
@@ -1681,7 +1680,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             # Persist the message to the RELAY (chat_store) — the source of truth the
                                             # client reads in relay-backed mode. A bare SQL `messages` insert shows
                                             # live over the socket then VANISHES on reload / chat-switch (the bug).
-                                            _uu = _adb.query(User).filter(User.id == _uid).first()
+                                            _uu = await user_table.aget(_adb, _uid)
                                             await chat_history.append(_adb, _uu, _conv, "assistant", _atext)
                                         except Exception as _e:
                                             logger.warning(f"[node] webui agent-result save failed: {_e}")
@@ -1736,7 +1735,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                 _ftext = (_ftext + "\n\n" + "\n".join(_links)).strip()
                                             if _ftext:
                                                 if await conversation_table.aget(_fdb, _conv) is not None:   # don't resurrect a chat just for a backup; the result already did
-                                                    _fu = _fdb.query(User).filter(User.id == _uid).first()
+                                                    _fu = await user_table.aget(_fdb, _uid)
                                                     await chat_history.append(_fdb, _fu, _conv, "assistant", _ftext)
                                                     await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": _ftext}}, _conn, _conv)
                                         except Exception as _e:
@@ -1755,7 +1754,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             try:
                                                 _ob = (job.output or "").encode("utf-8", "replace")
                                                 if chat_store.enabled(_db):
-                                                    _nu = _db.query(User).filter(User.id == _uid).first()
+                                                    _nu = await user_table.aget(_db, _uid)
                                                     _rel = await artifact_store.save_bytes(_db, _nu, _conv, _ob, "txt")
                                                 else:
                                                     _rel = StorageService(_db).save_file_bytes(
@@ -1769,7 +1768,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         await conversation_table.aensure(_db, _conv, _uid, "🛰️ Node job")
                                         # Message → RELAY (chat_store), not the SQL messages table, so it survives
                                         # a reload/chat-switch in relay-backed mode (matches the agent-result branch).
-                                        _uu2 = _db.query(User).filter(User.id == _uid).first()
+                                        _uu2 = await user_table.aget(_db, _uid)
                                         await chat_history.append(_db, _uu2, _conv, "assistant", _text)
                                     except Exception as _e:
                                         logger.warning(f"[node] webui notify save failed: {_e}")

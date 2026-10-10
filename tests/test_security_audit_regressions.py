@@ -40,15 +40,15 @@ def test_login_requires_its_explicit_purpose_and_preserves_native_proofs():
     assert not verify_self_auth('x' * 8193, pk)
 
 
-def test_legacy_password_login_cannot_authenticate_an_administrator():
+def test_legacy_password_login_cannot_authenticate_an_administrator(monkeypatch):
+    from app.database import NoSQL
     from app.routers.auth import login
     from app.schemas import UserLogin
-    class DB:
-        def query(self, *a): return self
-        def filter(self, *a): return self
-        def first(self): return SimpleNamespace(is_admin=True)
+    from app.services import user_table
+    # the account is a user_table row (#161)
+    monkeypatch.setattr(user_table, 'by_username', lambda db, name: SimpleNamespace(is_admin=True))
     with pytest.raises(HTTPException) as exc:
-        login(UserLogin(username='admin', password='anything'), Response(), None, DB())
+        login(UserLogin(username='admin', password='anything'), Response(), None, NoSQL())
     assert exc.value.status_code == 403
     assert 'Nostr' in exc.value.detail
 
@@ -111,19 +111,15 @@ def test_admin_email_verification_never_creates_a_login_cookie(web_page, monkeyp
     from app.main import verify_email_page
     from app.routers.auth import verify_email
     from tests.doc_table_mem import mem_tables
-    # Verification tokens are a DocTable now (#161): the token lives there, the user in SQL.
+    # Verification tokens and accounts are DocTables now (#161), in memory here.
+    from app.database import NoSQL
+    from app.services import user_table
+    from tests.user_fixtures import seed_user
     mem = mem_tables(monkeypatch)
+    seed_user(mem, 4, username='admin', is_admin=True, email_verified=False)
     mem.put('verification_tokens', '1', {'id': 1, 'user_id': 4, 'token': 'synthetic', 'created_at': None,
                                          'expires_at': (datetime.utcnow() + timedelta(minutes=5)).isoformat()})
-    user = SimpleNamespace(id=4, is_admin=True, email_verified=False)
-    class DB:
-        def __init__(self): self.rows = iter([user]); self.deleted = []
-        def query(self, *args): return self
-        def filter(self, *args): return self
-        def first(self): return next(self.rows)
-        def delete(self, row): self.deleted.append(row)
-        def commit(self): pass
-    db, response = DB(), Response()
+    db, response = NoSQL(), Response()
     if web_page:
         result = asyncio.run(verify_email_page('synthetic', response, db))
         assert 'set-cookie' not in result.headers and result.status_code == 302
@@ -131,13 +127,13 @@ def test_admin_email_verification_never_creates_a_login_cookie(web_page, monkeyp
         result = verify_email('synthetic', response, db)
         assert 'Nostr' in result['message']
     assert 'set-cookie' not in response.headers
-    assert user.email_verified and mem.table('verification_tokens') == {}, "the token is single-use"
+    assert user_table.get(db, 4).email_verified and mem.table('verification_tokens') == {}, "the token is single-use"
 
 
 def test_stream_application_uses_its_own_request_fields(monkeypatch):
-    from app.models import User
+    from app.database import NoSQL
     from app.routers.client import StreamRequestReq, stream_request
-    from app.services import user_settings_table
+    from app.services import user_settings_table, user_table
     stored = []
 
     async def aset(db, user_id, key, value):     # per-user settings are a relay DocTable now (#161 wave 2)
@@ -145,14 +141,10 @@ def test_stream_application_uses_its_own_request_fields(monkeypatch):
     monkeypatch.setattr(user_settings_table, "aset", aset)
     auth, pk = proof(content='auth')
     user = SimpleNamespace(id=5, username='fixture', is_admin=False, can_stream=False)
-    class DB:
-        def __init__(self): self.added = []
-        def query(self, model): self.model = model; return self
-        def filter(self, *args): return self
-        def first(self): return user if self.model is User else None
-        def add(self, row): self.added.append(row)
-        def commit(self): pass
-    db = DB()
+    async def by_npub(db, npub):                # the account is a user_table row (#161)
+        return user
+    monkeypatch.setattr(user_table, 'aby_npub', by_npub)
+    db = NoSQL()
     result = asyncio.run(stream_request(StreamRequestReq(pubkey=pk, auth=auth), db))
     assert result.status_code == 200 and stored == [(5, 'stream_requested')]
 

@@ -29,8 +29,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User
-from app.services import user_settings_table
+from app.services.user_table import UserRow as User
+from app.services import user_settings_table, user_table
 from app.services.relay_reader import Unavailable
 from app.services import settings_store, stream_end_service, stream_service, users_store
 from app.services.nostr.event import verify_event
@@ -502,7 +502,7 @@ async def stream_auth(request: Request, db=Depends(get_db)):
         return JSONResponse({"error": "not your stream"}, status_code=403)
     # The OBS path is the one that survives a revoke: a stream key already pasted into someone's
     # encoder keeps working unless permission is checked HERE, at the moment MediaMTX asks.
-    _owner = db.query(User).filter(User.id == row.user_id).first()
+    _owner = await user_table.aget(db, row.user_id)
     if not _may_stream(_owner):
         logger.info("[stream] publish denied (user %s has no stream permission)", row.user_id)
         return JSONResponse({"error": "no permission"}, status_code=403)
@@ -982,7 +982,7 @@ def stream_record_toggle(body: dict, current_user: User = Depends(get_current_us
     # toggle impossible to turn off.
     enabled = raw.strip().lower() in ("1", "true", "yes", "on") if isinstance(raw, str) else bool(raw)
     current_user.stream_record = enabled
-    db.commit()
+    user_table.save(db, current_user)
     try:
         users_store.sync_user_blocking(db, current_user)
     except Exception as e:

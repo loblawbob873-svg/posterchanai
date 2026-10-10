@@ -1,14 +1,12 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _HELP_SECTIONS, _link_action_cache, asyncio, logger, telegram_service, time
+from app.services import user_table
+from ._common import ChatService, CommandService, _HELP_SECTIONS, _link_action_cache, asyncio, logger, telegram_service, time
 from .keyboards import _help_main_keyboard
 from .senders import _deliver_pin_result, _link_content_for_llm, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
-        cb_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
+        cb_user = await user_table.aby_telegram_chat(db, chat_id)
         if not cb_user:
             await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
             return {"ok": True}
@@ -27,10 +25,7 @@ async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
 
 
 async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
-        cb_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
+        cb_user = await user_table.aby_telegram_chat(db, chat_id)
         if not cb_user:
             await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
             return {"ok": True}
@@ -101,10 +96,7 @@ async def _cb_help(update, db, chat_id, data, callback_query, callback_query_id)
             )
         elif section == "logs":
             # Execute the logs command directly instead of showing help text
-            cb_user = db.query(User).filter(
-                User.telegram_chat_id == chat_id,
-                User.telegram_enabled == True
-            ).first()
+            cb_user = await user_table.aby_telegram_chat(db, chat_id)
             if cb_user:
                 cb_command_service = CommandService(db, user=cb_user)
                 try:
@@ -155,10 +147,7 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
                 await telegram_service.send_message(chat_id, "No pending link found. Please send the URL again.")
             return {"ok": True}
 
-        lnk_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
+        lnk_user = await user_table.aby_telegram_chat(db, chat_id)
 
         if action == "summary":
             await telegram_service.send_message(chat_id, "⏳ Fetching and summarizing link, please wait...")

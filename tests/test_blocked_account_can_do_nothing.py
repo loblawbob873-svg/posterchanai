@@ -49,36 +49,40 @@ def test_a_signed_request_from_a_blocked_key_proves_nothing(blocked):
     assert nostr_event.verify_self_auth(_proof((0x0DD).to_bytes(32, "big")), other) is True
 
 
-class _Q:
-    def __init__(self, user): self.user = user
-    def filter(self, *a): return self
-    def first(self): return self.user
+def _accounts(monkeypatch, user):
+    """The account table answers `user` for every lookup (accounts are user_table rows, #161)."""
+    from app.services import user_table
+
+    async def aone(*_a, **_k):
+        return user
+    monkeypatch.setattr(user_table, "get", lambda *_a, **_k: user)
+    monkeypatch.setattr(user_table, "aget", aone)
+    monkeypatch.setattr(user_table, "aby_telegram_chat", aone)
 
 
-class _DB:
-    def __init__(self, user): self.user = user
-    def query(self, _m): return _Q(self.user)
-
-
-def test_an_existing_login_stops_working(blocked):
+def test_an_existing_login_stops_working(blocked, monkeypatch):
     from app import auth
     token = auth.create_access_token({"sub": "7"})
     req = SimpleNamespace(cookies={"access_token": token}, query_params={})
     user = SimpleNamespace(id=7, nostr_npub=PK, username="blocked")
+    _accounts(monkeypatch, user)
     with pytest.raises(HTTPException) as e:
-        auth.get_current_user(req, None, _DB(user))
+        auth.get_current_user(req, None, None)
     assert e.value.status_code == 403
     fine = SimpleNamespace(id=7, nostr_npub=OTHER, username="fine")
-    assert auth.get_current_user(req, None, _DB(fine)) is fine
+    _accounts(monkeypatch, fine)
+    assert auth.get_current_user(req, None, None) is fine
 
 
-def test_a_websocket_login_stops_working(blocked):
+def test_a_websocket_login_stops_working(blocked, monkeypatch):
     from app import auth
     token = auth.create_access_token({"sub": "7"})
     ws = SimpleNamespace(query_params={"token": token}, cookies={})
-    assert asyncio.run(auth.get_user_from_websocket(ws, _DB(SimpleNamespace(id=7, nostr_npub=PK)))) is None
+    _accounts(monkeypatch, SimpleNamespace(id=7, nostr_npub=PK))
+    assert asyncio.run(auth.get_user_from_websocket(ws, None)) is None
     fine = SimpleNamespace(id=7, nostr_npub=OTHER)
-    assert asyncio.run(auth.get_user_from_websocket(ws, _DB(fine))) is fine
+    _accounts(monkeypatch, fine)
+    assert asyncio.run(auth.get_user_from_websocket(ws, None)) is fine
 
 
 def test_membership_says_no_even_with_a_granted_name(blocked, monkeypatch):
@@ -123,13 +127,24 @@ def test_a_blocked_key_registers_no_push_device(blocked):
     assert push._direct_auth(proof(osk, OTHER), OTHER, "register", "dev-0123456789abcdef") is True
 
 
-def test_the_telegram_bot_ignores_a_blocked_linked_account(blocked):
+def test_the_telegram_bot_ignores_a_blocked_linked_account(blocked, monkeypatch):
     from app.routers.telegram import webhook
     upd = {"message": {"chat": {"id": 42}, "text": "hi"}}
-    assert webhook._from_blocked_account(upd, _DB(SimpleNamespace(nostr_npub=PK))) is True
-    assert webhook._from_blocked_account(upd, _DB(SimpleNamespace(nostr_npub=OTHER))) is False
+    _accounts(monkeypatch, SimpleNamespace(nostr_npub=PK))
+    assert asyncio.run(webhook._from_blocked_account(upd, None)) is True
+    _accounts(monkeypatch, SimpleNamespace(nostr_npub=OTHER))
+    assert asyncio.run(webhook._from_blocked_account(upd, None)) is False
     cb = {"callback_query": {"message": {"chat": {"id": 42}}}}
-    assert webhook._from_blocked_account(cb, _DB(SimpleNamespace(nostr_npub=PK))) is True
+    _accounts(monkeypatch, SimpleNamespace(nostr_npub=PK))
+    assert asyncio.run(webhook._from_blocked_account(cb, None)) is True
+    # an account table that cannot be read is NOT "this sender is not blocked" (#161: fail closed)
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+
+    async def down(*_a, **_k):
+        raise Unavailable("relay down (test)")
+    monkeypatch.setattr(user_table, "aby_telegram_chat", down)
+    assert asyncio.run(webhook._from_blocked_account(upd, None)) is True
 
 
 def test_a_blocked_key_is_a_stranger_to_the_vm_host(blocked):

@@ -1,9 +1,9 @@
 """Users / account-authority read-path → Nostr relay (Phase 2 of the Nostr-as-datastore migration).
 
-Mirrors `settings_store`: the relay becomes the authoritative store for each account's **identity +
-capabilities** (the "who exists and what they can do" record), while the SQLite `users` table is kept
-as a fast local **read-through cache** so the many `db.query(User)` callers + the FK relationships
-(conversations/messages) keep working unchanged.
+The accounts themselves are a relay DocTable (`user_table`, #161). This module keeps the npub-keyed MIRROR
+documents (`pcai:user:<npub>` / `pcai:usercfg:<npub>`) -- the subset that rides the operator's upstream DR backup
+(`_BACKUP_NS`; the DocTable's own documents never leave the node) -- and restores accounts from them only into an
+EMPTY account table.
 
   * `hydrate(db)`     — at startup (relay → users): for each operator-signed `pcai:user:<npub>` doc,
     UPSERT a `User` row keyed by `nostr_npub`.
@@ -25,7 +25,7 @@ import asyncio
 import logging
 import secrets
 
-from app.models import User
+from app.services.user_table import UserRow as User
 from app.services import nostr_store as store
 from app.services import settings_store as _ss  # reuse operator-key / port / enabled helpers
 
@@ -118,61 +118,55 @@ def delete_user_blocking(db, npub: str) -> None:
         logger.warning("[users-store] delete_user_blocking failed: %s", e)
 
 
-def _apply(db, rec: dict) -> bool:
-    """UPSERT a User row from a relay account record (keyed by npub). Returns True if changed."""
-    npub = rec.get("nostr_npub")
-    if not npub:
-        return False
-    u = db.query(User).filter(User.nostr_npub == npub).first()
-    created = False
-    if u is None:
-        from app.auth import get_password_hash
-        base = (rec.get("username") or ("npub_" + npub[4:16]))[:50]
-        username = base
-        for i in range(2, 1000):
-            if not db.query(User).filter(User.username == username).first():
-                break
-            username = f"{base[:46]}{i}"
-        u = User(username=username, email=rec.get("email"),
-                 password_hash=get_password_hash(secrets.token_urlsafe(32)),
-                 nostr_npub=npub)
-        db.add(u)
-        created = True
-    # Authority fields (admin/caps) are mutated only via synced endpoints, so always reconcile them.
-    # Config fields can be changed by flows that don't write-through (e.g. telegram_chat_id on link),
-    # so only restore them when reconstructing a MISSING account — never revert a live node's config.
-    fields = _SYNCED if created else ACCOUNT_FIELDS
-    changed = created
-    for f in fields:
-        if f == "username" and not created:
-            continue  # don't rename an existing local account out from under its FK rows
-        if f in rec and getattr(u, f, None) != rec[f]:
-            setattr(u, f, rec[f])
-            changed = True
-    return changed
-
-
 async def hydrate(db) -> int:
     """relay → users cache. UPSERT a User row for every operator-signed account doc. No-op when
-    there's no operator key. Returns the number of accounts created-or-updated."""
+    there's no operator key. Returns the number of accounts created-or-updated.
+
+    Once the accounts are a relay DocTable (#161 wave 3, `user_table`) these mirror documents are NOT a second
+    source of truth: they hold a subset of the columns, are written AFTER the table, and replaying one over the
+    table would undo any change whose mirror write failed (a revoked can_ai granted back on the next restart).
+    They are kept for one job only -- disaster recovery: they are what the upstream backup carries
+    (`_BACKUP_NS`; the table's own documents never leave this node), so when the account table is EMPTY (a
+    relay rebuilt from that backup) the accounts are recreated from them, as the SQL hydrate always did."""
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         logger.info("[users-store] hydrate skipped — no operator key")
         return 0
-    try:
-        docs = await store.list_docs(_ss._port(db), store.NS_USER, seckey=op_sk)
-    except Exception as e:
-        logger.warning("[users-store] hydrate failed to read relay: %s", e)
+    return await _hydrate_into_table(db, op_sk)
+
+
+async def _hydrate_into_table(db, op_sk) -> int:
+    """Disaster recovery only: an EMPTY account table (the store answered, strictly) is refilled from the mirror
+    documents. A table holding any account is never touched."""
+    from app.services import user_table
+    if await user_table.aall(db):
         return 0
-    changed = 0
-    for d_tag, value in (docs or {}).items():
+    try:
+        docs = await store.list_docs(_ss._port(db), store.NS_USER, seckey=op_sk, strict=True)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("[users-store] could not read the account mirror documents: %s", e)
+        return 0
+    from app.auth import get_password_hash
+    made = 0
+    for _d, value in (docs or {}).items():
         rec = value.get("value") if isinstance(value, dict) and "value" in value else value
-        if isinstance(rec, dict) and _apply(db, rec):
-            changed += 1
-    if changed:
-        db.commit()
-    logger.info("[users-store] hydrated %d account(s) from relay", changed)
-    return changed
+        if not isinstance(rec, dict) or not rec.get("nostr_npub"):
+            continue
+        if await user_table.aby_npub(db, rec["nostr_npub"]) is not None:
+            continue
+        fields = {f: rec[f] for f in _SYNCED if f in rec and f != "username"}
+        fields.update(nostr_npub=rec["nostr_npub"],
+                      username=await user_table.afree_username(
+                          db, (rec.get("username") or ("npub_" + rec["nostr_npub"][4:16]))[:50]),
+                      password_hash=get_password_hash(secrets.token_urlsafe(32)))
+        try:
+            await user_table.acreate(db, **fields)
+            made += 1
+        except user_table.UserConflict as e:
+            logger.warning("[users-store] DR restore skipped an account whose %s is taken", e.field)
+    if made:
+        logger.warning("[users-store] the account table was empty: recreated %d account(s) from the mirror", made)
+    return made
 
 
 # ---- UserSetting key/value (mail accounts, caldav/webdav/music configs, etc.) ----
@@ -208,37 +202,9 @@ async def _user_kv(db, user) -> dict:
 
 
 async def hydrate_user_kv(db) -> int:
-    """relay → UserSetting cache. Restore each user's non-exempt kv from their usercfg doc (fills only
-    MISSING keys — never clobbers a live local value like a freshly-linked token). Returns rows made.
-
-    Only while SQL is still the authoritative store (#161): once the user-settings table has moved to
-    its relay DocTable the SQL rows are not read any more, and filling them would do nothing but bring a
-    deleted key back into the copy an older build would read."""
-    from app.services import table_gate, user_settings_table
-    if await table_gate.arelay_mode(user_settings_table.TABLE):
-        return 0
-    op_sk = _ss._operator_seckey(db)
-    if not op_sk:
-        return 0
-    from app.models import UserSetting
-    made = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
-        try:
-            doc = await store.get_doc(_ss._port(db), store.NS_USERCFG + user.nostr_npub, seckey=op_sk)
-        except Exception:
-            doc = None
-        if not isinstance(doc, dict):
-            continue
-        for k, v in doc.items():
-            if _kv_exempt(k):
-                continue
-            if db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == k).first() is None:
-                db.add(UserSetting(user_id=user.id, key=k, value=v))
-                made += 1
-    if made:
-        db.commit()
-    logger.info("[users-store] hydrated %d user-setting kv row(s) from relay", made)
-    return made
+    """Nothing to do: per-user settings are a relay DocTable (user_settings_table) and the mirror documents are a
+    backup, never replayed over it -- a replay would bring a deleted key back. Kept for callers; returns 0."""
+    return 0
 
 
 # ---- reconcile sweep: SQL → relay catch-all -------------------------------------------------
@@ -295,7 +261,8 @@ async def _seed_hashes(db) -> int:
     if not op_sk:
         return 0
     import json as _json
-    users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
+    from app.services import user_table
+    users = [u for u in await user_table.aall(db) if u.nostr_npub]
     if not users:
         return 0
     try:
@@ -334,8 +301,9 @@ async def reconcile_all(db, *, force: bool = False) -> int:
     # rewritten (and re-broadcast to every upstream relay) just because this process is new.
     if not force and not _last_synced_hash:
         await _seed_hashes(db)
+    from app.services import user_table
     synced = 0
-    for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
+    for user in [u for u in await user_table.aall(db) if u.nostr_npub]:
         kv = await _user_kv(db, user)
         h = _hash(_record(user), kv)
         if not force and _last_synced_hash.get(user.nostr_npub) == h:

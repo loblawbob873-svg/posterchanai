@@ -22,10 +22,7 @@ table; only the relay write-through is stubbed, so its failure can be forced. Ea
 import asyncio
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.models import Bot, User
+from app.services import user_table
 from app.services import (blossom_service, nip05_registry, relay_access_policy, relay_blocklist,
                           settings_store, users_store)
 from app.services.nostr import bip340, nostr_service
@@ -40,17 +37,14 @@ def run(c):
 
 @pytest.fixture
 def world(monkeypatch):
-    engine = create_engine("sqlite://")
-    User.__table__.create(engine)
-    Bot.__table__.create(engine)
-    db = sessionmaker(bind=engine)()
-    for name, pk in PK.items():
-        u = User(username=name, email=f"{name}@x.example", password_hash="x", nostr_npub=nostr_service.npub_of(pk),
-                 is_admin=(name == "boss"), access_revoked=False)
-        for f in FIELDS:
-            setattr(u, f, True)
-        db.add(u)
-    db.commit()
+    # Accounts and bots are relay DocTables (#161), in memory here.
+    from tests.doc_table_mem import mem_tables
+    from tests.user_fixtures import FakeDB, seed_user
+    mem = mem_tables(monkeypatch)
+    for i, (name, pk) in enumerate(PK.items()):
+        seed_user(mem, i + 1, username=name, email=f"{name}@x.example", nostr_npub=nostr_service.npub_of(pk),
+                  is_admin=(name == "boss"), access_revoked=False, **{f: True for f in FIELDS})
+    db = FakeDB()
 
     vals = {
         nip05_registry.KEY: "\n".join([
@@ -86,12 +80,10 @@ def world(monkeypatch):
     from app.routers import client
     monkeypatch.setattr(client, "_nip05_domain", lambda request, db_: "poster.place")
     yield db, vals, writes
-    db.close()
 
 
 def user(db, name):
-    db.expire_all()
-    return db.query(User).filter(User.username == name).one()
+    return user_table.by_username(db, name)
 
 
 def granted(u):
@@ -144,9 +136,15 @@ def test_an_admin_is_never_revoked(world):
     assert all(granted(b).values()) and not b.access_revoked, "an admin lost their own permissions"
 
 
-def test_a_failed_write_leaves_the_account_as_it_was_and_says_so(world):
+def test_a_failed_write_leaves_the_account_as_it_was_and_says_so(world, monkeypatch):
     db, vals, writes = world
     writes["ok"] = False
+    # the account store (user_table, the authority since #161) refuses the write
+    from app.services.relay_reader import Unavailable
+
+    async def refused(db_, u):
+        raise Unavailable("the relay did not store users/%s (test)" % u.id)
+    monkeypatch.setattr(user_table, "asave", refused)
     r = remove(db, "ghost")
     assert r["ok"], "the name is removed either way"
     assert r.get("revoke_error"), "a revoke that did not happen was reported as done"

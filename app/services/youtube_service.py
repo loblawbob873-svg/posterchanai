@@ -653,7 +653,6 @@ async def download_video_and_save_to_storage(
     Returns:
         DownloadResult with success status and storage path
     """
-    from app.models import User
     from pathlib import Path
     from app.services import settings_store
     import tempfile
@@ -665,7 +664,8 @@ async def download_video_and_save_to_storage(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = await user_table.aget(db, user_id)
     if not user:
         return DownloadResult(success=False, error="User not found")
 
@@ -761,7 +761,6 @@ async def download_mp3_and_save_to_storage(
     Download YouTube as MP3 and save to user's storage.
     Uses storage proxy when storage_server_url is configured; otherwise saves to local upload_path.
     """
-    from app.models import User
     from pathlib import Path
     from app.services import settings_store
     import tempfile
@@ -772,7 +771,8 @@ async def download_mp3_and_save_to_storage(
             error="yt-dlp not installed. Install with: pip install yt-dlp"
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    from app.services import user_table
+    user = await user_table.aget(db, user_id)
     if not user:
         return DownloadResult(success=False, error="User not found")
 

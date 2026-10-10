@@ -243,6 +243,38 @@ def _pg_dsn() -> str:
     return os.environ.get("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")
 
 
+def _postgres_configured() -> bool:
+    """Did anybody point this node at a Postgres? A DSN in the local settings or the environment, or a
+    DATABASE_URL. A fresh install sets none of them (#161: the app needs no SQL database), and then the relay
+    runs on PosterChanDB alone."""
+    from app.services import settings_store
+    return bool(settings_store.get("nostr_relay_pg_dsn", None) or os.environ.get("NOSTR_RELAY_PG_DSN")
+                or os.environ.get("DATABASE_URL"))
+
+
+def _pcdb_mode(setting: str = "") -> str:
+    """POSTERCHANDB_MODE (env) wins, then the setting; with neither, a node with no Postgres configured is
+    `primary` -- PosterChanDB is its only store -- and one with Postgres keeps the old default (off)."""
+    mode = (os.environ.get("POSTERCHANDB_MODE") or setting or "").strip().lower()
+    if mode:
+        return mode
+    if _postgres_configured():
+        return "off"
+    # No DSN anywhere. A PosterChanDB directory that already holds a MIRROR's data (unpromoted) belongs to a
+    # node that has a Postgres -- the DSN default just was never written down -- so that node keeps its old
+    # default rather than refusing to start on an unpromoted mirror. Only a node with no such directory (or a
+    # promoted one) is a fresh, Postgres-less install.
+    try:
+        from app.services import posterchandb
+        from .pcdb_store import read_marker
+        path = os.path.join(posterchandb.data_dir(), "relay")
+        if read_marker(path) is None and os.path.isdir(path) and os.listdir(path):
+            return "off"
+    except Exception:      # noqa: BLE001 -- unreadable: the safe answer is the old default
+        return "off"
+    return "primary"
+
+
 def open_store_for_settings(loop) -> RelayStore:
     """THE RELAY PROCESS, before its first _read_config: open its own store and make it the settings source.
 
@@ -256,7 +288,7 @@ def open_store_for_settings(loop) -> RelayStore:
     # Primary vs Postgres is decided HERE, before any setting can be read -- so from the environment
     # (POSTERCHANDB_MODE, which both nodes set; env always wins over the setting). The mirror of a Postgres
     # store starts in _main, once the settings that size it have been read.
-    mode = (os.environ.get("POSTERCHANDB_MODE") or "").strip().lower()
+    mode = _pcdb_mode()
     store = _open_store({"pcdb_mode": mode, "pg_dsn": _pg_dsn(), "max_events": 0, "retention_days": 0,
                          "pcdb_flush_s": 300, "pcdb_cache_mb": 0}, loop, start_mirror=False)
     settings_store.set_event_source(lambda filters: store._query_sync(filters, 5000))
@@ -385,7 +417,7 @@ def _read_config() -> dict:
             # PosterChanDB beside Postgres (posterchandb/mirror.py): off | shadow (mirror every write, compare a
             # sample of answers) | serve (answer queries from RAM; Postgres still written first) | primary (PosterChanDB
             # ALONE, no Postgres: nostr_relay/pcdb_store.py, after scripts/posterchandb_promote.py). Env wins.
-            "pcdb_mode": (os.environ.get("POSTERCHANDB_MODE") or g("posterchandb_mode", "off") or "off").strip().lower(),
+            "pcdb_mode": _pcdb_mode(g("posterchandb_mode", "") or ""),
             "pcdb_cache_mb": gi("posterchandb_read_cache_mb", 0),
             "pcdb_flush_s": gi("posterchandb_flush_seconds", 300),
             # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
@@ -578,7 +610,7 @@ def _node_pubkey() -> str:
         return ""
 
 
-_last_known: dict = {"bots": set(), "storage": set()}
+_last_known: dict = {"bots": set(), "storage": set(), "users": set()}
 _heal = {"running": False}
 
 
@@ -595,13 +627,14 @@ def _reload_when_readable() -> None:
         import time as _time
         try:
             from app.database import SessionLocal
-            from app.services import bot_table, user_settings_table
+            from app.services import bot_table, user_settings_table, user_table
             for _ in range(240):                     # ~20 minutes, then the periodic reloads take over
                 _time.sleep(5)
                 db = SessionLocal()
                 try:
                     bot_table.all_bots(db)
                     user_settings_table.by_key(db, "storage_nsec")
+                    user_table.all_users(db)
                 except Exception:      # noqa: BLE001 -- still not readable: try again
                     continue
                 finally:
@@ -617,7 +650,7 @@ def _bot_pubkeys(db) -> set:
     """Every bot's Nostr pubkey (from the nsec in its config). The bots table is a relay DocTable (#161) that
     this very relay serves, so on the relay's own loop -- and before the app has loaded it -- it may not be
     readable yet: then the LAST set this process read is used rather than none, and the app triggers a reload
-    once the table is loaded (table_migration's startup pass, wave2_migration). An operator set that silently lost every bot
+    once the table is loaded (table_registry.start_loading at startup). An operator set that silently lost every bot
     would refuse all of their posts."""
     from app.services import bot_table
     from app.services.relay_reader import Unavailable
@@ -665,45 +698,64 @@ def _legacy_storage_pubkeys(db) -> set:
     return out
 
 
+def _user_pubkeys(db) -> set:
+    """Every account's keys: a linked nsec's pubkey, the login npub, and (npub accounts) the server-held
+    storage key. The accounts table is a relay DocTable (#161, wave 3) that this very relay serves, so on the
+    relay's own loop -- and before the table is loaded -- it may not be readable yet: then the LAST set this
+    process read is used rather than none (an operator set that silently lost every user would refuse their
+    posts), and a healer re-reads it off the loop and triggers a reload."""
+    from app.services import user_table
+    from app.services.relay_reader import Unavailable
+    try:
+        users = user_table.all_users(db)
+    except (Unavailable, RuntimeError) as e:
+        logger.info("[nostr-relay] accounts not readable yet (%s) -- keeping the last known set", type(e).__name__)
+        _reload_when_readable()
+        return set(_last_known["users"])
+    out: set = set()
+    for u in users:
+        nsec = getattr(u, "nostr_nsec", None)
+        if nsec:
+            try:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+            except Exception:
+                pass
+        # A registered user's POSTING identity (login npub). Including it preserves their own
+        # notes from the age-prune — a registered account's history is their data, not
+        # reconstructable feed content — and lets them publish through the relay.
+        npub = getattr(u, "nostr_npub", None)
+        if npub:
+            try:
+                h = nostr_service.to_pubkey_hex(npub)
+                if h:
+                    out.add(h)
+            except Exception:
+                pass
+        # The per-user STORAGE key — the author of everything the SERVER writes for this user
+        # (calendar, contacts, mail, the drive index). It was never in this set, so a fresh
+        # account's writes were refused ("not in web of trust") until something else happened to
+        # admit it — measured: a new account's drive-key save answered "relay rejected the
+        # write", which is the root of the fresh-pair key fork. Registration must be enough.
+        # Only for npub accounts (their key is the keyfile's; minting one is local). A no-npub legacy
+        # account's key lives in the user-settings table -- a relay DocTable this relay serves -- so minting
+        # one HERE would wait on the relay from the relay's own loop; those are read by _legacy_storage_pubkeys.
+        if npub:
+            try:
+                from app.services.nostr_store import user_storage_seckey
+                from app.services.nostr import bip340
+                out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
+            except Exception:
+                pass
+    _last_known["users"] = set(out)
+    return out
+
+
 def _collect_operator_pubkeys(db) -> list:
     """Pubkeys that may always publish through the relay: every linked user's and bot's
     Nostr key. So our own bots/users can point their relay list here and still be accepted."""
     out: set = set()
     try:
-        from app.models import User
-        for u in db.query(User).all():
-            nsec = getattr(u, "nostr_nsec", None)
-            if nsec:
-                try:
-                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
-                except Exception:
-                    pass
-            # A registered user's POSTING identity (login npub). Including it preserves their own
-            # notes from the age-prune — a registered account's history is their data, not
-            # reconstructable feed content — and lets them publish through the relay.
-            npub = getattr(u, "nostr_npub", None)
-            if npub:
-                try:
-                    h = nostr_service.to_pubkey_hex(npub)
-                    if h:
-                        out.add(h)
-                except Exception:
-                    pass
-            # The per-user STORAGE key — the author of everything the SERVER writes for this user
-            # (calendar, contacts, mail, the drive index). It was never in this set, so a fresh
-            # account's writes were refused ("not in web of trust") until something else happened to
-            # admit it — measured: a new account's drive-key save answered "relay rejected the
-            # write", which is the root of the fresh-pair key fork. Registration must be enough.
-            # Only for npub accounts (their key is the keyfile's; minting one is local). A no-npub legacy
-            # account's key lives in the user-settings table -- a relay DocTable this relay serves -- so minting
-            # one HERE would wait on the relay from the relay's own loop; those are read by _legacy_storage_pubkeys.
-            if npub:
-                try:
-                    from app.services.nostr_store import user_storage_seckey
-                    from app.services.nostr import bip340
-                    out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
-                except Exception:
-                    pass
+        out |= _user_pubkeys(db)
         out |= _bot_pubkeys(db)
         # The DATASTORE OPERATOR/SIGNER key: settings/users/bots/chat docs (kind-30078 `pcai:`) are
         # signed with it. On a fresh node with no linked users this is the ONLY operator pubkey, so
@@ -900,14 +952,25 @@ def _open_store(cfg: dict, loop, start_mirror: bool = True):
     into two histories."""
     if (cfg.get("pcdb_mode") or "off") == "primary":
         from app.services import posterchandb
-        from .pcdb_store import PcdbRelayStore, PrimaryNotReady
-        store = PcdbRelayStore(os.path.join(posterchandb.data_dir(), "relay"),
+        from .pcdb_store import PcdbRelayStore, PrimaryNotReady, init_new, read_marker
+        path = os.path.join(posterchandb.data_dir(), "relay")
+        if not _postgres_configured() and read_marker(path) is None:
+            # NO Postgres anywhere (a fresh install, #161): PosterChanDB is the store from the first start. An
+            # empty directory becomes a new primary; one holding a mirror's events is refused by init_new.
+            try:
+                init_new(path)
+                logger.info("[nostr-relay] no Postgres configured: created a new PosterChanDB primary store")
+            except PrimaryNotReady as e:
+                logger.error("[nostr-relay] could not create a PosterChanDB primary store: %s", e)
+        store = PcdbRelayStore(path,
                                max_events=cfg["max_events"], retention_days=cfg["retention_days"],
                                flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
                                log=logger.info)
         try:
             store.open(loop)
         except PrimaryNotReady as e:
+            if not _postgres_configured():
+                raise                   # nothing to fall back to: say so loudly rather than dial a Postgres
             logger.error("[nostr-relay] POSTERCHANDB_MODE=primary REFUSED: %s -- running on Postgres (serve) "
                          "instead", e)
             store.close()

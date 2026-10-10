@@ -28,10 +28,7 @@ WHAT "COULD NOT ASK" MEANS HERE (relay_reader.Unavailable is never "no rows"):
   * the own-sent-wrap dedup that cannot be read -> FAILS OPEN, the push goes out (never suppress the only copy);
   * a device whose queue cannot be written -> "failed", never "expired" (only "expired" deletes a device).
 
-MOVING OFF POSTGRES (#161 wave 1): until a table's `_migrated` marker exists SQL is still its store of record --
-DocTable reads it through the Legacies at the bottom of this module and writes SQL first, then the relay -- so
-nothing waits for the copy (table_migration runs it at startup) and a phone that re-registers mid-move updates
-its one row. A new device or queued message takes SQL's id until the marker exists.
+RELAY-ONLY (#161): no SQL side. A node's old rows (ids kept) are copied once by scripts/migrate_tables_to_nostr.py.
 """
 from __future__ import annotations
 
@@ -49,9 +46,8 @@ SUBS = "push_subs"
 SENT = "push_sent_wraps"
 FOLLOWS = "push_follow_seen"
 DIRECT = "direct_push_msgs"
-MIGRATED = "_migrated"
 
-#: SQL table name -> DocTable name. The migration markers are keyed on the SQL name.
+#: old SQL table name -> DocTable name (the copy script accepts either).
 TABLES = {"push_subscriptions": SUBS, "push_sent_wraps": SENT,
           "push_follow_seen": FOLLOWS, "direct_push_messages": DIRECT}
 
@@ -86,10 +82,7 @@ def _ts(value) -> int | None:
     return int(value.timestamp())
 
 
-# ---------------------------------------------------------------- the migration "gate"
-# There is none any more (#161 wave 1): until a table's `_migrated` marker exists DocTable answers it from SQL and
-# writes SQL then the relay (the Legacies at the bottom of this module), so no push path waits for the move and
-# none can register a device beside a not-yet-copied row. Kept for callers that still ask.
+# ---------------------------------------------------------------- no gate (relay-only); kept for callers that ask
 async def aready() -> None:
     return None
 
@@ -152,8 +145,7 @@ async def put_sub(row: dict) -> dict:
     if row.get("id") is None:
         row = dict(row)
         row.setdefault("created_at", int(time.time()))
-        # A new device: SQL's own id until the table's marker exists (the relay copy carries it), a random
-        # 52-bit id after.
+        # A new device: a random 52-bit id (never collides with a copied SQL id, needs no shared counter).
         doc = _sub_doc(row)
         sid = await subs().ainsert(doc, new_sub_id)
         return dict(row, id=int(sid))
@@ -271,159 +263,3 @@ def ack_message(sub_id: int, message_id: int) -> None:
     r = direct().get(str(int(message_id)))
     if r is not None and r.get("sub") == int(sub_id):
         direct().delete(str(int(message_id)))
-
-
-# ================================================================ the SQL side (#161 wave 1)
-# Until a table's `_migrated` marker exists SQL is its store of record: DocTable reads it through these Legacies
-# and writes SQL first, then the relay; table_migration copies it across (verified) and writes the marker.
-from app.services.doc_table import Legacy as _Legacy  # noqa: E402
-
-
-from app.services.doc_table_bulk import MigrationMismatch  # noqa: E402,F401 -- the engine's; callers catch it
-
-
-def _sub_from_sql(r) -> dict:
-    return {"pubkey": r.pubkey, "endpoint": r.endpoint, "transport": r.transport or "webpush",
-            "device_id": r.device_id, "token_hash": r.token_hash, "last_seen": _ts(r.last_seen),
-            "p256dh": r.p256dh, "auth": r.auth,
-            "prefs": r.prefs,                       # NULL stays None: "never configured" means send everything
-            "created_at": _ts(r.created_at)}
-
-
-def _direct_from_sql(r) -> dict:
-    return {"sub": int(r.subscription_id), "payload": r.payload, "at": _ts(r.created_at) or int(time.time()),
-            "exp": _ts(r.expires_at)}
-
-
-def _direct_expired(r) -> bool:
-    """Already-expired queue rows are not part of the table: every reader deletes them on sight anyway."""
-    exp = _ts(r.expires_at)
-    return exp is None or exp <= int(time.time())
-
-
-def _direct_cols(row: dict) -> dict:
-    from app.services.legacy_sql import to_datetime
-    return {"subscription_id": int(row.get("sub")), "payload": row.get("payload"),
-            "created_at": to_datetime(row.get("at")), "expires_at": to_datetime(row.get("exp"))}
-
-
-class FollowSeenLegacy(_Legacy):
-    """push_follow_seen: SQL holds one (recipient, follower) PAIR per row (follower "" = seeded); the documents
-    are per-recipient shards. A shard document is the pairs whose follower starts with its two hex digits."""
-    name = FOLLOWS
-
-    def rows(self, db) -> dict:
-        from app.models import PushFollowSeen
-        shards: dict = {}
-        seeded: set = set()
-        for r in db.query(PushFollowSeen).all():
-            if not r.recipient:
-                continue
-            if not r.follower:
-                seeded.add(r.recipient)
-                continue
-            shards.setdefault("%s:%s" % (r.recipient, _shard(r.follower)), set()).add(r.follower)
-        want = {k: {"r": k.rsplit(":", 1)[0], "f": sorted(v)} for k, v in shards.items()}
-        for rcp in seeded:
-            want[rcp] = {"seeded": True, "at": 0}
-        return want
-
-    def get(self, db, k):
-        from app.models import PushFollowSeen
-        if ":" not in k:
-            r = db.get(PushFollowSeen, (k, ""))
-            return {"seeded": True, "at": 0} if r is not None else None
-        rcp, sh = k.rsplit(":", 1)
-        fs = sorted(f for (f,) in db.query(PushFollowSeen.follower).filter(PushFollowSeen.recipient == rcp)
-                    if f and _shard(f) == sh)
-        return {"r": rcp, "f": fs} if fs else None
-
-    def put(self, db, k, row: dict) -> None:
-        from app.models import PushFollowSeen
-        if ":" not in k:
-            if row.get("seeded") and db.get(PushFollowSeen, (k, "")) is None:
-                db.add(PushFollowSeen(recipient=k, follower=""))
-            db.flush()
-            return
-        rcp = k.rsplit(":", 1)[0]
-        for f in row.get("f") or []:
-            if f and db.get(PushFollowSeen, (rcp, f)) is None:
-                db.add(PushFollowSeen(recipient=rcp, follower=f))
-        db.flush()
-
-    def delete(self, db, k) -> None:
-        from app.models import PushFollowSeen
-        if ":" not in k:
-            db.query(PushFollowSeen).filter(PushFollowSeen.recipient == k,
-                                            PushFollowSeen.follower == "").delete(synchronize_session=False)
-        else:
-            rcp, sh = k.rsplit(":", 1)
-            for r in db.query(PushFollowSeen).filter(PushFollowSeen.recipient == rcp).all():
-                if r.follower and _shard(r.follower) == sh:
-                    db.delete(r)
-        db.flush()
-
-
-class SentWrapsLegacy(_Legacy):
-    """push_sent_wraps is NOT COPIED, on purpose. A row lives 10 minutes and only stops a device being pushed
-    about a DM its owner sent. Losing the ledger at the cutover can at worst produce, inside those ten minutes,
-    the 'somebody sent you a message' push for one's own message that this table exists to prevent -- and the
-    publishing device drops even that one itself (ClientNotified). The table lives on the relay from the start;
-    its marker is written for the record."""
-    name = SENT
-    copy = False
-    why_not_copied = "transient 10-minute dedup ledger"
-
-    def rows(self, db) -> dict:
-        return {}
-
-
-def _register_legacy():
-    from app.services import table_migration
-    from app.services.legacy_sql import ModelLegacy
-    table_migration.register(ModelLegacy(SUBS, "PushSubscription", _sub_from_sql))
-    table_migration.register(ModelLegacy(DIRECT, "DirectPushMessage", _direct_from_sql, to_cols=_direct_cols,
-                                         skip_row=_direct_expired))
-    table_migration.register(FollowSeenLegacy())
-    table_migration.register(SentWrapsLegacy())
-
-
-_register_legacy()
-
-
-def _migrate_one(name: str, session_factory) -> dict:
-    from app.services import doc_table, table_migration
-    if session_factory is not None:
-        doc_table.set_session_factory(session_factory)
-    return table_migration.migrate(name)
-
-
-def migrate_push_subscriptions(session_factory=None) -> dict:
-    return _migrate_one(SUBS, session_factory)
-
-
-def migrate_direct_push_messages(session_factory=None) -> dict:
-    return _migrate_one(DIRECT, session_factory)
-
-
-def migrate_push_follow_seen(session_factory=None) -> dict:
-    return _migrate_one(FOLLOWS, session_factory)
-
-
-def migrate_push_sent_wraps(session_factory=None) -> dict:
-    return _migrate_one(SENT, session_factory)
-
-
-MIGRATIONS = {
-    "push_subscriptions": migrate_push_subscriptions,
-    "direct_push_messages": migrate_direct_push_messages,
-    "push_follow_seen": migrate_push_follow_seen,
-    "push_sent_wraps": migrate_push_sent_wraps,
-}
-
-
-def migrate_all(session_factory=None) -> dict:
-    """Every push table, in order (subscriptions before the queue that refers to them), through the one engine
-    (table_migration). Raises on the first failure; what already succeeded stays marked and is skipped next
-    time."""
-    return {t: fn(session_factory) for t, fn in MIGRATIONS.items()}

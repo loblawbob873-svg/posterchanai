@@ -40,6 +40,13 @@ def store(monkeypatch):
     monkeypatch.setattr(thread, "trigger_block_reload", lambda: reloads.append(1) or {})
     import app.services.blossom_service as bs
     monkeypatch.setattr(bs, "_operator_pubkeys", lambda db: {ADMIN_PK})
+    # the signer's account, an admin (#161: accounts are user_table rows on the relay)
+    from types import SimpleNamespace
+    from app.services import user_table
+
+    async def by_npub(db, npub):
+        return SimpleNamespace(is_admin=True) if npub == nostr_service.npub_of(ADMIN_PK) else None
+    monkeypatch.setattr(user_table, "aby_npub", by_npub)
     return vals, reloads
 
 
@@ -58,15 +65,7 @@ def test_the_nodes_own_key_is_never_blocked(store):
 
 
 class _DB:
-    """Just enough of a Session for the admin-proof check: the signer is an admin."""
-    def query(self, _m):
-        return self
-
-    def filter(self, *a):
-        return self
-
-    def first(self):
-        return object()
+    """The `db` the routes are handed (no SQL behind it; the admin account comes from user_table, above)."""
 
 
 def _proof(content, tags):

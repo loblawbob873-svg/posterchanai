@@ -1,6 +1,6 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
 from ._common import Depends, HTTPException, Session, TelegramBotConfig, TelegramChatSetup, User, _configure_telegram, datetime, get_admin_user, get_current_user, get_db, logger, router, telegram_service, timedelta
-from app.services import settings_store
+from app.services import settings_store, user_table
 
 _bot_username_cache = None
 async def _get_bot_username(db):
@@ -146,10 +146,7 @@ async def list_telegram_users(
     admin: User = Depends(get_admin_user)
 ):
     """List users with Telegram enabled."""
-    users = db.query(User).filter(
-        User.telegram_enabled == True,
-        User.telegram_chat_id.isnot(None)
-    ).all()
+    users = await user_table.afilter(db, lambda u: bool(u.telegram_enabled) and u.telegram_chat_id is not None)
     
     return [
         {
@@ -174,8 +171,7 @@ async def generate_telegram_key(
     key = secrets.token_urlsafe(32)
     current_user.telegram_key = key
     current_user.telegram_key_expires_at = datetime.utcnow() + timedelta(hours=24)
-    db.commit()
-    db.refresh(current_user)
+    await user_table.asave(db, current_user)
     bot_username = await _get_bot_username(db)
     return {
         "ok": True,
@@ -197,8 +193,7 @@ async def revoke_telegram_key(
     """Revoke (clear) the pending Telegram link key."""
     current_user.telegram_key = None
     current_user.telegram_key_expires_at = None
-    db.commit()
-    db.refresh(current_user)
+    await user_table.asave(db, current_user)
     return {"ok": True}
 
 
@@ -209,14 +204,12 @@ async def link_telegram_chat(
     db: Session = Depends(get_db)
 ):
     """Link current user's account to a Telegram chat."""
-    from sqlalchemy.exc import IntegrityError
     current_user.telegram_chat_id = data.chat_id
     current_user.telegram_enabled = True
     current_user.telegram_notifications = data.notifications
     try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
+        await user_table.asave(db, current_user)
+    except user_table.UserConflict:
         raise HTTPException(status_code=400, detail="That Telegram chat ID is already linked to another account.")
     return {"ok": True, "message": f"Linked to chat {data.chat_id}"}
 
@@ -233,7 +226,7 @@ async def unlink_telegram_chat(
     current_user.telegram_key = None
     current_user.telegram_key_expires_at = None
 
-    db.commit()
+    await user_table.asave(db, current_user)
     
     return {"ok": True, "message": "Telegram account unlinked"}
 
@@ -252,10 +245,7 @@ async def broadcast_to_telegram_users(
     telegram_service.set_token(bot_token)
     _configure_telegram(db)
 
-    users = db.query(User).filter(
-        User.telegram_enabled == True,
-        User.telegram_chat_id.isnot(None)
-    ).all()
+    users = await user_table.afilter(db, lambda u: bool(u.telegram_enabled) and u.telegram_chat_id is not None)
     
     results = []
     for user in users:
