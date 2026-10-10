@@ -65,6 +65,7 @@ class Mirror:
         self.cache_mb = float(cache_mb or 0)
         self.sample = float(sample)
         self.wait_s = float(wait_s)
+        self.id_listing = None              # RelayStore.attach_mirror: (now) -> ({id: (kind, origin, created)}, queue pos)
         self.log = log or (lambda *a: None)
         self.maintenance = maintenance
         self.state = "opening"                      # opening | copying | catching-up | ready | stale | failed | closed
@@ -324,7 +325,37 @@ class Mirror:
         self._apply_until(target)
         self.pg_count, self.my_count = pg, self._live_count(now)
         self.log("[posterchandb] count check: postgres %d, mirror %d" % (pg, self.my_count))
+        if pg != self.my_count:
+            self._explain_mismatch(now)
         return pg == self.my_count
+
+    def _live_ids(self, now: int) -> set:
+        st = self.store
+        with st._lock:
+            n = len(st.off)
+            return {bytes(st.ids[i * 32:i * 32 + 32]).hex() for i in range(n)
+                    if not st.dead[i] and (not st.expires[i] or st.expires[i] > now)}
+
+    def _explain_mismatch(self, now: int) -> None:
+        """WHICH events differ, not just how many -- the one-event gap of 2026-10-10 could not be traced after the
+        fact. Read at one instant on the writer thread (like the count), so only a real difference shows. Logs ids,
+        kinds, origins and times, never content. A failure here changes nothing: the mirror is already stale."""
+        if self.id_listing is None:
+            return
+        try:
+            pg, target = self.id_listing(now)
+            self._apply_until(target)
+            mine = self._live_ids(now)
+            only_pg = [i for i in pg if i not in mine]
+            only_me = [i for i in mine if i not in pg]
+            self.log("[posterchandb] mismatch: %d only in Postgres, %d only in the mirror" % (len(only_pg), len(only_me)))
+            for i in only_pg[:10]:
+                kind, origin, created = pg[i]
+                self.log("[posterchandb]   only in Postgres: %s kind=%s origin=%s created=%s" % (i[:16], kind, origin, created))
+            for i in only_me[:10]:
+                self.log("[posterchandb]   only in the mirror: %s" % i[:16])
+        except Exception as e:      # noqa: BLE001
+            self.log("[posterchandb] could not list the difference: %r" % (e,))
 
     # ---------------------------------------------------------------- reads (relay threads)
     def _wait_applied(self, target: int, timeout: float) -> bool:

@@ -724,6 +724,8 @@ class RelayStore:
             return True
 
     def _add_event_sync(self, ev: dict, origin: str) -> bool:
+        if self._writes_closed:
+            return False
         conn = self._conn()
         try:
             ok = self._insert_one(conn, ev, origin)
@@ -742,6 +744,8 @@ class RelayStore:
     def _add_events_bulk_sync(self, events: list, origin: str) -> int:
         """Insert many events in ONE transaction — far fewer write round-trips than per-event
         add_event, which is the bottleneck when a backfill batch returns thousands of events."""
+        if self._writes_closed:
+            return 0
         conn = self._conn()
         stored = 0
         tried = []                # what reached Postgres without raising, in order (the mirror gets exactly these)
@@ -813,6 +817,10 @@ class RelayStore:
     # source of truth; the mirror is told every event stored and every event deleted by id, in order, after the
     # Postgres transaction committed -- a mirror that saw a write Postgres rolled back would serve a ghost.
     mirror = None
+    # Set by detach_mirror ON THE WRITER THREAD: from then on no event is stored or deleted. Every event write is
+    # queued on that thread, and one queued BEHIND the detach used to reach Postgres with no mirror attached, under
+    # a clean token claiming the two were identical -- server1 reopened one event short (2026-10-10).
+    _writes_closed = False
 
     def attach_mirror(self, m) -> None:
         """Start handing writes to PosterChanDB (posterchandb/mirror.py) -- on the WRITER thread, which every
@@ -842,7 +850,16 @@ class RelayStore:
                 return int(row["n"]), m._enq
             return self._write_exec.submit(_count).result(timeout=600)
 
+        def _id_listing(now: int):
+            def _ids():
+                rows = self._conn().execute(
+                    "SELECT id, kind, origin, created_at FROM events WHERE expiration IS NULL OR expiration > ?",
+                    (now,)).fetchall()
+                return {r["id"]: (r["kind"], r["origin"], r["created_at"]) for r in rows}, m._enq
+            return self._write_exec.submit(_ids).result(timeout=600)
+
         m.sync_point = _sync_point
+        m.id_listing = _id_listing
         conn = self._write_exec.submit(_on_writer).result(timeout=60)
         m.start(conn)
 
@@ -852,6 +869,7 @@ class RelayStore:
         def _on_writer():
             token = "clean:" + uuid.uuid4().hex
             self._kv_set_sync(MIRROR_TOKEN_KEY, token)
+            self._writes_closed = True           # the relay is stopping: Postgres and the mirror end at the same write
             m, self.mirror = self.mirror, None
             return m, token
         return self._write_exec.submit(_on_writer).result(timeout=60)
@@ -876,6 +894,8 @@ class RelayStore:
         return await self._w(self._add_event_sync, ev, origin)
 
     def _delete_pubkeys_sync(self, pubkeys: list, spare_preserved: bool = True) -> int:
+        if self._writes_closed:
+            return 0
         if not pubkeys:
             return 0
         conn = self._conn()
@@ -923,6 +943,8 @@ class RelayStore:
         There is no SQL form of the real predicate, so this reads content and asks the predicate,
         exactly as the language purge already does.
         """
+        if self._writes_closed:
+            return 0
         words = [w for w in words if w]
         if not words:
             return 0
@@ -976,6 +998,8 @@ class RelayStore:
         blocked_language() uses, applied retroactively. Language detection has no SQL form,
         so this scans kind-1 content once (cheap at relay scale; the live filter keeps the
         set small thereafter)."""
+        if self._writes_closed:
+            return 0
         blocked = set(blocked)
         if not blocked:
             return 0
@@ -1000,6 +1024,8 @@ class RelayStore:
         (langfilter.is_hidden_payload) or one base64 token (is_encoded_payload): the same predicates the
         live filter refuses at the door, applied to what arrived before they existed. Local users' own
         notes are spared like every content purge here."""
+        if self._writes_closed:
+            return 0
         from .langfilter import is_encoded_payload, is_hidden_payload
         conn = self._conn()
         ids = [r["id"] for r in conn.execute(
@@ -1118,6 +1144,8 @@ class RelayStore:
         contradicted that and silently deleted the fediverse posts a user had replied to (orphaning the
         thread: 'Replying to a post that couldn't be loaded'). This purge is for EXTERNAL bridge mirror
         content synced in (origin='wot'), not the bridge we run ourselves."""
+        if self._writes_closed:
+            return 0
         from .bridges import is_bridged_post
         conn = self._conn()
         preserve = self._preserve_clause()
@@ -1602,6 +1630,8 @@ class RelayStore:
         feed, minutes of stalled ingestion for a first run with a few hundred thousand events behind
         it. Returns (removed, more) where `more` means a rule hit the cap and there is work left.
         """
+        if self._writes_closed:
+            return (0, False)
         conn = self._conn()
         removed = 0
         gone: list = []   # ids deleted this pass → their event_tags must be removed too (no FK CASCADE)
