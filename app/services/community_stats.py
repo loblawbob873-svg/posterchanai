@@ -454,14 +454,14 @@ def bot_pubkeys() -> set:
     try:
         import json as _json
         from app.database import SessionLocal
-        from app.models import Bot
+        from app.services import bot_table
         from app.services.nostr import nostr_service
         db = SessionLocal()
         try:
-            rows = db.query(Bot.config).all()
+            rows = [b.config for b in bot_table.all_bots(db)]
         finally:
             db.close()
-        for (cfg,) in rows:
+        for cfg in rows:
             try:
                 nsec = str(_json.loads(cfg or "{}").get("nostr_nsec") or "").strip()
                 if nsec:

@@ -17,9 +17,12 @@ def test_the_history_read_is_strict_and_a_failure_is_a_503():
         seen.update(kw)
         raise ConnectionError("relay not listening")
     db = mock.MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
-        id=5, title="Trip", created_at=None, updated_at=None)
-    with mock.patch.object(chat_store, "enabled", lambda db: True), \
+    from app.services import conversation_table
+
+    async def conv(db, conv_id, user_id=None):      # the conversation row exists (a relay DocTable since #161)
+        return SimpleNamespace(id=5, user_id=1, title="Trip", created_at=None, updated_at=None)
+    with mock.patch.object(conversation_table, "aget", conv), \
+         mock.patch.object(chat_store, "enabled", lambda db: True), \
          mock.patch.object(chat_store, "get_messages", down):
         try:
             asyncio.run(R.get_conversation(5, db=db, current_user=SimpleNamespace(id=1, username="u")))

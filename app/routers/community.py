@@ -32,10 +32,9 @@ async def get_bot_auth(request: Request, x_api_key: Optional[str] = Header(None)
                                          if (authorization or "").startswith("Bearer ") else "")
     if not key:
         raise HTTPException(401, "An API key is required")
-    from app.models import Bot
-    from app.services import settings_store
+    from app.services import bot_table, settings_store
     bot_keys = {str(settings_store.get("bots_posterchanai_api_key", "") or "").strip()}
-    for (cfg,) in db.query(Bot.config).all():
+    for cfg in [b.config for b in await bot_table.aall_bots(db)]:
         try:
             bot_keys.add(str(json.loads(cfg or "{}").get("posterchanai_api_key") or "").strip())
         except (ValueError, TypeError, AttributeError):

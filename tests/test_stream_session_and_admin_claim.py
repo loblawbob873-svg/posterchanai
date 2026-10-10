@@ -70,7 +70,8 @@ def test_parking_an_ended_event_is_authorized_by_the_token_not_the_raw_d():
         "the sentinel gate compares the raw `d` to the publish token again — `d` is `<token>-<starts>`, "
         "so this can never match and no stream will ever be able to end itself"
     )
-    assert 'stream_end_service.token_of({"event": event}) != _user_token' in src, (
+    assert ('stream_end_service.token_of({"event": event}) != _user_token' in src
+            or 'stream_end_service.token_of({"event": event}) != await _auser_token' in src), (
         "the sentinel gate must authorize on the TOKEN recovered from `d` (stream_end_service.token_of)"
     )
 

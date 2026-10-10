@@ -135,9 +135,13 @@ async def amarker(table: str):
     return m if isinstance(m, dict) else None
 
 
-async def amigrate_rows(table: str, rows: dict, *, extra: dict | None = None) -> dict:
+async def amigrate_rows(table: str, rows: dict, *, extra: dict | None = None, before_mark=None) -> dict:
     """Copy `rows` ({key: row}, the complete SQL table) into DocTable `table`, verify, mark. Idempotent: an
-    existing verified marker returns at once. Raises MigrationMismatch (no marker) when the re-read differs."""
+    existing verified marker returns at once. Raises MigrationMismatch (no marker) when the re-read differs.
+
+    `before_mark` (async, optional) is asked once the copy has verified and before the marker is written; a False
+    answer raises MigrationMismatch. A table that stays writable during the copy uses it to re-read SQL: a row
+    that changed after `rows` was read may have been copied over by the older value, and must not be marked."""
     t0 = time.time()
     m = await amarker(table)
     if m and m.get("verified"):
@@ -160,6 +164,8 @@ async def amigrate_rows(table: str, rows: dict, *, extra: dict | None = None) ->
     bad = [k for k, v in want.items() if got.get(k) != v]
     if bad:
         raise MigrationMismatch("%s: %d row(s) differ after the copy, e.g. %s" % (table, len(bad), bad[:3]))
+    if before_mark is not None and not await before_mark():
+        raise MigrationMismatch("%s: the SQL table changed while it was being copied" % table)
     info = {"verified": True, "rows": len(want), "at": int(time.time()), "written": written,
             "removed_stale": len(stale), "copy_s": round(t_copy, 1), "total_s": round(time.time() - t0, 1)}
     info.update(extra or {})

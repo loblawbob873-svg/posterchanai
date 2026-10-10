@@ -175,6 +175,21 @@ async def validation_exception_handler(request: FastAPIRequest, exc: RequestVali
     body = {"detail": cleaned_errors, "message": "Request validation failed (422). Check 'detail' for field errors."}
     return JSONResponse(status_code=422, content=body)
 
+from app.services.relay_reader import Unavailable as _RelayUnavailable
+
+_BACKGROUND_TASKS: set = set()   # strong refs to fire-and-forget startup tasks (asyncio keeps only weak ones)
+
+
+@app.exception_handler(_RelayUnavailable)
+async def relay_unavailable_handler(request: FastAPIRequest, exc: _RelayUnavailable):
+    """A table on this node's relay could not be read or written (#161: app tables are relay documents now).
+    That is "try again shortly" -- 503 + Retry-After -- never a 500, and never an empty answer: the route
+    raised precisely so that "could not ask" does not reach the client as "nothing there"."""
+    logging.getLogger(__name__).warning("[relay-unavailable] %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=503, headers={"Retry-After": "5"},
+                        content={"detail": "This node's datastore is not answering right now -- try again shortly."})
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: FastAPIRequest, exc: Exception):
     """Catch-all exception handler to ensure JSON responses for API routes"""
@@ -845,6 +860,18 @@ async def startup():
                         await chat_store.hydrate_conversations(_db)
                     except Exception as e:
                         logging.warning(f"Conversations hydrate from relay failed: {e}")
+                    try:
+                        # #161 wave 2: bots, per-user settings and conversations move from Postgres to relay
+                        # DocTables. Copy each table ONCE (verified, then a marker), after the hydrates above
+                        # so SQL is complete; until a table's marker exists SQL stays authoritative and every
+                        # write goes to both (table_gate). Retried in the background until every table has its
+                        # marker, then the tables are loaded. Legacy chat MESSAGE rows are counted, never copied.
+                        from app.services import wave2_migration
+                        _w2 = _aio.create_task(wave2_migration.run_at_startup(SessionLocal))
+                        _BACKGROUND_TASKS.add(_w2)
+                        _w2.add_done_callback(_BACKGROUND_TASKS.discard)
+                    except Exception as e:
+                        logging.warning(f"Wave-2 table migration not started: {e}")
                     try:
                         from app.services import record_store
                         await record_store.hydrate(_db)

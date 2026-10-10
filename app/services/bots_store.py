@@ -1,5 +1,9 @@
 """Bot config read-path → Nostr relay (Phase 3 of the Nostr-as-datastore migration).
 
+SUPERSEDED by bot_table (#161, wave 2): the bots are now ONE operator DocTable keyed by id, and this
+per-name mirror is written (by bot_table) only until that table's migration marker exists; `hydrate`
+likewise only runs before it. What follows describes the pre-migration arrangement.
+
 Mirrors `settings_store`/`users_store`: the relay becomes authoritative for each bot's config, while
 the SQLite `bots` table stays a fast local **read-through cache** (the bot_manager + admin UI keep
 reading it unchanged). Bot config is operator data, so docs are operator-signed (`pcai:bot:<name>`).
@@ -135,7 +139,14 @@ def _apply(db, rec: dict) -> bool:
 
 async def hydrate(db) -> int:
     """relay → bots cache. UPSERT a Bot row for every operator-signed bot doc. No-op when there's no
-    operator key. Returns the number created-or-updated."""
+    operator key. Returns the number created-or-updated.
+
+    Only until the bots table's migration marker exists (#161): after it the bots are the `bots` DocTable
+    (bot_table) and SQL is not read, so seeding it would only revive a deleted bot in the copy an older
+    build reads."""
+    from app.services import bot_table, table_gate
+    if await table_gate.arelay_mode(bot_table.TABLE):
+        return 0
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         logger.info("[bots-store] hydrate skipped — no operator key")

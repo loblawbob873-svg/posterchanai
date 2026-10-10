@@ -578,12 +578,99 @@ def _node_pubkey() -> str:
         return ""
 
 
+_last_known: dict = {"bots": set(), "storage": set()}
+_heal = {"running": False}
+
+
+def _reload_when_readable() -> None:
+    """The bots / settings tables could not be read where the relay asked (its own event loop cannot wait on
+    itself, and before startup nothing is listening yet). Read them OFF the loop until they answer, then
+    have the relay re-read its operator set -- otherwise the bots would stay out of it until some unrelated
+    reload happened to come along. One healer at a time."""
+    if _heal["running"]:
+        return
+    _heal["running"] = True
+
+    def _run():
+        import time as _time
+        try:
+            from app.database import SessionLocal
+            from app.services import bot_table, user_settings_table
+            for _ in range(240):                     # ~20 minutes, then the periodic reloads take over
+                _time.sleep(5)
+                db = SessionLocal()
+                try:
+                    bot_table.all_bots(db)
+                    user_settings_table.by_key(db, "storage_nsec")
+                except Exception:      # noqa: BLE001 -- still not readable: try again
+                    continue
+                finally:
+                    db.close()
+                trigger_block_reload()
+                return
+        finally:
+            _heal["running"] = False
+    threading.Thread(target=_run, name="relay-operator-heal", daemon=True).start()
+
+
+def _bot_pubkeys(db) -> set:
+    """Every bot's Nostr pubkey (from the nsec in its config). The bots table is a relay DocTable (#161) that
+    this very relay serves, so on the relay's own loop -- and before the app has loaded it -- it may not be
+    readable yet: then the LAST set this process read is used rather than none, and the app triggers a reload
+    once the table is loaded (wave2_migration.run_at_startup). An operator set that silently lost every bot
+    would refuse all of their posts."""
+    from app.services import bot_table
+    from app.services.relay_reader import Unavailable
+    try:
+        bots = bot_table.all_bots(db)
+    except (Unavailable, RuntimeError) as e:
+        logger.info("[nostr-relay] bot keys not readable yet (%s) -- keeping the last known set", type(e).__name__)
+        _reload_when_readable()
+        return set(_last_known["bots"])
+    out = set()
+    for b in bots:
+        try:
+            cfg = json.loads(b.config or "{}")
+        except (ValueError, TypeError):
+            continue
+        nsec = cfg.get("nostr_nsec") if isinstance(cfg, dict) else None
+        if nsec:
+            try:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+            except Exception:
+                pass
+    _last_known["bots"] = set(out)
+    return out
+
+
+def _legacy_storage_pubkeys(db) -> set:
+    """Storage keys still held in the user-settings table (no-npub legacy accounts); same last-known rule."""
+    from app.services import user_settings_table
+    from app.services.relay_reader import Unavailable
+    try:
+        held = user_settings_table.by_key(db, "storage_nsec")
+    except (Unavailable, RuntimeError) as e:
+        logger.info("[nostr-relay] legacy storage keys not readable yet (%s) -- keeping the last known set",
+                    type(e).__name__)
+        _reload_when_readable()
+        return set(_last_known["storage"])
+    out = set()
+    for value in held.values():
+        if value:
+            try:
+                out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(value)))
+            except Exception:
+                pass
+    _last_known["storage"] = set(out)
+    return out
+
+
 def _collect_operator_pubkeys(db) -> list:
     """Pubkeys that may always publish through the relay: every linked user's and bot's
     Nostr key. So our own bots/users can point their relay list here and still be accepted."""
     out: set = set()
     try:
-        from app.models import User, Bot
+        from app.models import User
         for u in db.query(User).all():
             nsec = getattr(u, "nostr_nsec", None)
             if nsec:
@@ -607,23 +694,17 @@ def _collect_operator_pubkeys(db) -> list:
             # account's writes were refused ("not in web of trust") until something else happened to
             # admit it — measured: a new account's drive-key save answered "relay rejected the
             # write", which is the root of the fresh-pair key fork. Registration must be enough.
-            try:
-                from app.services.nostr_store import user_storage_seckey
-                from app.services.nostr import bip340
-                out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
-            except Exception:
-                pass
-        for b in db.query(Bot).all():
-            try:
-                cfg = json.loads(b.config or "{}")
-            except (ValueError, TypeError):
-                continue
-            nsec = cfg.get("nostr_nsec")
-            if nsec:
+            # Only for npub accounts (their key is the keyfile's; minting one is local). A no-npub legacy
+            # account's key lives in the user-settings table -- a relay DocTable this relay serves -- so minting
+            # one HERE would wait on the relay from the relay's own loop; those are read by _legacy_storage_pubkeys.
+            if npub:
                 try:
-                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec)))
+                    from app.services.nostr_store import user_storage_seckey
+                    from app.services.nostr import bip340
+                    out.add(bip340.pubkey_from_seckey(user_storage_seckey(db, u)).hex())
                 except Exception:
                     pass
+        out |= _bot_pubkeys(db)
         # The DATASTORE OPERATOR/SIGNER key: settings/users/bots/chat docs (kind-30078 `pcai:`) are
         # signed with it. On a fresh node with no linked users this is the ONLY operator pubkey, so
         # the relay MUST trust it or it rejects its own settings docs ("not in web of trust") and the
@@ -648,13 +729,7 @@ def _collect_operator_pubkeys(db) -> list:
                     pass
         except Exception:
             pass
-        from app.models import UserSetting
-        for us in db.query(UserSetting).filter(UserSetting.key == "storage_nsec").all():
-            if us.value:
-                try:
-                    out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(us.value)))
-                except Exception:
-                    pass
+        out |= _legacy_storage_pubkeys(db)
     except Exception as e:
         logger.debug("[nostr-relay] operator key collection failed: %s", e)
     return list(out)

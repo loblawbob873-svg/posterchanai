@@ -386,8 +386,8 @@ async def render(db, face_sha: str, voice_sha: str, mouth, text: str, max_words:
 
 
 def bot_config(db, bot_name: str) -> dict:
-    from app.models import Bot
-    row = db.query(Bot).filter(Bot.name == bot_name).first()
+    from app.services import bot_table
+    row = bot_table.get_by_name(db, bot_name)
     if row is None:
         raise LookupError("no such bot")
     try:

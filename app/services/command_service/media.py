@@ -310,13 +310,9 @@ Files are saved to your Storage.""",
 
         # Translate the last assistant response.
         language = self._parse_language(arg)
-        from app.models import Conversation, Message
-        conversation = (
-            self.db.query(Conversation)
-            .filter(Conversation.user_id == self.user.id)
-            .order_by(Conversation.updated_at.desc())
-            .first()
-        )
+        from app.services import conversation_table
+        _convs = await conversation_table.alist_for_user(self.db, self.user.id)   # most recently updated first
+        conversation = _convs[0] if _convs else None
         if not conversation:
             return {"type": "text", "content": "No conversation found to translate."}
         from app.services import chat_history

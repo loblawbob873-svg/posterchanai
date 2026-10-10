@@ -192,9 +192,7 @@ async def sync_user_kv(db, user, *, force: bool = False) -> bool:
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         return False
-    from app.models import UserSetting
-    kv = {r.key: r.value for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
-          if not _kv_exempt(r.key)}
+    kv = await _user_kv(db, user)
     try:
         return await store.put_doc(_ss._port(db), op_sk, store.NS_USERCFG + user.nostr_npub, kv)
     except Exception as e:
@@ -202,9 +200,23 @@ async def sync_user_kv(db, user, *, force: bool = False) -> bool:
         return False
 
 
+async def _user_kv(db, user) -> dict:
+    """A user's non-exempt settings, from whichever store is authoritative (user_settings_table). Raises
+    Unavailable when it cannot be read -- never an empty kv, which the mirror would then publish."""
+    from app.services import user_settings_table
+    return {k: v for k, v in (await user_settings_table.afor_user(db, user.id)).items() if not _kv_exempt(k)}
+
+
 async def hydrate_user_kv(db) -> int:
     """relay → UserSetting cache. Restore each user's non-exempt kv from their usercfg doc (fills only
-    MISSING keys — never clobbers a live local value like a freshly-linked token). Returns rows made."""
+    MISSING keys — never clobbers a live local value like a freshly-linked token). Returns rows made.
+
+    Only while SQL is still the authoritative store (#161): once the user-settings table has moved to
+    its relay DocTable the SQL rows are not read any more, and filling them would do nothing but bring a
+    deleted key back into the copy an older build would read."""
+    from app.services import table_gate, user_settings_table
+    if await table_gate.arelay_mode(user_settings_table.TABLE):
+        return 0
     op_sk = _ss._operator_seckey(db)
     if not op_sk:
         return 0
@@ -283,7 +295,6 @@ async def _seed_hashes(db) -> int:
     if not op_sk:
         return 0
     import json as _json
-    from app.models import UserSetting
     users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
     if not users:
         return 0
@@ -304,9 +315,7 @@ async def _seed_hashes(db) -> int:
         kvd = stored_kv.get(store.NS_USERCFG + npub)
         if not isinstance(rec, dict) or not isinstance(kvd, dict):
             continue                       # never stored, or unreadable → let the sweep write it
-        kv = {r.key: r.value
-              for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
-              if not _kv_exempt(r.key)}
+        kv = await _user_kv(db, user)
         local = _json.loads(_json.dumps([_record(user), kv], sort_keys=True, default=str))
         if local == [rec, kvd]:
             _last_synced_hash[npub] = _hash(_record(user), kv)
@@ -321,16 +330,13 @@ async def reconcile_all(db, *, force: bool = False) -> int:
     the last pass (or all when `force`). Returns the number (re)synced."""
     if not _ss._operator_seckey(db):
         return 0
-    from app.models import UserSetting
     # First sweep after a restart: ask the relay what it already has, so identical content isn't
     # rewritten (and re-broadcast to every upstream relay) just because this process is new.
     if not force and not _last_synced_hash:
         await _seed_hashes(db)
     synced = 0
     for user in db.query(User).filter(User.nostr_npub.isnot(None)).all():
-        kv = {r.key: r.value
-              for r in db.query(UserSetting).filter(UserSetting.user_id == user.id).all()
-              if not _kv_exempt(r.key)}
+        kv = await _user_kv(db, user)
         h = _hash(_record(user), kv)
         if not force and _last_synced_hash.get(user.nostr_npub) == h:
             continue

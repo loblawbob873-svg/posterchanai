@@ -13,7 +13,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 import json
-from app.models import User, SocialReplyMap, UserSetting
+from app.models import User, SocialReplyMap
 from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -142,16 +142,20 @@ _FOLLOW_TYPES = {"follow", "follow_request", "followRequestAccepted", "receiveFo
 _SEEN_FOLLOWS_CAP = 3000
 
 
-def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social_notif_seen_follows") -> bool:
+async def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social_notif_seen_follows") -> bool:
     """True (→ caller should skip) if this follow notification's actor was already announced to `user`.
     No-op for non-follow types. `store_key` lets each relay keep its own seen-set
-    so both still notify the follow once. Records the actor on first sight."""
+    so both still notify the follow once. Records the actor on first sight.
+
+    A seen-set that could not be READ raises (Unavailable): read as empty, it would be rewritten holding
+    only this actor and every follow already announced would be announced again."""
     if (norm.get("type") or "") not in _FOLLOW_TYPES:
         return False
+    from app.services import user_settings_table
     fkey = f"{norm.get('platform')}:{norm.get('actor')}"
-    row = db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == store_key).first()
+    raw = await user_settings_table.aget(db, user.id, store_key)
     try:
-        seen = set(json.loads(row.value)) if (row and row.value) else set()
+        seen = set(json.loads(raw)) if raw else set()
     except Exception:
         seen = set()
     if fkey in seen:
@@ -159,12 +163,7 @@ def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social
     seen.add(fkey)
     if len(seen) > _SEEN_FOLLOWS_CAP:
         seen = set(sorted(seen)[-_SEEN_FOLLOWS_CAP:])
-    val = json.dumps(sorted(seen))
-    if row:
-        row.value = val
-    else:
-        db.add(UserSetting(user_id=user.id, key=store_key, value=val))
-    db.commit()
+    await user_settings_table.aset(db, user.id, store_key, json.dumps(sorted(seen)))
     return False
 
 
@@ -172,7 +171,7 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
     """True = delivered (or an intentional dupe-skip) → the caller may advance the cursor past it.
     False = the Telegram send FAILED (429/network/etc.) → the caller must NOT advance past it or the
     notification is silently lost with no retry."""
-    if is_dupe_follow(db, user, norm):
+    if await is_dupe_follow(db, user, norm):
         return True  # a follow we've already announced (re-issued past the cursor) — safe to advance past
     resp = await tg.send_message(chat_id, _format(norm), parse_mode="")
     msg_id = (resp or {}).get("result", {}).get("message_id")

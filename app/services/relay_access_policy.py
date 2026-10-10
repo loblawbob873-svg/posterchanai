@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.models import User, FediPuppet, Bot
+from app.models import User, FediPuppet
 from app.services import settings_store as settings, users_store, blossom_service
 from app.services.nostr import nostr_service as ns
 
@@ -32,7 +32,8 @@ def _infrastructure_keys(db, users=None) -> set:
             keep.add(ns.to_pubkey_hex(u.nostr_npub))
     from app.services import nostr_dvm
     keep.update(nostr_dvm.peer_pubkeys())
-    for bot in db.query(Bot).all():
+    from app.services import bot_table
+    for bot in bot_table.all_bots(db):   # Unavailable propagates: never plan from a list missing the bots
         try:
             key = json.loads(bot.config or "{}").get("nostr_nsec")
             if key:

@@ -23,7 +23,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User, Conversation, Message, Reminder
+from app.models import User, Reminder
 
 try:
     from zoneinfo import ZoneInfo
@@ -80,11 +80,8 @@ def _fallback_parse(text: str, now: datetime) -> Optional[dict]:
 
 
 def _get_setting_value(db: Session, user_id: int, key: str) -> Optional[str]:
-    from app.models import UserSetting
-    s = (db.query(UserSetting)
-         .filter(UserSetting.user_id == user_id, UserSetting.key == key)
-         .first())
-    return s.value if s else None
+    from app.services import user_settings_table
+    return user_settings_table.get(db, user_id, key)
 
 
 def get_user_tzinfo(db: Session, user_id: int):
@@ -224,17 +221,9 @@ def humanize_due(due_at: datetime, now: Optional[datetime] = None, tz=None) -> s
 
 # --------------------------------------------------------------------------- delivery
 
-def _get_or_create_reminders_chat(db: Session, user_id: int) -> Conversation:
-    chat = (db.query(Conversation)
-            .filter(Conversation.user_id == user_id, Conversation.title == REMINDERS_CHAT_TITLE)
-            .first())
-    if chat:
-        return chat
-    chat = Conversation(user_id=user_id, title=REMINDERS_CHAT_TITLE)
-    db.add(chat)
-    db.commit()
-    db.refresh(chat)
-    return chat
+async def _get_or_create_reminders_chat(db: Session, user_id: int):
+    from app.services import conversation_table
+    return await conversation_table.aget_or_create(db, user_id, REMINDERS_CHAT_TITLE)
 
 
 def notification_record(reminder: Reminder) -> dict:
@@ -259,11 +248,10 @@ async def deliver(db: Session, reminder: Reminder) -> None:
 
     # Web UI (always): persist into the "⏰ Reminders" conversation so it's there whenever the
     # user looks, then best-effort push live to a connected websocket.
-    chat = _get_or_create_reminders_chat(db, user.id)
-    from app.services import chat_history
+    chat = await _get_or_create_reminders_chat(db, user.id)
+    from app.services import chat_history, conversation_table
     await chat_history.append(db, user, chat.id, "assistant", body)   # encrypted event, no plaintext row
-    chat.updated_at = datetime.utcnow()
-    db.commit()
+    await conversation_table.atouch(db, chat)
     try:
         from app.routers.chat import manager
         await manager.send_json(user.id, {

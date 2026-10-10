@@ -26,6 +26,9 @@ class FakeQuery:
     def filter(self, *a, **k):
         return self
 
+    def order_by(self, *a, **k):
+        return self
+
     def all(self):
         return list(self._rows)
 
@@ -84,8 +87,18 @@ class SeedFromRelay(unittest.TestCase):
         self.user = _user(self.npub)
         self.db = FakeDb([self.user], self.kv_rows)
         self._patch()
+        # The kv is read through user_settings_table (#161). These tests are about the SQL-era sweep, so pin
+        # the table to "not yet migrated" -- and never let it go and ask a real relay which one it is.
+        from app.services import table_gate
+
+        async def _sql_authoritative(table):
+            return False
+        self._real_mode = table_gate.arelay_mode
+        table_gate.arelay_mode = _sql_authoritative
 
     def tearDown(self):
+        from app.services import table_gate
+        table_gate.arelay_mode = self._real_mode
         US._ss._operator_seckey = self._real_key
         US.store.get_docs = self._real_get
         US._last_synced_hash.clear()

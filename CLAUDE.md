@@ -387,11 +387,22 @@ passes both clip times in the arg (`clip <start> <end>`); the media tools are no
   relay doesn't already hold. So deleting only the relay doc looks like it worked and silently comes
   back on the next restart. Delete the legacy ROW FIRST, then the relay doc, on EVERY node, then
   restart and re-check. (Learned removing `finance_api_base`.)
-- **Per-user:** columns on `User` (+ the `UserSetting` key/value table). Migrations for new
+- **Per-user:** columns on `User` (+ the per-user key/value table, `user_settings_table` -- a relay DocTable,
+  see below; never `db.query(UserSetting)`). Migrations for new
   `User` columns go in `app/database.py:_run_migrations` `new_user_columns` (ALTER-on-startup);
   **new tables** are auto-created by `Base.metadata.create_all` in `init_db()`. UI is the client's
   User Settings (`renderUserSettings` in `static/js/client/settings.js`), saved via `/api/auth/settings`
   (`app/routers/auth.py`).
+- **WAVE 2 OF #161: BOTS, PER-USER SETTINGS AND CHAT CONVERSATIONS ARE RELAY DOCTABLES** (`bot_table`,
+  `user_settings_table`, `conversation_table`; docs `pcai:t:<table>:<key>`, operator-signed + NIP-44). Until a
+  table's `_migrated` marker exists SQL answers and every write goes relay FIRST, then SQL (`table_gate`); after
+  it only the relay. `wave2_migration.run_at_startup` (port 3051) copies, re-reads strictly, compares, re-reads
+  SQL (a write that raced the copy withholds the marker), then marks; `scripts/migrate_wave2_tables.py` is the
+  same by hand. Unreadable = `Unavailable` (global 503 handler), never "not set": a stream token, a storage key
+  or a follow seen-set read as empty would be REMINTED/forgotten. Sync helpers are for code off the event loop;
+  on the loop use the `a*` versions (a sync read there is memory-only). Chat MESSAGES were never in this move --
+  they have been relay-only, per conversation, under the user's key since c3ed195a2 -- and the legacy SQL rows
+  are COUNTED, never copied: they cannot be told from history deleted on the relay. `tests/test_wave2_tables.py`.
 
 ### Schedulers
 

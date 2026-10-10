@@ -303,7 +303,7 @@ async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
     """A Nostr-signup user requests AI access; an admin approves it (profile ☰ menu / Admin → Users).
     Records the pending request and DMs the admins over Nostr."""
     from app.services.nostr import nostr_service
-    from app.models import UserSetting
+    from app.services import user_settings_table
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         raise HTTPException(status_code=400, detail="invalid pubkey")
@@ -315,13 +315,7 @@ async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="log in with your Nostr key first")
     if user.is_admin or user.can_ai:
         return {"ok": True, "already": True}
-    row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
-                                       UserSetting.key == "ai_requested").first()
-    if row:
-        row.value = str(int(time.time()))
-    else:
-        db.add(UserSetting(user_id=user.id, key="ai_requested", value=str(int(time.time()))))
-    db.commit()
+    await user_settings_table.aset(db, user.id, "ai_requested", str(int(time.time())))
     logger.info("[auth] AI access requested by %s (%s)", user.username, npub[:16])
     try:
         await _notify_admins_ai_request(db, user, npub)
@@ -582,16 +576,10 @@ def set_user_timezone(
     """Store the user's UTC offset (minutes east of UTC, from the browser) so natural-language
     reminders are parsed and displayed in their local time, not UTC."""
     import re
-    from app.models import UserSetting
+    from app.services import user_settings_table
 
     def _save(key: str, value: str):
-        s = db.query(UserSetting).filter(
-            UserSetting.user_id == current_user.id, UserSetting.key == key
-        ).first()
-        if s:
-            s.value = value
-        else:
-            db.add(UserSetting(user_id=current_user.id, key=key, value=value))
+        user_settings_table.set(db, current_user.id, key, value)
 
     try:
         offset = max(-840, min(840, int(data.get("offset_minutes"))))  # clamp to ±14h
@@ -612,19 +600,16 @@ def set_user_timezone(
 def get_user_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current user's settings including custom AI service configuration"""
     import json
-    from app.models import UserSetting
+    from app.services import user_settings_table
 
     avatar_url = f"/api/auth/avatar/{current_user.username}" if current_user.avatar else None
 
     # Get mail account settings
     mail_accounts = []
-    mail_setting = db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == "mail_accounts"
-    ).first()
-    if mail_setting and mail_setting.value:
+    mail_value = user_settings_table.get(db, current_user.id, "mail_accounts")
+    if mail_value:
         try:
-            accounts = json.loads(mail_setting.value)
+            accounts = json.loads(mail_value)
             # Mask passwords
             mail_accounts = [
                 {**acc, 'password': '********' if acc.get('password') else ''}
@@ -684,29 +669,20 @@ def update_user_settings(
 
     # Update Calendar & Contacts settings (stored in UserSetting table)
     import json
-    from app.models import UserSetting
+    from app.services import user_settings_table
 
     def save_user_setting(key: str, value: str):
-        setting = db.query(UserSetting).filter(
-            UserSetting.user_id == current_user.id,
-            UserSetting.key == key
-        ).first()
-        if setting:
-            setting.value = value
-        else:
-            db.add(UserSetting(user_id=current_user.id, key=key, value=value))
+        user_settings_table.set(db, current_user.id, key, value)
 
     # Save mail account settings
     if settings.mail_accounts is not None:
-        # Get existing accounts to preserve passwords if not changed
-        existing_setting = db.query(UserSetting).filter(
-            UserSetting.user_id == current_user.id,
-            UserSetting.key == "mail_accounts"
-        ).first()
+        # Get existing accounts to preserve passwords if not changed. Unavailable propagates (503): read
+        # as "none", every stored password would be replaced with an empty one on this save.
+        existing_value = user_settings_table.get(db, current_user.id, "mail_accounts")
         existing_accounts = []
-        if existing_setting and existing_setting.value:
+        if existing_value:
             try:
-                existing_accounts = json.loads(existing_setting.value)
+                existing_accounts = json.loads(existing_value)
             except json.JSONDecodeError:
                 pass
 
