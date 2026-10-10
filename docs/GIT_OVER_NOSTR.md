@@ -1,8 +1,9 @@
 # Git-over-Nostr Host (GRASP) — implementation notes (P0–P4)
 
 Native, self-contained **git-over-nostr host** for PosterChanAI: a smart-HTTP git server whose
-pushes are authorized by **maintainer-signed Nostr events** (GRASP + NIP-34), backed by the built-in
-relay's Postgres. No external services (no ngit-relay/ngit.dev), no HTTP passwords.
+pushes are authorized by **maintainer-signed Nostr events** (GRASP + NIP-34), read from the built-in
+relay over its own websocket (`app/services/relay_reader.py`; never its Postgres tables — #161). No
+external services (no ngit-relay/ngit.dev), no HTTP passwords.
 
 **OFF BY DEFAULT.** Everything is gated on the `git_server_enabled` setting (default `"false"`):
 the supervisor spawns nothing and every `/api/git/*` route 404s until an admin turns it on. Shipping
@@ -16,7 +17,7 @@ deploys *from* it.
 |---|---|
 | `git_host_main.py` | Child HTTP server (stdlib) on `127.0.0.1:<git_server_port=3053>`; execs `git http-backend` as CGI. Also enforces the **private-repo read gate**. Runs in its OWN process — all git work (upload/receive-pack, packing) is here, never on the app event loop. |
 | `app/services/git_http_service.py` | Subprocess **supervisor** — a verbatim adaptation of the relay supervisor (singleton Popen, RLock, `_shutdown`, ~15s watchdog with crash-backoff, terminate→wait(4s)→kill). Gated on `git_server_enabled`. |
-| `app/services/git_auth.py` | **Push-authorization core** (the security crux). Pure, import-light, unit-tested. Owns the decision function + the maintainer-ACL / 30618 Postgres reads + NIP-98 verify. |
+| `app/services/git_auth.py` | **Push-authorization core** (the security crux). Pure, import-light, unit-tested. Owns the decision function + the maintainer-ACL / 30618 / PR-event relay reads (`NodeRelay`, authenticated as the node key) + NIP-98 verify. |
 | `app/services/git_host_service.py` | Repo provisioning: path mapping (traversal-proof), `git init --bare`, hook install, size/gc bounding, private-repo metadata. |
 | `git_hooks/pre_receive.py` | The `pre-receive` hook (invoked by receive-pack). Fail-closed push validator; delegates the decision to `git_auth.decide_push_ref`. |
 | `git_hooks/post_receive.py` | The `post-receive` hook. Publishes a normalized **30618 witness** (operator-signed, LOCAL relay only). Skips private repos. |
@@ -62,7 +63,7 @@ no directory. That printed `failed to list from https://…/<maintainer-npub>/<i
 even though the push to the owner's URL succeeded. `git_host_main._resolve_alias_owner` now maps a
 maintainer's path segment back to the hosting owner (300s cache, `ghs.owners_hosting` + the same
 `load_maintainers` ACL). It renames the URL and nothing else: the private-read gate, the write ACL and
-the **owner-only** delete gate all still resolve against the canonical owner. Fail-closed — no DSN, no
+the **owner-only** delete gate all still resolve against the canonical owner. Fail-closed — no relay, no
 candidate, or two hosted repos sharing the id all stay a 404.
 
 PUSH authorization is immune to the URL spelling by construction, not by the alias being careful:
@@ -73,9 +74,9 @@ owner segment, so a maintainer-signed header works through either URL while cros
 blocked.
 
 The alias lookup runs BEFORE any auth gate, so its cache is keyed on the **repo**, never on the
-caller's npub — keyed on the caller, an anonymous client could mint a Postgres connection per made-up
+caller's npub — keyed on the caller, an anonymous client could mint a relay read per made-up
 npub and evict the real entries on the way. Per repo the ACL is read once per 300s TTL; an unknown
-npub is a dict miss. A Postgres blip caches an empty map for that TTL, so the cosmetic `failed to
+npub is a dict miss. A relay blip caches an empty map for that TTL, so the cosmetic `failed to
 list` warning can return for up to 5 minutes after one — degrading to the old behaviour, never worse.
 Private repos never alias at all: `create` never announces them, so there is no 30617 to read.
 
@@ -110,7 +111,9 @@ Authorization is the SAME primitive as a push, so the editor can't exceed `git p
 1. A **NIP-98** (kind-27235) header, signature re-verified here, bound to `<id>.git/edit` (a
    read-scoped or other-repo header is refused), method-matched, fresh, and signed by a key in the
    **maintainer ACL** read from `30617:<owner>:<id>` — identical ACL code (`git_auth.load_maintainers`)
-   to `pre-receive`. No DSN ⇒ owner only (fail-closed).
+   to `pre-receive`. No relay configured ⇒ owner only (fail-closed). A relay that cannot be asked
+   also leaves the owner only, and a maintainer refused for THAT reason gets a **503** saying the relay
+   could not be asked — never a 401 that reads as "you are not a maintainer".
 2. The commit is built with plumbing against a **temporary index** (`GIT_INDEX_FILE` + `read-tree` →
    `update-index --index-info` → `write-tree` → `commit-tree`), never a work tree — a bare repo has
    none. Staging uses `--index-info` for BOTH add and delete because `--force-remove`/`--cacheinfo`
@@ -198,18 +201,24 @@ A repo can be marked **private** at create time (`private=true`; default configu
 - **A missing announcement never makes a repo public** — that is the shape our own private repos
   have. `repo_private_meta`'s older rule (repo dir exists, metadata indeterminate → private) still
   comes through the union untouched.
-- **The announcement read costs a DB hit for repos the disk flag calls public**, which the "public
-  reads hit no DB at all" note above no longer holds for, and it **fails closed**: a database we
-  cannot ask is answered *private*, so a Postgres outage 401s public clones too. A 60s per-repo cache
+- **The announcement read costs a relay read for repos the disk flag calls public**, which the "public
+  reads hit no DB at all" note above no longer holds for, and it **fails closed**: a relay we
+  cannot ask is answered *private*, so a relay outage 401s public clones too. A 60s per-repo cache
   bounds it (a clone makes many requests a second and pays one read) and failures are never cached.
-  No DSN is a different answer — a node with no relay database holds no 30617 to consult.
+  No relay configured is a different answer — such a host holds no 30617 to consult.
+- **The git host reads a private repo's events as the NODE.** The relay serves a private repo's
+  30617/30618 only to an authenticated owner/maintainer (`_can_serve_event`) — and, since #161, to the
+  node's own key (`node_pubkey`, the operator key in `keystore` that already signs the 30618 witnesses),
+  which `git_auth.NodeRelay` authenticates as (NIP-42) before asking. That node holds the repo's bytes on
+  disk, so this grants nothing new. Without the key the relay answers `auth-required`, which the hook
+  reads as "could not ask" and refuses the push — never as "no announcement".
 
 - **Read (clone/pull) requires auth.** For a private repo, `git-upload-pack` (both the
   `GET info/refs?service=git-upload-pack` and the `POST git-upload-pack`) is gated in
   `git_host_main.py` **before** git-http-backend runs: require a valid **NIP-98** header whose signer
-  is in the repo's ACCESS set = maintainers (owner ∪ 30617.maintainers, read from Postgres) ∪ the
+  is in the repo's ACCESS set = maintainers (owner ∪ 30617.maintainers, read from the relay) ∪ the
   per-repo `readers` list. No/invalid/unlisted auth → **401**, and **nothing is served** (refs never
-  leak — git-http-backend is never even spawned). Fail-closed: any error (DB unreachable, etc.) → 401.
+  leak — git-http-backend is never even spawned). Fail-closed: any error (relay unreachable, etc.) → 401.
 - **Plain git reads private repos via a Basic envelope.** The read gate (and ONLY the read gate —
   `allow_basic=True` is passed nowhere else) also accepts the same base64 NIP-98 event as the
   **password half of HTTP Basic**, so a client that can only do username/password still presents a
@@ -272,7 +281,7 @@ reports `Everything up-to-date` and pushes nothing. Two independent causes, both
    longer smart-HTTP paths still reach the app) proxies to a relay on `:3052`.
 
 **That endpoint must be the HOSTING node's relay.** `pre-receive` reads its own node's relay
-Postgres for the 30617 maintainer ACL and the 30618 authorizing the push, and server1/nas run
+(`ws://127.0.0.1:<nostr_relay_port>`, passed to it as `GRASP_RELAY_PORT`) for the 30617 maintainer ACL and the 30618 authorizing the push, and server1/nas run
 separate relays with separate event stores — so `location = /git` proxies to **nas**, not server1.
 Pointing it at server1's relay silently appears to work only if the client also publishes to nas by
 some other route; on its own it rejects every push.
@@ -291,7 +300,7 @@ signed 30618 reaching nas through `wss://poster.place/git`, and anonymous `info/
   30617, so an unannounced repo has nothing to resolve. `relay.poster.place` serves anonymous reads,
   so the repo **id is public even when the code is not** — announce private repos with no
   description.
-- **Push relays matter.** `pre-receive` reads the **hosting node's** relay Postgres, and the two
+- **Push relays matter.** `pre-receive` reads the **hosting node's** relay, and the two
   nodes have separate event stores, so a 30618 published only to `relay.poster.place` (server1) is
   invisible to nas. List the hosting node's relay (`ws://nas.lan:3052`) in the repo's relays or
   pushes fail to authorize.
@@ -342,7 +351,7 @@ To run the git host on ONE node (e.g. `nas.lan`) and reach it from another (`ser
   is a **thin HTTP reverse-proxy** that forwards the smart-HTTP requests (`info/refs`,
   `git-upload-pack`, `git-receive-pack`) to `<git_server_proxy_url>/<npub>/<id>.git/...` on the
   hosting node — streaming, preserving the `Authorization`/NIP-98 header, `Content-Type`, and
-  `Git-Protocol`. **All auth + repo storage + the pre-receive/post-receive hooks + the Postgres
+  `Git-Protocol`. **All auth + repo storage + the pre-receive/post-receive hooks + the relay
   30617/30618 lookups stay on the hosting node** — the proxy is dumb and re-implements NO auth (it
   forwards the client's NIP-98 header and the hosting node authorizes; no server-to-server bypass).
   The request body is buffered so `Content-Length` is preserved for the host's CGI; the response
@@ -397,7 +406,8 @@ hydrates + persists it generically). None are secret (no NIP-44 encryption neede
 
 ## Deps
 
-No new Python deps: stdlib `http.server` + `psycopg2` (already required) + `git`/`git-http-backend`
+No new Python deps: stdlib `http.server` + `websockets` (already required; the hook reads the relay
+through it) + `psycopg2` (only for the acceptance policy's `users`/`wot` table lookups) + `git`/`git-http-backend`
 (ship together; confirmed at `/usr/libexec/git-core/git-http-backend`, git 2.54.0). The Dockerfile
 already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequisites (no-op install).
 
@@ -407,9 +417,12 @@ already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequ
   cases and 5 private read-gate cases (all crafted with really-signed events).
 - `tests/test_git_host_serve.py` — supervisor gate (disabled ⇒ no spawn), public anonymous clone via
   git-http-backend, and the private read gate (401 anon / 200 allowlisted reader / 401 non-reader).
-- `tests/test_git_push_e2e.py` — a real `git push` through git-http-backend → pre-receive → real
-  Postgres: accept on matching maintainer-signed 30618, reject with no/mismatched state, and confirms
-  a rejected push does not move the ref (objects discarded).
+- `tests/test_git_push_e2e.py` — a real `git push` through git-http-backend → pre-receive → a real
+  websocket relay: accept on matching maintainer-signed 30618, reject with no/mismatched state, reject
+  (saying why) when the relay cannot be asked, and confirms a rejected push does not move the ref.
+- `tests/test_git_auth_reads_the_relay.py` — #161: the real hook process with psycopg2 unimportable,
+  relay up ⇒ allowed, relay down ⇒ refused; a private repo read by authenticating as the node key; the
+  web editor's 503; every loader RAISES on "could not ask".
 - `tests/test_git_host_browse_edit.py` — 47 checks on the browse API + web editor + chunked push:
   refs/tree/log/commit shapes (incl. root + merge commits), `?ref=` with a slashed branch, download
   headers, hostile refs/paths refused, all four `/edit` authorization refusals, commit/delete/exec-bit/
@@ -428,7 +441,7 @@ break-glass path — the GRASP repo is a **mirror**, like the `github` remote, n
 
 - **Where it runs: the HOSTING node.** Push auth is a maintainer *signature*, not a connection: only
   a maintainer of `30617:<owner>:<id>` can move a ref, and `pre-receive` reads the **hosting node's**
-  relay Postgres (`GRASP_PG_DSN`) — a 30618 published to another node's relay isn't seen. On the
+  relay (`GRASP_RELAY_PORT`) — a 30618 published to another node's relay isn't seen. On the
   hosting node the operator key IS the repo owner, hence always a maintainer. A proxy node
   (`git_server_proxy_url` set), a node with the host off, or one with no operator key **skips with a
   message and exit 0**. `sync.sh` therefore invokes it on **both** server1 and nas: whichever hosts

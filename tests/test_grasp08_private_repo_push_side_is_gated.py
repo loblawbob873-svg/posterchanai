@@ -55,7 +55,7 @@ def _commit(gitdir, ref):
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     import git_host_main
-    monkeypatch.setattr(git_host_main, "_CONFIG", {"pg_dsn": "", "repo_root": _ROOT, "repo_max_mb": 512,
+    monkeypatch.setattr(git_host_main, "_CONFIG", {"relay_port": 0, "repo_root": _ROOT, "repo_max_mb": 512,
                                                    "allow_force": True, "nip98_push": True,
                                                    "public_base": "", "read_skew": 300, "port": 0})
     priv = ghs.create_repo(OWNER, "privrepo", private=True)

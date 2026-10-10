@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from app.services.nostr.event import build_event, verify_event
-from app.services.nostr_relay.store import RelayStore, EVENT_COLUMNS, event_from_row
+from app.services.nostr_relay.store import RelayStore, event_from_row
 from app.services import git_auth
 
 
@@ -54,31 +54,27 @@ def test_a_legacy_row_is_served_from_its_columns_without_the_extra_keys(relay):
     assert got == [ev] and "_id" not in got[0], got
 
 
-def test_the_column_list_is_the_one_both_readers_use():
-    assert EVENT_COLUMNS == git_auth._ECOLS and git_auth._COLS == EVENT_COLUMNS.replace("e.", "")
+def test_the_column_list_is_the_one_reader():
+    """git_auth used to keep its own copy of the column list and row decoder; it reads the RELAY now
+    (#161), so the store's `event_from_row` is the only one left and must stay round-trip exact."""
+    assert not hasattr(git_auth, "_ECOLS") and not hasattr(git_auth, "_row_event")
     ev = _ev()
     row = (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], json.dumps(ev["tags"]), ev["content"], ev["sig"])
-    assert event_from_row(row) == ev == git_auth._row_event(row)
+    assert event_from_row(row) == ev
 
 
 def test_git_auth_reads_an_event_with_no_raw_copy(relay):
-    """The push hook's lookup, on a row the relay now writes (raw NULL)."""
+    """The push hook's lookup, on a row the relay now writes (raw NULL), answered by the relay's own
+    query code exactly as a REQ would be."""
     store, db = relay
     ev = _ev("announcement", kind=1)
     store._insert_one(db, ev, "direct")
 
-    class _Cur:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def execute(self, sql, params):
-            self.rows = db.execute(sql.replace("%s", "?"), params).fetchall()
-        def fetchone(self): return tuple(self.rows[0]) if self.rows else None
-        def fetchall(self): return [tuple(r) for r in self.rows]
+    class _Relay:
+        def query(self, filters):
+            return [e for f in filters for e in store._query_one(db, f)]
 
-    class _Conn:
-        def cursor(self): return _Cur()
-
-    assert git_auth.load_event_by_id(_Conn(), ev["id"]) == ev
+    assert git_auth.load_event_by_id(_Relay(), ev["id"]) == ev
 
 
 def test_the_schema_no_longer_has_a_raw_copy_and_an_old_table_loses_it():

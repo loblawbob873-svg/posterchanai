@@ -71,7 +71,7 @@ def test_an_identifier_that_is_not_a_slug_after_decoding_is_still_refused():
 def serve(tmp_path, monkeypatch):
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(gh, "_CONFIG", {
-        "pg_dsn": "", "public_base": BASE, "allowlist": "", "auto_provision": False,
+        "relay_port": 0, "public_base": BASE, "allowlist": "", "auto_provision": False,
         "accept_policy": "local-or-wot", "read_skew": 60, "write_skew": 120, "port": 0},
         raising=False)
     gh._prov_deny.clear()

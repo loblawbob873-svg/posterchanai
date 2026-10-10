@@ -13,11 +13,11 @@ payment / web-of-trust grounds, but says nothing about the resource question acc
 leaves it to the operator to state in NIP-11 `repo_acceptance_criteria`. Accepting means allocating
 disk to a remote party, so the default is narrow and every widening is a setting.
 
-Everything below runs the SHIPPED handler against a temp repo store and a stub Postgres.
+Everything below runs the SHIPPED handler against a temp repo store, a stub relay (the
+announcement) and a stub Postgres (the acceptance policy's `users`/`wot` tables).
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -31,6 +31,7 @@ import git_host_main as gh                             # noqa: E402
 from app.services import git_auth, git_host_service as ghs   # noqa: E402
 from app.services.nostr import bip340, nostr_service   # noqa: E402
 from app.services.nostr.event import build_event       # noqa: E402
+from tests.git_relay_fake import FakeRelay              # noqa: E402
 
 OWNER_SK = (11).to_bytes(32, "big")
 OWNER = bip340.pubkey_from_seckey(OWNER_SK).hex()
@@ -50,7 +51,8 @@ def announcement(clone=None, private=False, repo=REPO, relays=None):
 
 
 class _Cur:
-    """Just enough Postgres: the announcement read, plus the two acceptance-policy lookups."""
+    """Just enough Postgres: the two acceptance-policy lookups (the announcement is read from the
+    RELAY now, #161 -- see _Conn.relay)."""
 
     def __init__(self, conn):
         self._conn, self._rows = conn, []
@@ -63,13 +65,8 @@ class _Cur:
 
     def execute(self, sql, params=None):
         self._conn.sql.append(sql)
-        if "FROM events" in sql:
-            _repo, _kind, pubkey = params
-            # Honour the SQL's own comparison: case-insensitive only when it says lower(...).
-            ci = "lower(t.value) = lower(%s)" in sql
-            same = (lambda a, b: a.lower() == b.lower()) if ci else (lambda a, b: a == b)
-            self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events if e["pubkey"] == pubkey
-                          and any(t[0] == "d" and same(t[1], _repo) for t in e["tags"])]
+        if "FROM events" in sql or "event_tags" in sql:
+            raise AssertionError("the announcement is read from the relay, never Postgres (#161)")
         elif "FROM users" in sql:
             if self._conn.no_users_table:
                 raise RuntimeError('relation "users" does not exist')
@@ -87,10 +84,21 @@ class _Cur:
 
 
 class _Conn:
-    def __init__(self, events=(), wot=(), local_npubs=(), no_users_table=False):
+    """The node as the host sees it: a stub Postgres (`users`/`wot`) and THIS node's relay holding
+    `events`. `sql` records every read of either, so a test can count them."""
+
+    def __init__(self, events=(), wot=(), local_npubs=(), no_users_table=False, relay_down=False):
         self.events, self.wot, self.local_npubs = list(events), set(wot), set(local_npubs)
         self.no_users_table, self.sql = no_users_table, []
         self.autocommit = False
+        conn = self
+
+        class _Relay(FakeRelay):
+            def query(self, filters):
+                conn.sql.append(("REQ", filters))
+                return super().query(filters)
+
+        self.relay = _Relay(self.events, down=relay_down)
 
     def cursor(self):
         return _Cur(self)
@@ -108,8 +116,8 @@ def host(tmp_path, monkeypatch):
     # "passed" by finding a repo it never created.
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(gh, "_CONFIG", {
-        "pg_dsn": "stub", "public_base": BASE, "allowlist": "", "auto_provision": True,
-        "accept_policy": "local-or-wot", "port": 0}, raising=False)
+        "pg_dsn": "stub", "relay_port": 3052, "public_base": BASE, "allowlist": "",
+        "auto_provision": True, "accept_policy": "local-or-wot", "port": 0}, raising=False)
     gh._prov_deny.clear()
     state = {}
 
@@ -119,6 +127,7 @@ def host(tmp_path, monkeypatch):
         state["conn"] = conn
         monkeypatch.setitem(sys.modules, "psycopg2",
                             type("_PG", (), {"connect": staticmethod(lambda *a, **k: conn)}))
+        monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: conn.relay)
         h = object.__new__(gh._Handler)
         h.headers = {}
         return h._autoprovision(owner, repo)
@@ -243,9 +252,17 @@ def test_a_database_we_cannot_ask_provisions_nothing(host, monkeypatch):
     assert h._autoprovision(OWNER, REPO) is False
 
 
+def test_a_relay_we_cannot_ask_provisions_nothing(host):
+    """The announcement comes from THIS node's relay (#161). "Could not ask" is not "no
+    announcement" -- but here both refuse, and neither may provision."""
+    conn = _Conn([announcement()], wot=[OWNER], relay_down=True)
+    assert host(conn) is False
+    assert not ghs.repo_exists(OWNER, REPO)
+
+
 def test_a_refusal_is_cached_so_a_polling_client_cannot_hammer_postgres(host):
     """ngit polls `info/refs` in a loop, and this path is reachable by any anonymous caller with any
-    made-up name — it must not be three Postgres reads per request."""
+    made-up name — it must not be a relay read plus Postgres reads per request."""
     conn = _Conn([announcement()])
     assert host(conn) is False
     before = len(conn.sql)
@@ -273,12 +290,14 @@ def _serve(conn, tmp_path, monkeypatch, **cfg):
     from http.server import ThreadingHTTPServer
 
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
-    base_cfg = {"pg_dsn": "stub", "public_base": BASE, "allowlist": "", "auto_provision": True,
+    base_cfg = {"pg_dsn": "stub", "relay_port": 3052, "public_base": BASE, "allowlist": "",
+                "auto_provision": True,
                 "accept_policy": "local-or-wot", "read_skew": 60, "write_skew": 120, "port": 0}
     base_cfg.update(cfg)
     monkeypatch.setattr(gh, "_CONFIG", base_cfg, raising=False)
     monkeypatch.setitem(sys.modules, "psycopg2",
                         type("_PG", (), {"connect": staticmethod(lambda *a, **k: conn)}))
+    monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: conn.relay)
     gh._prov_deny.clear()
     gh._alias_cache.clear()
 

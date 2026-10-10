@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Serving + supervisor-gate verification for the GRASP git host.
 
-Proves, WITHOUT Postgres:
+Proves, WITHOUT a relay:
   1. the supervisor spawns NOTHING when git_server_enabled is false;
   2. git_host_main serves GET /<npub>/<id>.git/info/refs?service=git-upload-pack for a real bare repo
      by exec'ing git-http-backend (a PUBLIC repo clones anonymously);
   3. a PRIVATE repo: anonymous upload-pack -> 401 (no refs leaked); a valid NIP-98 header from an
      allowlisted reader -> 200; a non-allowlisted signer -> 401.
 
-Uses a temp GRASP_GIT_PROJECT_ROOT (no DB); the private read gate is exercised with pg_dsn="" so the
-readers allowlist alone gates (production injects the DSN + folds in maintainers).
+Uses a temp GRASP_GIT_PROJECT_ROOT (no relay); the private read gate is exercised with relay_port 0 so
+the readers allowlist alone gates (production reads the maintainers from this node's relay too).
 """
 
 import base64
@@ -129,7 +129,7 @@ def main():
     from app.services.nostr import nostr_service
     npub = nostr_service.npub_of(owner_hex)
 
-    config = {"pg_dsn": "", "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
+    config = {"relay_port": 0, "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
               "nip98_push": True, "public_base": "", "read_skew": 300, "port": 0}
     httpd, port = _serve_in_thread(config)
     time.sleep(0.3)

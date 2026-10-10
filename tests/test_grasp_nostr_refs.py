@@ -17,7 +17,6 @@ and is not loosened to make room for this one.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -30,6 +29,7 @@ if _ROOT not in sys.path:
 
 from app.services import git_auth, git_host_service as ghs   # noqa: E402
 from app.services.nostr import bip340                        # noqa: E402
+from tests.git_relay_fake import FakeRelay                    # noqa: E402
 from app.services.nostr.event import build_event             # noqa: E402
 
 SK = (11).to_bytes(32, "big")
@@ -123,41 +123,9 @@ def test_c_tags_are_read_as_ngit_v3_writes_them():
 
 # ------------------------------------------------------------------ the reaper
 
-class _Cur:
-    def __init__(self, conn):
-        self._conn, self._rows = conn, []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, params=None):
-        if "id = ANY" in sql:
-            ids, kinds = params
-            self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events
-                          if e["id"] in ids and e["kind"] in kinds]
-        else:
-            self._rows = []
-
-    def fetchall(self):
-        return self._rows
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-
-class _Conn:
-    def __init__(self, events=()):
-        self.events = list(events)
-        self.autocommit = False
-
-    def cursor(self):
-        return _Cur(self)
-
-    def close(self):
-        pass
+def _Conn(events=()):
+    """THIS node's relay holding `events` (the reaper reads the relay, not its Postgres: #161)."""
+    return FakeRelay(events)
 
 
 @pytest.fixture
@@ -189,7 +157,7 @@ def repo(tmp_path, monkeypatch):
 
 def test_an_unclaimed_ref_past_the_grace_is_deleted(repo, monkeypatch):
     d, sha, _claimed = repo
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     r = ghs.reap_nostr_refs(conn=_Conn([]), grace=0)
     assert r["deleted"] == 2, r
     assert ghs.nostr_refs(OWNER, REPO) == {}
@@ -197,7 +165,7 @@ def test_an_unclaimed_ref_past_the_grace_is_deleted(repo, monkeypatch):
 
 def test_a_CLAIMED_ref_survives(repo, monkeypatch):
     d, sha, claimed = repo
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     r = ghs.reap_nostr_refs(conn=_Conn([claimed]), grace=0)
     assert r["kept"] == 1 and r["deleted"] == 1, r
     assert list(ghs.nostr_refs(OWNER, REPO)) == ["refs/nostr/" + claimed["id"]]
@@ -206,7 +174,7 @@ def test_a_CLAIMED_ref_survives(repo, monkeypatch):
 def test_a_PR_event_naming_a_DIFFERENT_tip_does_not_save_the_ref(repo, monkeypatch):
     """"with a `c` tag that matches the ref tip" — an event about some other commit claims nothing."""
     d, sha, claimed = repo
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     # the SAME event id, but its `c` tag names a different commit
     other = build_event(CONTRIB_SK, 1618, "", tags=[["c", SHA_B]])
     subprocess.run(["git", "--git-dir", d, "update-ref", "refs/nostr/" + other["id"], sha],
@@ -218,7 +186,7 @@ def test_a_PR_event_naming_a_DIFFERENT_tip_does_not_save_the_ref(repo, monkeypat
 def test_a_ref_INSIDE_the_grace_is_never_touched(repo, monkeypatch):
     """The grace is the spec's 20 minutes and deleting early throws away a contribution whose PR
     event is still in flight."""
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     r = ghs.reap_nostr_refs(conn=_Conn([]), grace=ghs.NOSTR_REF_GRACE_SECONDS)
     assert r["deleted"] == 0 and r["kept"] == 2, r
     assert len(ghs.nostr_refs(OWNER, REPO)) == 2
@@ -228,32 +196,32 @@ def test_the_grace_is_the_specs_twenty_minutes():
     assert ghs.NOSTR_REF_GRACE_SECONDS == 20 * 60
 
 
-def test_a_database_we_cannot_ask_KEEPS_every_ref(repo, monkeypatch):
+def test_a_relay_we_cannot_ask_KEEPS_every_ref(repo, monkeypatch):
     """FAIL-CLOSED HERE MEANS KEEP. We cannot tell an unclaimed ref from a claimed one without the
-    relay, and deleting on "I could not ask" would throw away contributors' work every time Postgres
+    relay, and deleting on "I could not ask" would throw away contributors' work every time the relay
     blinked. Deletion needs positive evidence of absence — the same rule the folder-sync deletion
-    guard and the Blossom store scan already state."""
-    class _Boom:
-        @staticmethod
-        def connect(*a, **k):
-            raise OSError("connection refused")
-
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
-    monkeypatch.setitem(sys.modules, "psycopg2", _Boom)
+    guard and the Blossom store scan already state. A REAL socket to a port nobody listens on,
+    through the default (GRASP_RELAY_PORT) path and the shipped relay_reader."""
+    import socket
+    sk = socket.socket()
+    sk.bind(("127.0.0.1", 0))
+    port = sk.getsockname()[1]
+    sk.close()
+    monkeypatch.setenv("GRASP_RELAY_PORT", str(port))
     r = ghs.reap_nostr_refs(grace=0)
     assert r["deleted"] == 0
     assert len(ghs.nostr_refs(OWNER, REPO)) == 2
 
 
-def test_no_relay_dsn_keeps_every_ref(repo, monkeypatch):
-    monkeypatch.delenv("GRASP_PG_DSN", raising=False)
+def test_no_relay_configured_keeps_every_ref(repo, monkeypatch):
+    monkeypatch.delenv("GRASP_RELAY_PORT", raising=False)
     r = ghs.reap_nostr_refs(grace=0)
     assert r["deleted"] == 0
     assert len(ghs.nostr_refs(OWNER, REPO)) == 2
 
 
 def test_ordinary_branches_are_never_swept(repo, monkeypatch):
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     ghs.reap_nostr_refs(conn=_Conn([]), grace=0)
     assert "refs/heads/main" in ghs.repo_refs(OWNER, REPO)
 
@@ -266,7 +234,7 @@ def test_ref_age_comes_from_the_commit_date_not_the_file_mtime(repo, monkeypatch
     subprocess.run(["git", "--git-dir", d, "pack-refs", "--all"], check=True, capture_output=True)
     ages = {n: age for n, (s, age) in ghs.nostr_refs(OWNER, REPO).items()}
     assert ages and all(a >= 0 for a in ages.values())
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     assert ghs.reap_nostr_refs(conn=_Conn([]), grace=0)["deleted"] == 2
 
 
@@ -276,15 +244,11 @@ def test_a_relay_that_dies_MID_SWEEP_still_keeps_every_ref(repo, monkeypatch):
     the failure caught inside the loop, an unclaimed-looking ref went `deleted=1, refs left=0`. The
     error has to escape to the outer guard, which keeps everything and says so."""
     class _Dies:
-        autocommit = False
+        def query(self, filters):
+            from app.services import relay_reader
+            raise relay_reader.Unavailable("relay unreachable mid-query")
 
-        def cursor(self):
-            raise RuntimeError("relay unreachable mid-query")
-
-        def close(self):
-            pass
-
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
     r = ghs.reap_nostr_refs(conn=_Dies(), grace=0)
     assert r["deleted"] == 0, r
     assert len(ghs.nostr_refs(OWNER, REPO)) == 2, "a mid-sweep failure deleted refs"

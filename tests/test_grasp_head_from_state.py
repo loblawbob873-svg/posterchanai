@@ -7,11 +7,10 @@ answer handed to every reader that asks a repo for its default: the web Git UI's
 30618 witness we publish back, and `git clone`'s symref advertisement.
 
 These build a real bare repo with real branches and run the shipped functions against a stub
-Postgres holding REAL signed 30617/30618 events.
+relay holding REAL signed 30617/30618 events.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -25,6 +24,7 @@ if _ROOT not in sys.path:
 from app.services import git_auth, git_host_service as ghs   # noqa: E402
 from app.services.nostr import bip340                        # noqa: E402
 from app.services.nostr.event import build_event             # noqa: E402
+from tests.git_relay_fake import FakeRelay                    # noqa: E402
 
 OWNER_SK = (11).to_bytes(32, "big")
 RANDO_SK = (33).to_bytes(32, "big")
@@ -42,47 +42,9 @@ def state(sk=OWNER_SK, head="refs/heads/develop", refs=(), created_at=None):
     return build_event(sk, git_auth.STATE_KIND, "", tags=tags, created_at=created_at)
 
 
-class _Cur:
-    def __init__(self, conn):
-        self._conn, self._rows = conn, []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, params=None):
-        if "FROM events" not in sql:
-            self._rows = []
-            return
-        repo_id, kind, who = params
-        if kind == git_auth.STATE_KIND:
-            keep = [e for e in self._conn.events
-                    if e["kind"] == kind and e["pubkey"] in set(who)]
-        else:
-            keep = [e for e in self._conn.events if e["kind"] == kind and e["pubkey"] == who]
-        keep = [e for e in keep if any(t[:2] == ["d", repo_id] for t in e["tags"])]
-        keep.sort(key=lambda e: -e["created_at"])
-        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in keep]
-
-    def fetchall(self):
-        return self._rows
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-
-class _Conn:
-    def __init__(self, events):
-        self.events = list(events)
-        self.autocommit = False
-
-    def cursor(self):
-        return _Cur(self)
-
-    def close(self):
-        pass
+def _Conn(events):
+    """THIS node's relay holding `events` (git_auth reads the relay, not its Postgres: #161)."""
+    return FakeRelay(events)
 
 
 def _unhook(d):
@@ -114,10 +76,9 @@ def repo(tmp_path, monkeypatch):
     return d
 
 
-def use(conn, monkeypatch):
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
-    monkeypatch.setitem(sys.modules, "psycopg2",
-                        type("_PG", (), {"connect": staticmethod(lambda *a, **k: conn)}))
+def use(relay, monkeypatch):
+    monkeypatch.setenv("GRASP_RELAY_PORT", "3052")
+    monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: relay)
 
 
 def test_the_declared_HEAD_is_used_instead_of_the_convention(repo, monkeypatch):
@@ -194,17 +155,11 @@ def test_no_state_event_leaves_the_convention_in_charge(repo, monkeypatch):
     assert ghs.adopt_head_if_unborn(OWNER, REPO) == ""     # master is born; nothing to adopt
 
 
-def test_an_unreachable_database_leaves_the_convention_in_charge(repo, monkeypatch):
+def test_an_unreachable_relay_leaves_the_convention_in_charge(repo, monkeypatch):
     """HEAD is metadata. Refusing to serve a repo because we could not read a preference would be a
     far worse failure than a stale default — this is the one decision on the git host that is
     deliberately best-effort rather than fail-closed."""
-    class _Boom:
-        @staticmethod
-        def connect(*a, **k):
-            raise OSError("connection refused")
-
-    monkeypatch.setenv("GRASP_PG_DSN", "stub")
-    monkeypatch.setitem(sys.modules, "psycopg2", _Boom)
+    use(FakeRelay([state()], down=True), monkeypatch)
     assert ghs.head_from_state(OWNER, REPO) == ""
 
 
@@ -212,7 +167,7 @@ def test_the_unborn_HEAD_convention_still_works(tmp_path, monkeypatch):
     """The half this function is named for. A repo whose first push is `main` is left by
     `git init --bare` pointing at a `master` that does not exist."""
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.delenv("GRASP_PG_DSN", raising=False)
+    monkeypatch.delenv("GRASP_RELAY_PORT", raising=False)
     ghs.create_repo(OWNER, "fresh")
     d = ghs.repo_dir(OWNER, "fresh")
     _unhook(d)

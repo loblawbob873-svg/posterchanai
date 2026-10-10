@@ -1970,7 +1970,17 @@ class RelayServer:
         # private repo was private in its bytes and public in its name, structure, maintainers and
         # activity. GRASP-08 makes the relay half explicit, and this is that half.
         if self._is_private_repo_event(ev):
-            return bool(self._repo_readers(ev) & self._auth_pubkeys.get(conn, set()))
+            authed = self._auth_pubkeys.get(conn, set())
+            # ...AND THE NODE THAT HOSTS IT. The git host reads its push ACL, its private-read gate
+            # and its state events through this relay (git_auth, #161) instead of from Postgres, and it
+            # authenticates as the NODE key -- the operator key in keystore, which already signs the
+            # 30618 witnesses. That node holds the repository's bytes on its own disk, so serving it
+            # the metadata grants nothing it does not have; refusing it would turn every push to a
+            # private repo into an `auth-required` the hook can only answer with a refusal.
+            node = (getattr(self, "cfg", None) or {}).get("node_pubkey")
+            if node and node in authed:
+                return True
+            return bool(self._repo_readers(ev) & authed)
         return True
 
     # --- NIP-77 negentropy --------------------------------------------------

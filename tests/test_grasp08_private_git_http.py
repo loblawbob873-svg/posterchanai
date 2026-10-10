@@ -10,7 +10,7 @@ private in its announcement and WORLD-CLONABLE over HTTP. Nothing logs it, becau
 side every one of those reads is a legitimate read of a public repo.
 
 The gate is therefore a UNION of the two signals. These tests run the shipped `_read_gate_ok` and
-`_announced_private`, and the shipped `git_auth` loader against a stub cursor holding REAL signed
+`_announced_private`, and the shipped `git_auth` loader against a stub relay holding REAL signed
 events.
 """
 from __future__ import annotations
@@ -30,6 +30,7 @@ from app.services.nostr.event import build_event       # noqa: E402
 
 import git_host_main as gh                             # noqa: E402
 from app.services import git_host_service as ghs       # noqa: E402
+from tests.git_relay_fake import FakeRelay              # noqa: E402
 
 OWNER_SK = (11).to_bytes(32, "big")
 RANDO_SK = (33).to_bytes(32, "big")
@@ -45,36 +46,18 @@ def announcement(sk=OWNER_SK, *, private=True, repo=REPO):
     return build_event(sk, git_auth.ANNOUNCE_KIND, "", tags=tags)
 
 
-class _Cur:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, *a):
-        pass
-
-    def fetchall(self):
-        return self._rows
+def _Conn(events):
+    """THIS node's relay holding `events` -- git_auth reads the relay, not its Postgres (#161)."""
+    return FakeRelay(events)
 
 
-class _Conn:
-    """Just enough of a psycopg2 connection for git_auth's one indexed read."""
-
-    def __init__(self, events):
-        import json
-        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in events]
-        self.autocommit = False
-
-    def cursor(self):
-        return _Cur(self._rows)
-
-    def close(self):
-        pass
+def _closed_port() -> int:
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 # --------------------------------------------------------------------- the tag predicate
@@ -105,7 +88,7 @@ def test_the_relay_and_the_git_host_read_the_tag_through_the_SAME_predicate():
     assert RelayServer._is_private_repo_event(ev) is git_auth.event_says_private(ev) is True
 
 
-# --------------------------------------------------------------------- the Postgres loader
+# --------------------------------------------------------------------- the relay loader
 
 def test_load_announced_private_reads_the_owners_own_announcement():
     assert git_auth.load_announced_private(_Conn([announcement()]), OWNER, REPO) is True
@@ -119,7 +102,7 @@ def test_a_stranger_cannot_announce_someone_elses_repo_private():
 
 
 def test_a_tampered_announcement_is_not_trusted():
-    """Never trust the DB row's mere presence — the signature is re-verified here."""
+    """Never trust the relay's word for it — the signature is re-verified here."""
     bad = announcement()
     bad["tags"] = [["d", REPO]]        # id/sig now describe different tags
     assert git_auth.load_announced_private(_Conn([bad]), OWNER, REPO) is False
@@ -139,7 +122,7 @@ def _handler():
 
 @pytest.fixture
 def cfg(monkeypatch):
-    monkeypatch.setattr(gh, "_CONFIG", {"pg_dsn": "", "read_skew": 60, "port": 0}, raising=False)
+    monkeypatch.setattr(gh, "_CONFIG", {"relay_port": 0, "read_skew": 60, "port": 0}, raising=False)
     gh._priv_cache.clear()
     yield
     gh._priv_cache.clear()
@@ -179,42 +162,36 @@ def test_a_locally_private_repo_costs_no_announcement_read(monkeypatch, cfg):
 
 # --------------------------------------------------------------------- _announced_private itself
 
-def test_no_dsn_means_there_is_no_announcement_to_consult(cfg):
-    """A node with no relay database holds no 30617 at all, so this is "nothing to read", not "a
+def test_no_relay_means_there_is_no_announcement_to_consult(cfg):
+    """A host with no relay configured holds no 30617 at all, so this is "nothing to read", not "a
     read that failed" — the same reading `_maintainers` takes when it falls back to {owner}."""
     assert _handler()._announced_private(OWNER, REPO) is False
 
 
-def test_a_database_we_cannot_ask_is_answered_PRIVATE(monkeypatch, cfg):
+def test_a_relay_we_cannot_ask_is_answered_PRIVATE(monkeypatch, cfg):
     """Fail-closed, the stance `_read_gate_ok`/`_is_wot_member`/`repo_private_meta` already take:
-    "I could not ask whether this repo is private" is not "this repo is public"."""
-    monkeypatch.setitem(gh._CONFIG, "pg_dsn", "host=127.0.0.1 port=1 dbname=nope connect_timeout=1")
+    "I could not ask whether this repo is private" is not "this repo is public". A REAL socket to a
+    port nobody listens on, through the shipped relay_reader."""
+    monkeypatch.setitem(gh._CONFIG, "relay_port", _closed_port())
     assert _handler()._announced_private(OWNER, REPO) is True
 
 
 def test_a_failed_read_is_never_cached(monkeypatch, cfg):
-    """Caching the failure would turn a one-second database blip into a full TTL of 401s for every
+    """Caching the failure would turn a one-second relay blip into a full TTL of 401s for every
     public repo on the node."""
-    monkeypatch.setitem(gh._CONFIG, "pg_dsn", "host=127.0.0.1 port=1 dbname=nope connect_timeout=1")
+    monkeypatch.setitem(gh._CONFIG, "relay_port", _closed_port())
     assert _handler()._announced_private(OWNER, REPO) is True
     assert not gh._priv_cache
 
 
-def test_the_answer_is_cached_so_a_clone_costs_one_indexed_read(monkeypatch, cfg):
-    calls = []
-
-    class _FakePG:
-        @staticmethod
-        def connect(dsn, connect_timeout=None):
-            calls.append(dsn)
-            return _Conn([announcement()])
-
-    monkeypatch.setitem(gh._CONFIG, "pg_dsn", "dsn")
-    monkeypatch.setitem(sys.modules, "psycopg2", _FakePG)
+def test_the_answer_is_cached_so_a_clone_costs_one_relay_read(monkeypatch, cfg):
+    relay = FakeRelay([announcement()])
+    monkeypatch.setitem(gh._CONFIG, "relay_port", 3052)
+    monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: relay)
     h = _handler()
     assert h._announced_private(OWNER, REPO) is True
     assert h._announced_private(OWNER, REPO) is True
-    assert len(calls) == 1, "the second request re-queried Postgres"
+    assert len(relay.filters) == 1, "the second request re-queried the relay"
 
 
 # --------------------------------------------------------------------- the REAL on-disk shapes

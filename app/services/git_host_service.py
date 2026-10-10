@@ -317,6 +317,17 @@ def repo_head(owner_hex: str, repo_id: str) -> str:
     return (r.stdout or "").strip()
 
 
+def _env_relay():
+    """THIS node's relay for a git read made from the git host or a hook, or None when the process
+    was given no GRASP_RELAY_PORT (the old "no GRASP_PG_DSN": nothing to consult). Events are read
+    from the relay, never its Postgres tables (#161)."""
+    port = os.environ.get("GRASP_RELAY_PORT", "")
+    if not port.isdigit() or int(port) <= 0:
+        return None
+    from app.services import git_auth
+    return git_auth.node_relay(int(port), timeout=4.0)
+
+
 def head_from_state(owner_hex: str, repo_id: str) -> str:
     """The HEAD the repo's SIGNED kind-30618 declares, if that branch now exists here — else "".
 
@@ -336,27 +347,19 @@ def head_from_state(owner_hex: str, repo_id: str) -> str:
     must EXIST before we point at it: setting HEAD to a branch we do not have reproduces exactly the
     unborn-HEAD bug this module already had to fix once.
 
-    Best-effort by construction: no DSN, no psycopg2, an unreachable database or no state event all
-    return "" and leave the caller on its convention. HEAD is metadata — refusing to serve a repo
+    Best-effort by construction: no relay configured, a relay that cannot be asked or no state event
+    all return "" and leave the caller on its convention. HEAD is metadata — refusing to serve a repo
     because we could not read a preference would be a far worse failure than a stale default.
     """
     rid = sanitize_repo_id(repo_id)
-    dsn = os.environ.get("GRASP_PG_DSN", "")
-    if not rid or not dsn:
+    relay = _env_relay()
+    if not rid or relay is None:
         return ""
     try:
-        import psycopg2
         from app.services import git_auth
-        conn = psycopg2.connect(dsn, connect_timeout=5)
-        try:
-            conn.autocommit = True
-            with conn.cursor() as cur:
-                cur.execute("SET statement_timeout = 4000")
-            maints = git_auth.load_maintainers(conn, owner_hex, rid)
-            state = git_auth.select_authorized_state(
-                git_auth.load_state_events(conn, owner_hex, rid, maints), maints)
-        finally:
-            conn.close()
+        maints = git_auth.load_maintainers(relay, owner_hex, rid)
+        state = git_auth.select_authorized_state(
+            git_auth.load_state_events(relay, owner_hex, rid, maints), maints)
     except Exception as e:
         logger.info("[git-host] could not read a declared HEAD for %s/%s (%s)", owner_hex[:12], rid, e)
         return ""
@@ -598,25 +601,18 @@ def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
     quota alone. A ref is KEPT when the relay holds a valid kind-1618/1619 with that event id whose
     `c` tags include the ref's current tip; otherwise, once it is past the grace, it goes.
 
-    FAIL-CLOSED HERE MEANS KEEP, not delete: with no database, no psycopg2 or an unreachable relay we
-    cannot tell an unclaimed ref from a claimed one, and deleting on "I could not ask" would throw
-    away contributors' work every time Postgres blinked. Deletion needs positive evidence of absence,
+    FAIL-CLOSED HERE MEANS KEEP, not delete: with no relay configured or one that cannot be asked
+    (relay_reader.Unavailable) we cannot tell an unclaimed ref from a claimed one, and deleting on "I
+    could not ask" would throw away contributors' work every time the relay blinked.
+
+    `conn` is the relay to ask (anything with `.query(filters)`, e.g. git_auth.NodeRelay); by default
+    THIS node's relay at GRASP_RELAY_PORT. (The name is kept from when it was a Postgres connection.) Deletion needs positive evidence of absence,
     which is the same rule the folder-sync deletion guard and the Blossom store scan already state:
     "could not ask" is never "missing".
     """
-    dsn = os.environ.get("GRASP_PG_DSN", "")
-    close_after = False
-    if conn is None:
-        if not dsn:
-            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": "no relay DSN"}
-        try:
-            import psycopg2
-            conn = psycopg2.connect(dsn, connect_timeout=5)
-            conn.autocommit = True
-            close_after = True
-        except Exception as e:
-            logger.info("[git-host] nostr-ref reaper: no relay DB (%s) — keeping every ref", e)
-            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": str(e)}
+    relay = conn if conn is not None else _env_relay()
+    if relay is None:
+        return {"swept": 0, "deleted": 0, "kept": 0, "skipped": "no relay configured"}
     from app.services import git_auth
     swept = deleted = kept = 0
     try:
@@ -629,7 +625,7 @@ def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
                 kept += len(refs)
                 continue
             ids = [git_auth.nostr_ref_event_id(n) for n in stale]
-            claims = git_auth.load_pr_events_for_tips(conn, [i for i in ids if i])
+            claims = git_auth.load_pr_events_for_tips(relay, [i for i in ids if i])
             d = repo_dir(r["owner"], r["repo_id"])
             for name, (sha, _age) in stale.items():
                 swept += 1
@@ -648,12 +644,6 @@ def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
                                 name, r["owner"][:12], r["repo_id"], sha[:12])
     except Exception as e:
         logger.warning("[git-host] nostr-ref reaper failed (%s) — refs kept", e)
-    finally:
-        if close_after:
-            try:
-                conn.close()
-            except Exception:
-                pass
     return {"swept": swept, "deleted": deleted, "kept": kept}
 
 

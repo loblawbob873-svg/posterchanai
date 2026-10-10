@@ -81,7 +81,7 @@ def test_the_announced_clone_url_keeps_the_base_path(tmp_path, monkeypatch):
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     npub = nostr_service.npub_of(OWNER)
     monkeypatch.setattr(gh, "_CONFIG", {
-        "pg_dsn": "", "public_base": BASE, "allowlist": npub, "relay_url": "",
+        "relay_port": 0, "public_base": BASE, "allowlist": npub, "relay_url": "",
         "write_skew": 120, "read_skew": 60, "port": 0}, raising=False)
 
     class _S(ThreadingHTTPServer):

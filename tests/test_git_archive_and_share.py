@@ -63,7 +63,7 @@ def host():
     owner_hex = nostr_service.derive_pubkey(sk)
     owner = nostr_service.npub_of(owner_hex)
     # `git init --bare` directly, NOT git_host_service.create_repo: create_repo installs the
-    # pre-receive hook, which fails closed with no relay DSN and would reject the seeding push. The
+    # pre-receive hook, which fails closed with no relay configured and would reject the seeding push. The
     # archive route is a READ, so the push authorization is not what is under test here.
     repo = os.path.join(store, owner_hex, "demo.git")
     os.makedirs(os.path.dirname(repo), exist_ok=True)
@@ -83,7 +83,7 @@ def host():
     _git("push", "-q", "o", "master", "feature/x", "v1", cwd=wt)
 
     import git_host_main as gh
-    gh._CONFIG = {"pg_dsn": "", "read_skew": 300, "write_skew": 120, "port": 0,
+    gh._CONFIG = {"relay_port": 0, "read_skew": 300, "write_skew": 120, "port": 0,
                   "repo_max_mb": 512, "allow_force": True, "nip98_push": True, "public_base": ""}
 
     class _S(ThreadingHTTPServer):

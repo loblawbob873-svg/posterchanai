@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Browse API + web-editor + chunked-push verification for the GRASP git host.
 
-Proves, WITHOUT Postgres (pg_dsn="" -> the maintainer ACL is just the URL owner):
+Proves, WITHOUT a relay (relay_port 0 -> the maintainer ACL is just the URL owner):
 
   READ  1. /refs lists branches + tags and names the default branch;
         2. /tree, /log and /raw honour `?ref=` — the only way to reach a branch whose NAME contains a
@@ -24,7 +24,7 @@ Proves, WITHOUT Postgres (pg_dsn="" -> the maintainer ACL is just the URL owner)
 
   ALIAS 11. a clone URL written under a MAINTAINER's npub (ngit derives one per 30617 maintainer, so
             only the owner's path exists on disk) resolves to the owner's repo — and grants nothing:
-            without a DSN to confirm the ACL it stays a 404, a non-maintainer npub stays a 404, and
+            without a relay to confirm the ACL it stays a 404, a non-maintainer npub stays a 404, and
             delete stays owner-only through the aliased URL.
 
 Run: python tests/test_git_host_browse_edit.py   (non-zero exit if any case fails)
@@ -100,7 +100,7 @@ def main():
     w("push", "-q", "o", "master", "feature/x", "v1")
 
     import git_host_main as gh
-    gh._CONFIG = {"pg_dsn": "", "read_skew": 300, "write_skew": 120, "port": 0,
+    gh._CONFIG = {"relay_port": 0, "read_skew": 300, "write_skew": 120, "port": 0,
                   "repo_max_mb": 512, "allow_force": True, "nip98_push": True, "public_base": ""}
 
     class _S(ThreadingHTTPServer):
@@ -239,7 +239,7 @@ def main():
             check("refuses path %r" % bad, st == 400, st)
 
         print("10) chunked push (Transfer-Encoding: chunked)")
-        # Hooks would need the relay Postgres; framing is what's under test, so move them aside.
+        # Hooks would need the relay; framing is what's under test, so move them aside.
         hooks = os.path.join(repo, "hooks")
         if os.path.isdir(hooks):
             os.rename(hooks, hooks + ".off")
@@ -278,21 +278,23 @@ def main():
                 return e.code, e.read().decode("utf-8", "replace")[:200]
 
         gh._alias_cache.clear()
-        check("no DSN -> cannot confirm the ACL -> 404", aget("/refs")[0] == 404, aget("/refs"))
+        check("no relay -> cannot confirm the ACL -> 404", aget("/refs")[0] == 404, aget("/refs"))
         _real_maints = gh._Handler._maintainers
-        gh._CONFIG["pg_dsn"] = "stub"                       # only gates the lookup; ACL is stubbed
+        import socket as _socket
+        _s = _socket.socket(); _s.bind(("127.0.0.1", 0)); _dead = _s.getsockname()[1]; _s.close()
+        gh._CONFIG["relay_port"] = _dead                    # only gates the lookup; ACL is stubbed
         acl_reads = []
         def _stub_maints(self, o, r, _m=maint):
-            acl_reads.append((o, r))                        # each call is one Postgres connection
+            acl_reads.append((o, r))                        # each call is one relay read
             return {o, _m}
         gh._Handler._maintainers = _stub_maints
         gh._alias_cache.clear()
-        # GRASP-08 added a SECOND Postgres read to the read gate — "does this repo\'s own 30617 say
-        # ["private","true"]?" — and it fails CLOSED, so with this bogus DSN it answers "private" and
+        # GRASP-08 added a SECOND relay read to the read gate — "does this repo\'s own 30617 say
+        # ["private","true"]?" — and it fails CLOSED, so with this dead relay it answers "private" and
         # every route below would 401. Measure that first (it is the fail-closed contract, end to end
         # through the real handler), then stub it out exactly as the ACL above is stubbed.
         gh._priv_cache.clear()
-        check("a DSN we cannot ask -> the read gate fails closed (401)", aget("/refs")[0] == 401,
+        check("a relay we cannot ask -> the read gate fails closed (401)", aget("/refs")[0] == 401,
               aget("/refs"))
         _real_priv = gh._Handler._announced_private
         gh._Handler._announced_private = lambda self, o, r: False   # demo is public; read stubbed
@@ -316,7 +318,7 @@ def main():
                 check("alias does not grant delete", e.code == 401, e.code)
             check("repo survived", os.path.isdir(repo))
             # This lookup runs BEFORE any auth gate, so its cost must be per-REPO, not per-npub:
-            # keyed on the caller's path segment, an anonymous client mints a Postgres connection per
+            # keyed on the caller's path segment, an anonymous client mints a relay read per
             # made-up npub (and evicts the real entries once the cache bound is hit).
             before = len(acl_reads)
             for _ in range(5):
@@ -340,7 +342,7 @@ def main():
         finally:
             gh._Handler._maintainers = _real_maints
             gh._Handler._announced_private = _real_priv
-            gh._CONFIG["pg_dsn"] = ""
+            gh._CONFIG["relay_port"] = 0
             gh._alias_cache.clear()
             gh._priv_cache.clear()
     finally:

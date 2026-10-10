@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """END-TO-END push test through the REAL stack: a real `git push` over HTTP -> git-http-backend ->
-receive-pack -> our pre-receive hook -> real Postgres read of the maintainer-signed 30618 -> accept.
+receive-pack -> our pre-receive hook -> a read of the maintainer-signed 30618 from THIS node's RELAY
+(#161: never its Postgres) -> accept.
 
-This also proves the GRASP_* environment (DSN, repo root, allow-force) propagates from git_host_main's
-Popen env THROUGH git-http-backend + receive-pack into the hook — the hook can't read the DB otherwise.
-
-Inserts a handful of clearly-namespaced test events into the relay's `events`/`event_tags` and
-DELETES them (and the temp repo) in finally. Uses a random repo id so it can't collide.
+This also proves the GRASP_* environment (the relay port, repo root, allow-force) propagates from
+git_host_main's Popen env THROUGH git-http-backend + receive-pack into the hook — the hook can't ask
+the relay otherwise. The relay is a real websocket server (tests/git_relay_fake.serve) holding the
+test's events in memory; nothing is written to any database and the repo store is a temp dir.
 """
 
-import json
 import os
 import secrets
 import shutil
@@ -20,39 +19,23 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
+import pytest
+
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-import psycopg2
-from app.services import git_host_service as ghs
-from app.services.nostr import bip340, nostr_service
-from app.services.nostr.event import build_event
-from tests import scratch_postgres
+from app.services import git_host_service as ghs        # noqa: E402
+from app.services.nostr import bip340, nostr_service    # noqa: E402
+from app.services.nostr.event import build_event        # noqa: E402
+from tests import git_relay_fake                        # noqa: E402
 
-DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 _results = []
-_inserted_ids = []
 
 
 def check(name, cond):
     _results.append(bool(cond))
     print("  [%s] %s" % ("PASS" if cond else "FAIL", name))
-
-
-def _insert_event(conn, ev):
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,origin) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'direct') ON CONFLICT (id) DO NOTHING",
-            (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev["content"],
-             json.dumps(ev["tags"]), ev["sig"]))
-        for t in ev["tags"]:
-            if len(t) >= 2 and isinstance(t[0], str) and len(t[0]) == 1:
-                cur.execute("INSERT INTO event_tags (event_id,tag,value) VALUES (%s,%s,%s) "
-                            "ON CONFLICT DO NOTHING", (ev["id"], t[0], str(t[1])))
-    conn.commit()
-    _inserted_ids.append(ev["id"])
 
 
 def _serve(config):
@@ -81,13 +64,16 @@ def _client_commit(workdir, msg):
 
 def main():
     if not os.path.exists("/usr/libexec/git-core/git-http-backend"):
-        print("git-http-backend missing"); return 1
+        print("git-http-backend missing"); return 2
 
-    conn = psycopg2.connect(DSN)
+    del _results[:]
+    events = []                                   # the relay's store; appended to as the test goes
+    relay, relay_port = git_relay_fake.serve(events)
     tmp = tempfile.mkdtemp(prefix="grasp_e2e_")
     # Via the ENV VAR, never a module attribute: git_project_root() is lazy and reads
     # GRASP_GIT_PROJECT_ROOT / upload_path / a default, so an attribute assignment silently
     # leaves the test writing into the live repo store.
+    old_root = os.environ.get("GRASP_GIT_PROJECT_ROOT")
     os.environ["GRASP_GIT_PROJECT_ROOT"] = os.path.join(tmp, "git_repos")
     os.makedirs(os.environ["GRASP_GIT_PROJECT_ROOT"], exist_ok=True)
 
@@ -96,7 +82,7 @@ def main():
     npub = nostr_service.npub_of(owner_hex)
     repo_id = "grasptest" + secrets.token_hex(4)
 
-    config = {"pg_dsn": DSN, "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
+    config = {"relay_port": relay_port, "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
               "nip98_push": False, "public_base": "", "read_skew": 300, "port": 0}
     httpd, port = _serve(config)
     time.sleep(0.3)
@@ -116,23 +102,16 @@ def main():
         r = subprocess.run(["git", "-C", work, "push", "origin", "main"], capture_output=True, text=True)
         print("   rc=%d; server said: %s" % (r.returncode, (r.stderr.strip().splitlines() or [""])[-1][:120]))
         check("push rejected when no 30618 exists (fail-closed)", r.returncode != 0)
-        check("hook actually ran (DSN env propagated through git-http-backend)",
-              "GRASP" in r.stderr or "authorized" in r.stderr or "signed" in r.stderr)
+        check("hook actually ran (relay port env propagated through git-http-backend)",
+              "no signed" in r.stderr or "30618" in r.stderr or "GRASP" in r.stderr)
+        check("...and it ASKED the relay rather than failing to (no 'could not be asked')",
+              "could not be asked" not in r.stderr and "no relay configured" not in r.stderr)
 
-        # --- ACCEPT: sign a maintainer 30618 pinning refs/heads/main -> sha1, insert, push.
-        print("2) insert maintainer-signed 30618 pinning main->sha1 -> expect ACCEPT")
-        st = build_event(owner_sk, 30618, "",
-                         tags=[["d", repo_id], ["HEAD", "ref: refs/heads/main"], ["refs/heads/main", sha1]])
-        _insert_event(conn, st)
-        if os.environ.get("GRASP_DEBUG"):
-            c2 = psycopg2.connect(DSN); c2.autocommit = True
-            from app.services import git_auth as _ga
-            m = _ga.load_maintainers(c2, owner_hex, repo_id)
-            se = _ga.load_state_events(c2, owner_hex, repo_id, m)
-            print("   DEBUG maintainers=%s state_events=%d sha1=%s" % ([x[:8] for x in m], len(se), sha1))
-            if se:
-                print("   DEBUG refs_from_state=%s" % _ga.refs_from_state(_ga.select_authorized_state(se, m)))
-            c2.close()
+        # --- ACCEPT: sign a maintainer 30618 pinning refs/heads/main -> sha1, publish, push.
+        print("2) publish maintainer-signed 30618 pinning main->sha1 -> expect ACCEPT")
+        events.append(build_event(owner_sk, 30618, "",
+                                  tags=[["d", repo_id], ["HEAD", "ref: refs/heads/main"],
+                                        ["refs/heads/main", sha1]]))
         r = subprocess.run(["git", "-C", work, "push", "origin", "main"], capture_output=True, text=True)
         if os.environ.get("GRASP_DEBUG"):
             print("   DEBUG full stderr:\n" + r.stderr)
@@ -152,22 +131,42 @@ def main():
                                 "rev-parse", "refs/heads/main"], capture_output=True, text=True).stdout.strip()
         check("rejected push did NOT move the ref (objects discarded)", still == sha1 and sha2 != sha1)
 
+        # --- REJECT: the RIGHT signed state, but the relay is GONE -> refused, and it says why.
+        print("4) sign sha2, then take the relay down -> expect REJECT (fail-closed)")
+        events.append(build_event(owner_sk, 30618, "",
+                                  tags=[["d", repo_id], ["HEAD", "ref: refs/heads/main"],
+                                        ["refs/heads/main", sha2]], created_at=int(time.time()) + 1))
+        relay.shutdown()
+        r = subprocess.run(["git", "-C", work, "push", "origin", "main"], capture_output=True, text=True)
+        print("   rc=%d; server said: %s" % (r.returncode, (r.stderr.strip().splitlines() or [""])[-1][:120]))
+        check("push refused when the relay cannot be asked", r.returncode != 0)
+        check("...with a message that says the relay could not be asked", "could not be asked" in r.stderr)
+        still = subprocess.run(["git", "--git-dir", ghs.repo_dir(owner_hex, repo_id),
+                                "rev-parse", "refs/heads/main"], capture_output=True, text=True).stdout.strip()
+        check("...and the ref did not move", still == sha1)
+
     finally:
         httpd.shutdown()
         try:
-            with conn.cursor() as cur:
-                for eid in _inserted_ids:
-                    cur.execute("DELETE FROM event_tags WHERE event_id=%s", (eid,))
-                    cur.execute("DELETE FROM events WHERE id=%s", (eid,))
-            conn.commit()
-            print("cleanup: removed %d test event(s) from the relay DB" % len(_inserted_ids))
-        finally:
-            conn.close()
+            relay.shutdown()
+        except Exception:
+            pass
+        if old_root is None:
+            os.environ.pop("GRASP_GIT_PROJECT_ROOT", None)
+        else:
+            os.environ["GRASP_GIT_PROJECT_ROOT"] = old_root
         shutil.rmtree(tmp, ignore_errors=True)
 
     passed, total = sum(_results), len(_results)
     print("\n%d/%d checks passed" % (passed, total))
     return 0 if passed == total else 1
+
+
+def test_a_real_push_is_authorized_through_the_relay():
+    rc = main()
+    if rc == 2:
+        pytest.skip("git-http-backend is not installed")
+    assert rc == 0 and all(_results), _results
 
 
 if __name__ == "__main__":

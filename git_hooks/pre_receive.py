@@ -11,7 +11,9 @@ Decision (per ref), delegated to app/services/git_auth.decide_push_ref (unit-tes
   exactly <new-sha> for <refname> — OR a valid NIP-98 header from a maintainer is present
   (the admin/sync.sh convenience path). The maintainer ACL comes ONLY from 30617:<owner>:<id>.
 
-Config is read from the environment set by git_host_main.py (GRASP_*). ANY error -> reject.
+Config is read from the environment set by git_host_main.py (GRASP_*). Events are read from THIS
+node's relay (GRASP_RELAY_PORT), never from its database. ANY error -> reject, and that includes a
+relay that cannot be asked.
 """
 
 import os
@@ -87,9 +89,9 @@ def main():
         _fail("cannot resolve repo from GIT_DIR (path confinement failed)")
     owner_hex, repo_id = orp
 
-    dsn = os.environ.get("GRASP_PG_DSN", "")
-    if not dsn:
-        _fail("no relay DSN configured (fail-closed)")
+    relay_port = os.environ.get("GRASP_RELAY_PORT", "")
+    if not relay_port.isdigit():
+        _fail("no relay configured (fail-closed)")
 
     allow_force = os.environ.get("GRASP_ALLOW_FORCE", "1") == "1"
     nip98_enabled = os.environ.get("GRASP_NIP98_ENABLED", "1") == "1"
@@ -100,18 +102,14 @@ def main():
 
     from app.services import git_auth
 
-    # One short-lived autocommit connection with a statement timeout; a DB failure -> reject.
-    try:
-        import psycopg2
-        conn = psycopg2.connect(dsn, connect_timeout=5)
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute("SET statement_timeout = 5000")
-    except Exception as e:
-        _fail("relay DB unavailable (%s)" % e)
+    # Every read goes to THIS node's relay (never its database), authenticated as the node key so a
+    # private repo's events are served. A relay that cannot be asked -> reject: "no maintainers" or
+    # "no state" read off a failed query would be a decision made on nothing.
+    from app.services import relay_reader
+    relay = git_auth.node_relay(int(relay_port), timeout=5.0)
 
     try:
-        maintainers = git_auth.load_maintainers(conn, owner_hex, repo_id)
+        maintainers = git_auth.load_maintainers(relay, owner_hex, repo_id)
 
         # NIP-98 convenience path (admin/sync.sh): a maintainer-signed header for THIS receive-pack.
         nip98_signer = None
@@ -121,7 +119,7 @@ def main():
             nip98_signer = git_auth.verify_nip98(header, "POST", needle, maintainers, max_skew=60,
                                                  require_method=True)
 
-        state_events = git_auth.load_state_events(conn, owner_hex, repo_id, maintainers)
+        state_events = git_auth.load_state_events(relay, owner_hex, repo_id, maintainers)
 
         # Enforce the per-repo size cap once up front (quarantine objects already on disk under
         # $GIT_DIR/objects, so this measures the would-be post-push size).
@@ -140,7 +138,7 @@ def main():
             pr_event = None
             _eid = git_auth.nostr_ref_event_id(ref)
             if _eid:
-                pr_event = git_auth.load_event_by_id(conn, _eid)
+                pr_event = git_auth.load_event_by_id(relay, _eid)
             ok, reason = git_auth.decide_push_ref(
                 ref, old, new, maintainers, state_events,
                 allow_force=allow_force, is_non_fast_forward=nff, nip98_signer=nip98_signer,
@@ -151,13 +149,11 @@ def main():
                 sys.stderr.write("GRASP: %s\n" % reason)
     except SystemExit:
         raise
+    except relay_reader.Unavailable as e:
+        _fail("the relay could not be asked who may push here (%s); nothing was written, "
+              "try again (fail-closed)" % e)
     except Exception as e:
         _fail("internal error (%s)" % e)   # any uncertainty -> reject
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
     sys.exit(0)
 
 

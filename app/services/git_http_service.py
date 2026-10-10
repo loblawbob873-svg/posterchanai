@@ -74,8 +74,9 @@ def announce_relay_url() -> str:
 
 
 def _read_config() -> dict:
-    """Read the git-host settings from the Nostr datastore (same mechanism the relay uses). The DSN
-    is reused from the relay setting (same Postgres `posterchan_relay` the hook reads)."""
+    """Read the git-host settings from the Nostr datastore (same mechanism the relay uses). Events are
+    read from this node's relay (`relay_port`); the DSN is kept for the acceptance policy's table
+    lookups only."""
     from app.database import SessionLocal
     from app.services import settings_store
     db = SessionLocal()
@@ -155,6 +156,11 @@ def _read_config() -> dict:
             # admin changed only the advertised sentence, never what the host did.
             "accept_policy": g(git_acceptance.SETTING, git_acceptance.DEFAULT),
             "read_require_method": gb("git_server_read_require_method", True),
+            # THIS node's relay: every git decision's EVENTS are read from it (git_auth, #161 --
+            # never the relay's Postgres tables), by this process and by the pre-receive hook.
+            "relay_port": gi("nostr_relay_port", 3052),
+            # Postgres stays only for the acceptance policy's `users`/`wot` TABLE lookups, which
+            # are not events and have no NIP-01 query.
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
                 "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
         }

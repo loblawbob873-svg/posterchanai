@@ -1,9 +1,10 @@
 """GRASP git-over-nostr push authorization — the security crux (P1).
 
 This module is the SINGLE source of truth for "may this ref update be written?". It is
-deliberately import-light (stdlib + the repo's pure-Python nostr helpers + psycopg2) so it can
-be pulled in from a bare `pre-receive` git hook subprocess (`git_hooks/pre_receive.py`) with just
-the repo root on sys.path — no FastAPI, no settings hydration, no event loop.
+deliberately import-light (stdlib + the repo's pure-Python nostr helpers + `websockets`, via
+relay_reader) so it can be pulled in from a bare `pre-receive` git hook subprocess
+(`git_hooks/pre_receive.py`) with just the repo root on sys.path — no FastAPI, no settings
+hydration, no event loop, no database.
 
 CORE PRINCIPLE (fail-closed): a push to `refs/heads/<b>` is accepted ONLY if the resulting
 ref->SHA mapping is backed by a Nostr **kind-30618** "repository state" event that
@@ -12,7 +13,7 @@ ref->SHA mapping is backed by a Nostr **kind-30618** "repository state" event th
      ONLY from `30617:<owner-in-URL>:<id>` (owner + its `maintainers` tag) — a forged 30617 from
      a random pubkey addresses a DIFFERENT coordinate and can never self-authorize; and
   2. has its **BIP-340 signature re-verified right here**, never trusting the relay DB row's mere
-     presence (defends against a poisoned/compromised `events` row); and
+     presence (defends against a poisoned/compromised relay store); and
   3. is the **newest by created_at** among the maintainer-signed candidates (defeats replay of an
      old signed state to rewind the repo); and
   4. names EXACTLY the `<newsha>` git is trying to write for that ref (SHA-equality; git
@@ -50,17 +51,108 @@ _NOSTR_REF_RE = re.compile(r"^refs/nostr/([0-9a-f]{64})$")
 
 
 
-# Events are served from their columns -- the relay no longer stores a `raw` JSON copy (see
-# nostr_relay/store.py event_from_row, which this mirrors; kept here so the push hook imports nothing
-# of the relay). A row is (id, pubkey, created_at, kind, tags, content, sig).
-_COLS = "id, pubkey, created_at, kind, tags, content, sig"
-_ECOLS = "e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig"
+# --------------------------------------------------------------------------- reading the relay
+#
+# Every event this module decides on is read from THIS node's relay over its own websocket
+# (`relay_reader`), never from the relay's Postgres tables (#161, retiring Postgres as the relay's
+# store). Two rules carry over from the SQL version and are the reason this section exists:
+#
+#   * "COULD NOT ASK" RAISES. `relay_reader.Unavailable` propagates out of every loader below, and
+#     every caller turns it into a refusal (a push, a web edit, a private clone) — never into "no
+#     maintainers" or "no announcement", which would refuse the wrong person or, worse, read a private
+#     repository as public. A truncated answer is the same thing as no answer (`_ask` checks it).
+#   * THE SIGNATURE IS STILL RE-VERIFIED HERE. The relay verified it on ingest; the decision does not
+#     take its word for it any more than it took a database row's.
+#
+# The relay's `#d` filter is an EXACT match and the repository id is matched case-insensitively (a
+# 30617 announced as `PosterChanAI` speaks for the `posterchanai` directory), so the d-tag is never
+# put in the filter: the loaders ask by author + kind and match the identifier here, in Python.
+
+#: Per-filter ceiling, = the relay's own cap on one filter. An answer that FILLS it may have been cut
+#: short, so it is treated as "could not ask" rather than as everything there is.
+_RELAY_LIMIT = 5000
 
 
-def _row_event(row) -> dict:
-    i, pk, ca, k, tags, content, sig = row
-    return {"id": i, "pubkey": pk, "created_at": int(ca), "kind": int(k),
-            "tags": json.loads(tags) if tags else [], "content": content or "", "sig": sig}
+class NodeRelay:
+    """How this module reaches THIS node's relay: its port, and the node key it authenticates as.
+
+    The key matters for one thing: GRASP-08 private repositories. The relay serves a private repo's
+    30617/30618 only to an authenticated reader (nostr_relay/server.py:_can_serve_event), and the
+    hosting node -- which holds the repository's bytes on its own disk -- is one. Without the key
+    a private repo's announcement is withheld, the relay answers `auth-required`, and that arrives
+    here as Unavailable: a refusal, never "this repo is not private"."""
+
+    def __init__(self, port: int | None = None, *, auth_seckey: bytes | None = None,
+                 timeout: float = 5.0):
+        self.port, self.auth_seckey, self.timeout = port, auth_seckey, timeout
+
+    def query(self, filters: list) -> list:
+        from app.services import relay_reader
+        return relay_reader.query(filters, port=self.port, timeout=self.timeout,
+                                  auth_seckey=self.auth_seckey)
+
+
+def node_seckey() -> bytes | None:
+    """This node's operator key (the one `nostr_relay` knows as `node_pubkey`), or None."""
+    try:
+        from app.services import keystore
+        nsec = keystore.get_operator_nsec()
+        if not nsec:
+            return None
+        sk = bech32.decode_key(nsec)
+        return sk if sk and len(sk) == 32 else None
+    except Exception:       # noqa: BLE001 -- no key: public repos still read; private ones refuse
+        return None
+
+
+def node_relay(port: int | None = None, *, timeout: float = 5.0) -> NodeRelay:
+    """The relay a git decision reads from: `port`, else GRASP_RELAY_PORT, else relay_reader's default."""
+    if port is None:
+        import os
+        env = os.environ.get("GRASP_RELAY_PORT", "")
+        port = int(env) if env.isdigit() else None
+    return NodeRelay(port, auth_seckey=node_seckey(), timeout=timeout)
+
+
+def _ask(relay, flt: dict) -> list:
+    """One filter's answer; RAISES (relay_reader.Unavailable) when it cannot be the whole answer."""
+    from app.services import relay_reader
+    limit = int(flt.get("limit") or _RELAY_LIMIT)
+    events = relay.query([dict(flt, limit=limit)])
+    if not isinstance(events, list):
+        raise relay_reader.Unavailable("the relay answered something that is not a list of events")
+    if len(events) >= limit and limit >= _RELAY_LIMIT:
+        raise relay_reader.Unavailable("the relay's answer filled its %d-event limit, so it may be "
+                                       "incomplete" % limit)
+    return [e for e in events if isinstance(e, dict)]
+
+
+def _d_matches(ev: dict, repo_id: str) -> bool:
+    """The SQL's `lower(t.value) = lower(repo_id)` over the event's `d` tags."""
+    want = str(repo_id or "").lower()
+    for t in ev.get("tags") or []:
+        if isinstance(t, list) and len(t) >= 2 and t[0] == "d" and str(t[1]).lower() == want:
+            return True
+    return False
+
+
+def _newest_first(events) -> list:
+    """created_at DESC, id DESC -- the relay's own order, made explicit so a tie cannot depend on it."""
+    def key(e):
+        try:
+            return (int(e.get("created_at", 0)), str(e.get("id", "")))
+        except (TypeError, ValueError):
+            return (0, "")
+    return sorted(events, key=key, reverse=True)
+
+
+def _well_formed(ev) -> bool:
+    try:
+        int(ev.get("created_at")), int(ev.get("kind"))
+    except (TypeError, ValueError):
+        return False
+    return isinstance(ev.get("tags", []), list)
+
 
 def nostr_ref_event_id(ref: str):
     """The event id a `refs/nostr/<event-id>` ref names, or None if this is not such a ref."""
@@ -119,42 +211,32 @@ def decide_nostr_ref(ref: str, new_sha: str, pr_event) -> tuple:
     return True, "%s authorized by PR event %s" % (ref, str(pr_event.get("id", ""))[:12])
 
 
-def load_event_by_id(conn, event_id: str):
-    """One event by id, signature re-verified here. Returns the dict or None."""
+def load_event_by_id(relay, event_id: str):
+    """One event by id, signature re-verified here. Returns the dict or None (the relay does not have
+    it, or what it has does not verify). RAISES when the relay cannot be asked."""
     if not isinstance(event_id, str) or len(event_id) != 64:
         return None
-    with conn.cursor() as cur:
-        cur.execute("SELECT " + _COLS + " FROM events WHERE id = %s LIMIT 1", (event_id,))
-        row = cur.fetchone()
-    if not row:
-        return None
-    try:
-        ev = _row_event(row)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(ev, dict) or ev.get("id") != event_id or not verify_event(ev):
-        return None
-    return ev
+    for ev in _ask(relay, {"ids": [event_id], "limit": 1}):
+        if _well_formed(ev) and ev.get("id") == event_id and verify_event(ev):
+            return ev
+    return None
 
 
-def load_pr_events_for_tips(conn, event_ids) -> dict:
-    """{event_id: event} for the given ids that are valid kind-1618/1619 PR events. One indexed read
-    for the whole set; used by the reaper, which asks about every `refs/nostr/*` ref at once."""
-    ids = [i for i in (event_ids or []) if isinstance(i, str) and len(i) == 64]
+def load_pr_events_for_tips(relay, event_ids) -> dict:
+    """{event_id: event} for the given ids that are valid kind-1618/1619 PR events. One read for the
+    whole set; used by the reaper, which asks about every `refs/nostr/*` ref at once. RAISES when the
+    relay cannot be asked (the reaper then keeps every ref)."""
+    ids = sorted({i for i in (event_ids or []) if isinstance(i, str) and len(i) == 64})
     if not ids:
         return {}
-    with conn.cursor() as cur:
-        cur.execute("SELECT " + _COLS + " FROM events WHERE id = ANY(%s) AND kind = ANY(%s)",
-                    (ids, list(PR_KINDS)))
-        rows = cur.fetchall()
     out = {}
-    for row in rows:
-        try:
-            ev = _row_event(row)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(ev, dict) and verify_event(ev):
-            out[ev.get("id")] = ev
+    for i in range(0, len(ids), 500):            # well under the relay's per-filter cap, so an
+        chunk = ids[i:i + 500]                   # answer can never be silently cut short
+        want = set(chunk)
+        for ev in _ask(relay, {"ids": chunk, "kinds": list(PR_KINDS), "limit": len(chunk)}):
+            if (_well_formed(ev) and ev.get("id") in want and int(ev.get("kind")) in PR_KINDS
+                    and verify_event(ev)):
+                out[ev.get("id")] = ev
     return out
 
 
@@ -511,51 +593,60 @@ def announcement_urls(event, tag_name: str) -> list:
     return out
 
 
-# --------------------------------------------------------------------------- Postgres reads
-# One query each, driven by events(kind,pubkey). The `d` match is CASE-INSENSITIVE: the host's
+# --------------------------------------------------------------------------- relay reads
+# One relay read each, by author + kind (see "reading the relay" above). The `d` match is CASE-INSENSITIVE: the host's
 # on-disk id is lowercased (git_host_service.sanitize_repo_id), so `ngit init --name MyRepo` asked for
 # `myrepo` and never found its own announcement -- it polled for ever and every push was refused
 # (2026-09-28 GRASP review). An owner's `Foo` and `foo` therefore share one repository here.
 
 #: How many times the maintainer walk may expand. GRASP-01 says "recursive" and supplies NO bound;
 #: neither does NIP-34, and ngit's own loop simply runs to a fixpoint over a LOCAL cache where the
-#: cost is zero. Here every round is a Postgres read per newly discovered pubkey, reached from an
+#: cost is zero. Here every round is a relay read over the newly discovered pubkeys, reached from an
 #: UNAUTHENTICATED clone, so it needs a ceiling. 6 is a delegation chain six deep -- far past anything
 #: a real project has -- and the walk stops early at its own fixpoint, which is the normal case.
 _MAINTAINER_MAX_ROUNDS = 6
 _MAINTAINER_MAX_PUBKEYS = 64        # and a hard cap on the set, so one hostile announcement listing
-#                                     thousands of pubkeys cannot turn a clone into thousands of reads
+#                                     thousands of pubkeys cannot turn a clone into a read of thousands
+#                                     of authors' announcements
 
 
-def load_announcement(conn, pubkey_hex: str, repo_id: str):
-    """The newest VALID kind-30617 that `pubkey_hex` signed for `repo_id`, or None.
+def _announcement_of(events, pubkey_hex: str, repo_id: str):
+    """The newest VALID kind-30617 by `pubkey_hex` for `repo_id` among `events`, or None.
 
-    NIP-01 addressable-event rules: only an author's latest announcement speaks for them (ngit
-    reduces to `latest_announcement_per_author` for exactly this reason -- a stale version can keep an
-    ended role active or hide a departure). The signature is re-verified here rather than trusting the
-    row, and the author is re-checked, so a poisoned `events` row cannot speak for anybody."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT " + _ECOLS + " FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
-            "WHERE e.kind = %s AND e.pubkey = %s "
-            "ORDER BY e.created_at DESC LIMIT 4",
-            (repo_id, ANNOUNCE_KIND, pubkey_hex))
-        rows = cur.fetchall()
-    for row in rows:
-        try:
-            ev = _row_event(row)
-        except (ValueError, TypeError):
-            continue
-        if ev.get("pubkey") != pubkey_hex:     # belt-and-suspenders: the row must be this author's
-            continue
-        if not verify_event(ev):               # re-verify -- never trust the DB row's validity
+    Looks at that author's four newest candidates, as the SQL's `LIMIT 4` did: a run of invalid
+    newer copies does not let an arbitrarily old one speak."""
+    mine = [e for e in events
+            if _well_formed(e) and int(e.get("kind")) == ANNOUNCE_KIND
+            and e.get("pubkey") == pubkey_hex and _d_matches(e, repo_id)]
+    for ev in _newest_first(mine)[:4]:
+        if not verify_event(ev):               # re-verify -- never trust the relay's word for it
             continue
         return ev                              # newest VALID announcement by this author wins
     return None
 
 
-def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
+def _announcements(relay, pubkeys, repo_id: str) -> dict:
+    """{pubkey: newest valid 30617 for repo_id or None} -- ONE relay read for the whole set."""
+    pks = sorted({p for p in pubkeys if isinstance(p, str) and p})
+    if not pks:
+        return {}
+    events = _ask(relay, {"kinds": [ANNOUNCE_KIND], "authors": pks})
+    return {pk: _announcement_of(events, pk, repo_id) for pk in pks}
+
+
+def load_announcement(relay, pubkey_hex: str, repo_id: str):
+    """The newest VALID kind-30617 that `pubkey_hex` signed for `repo_id`, or None.
+
+    NIP-01 addressable-event rules: only an author's latest announcement speaks for them (ngit
+    reduces to `latest_announcement_per_author` for exactly this reason -- a stale version can keep an
+    ended role active or hide a departure). The signature is re-verified here rather than trusting the
+    relay, and the author is re-checked, so a poisoned store cannot speak for anybody. RAISES
+    (relay_reader.Unavailable) when the relay cannot be asked -- "no announcement" is an answer only
+    the relay can give."""
+    return _announcements(relay, [pubkey_hex], repo_id).get(pubkey_hex)
+
+
+def load_maintainers(relay, owner_hex: str, repo_id: str) -> set:
     """THE maintainer ACL for `<repo_id>` rooted at `owner_hex` -- the RECURSIVE set GRASP-01 requires.
 
     Transcribed from ngit-cli 3.0.0 `src/lib/client.rs:2121`
@@ -584,8 +675,8 @@ def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
     to and no recovery short of an operator with a shell.
 
     Bounded by `_MAINTAINER_MAX_ROUNDS`/`_MAINTAINER_MAX_PUBKEYS`: this runs from an unauthenticated
-    clone and the spec supplies no ceiling. Fail-closed as before -- a read that raises propagates to
-    a caller that denies."""
+    clone and the spec supplies no ceiling. Fail-closed as before -- a read that raises (the relay
+    could not be asked: relay_reader.Unavailable) propagates to a caller that denies."""
     maintainers = {owner_hex}
     discovered = {owner_hex}
     announcements = {}
@@ -593,8 +684,7 @@ def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
         pending = [pk for pk in discovered if pk not in announcements]
         if not pending:
             break                                   # fixpoint: nothing new to read
-        for pk in pending:
-            announcements[pk] = load_announcement(conn, pk, repo_id)
+        announcements.update(_announcements(relay, pending, repo_id))   # one read per round
         grew = False
         for pk, ev in announcements.items():
             if ev is None or pk not in maintainers:
@@ -628,7 +718,7 @@ def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
     return maintainers
 
 
-def load_announced_private(conn, owner_hex: str, repo_id: str) -> bool:
+def load_announced_private(relay, owner_hex: str, repo_id: str) -> bool:
     """GRASP-08: does the OWNER's newest valid kind-30617 for <repo_id> carry ["private","true"]?
 
     Same ACL reasoning and the same one indexed read as load_maintainers: ONLY `pubkey = owner` is
@@ -636,38 +726,30 @@ def load_announced_private(conn, owner_hex: str, repo_id: str) -> bool:
     neither reveal a private repo nor conceal a public one, and the announcement's signature is
     re-verified here rather than trusting the row.
 
-    RAISES on a database error instead of answering. The CALLER decides what "could not ask" means,
-    and on the read gate it means deny — returning False here would let an unreachable database
-    quietly publish a private repository, which is the failure this function exists to prevent.
+    RAISES when the relay cannot be asked instead of answering. The CALLER decides what "could not
+    ask" means, and on the read gate it means deny — returning False here would let an unreachable
+    relay quietly publish a private repository, which is the failure this function exists to prevent.
 
     Asks about the OWNER's announcement only, deliberately not the recursive set: privacy here is a
     property of the repository this node hosts at this path, and the owner is who that path belongs
     to. (GRASP-08 defines privacy over the recursive set for a CLIENT deciding where to publish; a
     co-maintainer flipping their own copy private must not take this host's repo off its listing.)
     """
-    ev = load_announcement(conn, owner_hex, repo_id)
+    ev = load_announcement(relay, owner_hex, repo_id)
     return event_says_private(ev) if ev is not None else False
 
 
-def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
+def load_state_events(relay, owner_hex: str, repo_id: str, maintainers) -> list:
     """Candidate kind-30618 events for 30618:<owner>:<repo_id> authored by any maintainer, newest
-    first. The SQL pre-filters to maintainers (pubkey = ANY); select_authorized_state then re-verifies
-    sigs + picks the newest. LIMIT keeps it to one cheap indexed read (no scan)."""
-    mlist = list(maintainers)
+    first (at most 8, as the SQL's LIMIT did). The read is bound to the maintainers (authors=);
+    select_authorized_state then re-verifies sigs + picks the newest. RAISES when the relay cannot
+    be asked -- "no state" would refuse the push for the wrong reason."""
+    mlist = sorted({m for m in (maintainers or ()) if isinstance(m, str) and m})
     if not mlist:
         return []
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT " + _ECOLS + " FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND lower(t.value) = lower(%s) "
-            "WHERE e.kind = %s AND e.pubkey = ANY(%s) "
-            "ORDER BY e.created_at DESC LIMIT 8",
-            (repo_id, STATE_KIND, mlist))
-        rows = cur.fetchall()
-    out = []
-    for row in rows:
-        try:
-            out.append(_row_event(row))
-        except (ValueError, TypeError):
-            continue
-    return out
+    events = _ask(relay, {"kinds": [STATE_KIND], "authors": mlist})
+    want = set(mlist)
+    mine = [e for e in events
+            if _well_formed(e) and int(e.get("kind")) == STATE_KIND
+            and e.get("pubkey") in want and _d_matches(e, repo_id)]
+    return _newest_first(mine)[:8]

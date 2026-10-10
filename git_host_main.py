@@ -112,6 +112,21 @@ def _state_tags(owner_hex: str, repo_id: str, refs: dict) -> list:
         return []
 
 
+def _relay():
+    """THIS node's relay, as every git decision here reads it (git_auth, #161) -- or None when this
+    host has no relay configured, which is the old "no DSN": there is no announcement to consult,
+    as opposed to one we failed to read. A relay that is configured but cannot be asked raises
+    relay_reader.Unavailable out of the git_auth loaders, and each caller fails closed on it."""
+    port = _CONFIG.get("relay_port")
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    if port <= 0:
+        return None
+    return git_auth.node_relay(port, timeout=4.0)
+
+
 def _publish_state_witness(owner_hex: str, repo_id: str) -> bool:
     try:
         return ghs.publish_state_witness(owner_hex, repo_id)
@@ -395,21 +410,24 @@ class _Handler(BaseHTTPRequestHandler):
             until = _prov_deny.get(key)
             if until and until > now:
                 return False
+        relay = _relay()
         dsn = _CONFIG.get("pg_dsn")
-        if not dsn:
-            return False          # no relay database -> no announcements to accept
+        if relay is None or not dsn:
+            return False          # no relay -> no announcements to accept (no DSN -> no acceptance)
         try:
+            ev = git_auth.load_announcement(relay, owner_hex, repo_id)
+            if ev is None:
+                return self._refuse_provision(key, "no announcement from %s" % owner_hex[:12])
+            if not self._service_is_named_by(ev):
+                return self._refuse_provision(key, "announcement does not name this service")
+            # The acceptance policy's lookups (`users`, `wot`) are relay/app TABLES, not events, so
+            # they are still asked of Postgres -- only the announcement moved to the relay.
             import psycopg2
             conn = psycopg2.connect(dsn, connect_timeout=5)
             try:
                 conn.autocommit = True
                 with conn.cursor() as cur:
                     cur.execute("SET statement_timeout = 4000")
-                ev = git_auth.load_announcement(conn, owner_hex, repo_id)
-                if ev is None:
-                    return self._refuse_provision(key, "no announcement from %s" % owner_hex[:12])
-                if not self._service_is_named_by(ev):
-                    return self._refuse_provision(key, "announcement does not name this service")
                 with conn.cursor() as cur:
                     if not self._accepts_repo_from(cur, owner_hex):
                         return self._refuse_provision(key, "author fails the acceptance policy (%s)"
@@ -534,18 +552,20 @@ class _Handler(BaseHTTPRequestHandler):
         the same predicate (git_auth.event_says_private), so the two doors answer "who may read
         this" from one definition.
 
-        FAIL-CLOSED, and it costs something. A database error is answered PRIVATE — the same stance
+        FAIL-CLOSED, and it costs something. A relay that cannot be asked is answered PRIVATE — the same stance
         `_read_gate_ok`, `_is_wot_member` and `repo_private_meta` already take, and the only safe one:
         "I could not ask whether this repo is private" is not "this repo is public". The price is
-        that a Postgres outage 401s public clones too, where before it only 401'd private ones. The
+        that a relay outage 401s public clones too, where before it only 401'd private ones. The
         60s cache above is what bounds it; there is no answer that keeps public repos serving during
         an outage without also serving private ones.
 
-        NO DSN is a different answer from an error, deliberately: a node with no relay database holds
-        no 30617 at all, so there is no announcement to consult rather than one we failed to read —
-        the same reading `_maintainers` takes when it falls back to {owner}.
+        NO RELAY is a different answer from an error, deliberately: a host with no relay configured
+        holds no 30617 at all, so there is no announcement to consult rather than one we failed to
+        read — the same reading `_maintainers` takes when it falls back to {owner}. (The announcement
+        is read from THIS node's relay, not its database: #161.)
         """
-        if not _CONFIG.get("pg_dsn"):
+        relay = _relay()
+        if relay is None:
             return False
         key = (owner_hex, repo_id)
         now = time.monotonic()
@@ -554,15 +574,7 @@ class _Handler(BaseHTTPRequestHandler):
             if hit and hit[0] > now:
                 return hit[1]
         try:
-            import psycopg2
-            conn = psycopg2.connect(_CONFIG["pg_dsn"], connect_timeout=5)
-            try:
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = 4000")
-                private = git_auth.load_announced_private(conn, owner_hex, repo_id)
-            finally:
-                conn.close()
+            private = git_auth.load_announced_private(relay, owner_hex, repo_id)
         except Exception as e:
             log.warning("[git-host] announced-privacy read failed for %s/%s (%s) -> treat as private",
                         owner_hex[:12], repo_id, e)
@@ -579,7 +591,7 @@ class _Handler(BaseHTTPRequestHandler):
         """PRIVATE-repo READ authorization (clone/pull). Public repos: always True (fast path, no DB).
 
         For a private repo require a valid NIP-98 `Authorization: Nostr <b64>` header whose signer is
-        in the repo's ACCESS set = maintainers (owner ∪ 30617.maintainers, read from Postgres) ∪ the
+        in the repo's ACCESS set = maintainers (owner ∪ 30617.maintainers, read from the relay) ∪ the
         per-repo `readers` list (read from disk). Fail-closed: any error/doubt -> deny. Serves NOTHING
         on denial (the caller 401s before git-http-backend runs, so refs never leak).
         """
@@ -593,23 +605,15 @@ class _Handler(BaseHTTPRequestHandler):
         if not header:
             return False
         # Build the access allowlist. readers come from disk (cheap); maintainers need one indexed
-        # DB read — only for private repos, so public traffic never pays for it.
+        # relay read — only for private repos, so public traffic never pays for it.
         allowed = set(meta.get("readers") or [])
         allowed.add(owner_hex)
-        dsn = _CONFIG.get("pg_dsn")
-        if dsn:
+        relay = _relay()
+        if relay is not None:
             try:
-                import psycopg2
-                conn = psycopg2.connect(dsn, connect_timeout=5)
-                try:
-                    conn.autocommit = True
-                    with conn.cursor() as cur:
-                        cur.execute("SET statement_timeout = 4000")
-                    allowed |= git_auth.load_maintainers(conn, owner_hex, repo_id)
-                finally:
-                    conn.close()
+                allowed |= git_auth.load_maintainers(relay, owner_hex, repo_id)
             except Exception as e:
-                log.warning("[git-host] private read ACL DB read failed (%s) -> deny", e)
+                log.warning("[git-host] private read ACL relay read failed (%s) -> deny", e)
                 return False   # fail-closed: can't confirm ACL -> no read
         # Read gate. GRASP-08 spells the credential out: repository-scoped, `method` tag GET, ONE
         # credential covering every endpoint of a Smart HTTP operation, `created_at` within 60s.
@@ -671,25 +675,20 @@ class _Handler(BaseHTTPRequestHandler):
             return False
 
     def _maintainers(self, owner_hex: str, repo_id: str) -> set:
-        """The repo's maintainer ACL = owner ∪ 30617.maintainers, read from the relay Postgres exactly
-        as the pre-receive hook reads it (git_auth.load_maintainers re-verifies the announcement's
-        signature). Returns just {owner} if there's no DSN — a web commit then needs the URL owner's
-        own key, which is the safe reading of "we cannot confirm who else may write"."""
+        """The repo's maintainer ACL = owner ∪ the recursive 30617 maintainer set, read from THIS node's
+        relay exactly as the pre-receive hook reads it (git_auth.load_maintainers re-verifies every
+        announcement's signature). Returns just {owner} if no relay is configured, or if the relay
+        could not be asked -- a web commit then needs the URL owner's own key, which is the safe
+        reading of "we cannot confirm who else may write". The second case is remembered on the
+        request (`_acl_unreadable`) so a refused maintainer is told WHY rather than "not a maintainer"."""
         maints = {owner_hex}
-        dsn = _CONFIG.get("pg_dsn")
-        if not dsn:
+        relay = _relay()
+        if relay is None:
             return maints
         try:
-            import psycopg2
-            conn = psycopg2.connect(dsn, connect_timeout=5)
-            try:
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = 4000")
-                maints |= git_auth.load_maintainers(conn, owner_hex, repo_id)
-            finally:
-                conn.close()
+            maints |= git_auth.load_maintainers(relay, owner_hex, repo_id)
         except Exception as e:
+            self._acl_unreadable = True
             log.warning("[git-host] maintainer ACL read failed (%s) -> owner only", e)
         return maints
 
@@ -729,7 +728,7 @@ class _Handler(BaseHTTPRequestHandler):
             if hit and hit[0] > now:
                 return hit[1]
         amap = {}
-        if _CONFIG.get("pg_dsn"):
+        if _relay() is not None:
             for owner in ghs.owners_hosting(repo_id):
                 for maint in self._maintainers(owner, repo_id):
                     if maint == owner:
@@ -1500,8 +1499,14 @@ class _Handler(BaseHTTPRequestHandler):
         The commit is built with plumbing against a TEMPORARY index (never a work tree — this is a
         bare repo), then `update-ref` with the expected old value. No hooks run for this path (it isn't
         receive-pack), so the 30618 witness that post-receive would publish is published here instead."""
+        self._acl_unreadable = False
         signer = self._write_gate_signer(owner_hex, repo_id, "edit")
         if not signer:
+            if self._acl_unreadable:
+                # FAIL-CLOSED, AND SAID. The ACL fell back to the owner alone because the relay could
+                # not be asked; a maintainer refused for that must not read it as "you are not one".
+                return self._deny(503, "the relay could not be asked who maintains this repo; "
+                                       "nothing was written — try again")
             return self._deny(401, "a repo maintainer's NIP-98 signature is required", auth=True)
         try:
             clen = int(self.headers.get("Content-Length") or 0)
@@ -1714,8 +1719,10 @@ class _Handler(BaseHTTPRequestHandler):
             "CONTENT_TYPE": self.headers.get("Content-Type", ""),
             "REMOTE_ADDR": self.client_address[0],
             "GIT_PROTOCOL": self.headers.get("Git-Protocol", ""),
-            # Static hook config (DSN, caps, flags) so a bare pre-receive process can run fail-closed.
-            "GRASP_PG_DSN": _CONFIG.get("pg_dsn", ""),
+            # Static hook config (relay port, caps, flags) so a bare pre-receive process can run
+            # fail-closed. The hook reads events from THIS node's relay, never its database (#161);
+            # an empty port makes it refuse every push.
+            "GRASP_RELAY_PORT": str(_CONFIG.get("relay_port") or ""),
             "GRASP_REPO_ROOT": _REPO_ROOT,
             "GRASP_REPO_MAX_MB": str(_CONFIG.get("repo_max_mb", 512)),
             "GRASP_ALLOW_FORCE": "1" if _CONFIG.get("allow_force", True) else "0",
@@ -1724,6 +1731,11 @@ class _Handler(BaseHTTPRequestHandler):
             # The per-request NIP-98 header rides through to the push hook (the admin/sync.sh path).
             "GRASP_NIP98": self.headers.get("Authorization", ""),
         }
+        # The hook authenticates to the relay as the node key (a private repo's events are served
+        # to nobody else). keystore finds it by POSTERCHANAI_KEYFILE when the service sets one, and
+        # this env is built from scratch, so carry it -- or the hook would read the default path.
+        if os.environ.get("POSTERCHANAI_KEYFILE"):
+            env["POSTERCHANAI_KEYFILE"] = os.environ["POSTERCHANAI_KEYFILE"]
         clen = self.headers.get("Content-Length")
         # CHUNKED request bodies. Git switches to `Transfer-Encoding: chunked` as soon as a pack
         # exceeds http.postBuffer (1 MB by default), so this is the NORMAL shape of a first full push.

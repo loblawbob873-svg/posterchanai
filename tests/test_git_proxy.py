@@ -92,7 +92,7 @@ async def run():
     reader_hex = bip340.pubkey_from_seckey(reader_sk).hex()
     npub = nostr_service.npub_of(owner_hex)
 
-    host_cfg = {"pg_dsn": "", "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
+    host_cfg = {"relay_port": 0, "repo_root": _ROOT, "repo_max_mb": 512, "allow_force": True,
                 "nip98_push": False, "public_base": "", "read_skew": 300, "port": 0}
     httpd, hport = _host_server(host_cfg)
     time.sleep(0.3)

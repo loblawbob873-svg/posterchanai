@@ -6,11 +6,10 @@ in ngit's code, so these tests are written against what ngit-cli 3.0.0 ACTUALLY 
 read at `src/lib/repo_ref.rs` and `src/lib/client.rs:2121`
 (`get_repo_ref_from_cache_with_selected_recovery`) — and each test names the rule it pins.
 
-Every case runs the SHIPPED `git_auth` functions against a stub cursor holding REAL signed events.
+Every case runs the SHIPPED `git_auth` functions against a stub relay holding REAL signed events.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -22,6 +21,7 @@ if _ROOT not in sys.path:
 from app.services import git_auth                      # noqa: E402
 from app.services.nostr import bip340                  # noqa: E402
 from app.services.nostr.event import build_event       # noqa: E402
+from tests.git_relay_fake import FakeRelay              # noqa: E402
 
 REPO = "demo"
 SK = {name: (n).to_bytes(32, "big") for n, name in
@@ -34,40 +34,10 @@ def ann(author, tags, repo=REPO):
     return build_event(SK[author], git_auth.ANNOUNCE_KIND, "", tags=[["d", repo]] + list(tags))
 
 
-class _Cur:
-    def __init__(self, conn):
-        self._conn, self._rows = conn, []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, params=None):
-        # git_auth's read is (repo_id, kind, pubkey). Answer per AUTHOR, which is the whole point:
-        # the walk must be seen to ask about one pubkey at a time.
-        repo_id, _kind, pubkey = params
-        self._conn.asked.append(pubkey)
-        self._rows = [(e["id"], e["pubkey"], e["created_at"], e["kind"], json.dumps(e["tags"]), e["content"], e["sig"]) for e in self._conn.events
-                      if e["pubkey"] == pubkey
-                      and any(t[:2] == ["d", repo_id] for t in e["tags"])]
-        self._rows.sort(key=lambda r: -r[2])
-
-    def fetchall(self):
-        return self._rows
-
-
-class _Conn:
-    def __init__(self, events):
-        self.events, self.asked = list(events), []
-        self.autocommit = False
-
-    def cursor(self):
-        return _Cur(self)
-
-    def close(self):
-        pass
+def _Conn(events):
+    """THIS node's relay holding `events` (git_auth reads the relay, not its Postgres: #161). Its
+    `asked` lists every author a read named, so a test can see whose announcement was consulted."""
+    return FakeRelay(events)
 
 
 def resolve(events, owner="owner"):
@@ -235,9 +205,9 @@ def test_the_walk_terminates_on_a_cycle():
 
 
 def test_the_walk_is_BOUNDED_because_the_spec_supplies_no_bound(monkeypatch):
-    """This runs from an UNAUTHENTICATED clone and every round is a Postgres read per newly
+    """This runs from an UNAUTHENTICATED clone and every round is a relay read over the newly
     discovered pubkey. ngit's own loop runs to a fixpoint over a local cache where that costs
-    nothing; here it must not be a remote party's lever on our database."""
+    nothing; here it must not be a remote party's lever on our relay."""
     monkeypatch.setattr(git_auth, "_MAINTAINER_MAX_PUBKEYS", 3)
     wide = ann("owner", [["m", PK[n]] for n in ("b", "c", "d", "mod", "stranger")])
     got = resolve([wide])
