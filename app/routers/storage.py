@@ -56,11 +56,8 @@ async def save_image(
             raise HTTPException(status_code=401, detail="Not authenticated")
         
         # Verify user owns this conversation
-        from app.models import Conversation
-        conversation = db.query(Conversation).filter(
-            Conversation.id == conversation_id,
-            Conversation.user_id == current_user.id
-        ).first()
+        from app.services import conversation_table
+        conversation = await conversation_table.aget(db, conversation_id, current_user.id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
@@ -175,11 +172,8 @@ async def save_file(
     
     if not is_server_request:
         # Verify user owns this conversation (for user requests)
-        from app.models import Conversation
-        conversation = db.query(Conversation).filter(
-            Conversation.id == conversation_id,
-            Conversation.user_id == current_user.id
-        ).first()
+        from app.services import conversation_table
+        conversation = await conversation_table.aget(db, conversation_id, current_user.id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         

@@ -139,6 +139,10 @@ class Legacy:
 
 
 LEGACIES: dict = {}             # DocTable name -> Legacy (table_migration.register fills it at store import)
+# Tables whose store module gates SQL-or-relay ITSELF (app/services/table_gate.py, wave 2: bots, user_settings,
+# conversations): no Legacy is bound to the DocTable -- the store writes the relay first and SQL after -- but its
+# background loader still waits for the table's `_migrated` marker, like a bound table's (table_migration fills it).
+GATED: set = set()
 _session_factory = None
 
 
@@ -377,7 +381,7 @@ class DocTable:
         backoff = 1.0
         while not self._orphaned():
             try:
-                if self.legacy is not None and not _run(amarked(self.name)):
+                if (self.legacy is not None or self.name in GATED) and not _run(amarked(self.name)):
                     time.sleep(2.0)
                     continue
                 if not self._loaded_at or self._reload_wanted or time.time() - self._loaded_at > self.resync_s:

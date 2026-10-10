@@ -1,5 +1,6 @@
 """Auto-split from messages.py: _msg_chat."""
-from ._common import _LINK_MENU, Conversation, Message, User, _link_action_cache, asyncio, datetime, logger, telegram_service
+from ._common import _LINK_MENU, User, _link_action_cache, asyncio, datetime, logger, telegram_service
+from app.services import conversation_table
 
 from .senders import asyncio, logger, telegram_service
 
@@ -91,8 +92,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         result = await command_service.execute_command(command, arg)
                 else:
                     # Regular chat - use the chat service
-                    # (Conversation/Message come from the module-level import; a local re-import
-                    # here would make them function-local and break the earlier `new` command.)
+                    # (The Telegram conversation is a conversation_table row; its transcript is chat_history.)
 
                     # Forwarded messages and bare URLs use a clean summarization context —
                     # no history, focused system prompt to avoid hallucination loops.
@@ -122,10 +122,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         last_role = "system"
 
                         # Add recent message history from the Telegram conversation (limited, truncated)
-                        conversation = db.query(Conversation).filter(
-                            Conversation.user_id == user_obj.id,
-                            Conversation.title == "📱 Telegram"
-                        ).order_by(Conversation.updated_at.desc()).first()
+                        conversation = await conversation_table.afind_by_title(db, user_obj.id, "📱 Telegram")
 
                         if conversation:
                             # History comes from the ENCRYPTED relay transcript, not plaintext rows.
@@ -366,14 +363,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                     _bot_worth_saving = bool(_reply_looks_complete and bot_reply != APOLOGY
                                              and not bot_reply.startswith(("Error:", "Sorry,")))
                     try:
-                        tg_conv = db.query(Conversation).filter(
-                            Conversation.user_id == user_obj.id,
-                            Conversation.title == "📱 Telegram"
-                        ).order_by(Conversation.updated_at.desc()).first()
-                        if not tg_conv:
-                            tg_conv = Conversation(user_id=user_obj.id, title="📱 Telegram")
-                            db.add(tg_conv)
-                            db.flush()
+                        tg_conv = await conversation_table.aget_or_create(db, user_obj.id, "📱 Telegram")
                         # Save the raw user text (not the injected URL content — keep history short).
                         # Save the full bot reply so follow-ups ("turn that into a post") have
                         # complete context — truncating to 500 chars cut off summaries mid-sentence.
@@ -381,8 +371,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         _did_user = await _ch.append(db, user_obj, tg_conv.id, "user", text)
                         if _bot_worth_saving:
                             _did_bot = await _ch.append(db, user_obj, tg_conv.id, "assistant", bot_reply)
-                        tg_conv.updated_at = datetime.utcnow()
-                        db.commit()
+                        await conversation_table.atouch(db, tg_conv)
                     except Exception as _save_err:
                         # A dead connection is the expected failure here (a generation long enough to
                         # outlive the session), and swallowing it is how history silently disappeared.
@@ -400,20 +389,12 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                                 _u = _s.query(User).filter(User.id == _uid).first()
                                 if _u is None:
                                     raise RuntimeError(f"user {_uid} is gone")
-                                _c = _s.query(Conversation).filter(
-                                    Conversation.user_id == _u.id,
-                                    Conversation.title == "📱 Telegram"
-                                ).order_by(Conversation.updated_at.desc()).first()
-                                if not _c:
-                                    _c = Conversation(user_id=_u.id, title="📱 Telegram")
-                                    _s.add(_c)
-                                    _s.flush()
+                                _c = await conversation_table.aget_or_create(_s, _u.id, "📱 Telegram")
                                 if not _did_user:
                                     await _ch2.append(_s, _u, _c.id, "user", text)
                                 if _bot_worth_saving and not _did_bot:
                                     await _ch2.append(_s, _u, _c.id, "assistant", bot_reply)
-                                _c.updated_at = datetime.utcnow()
-                                _s.commit()
+                                await conversation_table.atouch(_s, _c)
                                 logger.info("Telegram history saved on the retry "
                                             f"(user={not _did_user}, assistant={_bot_worth_saving and not _did_bot})")
                             finally:

@@ -1121,13 +1121,16 @@ def delete_user(
 
     npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
 
+    # Conversations and settings are relay documents now (#161) -- the FK cascade cannot reach them. Removed
+    # FIRST and outside the try below: a relay that cannot be asked raises Unavailable (503) and the account
+    # stays, so the delete can simply be retried instead of leaving its rows behind with nobody to own them.
+    from app.services import conversation_table, user_settings_table
+    conversation_table.purge_user(db, user_id)
+    user_settings_table.purge_user(db, user_id)
+
     try:
         # Manually delete related records in the correct order to avoid foreign key violations
         # This is necessary because existing databases might not have CASCADE constraints
-
-        from app.models import (
-            Conversation, Message, UserSetting
-        )
 
         # The DocTable rows that belonged to this account (#161) go FIRST, and must all go: an API key
         # or a share link left behind would outlive the account. Unreadable -> nothing is deleted (503).
@@ -1142,18 +1145,9 @@ def delete_user(
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                                 detail="The account's keys and links cannot be removed right now; the account was not deleted")
 
-
-        # 1. Delete messages (referenced by conversations)
-        # Get conversation IDs first to avoid subquery issues
-        conversation_ids = [c.id for c in db.query(Conversation.id).filter(Conversation.user_id == user_id).all()]
-        if conversation_ids:
-            db.query(Message).filter(Message.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
-
-        # 2. Delete conversations
-        db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
-
-        # 7. Delete user settings
-        db.query(UserSetting).filter(UserSetting.user_id == user_id).delete(synchronize_session=False)
+        # 1-2. Legacy SQL conversations + their plaintext transcript rows, 7. legacy SQL user settings
+        conversation_table.delete_legacy_sql_rows(db, user_id)
+        user_settings_table.delete_legacy_sql_rows(db, user_id)
         
         
         # 11. Finally, delete the user

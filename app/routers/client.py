@@ -434,8 +434,10 @@ def _game_bot_npub(db, flag: str) -> str | None:
     derived from the bot's nsec in its JSON config (Bot has no npub column)."""
     try:
         import json as _json
-        from app.models import Bot
-        for bot in db.query(Bot).filter(Bot.enabled == True, Bot.modes.like(f"%{flag}%")).all():  # noqa: E712
+        from app.services import bot_table
+        for bot in bot_table.all_bots(db):
+            if not (bot.enabled and flag in (bot.modes or "")):
+                continue
             try:
                 nsec = (_json.loads(bot.config or "{}")).get("nostr_nsec")
                 if nsec:
@@ -4243,7 +4245,7 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
     """A user asks for live-streaming access. Records it so the admin can see the queue even if the
     DM is missed, and notifies the admins — the same two halves the AI request has (Blossom only
     DMs, which loses the request if the admin never reads it)."""
-    from app.models import UserSetting
+    from app.services import user_settings_table
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
@@ -4254,13 +4256,7 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "sign in first"}, status_code=404)
     if u.is_admin or getattr(u, "can_stream", False):
         return JSONResponse({"ok": True, "already": True})
-    row = db.query(UserSetting).filter(UserSetting.user_id == u.id,
-                                       UserSetting.key == "stream_requested").first()
-    if row:
-        row.value = str(int(time.time()))
-    else:
-        db.add(UserSetting(user_id=u.id, key="stream_requested", value=str(int(time.time()))))
-    db.commit()
+    await user_settings_table.aset(db, u.id, "stream_requested", str(int(time.time())))
     logger.info("[client] streaming access requested by %s", u.username)
     return JSONResponse({"ok": True})
 
@@ -4268,12 +4264,12 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
 @router.get("/stream-requests")
 async def stream_requests(db: Session = Depends(get_db)):
     """Pending streaming-access requests, mirroring /ai-requests so the admin panel can list both."""
-    from app.models import UserSetting
+    from app.services import user_settings_table
     out = []
-    for r in db.query(UserSetting).filter(UserSetting.key == "stream_requested").all():
-        u = db.query(User).filter(User.id == r.user_id).first()
+    for uid, ts in (await user_settings_table.aby_key(db, "stream_requested")).items():
+        u = db.query(User).filter(User.id == uid).first()
         if u and u.nostr_npub and not (u.is_admin or getattr(u, "can_stream", False)):
-            out.append({"npub": u.nostr_npub, "name": u.username, "ts": r.value})
+            out.append({"npub": u.nostr_npub, "name": u.username, "ts": ts})
     out.sort(key=lambda x: x.get("ts") or "", reverse=True)
     return JSONResponse({"ok": True, "requests": out})
 
@@ -4282,12 +4278,12 @@ async def stream_requests(db: Session = Depends(get_db)):
 async def ai_requests(db: Session = Depends(get_db)):
     """Pending AI-access requests (users who asked, not yet granted), for admins to see + approve in
     the client. Sensitive only insofar as it lists requesters; returns just npub + name + when."""
-    from app.models import UserSetting
+    from app.services import user_settings_table
     out = []
-    for r in db.query(UserSetting).filter(UserSetting.key == "ai_requested").all():
-        u = db.query(User).filter(User.id == r.user_id).first()
+    for uid, ts in (await user_settings_table.aby_key(db, "ai_requested")).items():
+        u = db.query(User).filter(User.id == uid).first()
         if u and u.nostr_npub and not (u.is_admin or u.can_ai):
-            out.append({"npub": u.nostr_npub, "name": u.username, "ts": r.value})
+            out.append({"npub": u.nostr_npub, "name": u.username, "ts": ts})
     out.sort(key=lambda x: x.get("ts") or "", reverse=True)
     return JSONResponse({"ok": True, "requests": out})
 
@@ -5925,18 +5921,20 @@ async def delete_account(data: DeleteAccountReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": True, "already": True})
     if user.is_admin:
         return JSONResponse({"ok": False, "error": "admin accounts can't self-delete (use Admin → Users)"}, status_code=400)
-    from app.models import Conversation, Message, UserSetting
-    from app.services import chat_store, upload_store
-    convs = db.query(Conversation).filter(Conversation.user_id == user.id).all()
+    from app.services import chat_store, upload_store, conversation_table, user_settings_table
+    # Read BEFORE anything is removed, strictly: an account whose conversation list could not be read must
+    # not lose its row and leave its transcripts behind unlisted (Unavailable -> 503, nothing deleted).
+    convs = await conversation_table.alist_for_user(db, user.id)
     for c in convs:
         try:
             await chat_store.delete_conversation(db, user, c.id)   # relay msg events + artifact blobs
             await upload_store.delete_uploads(db, user, c.id)      # upload blobs + refs
         except Exception as e:
             logger.warning("[client] delete-account relay purge (conv %s) failed: %s", c.id, e)
-        db.query(Message).filter(Message.conversation_id == c.id).delete()
-        db.delete(c)
-    db.query(UserSetting).filter(UserSetting.user_id == user.id).delete()
+    await conversation_table.apurge_user(db, user.id)
+    await user_settings_table.apurge_user(db, user.id)
+    conversation_table.delete_legacy_sql_rows(db, user.id)     # the FK, and the plaintext legacy transcript
+    user_settings_table.delete_legacy_sql_rows(db, user.id)
     npub = user.nostr_npub   # capture before delete — needed to remove the relay account docs
     uid = user.id
     db.delete(user)

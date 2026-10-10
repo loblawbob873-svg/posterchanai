@@ -347,7 +347,7 @@ def _operator_pubkeys(db: Session) -> frozenset:
         return _operator_cache["set"]
     out = set()
     try:
-        from app.models import Bot
+        from app.services import bot_table
         for u in db.query(User).filter(User.nostr_nsec.isnot(None)).all():
             # A stored signing key must not override an explicit upload revocation.
             if u.access_revoked and not (u.is_admin or u.can_blossom):
@@ -356,7 +356,7 @@ def _operator_pubkeys(db: Session) -> frozenset:
                 out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(u.nostr_nsec)))
             except Exception:
                 pass
-        for b in db.query(Bot).all():
+        for b in bot_table.all_bots(db):    # Unavailable -> the except below: no partial set is cached
             try:
                 nsec = (json.loads(b.config or "{}")).get("nostr_nsec")
             except (ValueError, TypeError):

@@ -1,5 +1,5 @@
 """Auto-split from messages.py: _msg_command."""
-from ._common import Conversation, asyncio, logger, telegram_service
+from ._common import asyncio, logger, telegram_service
 from .keyboards import _help_main_keyboard
 from .senders import asyncio, logger, telegram_service
 
@@ -18,16 +18,13 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                         return {"ok": True}
                     elif command == "new":
                         # Clear the Telegram conversation history for this user
-                        tg_conv = db.query(Conversation).filter(
-                            Conversation.user_id == user_obj.id,
-                            Conversation.title == "📱 Telegram"
-                        ).order_by(Conversation.updated_at.desc()).first()
+                        from app.services import conversation_table
+                        tg_conv = await conversation_table.afind_by_title(db, user_obj.id, "📱 Telegram")
                         if tg_conv:
                             # The transcript is relay events now — deleting SQL rows would leave the
                             # history intact and "clear" would do nothing.
                             from app.services import chat_store
                             await chat_store.delete_conversation(db, user_obj, tg_conv.id)
-                            db.commit()
                         await telegram_service.send_message(chat_id, "Conversation cleared. Starting fresh!")
                         return {"ok": True}
                     elif command in ("remind", "reminders"):

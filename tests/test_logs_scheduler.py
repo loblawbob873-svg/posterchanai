@@ -504,19 +504,21 @@ class TestRunLogsForAdmin(unittest.IsolatedAsyncioTestCase):
         # ENCRYPTED relay event (the nostr-datastore migration). Asserting on db.add still passed as
         # "persisted" for a while after that stopped being true, so assert on the call that actually
         # stores it.
-        from app.services import chat_history, chat_store
+        # The Logs conversation is a conversation_table row (#161): its updated_at is stored there.
+        from app.services import chat_history, conversation_table
         append = mock.AsyncMock()
+        touch = mock.AsyncMock()
         with mock.patch.object(L, "SessionLocal", return_value=fake_db), \
              mock.patch.object(L, "build_health_report", mock.AsyncMock(return_value="REPORT")), \
              mock.patch.object(chat_history, "append", append), \
-             mock.patch.object(chat_store, "mirror_conversation", mock.AsyncMock()), \
-             mock.patch.object(L, "get_or_create_logs_chat", return_value=mock.Mock(id=7)):
+             mock.patch.object(conversation_table, "atouch", touch), \
+             mock.patch.object(L, "get_or_create_logs_chat", mock.AsyncMock(return_value=mock.Mock(id=7))):
             text = await L.run_logs_for_admin(return_text=True)
 
         self.assertEqual(text, "REPORT")
         self.assertTrue(append.called)             # the report was stored
         self.assertEqual(append.call_args[0][4], "REPORT")
-        self.assertTrue(fake_db.commit.called)
+        self.assertEqual(touch.call_args[0][1].id, 7)   # ...in the Logs conversation, whose time moved
         self.assertTrue(fake_db.close.called)
 
     async def test_no_admin_returns_none(self):

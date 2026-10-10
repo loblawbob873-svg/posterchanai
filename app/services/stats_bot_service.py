@@ -411,12 +411,14 @@ def _stats_bots() -> list:
     so the botframework subprocess never sees it; the app posts on the bot's behalf with its nsec."""
     import socket
     from app.database import SessionLocal
-    from app.models import Bot
+    from app.services import bot_table
     host = socket.gethostname().split(".")[0]
     out = []
     db = SessionLocal()
     try:
-        for b in db.query(Bot).filter(Bot.enabled == True, Bot.platform == "nostr").all():  # noqa: E712
+        for b in bot_table.all_bots(db):
+            if not b.enabled or b.platform != "nostr":
+                continue
             if b.host and b.host.split(".")[0] != host:     # empty host = runs on any node
                 continue
             try:

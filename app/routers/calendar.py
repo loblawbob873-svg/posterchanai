@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User, UserSetting
+from app.models import User
+from app.services import user_settings_table
 from app.services import caldav_store, caldav_subscribe
 
 # Radicale is imported LAZILY, inside the handlers. `app.services.caldav.auth` and `.storage` import
@@ -69,9 +70,7 @@ async def calendar_config(request: Request, current_user: User = Depends(get_cur
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     base = f"{proto}://{host}" if host else str(request.base_url).rstrip("/")
-    has_pw = bool(db.query(UserSetting).filter(
-        UserSetting.user_id == current_user.id,
-        UserSetting.key == SETTING_KEY).first())
+    has_pw = await user_settings_table.ahas(db, current_user.id, SETTING_KEY)
     return {
         "enabled": caldav_store.enabled(),
         "url": f"{base}/caldav/{current_user.username}/",
@@ -95,23 +94,15 @@ async def new_password(current_user: User = Depends(get_current_user), db: Sessi
     """
     _require_enabled()
     pw = "-".join(secrets.token_urlsafe(6) for _ in range(3))
-    row = db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
-                                       UserSetting.key == SETTING_KEY).first()
-    if not row:
-        row = UserSetting(user_id=current_user.id, key=SETTING_KEY, value="")
-        db.add(row)
     from app.services.caldav import auth as caldav_auth      # lazy: see the note above
-    row.value = caldav_auth.hash_password(pw)
-    db.commit()
+    await user_settings_table.aset(db, current_user.id, SETTING_KEY, caldav_auth.hash_password(pw))
     return {"password": pw}
 
 
 @router.delete("/password")
 async def clear_password(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Revoke: every device syncing with the old password stops immediately."""
-    db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
-                                 UserSetting.key == SETTING_KEY).delete()
-    db.commit()
+    await user_settings_table.adelete(db, current_user.id, SETTING_KEY)
     return {"ok": True}
 
 

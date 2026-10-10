@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.models import User, Bot
+from app.models import User
 from app.services import settings_store as settings, users_store, blossom_service
 from app.services.nostr import nostr_service as ns
 
@@ -23,7 +23,7 @@ def configuration():
 
 
 
-def _infrastructure_keys(db, users=None) -> set:
+async def _infrastructure_keys(db, users=None) -> set:
     """Admins, this node's bots and its GPU-sharing peers: infrastructure, not consumer grants.
     Nothing in this module ever revokes them."""
     keep = set()
@@ -32,7 +32,8 @@ def _infrastructure_keys(db, users=None) -> set:
             keep.add(ns.to_pubkey_hex(u.nostr_npub))
     from app.services import nostr_dvm
     keep.update(nostr_dvm.peer_pubkeys())
-    for bot in db.query(Bot).all():
+    from app.services import bot_table
+    for bot in await bot_table.aall_bots(db):   # Unavailable propagates: never plan from a list missing the bots
         try:
             key = json.loads(bot.config or "{}").get("nostr_nsec")
             if key:
@@ -57,7 +58,7 @@ async def _plan(db, exempt_fediverse=True):
     registered = {pk.lower() for pk in names.values()}
     qualified_keys = set()
     users = db.query(User).all()
-    keep = _infrastructure_keys(db, users)
+    keep = await _infrastructure_keys(db, users)
     if exempt_fediverse:
         # Raises relay_reader.Unavailable on an unreadable registry, which aborts the plan like any
         # other error here -- "no puppets" would strip every fediverse account of its exemption.
@@ -233,7 +234,7 @@ async def revoke_identities(db, pubkeys) -> dict:
     if not keys:
         return {"accounts": 0, "whitelist": 0, "protected": []}
     async with _lock:
-        protected = keys & _infrastructure_keys(db)
+        protected = keys & await _infrastructure_keys(db)
         targets = keys - protected
         out = {"accounts": 0, "whitelist": 0, "protected": sorted(protected)}
         npubs = {}

@@ -43,35 +43,31 @@ NS_UPLOAD  = "pcai:upload:"      # encrypted upload ref → ciphertext blob in B
 # to the relay and decrypt them to run the AI. Kept in UserSetting (no schema migration). Stored as
 # hex; decode_seckey accepts hex or nsec.
 def user_storage_seckey(db, user) -> bytes:
-    from app.models import UserSetting
-    from app.services import keystore
+    from app.services import keystore, user_settings_table
     npub = getattr(user, "nostr_npub", None)
     # 1) keyfile (authoritative — survives the app DB being in-memory/eliminated), keyed by npub
     if npub:
         sk = keystore.get_storage_seckey(npub)
         if sk:
             return sk
-    # 2) legacy app.db location (UserSetting) → migrate into the keyfile on first touch
-    row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
-                                       UserSetting.key == "storage_nsec").first()
-    if row and row.value:
+    # 2) legacy location (the user-settings table, now a relay DocTable) → migrate into the keyfile on first
+    # touch. A read that could not be answered RAISES (Unavailable): read as "no key", step 3 would mint a new
+    # one and every document already encrypted to the old key would become unreadable.
+    stored = user_settings_table.get(db, user.id, "storage_nsec")
+    if stored:
         try:
-            sk = bytes.fromhex(row.value)
+            sk = bytes.fromhex(stored)
             if npub:
                 keystore.set_storage_seckey(npub, sk)
             return sk
         except ValueError:
             pass
-    # 3) generate a fresh key → keyfile (npub users) or legacy UserSetting (no-npub legacy users)
+    # 3) generate a fresh key → keyfile (npub users) or the user-settings table (no-npub legacy users)
     sk = os.urandom(32)   # valid secp256k1 scalar w/ overwhelming probability
     if npub:
         keystore.set_storage_seckey(npub, sk)
     else:
-        if row:
-            row.value = sk.hex()
-        else:
-            db.add(UserSetting(user_id=user.id, key="storage_nsec", value=sk.hex()))
-        db.commit()
+        _store_legacy_storage_key(db, user.id, sk.hex())
     # New storage key → tell the relay to accept it as a writer (operator) without a restart.
     # Debounced: a burst of new users (e.g. a busy bot) would otherwise trigger a reload storm; at
     # most one reload per _RELOAD_DEBOUNCE. A key not yet picked up just mirrors on the next reload.
@@ -89,6 +85,36 @@ def user_storage_seckey(db, user) -> bytes:
 
 _last_op_reload = 0.0
 _RELOAD_DEBOUNCE = 20.0
+
+
+def _store_legacy_storage_key(db, user_id, hexsk: str) -> None:
+    """Persist a no-npub account's freshly minted storage key. This is reached from async code too (the
+    chat path asks for the key synchronously), and a relay write cannot run on the event loop's own thread --
+    so there it runs on a short-lived thread and is WAITED for: a key that was not stored must not be used,
+    or what it encrypts is lost at the next restart. Rare by construction (once per legacy account, ever)."""
+    from app.services import user_settings_table
+    from app.services.doc_table import _in_loop
+    if not _in_loop():
+        user_settings_table.set(db, user_id, "storage_nsec", hexsk)
+        return
+    import threading
+    err = []
+
+    def _run():
+        from app.database import SessionLocal
+        s = SessionLocal()
+        try:
+            user_settings_table.set(s, user_id, "storage_nsec", hexsk)
+        except Exception as e:      # noqa: BLE001
+            err.append(e)
+        finally:
+            s.close()
+    t = threading.Thread(target=_run, name="storage-key-store", daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive() or err:
+        from app.services.relay_reader import Unavailable
+        raise Unavailable("the new storage key could not be stored")
 
 
 def npub_storage_seckey(npub: str) -> bytes:

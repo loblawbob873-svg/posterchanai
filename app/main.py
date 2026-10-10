@@ -880,7 +880,9 @@ async def startup():
                         # #161: app tables leave Postgres for operator DocTables. One startup task copies
                         # every registered table (verified, then a marker) and loads it, on threads of its
                         # own; until a table's marker exists SQL stays authoritative (reads from SQL, writes
-                        # to both), so nothing here waits on it.
+                        # to both), so nothing here waits on it. Wave 2 (bots, per-user settings, conversations,
+                        # and the census of legacy chat messages -- never copied) is in the same registry and
+                        # runs after the bots/conversations hydrates above, so SQL is complete.
                         from app.services import table_migration
                         table_migration.start_background(SessionLocal)
                     except Exception as e:

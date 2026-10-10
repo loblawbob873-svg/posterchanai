@@ -29,7 +29,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import User, UserSetting
+from app.models import User
+from app.services import user_settings_table
 from app.services.relay_reader import Unavailable
 from app.services import settings_store, stream_end_service, stream_service, users_store
 from app.services.nostr.event import verify_event
@@ -176,16 +177,25 @@ def _stream_enabled() -> bool:
 
 
 def _user_token(db, user: User) -> str:
-    """Stable per-user publish token (unguessable, in the public HLS path). Generated once."""
-    row = db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == _TOKEN_SETTING).first()
-    if row and row.value:
-        return row.value
+    """Stable per-user publish token (unguessable, in the public HLS path). Generated once.
+
+    A token that could not be READ raises Unavailable (503) -- it is never "none yet": minting a new one
+    would move the user's stream path out from under the encoder that already has the old one."""
+    tok = user_settings_table.get(db, user.id, _TOKEN_SETTING)
+    if tok:
+        return tok
     tok = secrets.token_hex(8)
-    if row:
-        row.value = tok
-    else:
-        db.add(UserSetting(user_id=user.id, key=_TOKEN_SETTING, value=tok))
-    db.commit()
+    user_settings_table.set(db, user.id, _TOKEN_SETTING, tok)
+    return tok
+
+
+async def _auser_token(db, user: User) -> str:
+    """`_user_token` for async routes."""
+    tok = await user_settings_table.aget(db, user.id, _TOKEN_SETTING)
+    if tok:
+        return tok
+    tok = secrets.token_hex(8)
+    await user_settings_table.aset(db, user.id, _TOKEN_SETTING, tok)
     return tok
 
 
@@ -451,7 +461,7 @@ async def stream_auth(request: Request, db=Depends(get_db)):
             got = (parse_qs(q).get("clamp") or [""])[0]
         except Exception:
             got = ""
-        if want and hmac.compare_digest(got, want) and stream_end_service.user_by_token(db, base) is not None:
+        if want and hmac.compare_digest(got, want) and await stream_end_service.user_by_token(db, base) is not None:
             return Response(status_code=200)
         logger.info("[stream] clamp publish denied for %r", path)
         return JSONResponse({"error": "not a clamp publish"}, status_code=403)
@@ -486,9 +496,8 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     # A user may publish ONLY to their OWN token (not an arbitrary/made-up path, and not a sub-path of a
     # victim's token). Require the path to equal the key-owner's stream_token exactly — this closes both
     # the open-publish resource-abuse vector and the sub-path ownership bypass.
-    own = db.query(UserSetting).filter(UserSetting.user_id == row.user_id,
-                                       UserSetting.key == _TOKEN_SETTING).first()
-    if not own or not own.value or path != own.value:
+    own = await user_settings_table.aget(db, row.user_id, _TOKEN_SETTING)
+    if not own or path != own:
         logger.info("[stream] publish denied (path %r is not the key owner's token)", path)
         return JSONResponse({"error": "not your stream"}, status_code=403)
     # The OBS path is the one that survives a revoke: a stream key already pasted into someone's
@@ -499,7 +508,7 @@ async def stream_auth(request: Request, db=Depends(get_db)):
         return JSONResponse({"error": "no permission"}, status_code=403)
     # The feed is really flowing now — let the reaper end this stream if it later disappears.
     try:
-        stream_end_service.mark_publishing(db, row.user_id)
+        await stream_end_service.mark_publishing(db, row.user_id)
         # Record the authoritative go-live time for this session so the VOD finalizer knows the real
         # session start (and which segments belong to it), independent of file mtimes. No-op if recording
         # is off. Preserved across a reconnect (only written when absent), cleared when the VOD is claimed.
@@ -532,7 +541,7 @@ async def stream_unpublish(request: Request, db=Depends(get_db)):
     # because ending on this name would schedule an end that the source path can never re-confirm as live.
     if token.endswith(stream_service.CLAMP_SUFFIX):
         return Response(status_code=200)
-    user_id = stream_end_service.user_by_token(db, token)
+    user_id = await stream_end_service.user_by_token(db, token)
     if user_id is None:
         return Response(status_code=200)   # unknown token — nothing of ours to end
     stream_end_service.schedule_end(token, user_id)
@@ -572,16 +581,16 @@ async def stream_sentinel(request: Request, current_user: User = Depends(get_cur
     # raw `d` to the token could therefore never match, so EVERY park 403'd, no "ended" event was ever
     # stored, and every stream stayed ● LIVE on zap.stream/shosho for good once the tab was closed. The
     # log said so plainly — a 403 here every 30s for the length of the broadcast.
-    if stream_end_service.token_of({"event": event}) != _user_token(db, current_user):
+    if stream_end_service.token_of({"event": event}) != await _auser_token(db, current_user):
         return JSONResponse({"error": "not your stream"}, status_code=403)
-    stream_end_service.save_sentinel(db, current_user.id, event)
+    await stream_end_service.save_sentinel(db, current_user.id, event)
     return {"ok": True}
 
 
 @router.delete("/sentinel")
-def stream_sentinel_clear(current_user: User = Depends(get_current_user), db=Depends(get_db)):
+async def stream_sentinel_clear(current_user: User = Depends(get_current_user), db=Depends(get_db)):
     """The client ended its own stream (stamping an accurate `ends`) — drop the parked fallback."""
-    stream_end_service.clear_sentinel(db, current_user.id)
+    await stream_end_service.clear_sentinel(db, current_user.id)
     return {"ok": True}
 
 
@@ -708,9 +717,8 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
     # client that already had one (or a stale build) must not be able to go live without permission.
     if not _may_stream(current_user):
         return Response(status_code=403)
-    own = db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
-                                       UserSetting.key == _TOKEN_SETTING).first()
-    if not own or own.value != token:
+    own = await user_settings_table.aget(db, current_user.id, _TOKEN_SETTING)
+    if not own or own != token:
         return JSONResponse({"error": "not your stream"}, status_code=403)
     # Cap the offer body — an SDP is a few KB; refuse anything absurd (authed, but no memory-exhaustion foot-gun).
     clen = request.headers.get("content-length")

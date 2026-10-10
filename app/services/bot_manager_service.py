@@ -27,7 +27,9 @@ import subprocess
 from pathlib import Path
 
 from app.database import SessionLocal
-from app.models import Bot
+from app.services import bot_table
+from app.services.relay_reader import Unavailable
+from app.services.bot_table import BotRow as Bot
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
@@ -290,7 +292,7 @@ def _all_nostr_bot_pubkeys() -> str:
         from app.services.nostr import nostr_service
         db = SessionLocal()
         try:
-            for b in db.query(Bot).all():
+            for b in bot_table.all_bots(db):
                 try:
                     nsec = (json.loads(b.config or "{}") or {}).get("nostr_nsec")
                 except Exception:
@@ -335,7 +337,7 @@ def _profile_owner(bot_dict: dict) -> bool:
         try:
             db = SessionLocal()
             try:
-                rows = [bot_to_dict(b) for b in db.query(Bot).all() if b.enabled]
+                rows = [bot_to_dict(b) for b in bot_table.all_bots(db) if b.enabled]
             finally:
                 db.close()
             by_key = {}
@@ -349,7 +351,9 @@ def _profile_owner(bot_dict: dict) -> bool:
                                        d.get("name") or ""))
                 owners[k] = ds[0].get("name")
         except Exception:
-            owners = {}
+            # The bots table could not be read: keep the last answer rather than "nobody owns any key",
+            # which would let EVERY bot sharing a key publish its own profile (the last one up wins).
+            owners = _PROFILE_OWNER_CACHE["map"]
         _PROFILE_OWNER_CACHE.update(ts=now, map=owners)
     owner = _PROFILE_OWNER_CACHE["map"].get(nsec)
     return owner is None or owner == bot_dict.get("name")
@@ -658,7 +662,9 @@ def _enabled_bots_for_host():
     host = get_hostname()
     db = SessionLocal()
     try:
-        bots = db.query(Bot).filter(Bot.enabled == True).all()  # noqa: E712
+        # Unavailable propagates: the reconcile must not read "the bots table could not be asked" as "no
+        # bots are enabled" and stop every running bot (it skips the pass and keeps what is running).
+        bots = [b for b in bot_table.all_bots(db) if b.enabled]
         out = {"text": [], "image": []}
         for b in bots:
             if b.host and b.host.strip() and b.host.strip() != host:
@@ -1032,6 +1038,8 @@ def _reconcile():
             base_env = _load_global_env()
             _reconcile_text(bots["text"], base_env)
             _reconcile_scheduled(_scheduled_jobs(bots["image"], bots["text"]), base_env)
+        except Unavailable as e:
+            logger.info("[BOTS] reconcile skipped, the bots table is not readable yet: %s", e)
         except Exception as e:
             logger.error("[BOTS] reconcile error: %s", e, exc_info=True)
 
@@ -1094,7 +1102,7 @@ def seed_from_export():
         return
     db = SessionLocal()
     try:
-        if db.query(Bot).count() > 0:
+        if bot_table.all_bots(db):
             return
         try:
             data = json.loads(_EXPORT_PATH.read_text())
@@ -1121,13 +1129,12 @@ def seed_from_export():
                 if isinstance(modes, (list, tuple)):
                     modes = ",".join(modes)
                 json_cfg = {k: v for k, v in cfg.items() if k not in _COLUMN_KEYS}
-                db.add(Bot(
-                    name=name, enabled=True, bot_type=cfg.get("bot_type", bot_type),
+                bot_table.create(
+                    db, name=name, enabled=True, bot_type=cfg.get("bot_type", bot_type),
                     platform=cfg.get("platform", "pleroma"), host=cfg.get("host", "") or "",
                     modes=modes, config=json.dumps(json_cfg),
-                ))
+                )
                 count += 1
-        db.commit()
         logger.info("[BOTS] seeded %d bots + globals from %s", count, _EXPORT_PATH.name)
     except Exception as e:
         db.rollback()
@@ -1207,7 +1214,7 @@ def _bot_dict_by_name(name: str):
     """Look up a single bot (enabled or not) and return its merged config dict, or None."""
     db = SessionLocal()
     try:
-        b = db.query(Bot).filter(Bot.name == name).first()
+        b = bot_table.get_by_name(db, name)
         return bot_to_dict(b) if b else None
     finally:
         db.close()
@@ -1266,7 +1273,7 @@ def get_status():
     host = get_hostname()
     db = SessionLocal()
     try:
-        rows = db.query(Bot).all()
+        rows = bot_table.all_bots(db)
     finally:
         db.close()
     with _lock:

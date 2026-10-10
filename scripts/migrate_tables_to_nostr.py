@@ -4,6 +4,7 @@
     venv-unified/bin/python scripts/migrate_tables_to_nostr.py --table reminders
     venv-unified/bin/python scripts/migrate_tables_to_nostr.py --table all
     venv-unified/bin/python scripts/migrate_tables_to_nostr.py --list
+    venv-unified/bin/python scripts/migrate_tables_to_nostr.py --table bots --table messages   # wave 2 too
 
 The app does this by itself at startup on port 3051 (app/services/table_migration.py); this is the SAME engine
 and the SAME registry, for running one table by hand, checking a node, or reading why a table refused. Every

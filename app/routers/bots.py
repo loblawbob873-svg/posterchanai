@@ -20,7 +20,9 @@ from pydantic import BaseModel
 import httpx
 
 from app.database import get_db
-from app.models import Bot, User
+from app.models import User
+from app.services import bot_table
+from app.services.bot_table import BotRow as Bot
 from app.auth import get_admin_user
 from app.services import bot_manager_service, pleroma_service
 from app.services.nostr import nostr_service
@@ -142,7 +144,7 @@ def _serialize(bot: Bot) -> dict:
 
 @router.get("")
 def list_bots(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
-    return [_serialize(b) for b in db.query(Bot).order_by(Bot.name).all()]
+    return [_serialize(b) for b in bot_table.all_bots(db)]
 
 
 @router.get("/status")
@@ -329,7 +331,7 @@ async def upload_bot_avatar(payload: AvatarPayload, request: Request, db: Sessio
     from app.routers.blossom import _base_url
     nsec = (payload.nsec or "").strip()
     if not nsec and payload.bot_id is not None:
-        bot = db.query(Bot).filter(Bot.id == payload.bot_id).first()
+        bot = await bot_table.aget(db, payload.bot_id)
         if bot:
             try:
                 nsec = (json.loads(bot.config or "{}")).get("nostr_nsec", "")
@@ -384,7 +386,7 @@ class TalkPreviewPayload(BaseModel):
 def _payload_nsec(db: Session, bot_id, nsec) -> str:
     nsec = (nsec or "").strip()
     if not nsec and bot_id is not None:
-        bot = db.query(Bot).filter(Bot.id == bot_id).first()
+        bot = bot_table.get(db, bot_id)
         if bot:
             try:
                 nsec = (json.loads(bot.config or "{}")).get("nostr_nsec", "")
@@ -558,22 +560,19 @@ def create_bot(payload: BotPayload, request: Request, db: Session = Depends(get_
     config = payload.config
     if (payload.platform or "nostr") == "nostr":
         config = _ensure_identity(payload.name.strip(), config, request.url.hostname or "")
-    bot = Bot(
-        name=payload.name.strip(),
-        enabled=payload.enabled,
-        bot_type=payload.bot_type,
-        platform=payload.platform or "nostr",
-        host=(payload.host or "").strip(),
-        modes=_concord_default((payload.modes or "").strip(), config),
-        config=json.dumps(_vet_config(config)),
-    )
-    db.add(bot)
     try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
+        bot = bot_table.create(
+            db,
+            name=payload.name.strip(),
+            enabled=payload.enabled,
+            bot_type=payload.bot_type,
+            platform=payload.platform or "nostr",
+            host=(payload.host or "").strip(),
+            modes=_concord_default((payload.modes or "").strip(), config),
+            config=json.dumps(_vet_config(config)),
+        )
+    except (bot_table.NameTaken, IntegrityError):
         raise HTTPException(status_code=400, detail=f"A bot named '{payload.name}' already exists")
-    db.refresh(bot)
     # Bot operator key may be new/changed → refresh the Blossom operator auth set so its uploads are
     # accepted immediately (bots are authorized via the operator set, not the whitelist), rather than
     # waiting up to the operator-cache TTL.
@@ -582,8 +581,6 @@ def create_bot(payload: BotPayload, request: Request, db: Session = Depends(get_
         blossom_service.invalidate_operator_cache()
     except Exception:
         pass
-    from app.services import bots_store
-    bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
     _refresh_wot_for_nostr(bot)
     return _serialize(bot)
@@ -592,7 +589,7 @@ def create_bot(payload: BotPayload, request: Request, db: Session = Depends(get_
 @router.put("/{bot_id}")
 def update_bot(bot_id: int, payload: BotUpdate, request: Request, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     old_name = bot.name
@@ -616,11 +613,9 @@ def update_bot(bot_id: int, payload: BotUpdate, request: Request, db: Session = 
             cfg = _ensure_identity(bot.name, cfg, request.url.hostname or "")
         bot.config = json.dumps(_vet_config(cfg))
     try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
+        bot_table.save(db, bot, old_name=old_name)
+    except (bot_table.NameTaken, IntegrityError):
         raise HTTPException(status_code=400, detail="Bot name must be unique")
-    db.refresh(bot)
     # Bot operator key may be new/changed → refresh the Blossom operator auth set so its uploads are
     # accepted immediately (bots are authorized via the operator set, not the whitelist), rather than
     # waiting up to the operator-cache TTL.
@@ -629,10 +624,6 @@ def update_bot(bot_id: int, payload: BotUpdate, request: Request, db: Session = 
         blossom_service.invalidate_operator_cache()
     except Exception:
         pass
-    from app.services import bots_store
-    if old_name != bot.name:
-        bots_store.delete_bot_blocking(db, old_name)   # drop the stale relay doc on rename
-    bots_store.sync_bot_blocking(db, bot)
     # Register the NIP-05 name + WoT FIRST, then restart — so when the bot republishes its kind-0 on
     # startup the name already resolves in /.well-known/nostr.json (was: restart raced the register).
     _refresh_wot_for_nostr(bot)
@@ -644,21 +635,18 @@ def update_bot(bot_id: int, payload: BotUpdate, request: Request, db: Session = 
 @router.delete("/{bot_id}")
 def delete_bot(bot_id: int, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     name = bot.name
     _cleanup_nostr_identity(db, bot)   # remove its account data BEFORE the row is gone
-    db.delete(bot)
-    db.commit()
+    bot_table.delete(db, bot)          # the row, and its legacy per-name relay mirror
     # Deleted operator key → drop it from the Blossom operator auth set now, not up to a TTL later.
     try:
         from app.services import blossom_service
         blossom_service.invalidate_operator_cache()
     except Exception:
         pass
-    from app.services import bots_store
-    bots_store.delete_bot_blocking(db, name)
     bot_manager_service.reconcile_now()  # manager stops the now-absent child
     return {"status": "deleted", "name": name}
 
@@ -802,13 +790,11 @@ def _run_async(coro):
 @router.post("/{bot_id}/start")
 def start_bot(bot_id: int, db: Session = Depends(get_db),
               admin: User = Depends(get_admin_user)):
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     bot.enabled = True
-    db.commit()
-    from app.services import bots_store
-    bots_store.sync_bot_blocking(db, bot)
+    bot_table.save(db, bot)
     bot_manager_service.reconcile_now()
     return {"status": "started", "name": bot.name}
 
@@ -816,13 +802,11 @@ def start_bot(bot_id: int, db: Session = Depends(get_db),
 @router.post("/{bot_id}/stop")
 def stop_bot(bot_id: int, db: Session = Depends(get_db),
              admin: User = Depends(get_admin_user)):
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     bot.enabled = False
-    db.commit()
-    from app.services import bots_store
-    bots_store.sync_bot_blocking(db, bot)
+    bot_table.save(db, bot)
     bot_manager_service.reconcile_now()
     return {"status": "stopped", "name": bot.name}
 
@@ -835,7 +819,7 @@ async def delete_bot_posts(bot_id: int, db: Session = Depends(get_db),
     honour it. Profile (kind-0) and game state (kind-30078) are left alone."""
     from app.services import settings_store
     from app.services.nostr import event as _nevent
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = await bot_table.aget(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     if (bot.platform or "") != "nostr":
@@ -870,15 +854,12 @@ async def delete_bot_posts(bot_id: int, db: Session = Depends(get_db),
 @router.post("/{bot_id}/restart")
 def restart_bot(bot_id: int, db: Session = Depends(get_db),
                 admin: User = Depends(get_admin_user)):
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     if not bot.enabled:
         bot.enabled = True
-        db.commit()
-        from app.services import bots_store   # (module isn't imported at file scope; every call site imports locally)
-        bots_store.sync_bot_blocking(db, bot)   # write-through to the relay-authoritative store, else
-                                                # hydrate reverts enabled→False on the next startup
+        bot_table.save(db, bot)
     bot_manager_service.restart_bot(bot.name)
     return {"status": "restarted", "name": bot.name}
 
@@ -888,7 +869,7 @@ async def test_post_preview(bot_id: int, db: Session = Depends(get_db),
                             admin: User = Depends(get_admin_user)):
     """Generate from the bot's SAVED config and return it WITHOUT publishing.
     Text bots → the generated post text; image bots → a generated image (base64)."""
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = await bot_table.aget(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
 
@@ -922,7 +903,7 @@ def test_post_publish(bot_id: int, db: Session = Depends(get_db),
                       admin: User = Depends(get_admin_user)):
     """Fire one real post now from the bot's SAVED config, bypassing the schedule
     (Test → Publish now in the editor)."""
-    bot = db.query(Bot).filter(Bot.id == bot_id).first()
+    bot = bot_table.get(db, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     return bot_manager_service.publish_post(bot.name)

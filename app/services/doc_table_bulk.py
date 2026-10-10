@@ -134,7 +134,7 @@ def _diff(a: dict, b: dict) -> list:
 
 
 async def amigrate_rows(table: str, rows, *, extra: dict | None = None, point=None,
-                        rounds: int = _ROUNDS, in_thread: bool = True) -> dict:
+                        rounds: int = _ROUNDS, in_thread: bool = True, before_mark=None) -> dict:
     """Copy a SQL table into DocTable `table`, verify, mark. Idempotent: an existing verified marker returns at
     once. Raises MigrationMismatch (no marker) when the relay cannot be made to hold exactly what SQL holds.
 
@@ -146,7 +146,12 @@ async def amigrate_rows(table: str, rows, *, extra: dict | None = None, point=No
          (`point(k)` for SQL; a write in flight lands within milliseconds) and, where SQL still differs, by
          writing SQL's value to the relay -- repeated until the two agree;
       3. only a round that ends with every key agreeing writes the marker. A relay that keeps refusing or
-         keeps answering something else exhausts `rounds` and raises: no marker, the table stays on SQL."""
+         keeps answering something else exhausts `rounds` and raises: no marker, the table stays on SQL.
+
+    `before_mark` (async, optional) is asked once the copy has verified and before the marker is written; a False
+    answer raises MigrationMismatch. A table whose store writes the relay FIRST and SQL after (table_gate, wave 2)
+    copies a snapshot and uses it to re-read SQL: a row that changed after the snapshot was read may have been
+    copied over by the older value, and must not be marked."""
     t0 = time.time()
     m = await amarker(table)
     if doc_table.is_marker(m):
@@ -215,6 +220,8 @@ async def amigrate_rows(table: str, rows, *, extra: dict | None = None, point=No
     else:
         raise MigrationMismatch("%s: %d row(s) never agreed with SQL after %d round(s), e.g. %s"
                                 % (table, len(unsettled), rounds, sorted(unsettled)[:3]))
+    if before_mark is not None and not await before_mark():
+        raise MigrationMismatch("%s: the SQL table changed while it was being copied" % table)
     info = {"ok": True, "verified": True, "rows": len(want), "at": int(time.time()), "written": written,
             "removed_stale": len(stale), "settled": settled, "fixed": fixed, "rounds": rnd,
             "copy_s": round(t_copy, 1), "total_s": round(time.time() - t0, 1)}

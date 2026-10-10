@@ -30,7 +30,6 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models import UserSetting
 from app.services.crypto_service import decrypt_string
 
 logger = logging.getLogger(__name__)
@@ -81,13 +80,14 @@ class MailAccount:
 
 def get_user_mail_accounts(user_id: int, db: Session) -> List[MailAccount]:
     """Get user's configured mail accounts. Passwords are decrypted automatically."""
-    setting = db.query(UserSetting).filter(UserSetting.user_id == user_id, UserSetting.key == "mail_accounts").first()
+    from app.services import user_settings_table
+    value = user_settings_table.get(db, user_id, "mail_accounts")   # Unavailable propagates: never "no accounts"
 
-    if not setting or not setting.value:
+    if not value:
         return []
 
     try:
-        accounts_data = json.loads(setting.value)
+        accounts_data = json.loads(value)
         accounts = []
         for acc in accounts_data:
             # Decrypt password (handles both encrypted and legacy plaintext)
@@ -1665,16 +1665,25 @@ def get_folder_map(user_id: int, db: Session) -> dict:
     back with the mapping intact.
     """
     import json as _json
-    from app.models import UserSetting
-    row = db.query(UserSetting).filter(UserSetting.user_id == user_id,
-                                       UserSetting.key == FOLDER_MAP_KEY).first()
-    if not row or not row.value:
+    from app.services import user_settings_table
+    value = user_settings_table.get(db, user_id, FOLDER_MAP_KEY)
+    if not value:
         return {}
     try:
-        out = _json.loads(row.value)
+        out = _json.loads(value)
         return out if isinstance(out, dict) else {}
     except Exception:
         return {}
+
+
+def _merged_folder_map(full: dict, account_email: str, mapping: dict) -> dict:
+    clean = {r: str(mapping.get(r) or "").strip() for r in _FOLDER_ROLES}
+    clean = {r: v for r, v in clean.items() if v}
+    if clean:
+        full[account_email] = clean
+    else:
+        full.pop(account_email, None)
+    return full
 
 
 def set_folder_map(user_id: int, db: Session, account_email: str, mapping: dict) -> dict:
@@ -1682,21 +1691,23 @@ def set_folder_map(user_id: int, db: Session, account_email: str, mapping: dict)
     rather than "there is no such folder" — otherwise clearing a wrong guess would leave the account
     with no Sent folder at all."""
     import json as _json
-    from app.models import UserSetting
-    full = get_folder_map(user_id, db)
-    clean = {r: str(mapping.get(r) or "").strip() for r in _FOLDER_ROLES}
-    clean = {r: v for r, v in clean.items() if v}
-    if clean:
-        full[account_email] = clean
-    else:
-        full.pop(account_email, None)
-    row = db.query(UserSetting).filter(UserSetting.user_id == user_id,
-                                       UserSetting.key == FOLDER_MAP_KEY).first()
-    if not row:
-        row = UserSetting(user_id=user_id, key=FOLDER_MAP_KEY, value="")
-        db.add(row)
-    row.value = _json.dumps(full, separators=(",", ":"))
-    db.commit()
+    from app.services import user_settings_table
+    full = _merged_folder_map(get_folder_map(user_id, db), account_email, mapping)
+    user_settings_table.set(db, user_id, FOLDER_MAP_KEY, _json.dumps(full, separators=(",", ":")))
+    return full
+
+
+async def aset_folder_map(user_id: int, db: Session, account_email: str, mapping: dict) -> dict:
+    """`set_folder_map` for async callers (the write goes to the relay)."""
+    import json as _json
+    from app.services import user_settings_table
+    raw = await user_settings_table.aget(db, user_id, FOLDER_MAP_KEY)
+    try:
+        full = _json.loads(raw) if raw else {}
+    except Exception:
+        full = {}
+    full = _merged_folder_map(full if isinstance(full, dict) else {}, account_email, mapping)
+    await user_settings_table.aset(db, user_id, FOLDER_MAP_KEY, _json.dumps(full, separators=(",", ":")))
     return full
 
 

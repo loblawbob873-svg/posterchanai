@@ -28,8 +28,7 @@ import time
 from typing import Optional
 
 from app.database import SessionLocal
-from app.models import UserSetting
-from app.services import nostr_store, settings_store, stream_service
+from app.services import nostr_store, settings_store, stream_service, user_settings_table
 
 logger = logging.getLogger(__name__)
 
@@ -47,21 +46,23 @@ _pending: set = set()          # strong refs to in-flight grace tasks (a bare cr
 _strikes: dict = {}            # token -> consecutive sweeps seen with no HLS feed
 
 
-# ---------------------------------------------------------------- sentinel storage (UserSetting-backed)
+# ---------------------------------------------------------------- sentinel storage (user-settings table)
+# The parked event lives in the per-user settings table (a relay DocTable since #161). A read that could not
+# be answered RAISES (Unavailable) everywhere below -- read as "no sentinel", the reaper would skip a stream
+# it must end, or a re-park would reset `seen_live` and let the reaper end a stream that is running.
 
-def _row(db, user_id: int) -> Optional[UserSetting]:
-    return db.query(UserSetting).filter(UserSetting.user_id == user_id,
-                                        UserSetting.key == SENTINEL_KEY).first()
-
-
-def _data(row: Optional[UserSetting]) -> dict:
-    if not row or not row.value:
+def _data(value) -> dict:
+    if not value:
         return {}
     try:
-        d = json.loads(row.value)
+        d = json.loads(value)
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
+
+
+async def _aload(db, user_id: int) -> dict:
+    return _data(await user_settings_table.aget(db, user_id, SENTINEL_KEY))
 
 
 def _dump(data: dict) -> str:
@@ -98,12 +99,13 @@ def _session_of(data: dict) -> str:
     return _tag_of(data, "starts")
 
 
-def user_by_token(db, token: str) -> Optional[int]:
-    row = db.query(UserSetting).filter(UserSetting.key == TOKEN_KEY, UserSetting.value == token).first()
-    return row.user_id if row else None
+async def user_by_token(db, token: str) -> Optional[int]:
+    if not token:
+        return None
+    return await user_settings_table.afind_user(db, TOKEN_KEY, token)
 
 
-def save_sentinel(db, user_id: int, event: dict) -> None:
+async def save_sentinel(db, user_id: int, event: dict) -> None:
     """Park (or refresh) the user's pre-signed "ended" event.
 
     `seen_live` is carried over only when re-parking the SAME broadcast (a client re-adopting its own live
@@ -112,37 +114,29 @@ def save_sentinel(db, user_id: int, event: dict) -> None:
     never rotates, and a stale `seen_live` from a previous stream would skip the "never went live" grace and
     let the reaper end the NEXT stream 60s after they announce it but before they've started OBS.
     """
-    row = _row(db, user_id)
-    prev = _data(row)
+    prev = await _aload(db, user_id)
     fresh = {"event": event}
     seen = bool(prev.get("seen_live")) and _session_of(prev) == _session_of(fresh) \
         and token_of(prev) == token_of(fresh)
-    blob = _dump({"event": event, "seen_live": seen, "ts": int(time.time())})
-    if row:
-        row.value = blob
-    else:
-        db.add(UserSetting(user_id=user_id, key=SENTINEL_KEY, value=blob))
-    db.commit()
+    await user_settings_table.aset(db, user_id, SENTINEL_KEY,
+                                   _dump({"event": event, "seen_live": seen, "ts": int(time.time())}))
 
 
-def clear_sentinel(db, user_id: int) -> None:
+async def clear_sentinel(db, user_id: int) -> None:
     """The client ended the stream itself (with an accurate `ends`) — drop the fallback."""
-    row = _row(db, user_id)
-    if row:
-        _strikes.pop(token_of(_data(row)), None)
-        db.delete(row)
-        db.commit()
+    data = await _aload(db, user_id)
+    if data:
+        _strikes.pop(token_of(data), None)
+        await user_settings_table.adelete(db, user_id, SENTINEL_KEY)
 
 
-def mark_publishing(db, user_id: int) -> None:
+async def mark_publishing(db, user_id: int) -> None:
     """MediaMTX just authorized a publish for this user — their stream really went live."""
-    row = _row(db, user_id)
-    data = _data(row)
-    if not row or not data or data.get("seen_live"):
+    data = await _aload(db, user_id)
+    if not data or data.get("seen_live"):
         return
     data["seen_live"] = True
-    row.value = _dump(data)
-    db.commit()
+    await user_settings_table.aset(db, user_id, SENTINEL_KEY, _dump(data))
 
 
 # ---------------------------------------------------------------- liveness + publishing
@@ -210,14 +204,12 @@ async def _end_now(user_id: int, reason: str) -> None:
     """Publish the parked "ended" event. Opens its own session — this runs long after the request is gone."""
     db = SessionLocal()
     try:
-        row = _row(db, user_id)
-        data = _data(row)
-        if not row or not data:
+        data = await _aload(db, user_id)
+        if not data:
             return
         if await _publish_end(user_id, data):
             _strikes.pop(token_of(data), None)
-            db.delete(row)
-            db.commit()
+            await user_settings_table.adelete(db, user_id, SENTINEL_KEY)
             logger.info("[stream-end] marked user %s's stream ended (%s)", user_id, reason)
             return
         # The publish failed (the local relay restarts on deploys and is watchdog-respawned, so this is a
@@ -227,12 +219,10 @@ async def _end_now(user_id: int, reason: str) -> None:
         # abandoned as genuinely unpublishable.
         tries = int(data.get("tries", 0)) + 1
         data["tries"] = tries
-        row.value = _dump(data)
-        db.commit()
+        await user_settings_table.aset(db, user_id, SENTINEL_KEY, _dump(data))
         if int(time.time()) - int(data.get("ts", 0)) > _SENTINEL_MAX_AGE:
             _strikes.pop(token_of(data), None)
-            db.delete(row)
-            db.commit()
+            await user_settings_table.adelete(db, user_id, SENTINEL_KEY)
             logger.warning("[stream-end] abandoning user %s's ended event — still unpublishable after %d "
                            "tries over 24h", user_id, tries)
         elif tries in (1, 5, 20):
@@ -282,8 +272,9 @@ async def _sweep() -> None:
     """Safety net for the ends the hook can't deliver: app restarted mid-stream, MediaMTX killed, hook lost."""
     db = SessionLocal()
     try:
-        pending = [(r.user_id, _data(r)) for r in db.query(UserSetting).filter(
-            UserSetting.key == SENTINEL_KEY).all()]
+        # Unavailable propagates to the reaper loop (logged, retried next sweep): a sweep that could not
+        # read the sentinels must not run as though none were parked.
+        pending = [(uid, _data(v)) for uid, v in (await user_settings_table.aby_key(db, SENTINEL_KEY)).items()]
     finally:
         db.close()
     if not pending:
@@ -307,7 +298,7 @@ async def _sweep() -> None:
             if not data.get("seen_live"):     # the probe proves it — no need to wait for a publish hook
                 db = SessionLocal()
                 try:
-                    mark_publishing(db, user_id)
+                    await mark_publishing(db, user_id)
                 finally:
                     db.close()
             continue
