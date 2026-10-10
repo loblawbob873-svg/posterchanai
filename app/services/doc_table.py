@@ -274,6 +274,7 @@ class DocTable:
         self._watchers: list = []
         self.legacy = LEGACIES.get(name)    # SQL's side until the table's marker exists (None: relay only)
         self._bg = None                 # the background loader thread, when this process runs one
+        self._bg_lock = threading.Lock()
         self._reload_wanted = False
         self.load_seconds = None        # how long the last strict load took (measured, reported)
         self.resync_s = _RESYNC_S       # the backstop full reload (a big table sets a longer one)
@@ -362,7 +363,7 @@ class DocTable:
         """Load this table on a THREAD of its own and keep it loaded (the periodic backstop reload, and a reload
         after the live stream had a gap, happen there too -- never inside a request). Before the table's marker
         exists there is nothing to load: SQL answers, and the thread waits for the marker. Idempotent."""
-        with self._load_lock:
+        with self._bg_lock:             # never _load_lock: that is held for the whole of a running load
             if self._bg is not None and self._bg.is_alive():
                 return
             th = threading.Thread(target=self._bg_loop, name="doctable-load-%s" % self.name, daemon=True)

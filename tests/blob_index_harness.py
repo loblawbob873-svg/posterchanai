@@ -15,6 +15,7 @@ from app.services import blob_index, blossom_service, doc_table, doc_table_bulk
 from tests.test_doc_table import relay
 
 DAY = 86400
+_bound: set = set()
 _FIXTURES = (relay,)       # re-exported: a module that imports `relay` from here gets the fixture
 
 
@@ -23,7 +24,8 @@ def reset_process_state():
     doc_table.DocTable._registry.clear()
     doc_table_bulk._seen.clear()
     doc_table.set_session_factory(None)
-    doc_table.LEGACIES.pop(blob_index.TABLE, None)      # a test's own table name has no SQL side unless bound
+    while _bound:                       # only the test-named tables `bind_sql` gave a SQL side -- never the real one
+        doc_table.LEGACIES.pop(_bound.pop(), None)
     with blob_index._idx_lock:
         blob_index._by_owner.clear()
         blob_index._owners_of.clear()
@@ -128,6 +130,8 @@ def alive() -> set:
 def bind_sql(db):
     """Make this test's index table one that still lives in SQL (#161 wave 1): its Legacy bound and the session
     factory pointed at `db`'s database -- what `table_migration.bind(SessionLocal)` does for the real table."""
+    if blob_index.TABLE not in doc_table.LEGACIES:
+        _bound.add(blob_index.TABLE)
     doc_table.LEGACIES[blob_index.TABLE] = blob_index.BlobLegacy()
     doc_table.DocTable._registry.pop(blob_index.TABLE, None)
     doc_table.set_session_factory(sessionmaker(bind=db.get_bind()))

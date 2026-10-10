@@ -256,6 +256,10 @@ def test_after_a_restart_an_api_key_is_checked_while_its_table_loads(node, monke
         assert k is not None and k.id == 3, "a valid key was refused while its table loaded"
         assert _in_thread(lambda: api_key_store.lookup("sk-" + "b" * 64)) is None
         assert run(api_key_store.alookup(KEY)).id == 3
+        # main.py asks again later (start_background, on the event loop): that must not wait for the load
+        t0 = time.monotonic()
+        _in_thread(lambda: _start_loads(node), timeout=5)
+        assert time.monotonic() - t0 < 2, "starting the loads again waited on a running load"
     finally:
         slow.release.set()
 
