@@ -379,14 +379,20 @@ def _sender_brand(note):
     return _nk.get_brand(note)
 
 
+def _glow_text(reply, arg, brand_handle=None, brand_avatar=None):
+    """`glow <text>`: a glowing neon TEXT post. It needs no file, so a transport that cannot read attachments
+    (a Concord room) still offers it -- the help text advertises it everywhere."""
+    _gsum, _gout = process_media("glow", arg, [], brand_handle, brand_avatar)
+    imgs = [(f["data"], f["content_type"]) for f in _gout if f["content_type"].startswith("image/")]
+    reply("" if imgs else (_gsum or "Couldn't make that glow post."), image_bytes=imgs or None)
+
+
 def _handle_media_command(note, command, arg):
     brand_handle, brand_avatar = _sender_brand(note)
     media, had_files = _gather_media(note)
     if not media:
         if command == "glow" and arg.strip():
-            _gsum, _gout = process_media("glow", arg, [], brand_handle, brand_avatar)
-            imgs = [(f["data"], f["content_type"]) for f in _gout if f["content_type"].startswith("image/")]
-            send_reply(note, "" if imgs else (_gsum or "Couldn't make that glow post."), image_bytes=imgs or None)
+            _glow_text(lambda text="", **kw: send_reply(note, text, **kw), arg, brand_handle, brand_avatar)
             return
         if had_files:
             # The post DID carry media; we just couldn't download it (transient CDN/network blip).
@@ -439,6 +445,9 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
     media_cmd = next((c for c in MEDIA_COMMANDS if lower == c or lower.startswith(c + " ")), None)
     if media_cmd:
         if not media_ok:
+            if media_cmd == "glow" and prompt_text[4:].strip():
+                _glow_text(reply, prompt_text[4:].strip())
+                return
             reply("📎 File commands like `%s` need an attachment, and I can't read attachments in "
                   "a room yet — post the file on Nostr and tag me there." % media_cmd)
             return
