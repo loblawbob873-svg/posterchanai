@@ -307,7 +307,10 @@ class Store:
         self.derived: dict[int, set] = {}   # seq -> {(tag, value)}: re-emitted beside a record whenever it moves
         # id -> seq: leveled sorted runs + delta
         self._id_runs: list = []
-        self._id_delta: dict[int, int] = {}
+        # 8-byte id prefix -> seqs. A LIST: two ids can share a prefix (2^32 work to grind one on purpose), and a
+        # dict of single seqs lost the earlier one for good at the next merge -- that event could never be found
+        # by id again (dedupe, NIP-09, has_event). tests/test_pcdb_relay_store.py
+        self._id_delta: dict[int, list] = {}
         self.idx = _Postings()       # author+kind, author, kind, single-letter tags
         self.words = _Postings()     # search
         self.dprefix = _Prefix()     # `#d~` prefix reads
@@ -498,6 +501,24 @@ class Store:
             self._rotate_if_full()
             return n
 
+    def sync(self) -> int:
+        """Make everything written so far durable WITHOUT the index merge a flush also does, and with the fsync
+        OUTSIDE the lock: the relay's primary store calls this after each direct write and each purge, and a
+        merge cascade or an fsync on a RAID5 must not hold every reader. The bytes reach the kernel under the
+        lock (one sequential write); the fsync of that file then needs no lock. A rotation in between fsyncs and
+        closes the file itself, which is why a closed file here is success, not an error."""
+        with self._lock:
+            if self._file is None:
+                return 0
+            n = self._drain(fsync=False)
+            f = self._file
+        try:
+            os.fsync(f.fileno())
+        except (ValueError, OSError):
+            if not f.closed:
+                raise
+        return n
+
     def maybe_flush(self) -> int:
         if self._pending_n and time.monotonic() - self._last_flush >= self.flush_interval:
             return self.flush()
@@ -618,8 +639,9 @@ class Store:
     # ---------------------------------------------------------------- ids
     def _merge_ids(self) -> None:
         if self._id_delta:
-            k = np.fromiter(self._id_delta.keys(), dtype=np.uint64, count=len(self._id_delta))
-            v = np.fromiter(self._id_delta.values(), dtype=np.uint32, count=len(self._id_delta))
+            n = sum(len(v) for v in self._id_delta.values())
+            k = np.fromiter((key for key, vs in self._id_delta.items() for _ in vs), dtype=np.uint64, count=n)
+            v = np.fromiter((x for vs in self._id_delta.values() for x in vs), dtype=np.uint32, count=n)
             o = np.argsort(k)
             self._id_runs.append((k[o], v[o]))
             self._id_delta = {}
@@ -655,8 +677,7 @@ class Store:
             key = int(eid[:16], 16)
         except ValueError:
             return None
-        s = self._id_delta.get(key)
-        cands = [s] if s is not None else []
+        cands = list(self._id_delta.get(key, ()))
         ku = np.uint64(key)
         for keys, seqs in self._id_runs:
             lo = int(np.searchsorted(keys, ku, "left"))
@@ -831,7 +852,7 @@ class Store:
             self._authors.append(pk)
         _grow(self.author.append, aid)
         _grow(self.dead.append, 0)
-        self._id_delta[int(ev["id"][:16], 16)] = seq
+        self._id_delta.setdefault(int(ev["id"][:16], 16), []).append(seq)
         k = ev["kind"]
         self.idx.add(_h("ak:%s:%d" % (pk, k)), seq)
         self.idx.add(_h("au:%s" % pk), seq)
@@ -1082,9 +1103,39 @@ class Store:
         created_at column and the in-RAM ids, so only the events actually returned are decoded."""
         now = int(time.time()) if now is None else now
         with self._lock:
+            cand = self._match_locked(flt, now, exhaustive=False)
+            if not len(cand):
+                return []
+            created = np.frombuffer(self.created, dtype=np.uint64)
+            # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
+            limit = max(1, min(int(flt.get("limit") or 500), 5000))
+            c = created[cand]
+            if len(cand) > limit:
+                # keep every event at the cut-off timestamp: the id decides among them below
+                cut = np.partition(c, len(c) - limit)[len(c) - limit]
+                sel = c >= cut
+                cand, c = cand[sel], c[sel]
+            # ORDER BY created_at DESC, id DESC — the id as four big-endian words is its exact hex order
+            idw = np.frombuffer(self.ids, dtype=">u8").reshape(-1, 4)[cand]
+            order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
+            return [self.get(int(s)) for s in cand[order]]
+
+    def match(self, flt: dict, now: int | None = None) -> np.ndarray:
+        """EVERY live, unexpired seq the filter matches (no `limit`), ascending -- for COUNT and negentropy, which
+        the relay answers over the whole match. A filter with nothing selective unions whole kind posting lists
+        here: callers that care about lock holds (nostr_relay/pcdb_store.py) scan the columns in chunks instead."""
+        now = int(time.time()) if now is None else now
+        with self._lock:
+            return self._match_locked(flt, now, exhaustive=True).copy()
+
+    def _match_locked(self, flt: dict, now: int, exhaustive: bool) -> np.ndarray:
+        """The candidate seqs of one filter after every condition but the limit (dead/expired/since/until/cursor
+        applied). `exhaustive=False` lets a filter with nothing selective stop at the newest `limit` (the query)."""
+        _none = np.zeros(0, dtype=np.uint32)
+        with self._lock:
             n = len(self.off)
             if not n:
-                return []
+                return _none
             sets = []
             ids = flt.get("ids")
             if ids:
@@ -1105,7 +1156,7 @@ class Store:
                     sets.append(_union([self.idx.get(_h("t:%s:%s" % (tg, v))) for tg in tags for v in vals]))
                 elif len(key) == 3 and key.endswith("~"):
                     if key[1] != "d":
-                        return []          # prefix matching is indexed for `d` only — the app's one use
+                        return _none          # prefix matching is indexed for `d` only — the app's one use
                     sets.append(np.unique(np.array([q for v in vals for q in self.dprefix.prefix(str(v))],
                                                    dtype=np.uint32)))
             if flt.get("search"):
@@ -1113,7 +1164,7 @@ class Store:
                     self.index_pending_words()     # exact answers: catch up whatever a copy/replay deferred
                 words = search_words(flt["search"])
                 if not words:
-                    return []              # plainto_tsquery with no lexemes matches nothing
+                    return _none           # plainto_tsquery with no lexemes matches nothing
                 for w in words:
                     sets.append(_union([self.words.get(_h(w))]))
             kind_col = np.frombuffer(self.kind, dtype=np.uint32)
@@ -1126,7 +1177,7 @@ class Store:
                     cand = _intersect(cand, other)
                 if kinds and not kinds_done and len(cand):
                     cand = cand[np.isin(kind_col[cand], np.asarray([int(k) for k in kinds], dtype=np.uint32))]
-            elif not isinstance(flt.get("_cursor"), list):
+            elif not exhaustive and not isinstance(flt.get("_cursor"), list):
                 # Nothing selective (only `kinds`, or no filter at all): walk newest-first and stop as soon as the
                 # newest `limit` are certain. Building the union of every kind-1 and kind-6 posting and sorting it
                 # cost 465 ms at 2.6M events under the one store lock -- the global feed every client asks for --
@@ -1137,7 +1188,7 @@ class Store:
             else:
                 cand = np.arange(n, dtype=np.uint32)
             if not len(cand):
-                return []
+                return _none
             created = np.frombuffer(self.created, dtype=np.uint64)
             expires = np.frombuffer(self.expires, dtype=np.uint64)
             dead = np.frombuffer(self.dead, dtype=np.uint8)
@@ -1156,21 +1207,7 @@ class Store:
                 for j in np.nonzero(keep & (cc == c0))[0]:   # equal timestamps: page on the id (`e.id < cursor`)
                     if not self._id_hex(int(cand[j])) < c1:
                         keep[j] = False
-            cand = cand[keep]
-            if not len(cand):
-                return []
-            # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
-            limit = max(1, min(int(flt.get("limit") or 500), 5000))
-            c = created[cand]
-            if len(cand) > limit:
-                # keep every event at the cut-off timestamp: the id decides among them below
-                cut = np.partition(c, len(c) - limit)[len(c) - limit]
-                sel = c >= cut
-                cand, c = cand[sel], c[sel]
-            # ORDER BY created_at DESC, id DESC — the id as four big-endian words is its exact hex order
-            idw = np.frombuffer(self.ids, dtype=">u8").reshape(-1, 4)[cand]
-            order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
-            return [self.get(int(s)) for s in cand[order]]
+            return cand[keep]
 
 
 _SCAN_CHUNK = 65536
