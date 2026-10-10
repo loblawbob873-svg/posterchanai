@@ -226,7 +226,7 @@ def test_a_tampered_announcement_provisions_nothing(host):
     assert host(_Conn([bad], wot=[OWNER])) is False
 
 
-def test_a_database_we_cannot_ask_provisions_nothing(host):
+def test_a_database_we_cannot_ask_provisions_nothing(host, monkeypatch):
     """Fail closed, like every other decision in this file."""
     class _Boom:
         @staticmethod
@@ -235,7 +235,9 @@ def test_a_database_we_cannot_ask_provisions_nothing(host):
 
     gh._CONFIG.update({"pg_dsn": "stub"})
     gh._prov_deny.clear()
-    sys.modules["psycopg2"] = _Boom
+    # setitem, never a bare assignment: the stub outlived this test and every later test in the process that
+    # imported psycopg2.extras (the PosterChanDB mirror's copy) failed with "_Boom has no attribute extras".
+    monkeypatch.setitem(sys.modules, "psycopg2", _Boom)
     h = object.__new__(gh._Handler)
     h.headers = {}
     assert h._autoprovision(OWNER, REPO) is False

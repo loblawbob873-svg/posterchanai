@@ -304,13 +304,11 @@ def test_a_blocked_phrase_is_never_posted(tags, monkeypatch):
     hb, _, _ = tags
     monkeypatch.setattr(hb, "BLOCK_PHRASE", "forbidden")
     sent = []
-    sys.modules["nostr"] = type(sys)("nostr")
-    sys.modules["nostr"].post_image_to_fediverse = lambda m, *a, **k: sent.append(m)
-    try:
-        assert hb.post_to_nostr("this is forbidden") is False and sent == []
-        assert hb.post_to_nostr("fine") is True and sent == ["fine"]
-    finally:
-        sys.modules.pop("nostr", None)
+    stub = type(sys)("nostr")
+    stub.post_image_to_fediverse = lambda m, *a, **k: sent.append(m)
+    monkeypatch.setitem(sys.modules, "nostr", stub)        # restores a real `nostr` loaded earlier, too
+    assert hb.post_to_nostr("this is forbidden") is False and sent == []
+    assert hb.post_to_nostr("fine") is True and sent == ["fine"]
 
 
 # ============================== Pleroma block bot (real Postgres) ==================================
