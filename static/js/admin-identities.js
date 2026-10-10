@@ -59,7 +59,7 @@
                             : '<span class="blk-pic blk-nopic"></span>'}
                 <div class="blk-who">
                     <div class="blk-name">${esc(r.address)}<span class="ids-badge ids-ok" title="This name is granted here, so its owner is a member">✓ member</span></div>
-                    <div class="blk-id">${r.display ? esc(r.display) + ' · ' : '(no profile on this relay) · '}<code>${esc(String(r.npub).slice(0, 20))}…</code>${(r.others || []).length ? ` · also ${(r.others || []).map(esc).join(', ')}` : ''}</div>
+                    <div class="blk-id">${r.display ? esc(r.display) + ' · ' : (r.has_profile ? '(profile has no name) · ' : '(no profile on this relay) · ')}<code>${esc(String(r.npub).slice(0, 20))}…</code>${(r.others || []).length ? ` · also ${(r.others || []).map(esc).join(', ')}` : ''}</div>
                     <div class="blk-id ids-note">${esc(profileNote(r))}</div>
                     <div class="blk-id ids-act${r.activity && !r.activity.posts ? ' ids-idle' : ''}">${esc(activityNote(r))}</div>
                 </div>

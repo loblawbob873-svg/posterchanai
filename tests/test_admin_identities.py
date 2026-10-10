@@ -203,3 +203,14 @@ def test_the_page_is_wired():
     assert 'id="ids_search"' in tab and 'id="ids_list"' in tab
     assert 'id="nostr_relay_nip05_names" name="nostr_relay_nip05_names"' in tab, "the text box Save sends must stay"
     assert "admin-identities.js" in (ROOT / "templates/admin.html").read_text()
+
+
+def test_a_blank_profile_is_not_reported_as_no_profile(registry, monkeypatch):
+    """2026-10-10 "identities for vyram says no profile on this relay": his second key HAS a profile here,
+    with no name and no picture. The row says whether a profile exists, so the page can tell the two apart."""
+    async def profiles(pks):
+        return {PK["alice"]: {"name": "", "picture": "", "nip05": "alice@poster.place"}}, True
+    monkeypatch.setattr(relay_blocklist, "profiles", profiles)
+    rows = _by_name(asyncio.run(nip05_registry.rows("poster.place")))
+    assert rows["alice"]["display"] == "" and rows["alice"]["has_profile"] is True
+    assert rows["ghost"]["has_profile"] is False

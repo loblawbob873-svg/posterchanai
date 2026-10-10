@@ -59,7 +59,8 @@ const rowsOf=k=>DB[k].split('\n').filter(Boolean).map(v=>(k==='nostr_relay_wot_s
   :(k==='fedi_bridge_blocked_domains'?{value:v,valid:true,type:v.includes('@')?'account':'instance'}:{value:v,valid:true}));
 const IDS=[{name:'alice',address:'alice@poster.place',npub:'npub1a',verified:true,display:'Alice'},
   {name:'ghost',address:'ghost@poster.place',npub:'npub1g',verified:false,display:''},
-  {name:'liar',address:'liar@poster.place',npub:'npub1l',verified:false,display:'Liar',profile_nip05:'x@y'}];
+  {name:'liar',address:'liar@poster.place',npub:'npub1l',verified:false,display:'Liar',profile_nip05:'x@y'},
+  {name:'blank',address:'blank@poster.place',npub:'npub1b',verified:true,display:'',has_profile:true}];
 window.fetch=async(url,opt)=>{
   const u=new URL(url,location.href), body=opt&&opt.body?JSON.parse(opt.body):null;
   const ok=j=>({ok:true,status:200,json:async()=>j});
@@ -275,6 +276,15 @@ async def run():
                       return {box:Math.round(c.width),left:Math.round(c.left-row.left),who:Math.round(who.width),row:Math.round(row.width)}})})()""",
                     "awaitPromise": True, "returnByValue": True})
                 ids = z.get("result", {}).get("value") or []
+                z = await call("Runtime.evaluate", {"expression": """(()=>{const r=document.querySelector('#ids_list .ids-row[data-name="blank"]'),
+                    g=document.querySelector('#ids_list .ids-row[data-name="ghost"]');return [r&&r.textContent,g&&g.textContent]})()""", "returnByValue": True})
+                blank, ghost = z.get("result", {}).get("value") or [None, None]
+                # 2026-10-10 "identities for vyram says no profile on this relay": his second key HAS a profile here,
+                # it just has no name. Say which it is.
+                if not blank or "profile has no name" not in blank or "no profile on this relay" in blank:
+                    fails.append((where, "a blank profile is reported as no profile at all", blank))
+                if not ghost or "no profile on this relay" not in ghost:
+                    fails.append((where, "a key with no profile here no longer says so", ghost))
                 if not ids:
                     fails.append((where, "Identities drew no rows"))
                 for r in ids:

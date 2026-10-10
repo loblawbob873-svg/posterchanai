@@ -201,6 +201,7 @@ async def rows(domain: str) -> dict:
         out.append({"name": name, "address": addr, "pubkey": pk, "npub": npub,
                     "display": p.get("name", ""), "picture": p.get("picture", ""),
                     "profile_nip05": p.get("nip05", ""),
+                    "has_profile": pk in found,
                     "verified": verified,
                     "via": (p.get("nip05", "") if verified and claimed not in own else ""),
                     "others": sorted(n for n, k in names.items() if k == pk and n != name),
