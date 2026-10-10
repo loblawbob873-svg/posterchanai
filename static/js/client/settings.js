@@ -21,7 +21,7 @@ window.PCSettingsFactory = function(dep){
     _applyAutoMuteToView, _applyMediaCacheBudget, _autoMuteDocLoad, _autoMuteDocReady,
     _autoMuteDocSave, _autoMuteStored, _cacheAutoMute, _capPlugin, _clientBuild, _deleteAllMyNotes,
     _fillMediaCacheStat, _fillMusicOfflineStat, _flushPending, _fmtBytes, _hasNativeTor,
-    _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
+    _instanceAcceptable, _instanceBase, _langOptions, _loadAutoMute, _loginProviders, _navHideHtml, _navLabel,
     _normInstance, _notificationPane, _paintAutoMuteControls, _parsePresets, _postEffectsOn,
     _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
@@ -1147,8 +1147,9 @@ window.PCSettingsFactory = function(dep){
         let recent=[]; try{ recent=JSON.parse(localStorage.getItem('pc_instances')||'[]'); }catch(_){}
         const opts=[...new Set([cur, 'https://poster.place', ...recent].map(norm).filter(Boolean))];
         pick.innerHTML=opts.map(u=>`<button class="instance-chip${u===cur?' on':''}" data-u="${enc(u)}">${enc(u.replace(/^https?:\/\//,''))}${u===cur?' ✓':''}</button>`).join('');
-        const _switch=raw=>{ const u=norm(raw); if(!u){ toast('that doesn’t look like a valid instance domain'); return; }
+        const _switch=async raw=>{ const u=norm(raw); if(!u){ toast('that doesn’t look like a valid instance domain'); return; }
           if(u===cur){ toast('already connected to '+u.replace(/^https?:\/\//,'')); return; }
+          if(!(await _instanceAcceptable(u, m=>{ if(m) toast(m); }))) return;   // a relay is not a server
           try{ localStorage.setItem('pc_instances', JSON.stringify([...new Set([u, ...opts])].slice(0,6))); }catch(_){}
           if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
           else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); } };
