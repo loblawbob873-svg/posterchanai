@@ -48,12 +48,15 @@ def db(tmp_path):
 
 # ---------------------------------------------------------------- the relay's rules, one by one
 def test_expiry_deletes_except_the_kinds_that_must_never_expire(db):
-    # stored while valid, then the clock passes their expiration: maintenance must KILL them (reclaimable)
-    soon = NOW + 300
-    gone = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(soon)]])
-    later = mk(kind=1, created_at=NOW - 10, tags=[["expiration", str(soon + 999)]])
-    note = mk(kind=30078, created_at=NOW - 10, tags=[["d", "pcai:note:1"], ["expiration", str(NOW - 1)]])
-    repo = mk(kind=30617, created_at=NOW - 10, tags=[["d", "r"], ["expiration", str(NOW - 1)]])
+    # stored while valid, then the clock passes their expiration: maintenance must KILL them (reclaimable).
+    # The clock is read HERE, not at import: in a long gate shard this ran >5 min after import, NOW + 300 was
+    # already past, and the store rightly refused the event as expired ("flaky under load").
+    now = int(time.time())
+    soon = now + 300
+    gone = mk(kind=1, created_at=now - 10, tags=[["expiration", str(soon)]])
+    later = mk(kind=1, created_at=now - 10, tags=[["expiration", str(soon + 999)]])
+    note = mk(kind=30078, created_at=now - 10, tags=[["d", "pcai:note:1"], ["expiration", str(now - 1)]])
+    repo = mk(kind=30617, created_at=now - 10, tags=[["d", "r"], ["expiration", str(now - 1)]])
     for e in (gone, later, note, repo):
         assert db.put(e, direct=True) == "stored"       # never-expire kinds drop the tag, so even NOW-1 stores
     m = maint(db)
