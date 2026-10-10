@@ -501,6 +501,36 @@ async def relay_list(key: str, admin: User = Depends(get_admin_user)):
     return await relay_lists.rows(key, settings_store.get(key, "") or "")
 
 
+class ListFieldReq(BaseModel):
+    kind: str
+    raw: str = ""
+    add: Optional[str] = None
+    remove: Optional[str] = None
+
+
+@router.post("/list-field/rows")
+async def list_field_rows(data: ListFieldReq, admin: User = Depends(get_admin_user)):
+    """Rows for a list FIELD the page holds (Admin → Bots → Edit): the same rows, names and validity as
+    the relay lists, for a value that is not a global setting. Stores nothing -- the bot's own Save does."""
+    from app.services import relay_lists
+    if data.kind not in relay_lists.FIELD_KINDS:
+        raise HTTPException(status_code=400, detail="not a list kind")
+    return await relay_lists.rows_of(data.kind, data.raw or "")
+
+
+@router.post("/list-field/apply")
+def list_field_apply(data: ListFieldReq, admin: User = Depends(get_admin_user)):
+    """Add or remove ONE entry of a list field's text by the relay lists' rules (validation, one spelling
+    per entry). Answers the new text; stores nothing."""
+    from app.services import relay_lists
+    if data.kind not in relay_lists.FIELD_KINDS:
+        raise HTTPException(status_code=400, detail="not a list kind")
+    new, err = relay_lists.edit(data.raw or "", data.kind, add=data.add or "", remove=data.remove or "")
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return {"value": new}
+
+
 @router.post("/relay/list")
 def relay_list_edit(data: RelayListEditReq, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     """Add or remove ONE entry of a relay list setting. The edit applies to the value the server

@@ -39,6 +39,13 @@ LISTS = {
 
 MAX_ENTRY = 500
 
+# Kinds a list FIELD may use that is not a global setting (Admin → Bots → Edit: one bot's own lists, saved
+# with the bot). Each is split exactly the way the bot reads it (botframework/*): topics are lines or comma
+# pieces (autopost._topics); invites and hosts are whitespace/comma tokens (concord.invites_from_env,
+# config.TRUSTED_MEDIA_HOSTS); accounts are tokens (nostrListener NOSTR_RATE_EXEMPT).
+FIELD_KINDS = {"pubkey", "word", "domain", "relay", "server", "origin", "topic", "invite", "host"}
+_LINES = ("word", "topic")          # an entry may contain spaces; whitespace is not a separator
+
 
 def same(kind: str, entry: str) -> str:
     """What an entry MEANS, for comparing two entries -- never what is stored or shown.
@@ -47,9 +54,13 @@ def same(kind: str, entry: str) -> str:
     `wss://nostr.mom`; they were two rows, so Remove took one, the other was redrawn, and the button
     looked broken ("remove button dont work for RELAY URLS in admin"). The same shape exists in every
     list: a key as npub and as hex, a domain or origin in two cases, a trailing dot or slash."""
-    e = " ".join(str(entry or "").split()) if kind != "word" else str(entry or "").strip()
-    if kind == "word":
+    e = " ".join(str(entry or "").split()) if kind not in _LINES else str(entry or "").strip()
+    if kind in _LINES:
         return e.lower()
+    if kind == "invite":
+        return e                     # the part after `#` is the room's key: its case is its meaning
+    if kind == "host":
+        return e.lower().rstrip(".")
     if kind == "pubkey":
         return _pk(e) or e.lower()
     if kind == "peer":
@@ -88,6 +99,8 @@ def entries(kind: str, raw: str) -> list:
         parts = fedi_blocklist.tokens(raw)
     elif kind == "word":
         parts = [ln.strip() for ln in raw.split("\n")]
+    elif kind == "topic":
+        parts = [t.strip() for ln in raw.split("\n") for t in ln.split(",")]
     elif kind == "peer":
         parts = [" ".join(ln.split()) for ln in raw.replace(",", "\n").split("\n")]
     else:
@@ -111,14 +124,18 @@ def _pk(tok: str) -> str:
 
 def validate(kind: str, entry: str):
     """(clean entry, None) or (None, reason) for a NEW entry typed into the Add box."""
-    e = " ".join(str(entry or "").split()) if kind != "word" else str(entry or "").strip()
+    e = " ".join(str(entry or "").split()) if kind not in _LINES else str(entry or "").strip()
     if not e:
         return None, "empty"
-    if len(e) > MAX_ENTRY:
+    if len(e) > MAX_ENTRY and kind != "invite":     # an invite carries a whole naddr: long by nature
         return None, "too long"
     if kind == "word":
         if "\n" in e:
             return None, "one word or phrase at a time"
+        return e, None
+    if kind == "topic":
+        if "\n" in e or "," in e:
+            return None, "one topic at a time (a comma would split it in two)"
         return e, None
     if kind != "peer" and " " in e:
         return None, "one entry at a time (no spaces)"
@@ -146,6 +163,15 @@ def validate(kind: str, entry: str):
         if not n or not re.match(r"^[^\s@/]+\.[^\s@/.]+$", host):
             return None, "not an instance (bad.example) or an account (someone@bad.example)"
         return n, None
+    if kind == "invite":
+        if not re.match(r"^https?://[^\s/]+/\S*#\S+$", e, re.I):
+            return None, "not a Concord invite link (https://…/c/naddr1…#…)"
+        return e, None
+    if kind == "host":
+        h = e.lower().rstrip(".")
+        if not re.match(r"^(\[[0-9a-f:]+\]|[a-z0-9_.-]+)(:\d{1,5})?$", h):
+            return None, "a host name or IP address (nas.lan, 192.168.0.85)"
+        return h, None
     if kind == "domain":
         d = re.sub(r"^[a-z]+://", "", e, flags=re.I).split("/")[0].strip(".").lower()
         return (d, None) if re.match(r"^[a-z0-9.-]+\.[a-z0-9-]+$", d) else (None, "not a domain name")
@@ -162,6 +188,8 @@ def edit(raw: str, kind: str, add: str = "", remove: str = ""):
         return _edit_fedi(raw_parts, add, remove)
     if kind == "word":
         stored = [ln.strip() for ln in raw_parts.split("\n") if ln.strip()]
+    elif kind == "topic":
+        stored = [t.strip() for ln in raw_parts.split("\n") for t in ln.split(",") if t.strip()]
     elif kind == "peer":
         stored = [" ".join(ln.split()) for ln in raw_parts.replace(",", "\n").split("\n") if ln.strip()]
     else:
@@ -220,9 +248,15 @@ def _edit_fedi(raw: str, add: str, remove: str):
 
 async def rows(key: str, raw: str) -> dict:
     """The rows for one list; key-bearing kinds carry the owner's name/picture from this relay."""
+    out = await rows_of(LISTS[key], raw)
+    out["key"] = key
+    return out
+
+
+async def rows_of(kind: str, raw: str) -> dict:
+    """The rows for a value of any list KIND -- a global setting's, or a field the page holds."""
     from app.services import relay_blocklist
     from app.services.nostr import nostr_service
-    kind = LISTS[key]
     items = entries(kind, raw)
     out, names_ok = [], True
     if kind in ("pubkey", "peer"):
@@ -248,5 +282,7 @@ async def rows(key: str, raw: str) -> dict:
             row = {"value": e, "valid": validate(kind, e)[1] is None}
             if kind == "fedi":
                 row["type"] = "account" if "@" in _fedi_key(e) else "instance"
+            if kind == "invite":      # never draw the room key; what precedes `#` says which room it is
+                row["shown"] = e.split("#", 1)[0] + "#••••••"
             out.append(row)
-    return {"key": key, "kind": kind, "items": out, "names_complete": names_ok}
+    return {"kind": kind, "items": out, "names_complete": names_ok}

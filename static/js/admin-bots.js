@@ -310,6 +310,8 @@ function openBotModal(id) {
 
     wireBotConcordInvite();   // before the first form pass, so a loaded invite lights its feature up
     onBotFormChange();
+    // `.value =` fires no event: the list fields (admin-list-fields.js) redraw from what was just filled in.
+    if (window.PCListFields) window.PCListFields.refresh();
     _g('botModal').style.display = 'flex';
 }
 
@@ -394,6 +396,7 @@ function toggleBotConcord() {
     const show = !f.classList.contains('revealed');
     f.classList.toggle('revealed', show);
     if (btn) btn.textContent = show ? '🙈 Hide' : '👁 Reveal';
+    if (window.PCListFields) window.PCListFields.redraw(f);    // the room rows hide/show their key with it
 }
 
 /* DOES THIS LINK ACTUALLY OPEN THE ROOM? Answering before Save is the whole point: an invite that

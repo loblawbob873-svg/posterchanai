@@ -192,7 +192,7 @@
                 </div>
                 <div class="form-group">
                     <label for="bot_f_nostr_rate_exempt">Rate-limit exempt</label>
-                    <textarea id="bot_f_nostr_rate_exempt" class="bots-list" rows="3" placeholder="npub1youroperatorkey…&#10;npub1…"></textarea>
+                    <textarea id="bot_f_nostr_rate_exempt" data-list-kind="pubkey" class="bots-list" rows="3" placeholder="npub1youroperatorkey…&#10;npub1…"></textarea>
                     <small>Never throttled — e.g. you. npub or hex, one per line.</small>
                 </div>
                 <div class="form-group">
@@ -264,7 +264,7 @@
             <div id="bot_grp_concord" style="display:none">
                 <div class="form-group">
                     <label for="bot_f_concord_invite">Concord rooms</label>
-                    <textarea id="bot_f_concord_invite" class="bots-list bots-secret" rows="3" autocomplete="off"
+                    <textarea id="bot_f_concord_invite" data-list-kind="invite" class="bots-list bots-secret" rows="3" autocomplete="off"
                               spellcheck="false" placeholder="https://poster.place/c/naddr1…#…&#10;https://poster.place/c/naddr1…#…"></textarea>
                     <small>One invite link per line — the bot joins every room listed. Paste each whole
                         link INCLUDING the part after #, which is that room's key.</small>
@@ -375,7 +375,7 @@
                 </div>
                 <div class="form-group">
                     <label for="bot_f_auto_post_topics">Topics to rotate</label>
-                    <textarea id="bot_f_auto_post_topics" class="bots-list" rows="4" placeholder="gaming&#10;comics&#10;media double standards"></textarea>
+                    <textarea id="bot_f_auto_post_topics" data-list-kind="topic" class="bots-list" rows="4" placeholder="gaming&#10;comics&#10;media double standards"></textarea>
                     <small>Optional. A random one is picked for each post. One per line.</small>
                 </div>
                 <div class="form-group">
@@ -394,7 +394,7 @@
             <!-- Trusted media hosts (for bots that download media from posts) -->
             <div class="form-group" id="bot_grp_media" style="display:none">
                 <label for="bot_f_trusted_media_hosts">Trusted media hosts</label>
-                <textarea id="bot_f_trusted_media_hosts" class="bots-list" rows="3" placeholder="nas.lan&#10;192.168.0.85"></textarea>
+                <textarea id="bot_f_trusted_media_hosts" data-list-kind="host" class="bots-list" rows="3" placeholder="nas.lan&#10;192.168.0.85"></textarea>
                 <small>Optional. LAN instances whose media this bot may download. One host per line.</small>
             </div>
 
