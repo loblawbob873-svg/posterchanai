@@ -39,7 +39,7 @@ window.__directBundle={community_id:id,owner,owner_salt:salt,community_root:'33'
 const made=await api.create(__directBundle,ctx.pubkey,ctx);await api.park(made.wrap,ctx);
 window.__directQueries=[];const original=p.relayQueryFrom;
 p.relayQueryFrom=(relays,...args)=>{if(relays.includes('wss://never-connect.invalid')){__directQueries.push(relays);return Promise.resolve([]);}return original(relays,...args);};
-window.__directBefore=localStorage.getItem('pc.concord.invites');
+window.__directBefore=localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey);
 __PC.switchView('concord');
 })()''')
         await browser.until("!!window.PCConcord&&!!document.querySelector('#cc-direct-inbox')")
@@ -50,7 +50,7 @@ __PC.switchView('concord');
         assert 'Private <fixture>' in await browser.js("document.querySelector('#cc-invite-preview').textContent")
         assert not await browser.js("!!document.querySelector('#cc-invite-preview img')")
         assert await browser.js("__directQueries.length===0")
-        assert await browser.js("localStorage.getItem('pc.concord.invites')===__directBefore")
+        assert await browser.js("localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)===__directBefore")
         await click(browser,'#cc-invite-decline')
         assert await browser.js("PCCordDirectInvites.pending(__PC.cordDirectContext()).length===0")
         await browser.js("window.__sentDirect=[];__PC.sendCordDirectInvite=async(bundle,recipient)=>{__sentDirect.push({bundle,recipient});return 'accepted';};PCConcord.showDirectInviteSender({name:'Fixture',cord:{bundle:{...__directBundle,control_root:'SECRET',held_roots:[{seed:'SECRET'}]}}});")
@@ -64,6 +64,6 @@ __PC.switchView('concord');
         await browser.until("__sentDirect.length===1")
         assert await browser.js("__sentDirect[0].recipient===__recipient&&!('control_root' in __sentDirect[0].bundle)&&!('held_roots' in __sentDirect[0].bundle)")
         assert await browser.js("__directQueries.length===0")
-        assert await browser.js("localStorage.getItem('pc.concord.invites')===__directBefore")
+        assert await browser.js("localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)===__directBefore")
     init="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online','',check,extra_init=init))

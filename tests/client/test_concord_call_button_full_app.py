@@ -27,7 +27,7 @@ ROOM = r'''((kind, openMode)=>{
     channels:[{id:'fixture-general',name:'general'},{id:'fixture-voice',name:'hangout'}],
     cord:{bundle:{owner:__PC.me().pubkey,relays:['wss://fixture.invalid'],epoch:1},hydrated:true}};
   if(kind==='nip29')room.protocol='nip29';
-  localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   window.__opened=null;window.__group=null;
   window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]},{id:'fixture-voice',name:'hangout',streamPubkeys:[]}]}),
     inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),

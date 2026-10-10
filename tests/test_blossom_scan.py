@@ -26,9 +26,17 @@ import tempfile
 import unittest
 from unittest import mock
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services import blossom_service  # noqa: E402
+from tests.blob_index_harness import alive, idx, load, put, shared_relay  # noqa: E402
+_FIXTURES = (idx, shared_relay)   # pytest finds fixtures by module name
+
+# The rows live in the REAL blob index — the shipped RelayServer over PosterChanDB (#161 moved them out of
+# SQL). The first version of this file faked a SQL query whose filter it ignored, so a repair deleting an
+# arbitrary row would have shipped green; the real store cannot agree with a wrong assumption.
 
 
 class _Row:
@@ -40,88 +48,11 @@ class _Row:
         self.created_at = 0
 
 
-class _Q:
-    """Just enough SQLAlchemy query surface for the scan — and it HONOURS the filter.
-
-    The first version of this ignored its criteria and `first()` returned row zero whatever was
-    asked for, so `forget_missing` deleting an arbitrary row would have shipped green. A fake that
-    cannot be wrong makes every test using it a tautology.
-    """
-
-    def __init__(self, rows, db=None):
-        self._rows = rows
-        self._db = db
-
-    def order_by(self, *_a):
-        return self
-
-    def limit(self, n):
-        return _Q(self._rows[:n], self._db) if n else self
-
-    def yield_per(self, _n):
-        return list(self._rows)
-
-    def all(self):
-        return list(self._rows)
-
-    def filter(self, crit):
-        """Understands the two shapes the code under test uses: `sha256 == x` and `sha256.in_(xs)`."""
-        want = getattr(crit, "_pc_shas", None)
-        if want is None:
-            raise AssertionError("the fake query was given a criterion it does not model: %r" % (crit,))
-        return _Q([r for r in self._rows if r.sha256 in want], self._db)
-
-    def select_from(self, *_a):
-        return self
-
-    def delete(self, **_k):
-        gone = list(self._rows)
-        if self._db is not None:
-            for r in gone:
-                self._db.deleted.append(r)
-                if r in self._db.rows:
-                    self._db.rows.remove(r)
-        return len(gone)
-
-    def first(self):
-        return self._rows[0] if self._rows else None
-
-    def scalar(self):
-        return len(self._rows)
-
-
-class _Col:
-    """A stand-in for BlossomBlob.sha256 that records what was asked for."""
-
-    def __eq__(self, other):
-        c = _Crit()
-        c._pc_shas = {other}
-        return c
-
-    def in_(self, xs):
-        c = _Crit()
-        c._pc_shas = set(xs)
-        return c
-
-
-class _Crit:
-    pass
-
-
-class _DB:
-    def __init__(self, rows):
-        self.rows = rows
-        self.deleted = []
-        self.committed = 0
-
-    def query(self, *_a, **_k):
-        return _Q(self.rows, self)
-
-    def delete(self, row):
-        self.deleted.append(row)
-
-    def commit(self):
-        self.committed += 1
+def _seed(rows):
+    """Put `rows` into the index and load it, as the app's background loader does."""
+    for r in rows:
+        put(r.sha256, path=r.path, storage=r.storage, size=r.size)
+    load()
 
 
 def _run(coro):
@@ -130,6 +61,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.mark.usefixtures("idx")
 class LocalStoreScanTests(unittest.TestCase):
     """A local backend, where the answer is simply whether the file is on the disk."""
 
@@ -142,10 +74,11 @@ class LocalStoreScanTests(unittest.TestCase):
             fh.write(b"hello")
         self.rows = [_Row("a" * 64, self.here), _Row("b" * 64, os.path.join(self.dir, "bb", "b" * 64))]
         self.cfg = {"backend": "local", "storage_url": "", "blob_dir": self.dir, "cache_mb": 0}
+        _seed(self.rows)
 
     def _scan(self, **kw):
         with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg):
-            return _run(blossom_service.scan_store(_DB(self.rows), **kw))
+            return _run(blossom_service.scan_store(None, **kw))
 
     def test_a_row_whose_file_is_gone_is_reported_missing(self):
         out = self._scan()
@@ -176,13 +109,14 @@ class LocalStoreScanTests(unittest.TestCase):
 
     def test_it_changes_nothing(self):
         before = sorted(os.listdir(self.dir))
-        db = _DB(self.rows)
+        rows_before = alive()
         with mock.patch.object(blossom_service, "_cfg", lambda db_: self.cfg):
-            _run(blossom_service.scan_store(db))
+            _run(blossom_service.scan_store(None))
         self.assertEqual(sorted(os.listdir(self.dir)), before)
-        self.assertEqual(db.deleted, [], "a read-only scan deleted rows")
+        self.assertEqual(alive(), rows_before, "a read-only scan deleted rows")
 
 
+@pytest.mark.usefixtures("idx")
 class UnreadableLocalStoreTests(unittest.TestCase):
     """A disk that cannot be read is not a disk full of missing files.
 
@@ -203,16 +137,17 @@ class UnreadableLocalStoreTests(unittest.TestCase):
 
     def test_a_missing_storage_directory_produces_no_verdict_at_all(self):
         """THE ONE THAT WOULD HAVE COST THE BLOB TABLE."""
-        rows = [_Row(("%064x" % i), "/gone/%d" % i) for i in range(50)]
+        _seed([_Row(("%064x" % i), "/gone/%d" % i) for i in range(50)])
         cfg = {"backend": "local", "storage_url": "", "blob_dir": "/definitely/not/here",
                "cache_mb": 0}
         with mock.patch.object(blossom_service, "_cfg", lambda db: cfg):
-            out = _run(blossom_service.scan_store(_DB(rows)))
+            out = _run(blossom_service.scan_store(None))
         self.assertTrue(out["unreadable_store"], out)
         self.assertEqual(out["missing"], [], "an unreadable store reported every row as lost")
         self.assertEqual(out["unknown"], 50, out)
 
 
+@pytest.mark.usefixtures("idx")
 class ProxyStoreScanTests(unittest.TestCase):
     """A storage server, where "no answer" and "not there" are different things and must stay so."""
 
@@ -221,6 +156,7 @@ class ProxyStoreScanTests(unittest.TestCase):
                      _Row("b" * 64, "blossom/bb/" + "b" * 64, storage="proxy")]
         self.cfg = {"backend": "proxy", "storage_url": "http://store.example",
                     "blob_dir": "", "cache_mb": 0}
+        _seed(self.rows)
 
     def _scan(self, status_by_sha, **kw):
         class _Resp:
@@ -241,7 +177,7 @@ class ProxyStoreScanTests(unittest.TestCase):
         with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg), \
                 mock.patch.object(blossom_service, "_client", lambda: _Client()), \
                 mock.patch.object(blossom_service, "_proxy_headers", lambda: {}):
-            return _run(blossom_service.scan_store(_DB(self.rows), **kw))
+            return _run(blossom_service.scan_store(None, **kw))
 
     def test_a_404_is_missing(self):
         out = self._scan({"a" * 64: 200, "b" * 64: 404})
@@ -271,7 +207,7 @@ class ProxyStoreScanTests(unittest.TestCase):
         with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg), \
                 mock.patch.object(blossom_service, "_client", lambda: _Boom()), \
                 mock.patch.object(blossom_service, "_proxy_headers", lambda: {}):
-            out = _run(blossom_service.scan_store(_DB(self.rows)))
+            out = _run(blossom_service.scan_store(None))
         self.assertEqual(out["missing"], [], "an unreachable store reported every file as lost")
         self.assertEqual(out["unknown"], 2)
 
@@ -281,6 +217,7 @@ class ProxyStoreScanTests(unittest.TestCase):
         self.assertEqual(out["orphans"], 0)
 
 
+@pytest.mark.usefixtures("idx")
 class ForgetMissingTests(unittest.TestCase):
     """The repair asks the store AGAIN about every row before dropping it.
 
@@ -293,11 +230,10 @@ class ForgetMissingTests(unittest.TestCase):
 
     def setUp(self):
         self.rows = [_Row("a" * 64, "/x"), _Row("b" * 64, "/y")]
-        self.db = _DB(self.rows)
+        _seed(self.rows)
         self.patches = [
             mock.patch.object(blossom_service, "drop_meta", lambda s: None),
             mock.patch.object(blossom_service, "_cache_drop", lambda s: None),
-            mock.patch.object(blossom_service, "BlossomBlob", mock.Mock(sha256=_Col())),
             mock.patch.object(blossom_service, "_cfg",
                               lambda db: {"backend": "local", "storage_url": "", "blob_dir": "/x",
                                           "cache_mb": 0}),
@@ -310,48 +246,48 @@ class ForgetMissingTests(unittest.TestCase):
         async def probe(path):
             return states.get(path, "gone")
         with mock.patch.object(blossom_service, "_probe_local", probe):
-            return _run(blossom_service.forget_missing(self.db, shas))
+            return _run(blossom_service.forget_missing(None, shas))
 
     def test_it_drops_the_row_it_was_given_and_no_other(self):
         out = self._forget(["a" * 64], {})
         self.assertEqual(out["removed"], 1, out)
-        self.assertEqual([r.sha256 for r in self.db.deleted], ["a" * 64],
-                         "it deleted a row other than the one it was asked about")
-        self.assertEqual([r.sha256 for r in self.db.rows], ["b" * 64])
+        self.assertEqual(alive(), {"b" * 64}, "it deleted a row other than the one it was asked about")
 
     def test_a_row_whose_bytes_turn_out_to_be_there_is_kept(self):
         """The whole reason for the second look."""
         out = self._forget(["a" * 64], {"/x": "there"})
         self.assertEqual(out["removed"], 0, out)
         self.assertEqual(out["kept"], 1, out)
-        self.assertEqual(self.db.deleted, [], "it dropped a row for a file that is present")
+        self.assertEqual(alive(), {"a" * 64, "b" * 64}, "it dropped a row for a file that is present")
 
     def test_a_row_the_store_cannot_be_asked_about_is_kept(self):
         out = self._forget(["a" * 64], {"/x": "unknown"})
         self.assertEqual(out["removed"], 0, out)
         self.assertEqual(out["unknown"], 1, out)
-        self.assertEqual(self.db.deleted, [])
+        self.assertEqual(alive(), {"a" * 64, "b" * 64})
 
     def test_it_refuses_to_drop_most_of_the_store(self):
         """A store that looks mostly missing is a store that cannot be reached — the rule folder
         sync and the phone book both use, for the same reason."""
         rows = [_Row(("%064x" % i), "/x") for i in range(40)]
-        self.db = _DB(rows)
+        _seed(rows)
+        before = alive()
         out = self._forget([r.sha256 for r in rows], {})
         self.assertEqual(out["removed"], 0, out)
         self.assertIn("refusing", out["refused"])
-        self.assertEqual(self.db.deleted, [])
+        self.assertEqual(alive(), before)
 
     def test_a_small_delete_is_never_questioned(self):
         rows = [_Row(("%064x" % i), "/x") for i in range(40)]
-        self.db = _DB(rows)
+        _seed(rows)
         out = self._forget([rows[0].sha256, rows[1].sha256], {})
         self.assertEqual(out["removed"], 2, out)
 
     def test_it_ignores_anything_that_is_not_a_sha(self):
+        before = alive()
         out = self._forget(["nope", "", None], {})
         self.assertEqual(out["removed"], 0)
-        self.assertEqual(self.db.committed, 0, "it committed a transaction that changed nothing")
+        self.assertEqual(alive(), before, "it changed the index although nothing was asked")
 
     def test_it_never_touches_storage(self):
         """"Missing" means the bytes are already gone; there is nothing to delete, and a repair that
@@ -362,6 +298,7 @@ class ForgetMissingTests(unittest.TestCase):
             self.assertNotIn(danger, src, "the repair touches storage: %s" % danger)
 
 
+@pytest.mark.usefixtures("idx")
 class RowsThatCannotBeAskedTests(unittest.TestCase):
     """A ROW knows where its own bytes went. The CONFIG only knows where the next upload would go.
 
@@ -380,10 +317,11 @@ class RowsThatCannotBeAskedTests(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.cfg = {"backend": "local", "storage_url": "", "blob_dir": self.dir, "cache_mb": 0}
+        _seed(self.rows)
 
     def _scan(self):
         with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg):
-            return _run(blossom_service.scan_store(_DB(self.rows)))
+            return _run(blossom_service.scan_store(None))
 
     def test_this_is_not_the_unreadable_store_case(self):
         """Which is the guard that would otherwise make this test pass for the wrong reason: an
@@ -401,7 +339,8 @@ class RowsThatCannotBeAskedTests(unittest.TestCase):
         self.assertIn("2 row", out["cannot"])
 
     def test_a_normal_scan_carries_no_such_warning(self):
-        self.rows = [_Row("a" * 64, "blossom/aa/" + "a" * 64, storage="proxy")]
+        _run(blossom_service.blob_index.adelete("b" * 64))      # the one row this case wants
+        load()
         self.cfg = dict(self.cfg, backend="proxy", storage_url="http://store.example")
 
         class _Resp:
@@ -418,7 +357,7 @@ class RowsThatCannotBeAskedTests(unittest.TestCase):
         with mock.patch.object(blossom_service, "_cfg", lambda db: self.cfg), \
                 mock.patch.object(blossom_service, "_client", lambda: _Client()), \
                 mock.patch.object(blossom_service, "_proxy_headers", lambda: {}):
-            out = _run(blossom_service.scan_store(_DB(self.rows)))
+            out = _run(blossom_service.scan_store(None))
         self.assertEqual(out["cannot"], "")
 
 

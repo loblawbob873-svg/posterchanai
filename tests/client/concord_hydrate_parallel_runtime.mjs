@@ -19,6 +19,11 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
   head:{appendChild:noop}, documentElement:{appendChild:noop}, addEventListener:noop,
   body:{classList:{add:noop, remove:noop, contains:()=>false}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 vm.runInNewContext(src, {window, document, console, setTimeout:(f,ms)=>{queueMicrotask(f);return 0;},
   clearTimeout:noop, URL, atob, crypto:{}, localStorage, sessionStorage:{getItem:()=>null, setItem:noop}});
 const api = window.PCConcord;
@@ -31,7 +36,7 @@ const CHANNELS = [CH(0), CH(1), CH(2), CH(3), CH(4), CH(5)];
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const ROOM = {protocol:'cord', name:'Armada Room', communityId:'cid-1', naddr:'cid-1',
               channels:[CH(0)], cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 api.__testState({community:0, channel:'c0'});
 
 window.PosterCordReader = {
@@ -78,7 +83,7 @@ const p = {
 await api.hydrateRoomStreams(p, 0, 'cid-1');
 
 /* THE ROOM SURVIVED THE BAD CHANNEL. */
-const after = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+const after = JSON.parse(localStorage.getItem(CC_ROOMS))[0];
 if (!after) throw new Error('the room vanished when one channel failed');
 if (!(after.channels || []).length)
   throw new Error('the room lost its channels when one of them failed');
@@ -99,7 +104,7 @@ if (asked.length < CHANNELS.length)
    showed no messages, because every channel behind it was abandoned and the control set was never
    applied. */
 {
-  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-2', naddr:'cid-2'}]);
+  store[CC_ROOMS] = JSON.stringify([{...ROOM, communityId:'cid-2', naddr:'cid-2'}]);
   api.__testState({community:0, channel:'c0'});
   failFirst = true; asked.length = 0;
   let threw = null;
@@ -108,7 +113,7 @@ if (asked.length < CHANNELS.length)
     throw new Error('one slow channel still took the whole room: ' + threw.message);
   if (asked.length < CHANNELS.length)
     throw new Error('the channels behind the failing one were abandoned: asked ' + asked.length);
-  const saved2 = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+  const saved2 = JSON.parse(localStorage.getItem(CC_ROOMS))[0];
   if (!(saved2.channels || []).length)
     throw new Error('the room lost its channels when the open one failed');
   if (!(saved2.cord.stalled || []).includes('c0'))
@@ -119,7 +124,7 @@ if (asked.length < CHANNELS.length)
 /* …AND A ROOM WHERE NOTHING CAN BE READ STILL SAYS SO. Silence there is a community that is simply
    empty on screen with no explanation, which is the other half of the same report. */
 {
-  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-3', naddr:'cid-3'}]);
+  store[CC_ROOMS] = JSON.stringify([{...ROOM, communityId:'cid-3', naddr:'cid-3'}]);
   api.__testState({community:0, channel:'c0'});
   asked.length = 0;
   /* BOTH transports down. cordQuery fails only when the pool and the room's relays both do; a
@@ -142,7 +147,7 @@ if (asked.length < CHANNELS.length)
  * and with no prior messages its `since` is 0, so an un-prefetched channel fills the moment
  * somebody opens it. */
 {
-  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-4', naddr:'cid-4'}]);
+  store[CC_ROOMS] = JSON.stringify([{...ROOM, communityId:'cid-4', naddr:'cid-4'}]);
   api.__testState({community:0, channel:'c0'});
   failFirst = false; asked.length = 0;
   const slow = {...p, relayQueryFrom: async (relays, filters) => {
@@ -176,12 +181,12 @@ console.log('concord hydrate parallel runtime ok');
   window.PCConcordCache={get:async()=>{enteredResolve();return new Promise(r=>release=r);}};
   const oldInspect=window.PosterCordReader.inspectChat;
   window.PosterCordReader.inspectChat=async()=>{chatReads++;return{messages:[]};};
-  store['pc.concord.invites']=JSON.stringify([{...ROOM,communityId:'owner-race',naddr:'owner-race'}]);
+  store[CC_ROOMS]=JSON.stringify([{...ROOM,communityId:'owner-race',naddr:'owner-race'}]);
   const job=api.hydrateRoomStreams({...p,viewer:()=>({pubkey:owner})},0);
   await entered;owner=KEY(8);
   const replacement={...ROOM,name:'New owner membership',communityId:'owner-race',naddr:'owner-race',cord:{bundle:{...BUNDLE,owner:KEY(8)}}};
-  store['pc.concord.invites']=JSON.stringify([replacement]);release([{id:'old-controls',kind:1059}]);await job;
+  store[CC_ROOMS]=JSON.stringify([replacement]);release([{id:'old-controls',kind:1059}]);await job;
   if(chatReads)throw new Error('old account membership reached chat decryption after cache wait');
-  if(JSON.stringify(JSON.parse(store['pc.concord.invites']))!==JSON.stringify([replacement]))throw new Error('old hydration replaced new owner membership');
+  if(JSON.stringify(JSON.parse(store[CC_ROOMS]))!==JSON.stringify([replacement]))throw new Error('old hydration replaced new owner membership');
   window.PCConcordCache=previousCache;window.PosterCordReader.inspectChat=oldInspect;
 }

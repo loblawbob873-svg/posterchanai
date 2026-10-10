@@ -59,7 +59,8 @@ function boot() {
       inspectControl: () => ({ name: 'Soapbox', channels: [{ id: 'gen', name: 'general', private: false }] }),
     },
   };
-  window.__PC = { isView: () => false, toast: noop, $: () => null };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: OWNER }), isView: () => false, toast: noop, $: () => null };
   const context = {
     window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop },
@@ -108,7 +109,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 /* Device A joins: the account's vault now holds the membership. */
 {
   const a = boot();
-  a.localStorage.setItem('pc.concord.invites', JSON.stringify([room]));
+  a.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
   if (!(await a.PC.persistArmadaMembership(api(), room))) fail('device A could not publish the membership');
 }
 
@@ -116,7 +117,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 {
   const b = boot();
   const bare = { url: INVITE, naddr: NADDR, communityId: NADDR, name: 'Soapbox', channels: [], local: false };
-  b.localStorage.setItem('pc.concord.invites', JSON.stringify([bare]));
+  b.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([bare]));
   try { await b.PC.leaveArmadaMembership(api(), bare); }
   catch (e) { fail('leaving threw: ' + (e && e.message)); }
 }
@@ -125,7 +126,7 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 {
   const c = boot();
   try { await c.PC.syncArmadaMemberships(api(), { pubkey: OWNER }); } catch (e) { fail('sync threw: ' + (e && e.message)); }
-  const rooms = JSON.parse(c.localStorage.getItem('pc.concord.invites') || '[]');
+  const rooms = JSON.parse(c.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
   if (rooms.some(r => r.communityId === COMMUNITY || r.url === INVITE))
     fail('a community left on another device came back on a fresh one -- the leave never reached the account');
 }
@@ -135,11 +136,11 @@ const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
   const OTHER = hex('b'), OTHER_INVITE = `https://armada.buzz/invite/naddr1other#k3y`;
   const other = { ...room, url: OTHER_INVITE, naddr: 'naddr1other', communityId: OTHER, name: 'Other', cord: { bundle: { ...bundle, community_id: OTHER } } };
   const a = boot();
-  a.localStorage.setItem('pc.concord.invites', JSON.stringify([other]));
+  a.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([other]));
   if (!(await a.PC.persistArmadaMembership(api(), other))) fail('could not join the second community');
   const c = boot();
   await c.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
-  const rooms = JSON.parse(c.localStorage.getItem('pc.concord.invites') || '[]');
+  const rooms = JSON.parse(c.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
   if (!rooms.some(r => r.communityId === OTHER)) fail('a community nobody left disappeared from a fresh device');
 }
 

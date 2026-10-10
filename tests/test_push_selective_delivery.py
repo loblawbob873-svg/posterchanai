@@ -11,40 +11,21 @@ devices is the failure this split exists to prevent.
 """
 import asyncio
 import json
-import types
 
 import pytest
 
 from app.services import nostr_push_service as nps
+from tests import push_relay_harness as H
+push_relay = H.push_relay          # the fixture
+
+# The devices are push_store documents on a REAL relay now (#161), written the way the routes write them.
+pytestmark = pytest.mark.usefixtures("push_relay")
 
 
-class _Sub:
-    """Just enough PushSubscription for the poll: an identity, a transport and its preferences."""
-    def __init__(self, pubkey, endpoint, prefs=None):
-        self.id = endpoint
-        self.pubkey = pubkey
-        self.endpoint = endpoint
-        self.transport = "webpush"
-        self.device_id = None
-        self.token_hash = None
-        self.p256dh = "p"
-        self.auth = "a"
-        self.prefs = prefs
-
-
-class _DB:
-    def __init__(self, subs):
-        self._subs = subs
-    def query(self, _model):
-        return self
-    def all(self):
-        return list(self._subs)
-    def delete(self, row):
-        self._subs = [s for s in self._subs if s is not row]
-    def commit(self):
-        pass
-    def close(self):
-        pass
+def _Sub(pubkey, endpoint, prefs=None):
+    """A device row: an identity, a transport and its preferences (prefs None = never configured)."""
+    return {"pubkey": pubkey, "endpoint": endpoint, "transport": "webpush", "device_id": None,
+            "token_hash": None, "p256dh": "p", "auth": "a", "prefs": prefs}
 
 
 PK = "a" * 64
@@ -54,13 +35,14 @@ AUTHOR = "b" * 64
 def _run_poll(monkeypatch, subs, events):
     """Run one _poll() with a primed cursor and capture every (endpoint, payload) sent."""
     sent = []
-    db = _DB(subs)
-    monkeypatch.setattr("app.database.SessionLocal", lambda: db)
+    for row in subs:
+        H.add_sub(**row)
+    H.reset()                           # the worker reads them as another process would
     monkeypatch.setattr(nps.relay, "query", lambda *a, **k: _async(events))
     monkeypatch.setattr(nps, "_name_for", lambda pk: _async("Alice"))
     monkeypatch.setattr(nps.push_service, "send",
                         lambda sub, payload: sent.append((sub.get("endpoint"), payload)) or True)
-    monkeypatch.setattr(nps, "subscription_dict", lambda s: {"endpoint": s.endpoint})
+    monkeypatch.setattr(nps, "subscription_dict", lambda s: {"endpoint": s["endpoint"]})
     nps._cursor = 1                     # not the first poll, so it delivers rather than priming
     nps._seen.clear()
     asyncio.run(nps._poll())
@@ -119,9 +101,8 @@ def test_a_row_with_no_prefs_column_at_all_does_not_abort_the_whole_poll(monkeyp
     Found by test_quote_notifications, which builds its devices as SimpleNamespace: reading
     `s.prefs` threw, the poll aborted, and NOBODY was notified.
     """
-    import types
-    bare = types.SimpleNamespace(pubkey=PK, endpoint="https://push.example/bare",
-                                 transport="webpush", device_id=None, p256dh="p", auth="a")
+    bare = dict(pubkey=PK, endpoint="https://push.example/bare",
+                transport="webpush", device_id=None, p256dh="p", auth="a")      # no "prefs" key at all
     ok = _Sub(PK, "https://push.example/ok")
     sent = _run_poll(monkeypatch, [bare, ok], [_event(7)])
     assert sorted(e for e, _ in sent) == ["https://push.example/bare", "https://push.example/ok"], (

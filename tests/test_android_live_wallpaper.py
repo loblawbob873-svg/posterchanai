@@ -339,11 +339,20 @@ def test_the_launcher_offers_it_as_the_default_once(tmp_path):
     # (home, ours active, offered) in TT..FF order: only "home, not ours, never offered" offers.
     assert out == "00010000", out
     act = _read(home, "HomeActivity.java")
-    body = act[act.index("private void offerWallpaperOnce()"):act.index("private void dropWallpaperBanner()")]
+    body = act[act.index("private void offerWallpaperOnce()"):act.index("private void answerWallpaperOffer(")]
     # OFFERED, never opened by itself: the system preview opened on resume took the screen away from the
     # launcher the first time it appeared (the emulator's "HOME did not show the independent native launcher").
-    assert "CyberWallpaper.open(" not in body.split("onClick(View v)")[0], "the preview opens without being asked for"
-    assert "onClick(View v)" in body and "CyberWallpaper.open(HomeActivity.this)" in body, "tapping the offer does not open the preview"
-    assert body.count("prefs.setWallpaperOffered()") >= 2, "tapping or hiding the offer does not answer it for good"
+    # 2026-10-10: the offer was a translucent pill laid over the desk -- "unreadable ... and clashed with other
+    # widgets there". It is a DIALOG now: its own opaque surface, real buttons, nothing drawn onto the desk.
+    assert "AlertDialog.Builder" in body, "the offer is not a dialog"
+    assert "addView(" not in body and "pc_home_desk" not in body, "the offer is still drawn onto the desk over the widgets"
+    assert "setPositiveButton(" in body and "setNegativeButton(" in body, "the offer has no real buttons"
+    pos = body[body.index("setPositiveButton("):]
+    pos = pos[:pos.index("setNegativeButton(")]
+    assert "CyberWallpaper.open(HomeActivity.this)" in pos, "Preview does not open the system preview"
+    assert "CyberWallpaper.open(" not in body[:body.index("setPositiveButton(")], "the preview opens without being asked for"
+    assert "setOnDismissListener(" in body and "answerWallpaperOffer(" in body, "dismissing the dialog does not answer it for good"
+    ans = act[act.index("private void answerWallpaperOffer("):][:400]
+    assert "prefs.setWallpaperOffered()" in ans
     assert "offerWallpaperOnce();" in act[act.index("protected void onResume()"):][:400]
     assert 'name="home_wallpaper_offer"' in _read(APP, "res", "values", "strings.xml")

@@ -315,7 +315,9 @@ def test_a_member_with_no_name_here_is_never_a_bare_at(monkeypatch):
         return []
     monkeypatch.setattr(state, "blocks", fake_blocks)
     monkeypatch.setattr(cs, "mute_relations", no_mutes)
-    monkeypatch.setattr(cs, "_puppets_of_actors", lambda actors_: {a: "d" * 64 for a in actors_})
+    async def puppets_of(actors_):          # async since the puppet registry became a DocTable (#161)
+        return {a: "d" * 64 for a in actors_}
+    monkeypatch.setattr(cs, "_puppets_of_actors", puppets_of)
     [row] = asyncio.run(cs.blocks())
     assert row["blocked_handle"].startswith("nostr:npub1") and row["blocked_handle"] != "@"
     assert row["blocked_ref"] == "nostr:" + cs._npub(member)

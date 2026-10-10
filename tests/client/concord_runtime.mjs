@@ -3,6 +3,9 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const data = new Map();
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>, and the open room, read and
+// mention cursors, stars beside it); this fixture's signed-in account is the viewer below.
+const CC_PK='a'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
 globalThis.localStorage = {
   getItem: key => data.has(key) ? data.get(key) : null,
   setItem: (key, value) => data.set(key, String(value)),
@@ -265,16 +268,16 @@ if(!rehydratedIcon.includes('blob:')||rehydratedIcon.includes('blob:dead-from-pr
 // populated by applyRoomIconMetadata above. roomIcon starts hydration without blocking the room
 // list; the subsequent render reads the newly decrypted blob URL from renderer-only memory.
 const coldIconRoom={communityId:'icon-after-reload',name:'Cold icon',icon:'',iconPointer};
-data.set('pc.concord.invites',JSON.stringify([coldIconRoom]));
+data.set(CC_ROOMS,JSON.stringify([coldIconRoom]));
 const coldFirst=PCConcord.roomIcon({enc:String},coldIconRoom,0);
 if(coldFirst.includes('blob:'))throw new Error('cold community icon reused another room cache entry');
 await new Promise(resolve=>setTimeout(resolve,20));
 const coldHydrated=PCConcord.roomIcon({enc:String},coldIconRoom,0);
 if(!coldHydrated.includes('blob:'))throw new Error('encrypted community icon did not rehydrate after reload/re-enter');
-const coldStored=JSON.parse(data.get('pc.concord.invites'))[0];
+const coldStored=JSON.parse(data.get(CC_ROOMS))[0];
 if(!coldStored.iconPointer||String(coldStored.icon||'').startsWith('blob:'))
   throw new Error('community icon persisted an ephemeral blob instead of its encrypted pointer');
-data.delete('pc.concord.invites');
+data.delete(CC_ROOMS);
 
 // A remote encrypted community icon is decoration. Its fetch used to sit in applyControl's await
 // chain ahead of cachedEnvelopePage, so a slow/down icon host made a healthy cached room appear
@@ -286,7 +289,7 @@ globalThis.fetch=async url=>String(url).includes('intentionally-slow')
   ? (slowIconStarted=true,await new Promise(resolve=>{releaseSlowIcon=()=>resolve(new Response(iconCipher,{status:200}));}))
   : new Response(iconCipher,{status:200});
 const slowRoom={communityId:'slow-room',naddr:'slow-room',name:'Slow icon room',channels:[{name:'general',id:'slow-general'}],cord:{bundle:{...JOIN_BUNDLE,slowIcon:slowIconPointer}}};
-data.set('pc.concord.invites',JSON.stringify([slowRoom]));
+data.set(CC_ROOMS,JSON.stringify([slowRoom]));
 concordEnvelopeCache.set(JSON.stringify(['slow-room','control']),[{id:'cached-control',kind:1059,created_at:1}]);
 concordEnvelopeCache.set(JSON.stringify(['slow-room','slow-general']),[{id:'cached-chat',kind:1059,created_at:2}]);
 const slowHydration=PCConcord.activateJoinedRoom(window.__PC,0,false,'slow-room');
@@ -294,13 +297,13 @@ for(let i=0;i<20&&!feed.innerHTML.includes('joined history');i++)await new Promi
 if(!slowIconStarted||!feed.innerHTML.includes('joined history'))
   throw new Error('cached Concord history waited for the encrypted community icon');
 releaseSlowIcon();await slowHydration;
-data.delete('pc.concord.invites');concordEnvelopeCache.clear();
+data.delete(CC_ROOMS);concordEnvelopeCache.clear();
 
 // Armada rooms do not have to call their first channel #general. On a cold renderer, paint the
 // cached control list and its real selected channel before another channel cache or relay backfill
 // completes. This is the exact first-entry regression that previously appeared fixed on re-entry.
 const noGeneralRoom={communityId:'no-general',naddr:'no-general',name:'Cached room',channels:[{name:'general'}],cord:{bundle:{...JOIN_BUNDLE,noGeneral:true}}};
-data.set('pc.concord.invites',JSON.stringify([noGeneralRoom]));concordEnvelopeCache.clear();
+data.set(CC_ROOMS,JSON.stringify([noGeneralRoom]));concordEnvelopeCache.clear();
 concordEnvelopeCache.set(JSON.stringify(['no-general','control']),[{id:'no-general-control',kind:1059,created_at:1}]);
 concordEnvelopeCache.set(JSON.stringify(['no-general','joined-lounge']),[{id:'lounge-chat',kind:1059,created_at:2}]);
 concordEnvelopeCache.set(JSON.stringify(['no-general','joined-later']),[{id:'later-chat',kind:1059,created_at:3}]);
@@ -335,13 +338,13 @@ if(coldPaintedAtFirstQuery===false)throw new Error('relay backfill started befor
 for(let i=0;i<80&&typeof releaseLaterPage!=='function';i++)await new Promise(r=>setTimeout(r,25));
 if(typeof releaseLaterPage==='function')releaseLaterPage();
 await coldOpen;window.PCConcordCache.page=originalCachePage;
-data.delete('pc.concord.invites');concordEnvelopeCache.clear();
+data.delete(CC_ROOMS);concordEnvelopeCache.clear();
 
 // Opening a room is still successful when its encrypted control/history cache is valid but every
 // live relay path fails synchronously (the desktop bridge's disconnected/not-ready failure shape).
 // The failed refresh must remain retryable, while a room with no usable cache must stay honest.
 const offlineRoom={communityId:'offline-cached',naddr:'offline-cached',name:'Offline cached room',channels:[{name:'general',id:'joined-general'}],cord:{bundle:{...JOIN_BUNDLE}}};
-data.set('pc.concord.invites',JSON.stringify([offlineRoom]));
+data.set(CC_ROOMS,JSON.stringify([offlineRoom]));
 concordEnvelopeCache.set(JSON.stringify(['offline-cached','control']),[{id:'offline-control',kind:1059,created_at:1}]);
 concordEnvelopeCache.set(JSON.stringify(['offline-cached','joined-general']),[{id:'offline-chat',kind:1059,created_at:2}]);
 let offlineQueries=0;
@@ -359,13 +362,13 @@ if(!await PCConcord.activateJoinedRoom(offlinePC,0,false,'offline-cached') || of
   throw new Error('cached Concord room did not retry its failed live refresh on the next click');
 
 const uncachedRoom={communityId:'offline-uncached',naddr:'offline-uncached',name:'Offline uncached room',channels:[{name:'general',id:'joined-general'}],cord:{bundle:{...JOIN_BUNDLE}}};
-data.set('pc.concord.invites',JSON.stringify([uncachedRoom]));concordEnvelopeCache.clear();
+data.set(CC_ROOMS,JSON.stringify([uncachedRoom]));concordEnvelopeCache.clear();
 const uncachedToastCount=calls.toasts.length;
 if(await PCConcord.activateJoinedRoom(offlinePC,0,false,'offline-uncached'))
   throw new Error('uncached Concord room claimed a successful open while relays were unavailable');
 if(calls.toasts.length!==uncachedToastCount+1 || !calls.toasts.at(-1).includes('relay bridge offline'))
   throw new Error('uncached Concord relay failure was hidden from the user');
-data.delete('pc.concord.invites');concordEnvelopeCache.clear();
+data.delete(CC_ROOMS);concordEnvelopeCache.clear();
 const legacyNonce=crypto.getRandomValues(new Uint8Array(12));
 const legacyCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:legacyNonce},iconCryptoKey,iconPlain);
 const legacyPointer={...iconPointer,nonce:hex(legacyNonce)};
@@ -398,23 +401,23 @@ const newerLeave={id:'newer-leave',pubkey:window.__PC.viewer().pubkey,kind:13302
 let membershipBatch=[oldJoin,newerLeave];
 const membershipPC={...window.__PC,nip44dec:async(_pk,value)=>value,
   relayQuery:async filters=>(filters[0]?.kinds||[]).includes(13302)?membershipBatch:[]};
-data.set('pc.concord.invites',JSON.stringify([soapboxRoom]));
+data.set(CC_ROOMS,JSON.stringify([soapboxRoom]));
 PCConcord.__testState({community:null,channel:'general'});
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
-if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+if(JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
   throw new Error('newer Soapbox leave tombstone did not remove the cached community');
 PCConcord.rememberLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom,200);
 membershipBatch=[oldJoin]; // reconnect to a stale relay which has not received the replacement yet
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
-if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+if(JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
   throw new Error('delayed old Soapbox join resurrected a locally-left community');
 PCConcord.recoverOwnedInvite(membershipPC,{naddr:soapboxRoom.naddr,url:soapboxUrl,name:'Soapbox announcement',source:{pubkey:membershipPC.viewer().pubkey}});
-if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.naddr===soapboxRoom.naddr))
+if(JSON.parse(data.get(CC_ROOMS)).some(room=>room.naddr===soapboxRoom.naddr))
   throw new Error('the owner\'s old public Soapbox announcement resurrected a left community');
 PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
 membershipBatch=[{...oldJoin,id:'intentional-rejoin',created_at:300,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:300,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]})}];
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
-if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+if(!JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
   throw new Error('intentional Soapbox rejoin stayed suppressed by the leave ledger');
 // Rejoined on ANOTHER device: this device's ledger still says "left" and nothing cleared it here.
 // The vault fragment carrying the join has no tombstone beside it (a CORD-02 writer drops the
@@ -422,18 +425,18 @@ if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soa
 // waits for a visible tombstone never fires -- the room the person is in stayed hidden on this
 // device for ever. A ledger row OLDER than the join is answered by the join itself.
 PCConcord.rememberLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom,400);
-data.set('pc.concord.invites',JSON.stringify([]));
+data.set(CC_ROOMS,JSON.stringify([]));
 membershipBatch=[{...oldJoin,id:'rejoin-elsewhere',created_at:500,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:500,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]})}];
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
-if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+if(!JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
   throw new Error('a rejoin made on another device stayed hidden behind this device\'s older leave');
 if(PCConcord.wasLocallyLeft&&PCConcord.wasLocallyLeft(membershipPC.viewer().pubkey,soapboxRoom))
   throw new Error('the stale leave record outlived the rejoin that answered it');
 // ...but a leave made AFTER the join it is compared with still holds (the stale-relay case, without a tombstone).
 PCConcord.rememberLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom,600);
-data.set('pc.concord.invites',JSON.stringify([]));
+data.set(CC_ROOMS,JSON.stringify([]));
 await PCConcord.syncArmadaMemberships(membershipPC,membershipPC.viewer(),true);
-if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+if(JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
   throw new Error('an old join resurrected a community this device left after it');
 PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
 // "Check my communities" (the phone that would not show Developer's Quarters): the device REPORTS
@@ -442,7 +445,7 @@ PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
 {
   const pk=membershipPC.viewer().pubkey;
   PCConcord.rememberLeftCommunity(pk,soapboxRoom,900);
-  data.set('pc.concord.invites',JSON.stringify([]));
+  data.set(CC_ROOMS,JSON.stringify([]));
   membershipBatch=[{...oldJoin,id:'check-join',created_at:950,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:800,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]})},
                    {id:'check-bad',pubkey:pk,kind:13302,created_at:10,content:'NOT JSON',tags:[]}];
   const report=await PCConcord.checkMemberships(membershipPC);
@@ -451,10 +454,10 @@ PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
     throw new Error('the check did not say a membership document failed to decrypt: '+JSON.stringify(report.lines));
   if(!row||!/^hidden: this device recorded leaving it/.test(row.status)||!row.fixable)
     throw new Error('the check did not name the local leave record as what hid the room: '+JSON.stringify(report.rows));
-  if(JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+  if(JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
     throw new Error('the check is supposed to be read-only, and it added the room');
   await PCConcord.restoreMemberships(membershipPC,report.rows);
-  if(!JSON.parse(data.get('pc.concord.invites')).some(room=>room.communityId===soapboxId))
+  if(!JSON.parse(data.get(CC_ROOMS)).some(room=>room.communityId===soapboxId))
     throw new Error('Restore did not bring the hidden community back');
   const again=await PCConcord.checkMemberships(membershipPC);
   if((again.rows.find(r=>r.ref.communityId===soapboxId)||{}).status!=='shown')
@@ -464,7 +467,7 @@ PCConcord.forgetLeftCommunity(membershipPC.viewer().pubkey,soapboxRoom);
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
-data.set('pc.concord.star.mention-room:support','1');
+data.set('pc.concord.star.v2.'+CC_PK+'.mention-room:support','1');
 const channelSections=PCConcord.channelSectionsHtml({enc:String},mentionRoom,mentionRoom.channels);
 if(!channelSections.includes('STARRED') ||
    channelSections.indexOf('STARRED')>channelSections.indexOf('TEXT CHANNELS') ||
@@ -491,25 +494,25 @@ if(!PCConcord.textMentionsViewer('hello @Other_User',['Other User']) ||
 // shape: a valid room plus the maximum retained history and unusually large relay-controlled text.
 const stressRoom={local:true,naddr:'launch-stress',name:'Busy room',channels:[{name:'general',private:false}]};
 const stressMessages=Array.from({length:5000},(_,i)=>({id:'stress-'+i,pubkey:'b'.repeat(64),by:'member',at:i,text:'x'.repeat(1024)}));
-data.set('pc.concord.invites',JSON.stringify([stressRoom]));
-data.set('pc.concord.active','0');
+data.set(CC_ROOMS,JSON.stringify([stressRoom]));
+data.set(CC_ACTIVE,'0');
 data.set('pc.concord.test.launch-stress',JSON.stringify(stressMessages));
 const launchStarted=performance.now();
 PCConcord.render();
 const launchElapsed=performance.now()-launchStarted,painted=(feed.innerHTML.match(/class="cc-message"/g)||[]).length;
 if(!feed.innerHTML.includes('id="cc-input"')||painted!==300||launchElapsed>2000)
   throw new Error(`pathological Concord launch stayed blocked: ${painted} rows in ${launchElapsed.toFixed(0)}ms`);
-data.delete('pc.concord.invites');data.delete('pc.concord.active');data.delete('pc.concord.test.launch-stress');
+data.delete(CC_ROOMS);data.delete(CC_ACTIVE);data.delete('pc.concord.test.launch-stress');
 
 // A malformed encrypted icon is persisted by older clients. Opening that room must try once and
 // settle; the former finally{} repaint retriggered roomIcon immediately and grew the renderer by
 // gigabytes while clicks appeared dead.
 const brokenIconRoom={local:true,communityId:'broken-icon-room',naddr:'broken-icon-room',name:'Broken icon',channels:[{name:'general'}],iconPointer:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}};
-data.set('pc.concord.invites',JSON.stringify([brokenIconRoom]));data.set('pc.concord.active','0');
+data.set(CC_ROOMS,JSON.stringify([brokenIconRoom]));data.set(CC_ACTIVE,'0');
 const writesBeforeBrokenIcon=feedWrites;PCConcord.render();
 await new Promise(resolve=>setTimeout(resolve,30));
 if(feedWrites-writesBeforeBrokenIcon!==1)throw new Error('failed Concord icon caused a repaint loop');
-data.delete('pc.concord.invites');data.delete('pc.concord.active');
+data.delete(CC_ROOMS);data.delete(CC_ACTIVE);
 PCConcord.render();
 /* THE TAB IS GONE. Communities is its own sidebar view ("Separate Communities from Messages"), so
    there is no in-app control that switches to Direct Messages and nothing here to click. Assert its
@@ -521,7 +524,7 @@ if(/id="messages-direct"/.test(String(feed.innerHTML||'')))
 control('cc-community-name').value='Runtime Test';
 control('cc-community-icon').value='🚀';
 await control('cc-create-go').click();
-const rooms=JSON.parse(data.get('pc.concord.invites'));
+const rooms=JSON.parse(data.get(CC_ROOMS));
 if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || rooms[0].channels[0].private!==false || rooms[0].name!=='Runtime Test' || rooms[0].icon!=='🚀') throw new Error('relay create flow failed');
 
 // Discover owns its live public subscription only while that surface is visible. Entering a room
@@ -580,17 +583,17 @@ if(activeRoomQueries.some(relays=>relays.some(relay=>!roomRelaySet.includes(rela
 control('cc-edit-icon').click();
 control('cc-icon-value').value='https://example.test/room.png';
 await control('cc-icon-save').click();
-const edited=JSON.parse(data.get('pc.concord.invites'));
+const edited=JSON.parse(data.get(CC_ROOMS));
 if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed');
 control('cc-description-value').value='Editable room description';
 control('cc-settings-icon').value='🌌';
 control('cc-channel-visibility').value='private';
 await control('cc-settings-save').click();
-const configured=JSON.parse(data.get('pc.concord.invites'));
+const configured=JSON.parse(data.get(CC_ROOMS));
 if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌' || configured[0].channels[0].private===true) throw new Error('metadata settings must not pretend to privatize an unrotated channel');
 control('cc-channel-visibility').value='public';
 await control('cc-settings-save').click();
-const madePublic=JSON.parse(data.get('pc.concord.invites'));
+const madePublic=JSON.parse(data.get(CC_ROOMS));
 if(madePublic[0].channels[0].private!==false) throw new Error('public channel settings flow failed');
 control('cc-copy-link').click();
 if(calls.copied!=='https://poster.place/invite/naddr1qqqq#abc_DEF') throw new Error('relay invite copy failed');
@@ -759,16 +762,16 @@ messageData.set(raceKey,JSON.stringify(afterReaction));
 PCConcord.render();
 // NIP-29 rooms retain participant-addressed calls. Exercise that separate route
 // with the same known participant, then restore the Concord fixture.
-const beforeLegacyCall=data.get('pc.concord.invites');
+const beforeLegacyCall=data.get(CC_ROOMS);
 const legacyCallRooms=JSON.parse(beforeLegacyCall);
 legacyCallRooms[0].protocol='nip29';
-data.set('pc.concord.invites',JSON.stringify(legacyCallRooms));
+data.set(CC_ROOMS,JSON.stringify(legacyCallRooms));
 PCConcord.render();
 const callsBeforeMember = calls.group;
 await control('cc-call').onclick();
 if(calls.group!==callsBeforeMember+1 || !calls.groupPeers.includes('b'.repeat(64)))
   throw new Error('community call omitted a known room participant');
-data.set('pc.concord.invites',beforeLegacyCall);
+data.set(CC_ROOMS,beforeLegacyCall);
 PCConcord.render();
 if(PCConcord.memberTapAction(true,false)!=='profile' ||
    PCConcord.memberTapAction(false,false)!=='menu' ||
@@ -876,7 +879,7 @@ if(!feed.innerHTML.includes('cc-app show-chat drawer-open'))
 control('cc-drawer-backdrop').click();
 if(feed.innerHTML.includes('drawer-open'))
   throw new Error('mobile channel drawer backdrop did not close it');
-data.set('pc.concord.seen.'+(rooms[0].communityId||rooms[0].naddr)+':general','1');
+data.set('pc.concord.seen.v2.'+CC_PK+'.'+(rooms[0].communityId||rooms[0].naddr)+':general','1');
 /* A mention NEWER than anything read: the account's read mark (pcai:concord-read) already covers every
    message the earlier renders put on screen, so a mention dated before those is read, not new. */
 messageData.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:Date.now()+3600e3}]));
@@ -888,7 +891,7 @@ PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
 // Mention cursors are per channel. A newer #general timestamp must not suppress #support, and OS
 // notification replacement tags must not make mentions from the two channels overwrite each other.
-data.set('pc.concord.seen.'+(rooms[0].communityId||rooms[0].naddr)+':support','1');
+data.set('pc.concord.seen.v2.'+CC_PK+'.'+(rooms[0].communityId||rooms[0].naddr)+':support','1');
 PCConcord.notifyMentions(window.__PC,rooms[0],[{by:'Support User',pubkey:'c'.repeat(64),text:'hey @tester',at:2}],window.__PC.viewer(),'tester','support');
 if(calls.mentions.length!==2 || !calls.mentions[1].title.includes('#support') ||
    calls.mentions[0].opts.tag===calls.mentions[1].opts.tag)
@@ -906,7 +909,7 @@ await new Promise(r=>setTimeout(r,0));
 if(!control('cc-invite-accept')) throw new Error('the invite preview never offered a Join button');
 if(!control('cc-invite-decline')) throw new Error('the invite preview never offered a Decline button');
 await control('cc-invite-accept').click();
-const afterJoin=JSON.parse(data.get('pc.concord.invites'));
+const afterJoin=JSON.parse(data.get(CC_ROOMS));
 const joined=afterJoin.find(r=>r.communityId===JOIN_BUNDLE.community_id);
 if(!joined || !joined.cord?.hydrated || joined.icon!=='🛸' || joined.channels.length!==2)
   throw new Error('direct invite did not hydrate metadata and channels before completing: '+JSON.stringify({joined,rooms:afterJoin,toasts:calls.toasts.slice(-4)}));
@@ -923,8 +926,8 @@ if(!(calls.guestbook||[]).some(g=>g.verb==='join'&&g.community===JOIN_BUNDLE.com
 
 // Concord hands the recipient and its private-Lightning callback to Social's shared tip UI. The
 // callback must still publish an encrypted kind-9735 Armada receipt after that UI chooses an amount.
-const zapRoom=JSON.parse(data.get('pc.concord.invites'))[0],zapTarget='b'.repeat(64),zapMessage='zap-target';
-data.set('pc.concord.active','0');
+const zapRoom=JSON.parse(data.get(CC_ROOMS))[0],zapTarget='b'.repeat(64),zapMessage='zap-target';
+data.set(CC_ACTIVE,'0');
 messageData.set('pc.concord.test.'+zapRoom.naddr,JSON.stringify([{id:zapMessage,by:'Other User',pubkey:zapTarget,text:'zap me',at:3,kind:9}]));
 PCConcord.__testState({community:0,channel:'general'});
 let lightningPays=0,concordTipTarget='',concordLightning=null;
@@ -953,12 +956,12 @@ if(legacyMerged.length!==1||legacyMerged[0].communityId!=='dedup-community')thro
 if(PCConcord.uniqueRooms([...legacyMerged,{...hydratedDuplicate,url:'https://armada.buzz/invite/naddr1qqqq#rotated_secret'}]).length!==1)throw new Error('membership refresh with another invite recreated legacy-id duplicate');
 if(PCConcord.sameRoom(hydratedDuplicate,{...hydratedDuplicate,communityId:'different-community'}))throw new Error('different community ids merged by invite alias');
 if(PCConcord.sameRoom({protocol:'nip29',communityId:'nip29:wss://one#general'},{protocol:'nip29',communityId:'nip29:wss://two#general'}))throw new Error('same-named groups on separate relays merged');
-localStorage.setItem('pc.concord.invites',JSON.stringify([duplicateRoom,hydratedDuplicate,otherRoom]));
-localStorage.setItem('pc.concord.active','2');
+localStorage.setItem(CC_ROOMS,JSON.stringify([duplicateRoom,hydratedDuplicate,otherRoom]));
+localStorage.setItem(CC_ACTIVE,'2');
 control('cc-discovery').click();
 PCConcord.render();PCConcord.backgroundRender();
-const repaired=JSON.parse(localStorage.getItem('pc.concord.invites'));
-if(repaired.length!==2||repaired[0].channels[0].id!=='real-channel'||localStorage.getItem('pc.concord.active')!=='1')throw new Error('saved duplicate repair lost hydration or selected-room index');
+const repaired=JSON.parse(localStorage.getItem(CC_ROOMS));
+if(repaired.length!==2||repaired[0].channels[0].id!=='real-channel'||localStorage.getItem(CC_ACTIVE)!=='1')throw new Error('saved duplicate repair lost hydration or selected-room index');
 if(PCConcord.uniqueRooms([...repaired,duplicateRoom,hydratedDuplicate]).length!==2)throw new Error('repeated membership/relay replay recreated a duplicate');
 
 // A relay/deferred callback can render after the user has opened Code. It must not own the shared
@@ -979,13 +982,13 @@ window.__PC.relayQuery=async filters=>migrationEvents(filters);
 window.__PC.relayQueryFrom=async(relays,filters,options={})=>{migrationQueries.push({relays:[...relays],filters});if(options.report)options.report.ok=relays;return migrationEvents(filters);};
 window.Relay={subscribe:()=>1,close:()=>{},subscribeFrom:relays=>{migrationSubscriptions.push([...relays]);return ()=>{};}};
 const migrationRoom={communityId:'fa'.repeat(32),name:'Migration',naddr:'migration-room',channels:[{id:'joined-general',name:'general'}],cord:{bundle:{...JOIN_BUNDLE,community_id:'fa'.repeat(32),relays:['wss://old-migration.example'],migrationFixture:true}}};
-data.set('pc.concord.invites',JSON.stringify([migrationRoom]));PCConcord.__testState({community:0,channel:'general'});
+data.set(CC_ROOMS,JSON.stringify([migrationRoom]));PCConcord.__testState({community:0,channel:'general'});
 await PCConcord.hydrateRoomStreams(window.__PC,0);
 const migrationChatReads=migrationQueries.filter(row=>row.filters.some(f=>f.authors?.includes('6'.repeat(64))));
 if(!migrationChatReads.length||migrationChatReads.some(row=>row.relays.includes('wss://old-migration.example')))throw new Error('same hydration pass used stale invite relays after authenticated metadata');
-let migrationSaved=JSON.parse(data.get('pc.concord.invites'))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
+let migrationSaved=JSON.parse(data.get(CC_ROOMS))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
 if(!migrationSubscriptions.some(urls=>urls.includes('wss://migrated-1.example')))throw new Error('live subscription did not adopt metadata relays');
-migrationGeneration=2;await PCConcord.hydrateRoomStreams(window.__PC,0);migrationSaved=JSON.parse(data.get('pc.concord.invites'))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
+migrationGeneration=2;await PCConcord.hydrateRoomStreams(window.__PC,0);migrationSaved=JSON.parse(data.get(CC_ROOMS))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
 if(!migrationSubscriptions.some(urls=>urls.includes('wss://migrated-2.example')))throw new Error('live subscription remained on retired relay after new metadata');
 PCConcord.stopChatLive();
 console.log('same-pass and live metadata relay migration passed');

@@ -31,8 +31,8 @@ def test_remote_channel_title_cannot_execute_in_bundled_renderer(payload):
             {id:'safe',name:'general',streamPubkeys:[]},
             {id:'malicious',name,streamPubkeys:[]}]}),
             inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
-          localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+          localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           __PC.switchMessagesTab('concord');
         })()''')
         await b.until("[...document.querySelectorAll('[data-cc-channel]')].some(x=>x.dataset.ccChannel===__maliciousChannel)")

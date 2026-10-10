@@ -73,20 +73,18 @@ def test_postgres_index_backfill_and_new_events_agree_with_live_matching(store_f
 
 @pytest.mark.parametrize('also_p', [False, True])
 def test_poll_generates_one_notification_per_device_for_quote_recipient(monkeypatch, also_p):
-    from app import database
     event = copy.deepcopy(QUOTE)
     if also_p:
         event['tags'] += [['p', OWNER], ['p', OWNER]]
     # A self-quote and duplicate q recipient must not duplicate or self-deliver.
     event['tags'] += [event['tags'][0][:], ['q', 'e'*64, '', QUOTE['pubkey']]]
-    devices = [SimpleNamespace(id=i, pubkey=pk) for i, pk in enumerate(
+    devices = [{'id': i, 'pubkey': pk} for i, pk in enumerate(
         [OWNER, OWNER, QUOTE['pubkey'], 'a'*64])]
-    db = SimpleNamespace(query=lambda _: SimpleNamespace(all=lambda: devices), close=lambda: None)
-    monkeypatch.setattr(database, 'SessionLocal', lambda: db)
+    monkeypatch.setattr(push.push_store, 'all_subs', AsyncMock(return_value=devices))   # the device table (#161)
     monkeypatch.setattr(push, '_cursor', QUOTE['created_at']-1)
     monkeypatch.setattr(push, '_seen', set())
     monkeypatch.setattr(push, '_name_for', AsyncMock(return_value='Ditto author'))
-    monkeypatch.setattr(push, 'subscription_dict', lambda s: {'id': s.id})
+    monkeypatch.setattr(push, 'subscription_dict', lambda s: {'id': s['id']})
     monkeypatch.setattr(push, '_local_relay', lambda: ['ws://test.invalid'])
     async def query(urls, filters, **kwargs):
         return [event] if _matches(filters, event) else []
@@ -177,17 +175,15 @@ def test_backfill_v2_indexes_existing_bare_quotes(store_factory):
 
 @pytest.mark.parametrize('p_tag', [False, True])
 def test_push_says_quoted_your_post_for_a_bare_quote(monkeypatch, p_tag):
-    from app import database
     post = build_event(ALICE_SK, 1, 'my post', [])
     q = _bare_quote(post, p_tag=p_tag)
     owner = post['pubkey']
-    devices = [SimpleNamespace(id=1, pubkey=owner)]
-    db = SimpleNamespace(query=lambda _: SimpleNamespace(all=lambda: devices), close=lambda: None)
-    monkeypatch.setattr(database, 'SessionLocal', lambda: db)
+    devices = [{'id': 1, 'pubkey': owner}]
+    monkeypatch.setattr(push.push_store, 'all_subs', AsyncMock(return_value=devices))   # the device table (#161)
     monkeypatch.setattr(push, '_cursor', q['created_at'] - 1)
     monkeypatch.setattr(push, '_seen', set())
     monkeypatch.setattr(push, '_name_for', AsyncMock(return_value='Bob'))
-    monkeypatch.setattr(push, 'subscription_dict', lambda s: {'id': s.id})
+    monkeypatch.setattr(push, 'subscription_dict', lambda s: {'id': s['id']})
     monkeypatch.setattr(push, '_local_relay', lambda: ['ws://test.invalid'])
 
     async def query(urls, filters, **kwargs):

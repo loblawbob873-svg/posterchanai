@@ -40,7 +40,7 @@ def test_vector_parity_controls_are_reachable(width):
           const room={name:'Parity fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
             channels:[{id:'fixture-general',name:'general'},{id:'fixture-random',name:'random'}],
             cord:{bundle:{owner:me,relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           const now=Date.now();
           window.PosterCordReader={
             inspectControl:()=>({controlPubkeys:[],owner:me,moderators:[],banned:[],

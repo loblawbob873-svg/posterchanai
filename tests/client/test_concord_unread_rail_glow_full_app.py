@@ -20,8 +20,8 @@ def bundled_assets():
 SETUP = r"""(()=>{
   const me=__PC.me().pubkey;
   const mk=(n,id)=>({name:n,naddr:id,communityId:id.repeat(64).slice(0,64),local:true,channels:[{id:id+'-general',name:'general'}]});
-  localStorage.setItem('pc.concord.invites',JSON.stringify([mk('Quiet','a'),mk('Busy','b')]));
-  localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([mk('Quiet','a'),mk('Busy','b')]));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   __PC.switchView('concord');
 })()"""
 

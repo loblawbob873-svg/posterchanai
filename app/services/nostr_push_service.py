@@ -13,10 +13,11 @@ import time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.services import push_service
-from app.services import push_prefs, settings_store
+from app.services import push_prefs, push_store, settings_store
 from app.services.direct_push_service import subscription_dict
 from app.services.nostr import relay
 from app.services.nostr.quotes import quote_pubkeys, quoted_ids_without_author
+from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 
@@ -163,16 +164,15 @@ async def _refresh_joined(pubkeys: list[str]) -> None:
 
 async def _poll_channels():
     global _chan_cursor
-    from app.database import SessionLocal
-    from app.models import PushSubscription
-    db = SessionLocal()
     try:
-        subs = db.query(PushSubscription).all()
+        # COULD NOT ASK raises Unavailable here, BEFORE the cursor moves: this pass is skipped and the
+        # next one covers the same window. Never "nobody is subscribed".
+        subs = await push_store.all_subs()
         if not subs:
             return
         by_pk: dict[str, list] = {}
         for s in subs:
-            by_pk.setdefault(s.pubkey, []).append(s)
+            by_pk.setdefault(s["pubkey"], []).append(s)
 
         if not _joined or (time.monotonic() - _joined_at) > _JOINED_TTL:
             await _refresh_joined(list(by_pk.keys()))
@@ -230,22 +230,25 @@ async def _poll_channels():
                         subscription_dict(s), payload)
                     if not ok:
                         dead.append(s)
-        for s in dead:
-            try:
-                db.delete(s)
-            except Exception:
-                pass
-        if dead:
-            db.commit()
+        await _prune(dead)
 
         if len(_chan_seen) > _SEEN_MAX:
             _chan_seen.clear()
         if len(_chan_last) > _SEEN_MAX:
             _chan_last.clear()
+    except Unavailable as e:
+        logger.info(f"[nostr-push] channel poll skipped, will retry: {e}")
     except Exception as e:
         logger.warning(f"[nostr-push] channel poll error: {e}")
-    finally:
-        db.close()
+
+
+async def _prune(dead) -> None:
+    """Delete devices whose push service said EXPIRED (send() returned False). Never fatal."""
+    for sid in dict.fromkeys(s["id"] for s in dead):
+        try:
+            await push_store.delete_sub(sid)
+        except Exception as e:
+            logger.info(f"[nostr-push] could not remove an expired device yet: {e}")
 
 
 _SEED_LIMIT = 5000
@@ -256,48 +259,38 @@ async def _is_new_follower(recipient: str, follower: str) -> bool:
     naming the recipient. The first time a RECIPIENT is seen at all, every follower the relay already
     knows is recorded silently -- a kind-3 arriving is not evidence of a NEW follow, and without the seed
     turning this on would announce everybody who already followed them."""
-    from app.database import SessionLocal
-    from app.models import PushFollowSeen
-    db = SessionLocal()
+    # A LEDGER THAT CANNOT BE READ SAYS NOTHING (returns False), exactly as the SQL version did when its
+    # database failed: unlike a dedup, "unknown" here is not "send" -- every follower re-saves their whole
+    # contact list on every follow of anybody, so failing open would announce old followers as new.
     try:
-        have = lambda f: db.query(PushFollowSeen).filter(PushFollowSeen.recipient == recipient,
-                                                         PushFollowSeen.follower == f).first() is not None
-        if not have(""):
+        if not await push_store.follow_seeded(recipient):
             try:
                 lists = await relay.query(_local_relay(), [{"kinds": [3], "#p": [recipient], "limit": _SEED_LIMIT}],
                                           timeout=8)
             except Exception:
                 return False                    # could not ask: say nothing rather than guess
-            known = {e.get("pubkey") for e in lists or [] if e.get("pubkey")} | {""}
-            for f in known:
-                if not have(f):
-                    db.add(PushFollowSeen(recipient=recipient, follower=f))
-            db.commit()
-        if have(follower):
+            known = {e.get("pubkey") for e in lists or [] if e.get("pubkey")}
+            await push_store.follow_record(recipient, known, seeded=True)
+        if await push_store.follow_known(recipient, follower):
             return False
-        db.add(PushFollowSeen(recipient=recipient, follower=follower))
-        db.commit()
+        await push_store.follow_record(recipient, [follower])
         return True
     except Exception as e:
-        db.rollback()
         logger.info(f"[nostr-push] follow bookkeeping failed: {e}")
         return False
-    finally:
-        db.close()
 
 
 async def _poll():
     global _cursor
-    from app.database import SessionLocal
-    from app.models import PushSubscription
-    db = SessionLocal()
     try:
-        subs = db.query(PushSubscription).all()
+        # COULD NOT ASK raises Unavailable here, BEFORE the cursor moves: this pass is skipped and the
+        # next one covers the same window. Never "nobody is subscribed".
+        subs = await push_store.all_subs()
         if not subs:
             return
         by_pk: dict[str, list] = {}
         for s in subs:
-            by_pk.setdefault(s.pubkey, []).append(s)
+            by_pk.setdefault(s["pubkey"], []).append(s)
 
         now = int(time.time())
         if not _cursor:                      # first poll → set cursor, don't backfill old mentions
@@ -348,20 +341,14 @@ async def _poll():
                         subscription_dict(s), payload)
                     if not ok:
                         dead.append(s)
-            for s in dead:
-                try:
-                    db.delete(s)
-                except Exception:
-                    pass
-            if dead:
-                db.commit()
+            await _prune(dead)
 
         if len(_seen) > _SEEN_MAX:
             _seen.clear()
+    except Unavailable as e:
+        logger.info(f"[nostr-push] poll skipped, will retry: {e}")
     except Exception as e:
         logger.warning(f"[nostr-push] poll error: {e}")
-    finally:
-        db.close()
 
 
 # ---- Ring-a-closed-app: push incoming voice/video call (kind-25050) invites to a closed PWA. -------------
@@ -435,7 +422,7 @@ async def _call_handler(ev: dict):
         pass
 
     try:
-        targets = await asyncio.to_thread(_subs_for, fresh)   # off the event loop
+        targets = await _subs_for_retrying(fresh)
         if not targets:
             return
         name = await _name_for(author)
@@ -476,43 +463,40 @@ def _sent_by_own_device(pks, wrap_id: str) -> set:
 
     FAILS OPEN. Every other guard in this subsystem does, and for the same reason: a duplicate
     notification is a nuisance, a suppressed one is a message the person never learns about. So a
-    database that cannot be reached answers "nobody", and the push goes out.
+    ledger that cannot be read (relay_reader.Unavailable -- or anything else) answers "nobody", and
+    the push goes out.
     """
     wrap_id = (wrap_id or "").strip().lower()
     if not wrap_id or not pks:
         return set()
-    from datetime import datetime, timedelta
-    from app.database import SessionLocal
-    from app.models import PushSentWrap
-    db = SessionLocal()
     try:
-        cutoff = datetime.utcnow() - timedelta(seconds=600)
-        rows = (db.query(PushSentWrap.pubkey)
-                .filter(PushSentWrap.wrap_id == wrap_id,
-                        PushSentWrap.pubkey.in_(list(pks)),
-                        PushSentWrap.created_at >= cutoff)
-                .all())
-        return {r[0] for r in rows}
+        return push_store.sent_by_own_device_sync(pks, wrap_id)
     except Exception as e:
         logger.warning(f"[nostr-push] could not check own-sent wraps: {e}")
         return set()
-    finally:
-        db.close()
 
 
 def _subs_for(pks) -> dict:
-    """{pubkey: [web-push subscription dicts]} for `pks`. ONE query, not one per pubkey — the call
-    and DM handlers both feed this from an untrusted event's p tags. Blocking; call via to_thread."""
-    from app.database import SessionLocal
-    from app.models import PushSubscription
-    db = SessionLocal()
-    try:
-        out: dict = {}
-        for r in db.query(PushSubscription).filter(PushSubscription.pubkey.in_(list(pks))).all():
-            out.setdefault(r.pubkey, []).append(subscription_dict(r))
-        return out
-    finally:
-        db.close()
+    """{pubkey: [web-push subscription dicts]} for `pks`. ONE table read, not one per pubkey — the call
+    and DM handlers both feed this from an untrusted event's p tags. Blocking; call via to_thread.
+    Raises Unavailable when the table cannot be read: that is never "this person has no devices"."""
+    return {pk: [subscription_dict(r) for r in rows]
+            for pk, rows in push_store.subs_for_sync(pks).items()}
+
+
+_SUBS_RETRY_S = (1.0, 3.0)
+
+
+async def _subs_for_retrying(pks) -> dict:
+    """`_subs_for` for the LIVE handlers (a ring, a DM), which have no next pass to catch up in: "could not
+    ask" is retried briefly before the event is given up on, and never read as "no devices"."""
+    for wait in _SUBS_RETRY_S + (None,):
+        try:
+            return await asyncio.to_thread(_subs_for, pks)
+        except Unavailable:
+            if wait is None:
+                raise
+            await asyncio.sleep(wait)
 
 
 async def _subscriber_pks() -> set[str]:
@@ -532,17 +516,8 @@ async def _subscriber_pks() -> set[str]:
     if _sub_pks and (time.monotonic() - _sub_pks_at) < _SUB_PKS_TTL:
         return _sub_pks
 
-    def _load():
-        from app.database import SessionLocal
-        from app.models import PushSubscription
-        db = SessionLocal()
-        try:
-            return {pk for (pk,) in db.query(PushSubscription.pubkey).distinct()}
-        finally:
-            db.close()
-
     try:
-        _sub_pks = await asyncio.to_thread(_load)
+        _sub_pks = {r["pubkey"] for r in await push_store.all_subs()}
         _sub_pks_at = time.monotonic()
     except Exception as e:
         logger.debug("[nostr-push] subscriber refresh failed: %s", e)   # keep the previous set
@@ -590,7 +565,7 @@ async def _dm_handler(ev: dict):
             fresh = [pk for pk in fresh if pk not in mine]
             if not fresh:
                 return
-        targets = await asyncio.to_thread(_subs_for, fresh)
+        targets = await _subs_for_retrying(fresh)
         if not targets:
             return
         # NO content, and for 1059 no sender either — the server cannot decrypt, which is the point of

@@ -205,8 +205,9 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
 
 
 def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord():
-    assert "localStorage.getItem('pc.concord.active')" in CONCORD
-    assert "localStorage.setItem('pc.concord.active',String(index))" in CONCORD
+    # The last-open room is remembered PER ACCOUNT (activeGet/activeSet key it on the signed-in pubkey).
+    assert "activeGet()" in CONCORD and "function activeGet(){ const key=accountKey(ACTIVE_KEY)" in CONCORD
+    assert "activeSet(String(index))" in CONCORD
     assert 'mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false' in CONCORD
     assert "discoveryOpen=true; state.community=null" in CONCORD
     # `state.thread=null` joined this line: a thread belongs to one channel, and left set
@@ -223,7 +224,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert 'if(channels.length)room.channels=channels' in CONCORD
     assert "if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))" in CONCORD
     assert "await hydrateRoomStreams(p,state.community)" in CONCORD
-    assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
+    assert "if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()" in CONCORD
     assert "state.community==null?'Back to rooms':'Rooms and channels'" in CONCORD
 
 
@@ -267,8 +268,8 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')
     assert 'removeCommunityByIdentity(latest,leavingId)' in handler
     assert "rooms.splice(index,1)" not in handler
-    assert "localStorage.setItem('pc.concord.active',String(state.community))" in handler
-    assert "localStorage.removeItem('pc.concord.active')" in handler
+    assert "activeSet(String(state.community))" in handler
+    assert "activeSet(null)" in handler
     assert 'id="cc-copy-link" title="Copy room invite link"' in CONCORD
 
 
@@ -518,7 +519,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "if(current)markRead(current);" not in CONCORD
     assert "notifyMentions(p,current,messages,viewer,me,state.channel||'general')" in CONCORD
     assert 'route:notificationRoute(room,channel,m)' in CONCORD and 'concord-mention-' in CONCORD
-    assert "mentionSeenKey(room,channel)" in CONCORD
+    # Per channel AND per account: the cursor is keyed on the viewer it records mentions for.
+    assert "mentionSeenKey(room,channel,viewer.pubkey)" in CONCORD
     # EVERY MENTION IS ITS OWN NOTIFICATION. The tag was room.naddr + channel, so a second mention
     # in the same channel REPLACED the first — reported as "I see 1 notification, I have way more
     # than 1" — and a room with no naddr (NIP-29, or joined by community id) tagged every mention

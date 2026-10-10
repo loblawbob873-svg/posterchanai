@@ -298,7 +298,7 @@ async def _read_blob(db, sha: str) -> bytes:
     from app.services import blossom_service
     if not re.fullmatch(r"[0-9a-f]{64}", sha or ""):
         raise RuntimeError("asset not set")
-    meta = blossom_service.get_blob_meta(db, sha)
+    meta = await blossom_service.get_blob_meta(db, sha)
     if meta is None:
         raise RuntimeError(f"asset {sha[:12]} is not on this node")
     data = await blossom_service.read_full(db, meta)

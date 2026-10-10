@@ -40,7 +40,7 @@ def test_concord_header_channel_action_and_invite_access(width, role):
           if(role==='member')room.cord.bundle.owner='d'.repeat(64);
           if(role==='local')room.local=true;
           if(role==='nip29')room.protocol='nip29';
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.__channelWrites=0;
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
             inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),
@@ -62,7 +62,7 @@ def test_concord_header_channel_action_and_invite_access(width, role):
             await click(b, '.uiconfirm [data-uc="0"]')
             await b.until("!document.querySelector('.uiconfirm')")
             assert await b.js('__channelWrites') == 0
-            assert await b.js("JSON.parse(localStorage.getItem('pc.concord.invites'))[0].channels.length") == 1
+            assert await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0].channels.length") == 1
         else:
             assert not await b.js("!!document.querySelector('#cc-add-channel')"), 'unsupported channel control offered'
         # The separate community-rail action still opens the invite/create flow.

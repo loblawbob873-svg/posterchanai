@@ -12,20 +12,22 @@ is the truth:
 
 `arelay_mode()` answers which, and it answers it STRICTLY: a marker that cannot be read raises Unavailable. "Could
 not ask" is neither "not migrated" (that would serve a stale SQL row after the move) nor "migrated" (that would
-serve an empty DocTable before it). Once a process has seen the marker it never asks again (`_seen` is monotonic).
+serve an empty DocTable before it). Once a process has seen the marker it never asks again (doc_table's `_marked`
+is monotonic). The marker is wave 1's -- one `_migrated` DocTable, one shape, one engine (table_migration) for every
+#161 table; these tables are registered there as GATED (no Legacy bound to the DocTable: this module gates).
 
 The point reads below are the other half of "never empty for could-not-ask": while a big table is still loading
 after a restart, a lookup by key reads that ONE document from the relay instead of failing or waiting for the load.
 """
 import logging
 
-from app.services import doc_table_bulk
+from app.services import doc_table
 from app.services.doc_table import DocTable, _in_loop
 from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 
-MARKER_TABLE = doc_table_bulk.MARKER_TABLE
+MARKER_TABLE = doc_table.MARKERS
 
 
 _loading: set = set()
@@ -54,38 +56,24 @@ def _load_soon(t: DocTable) -> None:
 _tasks: set = set()
 
 
-def _verified(m) -> bool:
-    return isinstance(m, dict) and bool(m.get("verified"))
-
-
 async def arelay_mode(table: str) -> bool:
-    """True once `table` has a verified `_migrated` marker. Raises Unavailable when the marker cannot be read."""
-    if table in doc_table_bulk._seen:
-        return True
-    m = await DocTable(MARKER_TABLE).aget(table)
-    if _verified(m):
-        doc_table_bulk._seen.add(table)
-        return True
-    return False
+    """True once `table` has a verified `_migrated` marker (wave 1's marker, doc_table.is_marker). Raises
+    Unavailable when the marker cannot be read."""
+    return await doc_table.amarked(table)
 
 
 def relay_mode(table: str) -> bool:
-    """`arelay_mode` for synchronous code. Off the event loop it may load the (small) marker table; ON the loop it
-    can only answer from memory, and raises Unavailable until the markers have been loaded once."""
-    if table in doc_table_bulk._seen:
-        return True
-    markers = DocTable(MARKER_TABLE)
-    if _in_loop():
-        if not markers.loaded:
-            _load_soon(markers)
-            raise Unavailable("the table-migration markers are not loaded yet")
-        m = markers.peek(table)
-    else:
-        m = markers.get(table)
-    if _verified(m):
-        doc_table_bulk._seen.add(table)
-        return True
-    return False
+    """`arelay_mode` for synchronous code. Off the event loop it asks the relay; ON the loop it can only answer
+    from memory (the marker table, held and kept current once loaded), and raises Unavailable until then -- the
+    load is started here so the next call can answer."""
+    try:
+        return doc_table.marked(table)
+    except Unavailable:
+        if _in_loop():
+            markers = DocTable(MARKER_TABLE)
+            if not markers.loaded:
+                _load_soon(markers)
+        raise
 
 
 # ------------------------------------------------------------------ relay-mode reads

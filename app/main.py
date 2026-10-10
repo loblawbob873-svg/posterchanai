@@ -20,7 +20,7 @@ logging.basicConfig(
 
 from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
-from app.models import User, VerificationToken
+from app.models import User
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool, monero_wallet, monero_user_wallet
@@ -162,10 +162,26 @@ def _clean_error_detail(detail):
 async def http_exception_handler(request: FastAPIRequest, exc: StarletteHTTPException):
     """Ensure HTTP exceptions return JSON instead of HTML"""
     cleaned_detail = _clean_error_detail(exc.detail)
+    headers = dict(getattr(exc, "headers", None) or {})
+    if exc.status_code == 503 and not any(k.lower() == "retry-after" for k in headers):
+        headers["Retry-After"] = "10"       # a 503 is "ask again": say when (#161)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": cleaned_detail}
+        content={"detail": cleaned_detail},
+        headers=headers or None,
     )
+
+
+from app.services.relay_reader import Unavailable as _Unavailable
+
+
+@app.exception_handler(_Unavailable)
+async def unavailable_handler(request: FastAPIRequest, exc: _Unavailable):
+    """"Could not ask" (a relay that did not answer, a table still loading after a restart) is never a 500 and
+    never "no rows": 503 + Retry-After, so a client asks again rather than acting on an answer it did not get."""
+    retry = int(getattr(exc, "retry_after", 10) or 10)
+    return JSONResponse(status_code=503, content={"detail": "Temporarily unavailable; try again shortly"},
+                        headers={"Retry-After": str(retry)})
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: FastAPIRequest, exc: RequestValidationError):
@@ -174,21 +190,6 @@ async def validation_exception_handler(request: FastAPIRequest, exc: RequestVali
     cleaned_errors = _clean_error_detail(errors)
     body = {"detail": cleaned_errors, "message": "Request validation failed (422). Check 'detail' for field errors."}
     return JSONResponse(status_code=422, content=body)
-
-from app.services.relay_reader import Unavailable as _RelayUnavailable
-
-_BACKGROUND_TASKS: set = set()   # strong refs to fire-and-forget startup tasks (asyncio keeps only weak ones)
-
-
-@app.exception_handler(_RelayUnavailable)
-async def relay_unavailable_handler(request: FastAPIRequest, exc: _RelayUnavailable):
-    """A table on this node's relay could not be read or written (#161: app tables are relay documents now).
-    That is "try again shortly" -- 503 + Retry-After -- never a 500, and never an empty answer: the route
-    raised precisely so that "could not ask" does not reach the client as "nothing there"."""
-    logging.getLogger(__name__).warning("[relay-unavailable] %s %s: %s", request.method, request.url.path, exc)
-    return JSONResponse(status_code=503, headers={"Retry-After": "5"},
-                        content={"detail": "This node's datastore is not answering right now -- try again shortly."})
-
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: FastAPIRequest, exc: Exception):
@@ -646,6 +647,16 @@ async def startup():
             logging.info("[role] running as '%s' — supervising only this role's components", _role)
         if app_port == 3051:
             try:
+                # #161: the app tables that left Postgres for DocTables. Bind each table's SQL side (until its
+                # `_migrated` marker exists SQL is authoritative: reads from SQL, writes to SQL then the relay)
+                # and start loading every migrated table on a thread of its own -- FIRST, before anything can
+                # ask: while a big table loads its point reads go to the relay one document at a time, and
+                # only whole-table reads answer 503 + Retry-After. The copy itself runs after the hydrates.
+                from app.services import table_migration
+                table_migration.start_loading(SessionLocal)
+            except Exception as e:
+                logging.error(f"Error starting the app-table loads: {e}", exc_info=True)
+            try:
                 # Background pollers (social/logs)
                 # run in a SEPARATE worker process so their polling/bridging doesn't contend
                 # with the web/API event loop (the bridge could otherwise stall the reactor).
@@ -861,33 +872,21 @@ async def startup():
                     except Exception as e:
                         logging.warning(f"Conversations hydrate from relay failed: {e}")
                     try:
-                        # #161 wave 2: bots, per-user settings and conversations move from Postgres to relay
-                        # DocTables. Copy each table ONCE (verified, then a marker), after the hydrates above
-                        # so SQL is complete; until a table's marker exists SQL stays authoritative and every
-                        # write goes to both (table_gate). Retried in the background until every table has its
-                        # marker, then the tables are loaded. Legacy chat MESSAGE rows are counted, never copied.
-                        from app.services import wave2_migration
-                        _w2 = _aio.create_task(wave2_migration.run_at_startup(SessionLocal))
-                        _BACKGROUND_TASKS.add(_w2)
-                        _w2.add_done_callback(_BACKGROUND_TASKS.discard)
-                    except Exception as e:
-                        logging.warning(f"Wave-2 table migration not started: {e}")
-                    try:
-                        # #161 wave 3: the Exodus wallet backups, then the ACCOUNTS (users + their lookup
-                        # index). `users` waits until every table holding a foreign key to it carries its
-                        # marker (wave 1's and 2's included) -- a relay-only account would otherwise be
-                        # refused by a table still taking SQL writes. Same copy/verify/marker engine.
-                        from app.services import wave3_migration
-                        _w3 = _aio.create_task(wave3_migration.run_at_startup(SessionLocal))
-                        _BACKGROUND_TASKS.add(_w3)
-                        _w3.add_done_callback(_BACKGROUND_TASKS.discard)
-                    except Exception as e:
-                        logging.warning(f"Wave-3 table migration not started: {e}")
-                    try:
                         from app.services import record_store
                         await record_store.hydrate(_db)
                     except Exception as e:
                         logging.warning(f"Records hydrate from relay failed: {e}")
+                    try:
+                        # #161: app tables leave Postgres for operator DocTables. One startup task copies
+                        # every registered table (verified, then a marker) and loads it, on threads of its
+                        # own; until a table's marker exists SQL stays authoritative (reads from SQL, writes
+                        # to both), so nothing here waits on it. Wave 2 (bots, per-user settings, conversations,
+                        # and the census of legacy chat messages -- never copied) is in the same registry and
+                        # runs after the bots/conversations hydrates above, so SQL is complete.
+                        from app.services import table_migration
+                        table_migration.start_background(SessionLocal)
+                    except Exception as e:
+                        logging.warning(f"App-table migration not started: {e}")
                     try:
                         # Advertise the operator's Blossom server list (kind-10063 / BUD-03) now the
                         # relay is up + settings hydrated, so clients can fail over to the mirrors by
@@ -1584,12 +1583,25 @@ async def verify_email_page(
     db: Session = Depends(get_db)
 ):
     """Handle email verification link clicks"""
-    # Find the verification token
-    verification = db.query(VerificationToken).filter(
-        VerificationToken.token == token
-    ).first()
+    from app.services import verification_store
+    from app.services.relay_reader import Unavailable
+    try:
+        # Single-use: the token is gone from the relay (confirmed) before anything acts on it.
+        verdict, user_id = await verification_store.aconsume(token)
+    except Unavailable:
+        return HTMLResponse(content="""
+        <html>
+        <head><title>Try Again</title>
+        <style>body{font-family:Arial;background:#1a1a2e;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
+        .container{text-align:center;background:#16213e;padding:40px;border-radius:12px}
+        h1{color:#e74c3c}a{color:#4a9eff}</style></head>
+        <body><div class="container">
+        <h1>Please Try Again</h1>
+        <p>Verification is unavailable right now. Open this link again in a minute.</p>
+        </div></body></html>
+        """, status_code=503)
 
-    if not verification:
+    if verdict == "invalid":
         return HTMLResponse(content="""
         <html>
         <head><title>Verification Failed</title>
@@ -1604,9 +1616,7 @@ async def verify_email_page(
         """, status_code=400)
 
     # Check if expired
-    if verification.expires_at < datetime.utcnow():
-        db.delete(verification)
-        db.commit()
+    if verdict == "expired":
         return HTMLResponse(content="""
         <html>
         <head><title>Token Expired</title>
@@ -1622,10 +1632,8 @@ async def verify_email_page(
 
     # Get the user
     from app.services import user_table
-    user = await user_table.aget(db, verification.user_id)
+    user = await user_table.aget(db, user_id)
     if not user:
-        db.delete(verification)
-        db.commit()
         return HTMLResponse(content="""
         <html>
         <head><title>User Not Found</title>
@@ -1642,7 +1650,6 @@ async def verify_email_page(
     # Mark email as verified (the account first: a token is only spent once its effect is stored)
     user.email_verified = True
     await user_table.asave(db, user)
-    db.delete(verification)  # Token is single-use
     db.commit()
 
     # Create access token and set cookie

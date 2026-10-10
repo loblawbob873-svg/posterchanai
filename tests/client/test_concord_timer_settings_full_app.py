@@ -26,9 +26,9 @@ def test_timer_settings_publish_and_preserve_signed_state(width):
           const room={name:'Timer browser',communityId:made.communityId,naddr:'timer-browser',url:made.url,channels:info.channels,cord:{bundle,hydrated:true}};
           __PC.relayQuery=async()=>__timerControls;__PC.relayQueryFrom=async()=>__timerControls;
           __PC.relayPublishRoom=async(_relays,event)=>{__timerPublished.push(event);if(event.pubkey===bundle.control_pk)__timerControls.push(event);return {ok:true};};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');PCConcord.render();
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');PCConcord.render();
         })()''')
-        await b.until("JSON.parse(localStorage.getItem('pc.concord.invites'))[0].message_expiration===60")
+        await b.until("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0].message_expiration===60")
         await click(b,'#cc-edit-icon')
         await b.until("!document.querySelector('#cc-settings-dialog').classList.contains('hidden')")
         assert not await b.js("document.querySelector('#cc-message-expiration').disabled")
@@ -40,7 +40,7 @@ def test_timer_settings_publish_and_preserve_signed_state(width):
         await b.js("(()=>{const s=document.querySelector('#cc-message-expiration');s.value='86400';s.dispatchEvent(new Event('change',{bubbles:true}));document.activeElement.blur();PCConcord.backgroundRender();})()")
         await click(b,'#cc-settings-save')
         await b.until('__timerToasts.length>0')
-        assert await b.js("JSON.parse(localStorage.getItem('pc.concord.invites'))[0].message_expiration===86400"), await b.js('__timerToasts')
+        assert await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0].message_expiration===86400"), await b.js('__timerToasts')
         result=await b.js(r'''(async()=>{
           const info=PosterCordReader.inspectControl(__timerBundle,__timerControls),ch=info.channels[0];
           const messages=await PosterCordReader.inspectChat(__timerBundle,__timerControls,ch.id,__timerPublished.filter(e=>e.pubkey===ch.streamPubkeys[0]));

@@ -1,9 +1,12 @@
-"""One-time copy of the wave-2 app tables from Postgres into their DocTables (#161): bots, user_settings,
-conversations -- plus a read-only census of the legacy `messages` rows.
+"""The wave-2 app tables of #161 -- bots, user_settings, conversations -- plus the read-only census of the legacy
+`messages` rows, REGISTERED WITH THE ONE MIGRATION (app/services/table_migration.py): the same `_migrated`
+marker, the same engine (`doc_table_bulk.amigrate_rows`), the same port-3051 startup pass and the same script
+(`scripts/migrate_tables_to_nostr.py --table bots`) as every wave-1 table.
 
-Each table goes through `doc_table_bulk.amigrate_rows`: copy what differs, remove documents no SQL row accounts
-for, RE-READ the table strictly from the relay and compare row for row, and only then write the `_migrated`
-marker. Two things are specific to these tables, because they stay writable while the copy runs (table_gate):
+What differs is how the STORE gates SQL-or-relay. A wave-1 table binds a `doc_table.Legacy` and DocTable itself
+reads SQL and writes SQL-then-relay until the marker. These three keep their own gate (table_gate): the store
+writes the relay FIRST and SQL after it, and no Legacy is bound to the DocTable (they register as GATED). So their
+copy is a SNAPSHOT plus a re-read before the marker:
 
   * before the marker, SQL is re-read; if it changed while the copy ran (a write landed relay-first, and the copy
     may then have put the older SQL value back over it) the marker is withheld and the next pass tries again;
@@ -21,7 +24,8 @@ import asyncio
 import hashlib
 import logging
 
-from app.services import doc_table_bulk
+from app.services import doc_table, doc_table_bulk
+from app.services.doc_table import Legacy
 from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
@@ -37,30 +41,49 @@ def _sources():
             conversation_table.TABLE: conversation_table.sql_rows}
 
 
-def _read(session_factory, fn) -> dict:
-    db = session_factory()
-    try:
-        return {str(k): doc_table_bulk._norm(v) for k, v in fn(db).items()}
-    finally:
+def _runner(session_factory):
+    """`run(fn)` = fn(db) in a session of its own from `session_factory` (read only: rolled back, closed)."""
+    def run(fn):
+        db = session_factory()
         try:
-            db.rollback()
+            return fn(db)
         finally:
-            db.close()
+            try:
+                db.rollback()
+            finally:
+                db.close()
+    return run
+
+
+async def acopy_gated(name: str, sql, *, in_thread: bool = True) -> dict:
+    """The engine run for one GATED table: `sql(fn)` runs fn(db) against SQL. Copies a snapshot, verifies it on the
+    relay, and before the marker re-reads SQL -- a change since the snapshot withholds the marker
+    (MigrationMismatch); the next pass copies the newer rows."""
+    fn = _sources()[name]
+
+    def read():
+        return {str(k): doc_table_bulk._norm(v) for k, v in sql(fn).items()}
+
+    async def call():
+        return await asyncio.to_thread(read) if in_thread else read()
+
+    m = await doc_table_bulk.amarker(name)
+    if doc_table.is_marker(m):
+        doc_table._saw_marked(name)
+        return dict(m, table=name, skipped=True)
+    rows = await call()
+
+    async def unchanged() -> bool:
+        return (await call()) == rows
+
+    return await doc_table_bulk.amigrate_rows(name, rows, before_mark=unchanged)
 
 
 async def migrate_table(name: str, session_factory) -> dict:
-    """Copy table `name` once; returns the report. Raises MigrationMismatch (no marker) or Unavailable."""
-    fn = _sources()[name]
-    m = await doc_table_bulk.amarker(name)
-    if m and m.get("verified"):
-        doc_table_bulk._seen.add(name)
-        return {"table": name, "skipped": True}
-    rows = await asyncio.to_thread(_read, session_factory, fn)
-
-    async def unchanged() -> bool:
-        return (await asyncio.to_thread(_read, session_factory, fn)) == rows
-
-    return await doc_table_bulk.amigrate_rows(name, rows, before_mark=unchanged)
+    """Copy table `name` once through the one engine; returns the report. Raises MigrationMismatch (no marker) or
+    Unavailable."""
+    from app.services import table_migration
+    return await table_migration.amigrate(name, session_factory=session_factory)
 
 
 # --------------------------------------------------------------------------- messages: census only
@@ -102,27 +125,30 @@ def _storage_key_readonly(db, user_id, npub):
 
 
 async def amessage_census(session_factory) -> dict:
+    """The census with SQL sessions from `session_factory` (see `acensus`)."""
+    return await acensus(_runner(session_factory))
+
+
+async def acensus(sql, *, in_thread: bool = True) -> dict:
     """Count legacy SQL messages with and without a relay counterpart (matched per conversation by role +
     content, as a multiset). Writes the `messages` marker with the counts. Raises Unavailable when any
     conversation's relay documents could not be read -- a census with holes is not written."""
     from collections import Counter
     from app.services import nostr_store
-    from app.services.doc_table import DocTable
     from app.services.relay_reader import relay_port
     m = await doc_table_bulk.amarker(MESSAGES)
-    if m and m.get("verified"):
-        return {"table": MESSAGES, "skipped": True}
+    if doc_table.is_marker(m):
+        doc_table._saw_marked(MESSAGES)
+        return dict(m, table=MESSAGES, skipped=True)
 
-    def _collect():
-        db = session_factory()
-        try:
-            legacy = _legacy_messages(db)
-            keys = {cid: _storage_key_readonly(db, e["user_id"], e["npub"]) for cid, e in legacy["convs"].items()}
-            return legacy, keys
-        finally:
-            db.close()
+    def _collect(db):
+        legacy = _legacy_messages(db)
+        keys = {cid: _storage_key_readonly(db, e["user_id"], e["npub"]) for cid, e in legacy["convs"].items()}
+        return legacy, keys
 
-    legacy, keys = await asyncio.to_thread(_collect)
+    # always on a thread, even for a caller that asks for in_thread=False: `_storage_key_readonly` asks the
+    # user_settings gate synchronously, which on the event loop can only answer from memory
+    legacy, keys = await asyncio.to_thread(sql, _collect)
     on_relay = missing = 0
     gaps, no_key = {}, []
     for cid, e in sorted(legacy["convs"].items()):
@@ -144,63 +170,78 @@ async def amessage_census(session_factory) -> dict:
         if lacking:
             gaps[str(cid)] = lacking
     sql_rows = on_relay + missing
-    info = {"verified": True, "census_only": True, "sql_rows": sql_rows, "on_relay": on_relay,
+    info = {"ok": True, "verified": True, "census_only": True, "sql_rows": sql_rows, "on_relay": on_relay,
             "not_on_relay": missing, "orphan_rows": legacy["orphans"],
             "conversations": len(legacy["convs"]), "conversations_with_gaps": gaps,
             "conversations_without_storage_key": no_key,
             "note": "relay-authoritative since c3ed195a2; legacy rows are never copied (they cannot be told "
                     "apart from history deleted on the relay)"}
-    await DocTable(doc_table_bulk.MARKER_TABLE).aput(MESSAGES, info)
-    doc_table_bulk._seen.add(MESSAGES)
+    await doc_table_bulk._write_marker(MESSAGES, info)
     logger.info("[wave2-migration] messages census: %d legacy row(s), %d on the relay, %d not (in %d "
                 "conversation(s)) -- none copied", sql_rows, on_relay, missing, len(gaps))
     return dict(info, table=MESSAGES)
 
 
-# --------------------------------------------------------------------------- startup
+# --------------------------------------------------------------------------- the registry
 async def migrate_all(session_factory, names=None) -> dict:
-    """Every table in turn; one failing does not stop the others. {name: report | error string}."""
+    """Every wave-2 table in turn through the one engine; one failing does not stop the others.
+    {name: report | error string}."""
+    from app.services import table_migration
     out = {}
     for name in names or (TABLES + (MESSAGES,)):
+        out.update(await table_migration.amigrate_all([name], session_factory=session_factory))
+    return out
+
+
+class GatedLegacy(Legacy):
+    """A wave-2 table in table_migration's registry. `gated`: the store gates SQL-or-relay itself (table_gate), so
+    no Legacy is bound to its DocTable; `amigrate` is how the one engine copies it."""
+    gated = True
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def rows(self, db) -> dict:
+        return _sources()[self.name](db)
+
+    async def amigrate(self, sql, *, in_thread: bool = True) -> dict:
+        return await acopy_gated(self.name, sql, in_thread=in_thread)
+
+    def after_marked(self) -> None:
+        """Called by the startup pass (a thread of its own, off any event loop) once the table is marked: load it
+        now, and for `bots` have the relay re-read its operator set (the bots' keys) from the loaded table."""
         try:
-            if name == MESSAGES:
-                out[name] = await amessage_census(session_factory)
-            else:
-                out[name] = await migrate_table(name, session_factory)
-        except doc_table_bulk.MigrationMismatch as e:
-            out[name] = "did not verify: %s" % e
-            logger.error("[wave2-migration] %s", e)
-        except Exception as e:      # noqa: BLE001 -- Unavailable, a SQL error: no verdict, retried
-            out[name] = "not migrated: %s" % e
-            logger.warning("[wave2-migration] %s not migrated yet: %s", name, type(e).__name__)
-    return out
+            doc_table.DocTable(self.name).load()
+        except Exception as e:      # noqa: BLE001 -- the background loader keeps trying
+            logger.warning("[wave2-migration] %s marked but not loaded yet: %s", self.name, type(e).__name__)
+            return
+        if self.name == "bots":
+            try:
+                from app.services.nostr_relay.thread import trigger_block_reload
+                trigger_block_reload()
+            except Exception:      # noqa: BLE001
+                pass
 
 
-def _done(report) -> bool:
-    return isinstance(report, dict) and (report.get("skipped") or report.get("verified"))
+class CensusLegacy(Legacy):
+    """The legacy chat `messages` rows: counted, never copied (`acensus`). No DocTable is loaded for it."""
+    copy = False
+
+    def __init__(self):
+        self.name = MESSAGES
+
+    def rows(self, db) -> dict:
+        return {}
+
+    async def amigrate(self, sql, *, in_thread: bool = True) -> dict:
+        return await acensus(sql, in_thread=in_thread)
 
 
-async def run_at_startup(session_factory, retry_s: float = 30.0) -> dict:
-    """The port-3051 startup pass: migrate, retried until every table has its marker, then load each table
-    (strictly) and tell the relay thread to re-read its operator set (bot keys come from the bots table)."""
-    from app.services.doc_table import DocTable
-    pending = list(TABLES + (MESSAGES,))
-    out = {}
-    while pending:
-        out.update(await migrate_all(session_factory, pending))
-        for name in [n for n in pending if _done(out.get(n))]:
-            pending.remove(name)
-            if name in TABLES:
-                try:
-                    await DocTable(name).aload()
-                except Unavailable as e:
-                    logger.warning("[wave2-migration] %s migrated but not loaded yet: %s", name, e)
-                if name == "bots":
-                    try:
-                        from app.services.nostr_relay.thread import trigger_block_reload
-                        trigger_block_reload()
-                    except Exception:      # noqa: BLE001
-                        pass
-        if pending:
-            await asyncio.sleep(retry_s)
-    return out
+def _register() -> None:
+    from app.services import table_migration
+    for name in TABLES:
+        table_migration.register(GatedLegacy(name))
+    table_migration.register(CensusLegacy())
+
+
+_register()

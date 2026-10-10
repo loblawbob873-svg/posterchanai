@@ -34,13 +34,17 @@ async def peer_or_user_auth(request: Request, db: Session = Depends(get_db)) -> 
     if lb_auth.is_internal(request):
         return True
     from app.services.instance_membership import require_user
-    from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+    from app.utils.auth_utils import aquery_api_key, get_user_from_api_key
+    from app.services.relay_reader import Unavailable
     bearer = request.headers.get('authorization', '')
     candidates = [request.headers.get('x-api-key', '')]
     if bearer.lower().startswith('bearer '):
         candidates.append(bearer[7:].strip())
     for token in dict.fromkeys(value.strip() for value in candidates if value.strip()):
-        api_key, user_id = query_api_key_with_retry(db, token)
+        try:
+            api_key, user_id = await aquery_api_key(token)
+        except Unavailable:
+            raise HTTPException(503, 'API keys cannot be checked right now; try again shortly')
         if api_key and user_id:
             user = get_user_from_api_key(db, user_id)
             if user:

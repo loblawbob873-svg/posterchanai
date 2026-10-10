@@ -2,7 +2,7 @@
 
 Everything that is CONTENT becomes an ordinary Nostr event signed by the author's PUPPET key -- the
 same deterministic key the Pleroma timeline bridge gives them (fedi_bridge_identity.ensure_puppet)
--- with a NIP-48 `proxy` tag back to the object, and a row in the SAME `FediBridgeDelivered` table
+-- with a NIP-48 `proxy` tag back to the object, and a row in the SAME delivered-notes ledger (`fedi_tables`)
 the bridge dedups on. That shared table is the whole compatibility story in this direction:
 
   * a note that arrives here AND through the Pleroma timeline mirror is stored once, whichever path
@@ -534,15 +534,10 @@ async def _block(activity: dict, signer: str, *, undo: bool) -> str:
 # ------------------------------------------------------------------------------------ content
 
 async def _puppet(actor_doc: dict) -> dict | None:
-    from app.database import SessionLocal
     from app.services.activitypub import dm
     from app.services.fedi_bridge_identity import ensure_puppet
-    db = SessionLocal()
-    try:
-        p = await ensure_puppet(db, _port(), convert.account_from_actor(actor_doc),
-                                remote.host_of(convert.id_of(actor_doc)))
-    finally:
-        db.close()
+    p = await ensure_puppet(None, _port(), convert.account_from_actor(actor_doc),
+                            remote.host_of(convert.id_of(actor_doc)))
     if p:
         dm.remember_puppet(p["pubkey_hex"])      # a puppet made a moment ago is still a puppet
         try:
@@ -554,30 +549,21 @@ async def _puppet(actor_doc: dict) -> dict | None:
 
 
 def _delivered(uri: str):
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
-    try:
-        return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.note_uri == uri).first() if uri else None
-    finally:
-        db.close()
+    """The ledger row for a note URI (sync: called on a worker thread). Raises relay_reader.Unavailable
+    -- "could not ask" is never "not delivered yet"."""
+    from app.services import fedi_tables
+    return fedi_tables.delivered_by_uri(uri) if uri else None
 
 
 def _record(uri: str, event_id: str, pubkey: str, acct: str = "") -> None:
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
+    from app.services import fedi_tables
     try:
-        if not db.query(FediBridgeDelivered).filter(FediBridgeDelivered.note_uri == uri).first():
-            db.add(FediBridgeDelivered(platform="activitypub", instance_url=_origin(uri), note_id=uri[:255],
-                                       note_uri=uri[:512], author_acct=(acct or None),
-                                       nostr_event_id=event_id, nostr_pubkey=pubkey))
-            db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.warning("[activitypub] dedup row for %s not saved: %s", remote.host_of(uri), e)
-    finally:
-        db.close()
+        if not fedi_tables.delivered_by_uri(uri):
+            fedi_tables.record(platform="activitypub", instance_url=_origin(uri), note_id=uri[:255],
+                               note_uri=uri[:512], author_acct=(acct or None),
+                               nostr_event_id=event_id, nostr_pubkey=pubkey)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("[activitypub] dedup row for %s not saved: %s", remote.host_of(uri), type(e).__name__)
 
 
 async def _event(event_id: str) -> dict | None:
@@ -790,23 +776,18 @@ async def _resolve_mentions(cands: list) -> list:
     so trusting them let one note register `victim@mastodon.social` against an address the sender
     controls, and every later sighting of the real person reused that identity (their key, their
     DMs, their deletions). An account already known here is used as it is recorded."""
-    from app.database import SessionLocal
-    from app.models import FediPuppet
+    from app.services import fedi_tables
     def known():
         out, fetch = [], []
-        db = SessionLocal()
-        try:
-            for href, user, host in cands:
-                if config.host_blocked(host) or config.host_blocked(remote.host_of(href)):
-                    continue
-                row = db.query(FediPuppet).filter(FediPuppet.actor_uri == href).first()
-                if row is not None and row.acct:
-                    out.append({"url": href, "acct": row.acct, "username": row.acct.split("@")[0],
-                                "shown": f"{user}@{host}"})
-                else:
-                    fetch.append((href, user, host))
-        finally:
-            db.close()
+        for href, user, host in cands:
+            if config.host_blocked(host) or config.host_blocked(remote.host_of(href)):
+                continue
+            row = fedi_tables.puppet_by_uri(href)
+            if row is not None and row.acct:
+                out.append({"url": href, "acct": row.acct, "username": row.acct.split("@")[0],
+                            "shown": f"{user}@{host}"})
+            else:
+                fetch.append((href, user, host))
         return out, fetch
     out, fetch = await asyncio.to_thread(known)
 
@@ -835,7 +816,6 @@ async def _link_mentions(note: dict, text: str, author_host: str, *, is_reply: b
     their puppet (`mentions.rewrite`: the blocklist, the bare-vs-qualified handle rules). A reply's
     leading run of @-recipients (which fediverse clients hide) is dropped."""
     import re as _re
-    from app.database import SessionLocal
     from app.services.activitypub import mentions
     from app.services.nostr import bech32
     ours, cands = [], []
@@ -868,14 +848,11 @@ async def _link_mentions(note: dict, text: str, author_host: str, *, is_reply: b
         text = _re.sub(r"(?<![\w@/])@" + _re.escape(user) + r"(?![A-Za-z0-9_.\-@])", ref, text)
         tags.append(["p", pk])
     if theirs:
-        db = SessionLocal()
         try:
-            text, ptags = await mentions.rewrite(db, _port(), author_host, text, theirs)
+            text, ptags = await mentions.rewrite(None, _port(), author_host, text, theirs)
         except Exception as e:
             logger.info("[activitypub] mentions left as text: %s: %s", type(e).__name__, e)
             ptags = []
-        finally:
-            db.close()
         tags += [t for t in ptags if t not in tags]
     if is_reply:
         stripped = mentions.LEADING_MENTIONS_RE.sub("", text).strip()
@@ -1047,16 +1024,11 @@ async def _author_of(row, signer: str) -> str:
 
 
 def _forget(uri: str) -> None:
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
+    from app.services import fedi_tables
     try:
-        db.query(FediBridgeDelivered).filter(FediBridgeDelivered.note_uri == uri).delete()
-        db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
+        fedi_tables.forget_uri(uri)
+    except Exception as e:      # noqa: BLE001
+        logger.info("[activitypub] dedup row for %s not dropped: %s", remote.host_of(uri), type(e).__name__)
 
 
 _confirming: set = set()
@@ -1083,25 +1055,15 @@ async def confirm_gone(actor: str) -> None:
 def _puppet_actor_uri(actor: str) -> str:
     """The actor address a fediverse account's puppet key was DERIVED from (the old bridge may have
     keyed it on the profile URL) -- so a re-derived key is the same key."""
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        row = db.query(FediPuppet).filter(FediPuppet.actor_uri == actor).first()
-        return row.actor_uri if row else ""
-    finally:
-        db.close()
+    from app.services import fedi_tables
+    row = fedi_tables.puppet_by_uri(actor)
+    return row.actor_uri if row else ""
 
 
 def _actor_of_puppet(pubkey: str) -> str:
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        row = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pubkey).first() if pubkey else None
-        return row.actor_uri if row else ""
-    finally:
-        db.close()
+    from app.services import fedi_tables
+    row = fedi_tables.puppet_by_pubkey(pubkey) if pubkey else None
+    return row.actor_uri if row else ""
 
 
 async def _delete(uri: str, signer: str, *, undo: bool = False) -> str:

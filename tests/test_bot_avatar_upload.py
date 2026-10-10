@@ -56,6 +56,10 @@ def test_a_new_bots_avatar_is_stored_without_the_public_gate(monkeypatch):
     monkeypatch.setattr(blossom_service, "_cfg", lambda db: {"public_url": ""})
     monkeypatch.setattr(blossom_router.tor_service, "request_onion_host", lambda r: "")
     row = SimpleNamespace(sha256="ab" * 32, type="image/png", size=70, uploaded=0, created_at=0)
+
+    async def stored(sha):          # the blob index (relay documents, #161) holds the row save_blob wrote
+        return row
+    monkeypatch.setattr(blossom_service.blob_index, "aget", stored)
     monkeypatch.setattr(blossom_service, "descriptor", lambda blob, base, name="": {"url": f"{base}/{blob.sha256}.png"})
 
     out = asyncio.run(bots.upload_bot_avatar(bots.AvatarPayload(nsec=nsec, picture_data="data:image/png;base64," + PNG),

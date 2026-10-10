@@ -24,12 +24,17 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
      here would only mean stubbing the whole DOM to watch a store write. */
   body:{classList:{add:noop, remove:noop, contains:()=>false}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const CH = {name:'general', id:'chan-1', streamPubkeys:['b'.repeat(64)]};
 const ROOM = {protocol:'cord', name:'PosterChan', communityId:'cid-1', naddr:'cid-1',
               channels:[CH], cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 
 const timers = [];
 vm.runInNewContext(src, {window, document, console,
@@ -109,7 +114,7 @@ if(timers.length!==timerCount)throw new Error('a stale room callback scheduled a
    managed+invite-relay lifecycle and must update without leaving and re-entering the room. */
 const NIP={protocol:'nip29',name:'Public group',naddr:'nip-room',groupId:'group-1',relay:'wss://groups.example',
            nip29Hydrated:true,channels:[{name:'general',id:'general'}]};
-store['pc.concord.invites']=JSON.stringify([NIP]);
+store[CC_ROOMS]=JSON.stringify([NIP]);
 api.__testState({community:0,channel:'general'});
 api.startChatLive(p,NIP,NIP.channels[0]);
 const nipFilter=subFilters[0];
@@ -164,6 +169,8 @@ if(!api.__testMessages('nip-room').some(m=>m.id==='newest'))throw Error('wrong-a
 let owner='c'.repeat(64);p.viewer=()=>({pubkey:owner,profile:{}});
 await push(ev('old-owner-reaction',7,owner,10,'+','newest'));
 owner='f'.repeat(64);
+// The room is one BOTH accounts are in: the new account's own list holds it too.
+store['pc.concord.rooms.v1.'+owner]=store[CC_ROOMS];
 releaseNipHistory([ev('late-private-row',9,original.pubkey,11,'old account history')]);await settle();
 if(api.__testMessages('nip-room').some(m=>m.id==='late-private-row'))throw Error('late history crossed account boundary');
 await push(ev('new-account-row',9,owner,12,'new account live'));
@@ -173,12 +180,12 @@ store['pc.concord.test.nip-room']=JSON.stringify([...rows,{id:'pending-own',pubk
 await push(ev('pending-neighbor',9,owner,13,'neighbor live'));
 if(!api.__testMessages('nip-room').some(m=>m.id==='pending-own'&&m.pending))throw Error('live fold dropped pending own send');
 await push(ev('removed-room-reaction',7,owner,13,'+','new-account-row'));
-store['pc.concord.invites']='[]';
+store['pc.concord.rooms.v1.'+owner]='[]';
 releaseNipHistory([ev('removed-room-history',9,owner,14,'removed room')]);await settle();
 if(api.__testMessages('nip-room').some(m=>m.id==='removed-room-history'))throw Error('removed room history committed');
 console.log('NIP-29 deletion, distinct IDs, owner and membership guards passed');
 
-store['pc.concord.invites']=JSON.stringify([NIP]);
+store['pc.concord.rooms.v1.'+owner]=JSON.stringify([NIP]);
 p.relayQueryFrom=async()=>{throw Error('fixture relay unavailable')};
 await push(ev('reaction-query-failed',7,owner,15,'+','new-account-row'));
 rows=api.__testMessages('nip-room');
@@ -190,14 +197,14 @@ if(!api.__testMessages('nip-room').some(m=>m.id==='own-ack-before-echo'))throw E
 let rejectHistory;
 p.relayQueryFrom=()=>new Promise((_resolve,reject)=>{rejectHistory=reject});
 await push(ev('failure-after-switch',7,owner,17,'+','new-account-row'));
-owner='a'.repeat(64);rejectHistory(Error('late failed account request'));await settle();
+owner='a'.repeat(64);store['pc.concord.rooms.v1.'+owner]=JSON.stringify([NIP]);rejectHistory(Error('late failed account request'));await settle();
 if(api.__testMessages('nip-room').some(m=>m.reactionIds&&Object.values(m.reactionIds).some(ids=>Object.values(ids).includes('failure-after-switch'))))throw Error('failed old-owner query committed fallback after switch');
 console.log('NIP-29 restored rows, pending sends, ACK before echo and guarded failure fallback passed');
 
 // Every room in the new account generation must avoid the old owner's global row stores.
 await push(ev('account-a-first-room',9,owner,18,'new owner first room'));
 const secondRoom={...NIP,naddr:'second-nip-room',groupId:'group-2',channels:[{name:'general',id:'group-2'}]};
-store['pc.concord.invites']=JSON.stringify([NIP,secondRoom]);
+store['pc.concord.rooms.v1.'+owner]=JSON.stringify([NIP,secondRoom]);
 store['pc.concord.test.second-nip-room']=JSON.stringify([{id:'previous-owner-second-room',pubkey:'f'.repeat(64),kind:9,at:19000,text:'previous owner plaintext',remote:true,tags:[['h','group-2']]}]);
 api.__testState({community:1,channel:'general'});api.startChatLive(p,secondRoom,secondRoom.channels[0]);
 await push({...ev('new-owner-second-room',9,owner,20,'new owner second room'),tags:[['h','group-2']]});

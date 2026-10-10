@@ -103,7 +103,7 @@ def test_an_unreachable_relay_is_unavailable_never_an_empty_table(tmp_path, monk
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(port))
     doc_table.DocTable._registry.clear()
-    t = doc_table.DocTable("reminders")
+    t = doc_table.DocTable("rowsx")
     with pytest.raises(Unavailable):
         t.all()
     with pytest.raises(Unavailable):
@@ -111,12 +111,12 @@ def test_an_unreachable_relay_is_unavailable_never_an_empty_table(tmp_path, monk
 
 
 def test_rows_are_written_to_the_relay_and_a_fresh_process_reads_them(relay):
-    t = doc_table.DocTable("reminders")
+    t = doc_table.DocTable("rowsx")
     assert t.all() == {}
     t.put("7", {"user": "npub1x", "due": 1700000000, "text": "call the bank"})
     t.put("a/b c", {"n": 2})
     assert t.get("7")["text"] == "call the bank"
-    other = _fresh("reminders")
+    other = _fresh("rowsx")
     assert other.all() == {"7": {"user": "npub1x", "due": 1700000000, "text": "call the bank"}, "a/b c": {"n": 2}}
     assert [k for k, _ in other.where(lambda r: r.get("n") == 2)] == ["a/b c"]
     assert _fresh("pushsubs").all() == {}, "another table's namespace leaked in"
@@ -144,7 +144,7 @@ def test_rows_are_encrypted_on_the_relay(relay):
 
 
 def test_a_sync_call_on_an_event_loop_is_refused_not_a_deadlock(relay):
-    t = doc_table.DocTable("reminders")
+    t = doc_table.DocTable("rowsx")
 
     async def inside():
         with pytest.raises(RuntimeError, match="event-loop"):
@@ -159,3 +159,19 @@ def test_the_live_matcher_honours_a_d_prefix():
     ev = {"id": "x", "pubkey": OP, "kind": 30078, "created_at": 5, "tags": [["d", "pcai:t:bots:1"]], "content": ""}
     assert _matches([_compile_filter({"#d~": ["pcai:t:bots:"]})], ev)
     assert not _matches([_compile_filter({"#d~": ["pcai:t:reminders:"]})], ev)
+
+
+def test_a_delete_during_an_outage_is_unavailable_not_done(relay, monkeypatch):
+    """nostr_store.delete_doc answered success when it could not even look the document up -- the row stayed on
+    the relay and came back at the next load. A delete that could not ask must say so."""
+    t = doc_table.DocTable("pushq")
+    assert t.all() == {}
+    t.put("1", {"a": 1})
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); dead = s.getsockname()[1]; s.close()
+    monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(dead))
+    with pytest.raises(Unavailable):
+        t.delete("1")
+    assert t.get("1") == {"a": 1}, "memory dropped a row the relay still holds"
+    monkeypatch.setenv("POSTERCHANAI_RELAY_PORT", str(relay.port))
+    t.delete("1")
+    assert _fresh("pushq").get("1") is None

@@ -62,49 +62,33 @@ def _npub(pk: str) -> str:
         return pk
 
 
-def _puppet_accts(pks) -> dict:
-    """{pubkey: "@user@host"} for every fediverse puppet among `pks`, in ONE query. handle() asked the
+async def _puppet_accts(pks) -> dict:
+    """{pubkey: "@user@host"} for every fediverse puppet among `pks`, in ONE pass. handle() asked the
     database once per account -- 1,786 queries per /api/community/blocks call, on the event loop, every
-    minute (measured 2026-10-06: 2.4 s of a 2.4 s call)."""
+    minute (measured 2026-10-06: 2.4 s of a 2.4 s call). Raises relay_reader.Unavailable when the registry
+    cannot be read: the endpoint answers 503 rather than naming every fediverse account by npub."""
     pks = [p for p in set(pks) if p]
     if not pks:
         return {}
-    try:
-        from app.database import SessionLocal
-        from app.models import FediPuppet
-        db = SessionLocal()
-        try:
-            out = {}
-            for i in range(0, len(pks), 1000):
-                rows = db.query(FediPuppet.pubkey_hex, FediPuppet.acct).filter(
-                    FediPuppet.pubkey_hex.in_(pks[i:i + 1000])).all()
-                out.update({pk: "@" + acct.lstrip("@") for pk, acct in rows if pk and acct})
-            return out
-        finally:
-            db.close()
-    except Exception:
-        return {}
+    from app.services import fedi_tables
+    rows = await fedi_tables.apuppets_by_pubkeys(pks)
+    return {pk: "@" + r.acct.lstrip("@") for pk, r in rows.items() if pk and r.acct}
 
 
 def handle(pk: str, known: dict | None = None, puppets: dict | None = None) -> str:
     """How to NAME an account in a post: a member's address, a fediverse account's `@user@host`
     (its puppet), else a `nostr:npub…` reference every Nostr client renders as a profile link.
-    `puppets` (from _puppet_accts) answers the puppet half without a query per call."""
+    `puppets` (from _puppet_accts) answers the puppet half without a lookup per call."""
     known = members() if known is None else known
     if pk in known:
         return known[pk]
     if puppets is not None:
         return puppets.get(pk) or "nostr:" + _npub(pk)
     try:
-        from app.database import SessionLocal
-        from app.models import FediPuppet
-        db = SessionLocal()
-        try:
-            row = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pk).first()
-            if row and row.acct:
-                return "@" + row.acct.lstrip("@")
-        finally:
-            db.close()
+        from app.services import fedi_tables
+        row = fedi_tables.puppet_by_pubkey(pk)
+        if row and row.acct:
+            return "@" + row.acct.lstrip("@")
     except Exception:
         pass
     return "nostr:" + _npub(pk)
@@ -249,26 +233,15 @@ def _ref(pk: str) -> str:
     return "nostr:" + _npub(pk)
 
 
-def _puppets_of_actors(actors_) -> dict:
-    """{actor_uri: puppet pubkey} for many fediverse accounts in ONE query (see _puppet_accts)."""
+async def _puppets_of_actors(actors_) -> dict:
+    """{actor_uri: puppet pubkey} for many fediverse accounts in ONE pass (see _puppet_accts). Raises
+    relay_reader.Unavailable."""
     uris = [u for u in set(actors_) if u]
     if not uris:
         return {}
-    try:
-        from app.database import SessionLocal
-        from app.models import FediPuppet
-        db = SessionLocal()
-        try:
-            out = {}
-            for i in range(0, len(uris), 1000):
-                rows = db.query(FediPuppet.actor_uri, FediPuppet.pubkey_hex).filter(
-                    FediPuppet.actor_uri.in_(uris[i:i + 1000])).all()
-                out.update({uri: pk for uri, pk in rows if uri and pk})
-            return out
-        finally:
-            db.close()
-    except Exception:
-        return {}
+    from app.services import fedi_tables
+    await fedi_tables.aready()
+    return {uri: r.pubkey_hex for uri, r in fedi_tables.puppets_by_uris(uris).items() if uri and r.pubkey_hex}
 
 
 async def blocks() -> list:
@@ -278,7 +251,7 @@ async def blocks() -> list:
     known = members()
     out = []
     fedi = await state.blocks()
-    puppet_of = _puppets_of_actors([b["actor"] for b in fedi])   # one query, not one per block
+    puppet_of = await _puppets_of_actors([b["actor"] for b in fedi])   # one query, not one per block
     for b in fedi:
         # The member is keyed by pubkey; the blocker is a fediverse actor, named by its @user@host.
         member = b["member"]
@@ -292,7 +265,7 @@ async def blocks() -> list:
                     "blocker_ref": _ref(puppet) if puppet else (("@" + b["acct"]) if b.get("acct") else b["actor"]),
                     "blocked_ref": _ref(member)})
     mutes = await mute_relations(known)
-    puppets = _puppet_accts([pk for r in mutes for pk in (r["blocker"], r["blocked"]) if pk not in known])
+    puppets = await _puppet_accts([pk for r in mutes for pk in (r["blocker"], r["blocked"]) if pk not in known])
     for r in mutes:
         r["blocker_handle"] = handle(r["blocker"], known, puppets)
         r["blocked_handle"] = handle(r["blocked"], known, puppets)
@@ -350,12 +323,12 @@ async def follows() -> dict:
         member = d_tag[len(state._FOLLOWER_PREFIX):].split(":")[0]
         if member in member_set:
             fedi.append({"member": member, "actor": d["actor"], "gone": bool(d.get("gone")), "at": int(d.get("at") or 0)})
-    puppet_of = _puppets_of_actors([f["actor"] for f in fedi])
+    puppet_of = await _puppets_of_actors([f["actor"] for f in fedi])
     for f in fedi:
         pup = puppet_of.get(f["actor"], "")
         f["ref"] = _ref(pup) if pup else f["actor"]
     others = [pk for pk in lists if pk not in known]
-    puppets = _puppet_accts(others)
+    puppets = await _puppet_accts(others)
     names = dict(known)
     for pk in others:
         names[pk] = handle(pk, known, puppets)
@@ -508,6 +481,8 @@ async def reports(since: int = 0) -> list:
     window = {"since": int(since)} if since else {}
     evs = await _query([{"kinds": [1984], "authors": pks, "limit": 500, **window}])
     evs += await _query([{"kinds": [1984], "#p": pks, "limit": 500, **window}])
+    puppets = await _puppet_accts({ev.get("pubkey") or "" for ev in evs} |
+                                  {t[1] for ev in evs for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "p"})
     out, seen = [], set()
     for ev in sorted(evs, key=lambda e: (e.get("created_at", 0), e.get("id", ""))):
         if ev.get("id") in seen or ev.get("kind") != 1984:
@@ -525,6 +500,7 @@ async def reports(since: int = 0) -> list:
                     "reporter": reporter, "reported": f["reported"], "type": f["type"],
                     "reason": reason[:280] + ("…" if len(reason) > 280 else ""),
                     "note": note, "note_ref": ("nostr:" + bech32.encode("note", bytes.fromhex(note))) if note else "",
-                    "reporter_handle": handle(reporter, known), "reported_handle": handle(f["reported"], known),
+                    "reporter_handle": handle(reporter, known, puppets),
+                    "reported_handle": handle(f["reported"], known, puppets),
                     "reporter_ref": _ref(reporter), "reported_ref": _ref(f["reported"])})
     return out

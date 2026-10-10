@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import (bot_table, conversation_table, doc_table_bulk, table_gate, user_settings_table,
+from app.services import (bot_table, conversation_table, doc_table, doc_table_bulk, table_gate, user_settings_table,
                           wave2_migration)
 from app.services.relay_reader import Unavailable
 from tests.wave2_harness import (add_user, forget_markers, fresh_process_view, no_relay, relay_mode,  # noqa: F401
@@ -389,3 +389,30 @@ def test_the_migration_script_refuses_without_a_relay(no_relay):
     spec.loader.exec_module(mod)
     doc_table_bulk._seen.clear()
     assert mod.main(["--table", "user_settings"], session_factory=no_relay.Session) == 2
+
+
+def test_wave_2_migrates_through_the_one_registry_marker_and_script(sql_mode, capsys):
+    """One migration for every #161 table: the wave-2 tables are in table_migration's registry, their marker is
+    wave 1's shape, and the one script migrates them."""
+    import importlib.util
+    import pathlib
+    from app.services import table_migration
+    names = table_migration.tables()
+    for name in wave2_migration.TABLES + (wave2_migration.MESSAGES,):
+        assert name in names, name
+    for name in wave2_migration.TABLES:
+        assert name in doc_table.GATED and name not in doc_table.LEGACIES, "a gated table must not bind a Legacy"
+    _seed_sql(sql_mode.Session)
+    spec = importlib.util.spec_from_file_location(
+        "migrate_tables_to_nostr",
+        pathlib.Path(__file__).resolve().parents[1] / "scripts" / "migrate_tables_to_nostr.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.main(["--table", "bots", "--table", "messages"], session_factory=sql_mode.Session) == 0
+    out = capsys.readouterr().out
+    assert "nsec1x" not in out
+    forget_markers()
+    for name in ("bots", "messages"):
+        m = run(doc_table_bulk.amarker(name))
+        assert m.get("ok") is True and doc_table.is_marker(m), (name, m)
+    assert run(table_gate.arelay_mode("bots"))

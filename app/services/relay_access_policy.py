@@ -4,7 +4,6 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.models import FediPuppet
 from app.services import settings_store as settings, users_store, blossom_service, user_table
 from app.services.nostr import nostr_service as ns
 
@@ -23,7 +22,7 @@ def configuration():
 
 
 
-def _infrastructure_keys(db, users) -> set:
+async def _infrastructure_keys(db, users) -> set:
     """Admins, this node's bots and its GPU-sharing peers: infrastructure, not consumer grants.
     Nothing in this module ever revokes them. `users` is the WHOLE accounts table (user_table.aall: an
     unreadable table raised before this is reached -- a plan is never made from a missing admin)."""
@@ -34,7 +33,7 @@ def _infrastructure_keys(db, users) -> set:
     from app.services import nostr_dvm
     keep.update(nostr_dvm.peer_pubkeys())
     from app.services import bot_table
-    for bot in bot_table.all_bots(db):   # Unavailable propagates: never plan from a list missing the bots
+    for bot in await bot_table.aall_bots(db):   # Unavailable propagates: never plan from a list missing the bots
         try:
             key = json.loads(bot.config or "{}").get("nostr_nsec")
             if key:
@@ -59,9 +58,12 @@ async def _plan(db, exempt_fediverse=True):
     registered = {pk.lower() for pk in names.values()}
     qualified_keys = set()
     users = await user_table.aall(db)       # Unavailable aborts the plan: never plan from no accounts
-    keep = _infrastructure_keys(db, users)
+    keep = await _infrastructure_keys(db, users)
     if exempt_fediverse:
-        keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
+        # Raises relay_reader.Unavailable on an unreadable registry, which aborts the plan like any
+        # other error here -- "no puppets" would strip every fediverse account of its exemption.
+        from app.services import fedi_tables
+        keep.update(await fedi_tables.apuppet_pubkeys())
         # Accounts that linked a fediverse account under the retired bridge (legacy columns).
         keep.update(ns.to_pubkey_hex(u.nostr_npub) for u in users if u.nostr_npub and
                     (u.pleroma_acct or u.pleroma_enabled or u.pleroma_instance_url))
@@ -230,7 +232,7 @@ async def revoke_identities(db, pubkeys) -> dict:
         return {"accounts": 0, "whitelist": 0, "protected": []}
     async with _lock:
         all_users = await user_table.aall(db)     # Unavailable: nothing revoked, the caller says so
-        protected = keys & _infrastructure_keys(db, all_users)
+        protected = keys & await _infrastructure_keys(db, all_users)
         targets = keys - protected
         out = {"accounts": 0, "whitelist": 0, "protected": sorted(protected)}
         npubs = {}

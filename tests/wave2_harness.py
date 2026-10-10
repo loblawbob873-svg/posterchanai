@@ -58,7 +58,7 @@ def add_user(factory, username="alice", npub=None):
 
 def _reset():
     doc_table.DocTable._registry.clear()
-    doc_table_bulk._seen.clear()
+    doc_table.reset_state()             # the markers seen (and the "not yet" cache), the SQL session factory
     table_gate._loading.clear()
 
 
@@ -121,4 +121,5 @@ def fresh_process_view(name):
 def forget_markers():
     """A fresh process that has not yet seen any migration marker (it must read them from the relay)."""
     doc_table_bulk._seen.clear()
+    doc_table._neg.clear()
     doc_table.DocTable._registry.pop(doc_table_bulk.MARKER_TABLE, None)

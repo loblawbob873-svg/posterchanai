@@ -136,12 +136,16 @@ async def main() -> int:
             # from settings, so for a per-run override we patch the row after the fact.
             await blossom_service.save_blob(db, owner, data, mime)
             if args.ttl_days is not None:
-                from app.models import BlossomBlob
+                from app.services import blob_index
                 import time as _t
-                b = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
-                if b:
-                    b.expires_at = (int(_t.time()) + args.ttl_days * 86400) if args.ttl_days > 0 else None
-                    db.commit()
+                _exp = (int(_t.time()) + args.ttl_days * 86400) if args.ttl_days > 0 else None
+
+                def _stamp(r, _exp=_exp):
+                    if r is None:
+                        return None
+                    r["expires_at"] = _exp
+                    return r
+                await blob_index.aupdate(sha, _stamp)
             print(f"  ok   {sha[:12]}… ({len(data)} B, {mime})")
             ok += 1
     finally:

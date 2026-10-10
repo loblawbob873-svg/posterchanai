@@ -7,8 +7,8 @@ NOTHING HERE HAS A TABLE OF POSTS. It is the existing fediverse bridge's model, 
 
   * IN:  an activity that reaches our inbox becomes an ordinary Nostr event signed by the same
          per-author PUPPET key the Pleroma timeline bridge uses (fedi_bridge_identity), tagged with a
-         NIP-48 `proxy` back to the ActivityPub object, and recorded in the SAME `FediBridgeDelivered`
-         dedup table -- so a note that arrives both ways is one Nostr event, never two.
+         NIP-48 `proxy` back to the ActivityPub object, and recorded in the SAME delivered-notes ledger
+         (fedi_tables) -- so a note that arrives both ways is one Nostr event, never two.
   * OUT: a member's own Nostr events are READ from the local relay and translated on the way out
          (`/ap/objects/<event id>` is served straight from the relay).
   * State that is neither (followers, the per-member RSA keys ActivityPub needs, the delivery

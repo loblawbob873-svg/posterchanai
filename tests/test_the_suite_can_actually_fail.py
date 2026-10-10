@@ -75,9 +75,9 @@ MUTATIONS = [
     (
         "deleting an account mid-publish aborts other users' scheduled posts",
         "app/services/scheduled_posts_service.py",
-        "jobs = [(r.id, r.event_json) for r in due]",
-        "jobs = ((r.id, r.event_json) for r in due)",
-        "tests/test_a_scheduled_post_goes_out_once.py::AScheduledPostGoesOutOnce::"
+        'if fresh is None or fresh.get("status") != "sending":',
+        'if fresh is not None and fresh.get("status") != "sending":',
+        "tests/test_a_scheduled_post_goes_out_once.py::"
         "test_account_deletion_mid_publish_skips_its_queue_and_keeps_other_users_moving",
     ),
     (
@@ -173,8 +173,8 @@ MUTATIONS = [
     (
         "the Blossom age sweep stops exempting keep-flagged blobs, i.e. the encrypted drive",
         "app/services/blossom_service.py",
-        "conds.append(and_(BlossomBlob.keep.is_(False),",
-        "conds.append(and_(BlossomBlob.keep.is_(False) | BlossomBlob.keep.is_(True),",
+        "return (not b.keep) and b.created_at <= now",
+        "return b.created_at <= now",
         "tests/test_blossom_keep.py",
     ),
     (

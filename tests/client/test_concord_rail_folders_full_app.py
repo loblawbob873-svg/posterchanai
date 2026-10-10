@@ -23,7 +23,7 @@ ROOMS = r"""(armada)=>{
   const me=__PC.me().pubkey, ids=['a','b','c'].map(c=>c.repeat(64)), names=['Lounge','Politics','Games'];
   const rooms=ids.map((id,i)=>({name:names[i],communityId:id,naddr:'n'+i,url:'https://fixture.invalid/invite/'+i+'#s',
     channels:[{id:'ch'+i,name:'general'}],cord:{bundle:{owner:me,relays:['wss://fixture.invalid']},hydrated:true}}));
-  localStorage.setItem('pc.concord.invites',JSON.stringify(rooms));localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify(rooms));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   localStorage.removeItem('pc.concord.railOpen');
   window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'ch0',name:'general',streamPubkeys:[]}]}),
     inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};

@@ -24,7 +24,8 @@ function boot(reader) {
   const warnings = [];
   const window = { document, addEventListener: noop, PosterCordReader: reader,
     Relay: { subscribeFrom: (relays, filters) => { subs.push(filters); return noop; } } };
-  window.__PC = { isView: () => false, toast: noop, $: () => null };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: OWNER }), isView: () => false, toast: noop, $: () => null };
   const context = { window, document, console: { ...console, warn: (...a) => warnings.push(a.join(' ')) }, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop }, setTimeout: () => 0, clearTimeout: noop, setInterval: () => 0, clearInterval: noop,
     TextEncoder, indexedDB: undefined, location: { href: 'https://poster.place/client' }, AbortController };
@@ -44,13 +45,13 @@ const room = (streams) => ({ url: '', naddr: 'naddr1room', communityId: hex('a')
   const reader = { inspectControl: () => ({}), createPlaneAuth: () => { attempts++; throw new Error('Concord plane key is not held by this membership'); } };
   const x = boot(reader);
   if (typeof x.C.__testStartRoomsLive !== 'function') fail('concord.js exposes no __testStartRoomsLive hook');
-  x.localStorage.setItem('pc.concord.invites', JSON.stringify([room([hex('b')])]));
+  x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room([hex('b')])]));
   for (let i = 0; i < 10; i++) x.C.__testStartRoomsLive(p);
   if (attempts !== 1) fail(`an unheld room was rebuilt ${attempts} times in 10 ticks (want 1)`);
   if (x.warnings.length !== 1) fail(`${x.warnings.length} warnings in 10 ticks (want 1): ${x.warnings[0] || ''}`);
 
   /* ---- 2. The membership CHANGES (a rekey brings a new stream key): tried again at once. ---- */
-  x.localStorage.setItem('pc.concord.invites', JSON.stringify([room([hex('c')])]));
+  x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room([hex('c')])]));
   x.C.__testStartRoomsLive(p);
   if (attempts !== 2) fail(`a changed membership was not retried (attempts=${attempts})`);
 }
@@ -60,7 +61,7 @@ const room = (streams) => ({ url: '', naddr: 'naddr1room', communityId: hex('a')
   let attempts = 0;
   const reader = { inspectControl: () => ({}), createPlaneAuth: () => { attempts++; return null; } };
   const x = boot(reader);
-  x.localStorage.setItem('pc.concord.invites', JSON.stringify([room([hex('b')])]));
+  x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room([hex('b')])]));
   for (let i = 0; i < 5; i++) x.C.__testStartRoomsLive(p);
   if (x.subs.length !== 1) fail(`a held room should subscribe exactly once, got ${x.subs.length}`);
   if (x.warnings.length) fail('a held room warned: ' + x.warnings[0]);

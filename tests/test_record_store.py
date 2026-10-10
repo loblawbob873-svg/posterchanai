@@ -17,7 +17,8 @@ Two things here are subtle enough to be worth the whole file:
     overwrote or deleted, a stale relay doc would silently revert live data — the same replaceable-
     document failure this codebase has hit repeatedly. It also has to skip an API key whose VALUE
     already exists, because `APIKey.key` is UNIQUE and the alternative is an IntegrityError that
-    aborts the whole hydrate for every user after it.
+    aborts the whole hydrate for every user after it. (#161: API keys left SQL for the operator's
+    `api_keys` DocTable, so hydrate no longer creates API-key rows at all -- pinned below.)
 
 Every `*_blocking` wrapper also swallows exceptions by design (a failed mirror must not break the
 request that triggered it), which is precisely why the layer underneath needs its own tests: the
@@ -170,14 +171,12 @@ def test_a_relay_failure_is_reported_as_false_not_raised(monkeypatch):
                                force=False)) is False
 
 
-def test_an_api_key_record_does_not_carry_last_used_at():
-    """Commented in the source: it "churns on every API call". Mirroring it would republish the
-    document on every single authenticated request."""
-    k = _Rec(id=1, key="k" * 32, name="Default", is_active=True,
-             created_at=datetime(2026, 8, 31), last_used_at=datetime(2026, 8, 31))
-    rec = rs._apikey_rec(k)
-    assert "last_used_at" not in rec
-    assert set(rec) == {"key", "name", "is_active", "created_at"}
+def test_the_per_user_api_key_mirror_is_retired():
+    """#161: the operator-signed `api_keys` DocTable is the copy a fresh node rebuilds from; a second,
+    per-user mirror would be a second source of truth for a revocation. Only its delete survives (it
+    cleans up a deleted key's old copy). last_used_at's churn rule moved to api_key_store.touch."""
+    assert not hasattr(rs, "mirror_apikey_blocking") and not hasattr(rs, "_apikey_rec")
+    assert hasattr(rs, "delete_apikey_blocking")
 
 
 def test_the_namespaces_are_distinct_prefixes():
@@ -205,6 +204,14 @@ def db(monkeypatch):
     session.commit()
     monkeypatch.setattr(rs, "user_storage_seckey", lambda db, user: b"\x01" * 32)
     monkeypatch.setattr(rs._ss, "_port", lambda: 3052)
+    # Reminders and saved searches moved to DocTables (#161); until their migration marker exists the SQL
+    # rebuild below still runs (those rows are the migration's source). These tests are about that rebuild.
+    moved = set()
+
+    async def _moved(table):
+        return table in moved
+    monkeypatch.setattr(rs, "_moved_to_doctable", _moved)
+    session.moved = moved
     yield session
     session.close()
 
@@ -222,10 +229,11 @@ def test_a_fresh_node_rebuilds_every_record_type(db, monkeypatch):
                                          "due_at": "2026-09-01T00:00:00", "status": "pending"}},
           searches={"pcai:search:3": {"query": "nostr"}},
           keys={"pcai:apikey:2": {"key": "k" * 32, "name": "Default", "is_active": True}})
-    assert asyncio.run(rs.hydrate(db)) == 3
+    assert asyncio.run(rs.hydrate(db)) == 2
     assert db.query(Reminder).filter(Reminder.id == 5).first().text == "call the bank"
     assert db.query(SavedSearch).filter(SavedSearch.id == 3).first().query == "nostr"
-    assert db.query(APIKey).filter(APIKey.id == 2).first().name == "Default"
+    # API keys are not rebuilt into SQL any more: they live in the `api_keys` DocTable (#161).
+    assert db.query(APIKey).count() == 0
 
 
 def test_hydrate_never_overwrites_a_row_that_already_exists(db, monkeypatch):
@@ -249,21 +257,17 @@ def test_hydrate_never_deletes_a_row_the_relay_does_not_mention(db, monkeypatch)
     assert db.query(SavedSearch).filter(SavedSearch.id == 9).first().query == "only local"
 
 
-def test_a_duplicate_api_key_value_is_skipped_rather_than_violating_the_constraint(db, monkeypatch):
-    """`APIKey.key` is UNIQUE. Inserting a colliding value raises IntegrityError at commit, which
-    would lose EVERY record hydrated in the same pass, for every user — not just this row."""
+def test_hydrate_never_writes_an_api_key_row_into_sql(db, monkeypatch):
+    """#161: whatever the retired per-user mirror still holds, nothing is written back into the SQL
+    `api_keys` table -- a duplicate value can therefore no longer abort the pass either."""
     db.add(APIKey(id=1, user_id=1, key="k" * 32, name="Existing", is_active=True))
     db.commit()
     _docs(monkeypatch, keys={"pcai:apikey:77": {"key": "k" * 32, "name": "Duplicate",
-                                                "is_active": True}})
+                                                "is_active": True},
+                             "pcai:apikey:5": {"name": "no key here"},
+                             "pcai:apikey:6": {"key": "z" * 32, "name": "Fresh", "is_active": True}})
     assert asyncio.run(rs.hydrate(db)) == 0
     assert db.query(APIKey).count() == 1
-
-
-def test_an_api_key_record_with_no_key_value_is_skipped(db, monkeypatch):
-    _docs(monkeypatch, keys={"pcai:apikey:5": {"name": "no key here"}})
-    assert asyncio.run(rs.hydrate(db)) == 0
-    assert db.query(APIKey).count() == 0
 
 
 @pytest.mark.parametrize("bad_tag", ["pcai:reminder:notanint", "pcai:reminder:", "pcai:reminder:1.5"])
@@ -318,4 +322,23 @@ def test_a_user_with_no_nostr_key_is_not_hydrated(db, monkeypatch):
 
     monkeypatch.setattr(rs.store, "list_docs", _list)
     asyncio.run(rs.hydrate(db))
-    assert len(seen) == 3, "expected exactly one user (3 namespaces), so carol was included"
+    assert len(seen) == 2, "expected exactly one user (2 namespaces), so carol was included"
+
+
+def test_once_a_table_moved_to_doctable_hydrate_no_longer_writes_its_sql_rows(db, monkeypatch):
+    """#161: after the reminders / saved_searches migration markers exist, their store of record is the
+    DocTable and the SQL rows are dead; rebuilding them would only feed a table nothing reads. API keys
+    are never hydrated into SQL any more (they live in the api_keys DocTable)."""
+    db.moved.update({"reminders", "saved_searches"})
+    asked = []
+
+    async def _list(port, ns, **kw):
+        asked.append(ns)
+        return {rs.NS_REMINDER: {"pcai:reminder:5": {"text": "call the bank", "due_at": "2026-09-01T00:00:00"}},
+                rs.NS_SEARCH: {"pcai:search:3": {"query": "nostr"}},
+                rs.NS_APIKEY: {"pcai:apikey:2": {"key": "k" * 32, "name": "Default"}}}.get(ns, {})
+    monkeypatch.setattr(rs.store, "list_docs", _list)
+    assert asyncio.run(rs.hydrate(db)) == 0
+    assert db.query(Reminder).count() == 0 and db.query(SavedSearch).count() == 0
+    assert db.query(APIKey).count() == 0
+    assert rs.NS_REMINDER not in asked and rs.NS_SEARCH not in asked and rs.NS_APIKEY not in asked

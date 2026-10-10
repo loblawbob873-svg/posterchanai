@@ -16,11 +16,8 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.models import Base, FediBridgeDelivered, FediPuppet
+from app.models import FediBridgeDelivered, FediPuppet
 from app.services import settings_store
 
 ALICE, BOB, CAROL_PUPPET, STRANGER = "a1" * 32, "b2" * 32, "c3" * 32, "d4" * 32
@@ -38,11 +35,13 @@ def world(monkeypatch):
     monkeypatch.setattr(settings_store, "_port", lambda db=None: 1)
     from app.services.activitypub import actors
     actors._names_cache["raw"] = None
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine, tables=[FediBridgeDelivered.__table__, FediPuppet.__table__])
-    Session = sessionmaker(bind=engine)
-    import app.database
-    monkeypatch.setattr(app.database, "SessionLocal", Session)
+    # The puppet registry and the ledger are DocTables (#161), in memory here; `Session` keeps the
+    # seed/inspect idiom of these tests.
+    from tests.doc_table_mem import FakeSession, mem_tables
+    mem = mem_tables(monkeypatch)
+
+    def Session():
+        return FakeSession(mem)
     s = Session()
     s.add(FediPuppet(actor_uri="https://m.example/users/carol", acct="carol@m.example", pubkey_hex=CAROL_PUPPET,
                      nip05_name="carol"))
@@ -554,6 +553,7 @@ def test_blocks_ask_the_database_a_fixed_number_of_times_however_many_rows(world
     monkeypatch.setattr(app.database, "SessionLocal", counting)
     rows = run(cs.blocks())
     assert len(opened) <= 3, f"{len(opened)} database sessions for {len(rows)} rows"
+    assert opened == [], "the puppet lookups read the DocTable now (#161) -- no SQL session at all"
     named = {(b["via"], b["blocker_handle"], b["blocked_handle"]) for b in rows}
     for i in range(30):
         assert ("nostr", f"@u{i}@m.example", "@alice@poster.place") in named

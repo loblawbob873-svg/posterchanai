@@ -10,9 +10,9 @@ Shared plumbing only -- each feature's service owns its own rows:
                          (Telegram's `rem:cancel:<id>` buttons, the Drafts list) keeps working.
   * `row_lock()`      -- serialises read-check-write on the event loop (a reminder claim against a cancel), the
                          job the conditional `UPDATE ... WHERE status='pending'` used to do inside one process.
-  * `ready()`         -- whether a table may be read yet: its one-time SQL->DocTable migration has a marker, or
-                         this process has finished its migration pass. Until then a reader answers "unavailable",
-                         never a list that is missing the rows still sitting in Postgres.
+  * `table()`         -- the DocTable. Until its one-time SQL->DocTable migration has a marker, DocTable reads it
+                         from SQL and writes SQL then the relay (table_migration binds the Legacy), so no reader
+                         ever waits for the move and none is served a half-moved table.
   * `purge_user()`    -- the old `ON DELETE CASCADE`: a deleted account's rows go with it.
   * `to_iso()/from_iso()` -- naive-UTC datetimes as stored strings.
 """
@@ -25,7 +25,6 @@ import weakref
 from datetime import datetime
 
 from app.services.doc_table import DocTable
-from app.services.relay_reader import Unavailable
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ SCHEDULED_POSTS = "scheduled_posts"
 SAVED_SEARCHES = "saved_searches"
 SOCIAL_REPLY_MAP = "social_reply_map"
 TABLES = (REMINDERS, SCHEDULED_POSTS, SAVED_SEARCHES, SOCIAL_REPLY_MAP)
-MIGRATED = "_migrated"          # marker documents, one per migrated table
+MIGRATED = "_migrated"          # marker documents, one per migrated table (doc_table.MARKERS)
 
 _EPOCH_MS = 1767225600000       # 2026-01-01T00:00:00Z
 _id_lock = threading.Lock()
@@ -81,8 +80,9 @@ def row_lock(table: str) -> asyncio.Lock:
     return lk
 
 
-# --------------------------------------------------------------------------- migration gate
-_pass_done: set = set()        # tables this process finished a migration pass for (any outcome)
+# --------------------------------------------------------------------------- the table
+from app.services import doc_table as _doc_table  # noqa: E402
+_pass_done = _doc_table._marked    # the markers this process has seen (marking here = "the relay is authoritative")
 
 
 def mark_pass_done(table: str) -> None:
@@ -90,17 +90,14 @@ def mark_pass_done(table: str) -> None:
 
 
 async def ready(table: str) -> bool:
-    """True once the table's migration marker exists or this process finished its pass. Raises Unavailable
-    when the marker cannot be read -- "could not ask" is not "not migrated" and not "migrated" either."""
-    if table in _pass_done:
-        return True
-    return (await DocTable(MIGRATED).aget(table)) is not None
+    """Always True now: until a table's marker exists DocTable answers it from SQL (wave 1), so there is nothing
+    for a reader or a poller to wait for. Kept for callers that still ask."""
+    return True
 
 
 async def table(name: str) -> DocTable:
-    """The DocTable for `name`, refused (Unavailable) until it is ready to be read."""
-    if not await ready(name):
-        raise Unavailable("the %s table is still being moved to the relay -- try again shortly" % name)
+    """The DocTable for `name`. Before its migration marker exists its reads come from SQL and its writes go to
+    SQL and the relay (doc_table.Legacy) -- never a half-moved table, and never refused for being mid-move."""
     return DocTable(name)
 
 

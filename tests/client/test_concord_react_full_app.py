@@ -23,7 +23,7 @@ def bundled_assets():
 ROOM = r'''(()=>{
   const room={name:'React fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
     channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-  localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
   window.__wraps=[];
   window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),
     inspectChat:async()=>({messages:[{id:'msg-from-bob',pubkey:'b'.repeat(64),text:'hello from bob',at:Date.now()-60000,kind:9,tags:[]}],

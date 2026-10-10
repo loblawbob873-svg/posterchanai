@@ -50,10 +50,10 @@ SHOT_FRAMES = [0, int(round(2 * BEAT * FPS))]        # she fires on beats 1 and 
 
 
 def generate_sprite(dst):
-    from sqlalchemy import text
     from app.database import SessionLocal
     db = SessionLocal()
-    key = db.execute(text("select key from api_keys where user_id=1 order by id limit 1")).scalar()
+    from app.services import api_key_store
+    key = api_key_store.pick_key(db, user_id=1)
     db.close()
     body = json.dumps({"prompt": PROMPT, "negative_prompt": NEGATIVE,
                        "width": 768, "height": 1152, "steps": 30}).encode()

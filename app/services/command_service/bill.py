@@ -61,9 +61,12 @@ class _BillMixin:
                     if when <= now:
                         when = now + timedelta(hours=12)
                     if d >= now - timedelta(days=1):
-                        reminder_service.create_reminder(
-                            self.db, self.user, f"Pay {pend['vendor']} — {pend['amount']:.2f} due {due}", when)
-                        out.append(f"⏰ Reminder set for {when.strftime('%Y-%m-%d %H:%M')} (due {due})")
+                        try:
+                            await reminder_service.acreate_reminder(
+                                self.db, self.user, f"Pay {pend['vendor']} — {pend['amount']:.2f} due {due}", when)
+                            out.append(f"⏰ Reminder set for {when.strftime('%Y-%m-%d %H:%M')} (due {due})")
+                        except Exception:   # noqa: BLE001 -- Unavailable: say so, never claim it was set
+                            out.append("⚠️ Couldn't set the reminder right now — the datastore could not be asked.")
                     else:
                         out.append(f"📅 Due {due} — already past, no reminder set.")
                 except ValueError:

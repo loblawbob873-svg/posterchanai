@@ -147,11 +147,10 @@ async def load_body(db: Session, ref: dict) -> dict | None:
 async def load_attachment(db: Session, ref: dict) -> tuple[bytes | None, str]:
     """Fetch + decrypt an attachment's bytes from Blossom (for download or to re-attach on forward).
     Returns (plaintext_bytes, mime) or (None, '') if the blob is gone."""
-    from app.models import BlossomBlob
     sha = (ref or {}).get("sha256")
     if not sha:
         return None, ""
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+    blob = await blossom_service.get_blob_meta(db, sha)
     if not blob:
         return None, ""
     ct = await blossom_service.read_full(db, blob)

@@ -1,6 +1,6 @@
 """The Blossom auto-clean must never delete encrypted-drive content.
 
-Run: venv-unified/bin/python -m unittest tests.test_blossom_keep
+Run: venv-unified/bin/python -m pytest tests/test_blossom_keep.py
 
 `_cleanup_once` deletes blobs two ways: an explicit per-blob `expires_at`, and — the dangerous one —
 ANY blob older than the admin's `blossom_blob_ttl_days`, applied live to blobs already stored. That
@@ -17,51 +17,43 @@ read live, so it is retroactive by default.
 sweep. Every test here therefore asserts in BOTH directions: the drive survived AND the ordinary
 expired blobs actually went.
 """
+import asyncio
 import time
 import unittest
 from unittest import mock
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import pytest
 
-from app.models import Base, BlossomBlob
-from app.services import blossom_service
+from app.services import blob_index, blossom_service, doc_table_bulk
+from tests.blob_index_harness import DAY, idx, load, put, shared_relay
+_FIXTURES = (idx, shared_relay)   # pytest finds fixtures by module name
 
-DAY = 86400
-
-
-def _mk(session, sha, *, age_days=0, keep=False, expires_at=None):
-    session.add(BlossomBlob(
-        sha256=sha * 64, pubkey="a" * 64, size=10, mime="application/octet-stream",
-        created_at=int(time.time()) - age_days * DAY, expires_at=expires_at,
-        storage="local", path="/tmp/" + sha, private=False, keep=keep))
-    session.commit()
+# The index is the shipped relay (RelayServer + PosterChanDB), not a fake: these rules are only as good as
+# the real store's answers (#161 moved the blob rows there from SQL).
 
 
+def _mk(_session, sha, *, age_days=0, keep=False, expires_at=None):
+    put(sha * 64, owners=("a" * 64,), age_days=age_days, keep=keep, expires_at=expires_at)
+
+
+@pytest.mark.usefixtures("idx")
 class TestCleanupHonoursKeep(unittest.TestCase):
     def setUp(self):
-        # Only blossom_blobs is needed, but create_all is simplest and the schema is the real one —
-        # a test against a hand-written table would not catch a column that never got migrated.
-        self.engine = create_engine("sqlite://")
-        Base.metadata.create_all(self.engine, tables=[BlossomBlob.__table__])
-        self.Session = sessionmaker(bind=self.engine)
-        self.session = self.Session()
-
-    def tearDown(self):
-        self.session.close()
+        self.session = None
 
     def _sweep(self, ttl_days):
-        """Run the real _cleanup_once against this in-memory DB."""
+        """Run the real _cleanup_once against the real index (loaded, as the background thread does)."""
+        load()
         cfg = {"ttl_days": ttl_days, "backend": "local", "blob_dir": "/tmp",
                "storage_url": "", "cache_mb": 0}
-        with mock.patch.object(blossom_service, "SessionLocal", lambda: self.session), \
+        with mock.patch.object(blossom_service, "SessionLocal", lambda: mock.Mock()), \
              mock.patch.object(blossom_service, "_cfg", lambda db: cfg), \
-             mock.patch.object(blossom_service, "delete_blob_bytes", mock.AsyncMock()), \
-             mock.patch.object(self.session, "close", lambda: None):
+             mock.patch.object(blossom_service, "delete_blob_bytes", mock.AsyncMock()):
             return blossom_service._cleanup_once()
 
     def _alive(self):
-        return {b.sha256[0] for b in self.session.query(BlossomBlob).all()}
+        """What the relay holds — read independently of this process's memory."""
+        return {s[0] for s in asyncio.run(doc_table_bulk.aread_all(blob_index.TABLE))}
 
     def test_age_sweep_skips_keep_blobs(self):
         """The retroactive one: a drive uploaded while the TTL was off, swept when it's turned on."""
@@ -118,24 +110,29 @@ class TestCleanupHonoursKeep(unittest.TestCase):
         self.assertEqual(self._alive(), {"d", "c"})
 
 
+@pytest.mark.usefixtures("idx")
 class TestKeepIsOneWay(unittest.TestCase):
     """Blossom dedups by sha256, so one set of bytes can be both a throwaway and drive content.
     `keep` may only ever go False->True — the reference that must survive wins."""
 
+    DATA = b"x"
+
+    def _save(self, keep):
+        with mock.patch.object(blossom_service, "_cfg", lambda d: {"backend": "local", "cache_mb": 0,
+                                                                     "mirror_servers": []}):
+            asyncio.run(blossom_service.save_blob(mock.Mock(), "a" * 64, self.DATA, "text/plain", keep=keep))
+
+    def _row(self):
+        sha = blossom_service.compute_sha256(self.DATA)
+        return asyncio.run(doc_table_bulk.aread_all(blob_index.TABLE))[sha]
+
+    def _existing(self, *, keep, expires_at=None):
+        put(blossom_service.compute_sha256(self.DATA), owners=("a" * 64,), keep=keep, expires_at=expires_at)
+
     def test_save_blob_promotes_an_existing_blob_to_keep(self):
-        existing = mock.Mock(expires_at=None, keep=False)
-        db = mock.Mock()
-        db.query.return_value.filter.return_value.first.return_value = existing
-        with mock.patch.object(blossom_service, "_cfg", lambda d: {"backend": "local"}), \
-             mock.patch.object(blossom_service, "compute_sha256", lambda b: "a" * 64), \
-             mock.patch.object(blossom_service, "add_owner", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_put", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_from_row", mock.Mock()), \
-             mock.patch.object(blossom_service, "_descriptor_fields", mock.Mock()):
-            import asyncio
-            asyncio.run(blossom_service.save_blob(db, "a" * 64, b"x", "text/plain", keep=True))
-        self.assertTrue(existing.keep, "a keep upload must promote the deduped row")
-        db.commit.assert_called()
+        self._existing(keep=False)
+        self._save(keep=True)
+        self.assertTrue(self._row()["keep"], "a keep upload must promote the deduped row")
 
     def test_a_keep_upload_clears_an_expiry_stamped_earlier(self):
         """THE SAFETY NET under honouring an explicit expiry on a keep blob.
@@ -144,33 +141,15 @@ class TestKeepIsOneWay(unittest.TestCase):
         become referenced again by a later upload. If the stamp survived that, the sweep would delete
         something live. It does not: a keep upload passes no TTL of its own, and the save path clears
         any expiry it finds. So an expiry on a keep blob can only ever mean 'still unreferenced'."""
-        existing = mock.Mock(expires_at=int(time.time()) + 3 * DAY, keep=True)
-        db = mock.Mock()
-        db.query.return_value.filter.return_value.first.return_value = existing
-        with mock.patch.object(blossom_service, "_cfg", lambda d: {"backend": "local"}), \
-             mock.patch.object(blossom_service, "compute_sha256", lambda b: "a" * 64), \
-             mock.patch.object(blossom_service, "add_owner", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_put", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_from_row", mock.Mock()), \
-             mock.patch.object(blossom_service, "_descriptor_fields", mock.Mock()):
-            import asyncio
-            asyncio.run(blossom_service.save_blob(db, "a" * 64, b"x", "text/plain", keep=True))
-        self.assertIsNone(existing.expires_at,
+        self._existing(keep=True, expires_at=int(time.time()) + 3 * DAY)
+        self._save(keep=True)
+        self.assertIsNone(self._row()["expires_at"],
                           "a fresh reference must clear the TTL, or the sweep deletes live content")
 
     def test_save_blob_never_clears_keep(self):
-        existing = mock.Mock(expires_at=None, keep=True)
-        db = mock.Mock()
-        db.query.return_value.filter.return_value.first.return_value = existing
-        with mock.patch.object(blossom_service, "_cfg", lambda d: {"backend": "local"}), \
-             mock.patch.object(blossom_service, "compute_sha256", lambda b: "a" * 64), \
-             mock.patch.object(blossom_service, "add_owner", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_put", mock.Mock()), \
-             mock.patch.object(blossom_service, "_meta_from_row", mock.Mock()), \
-             mock.patch.object(blossom_service, "_descriptor_fields", mock.Mock()):
-            import asyncio
-            asyncio.run(blossom_service.save_blob(db, "a" * 64, b"x", "text/plain", keep=False))
-        self.assertTrue(existing.keep, "an ordinary re-upload must not un-keep drive content")
+        self._existing(keep=True)
+        self._save(keep=False)
+        self.assertTrue(self._row()["keep"], "an ordinary re-upload must not un-keep drive content")
 
 
 if __name__ == "__main__":

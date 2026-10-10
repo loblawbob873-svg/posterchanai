@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Bot, FediPuppet, User
+from app.models import Bot, User
 from app.services import (blossom_service, instance_membership, nip05_registry, relay_access_policy,
                           relay_blocklist, settings_store, users_store)
 from app.services.instance_membership import MembershipChecker
@@ -43,8 +43,10 @@ def run(c):
 @pytest.fixture
 def world(monkeypatch):
     engine = create_engine("sqlite://")
-    for t in (User, Bot, FediPuppet):
+    for t in (User, Bot):
         t.__table__.create(engine)
+    from tests.doc_table_mem import mem_tables
+    mem_tables(monkeypatch)                  # the puppet registry is a DocTable now (#161): empty here
     db = sessionmaker(bind=engine)()
     for name, pk in PK.items():
         u = User(username=name, email=f"{name}@x.example", password_hash="x",

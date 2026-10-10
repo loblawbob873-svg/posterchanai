@@ -23,7 +23,7 @@ def test_overlapping_live_batches_survive_view_changes_without_history_reload():
             {id:'fixture-other',name:'other',streamPubkeys:['d'.repeat(64)]}];
           const room={name:'Live fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
             channels,cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels}),
             inspectChat:async(_bundle,_control,_channel,wraps)=>{
               const messages=(wraps||[]).filter(w=>['slow','fast'].includes(w.content)).map(w=>({id:w.id,pubkey:w.pubkey,text:'Live '+w.content,at:w.created_at*1000,kind:9,tags:[]}));
@@ -78,7 +78,7 @@ def test_active_plane_rearms_before_held_history_and_receives_after_reconnect():
           window.__planeKeys=[new Uint8Array(32).fill(4),new Uint8Array(32).fill(5)];
           window.__planeIndex=0;window.__planeChannels=[{id:'active-plane',name:'general',streamPubkeys:[NostrTools.getPublicKey(__planeKeys[0])]}];
           const room={name:'Active plane fixture',communityId:'a'.repeat(64),channels:__planeChannels,cord:{bundle:{relays:['wss://plane.fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:__planeChannels}),
             createPlaneAuth:(_b,_c,author)=>({pubkey:author,sign:tpl=>NostrTools.finalizeEvent(tpl,__planeKeys.find(k=>NostrTools.getPublicKey(k)===author))}),
             inspectChat:async(_b,_c,_id,wraps)=>({messages:wraps.map(w=>({id:w.id,pubkey:w.pubkey,text:w.content,at:w.created_at*1000,kind:9,tags:[]})),reactions:[],reactionUrls:[]})};
@@ -97,8 +97,8 @@ def test_active_plane_rearms_before_held_history_and_receives_after_reconnect():
         token=await b.js('__documentIdentity')
         await b.js(r'''(()=>{
           __planeIndex=1;__planeChannels[0].streamPubkeys=[NostrTools.getPublicKey(__planeKeys[1])];
-          const rooms=JSON.parse(localStorage.getItem('pc.concord.invites'));rooms[0].channels=__planeChannels;rooms[0].cord.bundle.fixtureEpoch=1;
-          localStorage.setItem('pc.concord.invites',JSON.stringify(rooms));
+          const rooms=JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey));rooms[0].channels=__planeChannels;rooms[0].cord.bundle.fixtureEpoch=1;
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify(rooms));
           PCConcord.__testState({controls:[rooms[0].communityId,[{id:'new-verified-control-generation'}]]});
           __holdPlaneHistory=true;void PCConcord.refreshActiveChannel(__PC);
         })()''')

@@ -5,8 +5,9 @@ Run: venv-unified/bin/python -m pytest tests/test_scheduled_posts_endpoints.py
 tests/test_a_scheduled_post_goes_out_once.py drives the scheduler's state machine. Nothing drove the
 door in front of it, and that door is where the security lives: the server BROADCASTS a stored event
 verbatim later, under the author's name, so what it agrees to store is what it will publish. Every
-check here is driven through the real route functions against a real (sqlite) database with REALLY
-signed events and a real kind-27235 ownership proof — no signature or auth helper is stubbed.
+check here is driven through the real route functions — accounts in a real (sqlite) database, the schedules in
+the `scheduled_posts` DocTable on the shipped relay (#161) — with REALLY signed events and a real kind-27235
+ownership proof — no signature or auth helper is stubbed.
 
   proof         no valid, fresh, self-signed proof → 403, and nothing is stored;
   yours         an event signed by somebody else (or tampered after signing) is refused;
@@ -14,7 +15,8 @@ signed events and a real kind-27235 ownership proof — no signature or auth hel
   when          not in the past, not beyond the cap, and created_at must be the scheduled time
                 (it is the time the published note shows, and a strict relay rejects future events);
   cap           a per-user limit on pending rows;
-  list/cancel   scoped to the proven owner — another account sees nothing and cancels nothing.
+  list/cancel   scoped to the proven owner — another account sees nothing and cancels nothing;
+  could not ask a relay that cannot be read is a 503 with a reason, never an empty list or a stored row.
 """
 import asyncio
 import base64
@@ -25,9 +27,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import ScheduledPost, User
+from app.models import User
 from app.routers import client
+from app.services import scheduled_posts_service as sched
 from app.services.nostr import event as nostr_event, nostr_service
+from tests.app_tables_harness import tables, shared_relay, no_relay, fresh_process_view  # noqa: F401
 
 SK_A, SK_B = b"\x11" * 32, b"\x22" * 32
 PK_A = nostr_event.build_event(SK_A, 1, "x")["pubkey"]
@@ -51,15 +55,19 @@ def note(sk, when, kind=1, content="later, world"):
     return nostr_event.build_event(sk, kind, content, tags=[], created_at=when)
 
 
-@pytest.fixture
-def db():
+def _accounts():
     engine = create_engine("sqlite://")
     User.__table__.create(engine)
-    ScheduledPost.__table__.create(engine)
     s = sessionmaker(bind=engine)()
     for pk, name in ((PK_A, "alice"), (PK_B, "bob")):
         s.add(User(username=name, email=f"{name}@x.example", password_hash="x", nostr_npub=nostr_service.npub_of(pk)))
     s.commit()
+    return s
+
+
+@pytest.fixture
+def db(tables):
+    s = _accounts()
     yield s
     s.close()
 
@@ -70,7 +78,8 @@ def create(db, sk, pk, ev, when, auth=None):
 
 
 def rows(db):
-    return db.query(ScheduledPost).all()
+    """Every stored schedule, as the RELAY holds it (a fresh process's strict load)."""
+    return [sched.as_post(k, r) for k, r in fresh_process_view("scheduled_posts").all().items()]
 
 
 def test_a_valid_schedule_is_stored_exactly_as_signed(db):
@@ -172,3 +181,17 @@ def test_list_and_cancel_belong_to_the_owner(db):
     assert cancel(SK_A, PK_A, rid)[1]["ok"]
     assert lst(SK_A, PK_A)[1]["posts"] == [], "a cancelled post is still listed"
     assert not cancel(SK_A, PK_A, rid)[1]["ok"], "cancelling twice reports success"
+
+
+def test_a_relay_that_cannot_be_asked_is_a_503_never_an_empty_list(no_relay):
+    db = _accounts()
+    try:
+        when = int(time.time()) + 3600
+        code, j = create(db, SK_A, PK_A, note(SK_A, when), when)
+        assert code == 503 and not j["ok"] and "unavailable" in j["error"]
+        code, j = body(run(client.scheduled_list(client.ScheduledAuthReq(pubkey=PK_A, auth=proof(SK_A)), db=db)))
+        assert code == 503 and "posts" not in j, "an unreadable table was reported as 'nothing scheduled'"
+        code, j = body(run(client.scheduled_cancel(client.ScheduledCancelReq(pubkey=PK_A, auth=proof(SK_A), id=1), db=db)))
+        assert code == 503
+    finally:
+        db.close()

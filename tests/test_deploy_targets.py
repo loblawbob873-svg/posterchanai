@@ -38,6 +38,10 @@ class Mapping(unittest.TestCase):
             'app/main.py','app/routers/auth.py','app/routers/telegram/callbacks_misc.py',
             'app/services/command_service/bill.py','app/services/command_service/productivity.py',
             'app/services/libtorrent_service.py',
+            # #161: the calendar alarm filer writes reminder rows (reminder_row); it runs in the APP
+            # (app.main), already covered above. (table_migration imports the stores by NAME, through
+            # importlib, so every process registers their SQL side -- not a reminder consumer.)
+            'app/services/calendar_notify_service.py',
         }, 'A new reminder consumer needs a deployment-role review')
         release_paths=['app/routers/admin.py','app/routers/auth.py',
             'app/services/relay_access_policy.py','app/services/reminder_service.py',

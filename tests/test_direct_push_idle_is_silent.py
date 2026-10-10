@@ -24,8 +24,8 @@ SCALE = 400
 
 
 @pytest.fixture()
-def direct_db(monkeypatch):
-    return server_tests.direct_db.__wrapped__(monkeypatch)
+def direct_db(tmp_path, monkeypatch):
+    yield from server_tests.direct_db.__wrapped__(tmp_path, monkeypatch)
 
 
 class _FastAsyncio:
@@ -51,7 +51,7 @@ def _run_idle(monkeypatch, sid, seconds, before=None):
         task = asyncio.create_task(direct.serve(Socket(), sid))
         if before:
             await asyncio.sleep(.02)
-            before()
+            await asyncio.to_thread(before)      # the worker enqueues from a thread, never the loop
         await asyncio.sleep(seconds / SCALE)
         task.cancel()
         await task

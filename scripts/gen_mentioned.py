@@ -45,11 +45,10 @@ CONFETTI = [(255, 80, 120), (80, 200, 255), (255, 220, 60), (120, 230, 120), (19
 
 
 def generate(dst):
-    from sqlalchemy import text
     from app.database import SessionLocal
     db = SessionLocal()
-    key = db.execute(text("select k.key from api_keys k join users u on u.id=k.user_id "
-                          "where u.is_admin and k.is_active order by k.id limit 1")).scalar()
+    from app.services import api_key_store
+    key = api_key_store.pick_key(db, admin=True, active=True)
     db.close()
     body = json.dumps({"prompt": PROMPT, "negative_prompt": NEGATIVE, "width": 832, "height": 1216, "seed": SEED}).encode()
     req = urllib.request.Request("http://127.0.0.1:3051/api/generate-image", data=body,

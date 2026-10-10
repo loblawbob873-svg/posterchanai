@@ -89,16 +89,31 @@ def _by_name(bots, name):
     return next((b for b in bots if b.name == name), None)
 
 
+def _sql_all(db) -> list:
+    s, own = _session(db)
+    try:
+        from app.models import Bot
+        return [BotRow.from_sql(b) for b in s.query(Bot).all()]
+    finally:
+        if own:
+            s.close()
+
+
+def _sql_get(db, bot_id):
+    s, own = _session(db)
+    try:
+        from app.models import Bot
+        b = s.query(Bot).filter(Bot.id == bot_id).first()
+        return BotRow.from_sql(b) if b is not None else None
+    finally:
+        if own:
+            s.close()
+
+
 def all_bots(db=None) -> list:
     """Every bot, by name. Unavailable when the relay could not be asked."""
     if not table_gate.relay_mode(TABLE):
-        s, own = _session(db)
-        try:
-            from app.models import Bot
-            out = [BotRow.from_sql(b) for b in s.query(Bot).all()]
-        finally:
-            if own:
-                s.close()
+        out = _sql_all(db)
     else:
         out = [BotRow.from_row(k, r) for k, r in table_gate.rows(_t())]
     return sorted(out, key=lambda b: (b.name or "", b.id or 0))
@@ -106,7 +121,9 @@ def all_bots(db=None) -> list:
 
 async def aall_bots(db=None) -> list:
     if not await table_gate.arelay_mode(TABLE):
-        return all_bots(db)
+        # SQL directly: `all_bots` would ask the gate again, synchronously, which on the event loop can only
+        # answer from memory (the markers may not be loaded yet)
+        return sorted(_sql_all(db), key=lambda b: (b.name or "", b.id or 0))
     return sorted((BotRow.from_row(k, r) for k, r in await table_gate.arows(_t())),
                   key=lambda b: (b.name or "", b.id or 0))
 
@@ -117,14 +134,7 @@ def get(db, bot_id):
     except (TypeError, ValueError):
         return None
     if not table_gate.relay_mode(TABLE):
-        s, own = _session(db)
-        try:
-            from app.models import Bot
-            b = s.query(Bot).filter(Bot.id == bot_id).first()
-            return BotRow.from_sql(b) if b is not None else None
-        finally:
-            if own:
-                s.close()
+        return _sql_get(db, bot_id)
     r = table_gate.get_row(_t(), str(bot_id))
     return BotRow.from_row(bot_id, r) if r is not None else None
 
@@ -135,7 +145,7 @@ async def aget(db, bot_id):
     except (TypeError, ValueError):
         return None
     if not await table_gate.arelay_mode(TABLE):
-        return get(db, bot_id)
+        return _sql_get(db, bot_id)
     r = await table_gate.aget_row(_t(), str(bot_id))
     return BotRow.from_row(bot_id, r) if r is not None else None
 

@@ -154,8 +154,9 @@ class TestSupersededManifestBlobs(unittest.TestCase):
         src = " ".join(inspect.getsource(blossom_service._cleanup_once).split())
         self.assertIn("conds = [explicit]", src,
                       "an explicit per-blob expiry must apply to every blob")
-        self.assertIn("and_(BlossomBlob.keep.is_(False), BlossomBlob.created_at", src,
+        self.assertIn("return (not b.keep) and b.created_at", src,
                       "the ADMIN's age rule must still never touch a keep blob")
+        # (behaviourally, against the real index: tests/test_blossom_keep.py)
 
     def test_release_is_gated_on_ownership(self):
         """A crafted manifest naming somebody else's sha must not delete their bytes."""
@@ -163,11 +164,11 @@ class TestSupersededManifestBlobs(unittest.TestCase):
 
         seen = {}
 
-        def _owner(db, sha, pk):
+        async def _owner(db, sha, pk):
             seen["asked"] = True
             return False
 
-        def _release(*a, **k):
+        async def _release(*a, **k):
             raise AssertionError("released a blob this user does not own")
 
         with mock.patch.object(bs, "is_owner", _owner), \
@@ -179,11 +180,13 @@ class TestSupersededManifestBlobs(unittest.TestCase):
         """Blossom dedups, so one set of bytes can be referenced by several accounts."""
         from app.services import blossom_service as bs
 
-        expired = mock.MagicMock()
-        with mock.patch.object(bs, "is_owner", lambda *a: True), \
-                mock.patch.object(bs, "release_owner", lambda *a: 1), \
+        expired = mock.AsyncMock()
+        released = mock.AsyncMock(return_value=1)
+        with mock.patch.object(bs, "is_owner", mock.AsyncMock(return_value=True)), \
+                mock.patch.object(bs, "release_owner", released), \
                 mock.patch.object(bs, "expire_blob_in", expired):
             asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))
+        released.assert_awaited_once()
         expired.assert_not_called()
 
     def test_the_last_owner_leaves_a_week_of_grace(self):
@@ -192,10 +195,12 @@ class TestSupersededManifestBlobs(unittest.TestCase):
         from app.services import blossom_service as bs
 
         got = {}
-        with mock.patch.object(bs, "is_owner", lambda *a: True), \
-                mock.patch.object(bs, "release_owner", lambda *a: 0), \
-                mock.patch.object(bs, "expire_blob_in",
-                                  lambda db, sha, days: got.update(sha=sha, days=days)):
+
+        async def _expire(db, sha, days):
+            got.update(sha=sha, days=days)
+        with mock.patch.object(bs, "is_owner", mock.AsyncMock(return_value=True)), \
+                mock.patch.object(bs, "release_owner", mock.AsyncMock(return_value=0)), \
+                mock.patch.object(bs, "expire_blob_in", _expire):
             asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))
         self.assertEqual(got.get("sha"), "a" * 64)
         self.assertGreaterEqual(got.get("days", 0), 1, "no recovery window at all")
@@ -205,8 +210,8 @@ class TestSupersededManifestBlobs(unittest.TestCase):
         a failed one."""
         from app.services import blossom_service as bs
 
-        def _boom(*a, **k):
-            raise RuntimeError("db gone")
+        async def _boom(*a, **k):
+            raise RuntimeError("index gone")
 
         with mock.patch.object(bs, "is_owner", _boom):
             asyncio.run(C._release_sync_blob(mock.MagicMock(), "a" * 64, "b" * 64))   # must not raise

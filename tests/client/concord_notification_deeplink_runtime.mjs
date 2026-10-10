@@ -11,7 +11,9 @@ const rooms=[
   {name:'Cold',communityId:'community:cold',naddr:'cold',channels:[{name:'general'}],
    cord:{bundle:{relays:['wss://relay.example']}}},
 ];
-data.set('pc.concord.invites',JSON.stringify(rooms));
+// Rooms are kept PER ACCOUNT, keyed on the signed-in viewer (window.__PC.viewer below).
+const PK='a'.repeat(64);
+data.set('pc.concord.rooms.v1.'+PK,JSON.stringify(rooms));
 data.set('pc.concord.test.target.support-id',JSON.stringify([{id:'message:42',by:'Ada',text:'target',at:1}]));
 const row={dataset:{messageId:'message:42'},classList:{add(x){this.added=x;},remove(){}},isConnected:true,
   scrollIntoView(options){this.scrolled=options;}};
@@ -26,7 +28,7 @@ globalThis.document={body:{classList:classes},head:{appendChild(){}},documentEle
   querySelectorAll:s=>s==='.cc-message[data-message-id]'?[row,coldRow]:[],addEventListener(){},removeEventListener(){}};
 globalThis.window=globalThis; window.matchMedia=()=>({matches:false}); window.requestAnimationFrame=f=>f();
 window.addEventListener=()=>{}; window.removeEventListener=()=>{};
-window.__PC={isView:v=>v==='concord',$:s=>s==='#feed'?feed:null,$$:()=>[],enc:String,viewer:()=>({}),
+window.__PC={isView:v=>v==='concord',$:s=>s==='#feed'?feed:null,$$:()=>[],enc:String,viewer:()=>({pubkey:PK}),
   profOf:()=>({}),linkify:String,linkCardHtml:()=>'',hydrateLinkCards(){},LOGO:''};
 window.__PC.relayQueryFrom=async()=>[{id:'relay-wrap'}];
 window.PosterCordReader={

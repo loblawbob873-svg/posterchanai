@@ -32,17 +32,25 @@ ORIGIN = os.environ.get("PC_ORIGIN", "http://127.0.0.1:3051")
 
 
 def _blob():
-    """A real keep blob and its stored size, straight from the relay's own database."""
+    """A real keep blob and its stored size, from the node's blob index (the newest documents of it --
+    one recent keep blob is all this needs, so the whole index is not loaded)."""
     if len(sys.argv) > 1:
         return sys.argv[1], None
     sys.path.insert(0, ROOT)
-    from app.database import SessionLocal          # noqa: E402
-    from sqlalchemy import text                    # noqa: E402
-    db = SessionLocal()
-    row = db.execute(text("select sha256, size from blossom_blobs "
-                          "where keep=true and size between 50000 and 900000 "
-                          "order by created_at desc limit 1")).fetchone()
-    return (row[0], row[1]) if row else (None, None)
+    import asyncio                                 # noqa: E402
+    import urllib.parse                            # noqa: E402
+    from app.services import nostr_store           # noqa: E402
+    from app.services.doc_table import DocTable, _operator   # noqa: E402
+    from app.services.relay_reader import relay_port         # noqa: E402
+    sk, _pk = _operator()
+    prefix = DocTable("blossom_blobs").prefix
+    docs = asyncio.run(nostr_store.list_docs(relay_port(), prefix, seckey=sk, limit=500, strict=True))
+    best = None
+    for d, row in docs.items():
+        if isinstance(row, dict) and row.get("keep") and 50000 <= int(row.get("size") or 0) <= 900000:
+            if best is None or int(row.get("created_at") or 0) > best[2]:
+                best = (urllib.parse.unquote(d[len(prefix):]), int(row["size"]), int(row.get("created_at") or 0))
+    return (best[0], best[1]) if best else (None, None)
 
 
 PROBE = r"""(async () => {

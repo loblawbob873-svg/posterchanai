@@ -49,24 +49,16 @@ def stats() -> dict:
 
 # ------------------------------------------------------------------------------------ resolution
 
-def _puppet_row(pubkey: str):
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        return db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pubkey).first() if pubkey else None
-    finally:
-        db.close()
+async def _puppet_row(pubkey: str):
+    """The registry row of a puppet key. Raises relay_reader.Unavailable ("could not ask" is never "not
+    a fediverse account" -- read as that, a mention or reply would silently not be delivered)."""
+    from app.services import fedi_tables
+    return await fedi_tables.apuppet_by_pubkey(pubkey) if pubkey else None
 
 
-def _mirror_row(event_id: str):
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
-    try:
-        return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == event_id).first()
-    finally:
-        db.close()
+async def _mirror_row(event_id: str):
+    from app.services import fedi_tables
+    return await fedi_tables.adelivered_by_event(event_id) if event_id else None
 
 
 async def _event(event_id: str, *, strict: bool = False) -> dict | None:
@@ -92,7 +84,7 @@ async def resolve_pubkey(pubkey: str) -> dict:
             # of ours opened poster.place in a new tab instead of the profile inside Akkoma.
             return {"href": href, "url": f"{config.base_url()}/@{await actors.ap_handle(pubkey)}",
                     "name": f"@{shown}@{config.domain()}"}
-    row = _puppet_row(pubkey)
+    row = await _puppet_row(pubkey)
     # A blocked ACCOUNT (a `user@host` line, or its puppet npub on the relay blocklist) is as out of
     # reach as a blocked instance: a member's mention or reply must not deliver to it either.
     if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)) \
@@ -109,9 +101,9 @@ async def resolve_event(event_id: str) -> dict:
     """{"uri", "actor", "remote"} for an event that exists on the fediverse, else {}: a mirrored note
     (its original URI and author) or a member's own post (our object URL)."""
     base = config.base_url()
-    row = _mirror_row(event_id)
+    row = await _mirror_row(event_id)
     if row and row.note_uri:
-        prow = _puppet_row(row.nostr_pubkey or "")
+        prow = await _puppet_row(row.nostr_pubkey or "")
         actor_id = (await _canonical(prow.actor_uri))[0] or prow.actor_uri if prow else ""
         return {"uri": row.note_uri, "actor": actor_id, "remote": True}
     ev = await _event(event_id, strict=True)      # unanswered: raise, never "a Nostr-only thread"
@@ -446,7 +438,7 @@ async def _follows(ev: dict, member: str, me: str) -> list:
     wanted = {}
     for t in ev.get("tags") or []:
         if len(t) > 1 and t[0] == "p":
-            row = _puppet_row(t[1])
+            row = await _puppet_row(t[1])
             if row and row.actor_uri and not config.host_blocked(remote.host_of(row.actor_uri)):
                 wanted[row.actor_uri] = True
     current = await state.following(member)
@@ -504,7 +496,7 @@ async def _vote(ev: dict, member: str, me: str) -> list:
     the poll's author (the only server that counts it). A vote on a poll that lives on Nostr is
     tallied here and reaches the fediverse as the poll's Update(Question) instead."""
     poll_id = next((t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "e" and len(t[1]) == 64), "")
-    row = _mirror_row(poll_id) if poll_id else None
+    row = await _mirror_row(poll_id) if poll_id else None
     if not row or not row.note_uri:
         return []
     poll = await _event(poll_id)
@@ -517,7 +509,7 @@ async def _vote(ev: dict, member: str, me: str) -> list:
         return []
     if not convert.poll_multi(poll):
         chosen = chosen[:1]
-    prow = _puppet_row(row.nostr_pubkey or "")
+    prow = await _puppet_row(row.nostr_pubkey or "")
     author, inbox = await _canonical(prow.actor_uri) if prow and prow.actor_uri else ("", "")
     if not author or not inbox or config.host_blocked(remote.host_of(author)):
         return []
@@ -790,6 +782,14 @@ async def tick() -> int:
         return 0
     if not settings_store.is_hydrated():
         return 0          # "is the Pleroma bridge on?" and friends cannot be answered yet -- decide nothing
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
+    try:
+        await fedi_tables.aready()
+    except Unavailable as e:
+        # "Is this a puppet / a mirrored note?" cannot be answered: deliver nothing, move no cursor.
+        logger.info("[activitypub] delivery waits: %s", e)
+        return 0
     _stats["last_tick"] = int(time.time())
     await _flush_retries()
     try:
@@ -1008,7 +1008,7 @@ async def _everyone_filter():
     Returns an async predicate over a whole PAGE, so "is this a mirrored note?" is one query per
     page rather than one per event (almost every reply and reaction carries an `e` tag)."""
     followed = await state.nostr_users_with_followers()     # raises on a failed read: stop the pass
-    puppets = _puppet_set()
+    puppets = await _puppet_set()
     from app.services.activitypub import relays
     to_relays = relays.scope() == "everyone" and bool(await relays.accepted_inboxes())
 
@@ -1020,12 +1020,12 @@ async def _everyone_filter():
 
     async def page(evs: list) -> set:
         refs = {t[1] for ev in evs for t in ev.get("tags") or [] if len(t) > 1 and t[0] in ("e", "E")}
-        mirrored = _mirrored_among(refs)
+        mirrored = await _mirrored_among(refs)
         deletions = [ev for ev in evs if ev.get("kind") == 5]
         gone_ids = {t[1] for ev in deletions for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "e"}
         gone = await _events(list(gone_ids)) if gone_ids else {}
         gone_refs = {t[1] for g in gone.values() for t in g.get("tags") or [] if len(t) > 1 and t[0] in ("e", "E")}
-        mirrored |= _mirrored_among(gone_refs)
+        mirrored |= await _mirrored_among(gone_refs)
         ok = set()
         for ev in evs:
             pk = ev.get("pubkey", "")
@@ -1070,24 +1070,18 @@ async def _events(ids: list) -> dict:
     return {e["id"]: e for e in evs if isinstance(e, dict) and e.get("id")}
 
 
-def _puppet_set() -> frozenset:
+async def _puppet_set() -> frozenset:
     from app.services.activitypub import dm
-    return dm._puppet_pubkeys()
+    return await dm._apuppet_pubkeys()
 
 
-def _mirrored_among(event_ids) -> set:
-    """Which of these event ids are notes mirrored from the fediverse -- ONE query."""
+async def _mirrored_among(event_ids) -> set:
+    """Which of these event ids are notes mirrored from the fediverse -- ONE pass over the ledger."""
     ids = list(event_ids)[:2000]
     if not ids:
         return set()
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
-    try:
-        return {eid for (eid,) in db.query(FediBridgeDelivered.nostr_event_id).filter(
-            FediBridgeDelivered.nostr_event_id.in_(ids), FediBridgeDelivered.note_uri.isnot(None)).all()}
-    finally:
-        db.close()
+    from app.services import fedi_tables
+    return await fedi_tables.amirrored_among(ids)
 
 
 # THE CURSOR IS A `created_at`, AND `created_at` IS WHAT THE AUTHOR SAYS, NOT WHEN IT ARRIVED. An

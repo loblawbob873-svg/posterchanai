@@ -59,11 +59,11 @@ CHARACTERS = {
 
 
 def api_key():
-    from sqlalchemy import text
     from app.database import SessionLocal
     db = SessionLocal()
     try:
-        return db.execute(text("select key from api_keys where user_id=1 order by id limit 1")).scalar()
+        from app.services import api_key_store
+        return api_key_store.pick_key(db, user_id=1)
     finally:
         db.close()
 

@@ -8,7 +8,9 @@ from datetime import datetime
 import logging
 from app.database import get_db
 from app.utils import lb_auth
-from app.models import User, ExternalStorage
+from app.models import User
+from app.services.relay_reader import Unavailable
+from app.services import user_table
 from app.schemas import UserCreate, UserResponse, SettingsUpdate, SettingsResponse
 from app.auth import get_admin_user, get_password_hash
 from app.services.email_service import get_email_service
@@ -105,109 +107,11 @@ def _validate_mount_point(mount_point: str) -> bool:
     return True
 
 
-# Who may use a mount: the `external_storage_users` junction (user ids) + the accounts table (#161: accounts are
-# user_table rows, not ORM objects a relationship could load).
-def _mount_user_ids(db, mount_id) -> list:
-    from app.models import external_storage_users as J
-    return sorted(int(r[0]) for r in db.execute(J.select().with_only_columns(J.c.user_id)
-                                               .where(J.c.external_storage_id == mount_id)).all())
-
-
-def _set_mount_users(db, mount_id, user_ids) -> None:
-    """Replace the mount's allowed users with the EXISTING accounts among `user_ids` (in the caller's
-    transaction -- the caller commits)."""
-    from app.models import external_storage_users as J
-    from app.services import user_table
-    want = {int(i) for i in user_ids or []}
-    keep = sorted(u.id for u in user_table.filter_users(db, lambda u: u.id in want)) if want else []
-    db.execute(J.delete().where(J.c.external_storage_id == mount_id))
-    for uid in keep:
-        db.execute(J.insert().values(external_storage_id=mount_id, user_id=uid))
-
-
-def _mount_users_info(db, mount_id) -> dict:
-    from app.services import user_table
-    ids = set(_mount_user_ids(db, mount_id))
-    users = user_table.filter_users(db, lambda u: u.id in ids) if ids else []
-    return {"allowed_user_ids": [u.id for u in users],
-            "allowed_users": [{"id": u.id, "username": u.username, "email": u.email} for u in users]}
-
-
-@router.get("/external-storage", response_model=List[ExternalStorageResponse])
-def get_external_storage(
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
-):
-    """Get all external storage mounts with user access info."""
-    mounts = db.query(ExternalStorage).order_by(ExternalStorage.name).all()
-    result = []
-    for mount in mounts:
-        mount_dict = {
-            "id": mount.id,
-            "name": mount.name,
-            "mount_path": mount.mount_path,
-            "mount_point": mount.mount_point,
-            "description": mount.description,
-            "is_active": mount.is_active,
-            "created_at": mount.created_at,
-            "updated_at": mount.updated_at,
-            **_mount_users_info(db, mount.id),
-        }
-        result.append(mount_dict)
-    return result
-
-
-@router.post("/external-storage", response_model=ExternalStorageResponse, status_code=status.HTTP_201_CREATED)
-def create_external_storage(
-    data: ExternalStorageCreate,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user)
-):
-    """Create a new external storage mount."""
-    # Validate mount path
-    if not _validate_external_storage_path(data.mount_path):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid mount path. Path must be absolute, exist, be a directory, and be readable."
-        )
-    
-    # Validate mount point
-    if not _validate_mount_point(data.mount_point):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid mount point. Must be alphanumeric with dashes/underscores only."
-        )
-    
-    # Check if mount point already exists
-    existing = db.query(ExternalStorage).filter(
-        ExternalStorage.mount_point == data.mount_point
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Mount point '{data.mount_point}' already exists"
-        )
-    
-    # Create mount
-    mount = ExternalStorage(
-        name=data.name,
-        mount_path=data.mount_path,
-        mount_point=data.mount_point,
-        description=data.description,
-        is_active=data.is_active
-    )
-    
-    db.add(mount)
-    db.flush()                                  # the mount's id, for its allowed-users rows
-    # Set allowed users if provided
-    if data.allowed_user_ids:
-        _set_mount_users(db, mount.id, data.allowed_user_ids)
-    db.commit()
-    db.refresh(mount)
-    
-    logger.info(f"Created external storage mount: {mount.name} -> {mount.mount_path} (mount_point: {mount.mount_point})")
-    
-    # Return with user info
+def _mount_out(db, mount) -> dict:
+    """A mount as Admin → Storage shows it, with the users allowed on it (only accounts that still exist)."""
+    ids = list(mount.allowed_user_ids or [])
+    want = {int(i) for i in ids}
+    users = user_table.filter_users(db, lambda u: u.id in want) if want else []
     return {
         "id": mount.id,
         "name": mount.name,
@@ -217,8 +121,72 @@ def create_external_storage(
         "is_active": mount.is_active,
         "created_at": mount.created_at,
         "updated_at": mount.updated_at,
-        **_mount_users_info(db, mount.id),
+        "allowed_user_ids": [user.id for user in users],
+        "allowed_users": [
+            {"id": user.id, "username": user.username, "email": user.email}
+            for user in users
+        ]
     }
+
+
+def _mounts_unavailable():
+    return HTTPException(status_code=503, detail="External storage mounts cannot be read right now; try again shortly")
+
+
+@router.get("/external-storage", response_model=List[ExternalStorageResponse])
+def get_external_storage(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Get all external storage mounts with user access info."""
+    from app.services import external_storage_store as es
+    try:
+        mounts = es.all_mounts()
+    except Unavailable:
+        raise _mounts_unavailable()
+    return [_mount_out(db, m) for m in mounts]
+
+
+@router.post("/external-storage", response_model=ExternalStorageResponse, status_code=status.HTTP_201_CREATED)
+def create_external_storage(
+    data: ExternalStorageCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Create a new external storage mount."""
+    from app.services import external_storage_store as es
+    # Validate mount path
+    if not _validate_external_storage_path(data.mount_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount path. Path must be absolute, exist, be a directory, and be readable."
+        )
+
+    # Validate mount point
+    if not _validate_mount_point(data.mount_point):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mount point. Must be alphanumeric with dashes/underscores only."
+        )
+
+    try:
+        # Check if mount point already exists
+        if es.by_mount_point(data.mount_point):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Mount point '{data.mount_point}' already exists"
+            )
+        allowed = []
+        if data.allowed_user_ids:
+            _want = {int(i) for i in data.allowed_user_ids}; allowed = [u.id for u in user_table.filter_users(db, lambda u: u.id in _want)]
+        mount = es.save({"name": data.name, "mount_path": data.mount_path, "mount_point": data.mount_point,
+                         "description": data.description, "is_active": data.is_active,
+                         "allowed_user_ids": allowed})
+    except Unavailable:
+        raise _mounts_unavailable()
+
+    logger.info(f"Created external storage mount: {mount.name} (mount_point: {mount.mount_point})")
+    return _mount_out(db, mount)
 
 
 @router.put("/external-storage/{mount_id}", response_model=ExternalStorageResponse)
@@ -229,69 +197,60 @@ def update_external_storage(
     admin: User = Depends(get_admin_user)
 ):
     """Update an external storage mount."""
-    mount = db.query(ExternalStorage).filter(ExternalStorage.id == mount_id).first()
+    from app.services import external_storage_store as es
+    try:
+        mount = es.get(mount_id)
+    except Unavailable:
+        raise _mounts_unavailable()
     if not mount:
         raise HTTPException(status_code=404, detail="External storage mount not found")
-    
+
     # Validate mount path if provided
     if data.mount_path and not _validate_external_storage_path(data.mount_path):
         raise HTTPException(
             status_code=400,
             detail="Invalid mount path. Path must be absolute, exist, be a directory, and be readable."
         )
-    
+
     # Validate mount point if provided
     if data.mount_point and not _validate_mount_point(data.mount_point):
         raise HTTPException(
             status_code=400,
             detail="Invalid mount point. Must be alphanumeric with dashes/underscores only."
         )
-    
-    # Check if mount point conflicts with another mount
-    if data.mount_point and data.mount_point != mount.mount_point:
-        existing = db.query(ExternalStorage).filter(
-            ExternalStorage.mount_point == data.mount_point,
-            ExternalStorage.id != mount_id
-        ).first()
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Mount point '{data.mount_point}' already exists"
-            )
-    
-    # Update fields
-    if data.name is not None:
-        mount.name = data.name
-    if data.mount_path is not None:
-        mount.mount_path = data.mount_path
-    if data.mount_point is not None:
-        mount.mount_point = data.mount_point
-    if data.description is not None:
-        mount.description = data.description
-    if data.is_active is not None:
-        mount.is_active = data.is_active
-    
-    # Update allowed users if provided
-    if data.allowed_user_ids is not None:
-        _set_mount_users(db, mount.id, data.allowed_user_ids)
-    
-    db.commit()
-    db.refresh(mount)
-    
+
+    try:
+        # Check if mount point conflicts with another mount
+        if data.mount_point and data.mount_point != mount.mount_point:
+            if es.by_mount_point(data.mount_point, exclude_id=mount_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Mount point '{data.mount_point}' already exists"
+                )
+
+        # Update fields
+        if data.name is not None:
+            mount.name = data.name
+        if data.mount_path is not None:
+            mount.mount_path = data.mount_path
+        if data.mount_point is not None:
+            mount.mount_point = data.mount_point
+        if data.description is not None:
+            mount.description = data.description
+        if data.is_active is not None:
+            mount.is_active = data.is_active
+
+        # Update allowed users if provided
+        if data.allowed_user_ids is not None:
+            want = {int(i) for i in data.allowed_user_ids}
+            mount.allowed_user_ids = [u.id for u in user_table.filter_users(db, lambda u: u.id in want)]
+
+        mount = es.save(dict(mount))
+    except Unavailable:
+        raise _mounts_unavailable()
+
     logger.info(f"Updated external storage mount: {mount.name}")
-    
-    # Return with user info
-    return {
-        "id": mount.id,
-        "name": mount.name,
-        "mount_path": mount.mount_path,
-        "mount_point": mount.mount_point,
-        "description": mount.description,
-        "is_active": mount.is_active,
-        "created_at": mount.created_at,
-        "updated_at": mount.updated_at,
-        **_mount_users_info(db, mount.id),
-    }
+    return _mount_out(db, mount)
 
 
 @router.delete("/external-storage/{mount_id}")
@@ -301,18 +260,16 @@ def delete_external_storage(
     admin: User = Depends(get_admin_user)
 ):
     """Delete an external storage mount."""
-    mount = db.query(ExternalStorage).filter(ExternalStorage.id == mount_id).first()
-    if not mount:
-        raise HTTPException(status_code=404, detail="External storage mount not found")
-    
-    name = mount.name
-    # Core deletes, not db.delete(mount): the ORM would load the `allowed_users` relationship (account rows)
-    # just to remove the junction rows.
-    _set_mount_users(db, mount_id, [])
-    db.execute(ExternalStorage.__table__.delete().where(ExternalStorage.__table__.c.id == mount_id))
-    db.commit()
-    
-    logger.info(f"Deleted external storage mount: {name}")
+    from app.services import external_storage_store as es
+    try:
+        mount = es.get(mount_id)
+        if not mount:
+            raise HTTPException(status_code=404, detail="External storage mount not found")
+        es.delete(mount_id)
+    except Unavailable:
+        raise _mounts_unavailable()
+
+    logger.info(f"Deleted external storage mount: {mount.name}")
     return {"message": "External storage mount deleted"}
 
 
@@ -905,7 +862,7 @@ def update_settings(
             try:
                 from app.services import fedi_blocklist
                 from app.services.nostr_relay.thread import trigger_delete_author
-                pks = fedi_blocklist.blocked_puppet_pubkeys(db, settings_store.get("fedi_bridge_blocked_domains", "") or "")
+                pks = fedi_blocklist.blocked_puppet_pubkeys(settings_store.get("fedi_bridge_blocked_domains", "") or "")
                 if pks:
                     trigger_delete_author(pks)
                     logger.info(f"[Admin] instance block: removing stored posts of {len(pks)} fediverse account(s)")
@@ -1183,19 +1140,24 @@ def delete_user(
         # Manually delete related records in the correct order to avoid foreign key violations
         # This is necessary because existing databases might not have CASCADE constraints
 
-        from app.models import APIKey, VerificationToken
+        # The DocTable rows that belonged to this account (#161) go FIRST, and must all go: an API key
+        # or a share link left behind would outlive the account. Unreadable -> nothing is deleted (503).
+        from app.services import api_key_store, external_storage_store, share_store, verification_store
+        from app.services.relay_reader import Unavailable
+        try:
+            api_key_store.delete_for_user(user_id)
+            verification_store.delete_for_user(user_id)
+            share_store.delete_for_user(user_id)
+            external_storage_store.forget_user(user_id)
+        except Unavailable:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="The account's keys and links cannot be removed right now; the account was not deleted")
 
         # 1-2. Legacy SQL conversations + their plaintext transcript rows, 7. legacy SQL user settings
         conversation_table.delete_legacy_sql_rows(db, user_id)
         user_settings_table.delete_legacy_sql_rows(db, user_id)
         
-        # 8. Delete API keys
-        db.query(APIKey).filter(APIKey.user_id == user_id).delete(synchronize_session=False)
-        
-        # 9. Delete verification tokens
-        db.query(VerificationToken).filter(VerificationToken.user_id == user_id).delete(synchronize_session=False)
-
-        # 10. Legacy SQL Exodus wallet backup rows (the FK), committed with the rows above
+        # 10. Legacy SQL Exodus wallet backup rows (the FK)
         from app.services import exodus_tables
         exodus_tables.delete_legacy_sql_rows(db, user_id)
         db.commit()
@@ -1212,9 +1174,19 @@ def delete_user(
             from app.services import users_store
             users_store.delete_user_blocking(db, npub)
 
+        # Reminders, scheduled posts, pins and reply mappings left Postgres (#161), so the FK cascade that used
+        # to remove them is gone: remove them here. Best-effort -- the account is already deleted.
+        try:
+            from app.services import app_tables
+            app_tables.purge_user(user_id)
+        except Exception as e:
+            logger.warning(f"User {user_id}: app-table rows not removed: {e}")
+
         logger.info(f"User {user_id} ({user.username}) deleted by admin {admin.id}")
         return {"message": "User deleted"}
 
+    except HTTPException:
+        raise
     except Unavailable:
         db.rollback()
         raise                                   # "could not ask" -> 503, retry; never a 500
@@ -1862,6 +1834,10 @@ async def blossom_scan(
         want = int(body.get("limit") or 0)
         out = await blossom_service.scan_store(db, limit=max(0, min(want, 500000)),
                                                deep=bool(body.get("deep")))
+    except blossom_service.Unavailable as e:
+        # The index is still loading (or the relay is down): no verdict at all, rather than one about
+        # part of the store.
+        raise HTTPException(status_code=503, detail="blob index not readable yet: %s" % e)
     except Exception as e:
         logger.error("blossom scan failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -1890,7 +1866,10 @@ async def blossom_forget_missing(
     shas = [s for s in (payload.get("shas") or []) if isinstance(s, str) and len(s) == 64]
     if not shas:
         return {"ok": True, "removed": 0, "kept": 0, "unknown": 0}
-    out = await blossom_service.forget_missing(db, shas)
+    try:
+        out = await blossom_service.forget_missing(db, shas)
+    except blossom_service.Unavailable as e:
+        raise HTTPException(status_code=503, detail="blob index not readable — nothing was dropped: %s" % e)
     logger.info("[admin] blossom forget-missing: dropped %d, kept %d (still there), %d unanswered%s",
                 out.get("removed", 0), out.get("kept", 0), out.get("unknown", 0),
                 (" — REFUSED: " + out["refused"]) if out.get("refused") else "")

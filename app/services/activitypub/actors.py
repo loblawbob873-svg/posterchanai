@@ -82,26 +82,22 @@ def puppet_blocked(actor_id: str, acct: str = "") -> bool:
     if ck in _puppet_block_cache:
         return _puppet_block_cache[ck]
     keys = set()
+    read_ok = True
     try:
-        from sqlalchemy import func, or_
-        from app.database import SessionLocal
-        from app.models import FediPuppet
-        db = SessionLocal()
-        try:
-            conds = [FediPuppet.actor_uri == actor_id.split("#")[0]]
-            if acct:
-                conds.append(func.lower(FediPuppet.acct) == acct.lower().lstrip("@"))
-            keys |= {pk for (pk,) in db.query(FediPuppet.pubkey_hex).filter(or_(*conds)).all() if pk}
-        finally:
-            db.close()
+        from app.services import fedi_tables
+        uri, low = actor_id.split("#")[0], (acct or "").lower().lstrip("@")
+        keys |= {r.pubkey_hex for r in fedi_tables.all_puppets()
+                 if r.pubkey_hex and (r.actor_uri == uri or (low and (r.acct or "").lower() == low))}
     except Exception:
-        pass
+        read_ok = False           # the derived key below is still checked; the answer is not cached
     try:
         from app.services import fedi_bridge_identity as ident
         keys.add(ident.puppet_for({"url": actor_id.split("#")[0], "acct": acct or ""})["pubkey_hex"])
     except Exception:
         pass
     hit = any(k.lower() in blocked for k in keys)
+    if not read_ok and not hit:
+        return hit
     if len(_puppet_block_cache) > 5000:
         _puppet_block_cache.clear()
         _puppet_block_cache["set"] = blocked
@@ -379,22 +375,19 @@ async def _is_native_nostr_account(pk: str, *, strict: bool = False) -> bool:
     bridge. A fediverse puppet (ours) or a mirror account (Mostr and friends, whose profiles carry
     a `proxy` or `fedibridge` tag) served as `npub…@<our domain>` would put a copy of a fediverse
     person under this domain -- followable, messageable, signing as them."""
-    if is_puppet(pk):
-        return False
+    from app.services import fedi_tables
+    from app.services.relay_reader import Unavailable
+    try:
+        if await fedi_tables.apuppet_by_pubkey(pk) is not None:
+            return False
+    except Unavailable as e:
+        # The puppet registry could not be read: "is this one of ours?" has no answer, and a guess of
+        # "no" would serve a fediverse person's puppet as a native account of this domain.
+        raise RelayUnavailable("the puppet registry could not be read") from e
     ev = await profile_event(pk, strict=strict)
     if not ev:
         return False
     return not any(t and t[0] in ("proxy", "fedibridge") for t in ev.get("tags") or [])
-
-
-def is_puppet(pk: str) -> bool:
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        return db.query(FediPuppet.pubkey_hex).filter(FediPuppet.pubkey_hex == pk).first() is not None
-    finally:
-        db.close()
 
 
 def pubkey_of_actor_url(url: str) -> str:

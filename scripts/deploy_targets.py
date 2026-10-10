@@ -146,7 +146,12 @@ _OWNED = (
     # The cron runs in the worker and the "Run Logs" BUTTON runs in the app — one entry point,
     # run_logs_for_admin, shared by both (and by the /logs command). A lazy import in admin.py.
     ("app/services/logs_scheduler.py", (APP, WORKER)),
-    ("app/services/social_notifications_service.py", (WORKER,)),
+    # The poller runs in the worker; the Telegram webhook in the APP calls its handle_reply (lazily).
+    ("app/services/social_notifications_service.py", (APP, WORKER)),
+    # (#161 app tables on DocTable -- app_tables, table_migration, doc_table, the stores -- are NOT listed:
+    # every process binds the moving tables to SQL at start (main, worker, role_runner), so the measured
+    # import closures below are the honest owners. A hand entry here went stale the day the worker started
+    # binding, and under-restarting this code ships it running nowhere.)
     ("app/services/uptime_service.py", (WORKER,)),
     # THE APP IMPORTS THIS TOO, and lazily — which is the trap. `app/routers/admin.py` does
     # `from app.services.stats_bot_service import build_stats` INSIDE the Preview and Run endpoints,

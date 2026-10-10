@@ -280,14 +280,104 @@
   let liveWarned='';   // the last live-sync failure reported — see refreshActiveChannel
   let resumeRequested=false;
   let actionDismissOff=null;
-  function saved(){ try{ const v=cordJsonParse(localStorage.getItem('pc.concord.invites')||'[]'); if(!Array.isArray(v))return []; const clean=uniqueRooms(v);if(clean.length!==v.length){preserveRoomSelection(v,clean);writeRooms(clean);}return clean; }catch(_){ return []; } }
-  function writeRooms(v){try{localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value));}catch(_){}}
+  /* THE COMMUNITIES ON THIS SCREEN BELONG TO THE ACCOUNT SIGNED IN, NOT TO THE DEVICE.
+   *
+   * Reported as "using Concord with @beatboxserenade shows groups that profile is not in... the groups
+   * are those from [the other] profile": the joined-room list was ONE localStorage key for the whole
+   * browser profile, and the account switcher reloads the page without touching it -- so account B
+   * was drawn account A's rooms, swept them, and (via the vault backfill below) could publish them
+   * into B's OWN membership vault. Every piece of per-account Concord state is now keyed on the
+   * signed-in pubkey, the pattern cord-direct-invites.js and cord-invite-links.js already used: the
+   * room list, the open room, read markers, the mention cursors and ledger, declined invites and
+   * starred channels. No pubkey, no rooms -- a signed-out page owns nothing.
+   *
+   * The old shared list (`pc.concord.invites`) is FROZEN: never written and never deleted here. It can
+   * hold the rooms of every account that used this device, so it is handed out room by room, only to
+   * an account whose own evidence names the room -- see adoptLegacyRoom. */
+  const LEGACY_ROOMS_KEY='pc.concord.invites',ROOMS_KEY='pc.concord.rooms.v1.',ACTIVE_KEY='pc.concord.active.v1.',
+    ADOPTED_KEY='pc.concord.legacy-adopted.v1.';
+  function accountPk(){ try{ const p=PC(); return String(p&&p.viewer&&p.viewer().pubkey||''); }catch(_){ return ''; } }
+  function accountKey(base,pk=accountPk()){ return pk?base+pk:''; }
+  function saved(){ const key=accountKey(ROOMS_KEY); if(!key)return []; try{ const v=cordJsonParse(localStorage.getItem(key)||'[]'); if(!Array.isArray(v))return []; const clean=uniqueRooms(v);if(clean.length!==v.length){preserveRoomSelection(v,clean);writeRooms(clean);}return clean; }catch(_){ return []; } }
+  function writeRooms(v){const key=accountKey(ROOMS_KEY);if(!key)return;try{localStorage.setItem(key,JSON.stringify(v.slice(0,50),(k,value)=>k==='icon'&&/^blob:/i.test(String(value||''))?'':value));}catch(_){}}
+  function activeGet(){ const key=accountKey(ACTIVE_KEY); try{ return key?localStorage.getItem(key):null; }catch(_){ return null; } }
+  function activeSet(index){ const key=accountKey(ACTIVE_KEY); if(!key)return; try{ if(index==null)localStorage.removeItem(key); else localStorage.setItem(key,String(index)); }catch(_){} }
+  /* THE PRE-SEPARATION LIST, READ-ONLY. */
+  function legacyRooms(){ try{ const v=cordJsonParse(localStorage.getItem(LEGACY_ROOMS_KEY)||'[]'); return Array.isArray(v)?uniqueRooms(v.filter(r=>r&&typeof r==='object')):[]; }catch(_){ return []; } }
+  function legacyAdopted(pk){ try{ const v=JSON.parse(localStorage.getItem(ADOPTED_KEY+pk)||'[]'); return Array.isArray(v)?v.map(String):[]; }catch(_){ return []; } }
+  function noteLegacyAdopted(pk,room){
+    const id=roomIdentity(room);if(!pk||!id)return;
+    const rows=legacyAdopted(pk);if(rows.includes(id))return;
+    try{ localStorage.setItem(ADOPTED_KEY+pk,JSON.stringify([...rows,id].slice(-256))); }catch(_){}
+  }
+  /* The legacy record for `ref`, if this account has not already been handed it once. ONCE, because
+   * the legacy list never changes: a room adopted and then left would otherwise come straight back
+   * from it on the next pass. */
+  function legacyRoomFor(pk,ref){
+    if(!pk||!ref)return null;
+    const room=legacyRooms().find(r=>sameRoom(r,ref));
+    if(!room||legacyAdopted(pk).includes(roomIdentity(room))||wasLocallyLeft(pk,room))return null;
+    return room;
+  }
+  /* HAND ONE LEGACY ROOM TO ONE ACCOUNT -- called only where that account's own evidence names it
+   * (its decoded membership vault, its kind-10009 group list, a room whose bundle names it as owner,
+   * or the person choosing it in "Check my communities"). The room's per-room device state goes with
+   * it: read markers and stars were written under the shared keys too. The mention cursor does NOT --
+   * a cursor advanced while ANOTHER account read the room would hide this account's mentions, and a
+   * mention shown twice is the safe failure. Returns the record to add, or null. */
+  function adoptLegacyRoom(pk,ref){
+    const room=legacyRoomFor(pk,ref);if(!room)return null;
+    try{
+      const prefixes=[],naddr=String(room.naddr||''),star=String(room.communityId||room.naddr||room.url||'');
+      if(naddr)prefixes.push(['pc.concord.read.'+naddr,READ_KEY+pk+'.'+naddr]);
+      if(star)prefixes.push(['pc.concord.star.'+star+':',STAR_KEY+pk+'.'+star+':']);
+      const keys=[];for(let i=0;i<(localStorage.length||0);i++){const k=localStorage.key(i);if(k)keys.push(k);}
+      for(const k of keys)for(const [from,to] of prefixes){
+        if(k!==from&&!k.startsWith(from+':')&&!(from.endsWith(':')&&k.startsWith(from)))continue;
+        const target=to+k.slice(from.length);
+        if(localStorage.getItem(target)==null)localStorage.setItem(target,localStorage.getItem(k));
+      }
+    }catch(_){}
+    return JSON.parse(JSON.stringify(room));
+  }
+  /* Saved FIRST, marked "handed over" only once the account's list really holds it: a write that did
+   * not land must leave the room claimable, not adopted into nothing. */
+  function saveAdopted(pk,rooms,added){
+    if(!added.length)return 0;
+    save(rooms);
+    const now=saved();let kept=0;
+    for(const room of added)if(now.some(r=>sameRoom(r,room))){noteLegacyAdopted(pk,room);kept++;}
+    return kept;
+  }
+  /* Evidence that needs no network: a room whose own join bundle names this account as its owner. */
+  function adoptOwnedLegacyRooms(pk){
+    if(!pk)return false;
+    const rooms=saved(),added=[];
+    for(const room of legacyRooms()){
+      const b=room&&room.cord&&room.cord.bundle,owner=String(b&&(b.owner||b.creator_npub)||'');
+      if(owner!==pk||rooms.some(r=>sameRoom(r,room)))continue;
+      const got=adoptLegacyRoom(pk,room);if(got){rooms.push(got);added.push(got);}
+    }
+    return saveAdopted(pk,rooms,added)>0;
+  }
+  /* Rooms the old shared list holds that nothing has attributed to this account. Never shown as
+   * joined; listed in "Check my communities" so the person can say which are theirs. */
+  function unclaimedLegacyRooms(pk){
+    if(!pk)return [];
+    const mine=saved(),adopted=legacyAdopted(pk);
+    return legacyRooms().filter(r=>roomIdentity(r)&&!adopted.includes(roomIdentity(r))&&!mine.some(m=>sameRoom(m,r))&&!wasLocallyLeft(pk,r));
+  }
+  function claimLegacyRooms(pk,refs){
+    const rooms=saved(),added=[];
+    for(const ref of refs||[]){if(rooms.some(r=>sameRoom(r,ref)))continue;const got=adoptLegacyRoom(pk,ref);if(got){rooms.push(got);added.push(got);}}
+    return saveAdopted(pk,rooms,added);
+  }
   function save(v){const clean=uniqueRooms(v);preserveRoomSelection(v,clean);v.splice(0,v.length,...clean);writeRooms(v);}
   function preserveRoomSelection(before,after){
     const selected=state.community==null?null:before[state.community];
     if(selected){const index=after.findIndex(room=>sameRoom(room,selected));if(index>=0)state.community=index;}
-    const remembered=Number(localStorage.getItem('pc.concord.active')||0),room=before[remembered];
-    if(room){const index=after.findIndex(item=>sameRoom(item,room));if(index>=0)localStorage.setItem('pc.concord.active',String(index));}
+    const remembered=Number(activeGet()||0),room=before[remembered];
+    if(room){const index=after.findIndex(item=>sameRoom(item,room));if(index>=0)activeSet(String(index));}
   }
   function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${deliveryOwner(PC())}:${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
   function composerKey(room,channel){return `${deliveryOwner(PC())}:${room&&(room.communityId||room.naddr||room.url)||'home'}:${channel||'general'}`;}
@@ -414,8 +504,13 @@
     restoreChatScroll();
     return true;
   }
-  function handoffState(){ const room=state.community==null?null:saved()[state.community],key=scrollKey(),scroll=readScroll(key); return {room:room&&(room.communityId||room.naddr||room.url)||'',channel:state.channel||'general',mobileChatOpen:!!mobileChatOpen,mobileDrawerOpen:!!mobileDrawerOpen,scroll:{top:Number(scroll.top)||0,height:Number(scroll.height)||0,pinned:scroll.pinned!==false}}; }
-  function acceptHandoff(value){ const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(localStorage.getItem('pc.concord.active'))||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
+  function handoffState(){ if(pendingHandoff)return JSON.parse(JSON.stringify(pendingHandoff)); const room=state.community==null?null:saved()[state.community],key=scrollKey(),scroll=readScroll(key); return {room:room&&(room.communityId||room.naddr||room.url)||'',channel:state.channel||'general',mobileChatOpen:!!mobileChatOpen,mobileDrawerOpen:!!mobileDrawerOpen,scroll:{top:Number(scroll.top)||0,height:Number(scroll.height)||0,pinned:scroll.pinned!==false}}; }
+  /* A handoff that lands before anybody is signed in (concord.js evaluates before the session is
+   * restored) cannot be matched against a room list -- there is no account to own one yet. It is kept
+   * as it came and applied on the first render that has an account; until then it is still the state
+   * this window would hand on. */
+  let pendingHandoff=null;
+  function acceptHandoff(value){ if(!accountPk()){pendingHandoff=value&&typeof value==='object'?value:{};return;} pendingHandoff=null; const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(activeGet())||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
   function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
   function writeScroll(key,st){ scrollStates.set(key,st); try{ sessionStorage.setItem('pc.concord.scroll.'+key,JSON.stringify({top:Number(st.top)||0,height:Number(st.height)||0,pinned:st.pinned!==false})); }catch(_){} }
   /* A PROGRAMMATIC SCROLL IS TOLD APART FROM A FINGER BY WHERE IT LANDED, NOT BY WHEN IT HAPPENED.
@@ -973,15 +1068,19 @@
       },250);
     }catch(_){}
   }
-  function channelReadKey(room,name){ return 'pc.concord.read.'+(room&&room.naddr||'')+':'+(name||'general'); }
+  /* Per ACCOUNT (READ_KEY + pubkey): one account reading a room it shares with another is not the
+   * other account having read it. The shared keys of older builds are copied in when a room is
+   * adopted (adoptLegacyRoom), never read directly. */
+  const READ_KEY='pc.concord.read.v2.',STAR_KEY='pc.concord.star.v2.';
+  function channelReadKey(room,name){ return READ_KEY+accountPk()+'.'+(room&&room.naddr||'')+':'+(name||'general'); }
   function seenAt(room,name){
-    if(!room||!room.naddr)return 0;
+    if(!room||!room.naddr||!accountPk())return 0;
     const exact=Number(localStorage.getItem(channelReadKey(room,name))||0);
     if(exact)return exact;
     /* Migration fallback for the release that stored one timestamp for the whole community. */
-    return Number(localStorage.getItem('pc.concord.read.'+room.naddr)||0);
+    return Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0);
   }
-  function markRead(room,name){ if(room&&room.naddr)localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
+  function markRead(room,name){ if(room&&room.naddr&&accountPk())localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))); }
   /* THE SIDEBAR BADGE. Communities has its own nav row now, so it needs its own count — as a tab
    * inside Messages it had nowhere to put one and a community with unread messages looked exactly
@@ -1264,7 +1363,7 @@
     if(!host.isConnected)return;
     try{const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1'){host.innerHTML=attachmentImageHtml(p,file,got);host.dataset.ccReady='1';}const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/')){/* Built ONCE, like the video: a repaint that rewrote it stopped a playing track. */if(host.dataset.ccReady!=='1'||!host.querySelector('audio')){host.innerHTML=p.trackCard?p.trackCard(got.url,got.name||file.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`;host.dataset.ccReady='1';}}else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(e){console.warn('Concord attachment paint failed',e);}
   }
-  function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
+  function channelStarKey(room,name){ return `${STAR_KEY}${accountPk()}.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
   function channelStarred(room,name){ try{return localStorage.getItem(channelStarKey(room,name))==='1';}catch(_){return false;} }
   function setChannelStarred(room,name,on){ try{if(on)localStorage.setItem(channelStarKey(room,name),'1');else localStorage.removeItem(channelStarKey(room,name));}catch(_){} }
   function orderedChannels(room){ return channelsOf(room).map((channel,index)=>({channel,index,starred:channelStarred(room,channel.name)})).sort((a,b)=>Number(b.starred)-Number(a.starred)||a.index-b.index).map(x=>x.channel); }
@@ -2134,7 +2233,7 @@
     return String(html||'').replace(/(^|\s)@([\w.-]+)/g,(whole,pre,name)=>
       pre+'<span class="cc-mention'+(mine.has(String(name).toLowerCase())?' cc-mention-me':'')+'">@'+name+'</span>');
   }
-  function mentionSeenKey(room,channel){ return 'pc.concord.seen.'+roomIdentity(room)+':'+(channel||'general'); }
+  function mentionSeenKey(room,channel,pk=accountPk()){ return 'pc.concord.seen.v2.'+pk+'.'+roomIdentity(room)+':'+(channel||'general'); }
   /* A MENTION IS KEPT UNTIL IT IS READ, NOT ANNOUNCED ONCE AND FORGOTTEN.
    *
    * "i got tagged twice in a concord room today but never got notification" -- tagged while no
@@ -2144,10 +2243,13 @@
    * ledger is what the bell counts and what Notifications lists ("2 mentions in Lounge Chat · #general"),
    * shared by every window of this app through localStorage, and an entry leaves only when that channel
    * is actually on screen. notifs.js reads the same key without loading this module. */
-  const MENTION_LEDGER='pc.concord.mentions.v1', MENTION_LOOKBACK_MS=7*86400000;
-  function mentionLedger(){ try{ const v=JSON.parse(localStorage.getItem(MENTION_LEDGER)||'{}'); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }catch(_){ return {}; } }
-  function saveMentionLedger(l){
-    try{ localStorage.setItem(MENTION_LEDGER,JSON.stringify(l)); }catch(_){ }
+  /* Per account, like everything else here: the ledger is "mentions OF YOU", and the bell of the
+   * account switched to must not count the other one's. notifs.js reads the same `<base><pubkey>`. */
+  const MENTION_LEDGER='pc.concord.mentions.v1.', MENTION_LOOKBACK_MS=7*86400000;
+  function mentionLedger(pk=accountPk()){ const key=accountKey(MENTION_LEDGER,pk); if(!key)return {}; try{ const v=JSON.parse(localStorage.getItem(key)||'{}'); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }catch(_){ return {}; } }
+  function saveMentionLedger(l,pk=accountPk()){
+    const key=accountKey(MENTION_LEDGER,pk); if(!key)return;
+    try{ localStorage.setItem(key,JSON.stringify(l)); }catch(_){ }
     try{ const pc=PC(); if(pc&&pc.bumpNotif)pc.bumpNotif(); }catch(_){ }
   }
   function mentionLedgerKey(room,channel){ return roomIdentity(room)+'\n'+(channel||'general'); }
@@ -2159,14 +2261,14 @@
       return !!open&&roomIdentity(open)===roomIdentity(room)&&(state.channel||'general')===(channel||'general');
     }catch(_){ return false; }
   }
-  function recordMention(room,channel,m){
-    const l=mentionLedger(),key=mentionLedgerKey(room,channel),id=messageId(m);
+  function recordMention(room,channel,m,pk=accountPk()){
+    const l=mentionLedger(pk),key=mentionLedgerKey(room,channel),id=messageId(m);
     const row=l[key]||{room:roomIdentity(room),name:'',channel:channel||'general',ids:[],at:0,last:''};
     if((row.ids||[]).includes(id))return false;
     row.ids=[...(row.ids||[]),id].slice(-50);
     row.name=String(room.name||row.name||'').slice(0,80);
     if((Number(m.at)||0)>=row.at){ row.at=Number(m.at)||0; row.last=id; }
-    l[key]=row; saveMentionLedger(l); return true;
+    l[key]=row; saveMentionLedger(l,pk); return true;
   }
   function clearMentions(room,channel){
     const l=mentionLedger(),key=mentionLedgerKey(room,channel);
@@ -2267,12 +2369,14 @@
   function mentionsUnread(){ return Object.values(mentionLedger()).reduce((n,r)=>n+((r&&r.ids)||[]).length,0); }
   function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
     if(!room||!roomIdentity(room)||!messages.length||!viewer.pubkey)return;
-    const key=mentionSeenKey(room,channel), newest=Math.max(...messages.map(m=>Number(m.at)||0));
+    const key=mentionSeenKey(room,channel,viewer.pubkey), newest=Math.max(...messages.map(m=>Number(m.at)||0));
     /* The original release stored one cursor for the whole community. Only #general can inherit
      * that value safely: applying its newest timestamp to every channel lets a newer general post
      * permanently suppress an older (but newly fetched) #support mention. */
+    /* No fallback to the shared cursors of older builds: one advanced while ANOTHER account read this
+     * room would bury this account's mentions for good. Without it a device's first read here is a
+     * first read -- the week's mentions go to the ledger once, minus whatever READ_D says was read. */
     let seen=Number(localStorage.getItem(key)||0);
-    if(!seen&&channel==='general'&&room.naddr)seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
     /* A device's FIRST read of a channel still raises no OS notification (opening history must not
      * alert) -- but a mention from the last week goes into the ledger, which is exactly the case of
      * being tagged while nothing was running. */
@@ -2283,7 +2387,7 @@
     for(const m of messages){
       const at=Number(m.at)||0;
       if(at<=floor||!messageMentionsViewer(m,viewer,me))continue;
-      if(!looking)recordMention(room,channel,m);
+      if(!looking)recordMention(room,channel,m,viewer.pubkey);
       if(!first&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${mentionNames(String(m.text||''),p.profOf)}`,{tag:'concord-mention-'+roomIdentity(room)+':'+channel+':'+messageId(m),route:notificationRoute(room,channel,m)});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
@@ -2469,16 +2573,20 @@
       + '<button class="btn btn-neon" id="cc-invite-accept">'+(known?'Open':'Join community')+'</button>'
       + '</div></div>';
   }
-  const DECLINED_INVITES_KEY='pc.concord.declined.v1';
+  /* A decline is one account's answer. Not carried over from the shared v1 list: an invite this
+   * account never answered must not stay hidden because another account turned it down -- at worst a
+   * declined invite is offered once more. */
+  const DECLINED_INVITES_KEY='pc.concord.declined.v2.';
   let pendingInvite=null;          // {url, room, by} — the invitation on screen, before any answer
   function declinedInvites(){
-    try{ const v=JSON.parse(localStorage.getItem(DECLINED_INVITES_KEY)||'[]'); return Array.isArray(v)?v:[]; }
+    const store=accountKey(DECLINED_INVITES_KEY); if(!store)return [];
+    try{ const v=JSON.parse(localStorage.getItem(store)||'[]'); return Array.isArray(v)?v:[]; }
     catch(_){ return []; }
   }
   function declineInvite(url){
-    const key=inviteKey({url})||String(url||''); if(!key)return false;
+    const key=inviteKey({url})||String(url||''),store=accountKey(DECLINED_INVITES_KEY); if(!key||!store)return false;
     const kept=[key,...declinedInvites().filter(x=>x!==key)].slice(0,200);
-    try{ localStorage.setItem(DECLINED_INVITES_KEY,JSON.stringify(kept)); }catch(_){}
+    try{ localStorage.setItem(store,JSON.stringify(kept)); }catch(_){}
     return true;
   }
   function inviteWasDeclined(url){
@@ -2488,7 +2596,8 @@
    * a record that only grows is the failure this file already carries a v2 key because of. */
   function forgetDeclinedInvite(url){
     const key=inviteKey({url})||String(url||''); if(!key)return;
-    try{ localStorage.setItem(DECLINED_INVITES_KEY,JSON.stringify(declinedInvites().filter(x=>x!==key))); }catch(_){}
+    const store=accountKey(DECLINED_INVITES_KEY); if(!store)return;
+    try{ localStorage.setItem(store,JSON.stringify(declinedInvites().filter(x=>x!==key))); }catch(_){}
   }
 
   const LEFT_COMMUNITIES_KEY='pc.concord.left.v2';
@@ -2735,7 +2844,7 @@
     const signal=discoveryAbortController&&discoveryAbortController.signal;
     try{const membership=await nip29Memberships(p,viewer,signal,allowActive);if((signal&&signal.aborted)||(state.community!=null&&!allowActive))return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
       const found=[];for(const [relay,listed] of byRelay){if(state.community!=null&&!allowActive)return;let metas=[];try{metas=await nip29Metadata(p,relay,listed.map(g=>g.id),signal);}catch(_){}if(state.community!=null&&!allowActive)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
-      if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id;/* A group LEFT on this device stays left even while the account's kind-10009 still lists it ("it goes away in communities, then comes back"): this pass runs every 60-120s. */if(wasLocallyLeft(viewer.pubkey,{communityId:identity,naddr:identity}))continue;const i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
+      if(found.length){const rooms=saved(),adopted=[];let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id;/* A group LEFT on this device stays left even while the account's kind-10009 still lists it ("it goes away in communities, then comes back"): this pass runs every 60-120s. */if(wasLocallyLeft(viewer.pubkey,{communityId:identity,naddr:identity}))continue;const i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){/* this account's own kind-10009 names the group: a pre-separation record of it is this account's to keep */const legacy=adoptLegacyRoom(viewer.pubkey,{communityId:identity,naddr:identity}),merged=legacy?{...legacy,...room}:room;rooms.push(merged);if(legacy)adopted.push(merged);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){if(adopted.length)saveAdopted(viewer.pubkey,rooms,adopted);else save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:120000);}
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
@@ -3082,7 +3191,21 @@
         rooms=kept;changed=true;
         if(activeId){const at=rooms.findIndex(room=>roomIdentity(room)===activeId);state.community=at>=0?at:(rooms.length?0:null);state.channel=state.community==null?null:'general';}
         save(rooms);
-        if(state.community==null)localStorage.removeItem('pc.concord.active');else localStorage.setItem('pc.concord.active',String(state.community));
+        if(state.community==null)activeSet(null);else activeSet(String(state.community));
+      }
+      /* A ROOM THIS ACCOUNT'S VAULT NAMES, KEPT ON THIS DEVICE FROM BEFORE ACCOUNTS WERE SEPARATED,
+       * IS HANDED OVER WHOLE -- its joined bundle, channels and settings, with no invite round trip.
+       * Only from a DECODED vault (`live` is built from nothing else), so a vault that could not be
+       * read adopts nothing and leaves the old list exactly as it was. Saved at once: the loop below
+       * can return early, and an adoption that is marked but never saved would strand the room. */
+      if(recovered){
+        const added=[];
+        for(const e of live){
+          const url=inviteRefUrl(e.invite_ref),ref={communityId:e.community_id,url,naddr:url?String((inviteParts(url)||{}).naddr||''):''};
+          if(rooms.some(r=>sameRoom(r,ref)))continue;
+          const got=adoptLegacyRoom(viewer.pubkey,ref);if(got){rooms.push(got);added.push(got);}
+        }
+        if(saveAdopted(viewer.pubkey,rooms,added)){rooms=saved();changed=true;}
       }
       /* A ROOM THIS DEVICE IS IN AND THE VAULT HAS NEVER HEARD OF GETS WRITTEN INTO IT.
        *
@@ -3183,7 +3306,7 @@
     if(!pk||!p.nip44dec)return {lines:['Sign in with a key that can decrypt to check your communities.'],rows};
     let events=[];
     try{events=await membershipEvents(p,pk,{external:true,legacyRecovery:true,fullFragments:true});}
-    catch(e){lines.push('Could not read your membership list: '+String(e&&e.message||e).slice(0,160));return {lines,rows};}
+    catch(e){lines.push('Could not read your membership list: '+String(e&&e.message||e).slice(0,160));legacyReportRows(pk,lines,rows);return {lines,rows};}
     const kinds=[...new Set(events.map(e=>e.kind===33302?'33302:'+(((e.tags||[]).find(t=>t[0]==='d')||[])[1]??''):String(e.kind)))];
     lines.push('Membership documents found: '+events.length+(kinds.length?' ('+kinds.join(', ')+')':''));
     const decrypted=[];let failed=0,firstErr='';
@@ -3210,7 +3333,18 @@
       rows.push({name,status,ref,fixable});
     }
     if(!best.size)lines.push('No communities in your membership list.');
+    legacyReportRows(pk,lines,rows);
     return {lines,rows};
+  }
+  /* COMMUNITIES THIS DEVICE KEPT BEFORE ACCOUNTS WERE SEPARATED, WHICH NOTHING TIES TO THIS ACCOUNT.
+   * Listed, never joined on anyone's behalf: the old list can hold several accounts' rooms, and only
+   * the person knows which of the rest are theirs. Claiming one (`legacy` rows, their own button) is
+   * that answer; the vault backfill then publishes it to this account's membership list. */
+  function legacyReportRows(pk,lines,rows){
+    const rest=unclaimedLegacyRooms(pk);if(!rest.length)return;
+    lines.push('Saved on this device before accounts were kept apart, not linked to this account: '+rest.length);
+    for(const room of rest)rows.push({name:String(room.name||'Community'),status:'on this device, not linked to this account',
+      ref:{communityId:room.communityId||'',naddr:room.naddr||'',url:room.url||''},fixable:false,legacy:true});
   }
   /* The repair is the ordinary recovery pass, after forgetting this device's "left" record for the
    * rooms a person just chose to restore -- choosing to restore IS the decision that record stands in
@@ -3225,13 +3359,17 @@
     return [...report.lines,...report.rows.map(r=>'- '+r.name+': '+r.status)].join('\n');
   }
   async function showMembershipCheck(p){
-    p.modal('<h3>Check my communities</h3><p class="muted" id="cc-mcheck-status">Reading your membership list…</p><pre id="cc-mcheck-out" class="cc-mcheck-out"></pre><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-mcheck-fix" hidden>Restore missing communities</button><button class="btn btn-ghost" id="cc-mcheck-copy" hidden>Copy report</button></div>',async root=>{
+    p.modal('<h3>Check my communities</h3><p class="muted" id="cc-mcheck-status">Reading your membership list…</p><pre id="cc-mcheck-out" class="cc-mcheck-out"></pre><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-mcheck-fix" hidden>Restore missing communities</button><button class="btn btn-ghost" id="cc-mcheck-copy" hidden>Copy report</button></div><div class="cc-primary-actions" id="cc-mcheck-legacy"></div>',async root=>{
       const status=root.querySelector('#cc-mcheck-status'),out=root.querySelector('#cc-mcheck-out'),
             fix=root.querySelector('#cc-mcheck-fix'),copy=root.querySelector('#cc-mcheck-copy');
       const run=async()=>{
         let report;try{report=await checkMemberships(p);}catch(e){report={lines:['Check failed: '+String(e&&e.message||e).slice(0,160)],rows:[]};}
         out.textContent=membershipReportText(report);status.textContent='';
         copy.hidden=false;copy.onclick=()=>p.copyValue(out.textContent);
+        const legacy=root.querySelector('#cc-mcheck-legacy'),claims=report.rows.filter(r=>r.legacy);
+        if(legacy){legacy.innerHTML=claims.map((r,i)=>`<button class="btn btn-ghost" data-cc-claim="${i}">Add ${p.enc(r.name)} to this account</button>`).join('');
+          legacy.querySelectorAll('[data-cc-claim]').forEach(b=>b.onclick=async()=>{const row=claims[Number(b.dataset.ccClaim)],pk=accountPk();if(!row||!pk)return;b.disabled=true;
+            const added=claimLegacyRooms(pk,[row.ref]);p.toast(added?row.name+' added to this account':'could not add '+row.name);backgroundRender();await run();});}
         const broken=report.rows.filter(r=>r.fixable);fix.hidden=!broken.length;
         fix.onclick=async()=>{fix.disabled=true;status.textContent='Restoring…';
           try{await restoreMemberships(p,broken);backgroundRender();status.textContent='Checking again…';await run();}
@@ -4813,7 +4951,7 @@
     if(expectedIdentity){const currentIndex=rooms.findIndex(room=>roomIdentity(room)===expectedIdentity);if(currentIndex<0)return false;index=currentIndex;}
     let room=rooms[index];if(!room)return false;
     const identity=roomIdentity(room);
-    discoveryOpen=false;localStorage.setItem('pc.concord.active',String(index));state.thread=null;state.community=index;state.channel='general';mobileChatOpen=!!inDrawer;mobileDrawerOpen=!!inDrawer;
+    discoveryOpen=false;activeSet(String(index));state.thread=null;state.community=index;state.channel='general';mobileChatOpen=!!inDrawer;mobileDrawerOpen=!!inDrawer;
     render();enterChatBottom();
     try{
       if(room.url&&(!room.cord||!room.cord.bundle)){room=mergeRoom(room,await hydrateInvite(p,room.url));rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity||sameRoom(item,room));if(at<0)return false;const selected=rooms[state.community];rooms[at]=room;save(rooms);index=rooms.findIndex(item=>sameRoom(item,room));if(sameRoom(selected,room)){state.community=index;render();}}
@@ -4887,7 +5025,7 @@
       ||(Array.isArray(current&&current.moderators)
          && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -4906,6 +5044,7 @@
         })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b class="cc-message-author"${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${linkSparkleHtml(p,m)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}<!--/cc-list--></div>`:emptyChannelHtml(p,current))}`;
   }
   let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
+  let renderedAccount='';
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -4927,12 +5066,22 @@
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
     document.body.classList.add('concord-view','rb-off');
+    /* THE ACCOUNT ON SCREEN IS PART OF WHAT IS DRAWN. The switcher reloads, so this normally runs once
+     * per page; should the signed-in key change under a live page anyway, the open room index belongs
+     * to the OTHER account's list and must not be carried across. */
+    { const acct=accountPk();
+      if(acct!==renderedAccount){
+        if(renderedAccount){state.community=null;state.channel=null;state.thread=null;discoveryOpen=false;stopChatLive();}
+        renderedAccount=acct;
+        if(acct)adoptOwnedLegacyRooms(acct);
+      }
+      if(acct&&pendingHandoff)acceptHandoff(pendingHandoff); }
     void warmRoomIcons();
     const rooms=saved();
     const viewer=p.viewer?p.viewer():{};
     let autoOpen=-1;
     if(state.community==null&&rooms.length&&!discoveryOpen){
-      const wanted=Number(localStorage.getItem('pc.concord.active')||0);
+      const wanted=Number(activeGet()||0);
       state.community=Number.isInteger(wanted)&&wanted>=0&&wanted<rooms.length?wanted:0;
       state.channel='general';state.thread=null;
       autoOpen=state.community;
@@ -5129,7 +5278,7 @@
     state.community=index;
     state.channel=channels.some(c=>c.name===requested)?requested:(channels[0]&&channels[0].name)||'general';
     mobileChatOpen=true;mobileDrawerOpen=false;discoveryOpen=false;
-    localStorage.setItem('pc.concord.active',String(index));
+    activeSet(String(index));
     render();
     const id=String(t.message||'');
     if(!id)return true;
@@ -5167,7 +5316,7 @@
       isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey;
     const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||programmaticScrollEvent(scroller)||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
-    const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
+    const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     ['#cc-add','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     { const b=$('#cc-check-memberships'); if(b)b.onclick=()=>showMembershipCheck(p); }
@@ -5457,7 +5606,7 @@
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(room.url);return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>{$('#cc-settings-dialog').classList.add('hidden');if(backgroundRenderPending)backgroundRender();};
-    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
+    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)activeSet(String(state.community));else activeSet(null);render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until
      * a channel is opened, so the only Leave control lived behind a tap somebody has no reason to
      * make first — "mobile has no way to leave concord communities", with the button measurably
@@ -5586,7 +5735,7 @@
     $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(true); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
-    const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
+    const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
     const drawerBackdrop=$('#cc-drawer-backdrop');if(drawerBackdrop)drawerBackdrop.onclick=()=>{mobileDrawerOpen=false;render();};
     const send=$('#cc-send'); if(send&&input){
       send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,_shown=(target&&!state.thread)?(()=>{ /* replying from the channel: open that thread, or the reply vanishes into the collapse as it is sent */ try{ expandedThreads.add(threadRootId(testMessages(storeId)||[],target)); }catch(_){} return 1; })():0,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();const mentionPairs=[];for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle)){taggedPeople.add(pk);mentionPairs.push([handle,pk]);}}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){taggedPeople.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))mentionPairs.push([alias,pk]);}for(const pk of taggedPeople){mentionTags.push(['p',pk]);}const mentioned=wireMentionText(text,mentionPairs,npubOf),wireText=room.cord&&room.protocol!=='nip29'?wireAttachmentText(mentioned,used.filter(([,tag])=>tag.includes('encryption-algorithm aes-gcm')).map(([url])=>url)):mentioned; if(target){replyTags.push(...cordReplyTags(target,messageId(target),threadParticipants(m,target,viewer.pubkey),viewer.pubkey));} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text:wireText,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text,expires:(target.tags||[]).find(t=>t[0]==='expiration')?.[1]}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,wireText,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.tags=d.made.tags||row.tags;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.tags=made.tags||sent.tags;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
@@ -5971,7 +6120,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
+  window.PCConcord={legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

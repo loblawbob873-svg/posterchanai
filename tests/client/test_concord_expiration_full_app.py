@@ -16,7 +16,7 @@ def test_expiration_purges_verified_ciphertext_and_visible_history():
         await desktop.login(b)
         await b.js(r'''(()=>{
           const room={name:'Expiry fixture',communityId:'c'.repeat(64),naddr:'expiry-fixture',channels:[{id:'fixture-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
-          localStorage.setItem('pc.concord.invites',JSON.stringify([room]));localStorage.setItem('pc.concord.active','0');
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
           window.__expiryClock=Date.now();Date.now=()=>window.__expiryClock;
           window.__deadline=Math.floor(Date.now()/1000)+60;
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fixture-general',name:'general',streamPubkeys:[]}]}),

@@ -111,17 +111,30 @@ def account_blocked(acct: str, accounts, hosts=frozenset()) -> bool:
     return any(f"{user}@{h}" in accounts for h in _spellings(_host(host)))
 
 
-def blocked_puppet_pubkeys(db, raw: str) -> list:
-    """The puppet keys of every fediverse account this list blocks -- an instance line covers all its
-    accounts, a `user@host` line one. Their posts are what an instance block has to take back out of the
-    relay: blocking only stops NEW deliveries, and the stored ones stayed in timelines ("i blocked
-    baraag.net but posts are still in posterchan" -- 115 accounts, 100 stored posts)."""
-    from app.models import FediPuppet
+def _blocked_among(rows, raw: str) -> list:
     hosts, accounts = parse(raw or "")
     if not hosts and not accounts:
         return []
-    out = []
-    for acct, pk in db.query(FediPuppet.acct, FediPuppet.pubkey_hex).all():
-        if pk and acct and account_blocked(acct, accounts, hosts):
-            out.append(pk)
-    return out
+    return [r.pubkey_hex for r in rows
+            if r.pubkey_hex and r.acct and account_blocked(r.acct, accounts, hosts)]
+
+
+def blocked_puppet_pubkeys(raw: str) -> list:
+    """The puppet keys of every fediverse account this list blocks -- an instance line covers all its
+    accounts, a `user@host` line one. Their posts are what an instance block has to take back out of the
+    relay: blocking only stops NEW deliveries, and the stored ones stayed in timelines ("i blocked
+    baraag.net but posts are still in posterchan" -- 115 accounts, 100 stored posts). Raises
+    relay_reader.Unavailable when the puppet registry cannot be read (the caller purges nothing)."""
+    hosts, accounts = parse(raw or "")
+    if not hosts and not accounts:
+        return []
+    from app.services import fedi_tables
+    return _blocked_among(fedi_tables.all_puppets(), raw)
+
+
+async def ablocked_puppet_pubkeys(raw: str) -> list:
+    hosts, accounts = parse(raw or "")
+    if not hosts and not accounts:
+        return []
+    from app.services import fedi_tables
+    return _blocked_among(await fedi_tables.aall_puppets(), raw)

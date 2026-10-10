@@ -18,8 +18,8 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import BlossomBlob
 from app.services import blossom_service, tor_service
+from app.services.relay_reader import Unavailable
 from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,15 @@ def _err(status: int, reason: str) -> JSONResponse:
     # BUD-01: surface a human reason in X-Reason (clients display it) + a JSON body.
     return JSONResponse({"message": reason}, status_code=status,
                         headers={**_CORS, "X-Reason": reason})
+
+
+def _unavailable(e) -> JSONResponse:
+    """The blob index could not be asked (still loading, being migrated, relay down). A 503 with
+    Retry-After — never a 404 or an empty listing, which a client would act on as "not here"."""
+    logger.warning("[blossom] blob index unavailable: %s", e)
+    r = _err(503, "blob index temporarily unavailable, retry shortly")
+    r.headers["Retry-After"] = "30"
+    return r
 
 
 # Small in-RAM thumbnail cache for the Files grid (`?thumb=1`). Thumbs are tiny (~10-20 KB), so a
@@ -276,7 +285,10 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     # an admin set one, so the default costs nothing. It exists because blobs are now kept forever
     # (blossom_blob_ttl_days=0): with no age sweep and no cap, one uploader can fill the disk for
     # every other user on the node.
-    over, used, limit = blossom_service.quota_exceeded(db, pubkey, len(data))
+    try:
+        over, used, limit = blossom_service.quota_exceeded(db, pubkey, len(data))
+    except Unavailable as e:
+        return _unavailable(e)
     if over:
         return _err(413, f"storage quota reached ({used // (1024**3)} of {limit // (1024**3)} GB used)")
 
@@ -291,14 +303,17 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     try:
         await blossom_service.save_blob(db, pubkey, data, mime, mirror=not no_mirror,
                                         filename=filename, keep=keep)
+        blob = await blossom_service.blob_index.aget(sha256)
+    except Unavailable as e:
+        return _unavailable(e)
     except Exception as e:
         logger.error("[blossom] upload failed: %s", e, exc_info=True)
         return _err(500, "storage error")
-
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    if blob is None:
+        return _err(500, "storage error")
     return JSONResponse(
         blossom_service.descriptor(blob, _base_url(request, db),
-                                   name=blossom_service.name_for(db, sha256, pubkey)),
+                                   name=await blossom_service.name_for(db, sha256, pubkey)),
         headers=_CORS)
 
 
@@ -359,7 +374,10 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
     if not pk_hex:
         return _err(400, "invalid pubkey")
     base = _base_url(request, db)
-    blobs = blossom_service.list_for_pubkey(db, pk_hex)
+    try:
+        blobs = blossom_service.list_for_pubkey(db, pk_hex)
+    except Unavailable as e:
+        return _unavailable(e)
     # Narrow BEFORE building descriptors: descriptor() does per-blob string work (extension
     # resolution, URL assembly), so on 37,400 rows it is the expensive half, not the query.
     if since is not None:
@@ -417,9 +435,13 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     sha = _strip_ext(sha256)
-    # Metadata cache: a hot blob's row is served from RAM, so a GET/HEAD skips Postgres entirely
-    # (the row is immutable — content-addressed). Only a cache miss touches the DB.
-    blob = blossom_service.get_blob_meta(db, sha)
+    # Metadata cache: a hot blob's row is served from RAM (the row is immutable — content-addressed).
+    # Only a cache miss asks the blob index — and an index that could not be asked is a 503, never a
+    # 404: a client told "not found" about a file that is there gives up on it.
+    try:
+        blob = await blossom_service.get_blob_meta(db, sha)
+    except Unavailable as e:
+        return _unavailable(e)
     if not blob:
         return _err(404, "blob not found")
 
@@ -444,11 +466,11 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
     # sha + the extension implied by the MIME type. `?download=1` flips it to a forced download.
     _dl = bool(request.query_params.get("download"))
     _fname = _safe_filename(request.query_params.get("filename", ""))
-    # The stored-name lookup is a DB round-trip, so it's reserved for an actual download — the hot
-    # path here is thumbnails and inline media, which the metadata RAM cache deliberately serves
-    # without touching Postgres.
+    # The stored-name lookup may be a relay round-trip (while the index loads), so it's reserved for an
+    # actual download — the hot path here is thumbnails and inline media, which the metadata RAM cache
+    # deliberately serves without asking anything.
     if not _fname and _dl:
-        _fname = _safe_filename(blossom_service.name_for(db, sha))
+        _fname = _safe_filename(await blossom_service.name_for(db, sha))
     if not _fname:
         _ext = blossom_service.ext_for_mime(mime)
         _fname = sha + (f".{_ext}" if _ext else "")
@@ -510,7 +532,7 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
                     if t is None:
                         data = await blossom_service.read_full(db, blob)
                         if data is None:
-                            blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
+                            await blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
                             return _err(404, "blob bytes unavailable")
                         if _tmime.startswith("video/"):
                             t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
@@ -555,7 +577,7 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
         body = await blossom_service.read_range(db, blob, start, end)
         if body is None:
-            blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
+            await blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
             return _err(404, "blob bytes unavailable")
         return StreamingResponse(body, status_code=206, media_type=mime,
                                  headers={**headers, "Content-Range": f"bytes {start}-{end}/{total}",
@@ -563,7 +585,7 @@ async def _serve_blob(sha256: str, request: Request, db: Session, force_thumb: b
 
     result = await blossom_service.read_blob(db, blob)
     if result is None:
-        blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
+        await blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
         return _err(404, "blob bytes unavailable")
     stream, rmime, size = result
     return StreamingResponse(stream, media_type=rmime,
@@ -575,7 +597,10 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     sha = _strip_ext(sha256)
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+    try:
+        blob = await blossom_service.blob_index.aget(sha)
+    except Unavailable as e:
+        return _unavailable(e)
     if not blob:
         return _err(404, "blob not found")
     try:
@@ -586,7 +611,7 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
     # Who may delete: anyone who OWNS a reference (dedup means that is no longer just the first
     # uploader — listing by ownership without this would show a second owner a file they then got a
     # 403 deleting), or an admin, whose delete is a moderation purge for everyone.
-    owns = blossom_service.is_owner(db, sha, pubkey)
+    owns = pubkey in (blob.owners or {})
     is_admin = False
     if not owns:
         if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
@@ -597,18 +622,18 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
         if not is_admin:
             return _err(403, "only an owner or an admin may delete this blob")
 
-    if owns:
-        # Drop just THIS user's reference. Blossom dedups, so the same bytes can be referenced by
-        # several people, and deleting the row outright removed the file from everyone else's drive.
-        # The bytes go only once the last owner lets go.
-        remaining = blossom_service.release_owner(db, sha, pubkey)
-        if remaining > 0:
-            db.commit()
-            blossom_service.drop_meta(sha)
-            return JSONResponse({"message": "deleted", "sha256": sha, "shared": True}, headers=_CORS)
-
-    await blossom_service.delete_blob_bytes(db, blob)
-    db.delete(blob)
-    db.commit()
-    blossom_service.drop_meta(sha)   # AFTER commit: the row is gone, so a re-query can't re-cache it
+    try:
+        if owns:
+            # Drop just THIS user's reference. Blossom dedups, so the same bytes can be referenced by
+            # several people, and deleting the row outright removed the file from everyone else's
+            # drive. The bytes go only once the last owner lets go.
+            remaining = await blossom_service.release_owner(db, sha, pubkey)
+            if remaining > 0:
+                blossom_service.drop_meta(sha)
+                return JSONResponse({"message": "deleted", "sha256": sha, "shared": True}, headers=_CORS)
+        # The index document first, then the bytes (blossom_service.delete_blob); the metadata cache
+        # is dropped AFTER the delete landed, so a re-read can't re-cache it.
+        await blossom_service.delete_blob(db, blob)
+    except Unavailable as e:
+        return _unavailable(e)
     return JSONResponse({"message": "deleted", "sha256": sha}, headers=_CORS)

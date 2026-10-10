@@ -21,7 +21,8 @@ function boot() {
   const document = { body, visibilityState: 'visible', querySelector: () => null, querySelectorAll: () => [], createElement: () => ({ dataset: {} }),
     head: { appendChild: noop }, documentElement: { appendChild: noop }, addEventListener: noop };
   const window = { document, addEventListener: noop, PosterCordReader: { inspectControl: () => ({}) } };
-  window.__PC = { isView: () => false, toast: noop, $: () => null, bumpNotif: noop };
+  /* Concord's rooms, ledger and cursors are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: ME }), isView: () => false, toast: noop, $: () => null, bumpNotif: noop };
   const context = { window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop }, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: noop,
     TextEncoder, indexedDB: undefined, location: { href: 'https://poster.place/client' }, AbortController };

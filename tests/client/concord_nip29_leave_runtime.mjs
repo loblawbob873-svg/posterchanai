@@ -52,7 +52,8 @@ function boot() {
       inspectControl: () => ({ name: 'Soapbox', channels: [{ id: 'gen', name: 'general', private: false }] }),
     },
   };
-  window.__PC = { isView: () => false, toast: noop, $: () => null };
+  /* Concord's rooms are kept PER ACCOUNT, keyed on this signed-in viewer. */
+  window.__PC = { viewer: () => ({ pubkey: VIEW }), isView: () => false, toast: noop, $: () => null };
   const context = {
     window, document, console, URL, atob, btoa, crypto: {}, localStorage,
     sessionStorage: { getItem: () => null, setItem: noop },
@@ -91,12 +92,12 @@ function api() {
   };
 }
 const a = boot();
-const rooms = () => JSON.parse(a.localStorage.getItem('pc.concord.invites') || '[]');
+const rooms = () => JSON.parse(a.localStorage.getItem('pc.concord.rooms.v1.'+VIEW) || '[]');
 await a.PC.syncNip29Memberships(api(), { pubkey: VIEW });
 if (!rooms().some(r => r.communityId === identity)) fail('the membership pass did not add the listed group at all');
 const room = rooms().find(r => r.communityId === identity);
 await a.PC.leaveArmadaMembership(api(), room);
-a.localStorage.setItem('pc.concord.invites', JSON.stringify(a.PC.removeCommunityByIdentity(rooms(), identity).rooms));
+a.localStorage.setItem('pc.concord.rooms.v1.'+VIEW, JSON.stringify(a.PC.removeCommunityByIdentity(rooms(), identity).rooms));
 if (rooms().some(r => r.communityId === identity)) fail('leave did not remove the group');
 /* the next tick of the membership timer */
 await a.PC.syncNip29Memberships(api(), { pubkey: VIEW });
@@ -105,7 +106,7 @@ if (!rooms().some(r => r.communityId === 'nip29:' + GROUP_RELAY + '#other')) fai
 /* Another device -- empty storage, same account -- reads the list and must not get it back either. */
 const b = boot();
 await b.PC.syncNip29Memberships(api(), { pubkey: VIEW });
-const bRooms = JSON.parse(b.localStorage.getItem('pc.concord.invites') || '[]');
+const bRooms = JSON.parse(b.localStorage.getItem('pc.concord.rooms.v1.'+VIEW) || '[]');
 if (bRooms.some(r => r.communityId === identity)) fail('another device re-added the group: the account list still names it');
 if (!bRooms.some(r => r.communityId === 'nip29:' + GROUP_RELAY + '#other')) fail('the list rewrite dropped a group that was NOT left');
 /* No list readable -> nothing written (an empty read rewritten would drop every group). */

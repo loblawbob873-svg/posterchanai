@@ -4,7 +4,7 @@ The fediverse bridge plus the social-notification / logs pollers all used to
 run on the app's single asyncio loop and
 contended with request serving (the bridge in particular could stall the reactor for ~90s
 on a busy global feed). They're **DB-mediated** — the bridge/relays persist their state and
-maps (SocialReplyMap / FediBridgeDelivered), and the app's reply/action endpoints
+maps (SocialReplyMap / the fedi_bridge_delivered DocTable), and the app's reply/action endpoints
 read those tables — so they run perfectly well in a separate process while the app keeps
 serving requests.
 
@@ -113,6 +113,16 @@ async def _run():
             db.close()
     except Exception as e:
         logger.error(f"[worker] settings hydrate failed — schedulers may use defaults: {e}", exc_info=True)
+    try:
+        # #161: the app tables moving off Postgres. This process reads and writes them too (push, the
+        # fediverse ledger and puppets, the reply map), so it needs each table's SQL side bound: until a
+        # table's `_migrated` marker exists SQL is its store of record, and an unbound process would read the
+        # relay's incomplete copy as the table.
+        from app.database import SessionLocal
+        from app.services import table_migration
+        table_migration.bind(SessionLocal)
+    except Exception as e:
+        logger.error(f"[worker] app tables not bound to SQL: {e}", exc_info=True)
     # Wait for the local relay to be up before starting the relay-dependent schedulers (avoids the
     # ~60s of 'connection refused' noise while the relay subprocess is still booting).
     await _wait_for_relay()

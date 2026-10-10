@@ -26,6 +26,8 @@ import time
 from app.services import settings_store
 from app.services.activitypub import actors, config, convert, nostrside, remote, state
 
+from app.services.relay_reader import Unavailable
+
 logger = logging.getLogger(__name__)
 
 _PLATFORM = "activitypub-dm"
@@ -35,32 +37,22 @@ _puppets = {"at": 0.0, "set": frozenset()}
 
 # ------------------------------------------------------------------------------------ bookkeeping
 
-def _done(key: str) -> bool:
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
-    try:
-        return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.platform == _PLATFORM,
-                                                    FediBridgeDelivered.note_id == key[:255]).first() is not None
-    finally:
-        db.close()
+async def _done(key: str) -> bool:
+    """Whether this message was already handled. Raises relay_reader.Unavailable when the ledger cannot
+    be read: a DM is then neither sent (it may be a duplicate) nor recorded -- it is retried."""
+    from app.services import fedi_tables
+    return await fedi_tables.adelivered(_PLATFORM, "", key[:255])
 
 
-def _mark(key: str, event_id: str, pubkey: str) -> None:
+async def _mark(key: str, event_id: str, pubkey: str) -> None:
     """A row per handled message. `instance_url` is blank ON PURPOSE: the Pleroma bridge's sweeps
-    select rows by instance, and these are not statuses on any instance."""
-    from app.database import SessionLocal
-    from app.models import FediBridgeDelivered
-    db = SessionLocal()
+    selected rows by instance, and these are not statuses on any instance."""
+    from app.services import fedi_tables
     try:
-        db.add(FediBridgeDelivered(platform=_PLATFORM, instance_url="", note_id=key[:255], note_uri=None,
-                                   author_acct=None, nostr_event_id=event_id, nostr_pubkey=pubkey))
-        db.commit()
-    except Exception as e:
-        db.rollback()
+        await fedi_tables.arecord(platform=_PLATFORM, instance_url="", note_id=key[:255],
+                                  nostr_event_id=event_id, nostr_pubkey=pubkey)
+    except Exception as e:      # noqa: BLE001 -- the message went; only its bookkeeping did not
         logger.info("[activitypub] DM bookkeeping not saved: %s", type(e).__name__)
-    finally:
-        db.close()
 
 
 async def may_message(recipient: str, sender_actor: str, sender_puppet: str) -> bool:
@@ -106,7 +98,7 @@ async def receive_direct(note: dict, signer: str) -> str:
     sent = done = 0
     for pk in recipients[:10]:
         key = f"{uri}|{pk[:16]}"                 # per recipient: a partial failure resends to nobody twice
-        if _done(key):
+        if await _done(key):
             done += 1
             continue
         if not await may_message(pk, signer, puppet["pubkey_hex"]):
@@ -118,7 +110,7 @@ async def receive_direct(note: dict, signer: str) -> str:
             # the sender's profile so the conversation has a name and a way back.
             extra = await nostrside.puppet_identity_events(puppet["pubkey_hex"])
             await nostrside.deliver(pk, extra + [wrap], dm=True, force=True)
-        _mark(key, wrap["id"], puppet["pubkey_hex"])
+        await _mark(key, wrap["id"], puppet["pubkey_hex"])
         sent += 1
     if not sent:
         return "already delivered" if done else "ignored: the recipient muted the sender"
@@ -128,17 +120,22 @@ async def receive_direct(note: dict, signer: str) -> str:
 # ------------------------------------------------------------------------------------ nostr → fediverse
 
 def _puppet_pubkeys() -> frozenset:
-    """Every puppet's pubkey, refreshed every five minutes -- the cheap first test for a wrap."""
+    """Every puppet's pubkey, refreshed every five minutes -- the cheap first test for a wrap. Raises
+    relay_reader.Unavailable when the registry cannot be read (never "no puppets")."""
     if time.monotonic() - _puppets["at"] < 300 and _puppets["at"]:
         return _puppets["set"]
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        _puppets["set"] = frozenset(pk for (pk,) in db.query(FediPuppet.pubkey_hex).all() if pk)
-        _puppets["at"] = time.monotonic()
-    finally:
-        db.close()
+    from app.services import fedi_tables
+    _puppets["set"] = frozenset(fedi_tables.puppet_pubkeys())
+    _puppets["at"] = time.monotonic()
+    return _puppets["set"]
+
+
+async def _apuppet_pubkeys() -> frozenset:
+    if time.monotonic() - _puppets["at"] < 300 and _puppets["at"]:
+        return _puppets["set"]
+    from app.services import fedi_tables
+    _puppets["set"] = frozenset(await fedi_tables.apuppet_pubkeys())
+    _puppets["at"] = time.monotonic()
     return _puppets["set"]
 
 
@@ -149,16 +146,11 @@ def remember_puppet(pubkey: str) -> None:
         _puppets["set"] = _puppets["set"] | {pubkey}
 
 
-def _puppet_actor(pubkey: str) -> tuple[str, str]:
+async def _puppet_actor(pubkey: str) -> tuple[str, str]:
     """(actor URI the puppet was derived from, its handle)."""
-    from app.database import SessionLocal
-    from app.models import FediPuppet
-    db = SessionLocal()
-    try:
-        row = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pubkey).first()
-        return (row.actor_uri, row.acct or "") if row else ("", "")
-    finally:
-        db.close()
+    from app.services import fedi_tables
+    row = await fedi_tables.apuppet_by_pubkey(pubkey)
+    return (row.actor_uri, row.acct or "") if row else ("", "")
 
 
 async def handle_wrap(wrap: dict) -> str:
@@ -168,20 +160,22 @@ async def handle_wrap(wrap: dict) -> str:
     from app.services.nostr import bridge_keys, nip17
     if not (config.enabled() and config.dms() and config.base_url()):
         return "off"
-    puppets = _puppet_pubkeys()
+    from app.services import fedi_tables
+    await fedi_tables.aready()      # Unavailable: the listener reconnects and the wrap is replayed
+    puppets = await _apuppet_pubkeys()
     targets = [t[1] for t in wrap.get("tags", []) if len(t) > 1 and t[0] == "p" and t[1] in puppets]
     if not targets:
         return "not for the fediverse"
     results = []
     for puppet_pk in targets[:5]:
         key = f"{wrap.get('id', '')}:{puppet_pk[:16]}"
-        if _done(key):
+        if await _done(key):
             results.append("already sent")
             continue
         if key in _retrying:
             results.append("waiting to be retried")
             continue
-        actor_uri, acct = _puppet_actor(puppet_pk)
+        actor_uri, acct = await _puppet_actor(puppet_pk)
         if not actor_uri:
             continue
         if acct and config.account_blocked(acct):
@@ -224,7 +218,7 @@ async def handle_wrap(wrap: dict) -> str:
         key_id, priv = await actors.signing(sender, keys)
         status = await remote.deliver(inbox_url, act, key_id=key_id, private_pem=priv)
         if 200 <= status < 300:
-            _mark(key, wrap.get("id", ""), sender)   # first: a cancel after this must not resend
+            await _mark(key, wrap.get("id", ""), sender)   # first: a cancel after this must not resend
             await state.open_conversation(sender, canonical)
             results.append("sent")
         elif status == 0 or status >= 500 or status in (408, 429):
@@ -255,7 +249,7 @@ def _retry_later(key: str, inbox_url: str, act: dict, sender: str, canonical: st
                 key_id, priv = await actors.signing(sender, keys)
                 status = await remote.deliver(inbox_url, act, key_id=key_id, private_pem=priv)
                 if 200 <= status < 300:
-                    _mark(key, wrap_id, sender)
+                    await _mark(key, wrap_id, sender)
                     await state.open_conversation(sender, canonical)
                     return
                 if not (status == 0 or status >= 500 or status in (408, 429)):
@@ -289,6 +283,11 @@ async def _listen_once() -> None:
             if msg[0] == "EVENT" and msg[1] == sub and isinstance(msg[2], dict):
                 try:
                     await asyncio.wait_for(handle_wrap(msg[2]), timeout=60)
+                except Unavailable:
+                    # The ledger or the puppet registry could not be read: neither sent nor marked.
+                    # Dropping the subscription is the retry -- the reconnect re-reads the last three
+                    # days of wraps and `_done` skips everything that did go.
+                    raise
                 except Exception as e:
                     logger.info("[activitypub] DM not sent: %s: %s", type(e).__name__, e)
 

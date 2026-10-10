@@ -15,6 +15,11 @@ const document = {querySelector:()=>null, querySelectorAll:()=>[], createElement
   head:{appendChild:noop}, documentElement:{appendChild:noop}, addEventListener:noop,
   body:{classList:{add:noop, remove:noop, contains:c=>c==='concord-view'}}};
 const window = {document, addEventListener:noop};
+// Concord keeps its rooms PER ACCOUNT (pc.concord.rooms.v1.<pubkey>; the open room, read and mention
+// cursors and stars beside it), read off window.__PC -- in the app that IS the `p` handed to every call,
+// so the fixture's __PC follows `p` (and any account change the test makes on it).
+const CC_PK='c'.repeat(64),CC_ROOMS='pc.concord.rooms.v1.'+CC_PK,CC_ACTIVE='pc.concord.active.v1.'+CC_PK;
+window.__PC=window.__PC||{viewer:()=>{try{return p.viewer();}catch(_){return {pubkey:CC_PK};}}};
 const warns = [];
 const console2 = {...console, warn:(...a)=>{warns.push(a.map(String).join(' '));}};
 vm.runInNewContext(src, {window, document, console:console2, setTimeout:(f)=>{f();return 0;},
@@ -25,7 +30,7 @@ const CH = {name:'general', id:'c1', streamPubkeys:['b'.repeat(64)]};
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const ROOM = {protocol:'cord', name:'Room', communityId:'cid-1', naddr:'cid-1',
               channels:[CH], cord:{bundle:BUNDLE}};
-store['pc.concord.invites'] = JSON.stringify([ROOM]);
+store[CC_ROOMS] = JSON.stringify([ROOM]);
 api.__testState({community:0, channel:'general', controls:['cid-1', [{id:'ctrl-1'}]]});
 
 window.PosterCordReader = {
