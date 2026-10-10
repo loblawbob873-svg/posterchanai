@@ -28,6 +28,7 @@ psycopg2 = pytest.importorskip("psycopg2")
 
 from app.services.nostr_relay.store import RelayStore, _PRUNE_CHUNK  # noqa: E402
 from tests import scratch_postgres
+from tests.relay_backends import BACKENDS, pcdb_factory, is_pcdb
 
 DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 DAY = 86400
@@ -42,14 +43,18 @@ def _admin():
     return conn
 
 
-@pytest.fixture
-def store_factory():
+@pytest.fixture(params=BACKENDS)
+def store_factory(request):
     """Builds opened RelayStores inside a scratch schema, each with a clean slate; drops it after.
 
     The per-store truncate matters: a test that builds two stores (chunked vs unbounded) would
     otherwise run the second against the first's survivors, and duplicate event ids would be
     rejected as already-stored — which silently turns an assertion into a tautology.
     """
+    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
+        with pcdb_factory() as make:
+            yield make
+        return
     schema = "pcai_prune_test_" + uuid.uuid4().hex[:10]
     conn = _admin()
     conn.cursor().execute(f'CREATE SCHEMA "{schema}"')
@@ -802,6 +807,10 @@ def _plant(store, events, origin="direct"):
     refusal existed, which is exactly what this reproduces. Same columns _insert_one writes.
     """
     import json as _json
+    if is_pcdb(store):                 # the same bypass on PosterChanDB: rows exactly as given, no rule decided
+        for ev in events:
+            store.store.copy_put(dict(ev), origin=origin)
+        return
     conn = psycopg2.connect(store.dsn, connect_timeout=5)
     conn.autocommit = True
     cur = conn.cursor()

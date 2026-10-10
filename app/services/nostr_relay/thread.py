@@ -353,7 +353,8 @@ def _read_config() -> dict:
             # preserved (never pruned), so a user's own history is safe. 0 = keep everything.
             "retention_days": gi("nostr_relay_retention_days", 30),
             # PosterChanDB beside Postgres (posterchandb/mirror.py): off | shadow (mirror every write, compare a
-            # sample of answers) | serve (answer queries from RAM; Postgres still written first). Env wins.
+            # sample of answers) | serve (answer queries from RAM; Postgres still written first) | primary (PosterChanDB
+            # ALONE, no Postgres: nostr_relay/pcdb_store.py, after scripts/posterchandb_promote.py). Env wins.
             "pcdb_mode": (os.environ.get("POSTERCHANDB_MODE") or g("posterchandb_mode", "off") or "off").strip().lower(),
             "pcdb_cache_mb": gi("posterchandb_read_cache_mb", 0),
             "pcdb_flush_s": gi("posterchandb_flush_seconds", 300),
@@ -749,8 +750,12 @@ def _start_mirror(store, cfg: dict) -> None:
     relay writes while the mirror is off is missing from its directory."""
     from app.services import posterchandb
     from app.services.posterchandb import mirror as pcdb_mirror
+    from .pcdb_store import retire_marker
     path = os.path.join(posterchandb.data_dir(), "relay")
     mode = cfg.get("pcdb_mode") or "off"
+    # Postgres is the store again: the directory is not a primary's any more (its sidecar stops being kept), so
+    # a later `primary` start has to be promoted afresh rather than trust a stale one (pcdb_store.claim_directory).
+    retire_marker(path)
     if mode not in ("shadow", "serve"):
         pcdb_mirror.clear_clean_marker(path)
         return
@@ -772,8 +777,45 @@ _WS_CLOSE_WAIT = 3.0       # seconds the stop waits for clients' closing handsha
 
 
 def mirror_stats() -> dict:
+    p = _mirror_ref.get("primary")
+    if p is not None:
+        return p.stats()
     m = _mirror_ref.get("m")
     return m.stats() if m is not None else {"mode": "off"}
+
+
+def _open_store(cfg: dict, loop):
+    """The relay's store. `POSTERCHANDB_MODE=primary`: PosterChanDB alone (pcdb_store.py), no Postgres at all.
+    Every other mode: Postgres (RelayStore), with the PosterChanDB mirror beside it in shadow/serve -- unchanged.
+
+    A primary directory that was never promoted (or was overwritten by a mirror since) is REFUSED, and the relay
+    runs on Postgres in serve mode instead: Postgres is then still the truth, while starting on an unpromoted
+    directory would serve a stale copy and forget the WoT and the pinned authors. Any OTHER failure to open a
+    primary store is raised -- after a promotion Postgres is stale, and falling back to it would split the relay
+    into two histories."""
+    if (cfg.get("pcdb_mode") or "off") == "primary":
+        from app.services import posterchandb
+        from .pcdb_store import PcdbRelayStore, PrimaryNotReady
+        store = PcdbRelayStore(os.path.join(posterchandb.data_dir(), "relay"),
+                               max_events=cfg["max_events"], retention_days=cfg["retention_days"],
+                               flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
+                               log=logger.info)
+        try:
+            store.open(loop)
+        except PrimaryNotReady as e:
+            logger.error("[nostr-relay] POSTERCHANDB_MODE=primary REFUSED: %s -- running on Postgres (serve) "
+                         "instead", e)
+            store.close()
+            cfg["pcdb_mode"] = "serve"
+        else:
+            _mirror_ref["primary"] = store
+            return store
+    store = RelayStore(
+        cfg["pg_dsn"],
+        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
+    store.open(loop)
+    _start_mirror(store, cfg)
+    return store
 
 
 # --- async main -------------------------------------------------------------
@@ -782,13 +824,9 @@ async def _main(cfg: dict) -> None:
     # Public port → scanners/probes will hit it; the websockets server logs each failed
     # handshake with a full traceback, which would flood the journal. Quiet it.
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
-    store = RelayStore(
-        cfg["pg_dsn"],
-        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_relay_loop_exception_handler)
-    store.open(loop)
-    _start_mirror(store, cfg)
+    store = _open_store(cfg, loop)
     gate = WotGate()
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
@@ -1586,7 +1624,7 @@ async def _main(cfg: dict) -> None:
             await store.checkpoint()             # fold WAL into the main DB on clean shutdown
         except Exception as e:
             logger.warning("[nostr-relay] final checkpoint failed: %s", e)
-        if store.mirror is not None:
+        if getattr(store, "mirror", None) is not None:
             try:
                 # On the writer thread, after the last write: nothing enqueues after this, and Postgres and the
                 # CLEAN marker get the same token (a stale copy of the directory can never be mistaken for this one).
