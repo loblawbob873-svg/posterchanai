@@ -3026,8 +3026,17 @@ window.PCFilesFactory = function(dep){
          * that means app://posterchan/client/office; in the APK it means https://localhost/client/office.
          * Neither is the node that advertised Office, and retrying there only produces a white/empty
          * editor after the file bytes have already been read. */
+        /* A DESKTOP WITH NO OFFICE OF ITS OWN SAYS SO FIRST. With the bridge present but its suite
+         * not installed, the instance is the only editor left -- and when it cannot open the file,
+         * what it says ("Instance membership settings are not loaded yet", a 503 while it starts) is
+         * about the SERVER, not about the document on this computer the person just clicked. That
+         * sentence was the whole report ("office broken on desktop"). Name the real situation, then
+         * the instance's answer in words a person can act on. The web keeps its messages. */
+        const noLocal = !!window.pcOfficeLocal;
+        const why = m => noLocal ? 'PosterChan Office is not installed on this computer, and ' + m : m;
         if(!/^https?:\/\//i.test(B))
-          throw new Error('connect this app to your PosterChan instance before opening Office');
+          throw new Error(noLocal ? why('this app is not connected to a PosterChan instance that could open it')
+                                  : 'connect this app to your PosterChan instance before opening Office');
         const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
         /* WHERE THE EDITOR SHOULD POST BACK TO — this page, which is not the instance in either
          * packaged app (`app://posterchan` on the desktop, `capacitor://localhost` on Android). The
@@ -3038,9 +3047,17 @@ window.PCFilesFactory = function(dep){
         try{ if(location && location.origin && location.origin !== 'null') fd.append('origin', location.origin); }catch(_){ }
         let r;
         try{ await ensureAiSession();r=await window.__PC.authFetch(B + '/client/office/session',{method:'POST',body:fd}); }
-        catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
+        catch(e){ throw new Error(why('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e))); }
         if(!r.ok){
           const said=(await r.json().catch(()=>null)||{}).detail||'';
+          if(noLocal){
+            let host = B; try{ host = new URL(B).host; }catch(_){ }
+            throw new Error(why(r.status===403 ? host + ' only opens documents for its members'
+                              : r.status===503 ? host + ' is not ready yet — try again in a moment'
+                              : r.status===404 ? host + ' has no office editor'
+                              : r.status===502 ? host + '’s office editor is not running'
+                              : host + ' could not open it' + (said ? ': ' + said : ' (HTTP ' + r.status + ')')));
+          }
           // 404 here means the router is not mounted; 502 means CODE itself is not running behind
           // /office-code. Those send you to completely different places.
           throw new Error(said || (r.status===404 ? 'this node has no office editor installed'
@@ -3237,8 +3254,10 @@ window.PCFilesFactory = function(dep){
   async function _officeLocalSession(file){
     const L = window.pcOfficeLocal;
     if(!L) return null;
+    /* Only a YES is remembered: a "no" (suite not installed yet, an IPC that failed once) is asked
+     * again next time, or installing the suite would need a restart before Office noticed it. */
     if(!_officeLocalQ) _officeLocalQ = Promise.resolve().then(()=>L.available()).then(v=>!!v, ()=>false);
-    if(!(await _officeLocalQ)) return null;
+    if(!(await _officeLocalQ)){ _officeLocalQ = null; return null; }
     const r = await L.open(await file.arrayBuffer(), file.name || 'document', 'edit');
     if(!r || !r.ok) throw new Error((r && r.error) || 'the office editor on this machine could not open it');
     const session = { id:r.id, token:r.token, editor_url:r.editor_url, expires:r.expires, readonly:r.readonly };
