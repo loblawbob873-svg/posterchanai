@@ -390,7 +390,6 @@
     }catch(_){ return false; }
   }
   function _standalone(){ return BUNDLED && !_instanceBase(); }
-  let _instanceNotPc = false;   // the configured instance answered, but not as a PosterChan server (_isPcConfig)
   let _instanceNotPcWarned = false;
   async function _warnInstanceNotPc(){
     if(_instanceNotPcWarned) return; _instanceNotPcWarned = true;
@@ -2734,14 +2733,9 @@
       let _cfgTimer;
       try{
         const _cfgRequest = fetch('/client/config')
-          .then(r=>{ if(BUNDLED && r.status === 404) _instanceNotPc = true; return r.ok ? r.json() : null; })
-          .then(c=>{
-            // A relay (or any other site) named as the instance answers, but not as a PosterChan server:
-            // never cache that as the config, and tell the person once (_warnInstanceNotPc).
-            if(c && BUNDLED && !_isPcConfig(c)){ _instanceNotPc = true; return null; }
-            if(c) _cfgCache(c); return c; })
+          .then(r=>r.ok ? r.json() : null)
+          .then(c=>{ if(c) _cfgCache(c); return c; })
           .catch(()=>null);
-        _cfgRequest.then(()=>{ if(_instanceNotPc) setTimeout(_warnInstanceNotPc, 1500); });
         _bootCfg = await Promise.race([
           _cfgRequest,
           new Promise(resolve=>{ _cfgTimer=setTimeout(()=>resolve(null), 2500); }),
@@ -4198,6 +4192,10 @@
      * is the final navigation rather than being overwritten by the remainder of boot. */
     window.__PC_BOOTED = true;
     try{ document.dispatchEvent(new Event('pc-app-ready')); }catch(_){}
+    /* A relay (or any other site) named as the instance: say so once, after the app has painted. Kept OUT of
+     * the boot config chain on purpose -- that chain must stay the same three steps the offline/native-shell
+     * tests run on their own (a relay's NIP-11 has no relay_url, so _cfgCache never stores it anyway). */
+    if(BUNDLED && _instanceBase()) setTimeout(()=>{ _probeInstance(_instanceBase()).then(v=>{ if(v === 'not') _warnInstanceNotPc(); }).catch(()=>{}); }, 1500);
   }
   // Document/window/#feed listeners and background timers — bound ONCE PER PAGE LOAD, not per login.
   // startApp() runs again when a guest logs in WITHOUT a reload (see the hydrateUser note there), and
