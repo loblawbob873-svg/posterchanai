@@ -54,7 +54,7 @@ async def _relay_ws(port: int):
         except Exception:
             pass
     _ws = await websockets.connect(f"ws://127.0.0.1:{port}/relay", open_timeout=10,
-                                   close_timeout=2, ping_interval=30, max_queue=64)
+                                   close_timeout=2, ping_interval=30, max_queue=64, compression=None)
     _ws_port = port
     return _ws
 
@@ -383,7 +383,7 @@ async def query_one(port: int, filt: dict, timeout: float = 8.0) -> tuple[bool, 
     sub = "q" + os.urandom(4).hex()
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}/relay", open_timeout=10,
-                                      close_timeout=2, ping_interval=30) as ws:
+                                      close_timeout=2, ping_interval=30, compression=None) as ws:
             await ws.send(json.dumps(["REQ", sub, filt]))
             got = None
             while True:

@@ -39,6 +39,7 @@ class MemRelay:
         if t is not None and t._loaded_at:
             with t._lock:
                 t._rows[str(key)] = json.loads(json.dumps(row, default=str))
+            t._notify(str(key), t._rows[str(key)])      # as the live stream would: secondary indexes follow
 
 
 def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
@@ -54,6 +55,7 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
             self._rows = mem.table(self.name)
             self._stamp = {k: 0 for k in self._rows}
             self._loaded_at = time.time()
+        self._notify(None, None)                         # the real aload does: watchers rebuild their indexes
 
     async def aput(self, k, row):
         if mem.down or mem.writes_fail:
@@ -63,6 +65,7 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
         mem.writes += 1
         with self._lock:
             self._rows[str(k)] = json.loads(json.dumps(payload))
+        self._notify(str(k), self._rows[str(k)])
 
     async def adelete(self, k):
         if mem.down or mem.writes_fail:
@@ -71,6 +74,7 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
         mem.writes += 1
         with self._lock:
             self._rows.pop(str(k), None)
+        self._notify(str(k), None)
 
     async def reread(name):
         if mem.down:

@@ -42,6 +42,11 @@ NS_UPLOAD  = "pcai:upload:"      # encrypted upload ref → ciphertext blob in B
 # a separate keypair the server generates + holds, used to encrypt-at-rest the user's chats/uploads
 # to the relay and decrypt them to run the AI. Kept in UserSetting (no schema migration). Stored as
 # hex; decode_seckey accepts hex or nsec.
+
+def loopback_kw(uri: str) -> dict:
+    from app.services.relay_reader import loopback_kw as _kw    # lazy: relay_reader imports this module's peers
+    return _kw(uri)
+
 def user_storage_seckey(db, user) -> bytes:
     from app.services import keystore, user_settings_table
     npub = getattr(user, "nostr_npub", None)
@@ -209,7 +214,7 @@ async def _ws_publish(port: int, event: dict, timeout: float = 8.0,
             try:
                 if ws is None:
                     ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2,
-                                                  max_size=None)
+                                                  max_size=None, **loopback_kw(uri))
                     _pub_pool[key] = (loop, ws)
                 return await _publish_once(port, event, timeout, ws, auth_seckey)
             except Exception as e:
@@ -244,7 +249,7 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     sub = "repo" + os.urandom(4).hex()
     out: list = []
     try:
-        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2) as ws:
+        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2, **loopback_kw(uri)) as ws:
             await ws.send(json.dumps(["REQ", sub, *filters]))
             auth_id = None
             retried = False

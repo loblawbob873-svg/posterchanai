@@ -1027,10 +1027,10 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     # re-scan identity/relay-list events to keep on-the-fly bridge rejection working after a restart.
     # One-shot cleanup of content stored before a rule existed (or illegal content) is the admin
     # "Purge now" button only (cmd: purge-blocks).
-    if cfg["blocked_relays"]:
-        await _mark_blocked_relays(store, gate, cfg["blocked_relays"])
-    if cfg.get("block_bridged"):
-        await _safe(_mark_social_mirrors(store, gate))
+    # The marks are SEEDED from the last scan's saved result and re-derived in the background once the relay is
+    # listening (_rescan_bridges below): the scans read every identity event and every proxy-tagged post, and run
+    # before the listener they kept a 3.28M-event relay deaf for ~4 minutes on every start (2026-10-10).
+    seeded = await _seed_bridge_marks(store, gate)
     from .outbox import Outbox
     outbox = Outbox(cfg["upstream"], min_interval=cfg["outbox_min_interval"],
                     maxsize=cfg["outbox_max_queue"], direct=cfg["direct"],
@@ -1092,6 +1092,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     )
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))
+    asyncio.create_task(_safe(_rescan_bridges(store, gate, cfg, seeded)))
 
     from app.services.nostr.event import verify_event
     from .langfilter import blocked_language, blocked_word
@@ -1618,10 +1619,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                             gate.set_operator(cfg["operator"])              # gate CAN shrink (revoke removed operators)
                             store.extend_preserve_pubkeys(cfg["preserve"])  # preserve is grow-only (keeps pinned)
                             # Re-mark bridged accounts in the live gate (load_from_store doesn't keep them).
-                            if cfg["blocked_relays"]:
-                                asyncio.create_task(_safe(_mark_blocked_relays(store, gate, cfg["blocked_relays"])))
-                            if cfg["block_bridged"]:
-                                asyncio.create_task(_safe(_mark_social_mirrors(store, gate)))
+                            asyncio.create_task(_safe(_rescan_bridges(store, gate, cfg, frozenset())))
                             logger.info("[nostr-relay] control: reloaded %d blocked, %d bridge, %d operator key(s)",
                                         len(cfg["blocked_pubkeys"]), len(cfg["blocked_relays"]), len(cfg["operator"]))
                         except Exception as e:
@@ -2286,6 +2284,41 @@ def trigger_backfill(pubkey_hex: str, storage_pubkey: str | None = None) -> dict
     if storage_pubkey and storage_pubkey != pubkey_hex:
         cmd["storage_pubkey"] = storage_pubkey
     return _drop_control(cmd)
+
+
+_BRIDGE_MARKS_KEY = "bridge_marks"
+
+
+async def _seed_bridge_marks(store, gate) -> frozenset:
+    """Put the last scan's bridge marks into the gate at once, so bridge rejection is right from the first
+    connection while the real scan runs behind the listener. Returns what was seeded."""
+    try:
+        raw = await store.kv_get(_BRIDGE_MARKS_KEY)
+    except Exception as e:      # noqa: BLE001 -- no seed: the background scan still marks everything
+        logger.warning("[nostr-relay] saved bridge marks unreadable: %s", e)
+        return frozenset()
+    pks = frozenset(p for p in (raw or "").split() if len(p) == 64)
+    gate.add_bridged_identity(pks)          # operators are still spared
+    if pks:
+        logger.info("[nostr-relay] %d bridge mark(s) seeded from the last scan", len(pks))
+    return pks
+
+
+async def _rescan_bridges(store, gate, cfg, seeded) -> None:
+    """Re-derive the bridge marks from what is stored (start, and every live blocklist reload), drop seeded marks
+    the scan no longer finds (a domain taken off the blocklist), and save the result for the next start."""
+    found: set = set()
+    if cfg.get("blocked_relays"):
+        found |= set(await _mark_blocked_relays(store, gate, cfg["blocked_relays"]))
+    if cfg.get("block_bridged"):
+        found |= set(await _mark_social_mirrors(store, gate) or [])
+    stale = set(seeded) - found
+    if stale:
+        gate.drop_bridged(stale)
+    try:
+        await store.kv_set(_BRIDGE_MARKS_KEY, " ".join(sorted(gate.bridged())))
+    except Exception as e:      # noqa: BLE001 -- the next start just scans without a seed
+        logger.warning("[nostr-relay] could not save bridge marks: %s", e)
 
 
 async def _mark_blocked_relays(store, gate, domains) -> list:

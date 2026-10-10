@@ -77,6 +77,12 @@ class WotGate:
     def add_bridged_identity(self, pubkeys) -> None:
         self._bridged |= {p for p in (pubkeys or []) if p and p not in self._operator}
 
+    def bridged(self) -> frozenset:
+        return frozenset(self._bridged)
+
+    def drop_bridged(self, pubkeys) -> None:
+        self._bridged -= set(pubkeys or ())
+
     def operators(self) -> frozenset:
         return self._operator
 

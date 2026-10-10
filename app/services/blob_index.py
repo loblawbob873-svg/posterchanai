@@ -42,7 +42,6 @@ FIELDS = ("pubkey", "size", "mime", "created_at", "expires_at", "storage", "path
 
 # Attribute-compatible with the ORM row it replaces (blob.sha256, blob.size, blob.keep ...), immutable.
 Blob = namedtuple("Blob", ("sha256",) + FIELDS + ("owners",))
-_RESYNC_S = 6 * 3600       # backstop full reload; the live stream (with gap replay) keeps memory current between
 
 
 class NotMigrated(Unavailable):
@@ -53,7 +52,6 @@ def table() -> DocTable:
     t = DocTable(TABLE)
     if not getattr(t, "_blob_index_watch", False):
         t._blob_index_watch = True
-        t.resync_s = _RESYNC_S
         t.watch(_on_change)
         if t.loaded:                    # loaded before anything watched it: build the owner index now
             _on_change(None, None)

@@ -3,8 +3,8 @@
 Measured on 200k real events: storing cost 365 us an event and 93% of it was the Postgres-exact search tokenizer,
 so copying the relay (2.65M events) took ~18 min while everything else about it took ~3. A copy and a log replay
 now defer the words; whatever queries the store with a `search` before they are indexed gets them indexed first
-(exact, just slower), the mirror sends those searches to Postgres and indexes in the background, and a snapshot
-is only ever taken of a COMPLETE index.
+(exact, just slower), the indexer catches up in the background, and a snapshot records which events are still
+pending, so a restart neither replays the log nor starts the backlog over.
 """
 import random
 
@@ -60,21 +60,30 @@ def test_a_replay_defers_words_and_answers_exactly(tmp_path):
         again.close()
 
 
-def test_a_snapshot_is_only_taken_of_a_complete_index(tmp_path):
+def test_a_snapshot_taken_with_words_pending_restarts_without_a_replay_and_answers_exactly(tmp_path):
+    """2026-10-10: a snapshot used to be REFUSED while any words were pending. After server1's relay was promoted,
+    all 3.28M events were pending, so there was never a snapshot: every restart replayed the whole log (124 s)
+    and threw the word backlog away to start it again. The pending list now travels in the snapshot."""
     p = str(tmp_path / "db")
+    evs = _with_text(7, 1500)
+    worded = Store(str(tmp_path / "w"), flush_interval=3600, direct_durable=False)
     st = Store(p, flush_interval=3600, direct_durable=False, snapshot_min_events=1)
-    for e in _with_text(7, 1500):
+    for e in evs:
+        worded.put(dict(e), origin="wot")
         st.copy_put(dict(e), origin="wot")
-    assert st.snapshot() is None, "a snapshot was written with search words missing"
-    st.close()                                         # nor at a stop
-    import os
-    assert not os.path.exists(os.path.join(p, snap.NAME))
-    st = Store(p, flush_interval=3600, direct_durable=False, snapshot_min_events=1)
-    st.index_pending_words()
-    assert st.snapshot() is not None
-    st.close()
-    again = Store(p)
+    st.index_pending_words(400)                        # part of the backlog done, the rest still pending
+    pending = st.words_pending
+    assert 0 < pending < len(evs)
+    assert st.snapshot() is not None, "pending search words blocked the snapshot"
+    st.close(take_snapshot=False)
+    again = Store(p, flush_interval=3600, direct_durable=False)
     try:
-        assert again.last_open["snapshot"] and again.words_pending == 0
+        assert again.last_open["snapshot"], "the restart did not use the snapshot"
+        assert again.last_open["replayed"] == 0, "the restart replayed the log"
+        assert again.words_pending == pending, "the word backlog was lost or restarted"
+        for f in _searches(7):
+            assert [e["id"] for e in again.query(dict(f))] == [e["id"] for e in worded.query(dict(f))], f
+        assert again.words_pending == 0
     finally:
         again.close()
+        worded.close()

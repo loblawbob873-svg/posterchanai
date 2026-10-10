@@ -190,3 +190,40 @@ def test_many_rows_by_key_before_the_table_is_loaded(relay):
     assert not other.loaded
     other.all()
     assert asyncio.run(other.aget_many(["b:c", "missing"])) == {"b:c": {"n": 2}}
+
+
+def test_a_loaded_table_never_reloads_and_a_stream_gap_is_replayed_not_reloaded(relay, monkeypatch):
+    """A table is loaded ONCE and kept current by its live stream, like a replica following a log. It used to
+    re-read every row on a 10-minute timer and after every dropped socket -- the 388k-row fedi ledger and the
+    190k-row blob index, in the app AND the worker (2026-10-10)."""
+    from app.services import nostr_store, relay_reader
+    loads = []
+    real_list = nostr_store.list_all_docs
+
+    async def counting(*a, **kw):
+        loads.append(1)
+        return await real_list(*a, **kw)
+    monkeypatch.setattr(nostr_store, "list_all_docs", counting)
+
+    # the live stream's first two connections fail: a gap from the very start
+    real_auth = relay_reader._authenticate
+    fails = {"n": 2}
+
+    def flaky(*a, **kw):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise OSError("socket dropped")
+        return real_auth(*a, **kw)
+    monkeypatch.setattr(relay_reader, "_authenticate", flaky)
+
+    mine = doc_table.DocTable("gaptable")
+    mine.start_background_load()
+    assert _until(lambda: mine.loaded), "the table never loaded"
+    theirs = _fresh("gaptable")
+    doc_table.DocTable._registry["gaptable"] = mine
+    asyncio.run(theirs.aput("during-gap", {"v": 1}))            # written while the stream is down
+    assert _until(lambda: mine.get("during-gap") == {"v": 1}, timeout=20), "the gap was not replayed"
+    mine._loaded_at -= 7 * 3600                                   # hours later: still no reload
+    time.sleep(2.5)
+    mine.get("during-gap")
+    assert len(loads) == 1, "the table was re-read %d time(s) after its load" % (len(loads) - 1)

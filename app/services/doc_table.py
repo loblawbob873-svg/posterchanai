@@ -45,7 +45,11 @@ logger = logging.getLogger(__name__)
 
 NS = "pcai:t:"
 KIND = nostr_store.APP_KIND
-_RESYNC_S = 600            # a full strict reload as a backstop for anything the live stream missed
+# NO periodic reload. A table is loaded ONCE per process and kept current by its live subscription, which replays
+# every gap from where it dropped (deletions included) -- the way a database replica follows its log. A timed full
+# reload re-read and re-decrypted every row of every table (the 388k-row fedi ledger, the 190k-row blob index) every
+# ten minutes in both the app and the worker (2026-10-10). `resync_s` stays settable for a caller that wants one.
+_RESYNC_S = None
 
 
 def key(value) -> str:
@@ -149,7 +153,7 @@ class DocTable:
         self._bg_lock = threading.Lock()
         self._reload_wanted = False
         self.load_seconds = None        # how long the last strict load took (measured, reported)
-        self.resync_s = _RESYNC_S       # the backstop full reload (a big table sets a longer one)
+        self.resync_s = _RESYNC_S       # None: never reload (the live stream keeps the table current)
 
     @property
     def loaded(self) -> bool:
@@ -234,7 +238,7 @@ class DocTable:
         backoff = 1.0
         while not self._orphaned():
             try:
-                if not self._loaded_at or self._reload_wanted or time.time() - self._loaded_at > self.resync_s:
+                if not self._loaded_at or self._reload_wanted or self._stale():
                     first = not self._loaded_at
                     self._reload_wanted = False
                     self.load(force=True)
@@ -251,6 +255,9 @@ class DocTable:
                 # of whole-table 503s); a reload of a table already held can wait longer
                 backoff = min(backoff * 2, 30.0 if self._loaded_at else 3.0)
 
+    def _stale(self) -> bool:
+        return bool(self.resync_s) and time.time() - self._loaded_at > self.resync_s
+
     def _bg_running(self) -> bool:
         return self._bg is not None and self._bg.is_alive()
 
@@ -259,7 +266,7 @@ class DocTable:
 
     async def _ensure(self):
         if self._loaded_at:
-            if time.time() - self._loaded_at > self.resync_s:
+            if self._stale():
                 if self._bg_running():
                     self._reload_wanted = True          # the loader thread reloads; memory stays current meanwhile
                 else:
@@ -281,7 +288,7 @@ class DocTable:
 
     def _ensure_sync(self):
         if self._loaded_at:
-            if time.time() - self._loaded_at > self.resync_s:
+            if self._stale():
                 if self._bg_running():
                     self._reload_wanted = True
                 elif not _in_loop():
@@ -516,7 +523,8 @@ class DocTable:
             since = int(dropped_at if dropped_at is not None else time.time()) - 5
             try:
                 url = "ws://127.0.0.1:%d/relay" % relay_port()
-                with connect(url, open_timeout=10, close_timeout=2, max_size=16 * 1024 * 1024) as ws:
+                with connect(url, open_timeout=10, close_timeout=2, max_size=16 * 1024 * 1024,
+                             compression=None) as ws:
                     _authenticate(ws, url, sk, 10)        # 30078 is served live only to its signed-in author
                     sub = "dt-" + self.name[:20]
                     ws.send(json.dumps(["REQ", sub,
@@ -538,13 +546,8 @@ class DocTable:
                 logger.debug("[doctable] %s live stream: %s", self.name, e)
                 if dropped_at is None:
                     dropped_at = time.time()
-                # a gap in the stream may have missed writes: reload strictly -- on the loader thread when this
-                # process runs one (a big table must never reload inside a request), else on the next read
-                if self._bg_running():
-                    self._reload_wanted = True
-                else:
-                    with self._lock:
-                        if self._loaded_at:
-                            self._loaded_at = time.time() - self.resync_s - 1
+                # No reload for a gap: the reconnect asks from `dropped_at`, and the relay replays what was written
+                # meanwhile, deletions included. A full reload per dropped socket re-read whole tables every time the
+                # relay restarted.
             time.sleep(backoff)
             backoff = min(backoff * 2, 30.0)

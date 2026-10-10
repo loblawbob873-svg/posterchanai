@@ -276,7 +276,8 @@ async def _listen_once() -> None:
     import websockets
     sub = "apdm" + os.urandom(4).hex()
     uri = f"ws://127.0.0.1:{settings_store._port()}/relay"
-    async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30) as ws:
+    async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30,
+                                  compression=None) as ws:
         await ws.send(json.dumps(["REQ", sub, {"kinds": [1059], "since": int(time.time()) - _LOOKBACK}]))
         while True:
             msg = json.loads(await ws.recv())

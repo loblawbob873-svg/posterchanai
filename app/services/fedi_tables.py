@@ -21,6 +21,7 @@ request, because at ~390k rows that load takes many minutes after a restart.
 from __future__ import annotations
 
 import hashlib
+import threading
 from datetime import datetime, timedelta
 
 from app.services import table_migrate as tm
@@ -49,6 +50,95 @@ def _first(rows):
     """The earliest-created row among several (what a stable `.first()` would have meant)."""
     rows = list(rows)
     return min(rows, key=lambda r: (r.get("created_at") or "", r.get("actor_uri") or "")) if rows else None
+
+
+# ============================================================================== in-memory secondary indexes
+# Lookups by actor URI / handle / pubkey (puppets) and by note URI / event id (ledger) used to SCAN the whole table
+# per inbox activity -- 23k puppets and 388k ledger rows, on every delivery (2026-10-10). These maps are kept
+# current through DocTable's watcher (its own writes, the live stream, a (re)load) and are only consulted once the
+# table is loaded; before that the callers fall back exactly as before.
+_ix_lock = threading.Lock()
+_pix = {"acct": {}, "pk": {}}            # lower(acct) -> {uri}; pubkey -> {uri}
+_lix = {"uri": {}, "eid": {}}            # note_uri -> {key}; nostr_event_id -> {key}
+_ix_seen: dict = {}                      # (table, key) -> the values indexed for it (to unindex on change)
+
+
+def _ix_put(name, maps, fields, k, row):
+    old = _ix_seen.pop((name, k), None)
+    if old:
+        for f, v in old:
+            bucket = maps[f].get(v)
+            if bucket is not None:
+                bucket.discard(k)
+                if not bucket:
+                    del maps[f][v]
+    if row is None:
+        return
+    vals = []
+    for f, get in fields.items():
+        v = get(row)
+        if v:
+            maps[f].setdefault(v, set()).add(k)
+            vals.append((f, v))
+    if vals:
+        _ix_seen[(name, k)] = vals
+
+
+_P_IX = {"acct": lambda r: (r.get("acct") or "").lower().lstrip("@"), "pk": lambda r: r.get("pubkey_hex")}
+_L_IX = {"uri": lambda r: r.get("note_uri"), "eid": lambda r: r.get("nostr_event_id")}
+
+
+def _watcher(name, maps, fields):
+    def on_change(k, row):
+        with _ix_lock:
+            if k is None:
+                for m in maps.values():
+                    m.clear()
+                for key in [x for x in _ix_seen if x[0] == name]:
+                    del _ix_seen[key]
+                for kk, r in DocTable(name).rows_view():
+                    _ix_put(name, maps, fields, kk, r)
+            else:
+                _ix_put(name, maps, fields, k, row)
+    return on_change
+
+
+def _indexed(name) -> bool:
+    """True when `name` is loaded in this process and its secondary index is current. The watcher is attached to
+    the table INSTANCE (a fresh process -- or a test resetting the registry -- gets a new one)."""
+    t = DocTable(name)
+    if not getattr(t, "_fedi_ix_watch", False):
+        with _ix_lock:
+            if not getattr(t, "_fedi_ix_watch", False):
+                maps, fields = (_pix, _P_IX) if name == PUPPETS else (_lix, _L_IX)
+                fn = _watcher(name, maps, fields)
+                t._fedi_ix_watch = True
+                t.watch(fn)
+                for m in maps.values():
+                    m.clear()
+                for key in [x for x in _ix_seen if x[0] == name]:
+                    del _ix_seen[key]
+                if t.loaded:
+                    for kk, r in t.rows_view():
+                        _ix_put(name, maps, fields, kk, r)
+    return t.loaded
+
+
+def puppet_pubkeys_for(actor_uri: str, acct_lower: str) -> set:
+    """Puppet keys recorded for this actor URI or handle. Raises Unavailable until the registry is loaded."""
+    t = DocTable(PUPPETS)
+    if not _indexed(PUPPETS):
+        t.peek("")                                # raises Loading/Unavailable, never answers "none"
+    keys = {actor_uri} if actor_uri else set()
+    with _ix_lock:
+        if acct_lower:
+            keys |= set(_pix["acct"].get(acct_lower, ()))
+    out = set()
+    for k in keys:
+        r = t.peek(k)
+        if r and r.get("pubkey_hex"):
+            out.add(r["pubkey_hex"])
+    return out
 
 
 # ============================================================================================ puppets
@@ -107,10 +197,16 @@ def puppets_by_uris(uris) -> dict:
 
 
 def puppet_pubkeys() -> set:
+    if _indexed(PUPPETS):
+        with _ix_lock:
+            return set(_pix["pk"])
     return {r.get("pubkey_hex") for _k, r in tm.view(PUPPETS) if r.get("pubkey_hex")}
 
 
 async def apuppet_pubkeys() -> set:
+    if _indexed(PUPPETS):
+        with _ix_lock:
+            return set(_pix["pk"])
     return {r.get("pubkey_hex") for _k, r in await tm.aview(PUPPETS) if r.get("pubkey_hex")}
 
 
@@ -124,6 +220,12 @@ async def aall_puppets() -> list:
 
 async def apuppets_with_acct(acct: str) -> list:
     """Rows recorded under this exact handle, earliest first."""
+    if acct and _indexed(PUPPETS):
+        t = DocTable(PUPPETS)
+        with _ix_lock:
+            keys = list(_pix["acct"].get(acct.lower().lstrip("@"), ()))
+        rows = [_prow(r) for r in (t.peek(k) for k in keys) if r and r.get("acct") == acct]
+        return sorted(rows, key=lambda r: (r.get("created_at") or "", r.get("actor_uri") or ""))
     rows = [_prow(r) for _k, r in await tm.aview(PUPPETS) if acct and r.get("acct") == acct]
     return sorted(rows, key=lambda r: (r.get("created_at") or "", r.get("actor_uri") or ""))
 
@@ -235,6 +337,11 @@ async def _arows_by_uri(uri: str) -> list:
         idx = await DocTable(INDEX).aget(_uri_ikey(uri))
         keys = [_ap_key(uri)] + list((idx or {}).get("keys") or [])
         items = (await DocTable(LEDGER).aget_many(keys)).items()
+    elif _indexed(LEDGER):
+        t = DocTable(LEDGER)
+        with _ix_lock:
+            keys = list(_lix["uri"].get(want, ()))
+        items = [(k, r) for k, r in ((k, t.peek(k)) for k in keys) if r is not None]
     else:
         items = await tm.aview(LEDGER)
     return [(k, r) for k, r in items if r.get("note_uri") == want]
@@ -248,6 +355,11 @@ async def _arows_by_events(eids) -> list:
         idx = await DocTable(INDEX).aget_many([_event_ikey(e) for e in ids])
         keys = [k for d in idx.values() for k in (d.get("keys") or [])]
         items = (await DocTable(LEDGER).aget_many(keys)).items()
+    elif _indexed(LEDGER):
+        t = DocTable(LEDGER)
+        with _ix_lock:
+            keys = {k for e in ids for k in _lix["eid"].get(e, ())}
+        items = [(k, r) for k, r in ((k, t.peek(k)) for k in keys) if r is not None]
     else:
         items = await tm.aview(LEDGER)
     return [(k, r) for k, r in items if r.get("nostr_event_id") in ids and r.get("note_uri") is not None]

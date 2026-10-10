@@ -86,8 +86,7 @@ def puppet_blocked(actor_id: str, acct: str = "") -> bool:
     try:
         from app.services import fedi_tables
         uri, low = actor_id.split("#")[0], (acct or "").lower().lstrip("@")
-        keys |= {r.pubkey_hex for r in fedi_tables.all_puppets()
-                 if r.pubkey_hex and (r.actor_uri == uri or (low and (r.acct or "").lower() == low))}
+        keys |= fedi_tables.puppet_pubkeys_for(uri, low)
     except Exception:
         read_ok = False           # the derived key below is still checked; the answer is not cached
     try:

@@ -153,6 +153,11 @@ TESTS = (
     'tests/test_table_load_retry_and_quiet_jobs.py',
     'tests/test_relay_langfilter.py',
     'tests/test_pcdb_bridge_scan_cost.py',
+    'tests/test_posterchandb_prefix_index.py',
+    'tests/test_posterchandb_deferred_words.py',
+    'tests/test_relay_starts_before_bridge_scans.py',
+    'tests/test_fedi_lookups_never_scan.py',
+    'tests/test_loopback_relay_sockets_are_uncompressed.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

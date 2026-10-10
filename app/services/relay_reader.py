@@ -23,6 +23,14 @@ class Unavailable(RuntimeError):
     """The relay could not be asked. Never "no events"."""
 
 
+
+def loopback_kw(url: str) -> dict:
+    """websockets connect() options for a socket to THIS machine's relay: no permessage-deflate. Compressing bytes
+    that never leave the host is pure CPU on both ends -- the app's table streams, point reads and table loads all
+    paid it (2026-10-10)."""
+    host = (url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0]).strip("[]")
+    return {"compression": None} if host in ("127.0.0.1", "localhost", "::1") else {}
+
 def relay_port() -> int:
     """POSTERCHANAI_RELAY_PORT for a process that has no settings store (the git hook); else the setting."""
     env = os.environ.get("POSTERCHANAI_RELAY_PORT")
@@ -88,7 +96,8 @@ def query(filters: list, *, port: int | None = None, timeout: float = 10.0, url:
     sub = "rr" + uuid.uuid4().hex[:10]
     out: list = []
     try:
-        with connect(target, open_timeout=timeout, close_timeout=2, max_size=64 * 1024 * 1024) as ws:
+        with connect(target, open_timeout=timeout, close_timeout=2, max_size=64 * 1024 * 1024,
+                     **loopback_kw(target)) as ws:
             if auth_seckey:
                 _authenticate(ws, target, auth_seckey, timeout)
             ws.send(json.dumps(["REQ", sub, *filters]))
@@ -137,7 +146,7 @@ def counts(filters: list, *, port: int | None = None, timeout: float = 10.0, url
     subs = ["%s-%d" % (base, i) for i in range(len(filters))]
     got: dict = {}
     try:
-        with connect(target, open_timeout=timeout, close_timeout=2) as ws:
+        with connect(target, open_timeout=timeout, close_timeout=2, **loopback_kw(target)) as ws:
             if auth_seckey:
                 _authenticate(ws, target, auth_seckey, timeout)
             for sub, flt in zip(subs, filters):

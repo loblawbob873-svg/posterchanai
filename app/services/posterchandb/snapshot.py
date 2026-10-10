@@ -18,6 +18,7 @@ right after a restart writes nothing.
 from __future__ import annotations
 
 import array
+import collections
 import hashlib
 import io
 import json
@@ -56,6 +57,13 @@ def _one_run(postings, dead):
 
 def save(store) -> dict:
     """Write a snapshot of `store` (caller holds the lock; the store has just flushed). Returns a summary."""
+    return write(*collect(store))
+
+
+def collect(store):
+    """Everything a snapshot holds, as private COPIES (caller holds the lock; the store has just flushed).
+    Copies, so the file can be written with the lock released: writing ~1 GB with an fsync took the relay's one
+    lock for seconds every hour, stalling every query behind it (2026-10-10)."""
     st = store
     dead = np.frombuffer(st.dead, dtype=np.uint8) if len(st.dead) else None
     ik, is_, ip = _one_run(st.idx, dead)
@@ -95,15 +103,31 @@ def save(store) -> dict:
         "mk_sid": mk_sid, "mk_len": mk_len, "mk_buf": mk_buf,
         "meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
     }
-    path = os.path.join(st.path, NAME)
+    # Events whose SEARCH words are not indexed yet travel with the snapshot, so one can always be taken. It used to
+    # be refused while any were pending -- and after a promotion all 3.28M were, so there was never a snapshot,
+    # every restart replayed the whole log (124 s) and the word backlog started over from zero each time.
+    arrays["unworded"] = np.fromiter(st._unworded, dtype=np.uint32, count=len(st._unworded))
+    # Views of the live columns are copied; arrays that own their data (the merged runs, which are never mutated in
+    # place) are safe to write as they are.
+    arrays = {k: (v.copy() if isinstance(v, np.ndarray) and not v.flags.owndata else v) for k, v in arrays.items()}
+    return st.path, arrays, len(st.off)
+
+
+def write(path_dir: str, arrays: dict, events: int) -> dict:
+    """Write what `collect` gathered (no lock needed: the arrays are copies). Atomic: temp file, fsync, rename."""
+    path = os.path.join(path_dir, NAME)
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         np.savez(f, **arrays)          # uncompressed: loading is a memory copy, no CPU spent inflating
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
-    st._fsync_dir()
-    return {"events": len(st.off), "bytes": os.path.getsize(path)}
+    fd = os.open(path_dir, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return {"events": events, "bytes": os.path.getsize(path)}
 
 
 def load(store):
@@ -151,6 +175,8 @@ def load(store):
             vals = z["pref_vals"].tobytes().decode("utf-8").split("\x00") if len(z["pref_seqs"]) else []
             st.dprefix.runs = [list(zip(vals, (int(x) for x in z["pref_seqs"])))] if vals else []
             st.dprefix.delta = []
+            st._unworded = collections.deque(z["unworded"].tolist()) if "unworded" in z.files else \
+                collections.deque()
             st.seg_markers = {}
             buf, o = z["mk_buf"].tobytes(), 0
             for sid, n in zip(z["mk_sid"].tolist(), z["mk_len"].tolist()):

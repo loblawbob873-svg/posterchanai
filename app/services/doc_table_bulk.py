@@ -61,7 +61,7 @@ async def abulk_put(table: str, rows: dict, *, window: int = _WINDOW) -> int:
         return out
 
     done = 0
-    async with websockets.connect(url, open_timeout=10, close_timeout=2, max_size=None) as ws:
+    async with websockets.connect(url, open_timeout=10, close_timeout=2, max_size=None, compression=None) as ws:
         # NIP-42 first: 30078 writes by the operator are accepted from an authenticated socket.
         msg = json.loads(await asyncio.wait_for(ws.recv(), 10))
         if msg and msg[0] == "AUTH":

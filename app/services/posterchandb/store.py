@@ -208,11 +208,21 @@ class _Postings:
 
 class _Prefix:
     """Sorted (value, seq) runs for prefix matching on ONE tag letter (`#d~`, the app's folder reads).
-    Leveled like the postings; only events that carry the tag pay for it."""
+    Leveled like the postings; only events that carry the tag pay for it.
+
+    A `#d~` read is how every app table loads, a page of 1000 at a time, so the same prefix is asked for
+    hundreds of times in a row against runs that do not change. Walking the matches in Python per page --
+    and sorting them again -- cost O(table) Python work per page under the store lock: a 388k-row table
+    took 20 minutes to load and the relay sat at 100% while it did (2026-10-10). So each run keeps a
+    parallel (values, seqs) view built once, the range is found with two bisects, and the sorted set of
+    matching seqs is cached per prefix until a run changes; only the small unmerged delta is scanned per
+    call. Runs are never mutated in place (a merge builds new lists), which is what keeps the views valid."""
 
     def __init__(self):
         self.runs: list = []
         self.delta: list = []
+        self._views: dict = {}          # id(run) -> (run, values, seqs ndarray)
+        self._cache: dict = {}          # (prefix, run ids) -> (those runs, sorted unique seqs of their matches)
 
     def add(self, value: str, seq: int) -> None:
         self.delta.append((value, seq))
@@ -225,13 +235,53 @@ class _Prefix:
             b = self.runs.pop(); a = self.runs.pop()
             self.runs.append(sorted(x for x in a + b if dead is None or not dead[x[1]]))
 
+    def _view(self, run):
+        v = self._views.get(id(run))
+        if v is None or v[0] is not run:
+            live = {id(r) for r in self.runs}
+            for k in [k for k in self._views if k not in live]:
+                del self._views[k]
+            v = (run, [x[0] for x in run], np.fromiter((x[1] for x in run), dtype=np.uint32, count=len(run)))
+            self._views[id(run)] = v
+        return v
+
+    @staticmethod
+    def _upper(pre: str):
+        """The smallest string greater than every string that starts with `pre` (None: no bound)."""
+        while pre:
+            c = ord(pre[-1])
+            if c < 0x10FFFF:
+                return pre[:-1] + chr(c + 1)
+            pre = pre[:-1]
+        return None
+
+    def seqs(self, pre: str) -> np.ndarray:
+        """Sorted unique seqs whose value starts with `pre` (dead ones included)."""
+        runs = tuple(self.runs)
+        key = (pre, tuple(id(r) for r in runs))
+        hit = self._cache.get(key)          # the entry holds the runs themselves, so no id can be reused under it
+        base = hit[1] if hit is not None else None
+        if base is None:
+            hi = self._upper(pre)
+            parts = []
+            for run in self.runs:
+                _r, vals, sq = self._view(run)
+                i = bisect.bisect_left(vals, pre)
+                j = bisect.bisect_left(vals, hi) if hi is not None else len(vals)
+                if j > i:
+                    parts.append(sq[i:j])
+            base = np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.uint32)
+            if len(self._cache) > 64:
+                self._cache.clear()
+            self._cache = {k: v for k, v in self._cache.items() if k[1] == key[1]}
+            self._cache[key] = (runs, base)
+        extra = [q for v, q in self.delta if v.startswith(pre)]
+        if extra:
+            return np.union1d(base, np.asarray(extra, dtype=np.uint32)).astype(np.uint32)
+        return base
+
     def prefix(self, pre: str) -> list:
-        out = [q for v, q in self.delta if v.startswith(pre)]
-        for run in self.runs:
-            i = bisect.bisect_left(run, (pre, -1))
-            while i < len(run) and run[i][0].startswith(pre):
-                out.append(run[i][1]); i += 1
-        return out
+        return [int(q) for q in self.seqs(pre)]
 
 
 ORIGINS = {"direct": 0, "wot": 1, "bridge": 2, "ancestor": 3}
@@ -542,16 +592,18 @@ class Store:
             return len(batch)
 
     def snapshot(self):
-        """Write an index snapshot now (flushes first). None while a compaction is running or search words are
-        still deferred (a snapshot is a COMPLETE index, so a restart from it has nothing left to catch up)."""
+        """Write an index snapshot now (flushes first). None while a compaction is running. Deferred search words
+        are recorded in it (a restart from it resumes indexing them), so pending words never block one. Only the
+        gathering holds the lock; the file is written outside it."""
         with self._lock:
-            if self._file is None or self._compacting or self._unworded:
+            if self._file is None or self._compacting:
                 return None
             self.flush()
-            res = snapshot.save(self)
+            gathered = snapshot.collect(self)
             self._since_snap = 0
-            self.last_snapshot = time.time()
-            return res
+        res = snapshot.write(*gathered)
+        self.last_snapshot = time.time()
+        return res
 
     def close(self, take_snapshot: bool = True) -> None:
         """Flush (fsync) and close. `snapshot=False` for a stop with a deadline (the relay has systemd's 10 s):
@@ -560,7 +612,7 @@ class Store:
             if self._file is None:
                 return
             self.flush()
-            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events and not self._unworded:
+            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events:
                 try:
                     snapshot.save(self)          # a clean stop: the next start loads instead of re-indexing
                     self._since_snap = 0
@@ -1245,8 +1297,8 @@ class Store:
                 elif len(key) == 3 and key.endswith("~"):
                     if key[1] != "d":
                         return _none          # prefix matching is indexed for `d` only — the app's one use
-                    sets.append(np.unique(np.array([q for v in vals for q in self.dprefix.prefix(str(v))],
-                                                   dtype=np.uint32)))
+                    got = [self.dprefix.seqs(str(v)) for v in vals]
+                    sets.append(got[0] if len(got) == 1 else np.unique(np.concatenate(got)).astype(np.uint32))
             if flt.get("search"):
                 if self._unworded:
                     self.index_pending_words()     # exact answers: catch up whatever a copy/replay deferred
