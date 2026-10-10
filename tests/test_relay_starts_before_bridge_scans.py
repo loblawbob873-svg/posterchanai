@@ -82,3 +82,31 @@ def test_nothing_before_the_listener_awaits_a_bridge_scan():
         "a bridge scan is awaited before the relay listens"
     after = src[src.index("ws = await serve("):]
     assert "_rescan_bridges(" in after, "the bridge scan never runs"
+
+
+def test_before_listening_the_relay_never_asks_itself_for_its_tables(monkeypatch):
+    """The accounts, bots and legacy-storage tables are served by THIS relay. Asked before it listened, each read
+    spent ~6 s in page retries against a refused socket: 18 s of a 20 s start (2026-10-10)."""
+    from app.services import bot_table, user_table, user_settings_table
+    asked = []
+    monkeypatch.setattr(user_table, "all_users", lambda db: asked.append("users") or [])
+    monkeypatch.setattr(bot_table, "all_bots", lambda db: asked.append("bots") or [])
+    monkeypatch.setattr(user_settings_table, "by_key", lambda db, k: asked.append("storage") or {})
+    monkeypatch.setattr(relay_thread, "_reload_when_readable", lambda: None)
+    monkeypatch.setitem(relay_thread._listening, "on", False)
+    monkeypatch.setitem(relay_thread._last_known, "users", {A})
+    assert relay_thread._user_pubkeys(None) == {A}
+    relay_thread._bot_pubkeys(None)
+    relay_thread._legacy_storage_pubkeys(None)
+    assert asked == [], "the relay asked itself before it was listening: %s" % asked
+    monkeypatch.setitem(relay_thread._listening, "on", True)
+    relay_thread._user_pubkeys(None)
+    relay_thread._bot_pubkeys(None)
+    relay_thread._legacy_storage_pubkeys(None)
+    assert sorted(asked) == ["bots", "storage", "users"]
+
+
+def test_listening_is_declared_right_after_serve():
+    src = inspect.getsource(relay_thread._main)
+    after = src[src.index("ws = await serve("):]
+    assert after.index('_listening["on"] = True') < after.index("_rescan_bridges(")

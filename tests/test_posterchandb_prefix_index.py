@@ -66,3 +66,33 @@ def test_repeated_pages_reuse_one_sorted_set():
     got = p.seqs("pcai:t:big:")
     assert len(got) == 50001 and got[-1] == 50000
     assert p.seqs("pcai:t:big:") is not first or len(first) == 50000
+
+
+def test_a_query_scans_only_the_delta_added_since_the_last_one():
+    """The unmerged delta holds every write since the last merge (27k+ after a restart). Scanning it whole in
+    Python on every `#d~` query was a fifth of the relay's CPU (2026-10-10)."""
+    seen = []
+
+    class CountingList(list):
+        def __getitem__(self, i):
+            got = list.__getitem__(self, i)
+            if isinstance(i, slice):
+                seen.append(len(got))
+            return got
+
+    p = _Prefix()
+    for i in range(1000):
+        p.add("pcai:t:a:%d" % i, i)
+    p.merge()
+    p.delta = CountingList()
+    for i in range(1000, 21000):
+        p.add("pcai:other:%d" % i, i)
+    p.seqs("pcai:t:a:")
+    assert sum(seen) == 20000
+    seen.clear()
+    for _ in range(5):
+        assert len(p.seqs("pcai:t:a:")) == 1000
+    assert sum(seen) == 0, "a repeated query rescanned %d delta entries" % sum(seen)
+    p.add("pcai:t:a:new", 21000)
+    got = p.seqs("pcai:t:a:")
+    assert sum(seen) == 1 and len(got) == 1001 and got[-1] == 21000

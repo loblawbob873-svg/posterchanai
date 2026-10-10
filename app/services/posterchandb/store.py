@@ -256,29 +256,40 @@ class _Prefix:
         return None
 
     def seqs(self, pre: str) -> np.ndarray:
-        """Sorted unique seqs whose value starts with `pre` (dead ones included)."""
+        """Sorted unique seqs whose value starts with `pre` (dead ones included). The cache entry also remembers how
+        much of the unmerged delta it has looked at, so a query scans only the delta added since the last one --
+        the delta holds every write since the last merge (27k+ after a restart), and scanning it whole in Python
+        per query was a fifth of the relay's CPU. Delta seqs are newer than every run's, so a new match is
+        appended, never re-sorted in."""
         runs = tuple(self.runs)
         key = (pre, tuple(id(r) for r in runs))
-        hit = self._cache.get(key)          # the entry holds the runs themselves, so no id can be reused under it
-        base = hit[1] if hit is not None else None
-        if base is None:
+        ent = self._cache.get(key)          # [runs (kept alive: no id reuse), delta scanned, seqs]
+        if ent is None:
             hi = self._upper(pre)
             parts = []
-            for run in self.runs:
+            for run in runs:
                 _r, vals, sq = self._view(run)
                 i = bisect.bisect_left(vals, pre)
                 j = bisect.bisect_left(vals, hi) if hi is not None else len(vals)
                 if j > i:
                     parts.append(sq[i:j])
-            base = np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.uint32)
+            base = np.unique(np.concatenate(parts)).astype(np.uint32) if parts else np.zeros(0, dtype=np.uint32)
             if len(self._cache) > 64:
                 self._cache.clear()
             self._cache = {k: v for k, v in self._cache.items() if k[1] == key[1]}
-            self._cache[key] = (runs, base)
-        extra = [q for v, q in self.delta if v.startswith(pre)]
-        if extra:
-            return np.union1d(base, np.asarray(extra, dtype=np.uint32)).astype(np.uint32)
-        return base
+            ent = self._cache[key] = [runs, 0, base]
+        d = self.delta
+        if ent[1] < len(d):
+            new = sorted({q for v, q in d[ent[1]:] if v.startswith(pre)})
+            ent[1] = len(d)
+            if new:
+                add = np.asarray(new, dtype=np.uint32)
+                cur = ent[2]
+                if len(cur) and int(add[0]) <= int(cur[-1]):
+                    ent[2] = np.union1d(cur, add).astype(np.uint32)
+                else:
+                    ent[2] = np.concatenate([cur, add])
+        return ent[2]
 
     def prefix(self, pre: str) -> list:
         return [int(q) for q in self.seqs(pre)]

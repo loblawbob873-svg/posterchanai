@@ -612,6 +612,17 @@ def _node_pubkey() -> str:
 
 _last_known: dict = {"bots": set(), "storage": set(), "users": set()}
 _heal = {"running": False}
+# Set once the relay listens. Before that, these tables (which THIS relay serves) cannot answer, and asking cost
+# ~6 s each in page retries against a refused socket -- 18 s of a 20 s start (2026-10-10).
+_listening = {"on": False}
+
+
+def _not_yet(which: str) -> set | None:
+    """Before the relay listens: the last-known set, and the healer to re-read once it does. None = go ahead."""
+    if _listening["on"]:
+        return None
+    _reload_when_readable()
+    return set(_last_known[which])
 
 
 def _reload_when_readable() -> None:
@@ -652,6 +663,9 @@ def _bot_pubkeys(db) -> set:
     readable yet: then the LAST set this process read is used rather than none, and the app triggers a reload
     once the table is loaded (table_registry.start_loading at startup). An operator set that silently lost every bot
     would refuse all of their posts."""
+    early = _not_yet("bots")
+    if early is not None:
+        return early
     from app.services import bot_table
     from app.services.relay_reader import Unavailable
     try:
@@ -678,6 +692,9 @@ def _bot_pubkeys(db) -> set:
 
 def _legacy_storage_pubkeys(db) -> set:
     """Storage keys still held in the user-settings table (no-npub legacy accounts); same last-known rule."""
+    early = _not_yet("storage")
+    if early is not None:
+        return early
     from app.services import user_settings_table
     from app.services.relay_reader import Unavailable
     try:
@@ -704,6 +721,9 @@ def _user_pubkeys(db) -> set:
     relay's own loop -- and before the table is loaded -- it may not be readable yet: then the LAST set this
     process read is used rather than none (an operator set that silently lost every user would refuse their
     posts), and a healer re-reads it off the loop and triggers a reload."""
+    early = _not_yet("users")
+    if early is not None:
+        return early
     from app.services import user_table
     from app.services.relay_reader import Unavailable
     try:
@@ -1092,6 +1112,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     )
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))
+    _listening["on"] = True
     asyncio.create_task(_safe(_rescan_bridges(store, gate, cfg, seeded)))
 
     from app.services.nostr.event import verify_event
