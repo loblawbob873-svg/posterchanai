@@ -131,6 +131,28 @@ TESTS = (
     'tests/client/test_detached_sync_writer.py',
     'tests/client/test_sync_tick.py',
     'tests/test_native_window_reload_electron.py',
+    # 2026-10-10: the Postgres retirement and the day's regressions
+    'tests/client/test_concord_accounts_kept_apart_full_app.py',
+    'tests/client/test_concord_member_right_click_full_app.py',
+    'tests/client/test_dm_never_sends_nip44_to_nip04.py',
+    'tests/client/test_mail_addresses_open_the_composer_full_app.py',
+    'tests/client/test_mail_delete_is_instant_full_app.py',
+    'tests/client/test_music_opens_in_front_full_app.py',
+    'tests/client/test_office_local_needs_no_membership_full_app.py',
+    'tests/client/test_posted_track_carries_its_tags_full_app.py',
+    'tests/client/test_a_relay_is_not_an_instance_full_app.py',
+    'tests/test_doc_table.py',
+    'tests/test_fedi_ledger_point_reads.py',
+    'tests/test_list_all_docs_retries_a_page.py',
+    'tests/test_mail_delete_batch.py',
+    'tests/test_overlay_ebuild_versions.py',
+    'tests/test_relay_says_which_part_of_an_event_is_invalid.py',
+    'tests/test_script_tests_never_write_live_local_settings.py',
+    'tests/test_settings_hydrate_retries_until_the_relay_answers.py',
+    'tests/test_table_gate_sync_lookup_while_loading.py',
+    'tests/test_table_load_retry_and_quiet_jobs.py',
+    'tests/test_relay_langfilter.py',
+    'tests/test_pcdb_bridge_scan_cost.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

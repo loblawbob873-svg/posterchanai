@@ -312,12 +312,12 @@ class PcdbRelayStore(RelayStore):
         with self.store._lock:
             return len(self.store.off)
 
-    def _chunks(self, cols, hi: int | None = None, rows: int = SCAN_ROWS):
-        """Yield (lo, hi, {col: copy}) over rows [0, hi): the lock is held only while one chunk is copied out.
+    def _chunks(self, cols, hi: int | None = None, rows: int = SCAN_ROWS, lo: int = 0):
+        """Yield (lo, hi, {col: copy}) over rows [lo, hi): the lock is held only while one chunk is copied out.
         `hi` is fixed when the scan starts -- events stored meanwhile belong to the next pass."""
         st = self.store
         n = self._n() if hi is None else hi
-        for lo in range(0, n, rows):
+        for lo in range(lo, n, rows):
             b = min(n, lo + rows)
             with st._lock:
                 t0 = time.perf_counter()
@@ -347,10 +347,10 @@ class PcdbRelayStore(RelayStore):
         """1111 comments rooted at a git issue/patch/PR (`K` tag): the relay's _PRUNABLE_SQL exclusion."""
         return self._posting_seqs(["t:K:%s" % k for k in pg._GIT_COMMENT_ROOT_KINDS])
 
-    def _select(self, pred, cols, hi: int | None = None) -> np.ndarray:
-        """Live seqs where pred(chunk, seqs_of_chunk) is True, ascending."""
+    def _select(self, pred, cols, hi: int | None = None, lo: int = 0) -> np.ndarray:
+        """Live seqs in [lo, hi) where pred(chunk, seqs_of_chunk) is True, ascending."""
         out = []
-        for lo, b, c in self._chunks(tuple(cols) + ("dead",), hi):
+        for lo, b, c in self._chunks(tuple(cols) + ("dead",), hi, lo=lo):
             seqs = np.arange(lo, b, dtype=np.uint32)
             m = (c["dead"] == 0) & pred(c, seqs)
             if m.any():
@@ -602,21 +602,64 @@ class PcdbRelayStore(RelayStore):
         return await self._s(self._delete_by_proxy_sync)
 
     # ------------------------------------------------------------ scans that only read
+    # The bridge scans below used to DECODE EVERY STORED EVENT in Python, on every relay start and on every
+    # reload-blocks the app sends (2026-10-10, server1 promoted to PRIMARY with 3.28M events: the relay's main
+    # thread sat at 100% and every query took 4-6 s while the fediverse inbox answered 503 for its ledger reads).
+    # The SQL store answered the same question with `kind IN (0,3,10002) OR tags LIKE '%"proxy"%'`, so only those
+    # events are decoded here: the identity kinds come from the kind column, and every other event only if its
+    # RAW RECORD contains b"proxy" -- tag strings are stored as plain UTF-8 (codec.py), so that is a superset of
+    # the LIKE, and the exact check still runs on what is decoded. Hits are kept per seq, so a later pass scans
+    # only what was stored since, and a hit whose event has since died stops counting.
+    _BRIDGE_KINDS = (0, 3, 10002)
+
+    def _proxy_seqs(self, lo: int, hi: int, skip_kinds=()) -> list:
+        """Live seqs in [lo, hi) whose raw record contains b"proxy" (a superset of a "proxy" tag), kinds in
+        `skip_kinds` left out. Raw bytes only -- nothing is decoded."""
+        st = self.store
+        skip = np.asarray(skip_kinds, dtype=np.uint32)
+        out = []
+        for a, b, c in self._chunks(("kind", "dead"), hi, lo=lo):
+            seqs = np.arange(a, b, dtype=np.uint32)
+            m = c["dead"] == 0
+            if len(skip):
+                m &= ~np.isin(c["kind"], skip)
+            seqs = seqs[m]
+            for i in range(0, len(seqs), SCAN_ROWS // 16):
+                with st._lock:
+                    t0 = time.perf_counter()
+                    for s in seqs[i:i + SCAN_ROWS // 16]:
+                        s = int(s)
+                        if st.seg[s] != DROPPED and b"proxy" in bytes(st._rec(s)):
+                            out.append(s)
+                    self._held(t0)
+        return out
+
+    def _live_hits(self, hits: dict) -> list:
+        st = self.store
+        with st._lock:
+            return [v for s, v in hits.items() if not st.dead[s] and st.seg[s] != DROPPED]
+
     def _bridged_pubkeys_sync(self, domains) -> set:
-        domains = {d for d in domains if d}
+        domains = frozenset(d for d in domains if d)
         if not domains:
             return set()
         from .bridges import reveals_blocked_bridge
-        out: set = set()
-
-        def _check(s, ev, o):
-            if ev["kind"] in (0, 3, 10002) or '"proxy"' in self._tags_text(ev):
-                e = {"pubkey": ev["pubkey"], "kind": ev["kind"], "content": ev.get("content") or "",
-                     "tags": ev.get("tags") or []}
-                if ev["pubkey"] and reveals_blocked_bridge(e, domains):
-                    out.add(ev["pubkey"])
-        self._decode(self._select(lambda c, s: np.ones(len(s), dtype=bool), ()), _check)
-        return out
+        memo = getattr(self, "_bridged_memo", None)
+        if memo is None or memo[0] != domains:
+            memo = self._bridged_memo = [domains, 0, {}]
+        lo, hi, hits = memo[1], self._n(), memo[2]
+        if hi > lo:
+            def _check(s, ev, o):
+                if ev["kind"] in self._BRIDGE_KINDS or '"proxy"' in self._tags_text(ev):
+                    e = {"pubkey": ev["pubkey"], "kind": ev["kind"], "content": ev.get("content") or "",
+                         "tags": ev.get("tags") or []}
+                    if ev["pubkey"] and reveals_blocked_bridge(e, domains):
+                        hits[s] = ev["pubkey"]
+            ident = self._select(lambda c, s: np.isin(c["kind"], self._BRIDGE_KINDS), ("kind",), hi=hi, lo=lo)
+            cand = sorted(set(int(x) for x in ident) | set(self._proxy_seqs(lo, hi, self._BRIDGE_KINDS)))
+            self._decode(cand, _check)
+            memo[1] = hi
+        return set(self._live_hits(hits))
 
     async def bridged_pubkeys(self, domains) -> set:
         return await self._s(self._bridged_pubkeys_sync, set(domains))
@@ -645,19 +688,23 @@ class PcdbRelayStore(RelayStore):
         """Authors of stored fediverse/Bluesky MIRROR events, minus anyone who published one of our own puppet
         events (`fedibridge`) or anything stored as origin='bridge' (store.py, same rule)."""
         from .bridges import is_social_mirror
-        out: set = set()
-        ours: set = set()
-
-        def _check(s, ev, o):
-            raw = self._tags_text(ev)
-            if '"proxy"' not in raw or not ev["pubkey"]:
-                return
-            if o == _BRIDGE or '"fedibridge"' in raw:
-                ours.add(ev["pubkey"])
-            elif is_social_mirror({"tags": ev.get("tags") or []}):
-                out.add(ev["pubkey"])
-        self._decode(self._select(lambda c, s: np.ones(len(s), dtype=bool), ()), _check)
-        return out - ours
+        memo = getattr(self, "_mirror_memo", None)
+        if memo is None:
+            memo = self._mirror_memo = [0, {}]
+        lo, hi, hits = memo[0], self._n(), memo[1]
+        if hi > lo:
+            def _check(s, ev, o):
+                raw = self._tags_text(ev)
+                if '"proxy"' not in raw or not ev["pubkey"]:
+                    return
+                if o == _BRIDGE or '"fedibridge"' in raw:
+                    hits[s] = (ev["pubkey"], True)
+                elif is_social_mirror({"tags": ev.get("tags") or []}):
+                    hits[s] = (ev["pubkey"], False)
+            self._decode(self._proxy_seqs(lo, hi), _check)
+            memo[0] = hi
+        live = self._live_hits(hits)
+        return {pk for pk, ours in live if not ours} - {pk for pk, ours in live if ours}
 
     async def social_mirror_pubkeys(self) -> set:
         return await self._s(self._social_mirror_pubkeys_sync)
