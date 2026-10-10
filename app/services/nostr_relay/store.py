@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.errors
 
 from app.services.nostr.quotes import (quote_pubkeys, quoted_ids_without_author,
                                         remember_quote_authors)
@@ -419,13 +420,33 @@ class RelayStore:
         # read or written it since deploy 98 (event_from_row serves the columns), and this is the release
         # after. A metadata-only drop -- no row is rewritten; the space returns at the next VACUUM FULL /
         # pg_repack. IF EXISTS keeps it idempotent and lets a fresh schema (which never had it) pass.
-        conn.execute("ALTER TABLE events DROP COLUMN IF EXISTS raw")
+        self._housekeeping_ddl(conn, "ALTER TABLE events DROP COLUMN IF EXISTS raw")
         # `fedi_only_events` belonged to the retired Pleroma bridge's fedi-only client mode (removed
         # 2026-09-23). Nothing has read or written it since; poster.place still held 32 rows from
         # 2026-09-05..12 and nas.lan an empty table. Dropped once, idempotently, on every node.
-        conn.execute("DROP TABLE IF EXISTS fedi_only_events")
+        self._housekeeping_ddl(conn, "DROP TABLE IF EXISTS fedi_only_events")
         self._index_existing_quotes(conn)
         conn.commit()
+
+    @staticmethod
+    def _housekeeping_ddl(conn, sql: str) -> None:
+        """Idempotent cleanup DDL that must NEVER queue for its lock. ALTER/DROP take ACCESS EXCLUSIVE before
+        they check IF EXISTS, so behind any long reader (a pg_dump, an export) the statement waits -- and every
+        relay read queues behind IT: 2026-10-09 that emptied Notes and timelines on every device until the
+        waiter was terminated by hand. With a short lock_timeout it is skipped instead and runs at the next start.
+        tests/test_relay_open_never_blocks_reads.py"""
+        try:
+            conn.execute("SET lock_timeout = '2s'")
+            conn.execute(sql)
+            conn.commit()
+        except psycopg2.errors.LockNotAvailable:
+            conn.rollback()
+            logger.warning("[nostr-relay] skipped busy-table housekeeping (next start retries): %s", sql)
+        finally:
+            try:
+                conn.execute("SET lock_timeout = 0")
+            except Exception:
+                conn.rollback()
 
     @staticmethod
     def _index_existing_quotes(conn):
@@ -695,6 +716,8 @@ class RelayStore:
         try:
             ok = self._insert_one(conn, ev, origin)
             conn.commit()
+            if self.mirror is not None:      # every committed attempt: the mirror applies the same rules
+                self.mirror.put(dict(ev), origin)
             return ok
         except Exception as e:
             logger.warning("[nostr-relay] add_event %s failed: %s", ev.get("id", "")[:12], e)
@@ -709,6 +732,7 @@ class RelayStore:
         add_event, which is the bottleneck when a backfill batch returns thousands of events."""
         conn = self._conn()
         stored = 0
+        tried = []                # what reached Postgres without raising, in order (the mirror gets exactly these)
         conn.autocommit = False   # one transaction for the whole batch (far fewer round-trips)
         try:
             for ev in events:
@@ -718,11 +742,15 @@ class RelayStore:
                 try:
                     ok = self._insert_one(conn, ev, origin)
                     conn.execute("RELEASE SAVEPOINT s")
+                    tried.append(ev)
                     if ok:
                         stored += 1
                 except Exception:
                     conn.execute("ROLLBACK TO SAVEPOINT s")
             conn.commit()
+            if self.mirror is not None:
+                for ev in tried:
+                    self.mirror.put(dict(ev), origin)
         except Exception as e:
             logger.warning("[nostr-relay] bulk add failed: %s", e)
             try:
@@ -769,6 +797,40 @@ class RelayStore:
     # that RAISES admits — this is a filter, and a bug in it must not stop the relay storing anything.
     admit = None
 
+    # PosterChanDB beside Postgres (posterchandb/mirror.py), or None. Postgres is written FIRST and stays the
+    # source of truth; the mirror is told every event stored and every event deleted by id, in order, after the
+    # Postgres transaction committed -- a mirror that saw a write Postgres rolled back would serve a ghost.
+    mirror = None
+
+    def attach_mirror(self, m) -> None:
+        """Start handing writes to PosterChanDB (posterchandb/mirror.py) -- on the WRITER thread, which every
+        write to `events` goes through: in the same step a repeatable-read snapshot is fixed (when the mirror has
+        to copy), so each write is either in that snapshot or in the mirror's queue, exactly once."""
+        def _on_writer():
+            conn = None
+            if m.needs_copy():
+                conn = m.pg_connect()
+                conn.set_session(isolation_level="REPEATABLE READ", readonly=True, autocommit=False)
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")          # the snapshot is taken by the transaction's first query
+            self.mirror = m
+            return conn
+
+        def _sync_point(now: int):
+            def _count():
+                row = self._conn().execute(
+                    "SELECT count(*) AS n FROM events WHERE expiration IS NULL OR expiration > ?", (now,)).fetchone()
+                return int(row["n"]), m._enq
+            return self._write_exec.submit(_count).result(timeout=600)
+
+        m.sync_point = _sync_point
+        conn = self._write_exec.submit(_on_writer).result(timeout=60)
+        m.start(conn)
+
+    def _mirror_gone(self, ids) -> None:
+        if self.mirror is not None and ids:
+            self.mirror.gone(list(ids))
+
     def _admitted(self, ev: dict) -> bool:
         if self.admit is None:
             return True
@@ -789,6 +851,7 @@ class RelayStore:
             return 0
         conn = self._conn()
         removed = 0
+        gone = []
         for pk in pubkeys:
             # A HEURISTIC never purges a registered user's events: an account flagged as a bridge (it
             # cross-posts from the fediverse, so a synced post carries a proxy/relay hint to a blocked
@@ -801,9 +864,11 @@ class RelayStore:
                 continue
             conn.execute("DELETE FROM event_tags WHERE event_id IN "
                          "(SELECT id FROM events WHERE pubkey=?)", (pk,))
-            cur = conn.execute("DELETE FROM events WHERE pubkey=?", (pk,))
-            removed += cur.rowcount or 0
+            rows = conn.execute("DELETE FROM events WHERE pubkey=? RETURNING id", (pk,)).fetchall()
+            gone.extend(r["id"] for r in rows)
+            removed += len(rows)
         conn.commit()
+        self._mirror_gone(gone)
         return removed
 
     async def delete_pubkeys(self, pubkeys: list, spare_preserved: bool = True) -> int:
@@ -871,6 +936,7 @@ class RelayStore:
             conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
             removed += len(chunk)
         conn.commit()
+        self._mirror_gone(ids)
         return removed
 
     async def delete_by_words(self, words: list) -> int:
@@ -1045,6 +1111,7 @@ class RelayStore:
             conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
             removed += len(chunk)
         conn.commit()
+        self._mirror_gone(ids)
         return removed
 
     async def delete_by_proxy(self) -> int:
@@ -1061,13 +1128,21 @@ class RelayStore:
 
     def _query_sync(self, filters: list, hard_cap: int) -> list:
         """NIP-01 filter set (OR across filters); returns raw event dicts, newest-first."""
+        m = self.mirror
+        if m is not None:
+            served = m.query(filters, hard_cap)      # None = not ready / would have to wait / failed: ask Postgres
+            if served is not None:
+                return served
         conn = self._conn()
         seen: dict[str, dict] = {}
         for flt in filters or []:
             for ev in self._query_one(conn, flt or {}):
                 seen[ev["id"]] = ev
         out = sorted(seen.values(), key=lambda e: e.get("created_at", 0), reverse=True)
-        return out[:hard_cap] if hard_cap else out
+        out = out[:hard_cap] if hard_cap else out
+        if m is not None:
+            m.shadow(filters, hard_cap, out)
+        return out
 
     def _build_where(self, flt: dict):
         """Build the SQL WHERE clause + params for a NIP-01 filter. Returns (where, params),
@@ -1602,6 +1677,7 @@ class RelayStore:
             chunk = gone[i:i + 500]
             conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({','.join('?' * len(chunk))})", chunk)
         conn.commit()
+        self._mirror_gone(gone)
         # One-time reclaim of orphans left by the previous (tag-leaking) prune. Guarded by a relay_kv
         # flag so it runs ONCE, here in the nightly prune (off-peak), not on every startup. NOT EXISTS
         # uses the event_tags(event_id) + events(id PK) indexes — far cheaper than the old NOT IN.
