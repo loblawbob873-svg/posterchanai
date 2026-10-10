@@ -31,8 +31,14 @@ def _run(tmp_path, outcomes):
                    "  *) echo 'Error: failed to upload file: connection timed out'; exit 1;;\nesac\n"
                    % (state, state, " ".join(outcomes)))
     zsp.chmod(0o755)
+    verify = tmp_path / "verify"          # stands in for scripts/zapstore_verify.py: held unless told otherwise
+    verify.write_text("#!/bin/bash\n[ -f %s ] && exit 1; exit 0\n" % (tmp_path / "not_held"))
+    verify.chmod(0o755)
+    block = _block().replace("/tmp/zsp-publish.log", str(tmp_path / "log")).replace("/tmp/zsp", str(zsp))
+    block = block.replace("python3 scripts/zapstore_verify.py", str(verify)).replace("${{ github.run_number }}", "2505")
+    block = block.replace("zapstore.yaml", str(ROOT / "zapstore.yaml"))
     script = ("set -eo pipefail\nsleep(){ :; }\nfail(){ echo \"FAILED: $1\"; exit 1; }\n"
-              + _block().replace("/tmp/zsp-publish.log", str(tmp_path / "log")).replace("/tmp/zsp", str(zsp))
+              + block
               + "\necho PUBLISHED\n")
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
     return r, int(state.read_text())
@@ -55,3 +61,12 @@ def test_a_lasting_outage_still_fails_the_job_and_says_why(tmp_path):
     assert attempts == 4, "gave up after %d attempts" % attempts
     r, _ = _run(tmp_path, ["reject"] * 6)
     assert "Zapstore AppCatalog rejected the clean APK asset" in r.stdout, r.stdout
+
+
+def test_accepted_but_not_stored_is_not_published(tmp_path):
+    """1.0.2505: zsp exited 0 and the relay ACCEPTED the asset, but held it (the APK upload had timed out). The
+    read-back says the asset is not there, so the job retries -- and fails loudly instead of printing Published."""
+    (tmp_path / "not_held").write_text("x")
+    r, attempts = _run(tmp_path, ["ok"] * 6)
+    assert r.returncode != 0 and "does not hold its APK asset" in r.stdout, r.stdout
+    assert attempts == 4

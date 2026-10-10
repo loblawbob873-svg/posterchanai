@@ -382,11 +382,16 @@ jobs:
           # idempotent (the upload is content-addressed, the events are replaceable), so try again with
           # backoff before calling it failed. Both failure shapes retry: zsp exiting non-zero, and the
           # AppCatalog relay refusing the asset while a secondary relay took it.
+          # SUCCESS IS READ BACK, not taken from zsp's exit code: relay.zapstore.dev accepts an asset event and only
+          # SAVES it once the APK blob is on its CDN, so 1.0.2505 printed "Published" with nothing installable
+          # (the upload had timed out). scripts/zapstore_verify.py asks the relay for this version's asset.
+          zs_npub=$(sed -n 's/^pubkey: *//p' zapstore.yaml | head -1)
           published=''
           for wait in 0 60 180 420; do
             [ "$wait" = 0 ] || { echo "::warning title=Zapstore retry::retrying the publish in ${wait}s"; sleep "$wait"; }
             if /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log \
-               && ! grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
+               && ! grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log \
+               && python3 scripts/zapstore_verify.py "$zs_npub" "1.0.${{ github.run_number }}" --wait 120; then
               published=1; break
             fi
           done
@@ -397,6 +402,6 @@ jobs:
             if grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
               fail 'Zapstore AppCatalog rejected the clean APK asset'
             fi
-            fail 'zsp could not publish a complete release'
+            fail 'zsp could not publish a complete release (or Zapstore does not hold its APK asset)'
           fi
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
