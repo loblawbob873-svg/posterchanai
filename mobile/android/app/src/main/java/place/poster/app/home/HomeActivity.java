@@ -148,45 +148,39 @@ public class HomeActivity extends Activity implements DeskView.Host {
      * on the emulator, and the same surprise for a person). Tap: preview it, where Android applies it with
      * one more tap. Long-press: no thanks. Either answers the offer for good.
      */
-    private TextView wallpaperBanner;
+    private AlertDialog wallpaperOffer;
 
+    /**
+     * A DIALOG, not a pill on the desk (2026-10-10: the translucent banner over a busy wallpaper was
+     * "unreadable ... and clashed with other widgets there"). Android's dialog has its own opaque surface and
+     * real buttons, and draws nothing onto the desk. Preview opens the system preview (where Android applies
+     * it); No thanks, Back or a tap outside answer the offer for good.
+     */
     private void offerWallpaperOnce() {
         try {
             boolean offer = WallpaperOffer.shouldOffer(HomeRoles.isDefaultHome(this),
                     place.poster.app.wallpaper.CyberWallpaper.isActive(this), prefs.wallpaperOffered());
-            if (!offer) { dropWallpaperBanner(); return; }
-            if (wallpaperBanner != null) return;
-            FrameLayout host = (FrameLayout) findViewById(R.id.pc_home_desk);
-            if (host == null) return;
-            TextView b = new TextView(this);
-            b.setText(R.string.home_wallpaper_offer);
-            b.setTextColor(pal.text);
-            b.setTextSize(14);
-            int pad = Skin.dp(this, 12);
-            b.setPadding(pad, pad, pad, pad);
-            b.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.22), true));
-            b.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) {
-                    prefs.setWallpaperOffered();
-                    dropWallpaperBanner();
-                    place.poster.app.wallpaper.CyberWallpaper.open(HomeActivity.this);
-                }
+            if (!offer || wallpaperOffer != null || isFinishing()) return;
+            wallpaperOffer = new AlertDialog.Builder(this)
+                .setTitle(R.string.home_wallpaper_offer_title)
+                .setMessage(R.string.home_wallpaper_offer)
+                .setPositiveButton(R.string.home_wallpaper_offer_yes, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        answerWallpaperOffer();
+                        place.poster.app.wallpaper.CyberWallpaper.open(HomeActivity.this);
+                    }
+                })
+                .setNegativeButton(R.string.home_wallpaper_offer_no, null)
+                .create();
+            wallpaperOffer.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {
+                @Override public void onDismiss(android.content.DialogInterface d) { answerWallpaperOffer(); wallpaperOffer = null; }
             });
-            b.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override public boolean onLongClick(View v) { prefs.setWallpaperOffered(); dropWallpaperBanner(); return true; }
-            });
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-            lp.topMargin = Skin.dp(this, 16);
-            host.addView(b, lp);
-            wallpaperBanner = b;
+            wallpaperOffer.show();
         } catch (Throwable ignored) { /* a launcher that cannot offer a wallpaper is still a launcher */ }
     }
 
-    private void dropWallpaperBanner() {
-        if (wallpaperBanner == null) return;
-        try { ((ViewGroup) wallpaperBanner.getParent()).removeView(wallpaperBanner); } catch (Throwable ignored) { }
-        wallpaperBanner = null;
+    private void answerWallpaperOffer() {
+        prefs.setWallpaperOffered();
     }
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
