@@ -2608,38 +2608,48 @@ window.PCFilesFactory = function(dep){
      * session; folder changes only filter it through the encrypted local index. Paint that copy
      * immediately, then refresh it. A media host or CORS proxy that stops answering must not turn
      * a drive we just displayed into an infinite spinner. */
+    const keptKey=server.replace(/\/$/,'')+'|'+_S.ME.pubkey;
     const cachedList=Array.isArray(_S._filesGridList)?_S._filesGridList:null;
     if(cachedList){
       try{ if(_S._filesFolder==='Music') _renderMusicList($('#bl-grid',pane),cachedList,_S._filesQ);
         else _renderFilesGrid($('#bl-grid',pane),cachedList); }catch(_){}
     }
-    let list=null;
+    let list=null, _listFetched=false;
     const ctl=typeof AbortController!=='undefined'?new AbortController():null;
     const listTimer=ctl?setTimeout(()=>ctl.abort(),12000):null;
     try{ const r=await fetch(server+'/list/'+_S.ME.pubkey,
       Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
       if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json();
-      if(!Array.isArray(list)) throw new Error('invalid response'); }
+      if(!Array.isArray(list)) throw new Error('invalid response'); _listFetched=true; }
     catch(e){
+      /* OFFLINE: the list kept on this device. The names are in the drive index, which is already on
+       * the device; without this, a folder you had just looked at was an error over an empty grid. */
+      const kept=await _keptList(keptKey);
+      if(kept && Array.isArray(kept.list)){
+        if(!cachedList) list=kept.list;
+        _offlineNote(pane, kept.at);
+      }
       /* Keep a successfully painted cached list. With no copy, replace the spinner with a useful
        * bounded failure and a retry button—never leave animation pretending work is continuing. */
-      if(!cachedList){ const g=$('#bl-grid',pane); if(g){
+      else if(!cachedList){ const g=$('#bl-grid',pane); if(g){
         g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e&&e.name==='AbortError'?'timed out':e.message)+'). <button class="btn btn-ghost small" id="bl-list-retry">Retry</button></div>';
         const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
       } }
     }finally{ if(listTimer)clearTimeout(listTimer); }
+    const fromKept=list!==null && !_listFetched;
     if(list!==null){
       /* Blossom list responses need not repeat an absolute URL. Build the canonical blob address
        * once so thumbnails, Preview, copy and download all consume a complete entry. */
       list = list.filter(b=>b && b.sha256).map(b => Object.assign({}, b, {
         url:b.url || (server.replace(/\/$/,'') + '/' + b.sha256)
       }));
+      if(!fromKept){ _offlineNote(pane, 0); _keepList(keptKey, list); }
       _S._blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
       // …and the SIZES, which the drive home totals. Filled here as well as in _refreshBlobHave
       // because this is the fetch the Files screen actually makes; keying the figure on the other
       // one is what printed "0 B stored" on a full drive.
       _S._blobSizes=new Map(list.map(b=>[b.sha256, Number(b.size)||0]));
-      _backfillPostFolder(list);
+      if(!fromKept) _backfillPostFolder(list);   // it can write the index: never from a kept copy
       // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
       // spinner spinning with no error anywhere the user could see.
       try{
@@ -2675,6 +2685,26 @@ window.PCFilesFactory = function(dep){
         }
       });
     }
+  }
+  /* THE DRIVE'S BLOB LIST, KEPT ON THIS DEVICE for when the media server cannot be reached. Only what /list
+   * already says publicly (sha256, size, type, time) -- the names live in the encrypted drive index -- and it
+   * only ever PAINTS: nothing deletes, tombstones or repairs on the strength of a kept list. */
+  function _listDb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('pc-files-list-v1',1);
+    r.onupgradeneeded=()=>r.result.createObjectStore('l'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+  async function _keepList(key,list){
+    try{ const db=await _listDb();
+      db.transaction('l','readwrite').objectStore('l').put({at:Date.now(),
+        list:list.map(b=>({sha256:b.sha256,size:b.size,type:b.type,uploaded:b.uploaded,url:b.url}))},key); }catch(_){} }
+  async function _keptList(key){
+    try{ const db=await _listDb(); return await new Promise(res=>{ const q=db.transaction('l').objectStore('l').get(key);
+      q.onsuccess=()=>res(q.result||null); q.onerror=()=>res(null); }); }catch(_){ return null; } }
+  function _offlineNote(pane, at){
+    const old=$('#bl-offline',pane); if(old) old.remove();
+    if(!at) return;
+    const g=$('#bl-grid',pane); if(!g) return;
+    g.insertAdjacentHTML('beforebegin','<div class="empty small" id="bl-offline">Offline — showing the list kept on this device'+
+      ' ('+enc(new Date(at).toLocaleString())+'). <button class="btn btn-ghost small" id="bl-offline-retry">Retry</button></div>');
+    const r=$('#bl-offline-retry',pane); if(r) r.onclick=()=>renderBlossom();
   }
   let _vodNamesInflight=false; // a fetch is in progress — blocks a concurrent second fetch from a fast re-render
   let _vodNamesAt=0;           // last-fetch time. TTL-cached so we DON'T refetch every folder-switch, but DO pick up a VOD recorded later this session and recover from an early auth-race failure
