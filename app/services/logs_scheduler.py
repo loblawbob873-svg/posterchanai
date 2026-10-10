@@ -19,7 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.database import SessionLocal
-from app.models import User, Conversation, Message
+from app.models import User
 from app.services import node_service, settings_store
 from app.services.chat_service import ChatService
 
@@ -727,21 +727,10 @@ def selected_nodes(db) -> dict:
     return {name: available[name] for name in chosen if name in available}
 
 
-def get_or_create_logs_chat(db, user_id: int) -> Conversation:
-    """Get the Logs chat for a user, creating it if it doesn't exist."""
-    logs_chat = db.query(Conversation).filter(
-        Conversation.user_id == user_id,
-        Conversation.title == LOGS_CHAT_TITLE,
-    ).first()
-    if logs_chat:
-        return logs_chat
-
-    logs_chat = Conversation(user_id=user_id, title=LOGS_CHAT_TITLE)
-    db.add(logs_chat)
-    db.commit()
-    db.refresh(logs_chat)
-    logger.info(f"Created Logs chat for user {user_id}")
-    return logs_chat
+async def get_or_create_logs_chat(db, user_id: int):
+    """Get the Logs chat for a user, creating it if it doesn't exist (a conversation_table row)."""
+    from app.services import conversation_table
+    return await conversation_table.aget_or_create(db, user_id, LOGS_CHAT_TITLE)
 
 
 def _to_telegram_markdown(text: str) -> str:
@@ -871,21 +860,11 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
             return message_text if return_text else None
 
         # Store in the admin's Logs conversation
-        logs_chat = get_or_create_logs_chat(db, admin.id)
-        from app.services import chat_history
+        logs_chat = await get_or_create_logs_chat(db, admin.id)
+        from app.services import chat_history, conversation_table
         await chat_history.append(db, admin, logs_chat.id, "assistant", message_text)   # encrypted event
-        logs_chat.updated_at = datetime.utcnow()
-        db.commit()
+        await conversation_table.atouch(db, logs_chat)
         logger.info("Added health report to Logs chat for admin")
-        # The Logs conversation is created directly here (not via the API that normally mirrors its
-        # index doc), so mirror it so the relay is consistent for a fresh-node rebuild. The report
-        # MESSAGE is mirrored by the Message after_commit hook (this runs in the scheduler's async
-        # loop, so the hook fires); the client shows it from PG via the API regardless.
-        try:
-            from app.services import chat_store
-            await chat_store.mirror_conversation(db, admin, logs_chat)
-        except Exception as e:
-            logger.warning(f"Logs conversation relay mirror failed: {e}")
 
         # Send to Telegram if the admin has it enabled (suppressed for the interactive command,
         # whose return value is already delivered to the invoking channel).

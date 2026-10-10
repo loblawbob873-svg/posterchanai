@@ -134,9 +134,15 @@ def test_admin_email_verification_never_creates_a_login_cookie(web_page, monkeyp
     assert user.email_verified and mem.table('verification_tokens') == {}, "the token is single-use"
 
 
-def test_stream_application_uses_its_own_request_fields():
+def test_stream_application_uses_its_own_request_fields(monkeypatch):
     from app.models import User
     from app.routers.client import StreamRequestReq, stream_request
+    from app.services import user_settings_table
+    stored = []
+
+    async def aset(db, user_id, key, value):     # per-user settings are a relay DocTable now (#161 wave 2)
+        stored.append((user_id, key))
+    monkeypatch.setattr(user_settings_table, "aset", aset)
     auth, pk = proof(content='auth')
     user = SimpleNamespace(id=5, username='fixture', is_admin=False, can_stream=False)
     class DB:
@@ -148,7 +154,7 @@ def test_stream_application_uses_its_own_request_fields():
         def commit(self): pass
     db = DB()
     result = asyncio.run(stream_request(StreamRequestReq(pubkey=pk, auth=auth), db))
-    assert result.status_code == 200 and db.added[0].key == 'stream_requested'
+    assert result.status_code == 200 and stored == [(5, 'stream_requested')]
 
 
 def test_files_index_rejects_conflicting_operations_before_loading_user():

@@ -85,7 +85,11 @@ def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch)
     async def socket(owner,data):live.append((owner,data))
     monkeypatch.setattr(chat_history,'append',archive)
     monkeypatch.setattr(manager,'send_json',socket)
-    monkeypatch.setattr(reminder_service,'_get_or_create_reminders_chat',lambda db,uid:SimpleNamespace(id=88))
+    from app.services import conversation_table
+    async def reminders_chat(db,uid):return SimpleNamespace(id=88)   # a conversation_table row since #161
+    async def touched(db,conv,title=None):pass
+    monkeypatch.setattr(reminder_service,'_get_or_create_reminders_chat',reminders_chat)
+    monkeypatch.setattr(conversation_table,'atouch',touched)
     monkeypatch.setattr(nostr_service,'to_pubkey_hex',lambda value:'a'*64)
     monkeypatch.setattr(direct_push_service,'subscription_dict',lambda row:{'endpoint':'private-fixture'})
     monkeypatch.setattr(push_service,'send',lambda sub,payload:pushed.append(payload) or True)

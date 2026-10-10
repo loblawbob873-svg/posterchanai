@@ -54,7 +54,8 @@ class Auth(BaseAuth):
         if not login or not password:
             return ""
         from app.database import SessionLocal
-        from app.models import User, UserSetting
+        from app.models import User
+        from app.services import user_settings_table
         db = SessionLocal()
         try:
             user = db.query(User).filter(User.username == login).first()
@@ -63,11 +64,12 @@ class Auth(BaseAuth):
                 user = db.query(User).filter(User.email == login).first()
             if not user:
                 return ""
-            row = db.query(UserSetting).filter(UserSetting.user_id == user.id,
-                                               UserSetting.key == SETTING_KEY).first()
-            if not row or not row.value:
+            # Unavailable lands in the except below: a password that could not be read refuses the login
+            # (Radicale has no "try again"), it is never read as "no password set".
+            stored = user_settings_table.get(db, user.id, SETTING_KEY)
+            if not stored:
                 return ""
-            if not verify_password(password, row.value):
+            if not verify_password(password, stored):
                 logger.info("[caldav] bad password for %s", login)
                 return ""
             from app.services import relay_blocklist

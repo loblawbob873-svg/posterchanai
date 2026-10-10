@@ -763,7 +763,7 @@ async def mail_folder_map_save(request: Request, db: Session = Depends(get_db),
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
-    full = mail_service.set_folder_map(current_user.id, db, acc.email, d.get("mapping") or {})
+    full = await mail_service.aset_folder_map(current_user.id, db, acc.email, d.get("mapping") or {})
     # Persist off-box in the same breath. Waiting for some later sync would mean a mapping that
     # looks saved and is gone after a restore — the whole point of putting user kv on the relay.
     try:

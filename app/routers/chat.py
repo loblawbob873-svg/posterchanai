@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import asyncio
 import re
 import time
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from typing import List, Optional
 from pathlib import Path
 from urllib.parse import unquote
@@ -17,7 +17,9 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from app.database import get_db, SessionLocal
-from app.models import User, Conversation, Message
+from app.models import User
+from app.services import conversation_table
+from app.services.relay_reader import Unavailable
 from app.services import settings_store
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
@@ -342,10 +344,8 @@ def list_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return db.query(Conversation).filter(
-        Conversation.user_id == current_user.id,
-        ~Conversation.title.startswith("📱")
-    ).order_by(Conversation.updated_at.desc()).all()
+    return [c for c in conversation_table.list_for_user(db, current_user.id)
+            if not (c.title or "").startswith("📱")]
 
 
 @router.get("/node/state")
@@ -383,21 +383,10 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_ai_user)   # starting a chat needs AI access
 ):
-    conversation = Conversation(
-        user_id=current_user.id,
-        title=data.title or "New Chat"
-    )
-    db.add(conversation)
-    db.commit()
-    db.refresh(conversation)
-    # mirror the conversation index to the relay (the authoritative datastore)
-    try:
-        from app.services import chat_store
-        import asyncio as _aio
-        _aio.run(chat_store.mirror_conversation(db, current_user, conversation))
-    except Exception as e:
-        logger.warning(f"[chat] conversation mirror failed: {e}")
-    return conversation
+    # The conversation is a relay document (conversation_table) -- before its table's migration marker also
+    # a SQL row, written after the document. A relay that refuses it raises Unavailable (503): no id is
+    # handed out for a conversation that was not stored.
+    return conversation_table.create(db, current_user.id, data.title or "New Chat")
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationWithMessages)
@@ -406,10 +395,7 @@ async def get_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
+    conversation = await conversation_table.aget(db, conversation_id, current_user.id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     def _img_url(image_path):
@@ -460,10 +446,7 @@ async def delete_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
+    conversation = await conversation_table.aget(db, conversation_id, current_user.id)
     if not conversation:
         # Already gone: deleting twice is not an error, and racing DELETEs used to 500 on the second
         # one (ObjectDeletedError) because the row vanished under the session.
@@ -510,8 +493,7 @@ async def delete_conversation(
     except Exception as e:
         logger.warning("[CHAT] relay message purge failed: %s", e)
 
-    db.delete(conversation)
-    db.commit()
+    await conversation_table.adelete(db, conversation_id)
     return {"message": "Conversation deleted"}
 
 
@@ -524,10 +506,7 @@ def delete_all_conversations(
     storage = StorageService(db)
     storage.delete_user_files(current_user.username)
 
-    db.query(Conversation).filter(
-        Conversation.user_id == current_user.id
-    ).delete()
-    db.commit()
+    conversation_table.purge_user(db, current_user.id)
     return {"message": "All conversations deleted"}
 
 
@@ -778,9 +757,7 @@ async def chat_send(
     if not await nip05_access.ai_allowed(user):
         raise HTTPException(status_code=403, detail="AI access not enabled")
     conversation_id = req.conversation_id
-    conversation = db.query(Conversation).options(joinedload(Conversation.messages)).filter(
-        Conversation.id == conversation_id, Conversation.user_id == user.id
-    ).first()
+    conversation = await conversation_table.aget(db, conversation_id, user.id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -817,18 +794,11 @@ async def chat_send(
         prior = await chat_history.load(db, user, conversation_id)
         await chat_history.append(db, user, conversation_id, "user", content, image_path=user_image_path)
         first_msg = len(prior) == 0
-        if first_msg:
-            conversation.title = content[:50] + ("..." if len(content) > 50 else "")
-        conversation.updated_at = datetime.utcnow()
-        db.commit()
+        await conversation_table.atouch(
+            db, conversation, title=(content[:50] + ("..." if len(content) > 50 else "")) if first_msg else None)
     except Exception as _umsg_err:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"could not save message: {_umsg_err}")
-    if first_msg and chat_store.enabled(db):
-        try:
-            await chat_store.mirror_conversation(db, user, conversation)
-        except Exception as e:
-            logger.warning(f"[chat/send] conversation mirror failed: {e}")
 
     command, arg = command_service.parse_command(content)
     save_content, generated_image_path = "", None
@@ -883,10 +853,7 @@ async def get_messages(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
+    conversation = await conversation_table.aget(db, conversation_id, current_user.id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -924,10 +891,7 @@ async def serve_file(
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Verify conversation belongs to user
-    conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
-    ).first()
+    conversation = await conversation_table.aget(db, conversation_id, current_user.id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -1197,12 +1161,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             return
 
         # Verify conversation belongs to user (eagerly load messages to avoid N+1 queries)
-        conversation = db.query(Conversation).options(
-            joinedload(Conversation.messages)
-        ).filter(
-            Conversation.id == conversation_id,
-            Conversation.user_id == user.id
-        ).first()
+        conversation = await conversation_table.aget(db, conversation_id, user.id)
         if not conversation:
             await websocket.send_json({"type": "error", "message": "Conversation not found"})
             await websocket.close(code=4004)
@@ -1442,7 +1401,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                     # messages→conversations FK, crash the socket, and leave the shared DB session in an
                     # aborted state — which then 500s the delete/list calls (the bug where deleting a
                     # chat WITH an attachment "never leaves" the list). Re-check, then guard the insert.
-                    if not db.query(Conversation.id).filter(Conversation.id == conversation_id).first():
+                    try:
+                        _still_there = await conversation_table.aget(db, conversation_id) is not None
+                    except Unavailable:
+                        _still_there = True    # could not ask -- never read as "deleted"; the save below decides
+                    if not _still_there:
                         try:
                             db.rollback()
                         except Exception:
@@ -1460,11 +1423,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                         # Update conversation title if it's the first message
                         first_msg = len(_prior) == 0
-                        if first_msg:
-                            conversation.title = content[:50] + ("..." if len(content) > 50 else "")
-
-                        conversation.updated_at = datetime.utcnow()
-                        db.commit()
+                        await conversation_table.atouch(
+                            db, conversation,
+                            title=(content[:50] + ("..." if len(content) > 50 else "")) if first_msg else None)
                     except Exception as _umsg_err:
                         try:
                             db.rollback()
@@ -1473,12 +1434,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         logger.warning(f"[CHAT] user message save aborted (conversation gone?): {_umsg_err}")
                         await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                         continue
-                    # mirror the conversation index (title/timestamp) to the relay on first message
-                    if first_msg and chat_store.enabled(db):
-                        try:
-                            await chat_store.mirror_conversation(db, user, conversation)
-                        except Exception as e:
-                            logger.warning(f"[chat] conversation mirror failed: {e}")
 
                     # Check for commands
                     command, arg = command_service.parse_command(content)
@@ -1672,7 +1627,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 async def node_notify(job):
                                     from urllib.parse import quote as _q
                                     from app.database import SessionLocal
-                                    from app.models import Message as _Msg, Conversation as _Conv
                                     from app.services.node_service import tail as _tail, INLINE_LIMIT as _IL
                                     # Agent step-streaming passes a plain string. Push it live AND — for a node-agent
                                     # run — PERSIST it to the relay as its own chat message (like a DM), so leaving
@@ -1684,7 +1638,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             try:
                                                 # Only persist to an EXISTING conversation — a progress line must never
                                                 # resurrect a deleted/never-made chat (that's the final-result's job).
-                                                if _pdb.query(_Conv).filter(_Conv.id == _conv).first():
+                                                if await conversation_table.aget(_pdb, _conv) is not None:
                                                     _pu = _pdb.query(User).filter(User.id == _uid).first()
                                                     await chat_history.append(_pdb, _pu, _conv, "assistant", job)
                                             except Exception as _e:
@@ -1723,13 +1677,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             # ("never came back"). Resurrect the exact conversation id (safe: the
                                             # id sequence has moved past it, so no collision) so the message
                                             # persists AND the client's live push to _conv still matches.
-                                            _ac = _adb.query(_Conv).filter(_Conv.id == _conv).first()
-                                            if not _ac:
-                                                _ac = _Conv(id=_conv, user_id=_uid, title="🤖 Agent run")
-                                                _adb.add(_ac)
-                                                _adb.flush()
-                                            _ac.updated_at = datetime.utcnow()
-                                            _adb.commit()
+                                            await conversation_table.aensure(_adb, _conv, _uid, "🤖 Agent run")
                                             # Persist the message to the RELAY (chat_store) — the source of truth the
                                             # client reads in relay-backed mode. A bare SQL `messages` insert shows
                                             # live over the socket then VANISHES on reload / chat-switch (the bug).
@@ -1787,8 +1735,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             if _links:
                                                 _ftext = (_ftext + "\n\n" + "\n".join(_links)).strip()
                                             if _ftext:
-                                                _fc = _fdb.query(_Conv).filter(_Conv.id == _conv).first()
-                                                if _fc:   # don't resurrect a chat just for a backup; the result already did
+                                                if await conversation_table.aget(_fdb, _conv) is not None:   # don't resurrect a chat just for a backup; the result already did
                                                     _fu = _fdb.query(User).filter(User.id == _uid).first()
                                                     await chat_history.append(_fdb, _fu, _conv, "assistant", _ftext)
                                                     await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": _ftext}}, _conn, _conv)
@@ -1819,13 +1766,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                 logger.warning(f"[node] webui full-output save failed: {_fe}")
                                         # Resurrect the conversation if a long job outlived it (same reason as
                                         # the agent-result branch above) so the finished job's output is never lost.
-                                        _c = _db.query(_Conv).filter(_Conv.id == _conv).first()
-                                        if not _c:
-                                            _c = _Conv(id=_conv, user_id=_uid, title="🛰️ Node job")
-                                            _db.add(_c)
-                                            _db.flush()
-                                        _c.updated_at = datetime.utcnow()
-                                        _db.commit()
+                                        await conversation_table.aensure(_db, _conv, _uid, "🛰️ Node job")
                                         # Message → RELAY (chat_store), not the SQL messages table, so it survives
                                         # a reload/chat-switch in relay-backed mode (matches the agent-result branch).
                                         _uu2 = _db.query(User).filter(User.id == _uid).first()

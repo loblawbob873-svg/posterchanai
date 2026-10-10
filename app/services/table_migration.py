@@ -19,6 +19,11 @@ STARTUP (port 3051):
   * `start_background()`, once the startup hydrates have rebuilt the SQL side (record_store writes reminder and
     pin rows): copies every table that has no marker yet, on its own thread, retried until each has a verdict.
 
+WAVE 2 (bots, user_settings, conversations; app/services/wave2_migration.py) registers here too, through the
+same marker and engine, but its stores gate SQL-or-relay themselves (table_gate: relay first, SQL after), so their
+Legacy is GATED -- not bound to the DocTable -- and copies a snapshot that SQL must still match before the marker.
+A Legacy with its own `amigrate(sql)` (those, and the read-only census of the legacy chat `messages`) is run by it.
+
 What it never does: drop a SQL table, delete or change a SQL row, or treat "the relay could not be asked" as
 "nothing there" -- every read the engine decides from is strict.
 """
@@ -53,6 +58,7 @@ MODULES = (
     "app.services.api_key_store",
     "app.services.share_store",
     "app.services.verification_store",
+    "app.services.wave2_migration",
 )
 
 REGISTRY: dict = {}             # DocTable name -> Legacy, in registration order
@@ -68,7 +74,9 @@ def register(legacy: Legacy) -> Legacy:
     if not legacy.name:
         raise ValueError("a Legacy needs the DocTable name")
     REGISTRY[legacy.name] = legacy
-    if legacy.copy:
+    if getattr(legacy, "gated", False):
+        doc_table.GATED.add(legacy.name)        # its store gates SQL-or-relay; the loader still waits for the marker
+    elif legacy.copy:
         doc_table.LEGACIES[legacy.name] = legacy
         t = DocTable._registry.get(legacy.name)
         if t is not None:
@@ -101,11 +109,33 @@ def bind(session_factory=None) -> None:
 
 
 # ------------------------------------------------------------------------------------------- the engine
-async def amigrate(name: str, *, in_thread: bool = True) -> dict:
+def _runner(session_factory):
+    """How the engine reaches SQL: this process's bound sessions (doc_table._sql), or a GIVEN factory (a test, the
+    wave-2 callers) -- read only either way."""
+    if session_factory is None:
+        return doc_table._sql
+
+    def run(fn):
+        db = session_factory()
+        try:
+            return fn(db)
+        finally:
+            try:
+                db.rollback()
+            finally:
+                db.close()
+    return run
+
+
+async def amigrate(name: str, *, in_thread: bool = True, session_factory=None) -> dict:
     """Copy table `name` from SQL into its DocTable, verify, mark. Raises MigrationMismatch (no marker) when it
     will not verify, Unavailable when the relay or SQL cannot be asked."""
     name = ALIASES.get(name, name)
     lg = legacy(name)
+    sql = _runner(session_factory)
+    own = getattr(lg, "amigrate", None)
+    if own is not None:                 # a table whose copy is its own (wave 2's gated tables, the census)
+        return await own(sql, in_thread=in_thread)
     if not lg.copy:
         m = await amarker(name)
         if doc_table.is_marker(m):
@@ -118,19 +148,19 @@ async def amigrate(name: str, *, in_thread: bool = True) -> dict:
         return dict(info, table=name)
 
     def rows():
-        return doc_table._sql(lg.rows)
+        return sql(lg.rows)
 
     def point(k):
-        return doc_table._sql(lambda db: lg.get(db, k))
+        return sql(lambda db: lg.get(db, k))
     return await amigrate_rows(name, rows, point=point, in_thread=in_thread)
 
 
-async def amigrate_all(names=None) -> dict:
+async def amigrate_all(names=None, *, session_factory=None) -> dict:
     """Every table in turn; one table failing does not stop the others. {table: report | error string}."""
     out = {}
     for name in names or tables():
         try:
-            out[name] = await amigrate(name)
+            out[name] = await amigrate(name, session_factory=session_factory)
             if not out[name].get("skipped"):
                 logger.info("[table-migration] %s: %d row(s) verified (%s written, %s fixed) in %ss", name,
                             out[name].get("rows", 0), out[name].get("written", 0), out[name].get("fixed", 0),
@@ -155,6 +185,9 @@ async def migrate_table(name: str, db) -> dict:
     and what was already identical; raises MigrationMismatch / Unavailable like `amigrate`."""
     name = ALIASES.get(name, name)
     lg = legacy(name)
+    own = getattr(lg, "amigrate", None)
+    if own is not None:
+        return await own(lambda fn: fn(db), in_thread=False)
     out = await amigrate_rows(name, lambda: lg.rows(db), point=lambda k: lg.get(db, k), in_thread=False)
     if out.get("skipped"):
         return out
@@ -214,11 +247,23 @@ def start_loading(session_factory=None) -> None:
             DocTable(name).start_background_load()
 
 
+def _after_marked(name: str) -> None:
+    hook = getattr(REGISTRY.get(name), "after_marked", None)
+    if hook is not None:
+        try:
+            hook()
+        except Exception as e:      # noqa: BLE001 -- a follow-up, never a reason to re-copy
+            logger.warning("[table-migration] %s: after-marker step failed: %s", name, e)
+
+
 def _migrate_loop(retry_s: float) -> None:
     pending = tables()
     backoff = retry_s
     while pending:
         out = doc_table._run(amigrate_all(pending))
+        for n, r in out.items():
+            if isinstance(r, dict):
+                _after_marked(n)
         pending = [n for n, r in out.items() if not isinstance(r, dict)]
         if pending:
             time.sleep(backoff)

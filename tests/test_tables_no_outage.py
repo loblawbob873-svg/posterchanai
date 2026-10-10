@@ -317,13 +317,16 @@ def test_the_loads_start_at_startup_on_threads_of_their_own(node):
     src = (pathlib.Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
     assert "table_migration.start_loading(" in src
     assert src.index("table_migration.start_loading(") < src.index("async def _hydrate_settings")
-    _mark(*[n for n in table_migration.tables() if n != "push_sent_wraps"])
+    # every table that is COPIED (a `copy = False` Legacy -- push_sent_wraps, the wave-2 census of legacy chat
+    # messages -- has no rows to load)
+    copied = [n for n in table_migration.tables() if table_migration.legacy(n).copy]
+    assert "push_sent_wraps" not in copied and "bots" in copied
+    _mark(*copied)
     _cold_process()
     table_migration.start_loading(node)
     names = {t.name for t in threading.enumerate()}
-    for name in table_migration.tables():
-        if name != "push_sent_wraps":
-            assert "doctable-load-" + name in names, name
+    for name in copied:
+        assert "doctable-load-" + name in names, name
 
 
 # ============================================================================ "could not ask" is never "no rows"
