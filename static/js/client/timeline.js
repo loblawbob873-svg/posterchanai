@@ -866,7 +866,7 @@ window.PCTimelineFactory = function(dep){
             <!-- Background / Schedule / Sensitive live behind ⋯ deliberately. Five icons + Post is
                  exactly what fits one row at 360px (~269px of 279px); a sixth wraps Post onto its
                  own line, which is the regression the .tl-cmp-tools comment already records. -->
-            <button class="tl-cmp-btn" id="tl-cmp-more" title="More — background, schedule, sensitive">⋯</button>
+            <button class="tl-cmp-btn" id="tl-cmp-more" title="More — background, schedule, sensitive"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
             <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
             <button class="btn btn-neon tl-cmp-post" id="tl-cmp-post">Post</button>
             <input type="file" id="tl-cmp-file" multiple hidden>

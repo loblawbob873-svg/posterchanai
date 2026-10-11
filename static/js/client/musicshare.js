@@ -928,7 +928,7 @@
             <div class="msh-offer-act">
               <button class="btn btn-neon small msh-yes" data-key="${E(s.key)}">Accept</button>
               <button class="btn btn-ghost small msh-no" data-key="${E(s.key)}">Reject</button>
-              <button class="btn btn-ghost small msh-more" data-menu="offer" aria-label="More for this share" title="More">⋯</button>
+              <button class="btn btn-ghost small msh-more" data-menu="offer" aria-label="More for this share" title="More"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
               <span class="msh-acts" hidden><button class="btn btn-ghost small danger msh-stop" data-from="${E(s.from)}" title="Hide everything ${E(who(s.from))} shares with you, now and later">Stop receiving from ${E(who(s.from))}</button></span>
             </div></div>`).join('')
         : `<div class="empty">${have.length
@@ -1004,7 +1004,7 @@
           <button class="btn btn-neon small" id="msh-shuffle"${tracks.length ? '' : ' disabled'}>${icon('shuffle')}Shuffle</button>
           <button class="btn btn-ghost small" id="msh-refresh">${icon('refresh')}Refresh</button>
           <button class="btn btn-ghost small" id="msh-addall"${missing ? '' : ' disabled'}>${icon('plus')}${missing ? `Keep ${missing}` : 'Kept'}</button>
-          <button class="btn btn-ghost small msh-more" data-menu="head" aria-label="More for this playlist" title="More">⋯</button>
+          <button class="btn btn-ghost small msh-more" data-menu="head" aria-label="More for this playlist" title="More"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
           <span class="msh-acts" hidden>
             <button class="btn btn-ghost small danger" id="msh-dismiss" title="Stop receiving this playlist and its future changes; songs you kept stay yours">${icon('trash')}Stop getting this playlist</button>
             <button class="btn btn-ghost small danger" id="msh-stopfrom" title="Hide everything ${E(who(cur.from))} shares with you, now and later">Stop receiving from ${E(who(cur.from))}</button>

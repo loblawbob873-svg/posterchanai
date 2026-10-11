@@ -5953,7 +5953,7 @@
     const id=Number(nw.id), view='native:'+id;
     let w=wins.find(x=>x.native===id || x.view===view);
     if(w) return w;
-    w=openApp(view, nw.title||nw.name||nw.app||'App', '#i-window', null, true, true);
+    w=openApp(view, nw.title||nw.name||nw.app||'App', '#i-grid', null, true, true);   // i-grid: i-window is not in the sprite and drew an invisible taskbar icon
     if(!w) return null;
     w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.nativeGame=isGameApp(nw);
     if(w.nativeGame) w.nativeGameAt=Date.now();
@@ -8061,7 +8061,7 @@
    * `w` is the stored widget (`cfg` included); `save(w)` persists a cfg change. */
   const WIDGETS = {
     cpu: _performanceWidget('CPU', 'cpu', '#i-chart'),
-    ram: _performanceWidget('Memory', 'memory', '#i-server'),
+    ram: _performanceWidget('Memory', 'memory', '#i-chart'),   // i-chart: i-server is not in the sprite (an invisible icon)
     network: _performanceWidget('Network', 'network', '#i-wifi'),
     crypto: {
       label: 'Crypto ticker', icon: '#i-chart', blurb: 'Live prices for the coins Markets follows',

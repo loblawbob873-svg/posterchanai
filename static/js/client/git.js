@@ -380,7 +380,7 @@ window.PCGitFactory = function(dep){
         : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
            : _repoScope==='mine' ? `<div class="empty">None of your repos have loaded${repos.length?' yet':''}. ${_gitHostBase()?'Create one ↑, or ':''}try “All repos”.</div>`
            : (!reached && !repos.length) ? `<div class="empty">Could not reach the relays for the repo list. <button class="btn small" id="repo-retry">Try again</button></div>`
-           : _repoScope==='starred' ? `<div class="empty">No starred repos yet — tap ☆ on any repo to keep it here.</div>`
+           : _repoScope==='starred' ? `<div class="empty">No starred repos yet — tap the star on any repo to keep it here.</div>`
            : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();

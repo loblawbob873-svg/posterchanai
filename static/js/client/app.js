@@ -4325,7 +4325,7 @@
         if(q){ const id=q.dataset.id, pk=q.dataset.pk;
           if(q.dataset.q==='reply') compose({reply:id, replyPk:pk}); else pickEmoji(id, pk, q);
           return; }
-        const nm=e.target.closest('.notif-more'); if(nm){ notifMenu(nm); return; }   // ⋯ → Report (notifview.js)
+        const nm=e.target.closest('.notif-more'); if(nm){ notifMenu(nm); return; }   // More → Report (notifview.js)
         const nrow=e.target.closest('.notif');
         if(nrow){ const pf=e.target.closest('[data-prof]');                       // name/avatar → profile
           if(pf) renderProfileView(pf.dataset.prof);

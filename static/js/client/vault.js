@@ -1221,7 +1221,7 @@
       <div class="muted small">An <b>unencrypted</b> export from wherever your passwords are now —
         <code>.csv</code> from a browser or most managers, or Bitwarden’s <code>.json</code>.
         <br><b>Chrome:</b> Settings → Autofill → Passwords → ⋮ → Export passwords.
-        <b>Firefox:</b> about:logins → ⋯ → Export Logins.
+        <b>Firefox:</b> about:logins → the … menu → Export Logins.
         <b>Bitwarden:</b> Tools → Export vault, format .json, password protection OFF — the .json is the
         only one that brings your <b>one-time codes</b>, folders and notes across; a browser .csv has no
         column for them.

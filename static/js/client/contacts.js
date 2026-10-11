@@ -869,7 +869,7 @@
         if(d.sent > 0 && d.landed === 0){
           d.ok = false;
           say('this phone accepted ' + d.sent + ' contact' + (d.sent === 1 ? '' : 's')
-              + ' and stored none of them — open ⋯ → Addressbooks for the details', 'nolanding');
+              + ' and stored none of them — open More → Addressbooks for the details', 'nolanding');
         }
         /* THE RECONCILE. ALWAYS, even when nothing was written: this is the half that deletes, and
          * somebody removed in the web UI is only removed from the phone here.
@@ -1122,7 +1122,7 @@
            * the user to go and look at an empty Contacts app. */
           const d = await syncPhonebook(true);
           if(d && d.cards > 0 && !d.after && !d.landed){
-            toast('nothing reached this phone — ' + (_diag || 'see ⋯ → Addressbooks'));
+            toast('nothing reached this phone — ' + (_diag || 'see More → Addressbooks'));
           }else{
             toast('done — look in the phone’s Contacts app');
           }

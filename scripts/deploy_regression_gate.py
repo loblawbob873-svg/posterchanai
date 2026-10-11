@@ -177,7 +177,7 @@ TESTS = (
     'tests/client/test_ai_download_native.py',
     'tests/test_drafts_nostr_only_accounts.py',
     'tests/test_tor_pool_least_busy.py',
-    'tests/client/test_concord_icons_are_icons_not_glyphs.py',
+    'tests/client/test_client_icons_are_icons_not_glyphs.py',
     'tests/client/test_note_media_stays_where_it_was_written_full_app.py',
     'tests/client/test_generated_song_to_mp3_full_app.py',
     'tests/test_android_download_route.py',

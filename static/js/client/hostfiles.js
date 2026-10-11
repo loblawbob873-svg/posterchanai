@@ -352,7 +352,7 @@
            <button class="btn btn-ghost small hf-new">New folder</button>
            <button class="btn btn-ghost small hf-all" aria-pressed="${everySelected?'true':'false'}">${everySelected?'Deselect all':'Select all'}${rows.length ? ' (' + rows.length + ')' : ''}</button>
            <button class="btn btn-ghost small hf-none"${_sel.size ? '' : ' disabled'}>Select none</button>
-           <button class="btn btn-ghost small hf-more" aria-label="More" title="Show or hide dotfiles">⋯</button>
+           <button class="btn btn-ghost small hf-more" aria-label="More" title="Show or hide dotfiles"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
            ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${pasteLabel(_clipboard)}</button>
              <button class="btn btn-ghost small hf-unclip" aria-label="Cancel" title="Forget what was cut or copied">✕</button>` : ''}
            <span class="spacer"></span>
