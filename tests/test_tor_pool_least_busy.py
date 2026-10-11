@@ -55,6 +55,11 @@ class FakeTor:
             w.write(b"\x05\x00\x00\x01" + bytes(6))
             if host == "heavy":
                 w.write(b"x" * HEAVY)
+            if host == "plain":       # a plain-HTTP origin: answer and hang up
+                await r.readuntil(b"\r\n\r\n")
+                w.write(b"HTTP/1.1 200 OK\r\nContent-Length: 70000\r\n\r\n" + b"y" * 70000)
+                await w.drain()
+                return
             await w.drain()
             while await r.read(65536):
                 pass
@@ -144,6 +149,33 @@ class LeastBusy(unittest.TestCase):
         self.assertEqual(opened, [1, 1, 1])
         self.assertEqual(after, [0, 0, 0], "a closed tunnel must give its backend's slot back")
         self.assertEqual(lease, {})
+
+    def test_plain_http_requests_are_charged_and_released_too(self):
+        """The proxy's OTHER path (a non-CONNECT `GET http://...`, what HTTP trackers use) leases a
+        backend as well: its bytes must count and its slot must come back, or every plain request
+        would leave its daemon looking busier for ever."""
+        async def body(lport, fakes, proxy):
+            r, w = await asyncio.open_connection("127.0.0.1", lport)
+            w.write(b"GET http://plain/x HTTP/1.1\r\nHost: plain\r\n\r\n")
+            await w.drain()
+            got = b""
+            while True:
+                chunk = await r.read(65536)
+                if not chunk:
+                    break
+                got += chunk
+            w.close()
+            await asyncio.sleep(0.1)
+            used = [i for i, f in enumerate(fakes) if "plain" in f.hosts]
+            return got, used, list(proxy._open), dict(proxy._lease), list(proxy._bytes)
+
+        got, used, opened, lease, carried = asyncio.run(_scenario(body))
+        self.assertIn(b"200 OK", got)
+        self.assertGreaterEqual(len(got), 70000)
+        self.assertEqual(len(used), 1)
+        self.assertEqual(opened, [0, 0, 0])
+        self.assertEqual(lease, {})
+        self.assertGreater(carried[used[0]], 60000, "the response bytes were not charged to its daemon")
 
     def test_a_refusing_backend_fails_over_and_tor_only_still_holds(self):
         async def body(lport, fakes, proxy):
