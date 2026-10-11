@@ -14,8 +14,11 @@ import json
 import logging
 import time
 
-from app.services import nostr_store
-from app.services.doc_table import MARKERS, DocTable, KIND, _norm, _operator, key
+from app.services import doc_table, nostr_store
+# `_operator` is looked up on doc_table at CALL time (doc_table._operator()), never imported by name: a name bound
+# at import is whatever key was current then -- a test's patched fake (tests/doc_table_mem) when this module was
+# first imported under it, and every later copy in that process signed documents the operator cannot read.
+from app.services.doc_table import MARKERS, DocTable, KIND, _norm, key
 from app.services.relay_reader import Unavailable, relay_port
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,7 @@ class MigrationMismatch(RuntimeError):
 
 async def aread_all(table: str) -> dict:
     """{key: row} straight from the relay, strictly (every document or an exception)."""
-    sk, _pk = _operator()
+    sk, _pk = doc_table._operator()
     prefix = DocTable(table).prefix
     try:
         docs = await nostr_store.list_all_docs(relay_port(), prefix, seckey=sk)
@@ -48,7 +51,7 @@ async def abulk_put(table: str, rows: dict, *, window: int = _WINDOW) -> int:
     from app.services.nostr.event import build_event
     if not rows:
         return 0
-    sk, _pk = _operator()
+    sk, _pk = doc_table._operator()
     prefix = DocTable(table).prefix
     items = list(rows.items())
     url = "ws://127.0.0.1:%d/relay" % relay_port()
@@ -113,7 +116,7 @@ async def amigrate_rows(table: str, rows: dict, *, extra: dict | None = None) ->
          nothing is written) -- the record is informational; nothing at runtime reads it."""
     t0 = time.time()
     want = {str(k): _norm(v) for k, v in rows.items()}
-    sk, _pk = _operator()
+    sk, _pk = doc_table._operator()
     prefix = DocTable(table).prefix
     have = await aread_all(table)
     to_write = {k: v for k, v in want.items() if have.get(k) != v}

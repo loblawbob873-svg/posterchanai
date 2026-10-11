@@ -44,6 +44,10 @@ class MemRelay:
 
 def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
     """`migrated` is accepted for old callers and ignored: every table is relay-only (#161)."""
+    # Imported BEFORE anything is patched: a module first imported under the patches below would keep whatever it
+    # binds at import for the rest of the process (deploy 205: doc_table_bulk kept this fake operator key, and a
+    # later test's real copy wrote documents the operator could not read).
+    from app.services import doc_table_bulk
     mem = MemRelay()
 
     async def aload(self, *, force=False):
@@ -119,7 +123,6 @@ def mem_tables(monkeypatch, *, migrated=TABLES) -> MemRelay:
     monkeypatch.setattr(DocTable, "aget_many_remote", aget_many_remote, raising=False)
     monkeypatch.setattr(DocTable, "_start_live", lambda self, pk: None)
     monkeypatch.setattr(doc_table, "_operator", lambda: (b"\x01" * 32, "00" * 32))
-    from app.services import doc_table_bulk
     monkeypatch.setattr(doc_table_bulk, "aread_all", reread)
     monkeypatch.setattr(doc_table_bulk, "abulk_put", bulk_put)
     monkeypatch.setattr(doc_table_bulk.nostr_store, "delete_doc", delete_doc)
