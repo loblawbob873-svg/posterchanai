@@ -39,6 +39,8 @@ const other=NT.getPublicKey(NT.generateSecretKey());await assert.rejects(()=>R.c
 console.log('creator invite links passed');
 // Exercise the shipped adoption hook with real signed lists, registry folds and links.
 const fs=await import('node:fs');const source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
+// The invite host helpers (publicInviteBase: never the page's own origin) that the mint path calls.
+vm.runInContext(source.slice(source.indexOf('  function inviteParts('),source.indexOf('  /* An invite is an in-app Concord action')),ctx);
 vm.runInContext(source.slice(source.indexOf('  async function ownedInviteContext('),source.indexOf('  async function saveCommunitySettings(')),ctx);
 const second=await A.create(creator,context,{base:'https://example.test'}),secondPk=A.details(second.entry).pubkey;
 const liveRegistry=await R.createInviteRegistryWrap(creator,copy(controls),copy([secondPk]),pk,sign);
