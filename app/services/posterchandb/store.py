@@ -31,6 +31,7 @@ import os
 import re
 import struct
 import collections
+import itertools
 import threading
 import time
 import zlib
@@ -89,6 +90,20 @@ def _expiration(ev: dict):
 def _first_d(tags) -> str:
     """The relay's `d` for an addressable event: the first ["d", v] with a value (a bare ["d"] is skipped)."""
     return next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), "")
+
+
+# A NIP-44/NIP-04 ciphertext (or any long run with no space outside the base64 alphabet) has no words anybody can
+# search for -- what Postgres made of one was hundreds of random fragments -- and tokenising it is the expensive part
+# of indexing (the parser costs ~1.3 us a character, and a quarter of a relay's events are encrypted app documents).
+_OPAQUE = re.compile(r"[A-Za-z0-9+/=_-]+(?:\?iv=[A-Za-z0-9+/=]+)?")
+_OPAQUE_MIN = 256
+
+
+def index_words(text: str):
+    """The words an EVENT is indexed under: search_words, except that opaque ciphertext is not tokenised."""
+    if text and len(text) >= _OPAQUE_MIN and _OPAQUE.fullmatch(text):
+        return ()
+    return search_words(text)
 
 
 def search_words(text: str):
@@ -598,16 +613,39 @@ class Store:
 
     def index_pending_words(self, limit: int | None = None) -> int:
         """Index the search words of up to `limit` deferred events (all when None). Returns how many."""
+        if limit is None:
+            with self._lock:           # everything, under the lock (a search's exact catch-up holds it already)
+                q = self._unworded
+                n = len(q) if limit is None else min(limit, len(q))
+                batch = [q.popleft() for _ in range(n)]
+                for seq in batch:
+                    if self.dead[seq] or self.seg[seq] == DROPPED:
+                        continue
+                    for w in index_words(self.codec.decode(self._rec(seq)).get("content", "")):
+                        self.words.add(_h(w), seq)
+                return len(batch)
+        # The background pass TOKENISES OUTSIDE THE LOCK: only reading the batch and adding its words hold it, so a
+        # slow batch no longer stalls every query behind it. The batch stays queued (words_pending, and a search's
+        # inline catch-up, still see it) until its words are in; if a search caught it up meanwhile, the queue no
+        # longer starts with it and this batch adds nothing.
         with self._lock:
             q = self._unworded
-            n = len(q) if limit is None else min(limit, len(q))
-            batch = [q.popleft() for _ in range(n)]
-            for seq in batch:
-                if self.dead[seq] or self.seg[seq] == DROPPED:
+            seqs = list(itertools.islice(q, min(limit, len(q))))
+            contents = [None if (self.dead[s] or self.seg[s] == DROPPED)
+                        else self.codec.decode(self._rec(s)).get("content", "") for s in seqs]
+        found = [index_words(c) if c is not None else () for c in contents]
+        with self._lock:
+            q = self._unworded
+            if not seqs or len(q) < len(seqs) or list(itertools.islice(q, len(seqs))) != seqs:
+                return 0
+            for _ in seqs:
+                q.popleft()
+            for s, ws in zip(seqs, found):
+                if self.dead[s] or self.seg[s] == DROPPED:
                     continue
-                for w in search_words(self.codec.decode(self._rec(seq)).get("content", "")):
-                    self.words.add(_h(w), seq)
-            return len(batch)
+                for w in ws:
+                    self.words.add(_h(w), s)
+            return len(seqs)
 
     def snapshot(self):
         """Write an index snapshot now (flushes first). None while a compaction is running. Deferred search words
@@ -939,7 +977,7 @@ class Store:
         if is_addressable(k) and not has_d:
             self.idx.add(_h("nod:%s:%d" % (pk, k)), seq)
         if words:
-            for w in search_words(ev.get("content", "")):
+            for w in index_words(ev.get("content", "")):
                 self.words.add(_h(w), seq)
         else:
             self._unworded.append(seq)
