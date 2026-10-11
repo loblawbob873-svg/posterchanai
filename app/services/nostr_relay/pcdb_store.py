@@ -113,13 +113,56 @@ def write_marker(path: str, data: dict) -> None:
     atomic_write_json(os.path.join(path, MARKER), dict(data, format=SIDECAR_FORMAT))
 
 
-def retire_marker(path: str) -> None:
+LOCK = "PRIMARY.lock"
+
+
+def hold_primary(path: str) -> int:
+    """A SHARED lock on the directory for as long as a primary store is open on it (released by close, and by the
+    kernel when the process dies). It is what retire_marker asks before removing the marker."""
+    import fcntl
+    fd = os.open(os.path.join(path, LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_SH)
+    return fd
+
+
+def release_primary(fd) -> None:
+    import fcntl
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def retire_marker(path: str) -> bool:
     """The relay runs on Postgres (off/shadow/serve): this directory is a mirror again, not the primary's, and a
-    later `primary` start must be promoted afresh (the sidecar would be stale). thread._start_mirror."""
+    later `primary` start must be promoted afresh (the sidecar would be stale). thread._start_mirror.
+
+    NEVER FROM UNDER A LIVE PRIMARY. 2026-10-10 21:53: something started on Postgres while server1's relay was
+    primary on this directory, removed the marker, and the relay's next start refused -- a 2.5-minute outage of
+    poster.place. A primary holds a shared lock (hold_primary); this takes it exclusively without waiting and
+    refuses while anyone holds it. Returns whether the marker is gone."""
+    import fcntl
+    try:
+        fd = os.open(os.path.join(path, LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        fd = None                       # no directory: nothing to retire
+    if fd is not None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            logging.getLogger(__name__).warning(
+                "[nostr-relay] NOT retiring %s's PRIMARY marker: a primary relay has the directory open", path)
+            return False
     try:
         os.remove(os.path.join(path, MARKER))
     except OSError:
         pass
+    finally:
+        release_primary(fd)
+    return True
 
 
 def read_clean_token(path: str):
@@ -219,6 +262,7 @@ class PcdbRelayStore(RelayStore):
     def open(self, loop) -> None:
         self._loop = loop
         claim_directory(self.path)
+        self._primary_lock = hold_primary(self.path)      # while open, nothing may retire the marker
         self.sidecar = Sidecar(self.path)
         self._gov = cache_mod.CacheGovernor(budget_mb=self.cache_mb, log=self.log)
         # direct_durable OFF in the Store: a direct write is made durable by sync() below instead -- the same
@@ -276,6 +320,8 @@ class PcdbRelayStore(RelayStore):
         if self.store is not None:
             # No snapshot: the stop has systemd's 10 s, the log is complete, the hourly snapshot bounds the replay.
             self.store.close(take_snapshot=False)
+        release_primary(getattr(self, "_primary_lock", None))
+        self._primary_lock = None
 
     def _conn(self):
         raise RuntimeError("PosterChanDB primary store: there is no Postgres (a RelayStore method was not ported)")
