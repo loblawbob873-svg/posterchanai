@@ -70,7 +70,7 @@ _APP_TEMP_PREFIXES: Tuple[str, ...] = (
     "postcard_",
     "talk_cmd_",
     "tg_music_", "tg_pin_", "tg_png_", "tg_song_", "tg_video_",
-    "voice_cmd_", "voice_ref_",
+    "voice_cmd_", "voice_norm_", "voice_ref_",
     # `ytdl_` already covers the three below; they are listed anyway so this stays a 1:1 inventory
     # of what the code actually creates, which is what makes the drift test meaningful.
     "ytdl_", "ytdl_bytes_", "ytdl_mp3_", "ytdl_video_",
