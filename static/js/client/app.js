@@ -7806,7 +7806,7 @@
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
-    loadSentinel, mdToHtml, mediaParts, mentionTags, modal, needProfile, niceNip05, nip05Resolve,
+    loadSentinel, mdToHtml, mediaFlowHtml, mediaParts, mentionTags, modal, needProfile, niceNip05, nip05Resolve,
     noteHtml, npubOf, observeProfiles, openLightbox, openRepo, openStream, openThread, profOf,
     publish, renderProfileView, renderView, repoCard, safePk, streamCard, switchView, timeAgo,
     toast, toggleBookmark, torrentCard, uiConfirm, uiPrompt, uploadBlob,
@@ -8544,6 +8544,7 @@
   function feedNoteHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'feedNoteHtml', arguments); }
   function hydratePolls(){ return _lzRun(_cardsMod, _cardsLoad, 'hydratePolls', arguments); }
   function invalidateCounts(){ return _lzRun(_cardsMod, _cardsLoad, 'invalidateCounts', arguments); }
+  function mediaFlowHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'mediaFlowHtml', arguments); }
   function mediaParts(){ return _lzRun(_cardsMod, _cardsLoad, 'mediaParts', arguments); }
   function myReaction(){ return _lzRun(_cardsMod, _cardsLoad, 'myReaction', arguments); }
   function myReactionIds(){ return _lzRun(_cardsMod, _cardsLoad, 'myReactionIds', arguments); }

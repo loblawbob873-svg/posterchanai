@@ -54,8 +54,12 @@ def test_warned_quote_is_blurred_until_reveal_while_safe_quote_is_not_gated():
       const BLUR_NSFW=true, NO_IMAGES=false, LOGO='logo.png';
       const profOf=()=>({{name:'Alice',picture:'avatar.png'}}),needProfile=()=>{{}},npubOf=()=> 'npub1alice';
       const niceNip05=()=>'',enc=x=>String(x),emojiName=(p,n)=>n,timeAgo=()=> 'now';
-      const mediaParts=()=>({{mediaFirst:true,gallery:'<div class="media-row"><img src="media.png"></div>',text:'caption'}});
+      // quotedDiv draws its body through the shared in-order renderer (mediaFlowHtml), which reads `segs`.
+      const mediaParts=()=>({{mediaFirst:true,gallery:'<div class="media-row"><img src="media.png"></div>',text:'caption',
+        segs:[{{media:['<img src="media.png">']}},{{text:'caption'}}]}});
       const applyEmojis=x=>x,linkify=x=>x,stripQuoteRef=x=>x;
+      {_function('_galleryHtml')}
+      {_function('mediaFlowHtml')}
       const isSensitive=e=>(e.tags||[]).some(t=>t[0]==='content-warning'||(t[0]==='t'&&t[1]==='nsfw'));
       {state_shims(_function('quotedDiv'))}
       {_function('_cwRevealInner')}

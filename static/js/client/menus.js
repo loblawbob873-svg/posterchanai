@@ -589,8 +589,13 @@ window.PCMenusFactory = function(dep){
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); nodes.forEach(n=>n.style.opacity=''); return; }
       // normalized compare: /client/translate collapses whitespace on its unchanged (already-target) return
       if(_ltNorm(j.text)===_ltNorm(src)){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
+      // A post with pictures BETWEEN its paragraphs has one .txt per paragraph block (the card draws the
+      // media where it was written — mediaFlowHtml). The translation is of the whole text, so it goes in
+      // the first block and the rest are emptied, rather than the full translation repeating in each.
+      // (Per CARD: the same post can be on screen twice — the feed and a thread, say.)
       nodes.forEach(n=>{ n.style.opacity='';
-        n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
+        const first = n.parentElement.querySelector(':scope > .txt') === n;
+        n.innerHTML = first ? linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>' : ''; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }
   }
   /* STOPPING IT IS PART OF THE FEATURE, and there was no way to. Once a post started reading, the

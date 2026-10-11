@@ -47,6 +47,7 @@ _IS_MEDIA = APP[_m:APP.index(";", _m) + 1]
 
 
 def _run(content, tags):
+    # mediaParts also builds the in-order body (`segs`, via _flowSegs) and the gallery (_galleryHtml).
     helpers = _function("_imetaKinds") if "function _imetaKinds(" in APP else "function _imetaKinds(){return new Map()}"
     js = f"""
       const S={{NO_IMAGES:false}}, BLOBF='', enc=x=>String(x);
@@ -54,6 +55,8 @@ def _run(content, tags):
       const _media=(e,kind)=>kind==='video'?'<video src="'+e+'"></video>':'<img src="'+e+'">';
       {_IS_MEDIA}
       {helpers}
+      {_function('_flowSegs')}
+      {_function('_galleryHtml')}
       {_function('mediaParts')}
       const r=mediaParts({json.dumps(content)}, {{tags:{json.dumps(tags)}}});
       console.log(JSON.stringify({{text:r.text, items:r.items, first:r.mediaFirst}}));

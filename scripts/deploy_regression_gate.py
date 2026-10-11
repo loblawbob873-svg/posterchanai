@@ -172,6 +172,7 @@ TESTS = (
     'tests/client/test_ai_download_native.py',
     'tests/test_drafts_nostr_only_accounts.py',
     'tests/test_tor_pool_least_busy.py',
+    'tests/client/test_note_media_stays_where_it_was_written_full_app.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

@@ -22,7 +22,7 @@ window.PCDiscoverFactory = function(dep){
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
-    loadSentinel, mdToHtml, mediaParts, mentionTags, modal, needProfile, niceNip05, nip05Resolve,
+    loadSentinel, mdToHtml, mediaFlowHtml, mediaParts, mentionTags, modal, needProfile, niceNip05, nip05Resolve,
     noteHtml, npubOf, observeProfiles, openLightbox, openRepo, openStream, openThread, profOf,
     publish, renderProfileView, renderView, repoCard, safePk, streamCard, switchView, timeAgo,
     toast, toggleBookmark, torrentCard, uiConfirm, uiPrompt, uploadBlob,
@@ -156,7 +156,7 @@ window.PCDiscoverFactory = function(dep){
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
       <div class="ac-hd"><img alt="" class="ac-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
-      ${mp.mediaFirst?mp.gallery:''}<div class="ac-body">${applyEmojis(linkify(mp.text, c), c)}</div>${mp.mediaFirst?'':mp.gallery}
+      ${mediaFlowHtml(mp, c, { txtClass:'ac-body' })}
       <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply</button></div>
       ${kids}</div>`;
   }

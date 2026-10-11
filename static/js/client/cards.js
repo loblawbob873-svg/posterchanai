@@ -568,36 +568,91 @@ window.PCCardsFactory = function(dep){
     const media=[];
     // Media is LIFTED OUT of the text and rendered as its own row, so whatever text remains would always
     // sit above it — a card post ("<image>\n\n<link>") showed its link ABOVE the picture. When the content
-    // LEADS with media, that ordering is backwards: honour the author's order and put the row first.
+    // LEADS with media, that ordering is backwards: honour the order the author chose and put the row first.
     const _lead=(raw||'').trim().match(/^(https?:\/\/[^\s<]+)/);
     const _leadU=_lead && _lead[1].replace(/[)\].,!?]+$/,'');
     const mediaFirst=!!(_lead && (_isMediaUrl(_leadU) || kinds.has(_leadU)));
-    const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
+    // `flow` is the content IN THE ORDER IT WAS WRITTEN: the text between attachments, and the index of each
+    // attachment where it stood. `text` (the words with the media taken out) is still what callers that only
+    // want words read; `segs`, built from `flow`, is what a card draws — see _flowSegs.
+    const src=raw||'', flow=[]; let last=0;
+    const lift=(html, off, u)=>{ media.push(html); flow.push(src.slice(last, off), media.length-1); last=off+u.length; };
+    const text=src.replace(/(https?:\/\/[^\s<]+)/g,(url, _g, off)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       const said=kinds.get(u);
       if(said==='audio') return url;   // linkify draws it as a track, from this same imeta
-      if(said==='video'){ media.push(_media(E,'video')); return tail; }
-      if(said==='image'){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, null, alts.get(u))); return tail; }
-      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(_media(E,'video')); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF, alts.get(u))); return tail; }
+      if(said==='video'){ lift(_media(E,'video'), off, u); return tail; }
+      if(said==='image'){ lift(_media(E, null, null, null, alts.get(u)), off, u); return tail; }
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ lift(_media(E, null, null, null, alts.get(u)), off, u); return tail; }
+      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ lift(_media(E,'video'), off, u); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ lift(_media(E, null, null, BLOBF, alts.get(u)), off, u); return tail; }
       return url;  // non-media URL: leave for linkify
     });
-    // One attachment keeps the plain row. TWO OR MORE become a swipeable carousel (scroll-snap gives us
-    // native touch/trackpad swipe for free) so a 6-image post doesn't turn into a wall of thumbnails.
+    flow.push(src.slice(last));
     // `items` = the bare <img>/<video> html, no wrapper — callers that re-grid the media (the profile
     // Media tab) use it directly instead of regex-stripping the wrapper off `gallery`, which silently
     // broke the moment that wrapper stopped always being <div class="media-row">.
-    if(!media.length) return { text, gallery:'', items:media, mediaFirst };
-    if(media.length===1) return { text, gallery:`<div class="media-row">${media[0]}</div>`, items:media, mediaFirst };
+    return { text, items:media, mediaFirst, segs:_flowSegs(flow, media), gallery:_galleryHtml(media) };
+  }
+  // One attachment keeps the plain row. TWO OR MORE become a swipeable carousel (scroll-snap gives us
+  // native touch/trackpad swipe for free) so a 6-image post doesn't turn into a wall of thumbnails.
+  function _galleryHtml(media){
+    if(!media.length) return '';
+    if(media.length===1) return `<div class="media-row">${media[0]}</div>`;
     const n=media.length;
-    return { text, items:media, mediaFirst, gallery:`<div class="media-car" data-n="${n}">`
+    return `<div class="media-car" data-n="${n}">`
       +`<div class="mc-track">${media.map(m=>`<div class="mc-item">${m}</div>`).join('')}</div>`
       +`<button class="mc-nav mc-prev" aria-label="Previous" disabled>‹</button>`
       +`<button class="mc-nav mc-next" aria-label="Next">›</button>`
       +`<span class="mc-count">1/${n}</span>`
       +`<div class="mc-dots">${media.map((_,i)=>`<i${i?'':' class="on"'}></i>`).join('')}</div>`
-      +`</div>` };
+      +`</div>`;
+  }
+  /* A NOTE IS DRAWN IN THE ORDER IT WAS WRITTEN. Media used to be LIFTED OUT of the text into one
+   * gallery placed above or below ALL of it (`mediaFirst`), so a picture pasted between two paragraphs
+   * landed after the last one, and two pictures with text between them became one carousel holding
+   * both — while the composer's Preview (linkify over the raw text) drew each where the author put it.
+   * Reported as exactly that difference ("when I click preview, that shows exactly how it was supposed
+   * to be"). tests/client/test_note_media_stays_where_it_was_written_full_app.py.
+   *
+   * `flow` alternates text and media indexes. Each attachment stays where it stood; only a RUN of them
+   * — nothing but whitespace between, on one line or one per line — becomes one gallery, in order. The
+   * whitespace that only separated a text block from a picture is dropped: the picture is its own block. */
+  function _flowSegs(flow, media){
+    const segs=[];
+    for(const f of flow){
+      if(typeof f==='string'){ if(f) segs.push({ text:f }); continue; }
+      const a=segs[segs.length-1], b=segs[segs.length-2];
+      if(a && a.media) a.media.push(media[f]);
+      else if(a && !a.text.trim() && b && b.media){ segs.pop(); b.media.push(media[f]); }
+      else segs.push({ media:[media[f]] });
+    }
+    const out=segs.filter(g=>g.media || g.text.trim());
+    out.forEach((g,i)=>{
+      if(g.media) return;
+      if(out[i-1] && out[i-1].media) g.text=g.text.replace(/^\s+/,'');
+      if(out[i+1] && out[i+1].media) g.text=g.text.replace(/\s+$/,'');
+    });
+    return out;
+  }
+  /* A note's body — its text blocks and its media, interleaved as mediaParts' `segs` lists them. ONE
+   * renderer for the feed/thread/profile card (noteCard), a quoted note (quotedDiv) and an article
+   * comment, so they cannot disagree about order. `clamp` gives each LONG text block its own "Show
+   * more" guard (a block, not the whole post: a picture after a long first paragraph is not hidden
+   * under the clamp). A note with no text still gets its empty .txt, as it always did. */
+  function mediaFlowHtml(mp, ev, opts){
+    const clamp=!!(opts && opts.clamp), cls=(opts && opts.txtClass) || 'txt';
+    let html='', anyTxt=false;
+    for(const g of (mp.segs || [])){
+      if(g.media){ html+=_galleryHtml(g.media); continue; }
+      const t=stripQuoteRef(g.text, ev);
+      if(!t || !t.trim()) continue;
+      anyTxt=true;
+      const long=clamp && (t.length > 480 || (t.match(/\n/g)||[]).length > 10);
+      html+=`<div class="${cls}${long?' clamp':''}">${applyEmojis(linkify(t, ev), ev)}</div>`;
+      if(long) html+=`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`;
+    }
+    return anyTxt ? html : html+`<div class="${cls}"></div>`;
   }
   // ---------- media carousel ----------
   // Bound ONCE by delegation. Carousels are emitted as HTML strings by mediaParts and land in the
@@ -794,7 +849,6 @@ window.PCCardsFactory = function(dep){
     const mp = mediaParts(ev.content, ev);
     // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
     const bodyTxt = stripQuoteRef(mp.text, ev);
-    const longTxt = !!bodyTxt && (bodyTxt.length > 480 || (bodyTxt.match(/\n/g)||[]).length > 10);
     const name = p.name||p.display_name||(npubOf(ev.pubkey).slice(0,12)+'…');
     // Data saver: avatars are the biggest remaining image cost in the feed (dozens per page). Point them
     // at the single, already-cached local LOGO so a feed page pulls ~no avatar bytes over a throttled
@@ -817,11 +871,8 @@ window.PCCardsFactory = function(dep){
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${S.PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}${(window.Outbox&&Outbox.has(ev.id))?'<span class="pending-badge" data-pending="'+enc(ev.id)+'" title="Waiting to send — tap to send now or discard">Pending</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
-        ${mp.mediaFirst?mp.gallery:''}
-        <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt, ev), ev)}</div>
-        ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
+        ${mediaFlowHtml(mp, ev, { clamp:true })}
         ${xmrTipBadge(ev)}
-        ${mp.mediaFirst?'':mp.gallery}
         ${linkCardHtml(mp.text)}
         ${webxdcCardHtml(ev)}
         ${quoteHtml(ev)}
@@ -893,9 +944,7 @@ window.PCCardsFactory = function(dep){
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img alt="" class="qav" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
-      ${mp.mediaFirst?mp.gallery:''}
-      <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o), o), o)}</div>
-      ${mp.mediaFirst?'':mp.gallery}
+      ${mediaFlowHtml(mp, o)}
       ${cw?`</div></div>`:''}</div>`; }
   // The e-tag naming the post a reply ANSWERS. Returns the WHOLE tag so its relay hint (t[2]) can be
   // used to fetch an off-relay parent. Feed label, thread tree and notifications all read this one.
@@ -1408,7 +1457,7 @@ window.PCCardsFactory = function(dep){
   return {
     _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
     applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiHtml, emojiName,
-    feedNoteHtml, hydratePolls, invalidateCounts, mediaParts, myReaction, myReactionIds, needAddr,
+    feedNoteHtml, hydratePolls, invalidateCounts, mediaFlowHtml, mediaParts, myReaction, myReactionIds, needAddr,
     needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyContextHtml, replyParentId, repostWithWarning,
     get MediaDims(){ return MediaDims; },
     get VideoMount(){ return VideoMount; },
