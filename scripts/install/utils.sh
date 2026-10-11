@@ -63,6 +63,25 @@ ask() {
 # The account the service runs as. Normally whoever runs the installer; PosterChanOS runs the
 # installer as root through its privileged helper and names a dedicated system account here, so the
 # unit is never written with User=root.
+# A ROOT-RUN install for another account (--service-user) must leave that account owning what it made. The
+# installer's own Python steps (scripts/init_instance_key.py, the settings store) ran as root and left
+# data/keys.json(.lock) and /var/lib/posterchanai/local_settings.json(.lock) root-owned -- found by the fresh-Debian
+# E2E (2026-10-10): the service could not read its operator key, no table ever loaded, nothing reached the relay,
+# and the app ran on in that state rather than failing. Call it BEFORE the service first starts. No-op unless
+# running as root for a different, non-root account. Extra paths may be passed.
+give_state_to_service_user() {
+    local u g
+    u="$(service_user)"
+    [ "$(id -u)" = "0" ] && [ -n "$u" ] && [ "$u" != "root" ] || return 0
+    g="$(id -gn "$u" 2>/dev/null || echo "$u")"
+    chown -R "$u:$g" "$PWD" 2>/dev/null || true
+    local state="${POSTERCHANAI_STATE_DIR:-/var/lib/posterchanai}"
+    for p in "$state"/local_settings.json "$state"/local_settings.json.lock "$@"; do
+        [ -e "$p" ] && chown -R "$u:$g" "$p" 2>/dev/null || true
+    done
+    return 0
+}
+
 service_user() {
     echo "${PC_SERVICE_USER:-$(whoami)}"
 }

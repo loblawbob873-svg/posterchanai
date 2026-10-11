@@ -63,7 +63,9 @@ setup_searxng() {
     port="${POSTERCHANAI_SEARXNG_PORT:-8899}"
     repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     conf_dir="${SEARXNG_CONFIG_DIR:-$repo_root/searxng}"
-    src_dir="${SEARXNG_SRC_DIR:-$HOME/searxng}"
+    # The SERVICE user's home, not the installer's: a root-run install cloned into /root/searxng, which the
+    # service account cannot read, and the unit crash-looped ("Permission denied: /root/searxng/...").
+    src_dir="${SEARXNG_SRC_DIR:-$(service_home 2>/dev/null || echo "$HOME")/searxng}"
     venv="$(_searxng_find_venv)"
     py="$venv/bin/python"
 

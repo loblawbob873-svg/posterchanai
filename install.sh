@@ -245,6 +245,7 @@ install_nostr_only() {
     grep -q '^export POSTERCHANAI_NOSTR_ONLY='  data/secrets.env || echo 'export POSTERCHANAI_NOSTR_ONLY=1'  >> data/secrets.env
     print_success "Wrote data/secrets.env (relay on, AI hidden)"
 
+    give_state_to_service_user   # a root-run install: the service must own what the steps above created
     setup_systemd            # generic service + run-cpu.sh (sources data/secrets.env)
 
     # SearXNG is part of the NORMAL install on every path, not an add-on: the Full install has shipped
@@ -253,6 +254,7 @@ install_nostr_only() {
     # setup_searxng installs only its own dependency block, so it works on requirements-nostr.txt.
     # Non-fatal, exactly as in the Full path.
     setup_searxng || print_warning "SearXNG not installed; set Admin → Tools → SearXNG URL, or run ./install.sh --searxng later"
+    give_state_to_service_user "$(service_home 2>/dev/null)/searxng"
 
     echo ""
     print_success "Nostr-only install complete."
@@ -445,6 +447,7 @@ main() {
     setup_office_server || print_warning "Office editor not installed; add it later with ./install.sh --office"
 
     # Step 11: Setup systemd service
+    give_state_to_service_user   # before the service first starts (see utils.sh)
     setup_systemd
 
     # Step 13: Offer model download (if local LLM)

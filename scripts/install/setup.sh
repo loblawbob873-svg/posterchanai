@@ -45,6 +45,19 @@ setup_directories() {
     echo "  Transcodes use /tmp/posterchan-media-center; mount /tmp as tmpfs to avoid SSD writes."
 }
 
+# The command that installs a supported Python on THIS distro ($DISTRO from detect.sh). It used to name
+# Gentoo's emerge everywhere -- on a fresh Debian, the one machine most likely to be missing Python.
+python_install_hint() {
+    case "${DISTRO:-}" in
+        gentoo) echo "sudo emerge -av dev-lang/python:3.13" ;;
+        debian) echo "sudo apt install python3.13 python3.13-venv python3-pip   (Debian 13 / Ubuntu 24.10+; older: python3.12 python3.12-venv)" ;;
+        fedora) echo "sudo dnf install python3.13" ;;
+        arch)   echo "sudo pacman -S python   (then check it is 3.13 or older; install python313 from the AUR if not)" ;;
+        suse)   echo "sudo zypper install python313" ;;
+        *)      echo "install your distribution's python3.13 (or 3.12) package, with venv and pip" ;;
+    esac
+}
+
 setup_python_env() {
     print_step "Setting up Python environment..."
 
@@ -76,7 +89,7 @@ setup_python_env() {
     # a broken tree.
     if ! "$PYBIN" -c 'import sys; sys.exit(0 if sys.version_info[:2] <= (3, 13) else 1)' 2>/dev/null; then
         print_error "No supported Python found (need 3.13 or 3.12; $($PYBIN --version 2>&1) lacks prebuilt wheels for coincurve/libtorrent/torch-XPU)."
-        print_error "Install python3.13 (or 3.12) and re-run, e.g.:  sudo emerge -av dev-lang/python:3.13   # or your distro's python3.13 package"
+        print_error "Install python3.13 (or 3.12) and re-run:  $(python_install_hint)"
         return 1
     fi
 

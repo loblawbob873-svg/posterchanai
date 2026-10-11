@@ -21,3 +21,9 @@ numpy==2.4.6
 Brotli==1.2.0
 loguru==0.7.3
 beautifulsoup4==4.15.0
+# The reminder/accounts/fediverse tests import the scheduler and the JWT library; coincurve is the libsecp256k1
+# fast path for signing -- without it every relay document is signed in pure Python (62 ms each), which made one
+# 208-row test take 180 s and pushed the required list past CI's 20-minute cap.
+APScheduler==3.11.3
+python-jose==3.5.0
+coincurve==21.0.0
