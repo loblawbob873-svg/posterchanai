@@ -34,7 +34,7 @@ const room={name:'PosterChan Community',icon:'🕊',description:'A real communit
 localStorage.setItem('pc.concord.rooms.v1.'+'a'.repeat(64),JSON.stringify([room]));
 localStorage.setItem('pc.concord.active.v1.'+'a'.repeat(64),'0');
 const fixtureMessages=Array.from({length:36},(_,i)=>({id:'message-'+i,pubkey:(i===35?'a':'b').repeat(64),by:i===35?'Me':'Alexandria Long Username',at:i+1,
- text:i===0?'A message with https://example.test/a/very/long/path/that/must/not/push/the/phone/sideways and enough words to wrap naturally.':'Message '+i+' with enough text to give the chat a real scroll range.',tags:[],reactions:i===0?{'👍':['b'.repeat(64)]}:{}}));
+ text:i===1?'console output:\n```\n$ ./configure --prefix=/usr --enable-everything-that-makes-this-line-far-wider-than-a-phone\nchecking for gcc... yes\n```\nand `make -j8` after':i===0?'A message with https://example.test/a/very/long/path/that/must/not/push/the/phone/sideways and enough words to wrap naturally.':'Message '+i+' with enough text to give the chat a real scroll range.',tags:[],reactions:i===0?{'👍':['b'.repeat(64)]}:{}}));
 localStorage.setItem('pc.concord.test.'+room.naddr,JSON.stringify(fixtureMessages));
 window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord',
  viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1mobile',profile:{name:'Me',picture:''}}),
@@ -125,6 +125,17 @@ async def drive(url):
                 problems.append(f"{width}px chat did not take the phone viewport cleanly: {chat}")
             if chat["chat"] and abs(chat["chat"]["width"] - width) > 2:
                 problems.append(f"{width}px chat width is {chat['chat']['width']:.1f}px")
+            # Code renders as code: a fenced block keeps its lines and scrolls INSIDE itself, never the page.
+            code = await evaluate(ws, r"""(()=>{const pre=document.querySelector('.cc-message-body .cc-codeblock'),
+              inl=document.querySelector('.cc-message-body .cc-code');if(!pre)return {pre:false};pre.scrollIntoView({block:'center'});
+              const r=pre.getBoundingClientRect(),cs=getComputedStyle(pre);
+              return {pre:true,inline:!!inl&&inl.textContent==='make -j8',lines:pre.textContent.split('\n').length,
+                scrolls:pre.scrollWidth>pre.clientWidth+4,right:r.right,height:r.height,ws:cs.whiteSpace,
+                ticks:/`/.test(pre.closest('.cc-message-body').textContent),overflow:document.documentElement.scrollWidth-innerWidth};})()""")
+            if not code.get("pre") or not code.get("inline") or code.get("lines", 0) < 2 or code.get("ticks"):
+                problems.append(f"{width}px code in a message is not rendered as code: {code}")
+            elif not code["scrolls"] or code["right"] > width + 1 or code["overflow"] > 1 or code["ws"] != "pre":
+                problems.append(f"{width}px a long code line does not scroll inside its block: {code}")
             deletion = await evaluate(ws, r"""(async()=>{const box=document.querySelector('.cc-messages');box.scrollTop=24;box.dispatchEvent(new Event('scroll'));const top=box.scrollTop,count=document.querySelectorAll('.cc-message').length,button=[...document.querySelectorAll('[data-cc-delete]')].at(-1);await button.onclick();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {top,bottom:box.scrollTop,before:count,after:document.querySelectorAll('.cc-message').length,app:document.querySelector('.cc-app').className,overflow:document.documentElement.scrollWidth-innerWidth};})()""")
             if deletion["after"] != deletion["before"] - 1:
                 problems.append(f"{width}px delete did not remove exactly one message: {deletion}")

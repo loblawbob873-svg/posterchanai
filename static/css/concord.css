@@ -370,3 +370,11 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
   body.concord-view .cc-conversation>header:has(#cc-call) :is(#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-leave-shortcut,#cc-direct-inbox){display:none!important}
   body.concord-view .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
 }
+/* Code in messages (messageContentHtml: `inline` and ``` fenced blocks). A block keeps its line breaks
+   and scrolls sideways INSIDE itself, so a long command never widens the chat on a phone. */
+.cc-message-body .cc-code{font-family:var(--mono,monospace);font-size:.9em;padding:.1em .35em;border-radius:5px;
+  background:rgba(127,127,160,.16);border:1px solid var(--line,rgba(127,127,160,.25));word-break:break-all}
+.cc-message-body .cc-codeblock{display:block;box-sizing:border-box;max-width:100%;margin:6px 0;padding:8px 10px;
+  border-radius:8px;background:rgba(0,0,0,.35);border:1px solid var(--line,rgba(127,127,160,.25));
+  overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:pre!important;overflow-wrap:normal!important;word-break:normal!important}
+.cc-message-body .cc-codeblock code{font-family:var(--mono,monospace);font-size:.86em;line-height:1.45;white-space:pre;background:none;border:0;padding:0;word-break:normal}
