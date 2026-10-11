@@ -1400,7 +1400,11 @@ window.PCCardsFactory = function(dep){
       // aim for the timestamp. Skip clicks on attachments / links / form controls (images already
       // returned above as a lightbox; video & co. must keep their own controls), and skip when the
       // user just drag-SELECTED text (so highlight-to-copy works instead of opening the thread).
-      const hasSelection = window.getSelection && String(window.getSelection()).length>0;
+      // ASKED ONLY WHEN IT DECIDES SOMETHING. Stringifying the selection forces a synchronous style +
+      // layout of the whole feed, and this listener sees EVERY click in #feed -- Concord's menus
+      // included -- so each tap there paid a forced relayout of the conversation (measured 40-75 ms at
+      // 4x CPU throttle on a 200-message room) for an answer only a tap on a post's body uses.
+      const hasSelection = () => !!(window.getSelection && String(window.getSelection()).length>0);
       // Excluding the media CONTAINERS (.media-row/.media-grid/.media-car) made their empty space dead.
       // .media-row is a flex row and its images are `width:auto` — a portrait or narrow photo sits at the
       // left and leaves the rest of the full-width row bare, so clicking the RIGHT of a post with an image
@@ -1418,7 +1422,7 @@ window.PCCardsFactory = function(dep){
        * my home feed", exactly, and it stayed true through every fix aimed at the push/replace rule
        * because this tap never reached that rule. openThread decides push-vs-replace and is the only
        * way into a thread from a click. */
-      if(!btn){ if(art && art.dataset.id && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) openThread(art.dataset.id); return; }
+      if(!btn){ if(art && art.dataset.id && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card') && !hasSelection()) openThread(art.dataset.id); return; }
       if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;

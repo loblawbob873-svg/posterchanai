@@ -1101,6 +1101,28 @@
       try{ const p=PC(); if(p && p.bumpMoreBadge) p.bumpMoreBadge(); }catch(_){ }
     }catch(_){ }
   }
+  /* A DRAWER IS A CLASS, NOT A REPAINT ("going through the menus is clunky, it's not smooth at all").
+   * Measured at 390x844 with the CPU throttled 4x and a 200-message room: the menu button and the
+   * backdrop both went through render(), which rebuilds the whole workspace (rail, channels, all 200
+   * message cards, the composer) and rebinds every handler, to flip ONE class: a 225-281 ms long task
+   * per tap, every message card replaced (tests/client/test_concord_menus_stay_smooth_full_app.py).
+   * The drawer's whole state is `drawer-open` on .cc-app, so that is all that changes now. Closing it
+   * is the moment the conversation becomes visible again, which is when render() used to mark the
+   * channel read; that one side effect is done here, with the two unread marks it clears. A repaint
+   * that was deferred meanwhile (backgroundRenderPending) still gets its full render. */
+  function setMobileDrawer(open){
+    const app=document.querySelector?document.querySelector('.cc-app'):null,room=state.community==null?null:saved()[state.community];
+    mobileDrawerOpen=!!open;
+    if(!app||!room||!mobileChatOpen||backgroundRenderPending||!app.classList){render();return;}
+    app.classList.toggle('drawer-open',mobileDrawerOpen);
+    if(mobileDrawerOpen)return;
+    const name=state.channel||'general';markRead(room,name);
+    try{
+      const row=[...app.querySelectorAll('[data-cc-channel]')].find(b=>b.dataset.ccChannel===name);if(row)row.classList.remove('unread');
+      const server=app.querySelector('.cc-server.active');if(server&&!isUnread(room))server.classList.remove('unread');
+    }catch(_){}
+    paintUnreadBadge();
+  }
   function conversationIsVisible(narrow,chatOpen,drawerOpen){ return !narrow||(!!chatOpen&&!drawerOpen); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
   function imetaFields(tag){
@@ -4619,7 +4641,7 @@
   let sweepBusy=false,sweepAt=0,sweepNext=0;
   async function sweepOtherRooms(p){
     if(sweepBusy||Date.now()-sweepAt<SWEEP_MS)return;
-    sweepBusy=true;sweepAt=Date.now();
+    sweepBusy=true;sweepAt=Date.now();let stored=false;
     try{
       const reader=window.PosterCordReader,rooms=saved();if(!reader||!rooms.length)return;
       const owner=deliveryOwner(p);
@@ -4644,14 +4666,21 @@
           if(!wraps||!wraps.length)continue;
           try{ await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps); }catch(_){ }
           await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId).catch(()=>{});
+          if(sweepSignature(testMessages(storeId))!==sweepSignature(prior))stored=true;
         }
         sweepNext=(i+1)%rooms.length;
         break;                                    // one room per sweep: the next sweep takes the next room
       }
       try{ paintUnreadBadge(); }catch(_){ }
-      if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());
+      /* ONLY WHEN THE SWEEP STORED SOMETHING. This repaint was unconditional, so every 20 s -- with
+       * nothing new anywhere -- the whole workspace was rebuilt: all message cards, the rail, the
+       * composer, every handler. Measured at 4x CPU throttle on a 200-message room: a 170-190 ms long
+       * task, and it is what turned an open drawer or menu into a rebuilt one mid-tap ("going
+       * through the menus is clunky"). The badge above is cheap and stays unconditional. */
+      if(stored&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());
     }catch(_){ }finally{ sweepBusy=false; }
   }
+  function sweepSignature(rows){ const last=rows&&rows.length?rows[rows.length-1]:null; return (rows?rows.length:0)+':'+(last?messageId(last)+':'+(Number(last.at)||0):''); }
   const SWEEP_MS=20000, SWEEP_CHANNELS=6;
   /* Before Communities has ever been opened in this page the live timer is not running, and the
    * sidebar's Communities badge would still know nothing. The sweep runs on its own then — only for a
@@ -5827,8 +5856,8 @@
     $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(true); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
-    const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
-    const drawerBackdrop=$('#cc-drawer-backdrop');if(drawerBackdrop)drawerBackdrop.onclick=()=>{mobileDrawerOpen=false;render();};
+    const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){setMobileDrawer(!mobileDrawerOpen);return;}else mobileChatOpen=true; render(); };
+    const drawerBackdrop=$('#cc-drawer-backdrop');if(drawerBackdrop)drawerBackdrop.onclick=()=>setMobileDrawer(false);
     const send=$('#cc-send'); if(send&&input){
       send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,_shown=(target&&!state.thread)?(()=>{ /* replying from the channel: open that thread, or the reply vanishes into the collapse as it is sent */ try{ expandedThreads.add(threadRootId(testMessages(storeId)||[],target)); }catch(_){} return 1; })():0,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();const mentionPairs=[];for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle)){taggedPeople.add(pk);mentionPairs.push([handle,pk]);}}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){taggedPeople.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))mentionPairs.push([alias,pk]);}for(const pk of taggedPeople){mentionTags.push(['p',pk]);}const mentioned=wireMentionText(text,mentionPairs,npubOf),wireText=room.cord&&room.protocol!=='nip29'?wireAttachmentText(mentioned,used.filter(([,tag])=>tag.includes('encryption-algorithm aes-gcm')).map(([url])=>url)):mentioned; if(target){replyTags.push(...cordReplyTags(target,messageId(target),threadParticipants(m,target,viewer.pubkey),viewer.pubkey));} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text:wireText,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text,expires:(target.tags||[]).find(t=>t[0]==='expiration')?.[1]}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,wireText,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.tags=d.made.tags||row.tags;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.tags=made.tags||sent.tags;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
       input.onkeydown=e=>{ const enter=e.key==='Enter'||e.code==='Enter'; if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;syncMentionState();drawMentions();return;} if(e.key==='Tab'||(enter&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } /* ENTER SENDS ("make enter sent message instead of ctrl+enter, ctrl+enter should add" a line). Shift+Enter

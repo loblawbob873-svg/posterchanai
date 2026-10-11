@@ -388,3 +388,14 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
 .cc-icon-status.failed{background:rgba(239,68,68,.12)!important}
 .cc-icon-status.failed span{color:#fca5a5!important}
 @keyframes ccIconSpin{to{transform:rotate(360deg)}}
+/* The phone drawer is a class flip now (setMobileDrawer), so it can slide instead of popping in.
+   Transform only -- never opacity, so a frozen or disabled animation can never leave it invisible. */
+@media(max-width:820px){
+  body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
+  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:ccDrawerIn .16s ease-out}
+}
+@keyframes ccDrawerIn{from{transform:translateX(-28px)}to{transform:none}}
+@media (prefers-reduced-motion:reduce){
+  body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
+  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:none!important}
+}

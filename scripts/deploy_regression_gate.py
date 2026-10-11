@@ -137,6 +137,7 @@ TESTS = (
     # 2026-10-11: Concord reports from the APK (invite host, icon upload, menu jank)
     'tests/client/test_concord_invite_links_are_public_full_app.py',
     'tests/client/test_concord_icon_upload_says_so_full_app.py',
+    'tests/client/test_concord_menus_stay_smooth_full_app.py',
     'tests/client/test_concord_member_right_click_full_app.py',
     'tests/client/test_dm_never_sends_nip44_to_nip04.py',
     'tests/client/test_mail_addresses_open_the_composer_full_app.py',
