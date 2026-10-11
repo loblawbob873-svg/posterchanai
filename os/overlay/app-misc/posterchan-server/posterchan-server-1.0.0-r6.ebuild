@@ -20,18 +20,19 @@ RESTRICT="mirror strip"
 
 # WHAT IS INSTALLED AND WHAT IS NOT, and why the line is there.
 #
-# Installed: the code, the database server, the interpreter the installer accepts, and the toolchain
-# its AI path compiles llama.cpp with. All small (measured binpkgs: postgresql-18 11 MB, python-3.13
-# 9 MB). NOT installed: the Python environment. requirements-nostr.txt measured 126 MB to download and
-# 503 MB installed, which would more than double the cost of a feature that is off on almost every
-# machine — so it is built by ./install.sh --nostr-only the first time somebody presses Enable.
+# Installed: the code, the interpreter the installer accepts, and the toolchain its AI path compiles
+# llama.cpp with. All small (measured binpkg: python-3.13 9 MB). NOT installed: a database server — there
+# is none to run (#161: the relay stores into PosterChanDB, the app's tables are relay documents; -r6
+# dropped the PostgreSQL server dependency). NOT installed either: the Python environment.
+# requirements-nostr.txt measured 126 MB to download and 503 MB installed, which would more than double
+# the cost of a feature that is off on almost every machine — so it is built by ./install.sh --nostr-only
+# the first time somebody presses Enable.
 #
 # PYTHON 3.13, NOT THE SYSTEM'S. PosterChanOS runs 3.14, and install.sh refuses it (coincurve and
 # libtorrent have no 3.14 wheels; building them from source fails). 3.13 is a separate slot and changes
 # nothing else on the machine.
 RDEPEND="
 	acct-user/posterchan-server
-	dev-db/postgresql[server]
 	dev-lang/python:3.13
 	dev-vcs/git
 	dev-build/cmake

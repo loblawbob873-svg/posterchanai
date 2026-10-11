@@ -34,7 +34,10 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 
-# PostgreSQL — the one datastore (app + built-in Nostr relay)
+# PostgreSQL CLIENT library only -- no server is installed or needed (#161: the app and relay run on
+# PosterChanDB). Kept for scripts/migrate_tables_to_nostr.py and the PosterChanDB promote/copy scripts,
+# which read an OLD node's Postgres, and for the bots that read a Pleroma database. The app imports it
+# lazily, only when a Postgres DSN is actually configured (nostr_relay/store.py).
 psycopg2-binary>=2.9.0
 
 # Nostr: wss relay client + fast BIP340 verify

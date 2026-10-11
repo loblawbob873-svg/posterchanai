@@ -59,7 +59,7 @@ window.pcServer = {
   status: async () => S.available === false ? { available: false, reason: 'not on this machine' } : ({
     available: true, code: true, configured: S.configured, venv: S.venv, enabled: S.enabled,
     active: S.active, port: 3051, relayPort: 3052, nostrOnly: !S.features.ai,
-    postgres: { slot: '18', active: S.configured ? 'active' : 'inactive' },
+    database: 'posterchandb',
     features: Object.assign({}, S.features), job: Object.assign({}, S.job), reachable: S.reachable,
     localUrl: 'http://127.0.0.1:3051', adminUrl: 'http://127.0.0.1:3051/admin',
     relayUrl: 'ws://127.0.0.1:3052/relay', lanUrls: ['http://192.168.1.5:3051'],

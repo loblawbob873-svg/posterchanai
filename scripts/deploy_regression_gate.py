@@ -160,6 +160,7 @@ TESTS = (
     'tests/test_loopback_relay_sockets_are_uncompressed.py',
     'tests/client/test_terminal_symbol_font.py',
     'tests/test_ptop.py',
+    'tests/test_fresh_install_has_no_postgres.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

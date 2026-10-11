@@ -4,12 +4,12 @@ PosterChanAI ships a **self-contained Nostr relay** (NIP-01/02/09/11/17/22/23/40
 built natively into the
 app — no external relay software (strfry/khatru), no extra daemon, no new dependencies. It
 runs in **its own thread + asyncio loop** (isolated from the web request loop), stores into
-its own **PostgreSQL** database, and is configured entirely from **Admin → Relay**.
+**PosterChanDB** (its own append-only store, [POSTERCHANDB.md](POSTERCHANDB.md) — no database
+server), and is configured entirely from **Admin → Relay**.
 
 > **The relay is also the app's datastore.** PosterChanAI is Nostr-native: settings, accounts,
 > API keys, bot config, and AI chats are stored as **NIP-44-encrypted `kind-30078` events**
-> in this relay (the Postgres tables are just a hydrated read-cache). There is no separate
-> app DB and no SQLite. See [NOSTR_DATASTORE.md](NOSTR_DATASTORE.md).
+> in this relay. There is no separate app DB, no SQLite and no PostgreSQL. See [NOSTR_DATASTORE.md](NOSTR_DATASTORE.md).
 
 Its purpose is a **curated, spam-free feed**: it only ever accepts or syncs notes from a
 **Web of Trust (WoT)**, automatically completes broken reply threads, and fetches profile
@@ -23,7 +23,7 @@ point your bots/clients at it and it re-broadcasts what you publish to the wider
 ```
           ┌──────────────────────── PosterChanAI ────────────────────────┐
  clients  │   relay thread (own asyncio loop, own port :3052)            │
-   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ PostgreSQL (GIN/tsvector) ─┼─▶ durable
+   ⇄ wss ─┼─▶  NIP-01 WS ──▶ WoT gate ──▶ PosterChanDB (RAM + log)  ─┼─▶ durable
           │        ▲                          ▲     │                     │
           │        │  outbox (your writes)    │     └─▶ live fan-out ─────┼─▶ subscribers
           │        └──────────────┐           │                          │
@@ -241,20 +241,18 @@ node's Web-of-Trust **seed npubs**.
 
 ---
 
-## Storage (PostgreSQL)
+## Storage (PosterChanDB)
 
-The relay stores into **PostgreSQL** — the *same* database the app uses, since the relay **is**
-the app's datastore. Events live in an `events` table with a **GIN `tsvector`** index for NIP-50
-full-text search and proper row-level locking (no single-writer WAL lock — concurrent ingest and
-client reads don't block each other). It scales to many GB (a depth-2 WoT is multi-GB), and a
-fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
+The relay stores into **PosterChanDB** (`nostr_relay/pcdb_store.py`, [POSTERCHANDB.md](POSTERCHANDB.md)):
+an append-only log on disk with its indexes in RAM, under `POSTERCHANDB_DIR` (default
+`/var/lib/posterchandb`; `/var/lib/posterchanai/posterchandb` in Docker). It is the app's datastore
+too — every app table is a set of encrypted `kind-30078` documents on this relay. No database server
+is installed or started by any install path (#161); a fresh node with no Postgres DSN creates a new
+store on its first start. A fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
 
-- **Connection:** passwordless localhost `trust` by default (`host=127.0.0.1 dbname=posterchan_relay
-  user=posterchan`); override with the `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` env for a password or
-  a remote/Docker server. Provisioned by `install.sh` (or the `postgres` Docker service).
-- **App tables vs relay events:** `Base.metadata` (the app's operational/cache tables) and the
-  relay's raw `events`/`event_tags`/`wot` tables share one DB. The app's authoritative data is the
-  encrypted `kind-30078` events; the SQL tables are a hydrated read-cache.
+- **Legacy Postgres:** a node that still sets `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` keeps running its
+  relay on that PostgreSQL (`posterchandb_mode` off/shadow/serve) until it is promoted with
+  `scripts/posterchandb_promote.py`. Nothing creates such a database any more.
 
 Size is **hard-bounded** by an event-count cap, a byte budget, and an **auto-cleaner** that
 deletes notes/reactions older than *N* days (default 30) but **keeps profiles and contact lists
@@ -288,10 +286,9 @@ strongly recommended for a relay).
 POSTERCHANAI_NOSTR_RELAY=1 docker compose --profile cpu up
 ```
 
-Binds the relay `0.0.0.0:3052` (published by compose) and stores events in the compose
-`postgres` service. (The relay runs in every deployment regardless — `POSTERCHANAI_NOSTR_RELAY=1`
-just also sets the public bind. **Use `docker compose`, not `docker run`** — the relay + app need
-the `postgres` service.) Still front it with TLS for public use.
+Binds the relay `0.0.0.0:3052` (published by compose) and stores events in PosterChanDB on the
+`pc-data` volume. (The relay runs in every deployment regardless — `POSTERCHANAI_NOSTR_RELAY=1`
+just also sets the public bind.) Still front it with TLS for public use.
 
 ---
 
@@ -371,7 +368,7 @@ Edits in the admin UI apply immediately (no restart).
 | Max connections | 5000 | Concurrent client cap |
 | Enforce Web of Trust | on | Off = open publishing + no WoT/firehose/sync/NIP-05 work (processing node) |
 | Send-only | off | Broadcast to upstream but don't pull/store their events |
-| PostgreSQL DSN | host=127.0.0.1 dbname=posterchan_relay | `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` env; passwordless localhost trust by default |
+| PostgreSQL DSN | — (none) | Legacy only: `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` env. Unset = PosterChanDB alone (every fresh install) |
 | Auto-clean notes older than | 30 days (0=off) | Old notes only — **profiles & contacts kept forever** |
 | Max events / Max DB MB | 500k / 1024 | Hard bounds (trim oldest notes first) |
 | NIP-11 name/description/pubkey/contact | — | Relay info document |

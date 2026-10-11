@@ -67,9 +67,6 @@ cat > .env <<EOF
 # up spell them out anyway, so a typo in this line can't leave you with a half-started node.
 COMPOSE_PROFILES=nostr,tls
 
-# Database password. Change it — this is the only place you set it.
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-
 # Your domain. Used for the proxy's server_name and its self-signed certificate.
 POSTERCHANAI_DOMAIN=your-domain.com
 
@@ -93,9 +90,10 @@ Nostr-only image, no AI), and **`tls`** is the nginx+certbot proxy that puts HTT
 
 The profiles are spelled out here on purpose. `COMPOSE_PROFILES` in your `.env` means you can drop
 the flags from every later command — but if that line is missing or misspelled, a bare
-`docker compose up -d` silently starts **only the `postgres` service** (everything else is behind a
+`docker compose up -d` silently starts **only the `office` service** (everything else is behind a
 profile) and you get no app, no relay, and no obvious error. Passing them explicitly once removes
-that failure mode; after this, `docker compose ps` should list `postgres`, `nostr` and `proxy`.
+that failure mode; after this, `docker compose ps` should list `office`, `nostr` and `proxy`. There
+is no database container — the relay keeps its events in PosterChanDB on the `pc-data` volume.
 
 First run builds the image and starts all three. Watch it come up with `docker compose logs -f`.
 
@@ -220,10 +218,14 @@ it. Losing it means you cannot rebuild this instance's identity, ever.
 docker compose exec -T nostr cat /app/data/keys.json > keys.json.backup   # keep this SECRET
 ```
 
-**2. The database** — every event the relay holds, plus all accounts and settings.
+**2. The relay's store** — every event the relay holds, plus all accounts and settings
+(PosterChanDB, `/var/lib/posterchanai/posterchandb` on the `pc-data` volume). Copy it with the app
+stopped, so the copy is a clean stop's flushed state:
 
 ```bash
-docker compose exec -T postgres pg_dump -U posterchan posterchan_relay | gzip > relay-$(date +%F).sql.gz
+docker compose stop nostr
+docker run --rm -v posterchanai_pc-data:/d alpine tar czf - -C /d posterchandb > relay-$(date +%F).tar.gz
+docker compose start nostr
 ```
 
 **3. Blossom blobs** — the media your users uploaded, at `/app/data/blossom` in the container (the
@@ -248,7 +250,7 @@ not reach an existing install — see [DOCKER.md](DOCKER.md#production-https--tl
 
 | Symptom | Cause |
 |---|---|
-| `docker compose ps` shows only `postgres` | The profiles weren't passed. Every other service is behind `nostr` or `tls` — re-run the Step 4 command with both `--profile` flags, or fix the `COMPOSE_PROFILES` line in `.env` |
+| `docker compose ps` shows only `office` | The profiles weren't passed. Every other service is behind `nostr` or `tls` — re-run the Step 4 command with both `--profile` flags, or fix the `COMPOSE_PROFILES` line in `.env` |
 | `no such service: proxy` / `nostr` | Same cause, for `exec`/`logs`/`down`. Add the two `--profile` flags to that command |
 | Browser still warns about the certificate | Step 6 hasn't run, or ran against a domain that doesn't resolve to this box yet |
 | `502 Bad Gateway` right after `up -d` | The backend is still starting. The proxy retries on its own — no restart needed |

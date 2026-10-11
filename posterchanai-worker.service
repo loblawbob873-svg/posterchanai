@@ -12,7 +12,7 @@
 # the same ports — but it is still the one mistake to avoid when enabling this.
 #
 # run-intel.sh (or run.sh) is used rather than python directly so this inherits the SAME environment
-# as the app: LD_LIBRARY_PATH, oneAPI selection, both Postgres DSNs and data/secrets.env.
+# as the app: LD_LIBRARY_PATH, oneAPI selection and data/secrets.env.
 
 [Unit]
 Description=Posterchan AI — background worker (pollers/schedulers)

@@ -2,15 +2,18 @@
 # pc-server — PosterChanOS's one privileged door to the bundled PosterChan server.
 #
 # app-misc/posterchan-server puts the server's CODE on every PosterChanOS machine (/opt/posterchan-server)
-# and nothing else: no Python environment, no database, no unit, nothing listening. It is OFF until
+# and nothing else: no Python environment, no unit, nothing listening. There is no database server to set up
+# at all (#161): the relay stores into PosterChanDB under /var/lib/posterchandb, and the app's tables are
+# documents on that relay. tests/test_fresh_install_has_no_postgres.py runs `enable` and checks nothing
+# here installs, initialises, starts or configures PostgreSQL. It is OFF until
 # somebody presses Enable in System Settings → PosterChan Server, and then THIS script does the work —
 # by running the project's own ./install.sh (`--nostr-only`, `--ai`, `--music`, …) rather than a second
 # copy of what it does. The desktop reaches it through sudo, and the sudoers rule names every verb
 # below with its exact arguments, so the grant is "these few things", never "any command as root".
 #
 #   status                 JSON: what is installed, enabled and running (no root needed)
-#   enable                 set up on first use (Postgres + the Nostr-only install), then start + enable
-#   disable                stop + disable (the database it set up too)
+#   enable                 set up on first use (the Nostr-only install), then start + enable
+#   disable                stop + disable
 #   restart                restart the server
 #   logs                   the server's recent journal
 #   install-ai FEATURE     ai | music | video | voice | searxng — the installer's own add-on paths
@@ -27,17 +30,12 @@ APP="${PC_SERVER_APP:-/opt/posterchan-server}"
 STATE="${PC_SERVER_STATE:-/var/lib/posterchan-server}"
 SVC_USER="${PC_SERVER_USER:-posterchan-server}"
 UNIT_DIR="${PC_SERVER_UNIT_DIR:-/etc/systemd/system}"
-PG_LIBDIR="${PC_PG_LIBDIR:-/usr/lib64}"
-PG_DATA_ROOT="${PC_PG_DATA_ROOT:-/var/lib/postgresql}"
-PG_ETC_ROOT="${PC_PG_ETC_ROOT:-/etc}"
-PG_SOCKET="/run/postgresql"
 PIP_CACHE="${PC_SERVER_PIP_CACHE:-/var/cache/posterchan-server/pip}"
 UNIT="posterchanai.service"
 SEARX_UNIT="posterchanai-searxng.service"
 JOB_UNIT="posterchan-server-job"
 JOB_LOG="$STATE/job.log"
 JOB_STATE="$STATE/job.state"
-PG_OWNED="$STATE/postgres-owned"
 FEATURES="ai music video voice searxng"
 
 die(){ echo "pc-server: $*" >&2; exit 1; }
@@ -66,15 +64,6 @@ feature_installed(){
 secret(){ # the value of `export KEY=...` in data/secrets.env, quotes stripped
   sed -n "s/^export $1=//p" "$APP/data/secrets.env" 2>/dev/null | tail -n1 | tr -d "\"'"
 }
-pg_slot(){ # the newest PostgreSQL this machine has a server for
-  local d best="" n
-  for d in "$PG_LIBDIR"/postgresql-*/bin/initdb; do
-    [ -x "$d" ] || continue
-    n="${d#"$PG_LIBDIR"/postgresql-}"; n="${n%%/*}"
-    if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$n" | sort -V | tail -n1)" = "$n" ]; then best="$n"; fi
-  done
-  [ -n "$best" ] && echo "$best"
-}
 unit_state(){ systemctl "$1" "$2" 2>/dev/null | head -n1; }
 job_running(){ case "$(unit_state is-active "$JOB_UNIT")" in active|activating|reloading) return 0;; esac; return 1; }
 jstr(){ local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
@@ -82,16 +71,14 @@ jbool(){ if "$@" >/dev/null 2>&1; then printf true; else printf false; fi; }
 job_field(){ sed -n "s/^$1=//p" "$JOB_STATE" 2>/dev/null | tail -n1; }
 
 status(){
-  local slot port feats="" f sep=""
-  slot="$(pg_slot || true)"
+  local port feats="" f sep=""
   port="$(secret POSTERCHANAI_PORT)"; case "$port" in ''|*[!0-9]*) port=3051;; esac
   for f in $FEATURES; do feats="$feats$sep$(jstr "$f"):$(jbool feature_installed "$f")"; sep=","; done
   printf '{"code":%s,"configured":%s,"venv":%s,"enabled":%s,"active":%s,"port":%s,"relayPort":3052,' \
     "$(jbool test -f "$APP/install.sh")" "$(jbool configured)" "$(jbool venv_dir)" \
     "$(jstr "$(unit_state is-enabled "$UNIT")")" "$(jstr "$(unit_state is-active "$UNIT")")" "$port"
-  printf '"nostrOnly":%s,"postgres":{"slot":%s,"active":%s},"features":{%s},' \
-    "$(jbool test "$(secret POSTERCHANAI_NOSTR_ONLY)" = 1)" "$(jstr "$slot")" \
-    "$(jstr "${slot:+$(unit_state is-active "postgresql-$slot.service")}")" "$feats"
+  printf '"nostrOnly":%s,"database":"posterchandb","features":{%s},' \
+    "$(jbool test "$(secret POSTERCHANAI_NOSTR_ONLY)" = 1)" "$feats"
   printf '"job":{"running":%s,"verb":%s,"rc":%s,"started":%s,"finished":%s}}\n' \
     "$(jbool job_running)" "$(jstr "$(job_field verb)")" "$(jstr "$(job_field rc)")" \
     "$(jstr "$(job_field started)")" "$(jstr "$(job_field finished)")"
@@ -134,15 +121,6 @@ ensure_account(){
   useradd --system --user-group --home-dir "$STATE" --shell /sbin/nologin "$SVC_USER"
 }
 
-# POSTGRES IS THE ONE DATABASE (app + relay). The installer can create the role and database but not a
-# cluster — on Gentoo that is `emerge --config`, which is exactly what is run here, once.
-#
-# AUTHENTICATION IS PEER, NOT TRUST. initdb's default (and what install.sh documents) is `trust` for
-# localhost, which on a server box is one admin's machine. PosterChanOS is a machine ANYONE may sign in
-# to with a key, and every one of those accounts could connect to 127.0.0.1 as the database superuser
-# under `trust`. So a cluster set up HERE lets local accounts in only as themselves, maps exactly the
-# service account (and root, which runs the installer) onto the `posterchan` role, and asks for a
-# password on TCP. A cluster that was already there is somebody's; it is used as it is and not edited.
 # TOR IS PART OF THE SERVER. The app starts its own Tor daemons when a `tor` binary exists and says
 # nothing when it does not — measured on the build VM: every upstream relay "connected DIRECT (Tor
 # proxy unavailable)", i.e. the node fetched Nostr from its real IP. net-vpn/tor is in the profile's
@@ -154,33 +132,6 @@ ensure_tor(){
   emerge -1 --usepkg --getbinpkg net-vpn/tor || { echo "note: Tor did not install — relays will be reached directly"; return 0; }
 }
 
-ensure_postgres(){
-  local slot data etc
-  slot="$(pg_slot)" || { echo "PostgreSQL is not installed (dev-db/postgresql)."; return 1; }
-  data="$PG_DATA_ROOT/$slot/data"; etc="$PG_ETC_ROOT/postgresql-$slot"
-  if [ -z "$(ls -A "$data" 2>/dev/null)" ]; then
-    echo "initialising PostgreSQL $slot"
-    emerge --config "dev-db/postgresql:$slot" || { echo "emerge --config failed"; return 1; }
-    [ -f "$etc/pg_hba.conf" ] || { echo "no $etc/pg_hba.conf after initialisation"; return 1; }
-    printf '%s\n' \
-      "# Written by pc-server (PosterChanOS). Local accounts connect as themselves; see os/bin/pc-server." \
-      "local   all               postgres                  peer" \
-      "local   posterchan_relay  posterchan                peer map=posterchan" \
-      "host    all               all        127.0.0.1/32   scram-sha-256" \
-      "host    all               all        ::1/128        scram-sha-256" >"$etc/pg_hba.conf"
-    printf '%s\n' "# MAPNAME   SYSTEM-USER   PG-USER" \
-      "posterchan  $SVC_USER  posterchan" "posterchan  root  posterchan" >"$etc/pg_ident.conf"
-    echo "$slot" >"$PG_OWNED"
-  fi
-  systemctl enable --now "postgresql-$slot.service" || { echo "postgresql-$slot did not start"; return 1; }
-  local i
-  for i in $(seq 1 30); do
-    runuser -u postgres -- "$PG_LIBDIR/postgresql-$slot/bin/psql" -Atqc 'select 1' >/dev/null 2>&1 && return 0
-    sleep 1
-  done
-  echo "PostgreSQL $slot is not answering"; return 1
-}
-
 set_secret(){ # set_secret KEY VALUE — only when the key is absent (never overwrite an operator's value)
   local f="$APP/data/secrets.env"
   mkdir -p "$APP/data"; touch "$f"; chmod 0600 "$f"
@@ -188,28 +139,12 @@ set_secret(){ # set_secret KEY VALUE — only when the key is absent (never over
 }
 
 installer(){ # installer <args…> — the project's own install.sh, as root, told who the service runs as
-  local dsn_env=()
-  if [ -f "$PG_OWNED" ]; then
-    dsn_env=("DATABASE_URL=postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET"
-             "NOSTR_RELAY_PG_DSN=host=$PG_SOCKET dbname=posterchan_relay user=posterchan")
-  fi
   # pip runs as root here; its cache must be somewhere root owns or pip disables it (and a retried
   # multi-GB AI install would download everything again).
   mkdir -p "$PIP_CACHE"
   ( cd "$APP" && env HOME="$STATE" U2NET_HOME="$STATE/.u2net" PIP_CACHE_DIR="$PIP_CACHE" PC_SERVICE_USER="$SVC_USER" \
       ACESTEP_DIR="$APP/ACE-Step-1.5" SEARXNG_SRC_DIR="$APP/searxng-src" \
-      VIDEO_PREFETCH=n VOICE_PREFETCH=n "${dsn_env[@]}" ./install.sh "$@" )
-}
-
-# THE SEARXNG UNIT NEEDS THE SAME DATABASE AS THE SERVER. It reads its own `searxng_enabled` setting
-# from the DB, and on PosterChanOS that DB is only reachable over the peer socket — the URL lives in
-# data/secrets.env as `export` lines, which systemd's EnvironmentFile cannot read. Measured: the unit
-# fell back to 127.0.0.1:5432 ("fe_sendauth: no password supplied"). A drop-in carries it.
-searx_dropin(){
-  [ -f "$UNIT_DIR/$SEARX_UNIT" ] && [ -f "$PG_OWNED" ] || return 0
-  mkdir -p "$UNIT_DIR/$SEARX_UNIT.d"
-  printf '[Service]\nEnvironment="DATABASE_URL=postgresql+psycopg2://posterchan@/posterchan_relay?host=%s"\n' "$PG_SOCKET" \
-    > "$UNIT_DIR/$SEARX_UNIT.d/pc-server.conf"
+      VIDEO_PREFETCH=n VOICE_PREFETCH=n ./install.sh "$@" )
 }
 
 own_tree(){ # the service writes into its own tree (data/, state files); the installer ran as root
@@ -222,15 +157,10 @@ own_tree(){ # the service writes into its own tree (data/, state files); the ins
 do_enable(){
   [ -f "$APP/install.sh" ] || { echo "the server code is not installed (app-misc/posterchan-server)"; return 1; }
   ensure_account || return 1
-  ensure_postgres || return 1
   ensure_tor
   # PosterChanDB (the relay's RAM-first store) lives beside the other system state, where
   # gentoo.sh's btrfs tweaks already made it NOCOW; install.sh creates it and re-checks +C.
   set_secret POSTERCHANDB_DIR "/var/lib/posterchandb"
-  if [ -f "$PG_OWNED" ]; then
-    set_secret DATABASE_URL "'postgresql+psycopg2://posterchan@/posterchan_relay?host=$PG_SOCKET'"
-    set_secret NOSTR_RELAY_PG_DSN "'host=$PG_SOCKET dbname=posterchan_relay user=posterchan'"
-  fi
   if configured && venv_dir >/dev/null; then
     echo "already set up — starting it"
   else
@@ -240,7 +170,6 @@ do_enable(){
   # SearXNG comes with the server (install.sh installs it on the nostr-only path too). A server set up
   # before that gets it here, once; a failure only means the node searches elsewhere.
   feature_installed searxng || installer --searxng || echo "note: SearXNG did not install — web search will use Admin → Tools"
-  searx_dropin
   own_tree
   systemctl daemon-reload
   systemctl enable --now "$UNIT" || { echo "$UNIT did not start"; return 1; }
@@ -255,7 +184,7 @@ do_install_ai(){
     music)   installer --music ;;
     video)   installer --video ;;
     voice)   installer --voice ;;
-    searxng) installer --searxng && searx_dropin ;;
+    searxng) installer --searxng ;;
     *) echo "unknown feature $f"; return 2 ;;
   esac || { echo "the installer failed"; return 1; }
   own_tree
@@ -269,8 +198,8 @@ do_disable(){
   need_root
   systemctl disable --now "$UNIT" 2>&1 || true
   if [ -f "$UNIT_DIR/$SEARX_UNIT" ]; then systemctl disable --now "$SEARX_UNIT" 2>&1 || true; fi
-  # The database goes back off only if it was THIS script that brought it up.
-  if [ -f "$PG_OWNED" ]; then systemctl disable --now "postgresql-$(cat "$PG_OWNED").service" 2>&1 || true; fi
+  # No database to stop. A PostgreSQL an older version of this script set up is left exactly as it is: a
+  # server enabled before #161 may still have its relay DSN in data/secrets.env, and another program may use it.
   echo "PosterChan server disabled"
 }
 

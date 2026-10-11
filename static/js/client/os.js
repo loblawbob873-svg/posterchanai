@@ -4272,7 +4272,7 @@
         : (s.enabled==='enabled' ? 'Enabled, not running' : 'Off');
       const failed = !running && s.job && s.job.rc && s.job.rc!=='0';
       summary.textContent = !s.configured && !running
-        ? 'Not set up. Enabling sets up a database and downloads the server\'s Python packages (about 130 MB, 500 MB on disk), then starts it. It listens on your network on ports '+s.port+' and '+s.relayPort+'.'
+        ? 'Not set up. Enabling downloads the server\'s Python packages (about 130 MB, 500 MB on disk), then starts it. It listens on your network on ports '+s.port+' and '+s.relayPort+'.'
         : failed ? jobName(s.job.verb)+' failed (exit '+s.job.rc+') — the log is below.'
         : state+(s.nostrOnly?' · Nostr relay + web client':s.configured?' · with AI features':'');
       const row=(k,v)=>`<div><span>${enc(k)}</span><b>${v}</b></div>`;
@@ -4280,7 +4280,7 @@
       facts.innerHTML=[row('Status',enc(state)),
         row('Web client', s.configured?`<code>${enc(s.localUrl+'/client')}</code>`+(s.lanUrls&&s.lanUrls.length?'<br>'+urls(s.lanUrls.map(u=>u+'/client')):''):'—'),
         row('Nostr relay', s.configured?`<code>${enc(s.relayUrl)}</code>`+(s.lanRelayUrls&&s.lanRelayUrls.length?'<br>'+urls(s.lanRelayUrls):''):'—'),
-        row('Database', s.postgres&&s.postgres.slot?enc('PostgreSQL '+s.postgres.slot+(s.postgres.active==='active'?' · running':' · stopped')):'PostgreSQL is not installed')].join('');
+        row('Database', enc('PosterChanDB (built in — no database server)'))].join('');
       btn.enable.disabled = running || active;
       btn.enable.textContent = s.configured ? 'Start server' : 'Enable server';
       btn.restart.disabled = running || !s.configured || !active;
@@ -4366,7 +4366,7 @@
       act(()=>pcServer.installAi(id),'Installing '+f.name+'…',true);
     };
     btn.enable.onclick=async()=>{
-      if(s&&!s.configured&&!await ask('Enable the PosterChan server? This sets up PostgreSQL and the server\'s Python packages (about 130 MB), then starts it. It will listen on your network on ports '+s.port+' and '+s.relayPort+'.','Enable server'))return;
+      if(s&&!s.configured&&!await ask('Enable the PosterChan server? This downloads the server\'s Python packages (about 130 MB), then starts it. It will listen on your network on ports '+s.port+' and '+s.relayPort+'.','Enable server'))return;
       act(()=>pcServer.enable(), s&&s.configured?'Starting…':'Setting up the server…', true);
     };
     btn.disable.onclick=async()=>{

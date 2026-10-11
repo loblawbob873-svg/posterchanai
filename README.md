@@ -19,12 +19,11 @@
 
 **Your own Jellyfin-compatible media server:** [Media Center](docs/MEDIA_CENTER.md) turns server or NAS folders into private, folder-sorted libraries with cover cards, mobile/TV playback and full-screen video. Connect supported Jellyfin clients to `https://your-instance/jellyfin` using Quick Connect ([tested clients and compatibility scope](docs/JELLYFIN_COMPATIBILITY.md)), share with approved Nostr users, stream through a NAS proxy, and transcode with NVIDIA, AMD/VA-API or CPU fallback. Catalogs stay as encrypted events on your local relay; media files stay on disk and are not federated. Bandwidth defaults to 200 KB/s per viewer, with bounded transcoding and a `/tmp` cache.
 
-**Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, a **fediverse (ActivityPub) server**, and autonomous bots on **Telegram, Nostr & Pleroma** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay on PostgreSQL that *is* the datastore.
+**Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, a **fediverse (ActivityPub) server**, and autonomous bots on **Telegram, Nostr & Pleroma** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay that *is* the datastore.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Nostr-native](https://img.shields.io/badge/Nostr-native-8e44ad?logo=nostr&logoColor=white)](docs/NOSTR_DATASTORE.md)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-datastore-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![OpenAI-compatible](https://img.shields.io/badge/API-OpenAI--compatible-412991?logo=openai&logoColor=white)](#chat--ai)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-100%25-success)](#quick-start-backend-and-web-ui)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20GPU%20optional-FCC624?logo=linux&logoColor=black)](#requirements)
@@ -52,8 +51,9 @@ docker compose --profile nostr up -d --build
 
 Then open **<http://localhost:3051/client>** — a self-hosted **Nostr relay + full web client +
 Blossom media server**, with no AI stack (a ~2 GB image, not ~70 GB). Sign in with a browser
-extension like Alby, or let the app generate you a key. Postgres comes up alongside it
-automatically; you don't need a `.env`, a domain or a certificate to look around.
+extension like Alby, or let the app generate you a key. There is no database server to run —
+the relay keeps its events in its own store (PosterChanDB) on the data volume; you don't need a
+`.env`, a domain or a certificate to look around.
 
 Then, when you want more:
 
@@ -73,7 +73,7 @@ Then, when you want more:
 ### The personal cloud
 
 - ☁️ **The things you'd otherwise rent** — **Notes** (offline-first, with Joplin import), **Calendar** and **Contacts** over real **CalDAV/CardDAV** so your phone's own apps sync with them, **Files** on encrypted Blossom storage, **Folder sync** for Documents and Pictures across desktop and Android, **Mail** over your own IMAP/SMTP, **Music**, **Budget**, and a **password manager**. One node, one account, no subscription.
-- 🟣 **Encrypted events, not somebody's database** — the built-in **web-of-trust relay** (on PostgreSQL) is the source of truth. Settings, accounts, API keys, notes, calendars and AI chats are **NIP-44-encrypted `kind-30078` events** signed by your node. Log in with your **Nostr key** (NIP-07/NIP-46). No SQLite, no proprietary schema, nothing to export because you already hold it.
+- 🟣 **Encrypted events, not somebody's database** — the built-in **web-of-trust relay** (on its own store, PosterChanDB) is the source of truth. Settings, accounts, API keys, notes, calendars and AI chats are **NIP-44-encrypted `kind-30078` events** signed by your node. Log in with your **Nostr key** (NIP-07/NIP-46). No SQLite, no proprietary schema, nothing to export because you already hold it.
 - 🔐 **Passwords & bookmarks in the browser you already use** — a **Firefox / Chrome / Brave** extension turns your relay into an end-to-end-encrypted **password manager** and **cross-browser bookmark sync**. Every login is an **AES-GCM-encrypted** event decrypted only on your device — the relay holds ciphertext. Autofill, **TOTP** codes, a generator, and a built-in **NIP-07 signer** so you sign into Nostr apps without pasting your `nsec`.
 - 📱 **Every surface** — a cyberpunk **Nostr web client** and PWA, a **desktop app** (Windows/macOS/Linux, with bundled Tor), an **Android APK**, a **windowed desktop mode**, and CalDAV/CardDAV for the phone apps you already have. The native apps bundle the client and can run with **no server at all** — relays and a key are enough.
 
@@ -264,11 +264,10 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 
 ## Quick start (backend and web UI)
 
-> **Recommended: Docker Compose (Option A).** PostgreSQL is the one datastore for **both** the app
-> and the built-in Nostr relay, so it's **required in every setup** — and the compose file brings it
-> up and wires it automatically. The bare-metal installer (B) and manual setup (C) work too, but you
-> must provision PostgreSQL yourself (the installer can do it). A plain `docker run` with no Postgres
-> will not start.
+> **Recommended: Docker Compose (Option A).** No setup needs a database server: the app's data is
+> encrypted documents on the built-in Nostr relay, and the relay stores into **PosterChanDB**, its own
+> append-only store on the data volume ([docs/POSTERCHANDB.md](docs/POSTERCHANDB.md)). The bare-metal
+> installer (B) and manual setup (C) work too, and install no PostgreSQL.
 
 ### Option A: Docker Compose (turnkey — one image, any GPU) ✅ recommended
 
@@ -276,10 +275,10 @@ One Ubuntu image builds for **CPU, NVIDIA (CUDA), AMD (ROCm), or Intel Arc (XPU)
 pick the accelerator with a build-arg. It comes up **turnkey**: native local LLM +
 image backends, auto-downloads the recommended chat model on first run, and (on AMD)
 auto-detects the GPU override and persists the MIOpen kernel cache for fast image gen.
-The compose file brings up **PostgreSQL** (the one datastore) for you.
+There is no database container: the relay's store lives on the `pc-data` volume.
 
 ```bash
-# compose (recommended — also starts Postgres):  cpu | cuda | rocm | intel | nostr
+# compose (recommended):  cpu | cuda | rocm | intel | nostr
 docker compose --profile rocm up -d --build
 ```
 
@@ -301,7 +300,7 @@ guide in **[docs/NGINX.md](docs/NGINX.md)**.
 
 ### Option B: Installer (Linux, recommended for bare metal)
 
-The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), **provisions PostgreSQL** (required — the one datastore), and can configure a systemd service. (If you'd rather not manage Postgres yourself, use **Option A / Docker Compose** instead.)
+The **installer** sets up the virtual environment, dependencies, optional GPU backends (LLM and image), the relay's PosterChanDB directory, and can configure a systemd service. It installs no database server.
 
 1. **Clone and enter the project:**
    ```bash
@@ -361,7 +360,7 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 ## Configuration
 
 - Copy **`.env.example`** to **`.env`** and adjust (optional).
-- Everything else is configured from the **web UI** and **Admin** panel — settings, accounts and API keys are stored as **encrypted Nostr events on the built-in relay** (PostgreSQL-backed), not a local config DB:
+- Everything else is configured from the **web UI** and **Admin** panel — settings, accounts and API keys are stored as **encrypted Nostr events on the built-in relay**, not a local config DB:
   - LLM model (native llama-cpp backend; IPEX on Intel Arc)
   - Image generation (native diffusers model)
   - TTS/STT, email, plugins

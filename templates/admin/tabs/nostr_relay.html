@@ -495,7 +495,7 @@
         <div class="form-group">
             <label for="nostr_relay_private_relays">Private mirror relays</label>
             <textarea id="nostr_relay_private_relays" name="nostr_relay_private_relays" rows="3" placeholder="blank = no mirroring (your notes and passwords stay on this node only)"></textarea>
-            <small>One per line. Where your users' <strong>encrypted libraries</strong> — Notes, Passwords, Budget, the files index — are copied for redundancy. They are the only data here with no second copy anywhere: everything public is already on the upstream relays above, while a note or a vault entry lives in exactly this one Postgres, so losing this box loses it.
+            <small>One per line. Where your users' <strong>encrypted libraries</strong> — Notes, Passwords, Budget, the files index — are copied for redundancy. They are the only data here with no second copy anywhere: everything public is already on the upstream relays above, while a note or a vault entry lives in exactly this one node, so losing this box loses it.
             <br><strong>Point this at a relay you run</strong> (your other node), not at a public one. The bodies are ciphertext and nobody else can read them — but every event carries the author's pubkey, a stable id and a timestamp, so a copy on someone else's relay is a permanent public record of how many passwords each user has and when each one changed, and there is no taking it back. On your own relay that record is already yours. <strong>Restart after turning this on.</strong></small>
         </div>
         <div class="form-group">
@@ -522,17 +522,20 @@
     </fieldset>
 
     <fieldset>
-        <legend>PosterChanDB (RAM event store)</legend>
-        <p class="muted" style="margin:0 0 12px">PosterChanDB keeps the relay's events in RAM beside PostgreSQL.
-        <strong>PostgreSQL is still written first and stays the source of truth</strong>; every write and delete is
-        mirrored here in order. In <em>Serve</em> mode the relay answers queries from RAM, falling back to
-        PostgreSQL for any query the mirror cannot answer (still loading, behind, or an error). Saving restarts the relay.</p>
+        <legend>PosterChanDB (the relay's event store)</legend>
+        <p class="muted" style="margin:0 0 12px">PosterChanDB is where the relay keeps its events. A node with no
+        PostgreSQL configured (every fresh install) runs on it alone — <em>Automatic</em> chooses that. The other modes
+        exist only for a node that still has a PostgreSQL relay database (a <code>NOSTR_RELAY_PG_DSN</code>): there
+        PostgreSQL is written first and PosterChanDB mirrors it, answering queries from RAM in <em>Serve</em>.
+        <strong>Without a PostgreSQL DSN, Off/Shadow/Serve leave the relay with no store.</strong> Saving restarts the relay.</p>
         <div class="form-group">
             <label for="posterchandb_mode">Mode</label>
             <select id="posterchandb_mode" name="posterchandb_mode">
-                <option value="off">Off — PostgreSQL only</option>
-                <option value="shadow">Shadow — mirror writes, compare a sample of answers</option>
-                <option value="serve">Serve — answer queries from RAM</option>
+                <option value="">Automatic — PosterChanDB alone unless a PostgreSQL DSN is configured</option>
+                <option value="primary">Primary — PosterChanDB alone</option>
+                <option value="off">Off — PostgreSQL only (needs a DSN)</option>
+                <option value="shadow">Shadow — PostgreSQL + mirror, compare a sample of answers (needs a DSN)</option>
+                <option value="serve">Serve — PostgreSQL + mirror answering from RAM (needs a DSN)</option>
             </select>
             <small id="pcdb-status" class="muted" aria-live="polite"></small>
         </div>
@@ -540,8 +543,8 @@
             <label for="posterchandb_flush_seconds">Write delay (seconds)</label>
             <input type="number" id="posterchandb_flush_seconds" name="posterchandb_flush_seconds" placeholder="300" min="1">
             <small>How long new events wait in RAM before being written to disk together. A clean stop (systemd) writes them
-            first; a crash or power loss can lose this window from PosterChanDB only — PostgreSQL has every event, and the
-            next start reloads from it.</small>
+            first; a crash or power loss can lose this window. (On a node mirroring a PostgreSQL, PostgreSQL has every
+            event and the next start reloads from it.)</small>
             <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
             <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0">
             <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
@@ -569,8 +572,7 @@
 
     <fieldset>
         <legend>Auto-clean (feed retention)</legend>
-        <p class="muted" style="margin:0 0 12px">The relay store is <strong>PostgreSQL</strong> — it tunes its own
-        buffers/WAL, so there are no SQLite cache/mmap/DB-path knobs. Auto-clean only ever trims
+        <p class="muted" style="margin:0 0 12px">Auto-clean only ever trims
         high-volume <strong>feed</strong> content (notes/reactions/reposts/comments); <strong>profiles, contacts,
         articles, DMs, and your local users' own events are kept forever.</strong></p>
         <div class="form-group">

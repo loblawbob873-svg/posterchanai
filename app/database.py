@@ -156,9 +156,10 @@ def init_db():
         "nostr_relay_port": "3052",
         "nostr_relay_prune_interval_sec": "86400",   # auto-prune NIGHTLY (not hourly)
         "nostr_relay_wot_refresh_sec": "604800",     # rebuild the follow graph WEEKLY (was daily)
-        # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
-        "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
-            "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
+        # BLANK unless the environment names a Postgres (#161). A non-empty value here is what tells the relay
+        # "this node has a Postgres" (nostr_relay/thread.py _postgres_configured), so a default DSN would point a
+        # fresh install at a database that does not exist. tests/test_fresh_install_has_no_postgres.py.
+        "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN", ""),
         # Built-in git-over-nostr host (GRASP). OFF by default — the supervisor spawns nothing and
         # the /api/git endpoints 404 until an admin enables it. All keys are relay-stored via
         # settings_store (pcai:setting:<key>), non-secret. See docs/GIT_OVER_NOSTR.md.

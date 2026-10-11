@@ -289,12 +289,13 @@ media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 x11-drivers/nvidia-drivers \
 net-vpn/tor gui-apps/swayidle \
-dev-db/postgresql sys-fs/udisks sys-fs/exfatprogs"
-# dev-db/postgresql IS THE BUNDLED SERVER'S DATABASE, INSTALLED AND NEVER STARTED. app-misc/posterchan-server
-# (pulled in by posterchanos-shell) carries the server's code and is OFF until System Settings → PosterChan
-# Server → Enable, where /usr/local/bin/pc-server initialises this cluster (peer auth, not initdb's trust)
-# and runs the project's own ./install.sh --nostr-only. Listed here as well as in that ebuild's RDEPEND so
-# an image built while the overlay is unreachable still has it: a ~11 MB binpkg, no unit enabled.
+sys-fs/udisks sys-fs/exfatprogs"
+# NO dev-db/postgresql (#161). The bundled server (app-misc/posterchan-server, pulled in by
+# posterchanos-shell, OFF until System Settings → PosterChan Server → Enable) needs no database server:
+# its relay stores into PosterChanDB under /var/lib/posterchandb and the app's tables are documents on
+# that relay. pc-server runs the project's own ./install.sh --nostr-only and nothing else.
+# tests/test_fresh_install_has_no_postgres.py. (SPECIAL_PACKAGE_USE's app-db/postgresql line and the
+# NOCOW/exclude lists below are for OTHER software a machine may run, and stay.)
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
 # (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
 # terminal's PTY — see desktop/localterm.js) come from BASE_PACKAGES / @system above. They are

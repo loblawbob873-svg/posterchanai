@@ -30,7 +30,6 @@ source "$INSTALL_DIR/llama_cpp.sh"
 source "$INSTALL_DIR/image.sh"
 source "$INSTALL_DIR/systemd.sh"
 source "$INSTALL_DIR/setup.sh"
-source "$INSTALL_DIR/postgres.sh"
 source "$INSTALL_DIR/posterchandb.sh"
 source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
@@ -229,15 +228,17 @@ install_nostr_only() {
     NOSTR_ONLY=1
 
     setup_directories
-    setup_postgres           # the one and only database (app + built-in Nostr relay)
-    setup_posterchandb_dir   # the relay's RAM-first event store (NOCOW on btrfs)
+    # NO POSTGRES (#161). The app's tables are relay documents and the relay stores into PosterChanDB,
+    # which opens a fresh primary store on first start when no Postgres DSN is configured.
+    setup_posterchandb_dir   # the relay's one store (NOCOW on btrfs)
     setup_python_env         # honours NOSTR_ONLY -> installs requirements-nostr.txt
 
     # Provision the relay's instance (operator) key now, seed the WoT with it, and print the npub.
     venv/bin/python scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
 
     # Turnkey runtime flags (the run script sources data/secrets.env): enable the relay and the
-    # nostr-only UI. DATABASE_URL defaults to the local-trust Postgres set up above.
+    # nostr-only UI. No DATABASE_URL / NOSTR_RELAY_PG_DSN is written: with neither set the relay runs on
+    # PosterChanDB alone (nostr_relay/thread.py _pcdb_mode).
     mkdir -p data
     touch data/secrets.env
     grep -q '^export POSTERCHANAI_NOSTR_RELAY=' data/secrets.env || echo 'export POSTERCHANAI_NOSTR_RELAY=1' >> data/secrets.env
@@ -318,10 +319,10 @@ main() {
         return
     fi
 
-    # Option 6 (update): safely refresh deps + Telegram server, then stop. Ensure Postgres exists
-    # too (existing SQLite installs upgrading to the Postgres-only datastore).
+    # Option 6 (update): safely refresh deps + Telegram server, then stop. Neither creates nor requires
+    # a Postgres -- and never touches one that is there (other software on the host may use it, and an
+    # install that still points its relay at it keeps its DSN in data/secrets.env untouched).
     if [ "${UPDATE_ONLY:-0}" = "1" ]; then
-        setup_postgres
         setup_posterchandb_dir
         run_updates
         return
@@ -336,8 +337,7 @@ main() {
     # Step 6: Setup directories
     setup_directories
 
-    # Step 6b: PostgreSQL — the one and only database (app + built-in Nostr relay).
-    setup_postgres
+    # Step 6b: the relay's store, PosterChanDB. There is no SQL database to set up (#161).
     setup_posterchandb_dir
 
     # Step 7: Setup Python environment

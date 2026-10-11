@@ -7,11 +7,10 @@ base image for the backend you choose.
 > **Just want a Nostr relay + client, no AI?** Use `GPU=nostr` — a small (~2 GB vs ~70 GB)
 > image with no torch/llama/diffusers. See [Nostr-only](#nostr-only-no-ai) below.
 
-**Postgres is the one and only database** — it backs both the app and the built-in Nostr relay, so
-it is **required in every setup**. The **recommended (and simplest) way to run is the bundled
-`docker compose` file**: it starts a `postgres` service and wires it up automatically. A bare
-`docker run` has **no database** and will exit on startup with `connection refused` — only use it
-if you point `DATABASE_URL` / `NOSTR_RELAY_PG_DSN` at your own external Postgres.
+**There is no database server to run.** The app's data is encrypted documents on the built-in
+Nostr relay, and the relay stores into **PosterChanDB**, its own append-only store on the data volume
+(`POSTERCHANDB_DIR`, [POSTERCHANDB.md](POSTERCHANDB.md)). The recommended way to run is the bundled
+`docker compose` file, but a bare `docker run` with the two volumes works just as well.
 
 The image is **turnkey**: on first run it comes up on the `native` LLM + image
 backends, auto-downloads the recommended chat model, and (on AMD) auto-detects the
@@ -59,8 +58,8 @@ or you're on an unsupported GPU — check `ls -l /dev/kfd /dev/dri` before filin
 
 ## Install — one `docker compose` command
 
-Pick the profile for your hardware. Compose **builds the image, starts PostgreSQL (required), and
-wires it all together** — there's no separate build/run step to manage:
+Pick the profile for your hardware. Compose **builds the image and starts it** — there's no
+separate build/run step to manage, and no database container:
 
 ```bash
 docker compose --profile cpu   up -d --build   # no GPU
@@ -78,10 +77,11 @@ Each profile builds its **own image tag** (`posterchanai:<TAG>-<backend>`, `TAG`
 `local`), so profiles never alias one another — `--profile nostr` always runs the lean Nostr-only
 image even on a box where you previously built `cuda`.
 
-> Override the password in a `.env` next to the compose file: `POSTGRES_PASSWORD=…` (used by both
-> the `postgres` service and the app's `DATABASE_URL`/`NOSTR_RELAY_PG_DSN`).
+> **Upgrading a stack that had a `postgres` service?** Compose no longer starts it, and never deletes
+> it: the old container and its `pc-pg` volume are left exactly as they were. When nothing needs them
+> any more, `docker compose rm -sf postgres` and `docker volume rm posterchanai_pc-pg` remove them.
 
-## Advanced: manual build / bring-your-own-Postgres
+## Advanced: manual build / `docker run`
 
 You normally never need this — compose does it. But if you build/run by hand:
 
@@ -95,13 +95,10 @@ The Dockerfile uses **one** parametrized base (`BASE_IMAGE`, default `ubuntu:24.
 the HIP `llama-cpp-python` (**requires ROCm ≥ 6.3**); the SYCL/Intel build is RAM-hungry — narrow the
 AMD build with `--build-arg AMDGPU_TARGETS=gfx1100`.
 
-A bare `docker run` has **no database** — you must point it at your own Postgres or it exits with
-`connection refused`:
+A bare `docker run` needs only the two volumes — the relay's store is on `pc-data`:
 
 ```bash
 docker run -d --gpus all -p 3051:3051 -v pc-data:/var/lib/posterchanai -v pc-rag:/app/data \
-  -e DATABASE_URL='postgresql+psycopg2://user:pw@host:5432/posterchan_relay' \
-  -e NOSTR_RELAY_PG_DSN='host=host port=5432 dbname=posterchan_relay user=user password=pw' \
   posterchanai:cuda
 ```
 
@@ -302,13 +299,11 @@ NIP-46 remote signer like Amber). The first admin is configured in Admin → Use
 
 | Volume | Mounted at | Holds |
 |---|---|---|
-| `pc-pg` | `/var/lib/postgresql` | **The database.** One Postgres DB backs both the app *and* the Nostr relay — accounts, settings and every event the relay stores |
 | `pc-rag` | `/app/data` | The **operator key** (`keys.json`) and, on a Docker node, the **Blossom blobs** |
-| `pc-data` | `/var/lib/posterchanai` | Uploads, downloaded models, HF cache, **MIOpen cache**, torrents, Tor data |
+| `pc-data` | `/var/lib/posterchanai` | **The relay's store** (`posterchandb/` — accounts, settings and every event the relay keeps), uploads, downloaded models, HF cache, **MIOpen cache**, torrents, Tor data |
 | `pc-proxy-conf`, `pc-proxy-ssl` | in the proxy | The `tls` profile's nginx config and certificates (see above) |
 
-There is **no sqlite** anywhere — Postgres is the only supported database, and it is required in
-every setup.
+There is **no SQL database** anywhere — no sqlite, no PostgreSQL.
 
 **If you back up one thing, back up `/app/data/keys.json`.** It's the operator key: it identifies
 this instance, and the encrypted settings/account documents the relay publishes to upstream relays

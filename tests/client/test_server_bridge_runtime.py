@@ -20,7 +20,7 @@ const execFile=(bin,args,opts,cb)=>{
   assert.equal(opts.env.LC_ALL,'C'); assert.ok(opts.timeout>0);
   if(deny)return cb(new Error('exit 1'),'','sudo: a password is required\n');
   if(args[2]==='status')return cb(null,statusJson||JSON.stringify({code:true,configured:true,venv:true,
-    enabled:'enabled',active:'active',port:3051,relayPort:3052,nostrOnly:true,postgres:{slot:'18',active:'active'},
+    enabled:'enabled',active:'active',port:3051,relayPort:3052,nostrOnly:true,database:'posterchandb',
     features:{ai:false},job:{running:false,verb:'',rc:'',started:'',finished:''}}),'');
   if(args[2]==='job')return cb(null,'{"running":true,"verb":"enable","rc":""}\n','');
   if(args[2]==='logs')return cb(null,'journal\n','');

@@ -24,8 +24,8 @@ def main() -> int:
         print(f"[init-instance-key] import failed: {e}", file=sys.stderr)
         return 1
 
-    # Run the app's full DB init first (idempotent: create_all on Postgres + seed defaults, incl. the
-    # 10 default WoT seeds), so the operator key is minted into a ready database.
+    # Run the app's init first (idempotent: seeds the settings defaults, incl. the 10 default WoT
+    # seeds). There is no SQL database to create (#161).
     try:
         init_db()
     except Exception as e:
