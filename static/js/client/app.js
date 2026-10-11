@@ -1542,8 +1542,22 @@
     const mine = _seen;
     (async () => { try{ await Relay.ready(); }catch(_){} if(_seen === mine) mine.load(); })();
     // LIVE: another device reading things makes the counts here drop while you watch.
+    /* ONLY `pcai:seen` IS KEPT FROM THIS SUBSCRIPTION -- the filter asks for it, but a relay that
+     * ignores `#d` (some do; the test relays do) hands back EVERY kind-30078 of this account. Saved
+     * into the Store, `pcai:desktop` then painted the PosterChanOS desktop from cache before its
+     * own relay read had answered, so the icons were on screen while every change to them was
+     * refused ("still loading your desktop layout") -- tests/client/
+     * test_seen_sync_stores_only_its_own_doc_full_app.py. What a document's own reader has not
+     * read is not this code's to cache. */
     try{ _seenSub = Relay.subscribe([{ authors:[pk], kinds:[30078], '#d':[PCSeen.D] }], {
-      onEvent: ev => { try{ Store.saveEvent(ev); }catch(_){} if(_seen === mine) mine.ingest(ev); } }); }catch(_){}
+      onEvent: ev => {
+        try{
+          if(!ev || ev.pubkey !== pk || ev.kind !== 30078
+             || !(ev.tags || []).some(t => t && t[0] === 'd' && t[1] === PCSeen.D)) return;
+          try{ Store.saveEvent(ev); }catch(_){}
+          if(_seen === mine) mine.ingest(ev).catch(() => {});
+        }catch(_){}
+      } }); }catch(_){}
   }
   // A phone kills a backgrounded page without warning: the debounced write goes out NOW. Coming back
   // re-reads, so what another device read meanwhile is adopted before anything is counted.
@@ -3746,7 +3760,9 @@
 
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
-    _seenStart();      // this account's read markers (pcai:seen): cached ones paint now, the relay's when it answers
+    // This account's read markers (pcai:seen): cached ones paint now, the relay's when it answers.
+    // A background nicety -- nothing after this line may depend on it, so a throw stops here.
+    try{ _seenStart(); }catch(_){}
     setTimeout(_syncAutofillBackground, 0);
     if(!GUEST)setTimeout(()=>_startCordDirectInbox().catch(()=>{_cordDirectOwner='';}),0);
     // Establish the shared app credential before background restore starts asking the signer.

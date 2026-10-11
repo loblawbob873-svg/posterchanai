@@ -52,6 +52,7 @@ TESTS = (
     # Read on one device is read on all of them (pcai:seen), and a DM badges Messages, never the bell.
     'tests/client/test_seen_sync.py',
     'tests/client/test_read_state_follows_the_account_full_app.py',
+    'tests/client/test_seen_sync_stores_only_its_own_doc_full_app.py',
     'tests/client/test_bell_clears_dms.py',
     'tests/client/test_dm_badges_messages_not_the_bell_full_app.py',
     'tests/test_mail_global_search.py',
