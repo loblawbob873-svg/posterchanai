@@ -178,6 +178,7 @@ TESTS = (
     'tests/test_bot_musicgeni.py',
     'tests/test_bot_runs_only_the_command_you_typed.py',
     'tests/test_every_bot_command.py',
+    'tests/test_generation_endpoints_require_auth.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

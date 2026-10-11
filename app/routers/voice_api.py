@@ -12,7 +12,8 @@ because the remote node has no access to the requesting user's Blossom drive.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, Request, Response, UploadFile
+from app.services.relay_reader import Unavailable
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -52,11 +53,16 @@ async def get_voice_auth(
         except Exception:
             pass
     try:
-        if get_current_user_optional(request, db):
+        if get_current_user_optional(request, None, db):
             return True
+    except Unavailable:
+        raise                    # the accounts could not be read: 503, never "not logged in"
     except Exception:
         pass
-    return True
+    # NOT `return True`: every path above that proves a caller returned already, so reaching here means
+    # nobody was proven -- and this endpoint runs a GPU job. It used to fall through to True, which made it
+    # a public generation endpoint (tests/test_generation_endpoints_require_auth.py).
+    raise HTTPException(status_code=401, detail="authentication required")
 
 
 @router.get("/generate-voice/status")
