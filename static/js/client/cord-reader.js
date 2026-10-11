@@ -26015,6 +26015,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var DICT_BY_URL = new Map(Object.entries(RELAY_DICTIONARY).map(([id, url2]) => [url2, Number(id)]));
 
   // src/concord-v2/lib/community.ts
+  /* CORD-03 §2 `view`: "forum" opens the channel thread-first; absent or anything else is "chat"
+   * (Armada channelView.ts). Presentation only -- the keys, stream and permissions are identical. */
+  function channelViewOf(metadata) {
+    return metadata && metadata.view === "forum" ? "forum" : "chat";
+  }
   function channelsView(community, folded) {
     const out = [];
     const seen = /* @__PURE__ */ new Set();
@@ -26039,6 +26044,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
           idHex: def.channelIdHex,
           name: def.name,
           isPrivate: false,
+          view: channelViewOf(def.metadata),
           voice: voiceKeys(community.root, id, community.rootEpoch),
           streams,
           current: streams[0]
@@ -26050,7 +26056,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const streams=held?[stream,...(held.heldKeys||[]).map(k=>({epoch:k.epoch,group:channelGroupKey(k.key,id,k.epoch)}))]:[];
       if(def.wasPublic||community.publicHistory?.has(def.channelIdHex))for(const root of community.heldRoots)streams.push({epoch:root.epoch,group:channelGroupKey(root.key,id,root.epoch)});
       if(!streams.length)continue;
-      out.push({id,idHex:def.channelIdHex,name:def.name,isPrivate:true,readOnly:!held,
+      out.push({id,idHex:def.channelIdHex,name:def.name,isPrivate:true,readOnly:!held,view:channelViewOf(def.metadata),
         voice:held?voiceKeys(held.key,id,held.epoch):null,streams,current:stream});
     }
     for (const held of community.privateChannels) {
@@ -26994,7 +27000,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
        * holds which (Vector's Admin / Moderator). */
       roles: folded.roster.roles.map(r => ({ id: r.roleId, name: r.name, position: r.position, permissions: r.permissions.toString(), scope: r.scope && r.scope.kind || "server" })),
       grants: Object.fromEntries(folded.roster.grants.filter(g => !folded.banned.has(g.member)).map(g => [g.member, [...g.roleIds]])),
-      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
+      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, view: ch.view || "chat", streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
   // CORD-06. Binary key material must never pass through TextDecoder: NIP-44's
@@ -27310,6 +27316,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if (!name || utf8Len(name) > NAME_MAX_BYTES) throw new Error("channel name must be between 1 and 64 UTF-8 bytes");
       body.name = name;
     }
+    if (changes && Object.prototype.hasOwnProperty.call(changes, "view")) {
+      if (changes.view === "forum") body.view = "forum"; else delete body.view;
+    }
     if (changes && changes.deleted) {
       const live = [...folded.channels.values()].filter(c => !c.deleted);
       if (live.length <= 1) throw new Error("a community keeps at least one channel");
@@ -27557,6 +27566,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       delete body.picture;
     } else if (metadata && metadata.icon) { body.picture = String(metadata.icon).slice(0, 2048); delete body.icon; }
     else if (metadata && Object.prototype.hasOwnProperty.call(metadata, "icon") && !metadata.icon) { delete body.picture; delete body.icon; }
+    /* `banner` is CORD-02's second ImagePointer (Armada: "Edit name, description, logo, banner"),
+     * the same {url,key,nonce,hash} shape and validation as the icon. An absent `bannerRef` keeps
+     * whatever banner the prior body carried (round-trip); `banner:null` removes it. */
+    if (metadata && isImagePointer(metadata.bannerRef)) {
+      const r = metadata.bannerRef;
+      if (!/^https:\/\//i.test(r.url) || !/^[0-9a-f]{64}$/i.test(r.key) || !/^[0-9a-f]{32}$/i.test(r.nonce) || !/^[0-9a-f]{64}$/i.test(r.hash)) throw new Error("invalid encrypted banner");
+      body.banner = { url: r.url, key: r.key.toLowerCase(), nonce: r.nonce.toLowerCase(), hash: r.hash.toLowerCase(), ...(r.ext ? { ext: String(r.ext).slice(0, 8) } : {}) };
+    } else if (metadata && Object.prototype.hasOwnProperty.call(metadata, "banner") && metadata.banner === null) delete body.banner;
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()], ...authority];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
@@ -27593,12 +27610,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (channel && channel.private) throw new Error(
       "private channels need a membership grant, which cannot be issued here yet");
     const body = { name, private: false };
+    /* CORD-03 §2 `view` (what Armada's New Channel dialog writes for a Forum). "chat" is written as
+     * an ABSENT field, exactly as Armada's withChannelView does, so equal state is equal bytes. */
+    if (channel && channel.view === "forum") body.view = "forum";
     const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"], ...authority];
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey,
                                ms: Date.now(), tags });
     const group = writableControlGroup(groups);
     const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
-    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name };
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name, view: body.view === "forum" ? "forum" : "chat" };
   }
   // First private access uses CORD-05 delivery, not a rekey blob (the new member
   // has no old key with which to authenticate a rotation commitment).

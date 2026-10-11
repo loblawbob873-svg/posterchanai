@@ -195,6 +195,10 @@ TESTS = (
     'tests/client/test_concord_report_private_full_app.py',
     'tests/test_voice_reference_size.py',
     'tests/client/test_voice_reference_once_full_app.py',
+    # 2026-10-11: Concord banners, forum channels, voice presence on the channel list
+    'tests/client/test_concord_banner_full_app.py',
+    'tests/client/test_concord_forum_full_app.py',
+    'tests/client/test_concord_voice_presence_full_app.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

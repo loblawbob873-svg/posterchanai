@@ -51,7 +51,7 @@ def test_the_ui_is_wired_to_the_writers():
     for needle in ("data-cc-edit=", "data-cc-pin=", 'id="cc-pins"', "data-cc-member-kick=", "data-cc-member-role=",
                    "data-cc-channel-more=", 'id="cc-dissolve"', 'id="cc-typing"', "data-cc-icon-pick=",
                    "void checkDissolution(p,room)", "sealAttachment(clean)", "wireMentionText(text,mentionPairs,npubOf)",
-                   "readableMentions(text)", "applyRoomBanner(room,info,loadKey)"):
+                   "readableMentions(text)", "applyRoomBanner(room,info,loadKey,seed)"):
         assert needle in src, needle
     live = src[src.index("function startChatLive("):]
     assert "{kinds:[21059],authors" in live[:4000], "the live subscription does not carry typing"

@@ -143,12 +143,19 @@
         const next=pendingBroker;pendingBroker=null;if(next&&valid())void connect(next);
       }
     }
-    let heardUntil=Date.now()+30000;
+    /* CORD-07 §5: listen for an existing call before choosing a broker. A caller that has ALREADY
+     * been listening (the channel list's presence watcher, see concord.js startVoiceWatch) says so
+     * through `listened`/`seed`, and a call it has seen is occupied -- its broker is known -- so there
+     * is nothing left to wait for. Without them this is the original 30-second window. */
+    const remember=e=>{const old=records.get(e.pubkey);if(!old||e.at>old.at||(e.at===old.at&&e.id<old.id))records.set(e.pubkey,e);};
+    try{for(const e of (context.seed?.()||[]))if(e&&/^[0-9a-f]{64}$/.test(e.pubkey))remember(e);}catch(_){}
+    const listened=Math.max(0,Math.min(30000,Number(context.listened?.()||0)||0));
+    let heardUntil=Date.now()+(fresh().length?0:30000-listened),autoTried=false;
     async function receive(wrap){
       if(!valid())return;const seq=readSeq;
       try{for(const e of await context.decode(wrap)){
         if(!valid()||seq!==readSeq)return;
-        const old=records.get(e.pubkey);if(!old||e.at>old.at||(e.at===old.at&&e.id<old.id))records.set(e.pubkey,e);
+        remember(e);
       }
       while(records.size>1024)records.delete(records.keys().next().value);
       people();
@@ -157,13 +164,17 @@
       }catch(_){}
     }
     try{subscription=context.subscribe(receive);}catch(e){await close();throw e;}
-    clock=setInterval(()=>{people();if(!joined&&!moving){const left=Math.ceil((heardUntil-Date.now())/1000);status(left>0?'Listening for an existing call ('+left+'s)…':'Ready to join');button('join').disabled=left>0;}},1000);
+    /* `joinOnOpen`: the person already asked to join (they tapped the channel's voice control), so the
+     * first moment a broker can be chosen correctly is the moment to connect -- never a second tap. */
+    const tick=()=>{people();if(!joined&&!moving){const left=Math.ceil((heardUntil-Date.now())/1000);status(left>0?'Listening for an existing call ('+left+'s)…':'Ready to join');button('join').disabled=left>0;
+      if(left<=0&&context.joinOnOpen&&!autoTried&&valid()){autoTried=true;void connect(button('broker').value);}}};
+    clock=setInterval(tick,1000);
     membership=setInterval(()=>{
       if(!valid()){void close();return;}
       try{const next=context.material();if(next.room!==material.room){const reconnect=joined?.broker||button('broker').value,wanted=!!joined||moving;generation++;attemptAbort?.abort();readSeq++;records.clear();subscription?.();subscription=context.subscribe(receive);material=next;if(wanted){if(moving)pendingBroker=reconnect;else void connect(reconnect);}}}catch(_){void close();}
     },2000);
     button('close').onclick=()=>{void close();};
-    button('join').disabled=true;status('Listening for an existing call (30s)…');
+    button('join').disabled=true;status('Listening for an existing call (30s)…');tick();
     button('join').onclick=()=>{context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
     button('mute').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setMicrophoneEnabled(muted);if(!valid()||room!==target){await target.disconnect();return;}muted=!muted;button('mute').textContent=muted?'Unmute':'Mute';}catch(e){status(e.message);}};
     button('video').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setCameraEnabled(!video);if(!valid()||room!==target){await target.disconnect();return;}video=!video;button('video').textContent=video?'Camera off':'Camera on';}catch(e){status(e.message);}};
