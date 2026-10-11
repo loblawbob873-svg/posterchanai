@@ -224,6 +224,47 @@ class VerifiesTheDeployLanded(unittest.TestCase):
         self.assertLess(src.index("ssh nas.lan"), src.index("_verify_node()"))
 
 
+
+class PullsSurviveABusyEndpoint(unittest.TestCase):
+    """The nodes fetch from poster.place/git, which is served by server1's OWN app -- the one this deploy may be
+    restarting. nas gave up after 5 tries in 15 s and stayed a commit behind (2026-10-10). These RUN the real loops
+    from sync.sh with git/ssh/sleep stubbed to fail N times."""
+
+    def _nas_loop(self):
+        src = _src()
+        start = src.index("_NAS_FETCH_ATTEMPT=1")
+        end = src.index("done", src.index("until git fetch origin", start)) + len("done")
+        # the loop lives inside `ssh nas.lan "..."`: undo that string's escaping to run it here
+        return src[start:end].replace('\\"', '"').replace("\\$", "$")
+
+    def _run(self, script, fails):
+        stub = ("n=0; f=%d\n"
+                "git(){ n=$((n+1)); [ $n -gt $f ]; }\n"
+                "ssh(){ n=$((n+1)); [ $n -gt $f ]; }\n"
+                "sleep(){ waited=$((waited+${1:-0})); }\nwaited=0\n") % fails
+        return subprocess.run(["bash", "-c", stub + script + "\necho waited=$waited"], capture_output=True, text=True)
+
+    def test_nas_keeps_fetching_through_a_restart(self):
+        r = self._run(self._nas_loop() + "\necho FETCHED", 8)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("FETCHED", r.stdout)
+        waited = int(re.search(r"waited=(\d+)", r.stdout).group(1))
+        self.assertGreaterEqual(waited, 60, "8 failures must span at least a minute of waiting, got %ds" % waited)
+
+    def test_nas_still_gives_up_eventually(self):
+        r = self._run(self._nas_loop() + "\necho FETCHED", 999)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("FETCHED", r.stdout)
+        self.assertIn("ABORT", r.stderr)
+
+    def test_router_pull_is_retried(self):
+        src = _src()
+        fn = re.search(r"_pull_router\(\) \{.*?\n\}", src, re.S).group(0)
+        r = self._run(fn + "\n_pull_router && echo PULLED", 5)
+        self.assertIn("PULLED", r.stdout, r.stdout + r.stderr)
+        self.assertGreater(src.index("_pull_router || true"), src.index('_verify_node "nas.lan'),
+                           "a lagging router.lan must be pulled again before it is verified")
+
 if __name__ == "__main__":
     unittest.main()
 

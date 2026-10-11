@@ -242,8 +242,18 @@ APK_SHA=$(git rev-parse HEAD)
 # stale JS/CSS. (See memory: project_client_nginx_cache.)
 # Also on the nostr repo now. It runs under sudo, which is why git-remote-nostr lives in
 # /usr/local/bin rather than ~/.local/bin — sudo's secure_path would not find the latter.
-ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master" \
-    || echo "[sync] WARN: router.lan static git pull failed"
+# Retried with backoff: origin is served by THIS node's app (poster.place/git), which can be briefly busy or
+# restarting; one refused fetch used to leave router on old static files for the whole deploy (2026-10-10).
+_pull_router() {
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master" && return 0
+        echo "[sync] router.lan pull attempt $i failed; retrying in $((i < 4 ? i * 3 : 12))s"
+        sleep $((i < 4 ? i * 3 : 12))
+    done
+    return 1
+}
+_pull_router || echo "[sync] WARN: router.lan static git pull failed after 10 attempts"
 
 # Publish the PosterChanOS overlay whenever anything in it changed. This is how an INSTALLED
 # machine gets a newer desktop or session — `emerge -u` against
@@ -393,14 +403,17 @@ cd ~/posterchanai || exit 1
 _NAS_PREV=\$(git rev-parse HEAD 2>/dev/null || echo HEAD)
 # The local app may still be coming back after its restart, so its Git HTTP endpoint can
 # briefly refuse connections. Never reset against stale origin/master after a failed fetch.
+# 20 attempts, backing off to 10 s (~2.5 min): the endpoint is server1's own app, which this very deploy may be
+# restarting. Five tries 3 s apart (15 s) gave up mid-restart and left nas one commit behind (2026-10-10).
 _NAS_FETCH_ATTEMPT=1
 until git fetch origin; do
-    if [ \"\$_NAS_FETCH_ATTEMPT\" -ge 5 ]; then
-        echo \"[nas] ABORT: fetch failed after 5 attempts; checkout and services unchanged\" >&2
+    if [ \"\$_NAS_FETCH_ATTEMPT\" -ge 20 ]; then
+        echo \"[nas] ABORT: fetch failed after 20 attempts; checkout and services unchanged\" >&2
         exit 1
     fi
-    echo \"[nas] fetch attempt \$_NAS_FETCH_ATTEMPT failed; retrying in 3 seconds\" >&2
-    sleep 3
+    _NAS_WAIT=\$(( _NAS_FETCH_ATTEMPT < 4 ? _NAS_FETCH_ATTEMPT * 3 : 10 ))
+    echo \"[nas] fetch attempt \$_NAS_FETCH_ATTEMPT failed; retrying in \$_NAS_WAIT seconds\" >&2
+    sleep \$_NAS_WAIT
     _NAS_FETCH_ATTEMPT=\$((\$_NAS_FETCH_ATTEMPT + 1))
 done
 git reset --hard origin/master || exit 1
@@ -470,6 +483,12 @@ for _r in origin:master github:main; do
     fi
 done
 _verify_node "nas.lan    " nas.lan '~/posterchanai'
+# router.lan only SERVES static files -- a pull is the whole deploy there, so one that lagged is caught up here
+# rather than reported. (nas is not: a pull without its targeted restart would hide stale RUNNING code.)
+if [ "$(ssh -o ConnectTimeout=15 router.lan 'cd /srv/posterchanai 2>/dev/null && git rev-parse HEAD' 2>/dev/null)" != "$_EXPECT" ]; then
+    echo "[sync] router.lan is behind -- pulling it again"
+    _pull_router || true
+fi
 _verify_node "router.lan " router.lan /srv/posterchanai
 
 if [ "$_DRIFT" != "0" ]; then
