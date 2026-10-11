@@ -507,6 +507,9 @@
 <!-- Notifications (the live subscription, the ping/toast, reminder history, notifList and the unread
      count every badge paints from), split out of app.js. Loaded BEFORE app.js, which builds it while it
      boots: the subscription starts at login and the Android/desktop notification routes land here. -->
+<!-- What this account has read (the notification + DM read markers, synced as pcai:seen). DOM-free;
+     app.js binds it at sign-in, before the first badge paints. -->
+<script src="/static/js/client/seen.js?v={{ ver }}"></script>
 <script src="/static/js/client/notifs.js?v={{ ver }}"></script>
 <!-- The Notifications VIEW (the list, its filter tabs, notifHtml, markNotifsRead), split out of app.js.
      Loaded BEFORE app.js, which builds it while it boots: the toast and the right-column rail read its

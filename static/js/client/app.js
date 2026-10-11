@@ -1422,6 +1422,70 @@
     if(v > seenNotif.last){ seenNotif.last = v; try{ bumpNotif(); }catch(_){} }
   }); }catch(_){}
 
+  /* READ ON ONE DEVICE IS READ ON ALL OF THEM ("the blue counts go away -- then on mobile all those same
+   * notifications and DMs claim to still be new until I look at them again"). The markers above are
+   * this browser profile's; the ACCOUNT's live in `d=pcai:seen` (seen.js: one kind-30078 document,
+   * NIP-44 to the user's own key, every field a MAX, nothing written until a relay has answered a read).
+   * Both are honoured -- unread means newer than EITHER -- so the device copy keeps its instant paint and
+   * its multi-monitor `storage` sync, and the account copy is what a phone signing in fresh inherits.
+   * Per ACCOUNT: the engine is bound to one pubkey, its cache is `pc_seen:<pubkey>`, and it refuses
+   * every read and write once that pubkey is no longer the one signed in. Registered in `_isPinned`
+   * (store.js) and `_CARRY_D` below, like every private document here.
+   * tests/client/test_read_state_follows_the_account_full_app.py, tests/client/seen_sync_runtime.mjs. */
+  let _seen = null, _seenSub = null;
+  function _seenFor(){
+    const pk = ME && ME.pubkey;
+    return (_seen && !GUEST && pk && _seen.owner === pk) ? _seen : null;
+  }
+  function dmSeenFor(pk){
+    const s = _seenFor();
+    return Math.max(Number(ClientSettings.get('dmSeen', 0)) || 0, s ? s.dmFor(pk) : 0);
+  }
+  function seenMarkNotif(ts){ const s = _seenFor(); if(s) s.markNotif(ts); }
+  function _dmNewest(arr){ let n = 0; for(const m of arr || []) if((m.t || 0) > n) n = m.t; return n; }
+  function _seenApply(st){
+    if(!st || !ME || st.owner !== ME.pubkey) return;
+    if((st.notif || 0) > (seenNotif.last || 0)){ seenNotif.last = st.notif; }
+    try{ bumpNotif(); }catch(_){}
+    try{ recountDmUnread(); }catch(_){}
+    try{ if(VIEW === 'messages') _renderDmPeerRows(); }catch(_){}
+  }
+  function _seenStart(){
+    const pk = ME && ME.pubkey;
+    if(GUEST || !pk || !signer || !window.PCSeen) return;
+    if(_seen && _seen.owner === pk) return;
+    if(_seen) _seen.stop();
+    if(_seenSub){ try{ Relay.close(_seenSub); }catch(_){} _seenSub = null; }
+    try{
+      _seen = PCSeen.create({
+        owner: pk,
+        storage: { get: k => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
+        query: filters => Relay.query(filters, 8000),
+        cached: () => (window.Store && Store.query) ? Store.query([{ authors:[pk], kinds:[30078], '#d':[PCSeen.D] }]) : [],
+        decrypt: ct => (signer && signer.nip44dec) ? signer.nip44dec(pk, ct) : Promise.reject(new Error('no nip44')),
+        encrypt: text => (signer && signer.nip44enc) ? signer.nip44enc(pk, text) : Promise.reject(new Error('no nip44')),
+        publish: (kind, content, tags) => publish(kind, content, tags, { quiet:true }),
+        isCurrent: owner => !GUEST && !!ME && ME.pubkey === owner,
+        onChange: _seenApply,
+      });
+    }catch(_){ _seen = null; return; }
+    _seenApply(_seen.snapshot());                    // cache-first: what this account had seen, before any socket
+    const mine = _seen;
+    (async () => { try{ await Relay.ready(); }catch(_){} if(_seen === mine) mine.load(); })();
+    // LIVE: another device reading things makes the counts here drop while you watch.
+    try{ _seenSub = Relay.subscribe([{ authors:[pk], kinds:[30078], '#d':[PCSeen.D] }], {
+      onEvent: ev => { try{ Store.saveEvent(ev); }catch(_){} if(_seen === mine) mine.ingest(ev); } }); }catch(_){}
+  }
+  // A phone kills a backgrounded page without warning: the debounced write goes out NOW. Coming back
+  // re-reads, so what another device read meanwhile is adopted before anything is counted.
+  try{
+    window.addEventListener('pagehide', () => { const s = _seenFor(); if(s) s.flush(); });
+    document.addEventListener('visibilitychange', () => {
+      const s = _seenFor(); if(!s) return;
+      if(document.visibilityState === 'hidden') s.flush(); else s.load();
+    });
+  }catch(_){}
+
   // NIP-17 for signers whose SECRET KEY we never hold (nip07 extension / nip46 remote signer):
   // they do the two key-dependent steps via NIP-44 — sign the kind-13 seal + nip44-encrypt the
   // rumor to the recipient — and the worker does the throwaway ephemeral outer kind-1059 layer.
@@ -3613,6 +3677,7 @@
 
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    _seenStart();      // this account's read markers (pcai:seen): cached ones paint now, the relay's when it answers
     setTimeout(_syncAutofillBackground, 0);
     if(!GUEST)setTimeout(()=>_startCordDirectInbox().catch(()=>{_cordDirectOwner='';}),0);
     // Establish the shared app credential before background restore starts asking the signer.
@@ -4945,6 +5010,9 @@
                        indistinguishable from never having turned it on — the exact shape of "why is
                        it disabled again?". */
                     /^pcai:automute$/,
+                    /* What this account has read (seen.js): left behind, every device's badges
+                       relight for notifications and DMs that were read long ago. */
+                    /^pcai:seen$/,
                     /* Concord read positions: left behind, old mentions come back as new. */
                     /^pcai:concord-read$/,
                     /* Concord community folders: left behind, a second device has none. */
@@ -11604,7 +11672,7 @@
     $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
-    renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
+    renderProfileView, replyParentId, seenNotif, seenMarkNotif, timeAgo, zapAmount, zapSender,
     openMenuPopover, openReport, reportItem,
   }; }
   function _notifviewMod(){ return _lzGet('notifview.js', 'PCNotifViewFactory', _notifviewDeps); }
@@ -11697,7 +11765,7 @@
       get signer(){ return signer; },
     },
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
-    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers,
+    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
@@ -11769,14 +11837,14 @@
     // A messenger list, not a directory: avatar, name, the last line, WHEN it happened, and unread
     // weight. Previously every row was an identical name+preview pill with no time and no way to see
     // what was new — "a long boring list".
-    const _seen = Number(ClientSettings.get('dmSeen', 0)) || 0;
     const rows = peers.map(pk=>{
       const p=profOf(pk); needProfile(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
       const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,80)) : '🔒 …');
       const nm = p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
       // Unread = their newest message is newer than the last time this tab was opened. Cheap, and it
       // can't mark your OWN message unread.
-      const unread = !!(last.t && last.t > _seen && !last.mine);
+      // …this device's mark or the account's (dmSeenFor, pcai:seen), whichever is later.
+      const unread = !!(last.t && last.t > dmSeenFor(pk) && !last.mine);
       return `<div class="dm-peer${unread?' unread':''}" data-peer="${pk}" data-name="${enc((nm||'').toLowerCase())}">
         <img alt="" class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div class="dm-peer-main">
@@ -11800,6 +11868,9 @@
 
   function renderMessages(){
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
+    // …on every device of this account: the newest message listed (not the clock, so a list that
+    // re-renders while open writes nothing new) -- seen.js / pcai:seen.
+    try{ const s = _seenFor(); if(s){ let n = 0; for(const arr of dmPeers.values()){ const t = _dmNewest(arr); if(t > n) n = t; } if(n) s.markDmAll(n); } }catch(_){}
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
     const feed=$('#feed');
@@ -11948,7 +12019,8 @@
     if(VIEW === 'messages') try{ openDm(peer); }catch(_){ }
     return true;
   }
-  function openDm(pk){ _dmShown.delete(pk); dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
+  function openDm(pk){ try{ const s = _seenFor(), t = _dmNewest(dmPeers.get(pk)); if(s && t) s.markDm(pk, t); }catch(_){}
+    _dmShown.delete(pk); dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
 
   /* ---------- The DM conversation pane: moved to static/js/client/dmthread.js, loaded on first use ----------
    * The code lives in dmthread.js as a factory; app.js keeps only these entry points. Each one is

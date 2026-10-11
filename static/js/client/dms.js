@@ -12,7 +12,7 @@ window.PCDmsFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.GUEST, S.LOGO, S.ME, S.NO_IMAGES, S.VIEW, S._cordDirectOwner, S._dmDone, S._dmLoaded, S._dmTotal, S._dmUnread, S.dmActive, S.signer
   const {
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
-    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers,
+    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
@@ -811,7 +811,7 @@ window.PCDmsFactory = function(dep){
     // count, no badge, ever. (relay.js now backstops that, but the badge must not depend on it at all.)
     // Newer than the last time Messages was opened IS the definition of unread — the same test
     // recountDmUnread and the per-peer unread dot already use, so all three now agree.
-    const _seen = Number(ClientSettings.get('dmSeen', 0)) || 0;
+    const _seen = dmSeenFor(peer);   // this device's mark AND the account's (pcai:seen)
     // A NOTE TO SELF counts too. The server sends system notifications (agent run finished, uptime
     // alerts) from the node's operator key — which on a single-admin install IS your key, so they
     // arrive as you→you. Skipping every `mine` message meant those published, decrypted, and notified
@@ -1058,18 +1058,11 @@ window.PCDmsFactory = function(dep){
     try{ now = (JSON.parse(e.newValue || '{}') || {}).dmSeen || 0; }catch(_){}
     if(was !== now) try{ recountDmUnread(); }catch(_){}
   }); }catch(_){}
-  /* Unread DMs that arrived AFTER `since` (seconds). The bell counts these, not every unread DM: opening
-     Notifications has to empty the bell ("still says 13" -- "i opened messages and it cleared": the 13
-     were DMs, which only Messages marked read). The Messages badge keeps the full count. */
-  function dmUnreadSince(since){ const seen=Math.max(Number(ClientSettings.get('dmSeen',0))||0, Number(since)||0); let n=0;
+  // Read = at or before what THIS ACCOUNT has seen in that conversation, on any device (dmSeenFor:
+  // this device's `dmSeen` and the synced `pcai:seen` marks, app.js / seen.js).
+  function recountDmUnread(){ let n=0;
     for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
-      const selfThread = pk===S.ME.pubkey;
-      for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } }
-    return n; }
-  try{ window.PCdmUnreadSince = dmUnreadSince; }catch(_){}
-  function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
-    for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
-      const selfThread = pk===S.ME.pubkey;
+      const selfThread = pk===S.ME.pubkey, seen = dmSeenFor(pk);
       for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } } S._dmUnread=n; bumpDm(); }
   function _dmNotify(fromPk, selfNote, text){
     if(!notificationAllowed('dm'))return;

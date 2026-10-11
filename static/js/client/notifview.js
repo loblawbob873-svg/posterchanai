@@ -12,7 +12,7 @@ window.PCNotifViewFactory = function(dep){
     $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
-    renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
+    renderProfileView, replyParentId, seenNotif, seenMarkNotif, timeAgo, zapAmount, zapSender,
     openMenuPopover, openReport, reportItem,
   } = dep;
 
@@ -97,14 +97,23 @@ window.PCNotifViewFactory = function(dep){
       seenNotif.readIds = new Set(ids);
       localStorage.setItem('pc_notif_read_ids', JSON.stringify(ids));
     }catch(_){}
+    /* …and READ ON EVERY DEVICE OF THIS ACCOUNT ("all those same notifications claim to still be new on
+     * mobile"): the newest notification on screen goes into the account's `pcai:seen` (app.js / seen.js).
+     * The NEWEST NOTIFICATION, not the clock -- it only moves when something new arrives, so a view that
+     * re-renders while open writes nothing, and seen.js never takes a date from the future. */
+    try{
+      let newest = 0;
+      for(const e of notifList()){ if(e && e.id){ const t = Number(_notifTs(e)) || 0; if(t > newest) newest = t; } }
+      if(newest) seenMarkNotif(newest);
+    }catch(_){}
     S._updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
     // The desktop's tray bell reads the same unread count, so it clears here too — opening the
     // Notifications app in a window has to empty the bell, not only the badge inside that window.
     try{ if(window.PCOS && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
   }
-  // UNREAD DIRECT MESSAGES, as one row that opens Messages ("i see no notification bell when DM's come in").
-  // The bell counts them (notifs.js notifUnread), so the screen behind the bell must show them; a row per DM
+  // UNREAD DIRECT MESSAGES, as one row that opens Messages. The bell no longer COUNTS them (notifs.js
+  // notifUnread -- a DM badges Messages only), but somebody on this screen is still told; a row per DM
   // would need the decrypted messages, which live in the Messages view, and would print their senders on a
   // screen that a shoulder-surfer reads -- the count is enough to say "you have mail".
   function _dmNotifHtml(){

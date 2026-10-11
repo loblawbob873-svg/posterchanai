@@ -180,6 +180,7 @@ const SHELL = [
   '/static/js/client/blossom.js',
   '/static/js/client/timeline.js',
   '/static/js/client/drafts.js',
+  '/static/js/client/seen.js',
   '/static/js/client/notifs.js',
   '/static/js/client/notifview.js',
   '/static/js/client/rail.js',

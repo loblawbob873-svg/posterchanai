@@ -159,6 +159,9 @@
          /* Where each Concord channel was last read, account-wide (concord.js READ_D). Evicted, a second
             device reads every mention from the last week as new again. */
          t[1] === 'pcai:concord-read' ||
+         /* What notifications and DMs this account has read (seen.js). Evicted, a phone that read the
+            global feed for a while counts every one of them as new again until a relay answers. */
+         t[1] === 'pcai:seen' ||
          /* Community folders (concord.js RAIL_D). Evicted, the rail draws without them as if never made. */
          t[1] === 'pcai:concord-rail' ||
          /* Go Live templates (client/livetemplates.js). Evicted, the menu reads as "you never saved any". */

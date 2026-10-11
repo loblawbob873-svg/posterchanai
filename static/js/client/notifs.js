@@ -387,13 +387,11 @@ window.PCNotifsFactory = function(dep){
     // pinned the bell at 1 however often it was clicked ("notification bell stuck at 1 despite clicking on
     // it many times"). The row stays in the list; it just stops being unread once seen, like any other.
     }).length + ((S._newBuild||S._apkUpdate)&&S._updBadge?1:0)
-      // Unread DMs light the bell as well: a message is a notification to the person it is for. The
-      // Notifications screen shows them as one row that opens Messages (notifview _dmNotifHtml), so the
-      // bell never counts something the screen behind it cannot show.
-      // …but only those since Notifications was last opened: opening it empties the bell, DMs included,
-      // while Messages keeps its own count until they are read (dms.js dmUnreadSince).
-      + (typeof window.PCdmUnreadSince === 'function' ? window.PCdmUnreadSince(seenNotif.last) : (Number(S._dmUnread)||0))
-      // …and Concord mentions not yet read (concord.js's ledger -- see _concordMentions).
+      // UNREAD DMs ARE NOT IN THE BELL (operator decision, 2026-10-11). They were, for a while ("i see no
+      // notification bell when DM's come in"), and one message then lit two badges while the bell rang
+      // for something Notifications could only point away from. A DM badges Messages (dms.js bumpDm);
+      // its toast and OS/push notification are unchanged. tests/client/bell_dms_runtime.mjs.
+      // Concord mentions not yet read DO count (concord.js's ledger -- see _concordMentions).
       + _concordMentions().reduce((n,r)=>n+r.n,0); }
   /* CONCORD MENTIONS, read straight from the ledger concord.js keeps in localStorage, so the bell is
    * right on a page that never loaded Communities ("i got tagged twice in a concord room today but
