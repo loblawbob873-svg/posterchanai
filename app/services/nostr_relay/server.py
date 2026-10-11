@@ -928,6 +928,32 @@ class RelayServer:
             doc["relays"] = {pk: list(relays) for pk in out_names.values()}
         return json.dumps(doc).encode("utf-8")
 
+    def _wot_probe(self, connection, hdrs, path):
+        """GET /_wot/<pubkey hex> -> {"member": bool}: is this key in the relay's web of trust, by the SAME gate
+        the relay admits writes with. For other processes on the node (the git host's acceptance policy read
+        Postgres's `wot` table, which a PosterChanDB node does not have -- #161).
+
+        Refused for anything that came through the web front (nginx always adds a forwarding header), judged by
+        the header's PRESENCE: `_one_header` reads a repeated header as absent, which would let a client opt out
+        of this check by sending it twice. NOT judged by the peer IP: on these nodes a connection made to
+        127.0.0.1 can arrive from the LAN address (the MediaMTX note in CLAUDE.md), so "loopback" cannot be told
+        from the socket. Membership is not a secret worth more than that: it is derived from public follow lists,
+        and any write the relay refuses already says "not in web of trust"."""
+        jtype = Headers({"Content-Type": "application/json"})
+
+        def present(name):
+            try:
+                return bool(hdrs.get_all(name))
+            except AttributeError:
+                return bool(hdrs.get(name))
+        if any(present(h) for h in ("X-Forwarded-For", "X-Real-IP", "Forwarded", "CF-Connecting-IP")):
+            return Response(403, "Forbidden", jtype, b'{"error":"not over the web front"}')
+        pk = path[len("/_wot/"):].strip("/").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", pk):
+            return Response(400, "Bad Request", jtype, b'{"error":"pubkey hex"}')
+        member = bool(self.gate.is_member(pk))
+        return Response(200, "OK", jtype, json.dumps({"member": member}).encode())
+
     def process_request(self, connection, request):
         """Route the opening handshake: WebSocket upgrade → proceed (None); a NIP-11
         request (`Accept: application/nostr+json`) → the info doc; any other browser GET →
@@ -973,6 +999,8 @@ class RelayServer:
             path = raw_path.split("?", 1)[0]
         except Exception:
             return None
+        if path.startswith("/_wot/"):
+            return self._wot_probe(connection, hdrs, path)
         # NIP-05: nginx proxies /.well-known/nostr.json here (so the identity server "runs as a
         # subprocess" alongside the relay). Honour the ?name= query per the spec.
         if path == "/.well-known/nostr.json":

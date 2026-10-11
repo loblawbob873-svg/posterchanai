@@ -127,6 +127,26 @@ def _relay():
     return git_auth.node_relay(port, timeout=4.0)
 
 
+def _relay_wot_member(pubkey_hex: str) -> bool:
+    """Is this key in THIS node's web of trust? Asked of the relay itself (its loopback /_wot/ probe, the same gate
+    it admits writes with) -- the `wot` Postgres table this used to read does not exist on a PosterChanDB node
+    (#161). Raises when the relay cannot be asked: the callers decide what "could not ask" means (refuse)."""
+    import json as _json
+    import urllib.request
+    port = int(_CONFIG.get("relay_port") or 0)
+    if port <= 0:
+        raise RuntimeError("no relay configured")
+    with urllib.request.urlopen("http://127.0.0.1:%d/_wot/%s" % (port, pubkey_hex), timeout=4) as r:
+        return bool(_json.loads(r.read().decode()).get("member"))
+
+
+def _has_local_account(npub: str) -> bool:
+    """Does this node have an account for this npub? The accounts are a relay DocTable (#161, wave 3), read by
+    one point lookup. Raises relay_reader.Unavailable when it cannot be asked."""
+    from app.services import user_table
+    return user_table.by_npub(None, npub) is not None
+
+
 def _publish_state_witness(owner_hex: str, repo_id: str) -> bool:
     try:
         return ghs.publish_state_witness(owner_hex, repo_id)
@@ -301,7 +321,7 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def _accepts_repo_from(self, cur, owner_hex: str) -> bool:
+    def _accepts_repo_from(self, owner_hex: str) -> bool:
         """The ACCEPTANCE POLICY, and the only thing standing between GRASP-01's "serve a repository
         for each accepted announcement" and an unauthenticated `git init --bare` on our disk.
 
@@ -312,12 +332,10 @@ class _Handler(BaseHTTPRequestHandler):
         deliberately narrow by default, not a reading of the spec.
 
         Default `local-or-wot`: an account on this node, or a member of this relay's web of trust.
-        Both are cheap indexed reads on the relay Postgres. `any` exists so an operator can run an
+        Both are point reads: the accounts DocTable and the relay's own web-of-trust gate (#161: no Postgres). `any` exists so an operator can run an
         open service, and it is not the default because with no per-pubkey quota (the repo size caps
         are enforced at PUSH time, in the hook) it is an unbounded empty-repo flood.
-
-        Takes an open cursor rather than a connection: the caller has already paid for one and this
-        must not be a second connect per probe."""
+"""
         from app.services import git_acceptance
         from app.services.nostr import nostr_service
         # ONE policy, decided by git_acceptance.accepts -- the same function and the same setting
@@ -332,16 +350,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not allowlisted and policy in ("account", "account_or_wot"):
             npub = nostr_service.npub_of(owner_hex) or ""
             try:
-                cur.execute("SELECT 1 FROM users WHERE nostr_npub = %s LIMIT 1", (npub,))
-                has_account = cur.fetchone() is not None
+                has_account = _has_local_account(npub)
             except Exception:
-                # No `users` table here (the relay DB need not be the app's on every deployment).
-                # That is "this criterion cannot be evaluated", not "denied" — WoT below still can.
-                log.info("[git-host] no local-account table on the relay DSN; accept policy falls "
-                         "back to web-of-trust only")
+                # The accounts could not be read. That is "this criterion cannot be evaluated", not
+                # "denied" -- web of trust below still can.
+                log.info("[git-host] accounts unreadable; accept policy falls back to web-of-trust only")
         if not allowlisted and not has_account and policy in ("wot", "account_or_wot"):
-            cur.execute("SELECT 1 FROM wot WHERE pubkey = %s LIMIT 1", (owner_hex,))
-            in_wot = cur.fetchone() is not None
+            in_wot = _relay_wot_member(owner_hex)     # raises -> the caller refuses (fail closed)
         return git_acceptance.accepts(policy, has_account=has_account, in_wot=in_wot,
                                       allowlisted=allowlisted)
 
@@ -411,29 +426,19 @@ class _Handler(BaseHTTPRequestHandler):
             if until and until > now:
                 return False
         relay = _relay()
-        dsn = _CONFIG.get("pg_dsn")
-        if relay is None or not dsn:
-            return False          # no relay -> no announcements to accept (no DSN -> no acceptance)
+        if relay is None:
+            return False          # no relay -> no announcements to accept
         try:
             ev = git_auth.load_announcement(relay, owner_hex, repo_id)
             if ev is None:
                 return self._refuse_provision(key, "no announcement from %s" % owner_hex[:12])
             if not self._service_is_named_by(ev):
                 return self._refuse_provision(key, "announcement does not name this service")
-            # The acceptance policy's lookups (`users`, `wot`) are relay/app TABLES, not events, so
-            # they are still asked of Postgres -- only the announcement moved to the relay.
-            import psycopg2
-            conn = psycopg2.connect(dsn, connect_timeout=5)
-            try:
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = 4000")
-                with conn.cursor() as cur:
-                    if not self._accepts_repo_from(cur, owner_hex):
-                        return self._refuse_provision(key, "author fails the acceptance policy (%s)"
-                                               % _CONFIG.get("accept_policy", "local-or-wot"))
-            finally:
-                conn.close()
+            # The acceptance policy's lookups are the accounts DocTable and the relay's web-of-trust gate
+            # (#161: no Postgres anywhere in this decision).
+            if not self._accepts_repo_from(owner_hex):
+                return self._refuse_provision(key, "author fails the acceptance policy (%s)"
+                                       % _CONFIG.get("accept_policy", "local-or-wot"))
         except Exception as e:
             log.warning("[git-host] auto-provision check failed for %s/%s (%s) -> refuse",
                         owner_hex[:12], repo_id, e)
@@ -653,23 +658,11 @@ class _Handler(BaseHTTPRequestHandler):
         return False
 
     def _is_wot_member(self, pubkey_hex: str) -> bool:
-        """True if pubkey is in the relay's Web of Trust — read from the `wot` table the relay maintains,
-        via the SAME Postgres the maintainer ACL uses. Lets any WoT member provision a repo (no explicit
-        npub allowlist to curate). Fail-closed on any DB error / no DSN."""
-        dsn = _CONFIG.get("pg_dsn")
-        if not dsn:
-            return False
+        """True if pubkey is in the relay's Web of Trust -- asked of the relay's own gate (`_relay_wot_member`).
+        Lets any WoT member provision a repo (no explicit npub allowlist to curate). Fail-closed when the relay
+        cannot be asked."""
         try:
-            import psycopg2
-            conn = psycopg2.connect(dsn, connect_timeout=5)
-            try:
-                conn.autocommit = True
-                with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = 4000")
-                    cur.execute("SELECT 1 FROM wot WHERE pubkey = %s LIMIT 1", (pubkey_hex,))
-                    return cur.fetchone() is not None
-            finally:
-                conn.close()
+            return _relay_wot_member(pubkey_hex)
         except Exception as e:
             log.warning("[git-host] WoT membership check failed (%s) -> deny", e)
             return False
