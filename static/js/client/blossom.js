@@ -311,17 +311,18 @@ window.PCBlossomFactory = function(dep){
     try{ if(Object.keys(v).length) localStorage.setItem(_PENDING_KEY(owner), JSON.stringify(v));
          else localStorage.removeItem(_PENDING_KEY(owner)); }catch(_){}
   }
-  /* TWO PREFS CARRY THEIR OWN CLOCK, and for those an unsent value is not automatically the newer
+  /* SOME PREFS CARRY THEIR OWN CLOCK, and for those an unsent value is not automatically the newer
      one: a Concord theme picked here while offline, then a different one picked on the phone an hour
      later, must not overwrite the phone's choice when this device finally gets through -- and
      concord.js would then keep re-asserting the newer one, so the document would flip back and forth.
      Everything else has no clock and the unsent local change wins, as it always did locally. */
+  const _STAMPED_PREFS=[['startupApps','startupAppsAt'],['searchBar','searchBarAt']];   // [value, its stamp]
   function _dropStale(local, remote){   // removes from `local` what `remote` holds a NEWER copy of; true if it did
     const r=remote||{}, at=v=>Number(v&&v.at)||0; let changed=false;
     if('concordTheme' in local && r.concordTheme && typeof r.concordTheme==='object' && at(r.concordTheme)>at(local.concordTheme)){
       delete local.concordTheme; changed=true; }
-    if(('startupApps' in local || 'startupAppsAt' in local) && (Number(r.startupAppsAt)||0)>(Number(local.startupAppsAt)||0)){
-      delete local.startupApps; delete local.startupAppsAt; changed=true; }
+    for(const [k,ka] of _STAMPED_PREFS)
+      if((k in local || ka in local) && (Number(r[ka])||0)>(Number(local[ka])||0)){ delete local[k]; delete local[ka]; changed=true; }
     return changed;
   }
   function _pendingAgainst(owner, remote){

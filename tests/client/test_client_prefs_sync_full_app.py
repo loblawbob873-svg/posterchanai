@@ -330,14 +330,15 @@ SWITCHES = {"set-vim": "vimKeys", "set-no-images": "noImages", "set-hide-replies
             "set-auto-new-posts": "autoNewPosts", "set-clean-links": "cleanLinks", "set-post-effects": "postEffects",
             "set-right-panel": "rightPanel"}
 SELECTS = {"set-start-timeline": "startTimeline", "set-start-view": "startView", "set-media-cache": "mediaCacheGB",
-           "set-music-offline": "musicOfflineGB", "set-desktop-buddy-who": "desktopBuddy"}
+           "set-music-offline": "musicOfflineGB", "set-desktop-buddy-who": "desktopBuddy",
+           "set-search-bar": "searchBar"}
 
 # What the app on device B reads for each key (an expression evaluated there).
 READ = {k: f"ClientSettings.get({json.dumps(k)})" for k in (
     "vimKeys", "noImages", "hideReplies", "readAloudHold", "newPostsPill", "autoNewPosts", "cleanLinks",
     "postEffects", "startTimeline", "startView", "mediaCacheGB", "musicOfflineGB", "desktopBuddy", "navHidden",
     "navOrder", "tlHidden", "mobileNav", "navGroupOf", "navUserGroups", "startupApps", "startupAppsAt",
-    "zapPresets", "xmrPresets", "bchPresets", "experience", "experienceRev")}
+    "zapPresets", "xmrPresets", "bchPresets", "experience", "experienceRev", "searchBar", "searchBarAt")}
 READ.update({
     "xmrTip": "ClientSettings.get('xmrLastAmt')",
     "bchTip": "ClientSettings.get('bchLastAmt')",
