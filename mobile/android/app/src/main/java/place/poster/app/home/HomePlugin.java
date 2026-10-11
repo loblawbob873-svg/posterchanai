@@ -118,6 +118,8 @@ public class HomePlugin extends Plugin {
                 decor.getLocationOnScreen(d);
                 o.put("windowTopOnScreen", d[1]);
                 o.put("windowHeight", decor.getHeight());
+                o.put("windowLeftOnScreen", d[0]);
+                o.put("windowWidth", decor.getWidth());
                 android.view.View wv = getBridge().getWebView();
                 int[] w = new int[2];
                 wv.getLocationOnScreen(w);
@@ -126,6 +128,9 @@ public class HomePlugin extends Plugin {
                 o.put("pageTopOnScreen", w[1]);
                 o.put("pageTopInWindow", wi[1]);
                 o.put("pageBottomOnScreen", w[1] + wv.getHeight());
+                // The width half: a page cut off at the SIDE (a foldable unfolding) is invisible without it.
+                o.put("pageLeftOnScreen", w[0]);
+                o.put("pageRightOnScreen", w[0] + wv.getWidth());
                 android.view.ViewGroup.LayoutParams lp = wv.getLayoutParams();
                 if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
                     android.view.ViewGroup.MarginLayoutParams m = (android.view.ViewGroup.MarginLayoutParams) lp;
@@ -142,7 +147,13 @@ public class HomePlugin extends Plugin {
                         o.put("statusTopIgnoringVisibility",
                                 in.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars()).top);
                         o.put("statusVisible", in.isVisible(android.view.WindowInsets.Type.statusBars()));
-                        o.put("navBottom", in.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom);
+                        android.graphics.Insets nav = in.getInsets(android.view.WindowInsets.Type.navigationBars());
+                        o.put("navBottom", nav.bottom);
+                        o.put("navLeft", nav.left);
+                        o.put("navRight", nav.right);
+                        android.graphics.Insets cut = in.getInsets(android.view.WindowInsets.Type.displayCutout());
+                        o.put("cutoutLeft", cut.left);
+                        o.put("cutoutRight", cut.right);
                         o.put("cutoutTop", in.getInsets(android.view.WindowInsets.Type.displayCutout()).top);
                         o.put("imeBottom", in.getInsets(android.view.WindowInsets.Type.ime()).bottom);
                     }

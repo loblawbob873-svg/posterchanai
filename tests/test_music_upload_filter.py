@@ -51,8 +51,10 @@ CASES = [
 
 def _extract():
     src = client_source()
-    m_re = re.search(r"const _AUDIO_EXT = /.*?/i;", src, re.S)
     m_fn = re.search(r"function _looksAudio\(f\)\{.*?\n  \}", src, re.S)
+    # the _AUDIO_EXT IN SCOPE: the last one defined before the function (upload.js has its own, narrower one)
+    defs = list(re.finditer(r"const _AUDIO_EXT = /.*?/i;", src[:m_fn.start()] if m_fn else src, re.S))
+    m_re = defs[-1] if defs else None
     assert m_re, "_AUDIO_EXT not found in app.js — did the Music upload filter move?"
     assert m_fn, "_looksAudio not found in app.js — did the Music upload filter move?"
     return m_re.group(0) + "\n" + m_fn.group(0)

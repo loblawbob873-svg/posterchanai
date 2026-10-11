@@ -105,18 +105,18 @@ window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord', LOGO:'',
  uploadBlob:async()=>'', openEmojiPopover:()=>{}, insertAt:()=>{}, blossomPicker:null, modal:null};
 
 window.__seedJoined=()=>{
-  localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
-  localStorage.setItem('pc.concord.active','0');
+  localStorage.setItem('pc.concord.rooms.v1.'+OWNER,JSON.stringify([room]));
+  localStorage.setItem('pc.concord.active.v1.'+OWNER,'0');
 };
 window.__becomeFreshDevice=()=>{
   /* A second machine on the same account: same relay, nothing else. */
-  localStorage.removeItem('pc.concord.invites');
-  localStorage.removeItem('pc.concord.active');
+  localStorage.removeItem('pc.concord.rooms.v1.'+OWNER);
+  localStorage.removeItem('pc.concord.active.v1.'+OWNER);
   localStorage.removeItem('pc.concord.left.v1');
 };
 window.__announcement=()=>({url:INVITE,naddr:NADDR,secret:'s3cr3t',name:'Soapbox',
   description:'Soapbox',source:{pubkey:OWNER,created_at:1699999999,content:'join '+INVITE}});
-window.__rooms=()=>{try{return JSON.parse(localStorage.getItem('pc.concord.invites')||'[]');}catch(_){return [];}};
+window.__rooms=()=>{try{return JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+OWNER)||'[]');}catch(_){return [];}};
 window.__vault=async()=>{
   const out=[];
   for(const ev of RELAY.filter(e=>e.kind===13302||e.kind===33302)){
@@ -280,7 +280,7 @@ async def drive(url):
                 cord:{bundle:{community_id:'c'.repeat(64),owner:'a'.repeat(64),owner_salt:'2'.repeat(64),root_epoch:0,
                   community_root:'d'.repeat(64),
                   channels:[{id:'e'.repeat(64),key:'f'.repeat(64),epoch:0,name:'general'}],relays:['wss://relay.test']}}};
-              localStorage.setItem('pc.concord.invites',JSON.stringify([fresh]));
+              localStorage.setItem('pc.concord.rooms.v1.'+OWNER,JSON.stringify([fresh]));
               const ok=await PCConcord.persistArmadaMembership(window.__PC,fresh);
               return {ok,left:PCConcord.leftCommunities('a'.repeat(64)).length};})()""")
             if not rejoined["ok"]:
@@ -303,9 +303,9 @@ async def drive(url):
             # "could not leave concord community just now, something about a 32 bit key": the Leave
             # button threw 'membership contains an invalid 32-byte key' for such a room.
             await evaluate(ws, r"""(()=>{window.__toasts=[];
-              localStorage.setItem('pc.concord.invites',JSON.stringify([{url:'',naddr:'naddr1neveropened',
+              localStorage.setItem('pc.concord.rooms.v1.'+OWNER,JSON.stringify([{url:'',naddr:'naddr1neveropened',
                 communityId:'naddr1neveropened',name:'Monero',description:'',channels:[{name:'general',private:false}],local:false}]));
-              localStorage.setItem('pc.concord.active','0');})()""")
+              localStorage.setItem('pc.concord.active.v1.'+OWNER,'0');})()""")
             if not await boot(ws, url, "!!window.__ready && !!document.querySelector('.cc-app')"):
                 problems.append(f"{label} the bare-room device never rendered")
                 continue

@@ -676,30 +676,29 @@ window.PCUploadFactory = function(dep){
     return url + sep + 'download=1' + (name?('&filename='+encodeURIComponent(name)):'');
   }
 
-  /* SAVE MEANS THE DEVICE, NOT THE SHARE SHEET. In the APK saveBlobAs IS the share sheet (a WebView
-   * ignores <a download>), so every "Save" behaved exactly like "Share" ("PDF editor -> save on android
-   * is functioning like share, not saving to device"). The APK already ships MediaSave (the image
-   * viewer's Save): MediaStore with RELATIVE_PATH, no permission on Android 10+, and anything that is
-   * not a picture or a video lands in Download/PosterChan. An older APK, Android 9, or a failed write
-   * fall back to saveBlobAs -- the share sheet is still a way to keep the file, and saying so beats a
-   * dead button. Returns 'saved:<where>' | 'shared' | 'saved'. */
-  async function saveToDevice(blob, name){
+  /* SAVE MEANS THE DEVICE, NOT THE SHARE SHEET. A WebView ignores <a download>, so in the APK every
+   * Download/Save used to open the share sheet ("when you hit download it should save automatically not
+   * go into share & ask how you want to share it because that's not downloading"). The APK ships
+   * MediaSave (MediaStore with RELATIVE_PATH, no permission on Android 10+): pictures land in
+   * Pictures/PosterChan, videos in Movies/PosterChan, everything else in Download/PosterChan, and the
+   * toast says where. Only a phone that cannot save directly (Android 9, an APK older than MediaSave, a
+   * failed write) gets the share sheet -- still a way to keep the file, and saying so beats a dead
+   * button. Returns 'saved:<where>' | 'shared' | 'saved'. `quiet` leaves the toast to the caller. */
+  async function saveToDevice(blob, name){ return saveBlobAs(blob, name, { quiet:true }); }
+  async function saveBlobAs(blob, name, opts){
     name=name||'file';
     if(_isNativeApp()){
-      let M=null; try{ const P=window.Capacitor&&Capacitor.Plugins; M=(P&&P.MediaSave)||null; }catch(_){ }
-      let ok=false; try{ ok=!!(M && typeof M.available==='function' && ((await M.available())||{}).ok); }catch(_){ ok=false; }
-      if(ok){
-        try{
+      try{
+        const P=(window.Capacitor&&Capacitor.Plugins)||{}, M=P.MediaSave;
+        if(M && typeof M.available==='function' && ((await M.available())||{}).ok){
           const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'' });
-          if(r && r.ok) return 'saved:'+String(r.where||'Download/PosterChan/'+name);
-        }catch(_){ /* fall through to the share sheet */ }
-      }
-    }
-    return saveBlobAs(blob, name);
-  }
-  async function saveBlobAs(blob, name){
-    name=name||'file';
-    if(_isNativeApp()){
+          if(r && r.ok){
+            const where=String(r.where||('Download/PosterChan/'+name));
+            if(!(opts&&opts.quiet)) try{ toast('saved to '+where); }catch(_){ }
+            return 'saved:'+where;
+          }
+        }
+      }catch(_){ /* the share sheet below is still a way to keep the file */ }
       try{
         const P=(window.Capacitor&&Capacitor.Plugins)||{};
         if(P.Filesystem && P.Share){

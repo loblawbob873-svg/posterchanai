@@ -72,3 +72,29 @@ def test_an_apk_without_the_call_shows_no_report_row():
 
     asyncio.run(desktop.with_browser("online", "", check, native(with_call=False)))
     assert got["row"] is False, got
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_report_measures_width_and_says_when_the_page_is_wider_than_the_screen():
+    """A Galaxy Z Fold report ("image cuts off when unfolded") carried only the vertical half: every bar inset
+    and where the page starts, and no width at all -- so a page cut off at the SIDE was invisible to the one
+    tool built to diagnose it. The report now carries the page's width, zoom and pixel ratio, and says out
+    loud when the page is wider than the screen it is drawn on."""
+    got = {}
+
+    async def check(b):
+        await _phone_pane(b)
+        await b.until("/px/.test((document.querySelector('#us-screen-sum')||{}).textContent||'')")
+        await b.js("(()=>{const d=document.createElement('div');d.id='wide';d.style.cssText='width:'+(innerWidth+120)+'px;height:4px';document.body.appendChild(d)})()")
+        await b.js("document.querySelector('#us-screen-copy').click()")
+        await b.until("__copied.length>0")
+        got["copied"] = await b.js("__copied[0]||''")
+        got["sum"] = await b.js("document.querySelector('#us-screen-sum').textContent")
+        got["iw"] = await b.js("innerWidth")
+
+    asyncio.run(desktop.with_browser("online", "", check, native()))
+    rep = json.loads(got["copied"])
+    for k in ("innerWidth", "devicePixelRatio", "zoom", "overflowX", "vvWidth", "vvScale"):
+        assert k in rep, "the report has no %s: %s" % (k, sorted(rep))
+    assert rep["innerWidth"] == got["iw"] and rep["overflowX"] >= 100, rep
+    assert "wider than the screen" in got["sum"], got["sum"]

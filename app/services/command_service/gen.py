@@ -77,9 +77,10 @@ class _GenMixin:
         `musicgeni` produces vocals. Falls back to (request, "") — instrumental — on any error."""
         messages = [
             {"role": "system", "content": (
-                "You write songs for a music-generation model. From the user's request, produce a "
-                "song. Respond EXACTLY in this format and nothing else:\n"
-                "STYLE: <one line: genre, mood, tempo, instrumentation, and vocal type>\n"
+                "You write song LYRICS for a music-generation model. The user's request describes the "
+                "song they want; the music model is given their description as it is, so do NOT restate "
+                "or change its genre, instruments or mood -- write words that fit it. Respond EXACTLY in "
+                "this format and nothing else:\n"
                 "LYRICS:\n"
                 "<lyrics using [verse], [chorus], [bridge] section tags. Write a FULL-LENGTH song of "
                 "roughly 3-5 minutes: at least two or three verses, a chorus repeated after each, and "
@@ -132,7 +133,10 @@ class _GenMixin:
         lyrics = lyrics.strip()
         instrumental = any(k in prompt.lower() for k in ("instrumental", "no vocals", "no lyrics"))
         if not has_pipe and not instrumental:
-            prompt, lyrics = await self._music_write_lyrics(prompt)
+            # LYRICS ONLY. The model's STYLE line used to REPLACE the request as the music caption and was
+            # quoted back as "Generated song for: ..." -- a member's battle-music request came back as
+            # "battle rap, 140 BPM" and read as somebody else's song. The caption is what they typed.
+            _style, lyrics = await self._music_write_lyrics(prompt)
 
         if stop_check and stop_check():
             return {"type": "text", "content": "Generation cancelled."}

@@ -1223,6 +1223,15 @@
     return `<button type="button" class="tg-sum cc-sum" data-cc-sum="${p.enc(mid)}" title="Summarize with AI">✨ Summarize ${A.isVideo(text)?'video':'link'}</button>`;
   }
 
+  /* ```lang\n…\n``` blocks out of chat text; everything else stays prose. A fence only opens at the
+     start of a line and only counts when it closes — an unclosed one is shown exactly as typed. */
+  function codeParts(text){
+    const out=[],re=/(^|\n)```[^\n`]*\n([\s\S]*?)\n?```(?=\n|$)/g;let at=0,mm;
+    while((mm=re.exec(text))){const start=mm.index+mm[1].length;if(start>at)out.push({text:text.slice(at,start)});out.push({block:mm[2]});at=re.lastIndex;}
+    if(at<text.length)out.push({text:text.slice(at)});
+    return out;
+  }
+  function escCode(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function messageContentHtml(p,m,room,channelName){
     if(m.kind===1740){const seconds=Number((m.tags||[]).find(t=>t[0]==='timer')?.[1]||0),duration=seconds%86400===0?seconds/86400+' days':seconds%3600===0?seconds/3600+' hours':seconds+' seconds';return '<span class="cc-timer-notice">'+p.enc(seconds?'Set disappearing messages to '+duration:'Turned off disappearing messages')+'</span>';}
 
@@ -1238,12 +1247,30 @@
     const mini=webxdcOf(m,room,channelName),canPlayMini=!!(mini&&window.PCWebxdc&&PCWebxdc.cardHtml);
     if(canPlayMini)text=text.split(mini.url).join('').replace(/\s{2,}/g,' ').trim();
     const viewer=p.viewer?p.viewer():{};
-    const linked=p.linkify?p.linkify(readableMentions(text)):p.enc(mentionNames(text,p.profOf));
-    const escaped=p.renderCustomEmojis?p.renderCustomEmojis(linked,m):linked;
     /* No display-label fallback here: `me` is a LABEL ("You" when there is no profile) and feeding
        it in would paint "@you" as the reader's own mention in anybody's message. The identity
        handles — profile name, display name, npub, pubkey — are what a mention can actually be. */
-    const body=text?`<p>${paintMentions(escaped,viewerHandles(viewer,''))}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`:'';
+    const prose=t=>{const linked=p.linkify?p.linkify(readableMentions(t)):p.enc(mentionNames(t,p.profOf));
+      const escaped=p.renderCustomEmojis?p.renderCustomEmojis(linked,m):linked;
+      return paintMentions(escaped,viewerHandles(viewer,''));};
+    let body='';
+    if(text&&text.indexOf('`')<0)body=`<p>${prose(text)}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`;
+    else if(text){
+      /* CODE — "concord is not rendering console text": shell output pasted in backticks showed the
+         raw ticks. Fenced blocks and `inline` spans are cut out BEFORE linkify/mentions/emoji ever see
+         the text, so a URL, an @name or a :shortcode: inside code stays literal and escaped, and a
+         URL in code never becomes a link preview. A <pre> never sits inside a <p>. */
+      const parts=codeParts(text),out=[];
+      for(const part of parts){
+        if(part.block){out.push(`<pre class="cc-codeblock"><code>${escCode(part.block)}</code></pre>`);continue;}
+        const spans=[];
+        const held=part.text.replace(/```([^`\n](?:[^`]|`(?!``))*)```|``([^`\n](?:[^`]|`(?!`))*)``|`([^`\n]+)`/g,(_,a,b,c)=>{spans.push(a??b??c);return '\uE000'+(spans.length-1)+'\uE001';});
+        if(!held.trim())continue;
+        out.push('<p>'+prose(held).replace(/\uE000(\d+)\uE001/g,(_,i)=>`<code class="cc-code">${escCode(spans[+i])}</code>`)+'</p>');
+      }
+      const plain=parts.filter(x=>!x.block).map(x=>x.text.replace(/`[^`]*`/g,' ')).join('\n');
+      body=out.join('')+(p.linkCardHtml?p.linkCardHtml(plain):'');
+    }
     const poll=pollHtml(p,m);
     const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/'))return `<div class="cc-plain-attachment"><img src="${url}" alt="${label}" loading="lazy"></div>`;if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment">${p.trackCard?p.trackCard(f.url,f.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`}</div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
     const media=files.map((f,i)=>{ const vis=f.mime.startsWith('image/')||f.mime.startsWith('video/'),got=vis?attachmentCache.get(attachmentKey(f)):null, d=vis?attachmentSize(f):null;

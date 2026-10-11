@@ -201,3 +201,20 @@ def test_every_command_the_dispatcher_knows_is_in_the_table():
     covered = {r[0].split()[0] for r in ROWS} | {"shot", "ss", "commands", "/help", "video", "mp3"}   # ytdl's own arguments
     missing = sorted(words - covered)
     assert not missing, "commands with no row in ROWS: %s" % missing
+
+
+# EVERY media/effect command the bot knows, not a sample of them: the list is the bot's own MEDIA_COMMANDS, so an
+# effect added there is tested here with no edit. (Six were covered by name; 78 effects ran untested.)
+from bot_commands import MEDIA_COMMANDS as _ALL_MEDIA   # noqa: E402
+_ARGS = {"clip": "clip 0:10 0:20", "meme": "meme hello"}
+
+
+@pytest.mark.parametrize("cmd", sorted(_ALL_MEDIA))
+def test_every_media_command_runs_on_the_attached_file(bot, cmd):
+    text = _ARGS.get(cmd, cmd)
+    said = _nostr(bot, text)
+    ran = [c for c in bot["calls"] if c[0] == "process_media"]
+    assert ran and ran[0][1][0] == cmd and ran[0][1][2], "%r never reached process_media with the file" % cmd
+    assert said and (said[0][1].get("image_bytes") or said[0][1].get("video_bytes")), (cmd, said)
+    said, route = _room(bot, text)
+    assert route == "dispatcher" and said and "attachment" in said[0][0], (cmd, route, said)

@@ -81,6 +81,12 @@ function nativeShell(){
       Share: { share: async o => { log.shares.push({ files:o.files, title:o.dialogTitle }); } },
     },
   };
+  // An APK new enough to carry MediaSave (Android 10+): what most phones are.
+  if(window.__withMediaSave) window.Capacitor.Plugins.MediaSave = {
+    available: async () => ({ ok:true }),
+    save: async o => { log.saved = (log.saved||[]).concat([{ name:o.name, bytes:(o.data||'').length, mime:o.mime }]);
+                       return { ok:true, where:'Download/PosterChan/'+o.name }; },
+  };
 }
 function btn(label){
   const b = document.createElement('button');
@@ -108,7 +114,7 @@ def _harness(src, *, with_fix=True):
         STUBS,
         _fn(src, "_isNativeApp", "function _isNativeApp(){"),
         _fn(src, "_blobToB64", "function _blobToB64(blob){"),
-        _fn(src, "saveBlobAs", "async function saveBlobAs(blob, name){"),
+        _fn(src, "saveBlobAs", "async function saveBlobAs("),
         _fn(src, "_btnText", "function _btnText(btn, text){"),
         _fn(src, "_btnLabel", "function _btnLabel(btn){"),
         _fn(src, "downloadFileUrl", "async function downloadFileUrl(u, btn, name){"),
@@ -143,6 +149,7 @@ const out = {};
     out.failIcon = !!eb.querySelector('svg');
 
     out.writes = log.writes; out.shares = log.shares; out.clicks = log.clicks; out.toasts = log.toasts;
+    out.saved = log.saved || [];
   } catch (e) { out.error = String((e && e.stack) || e); }
   document.title = JSON.stringify(out);
 })();
@@ -153,14 +160,14 @@ CHROME = (shutil.which("google-chrome-stable") or shutil.which("chromium")
           or shutil.which("chrome") or shutil.which("google-chrome"))
 
 
-def _run(harness, *, native):
+def _run(harness, *, native, media_save=False):
     """Render the page and read the result back out of <title>.
 
     No `--remote-debugging-port` and a throwaway profile per call: the suite runs several checks at
     once and a fixed port/profile is the collision PC_CHECK_PORT exists to avoid."""
     if not CHROME:
         raise unittest.SkipTest("no chrome on this host")
-    page_src = PAGE % (harness, "nativeShell();" if native else "",
+    page_src = PAGE % (harness, ("window.__withMediaSave=true;" if media_save else "") + ("nativeShell();" if native else ""),
                        json.dumps(ARTIFACT), json.dumps(ARTIFACT))
     d = tempfile.mkdtemp(prefix="pc-aidl-")
     try:
@@ -230,6 +237,20 @@ class AiDownloadNative(unittest.TestCase):
         self.assertTrue(o["failIcon"], "the failure path ate the button's sprite icon")
         self.assertTrue(any("download failed" in t for t in o["toasts"]),
                         "the failure was silent: " + repr(o["toasts"]))
+
+    def test_download_saves_to_the_phone_not_the_share_sheet(self):
+        """'when you hit download it should save automatically, not go into share & ask how you want to
+        share it, because that's not downloading' (2026-10-10). With MediaSave (every APK on Android 10+)
+        the bytes go straight to the phone's Download/Movies/Pictures and no share sheet opens; the
+        share sheet stays only as the fallback for a phone that cannot save directly."""
+        o = _run(self.harness, native=True, media_save=True)
+        self.assertEqual(o["shares"], [], "Download opened the share sheet: " + repr(o["shares"]))
+        self.assertEqual([x["name"] for x in o["saved"]][:1], ["sandbox-workspace.tar.gz"], repr(o["saved"]))
+        self.assertTrue(all(x["bytes"] > 0 for x in o["saved"]), "an empty file was saved")
+        self.assertEqual(len(o["saved"]), 2, "the base64 media download did not save: " + repr(o["saved"]))
+        self.assertNotIn("shared", o["label"], repr(o["label"]))
+        self.assertTrue(any("Download/PosterChan/" in t for t in o["toasts"]),
+                        "nothing said WHERE the file went: " + repr(o["toasts"]))
 
     def test_check_can_fail(self):
         """With the pre-fix saver, the native run writes nothing and still reports success."""
