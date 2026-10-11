@@ -13,6 +13,7 @@ What it pins (each verified to fail without its rule):
 """
 import json
 import os
+import re
 import shutil
 
 import subprocess
@@ -187,7 +188,8 @@ def test_posterchanos_grants_one_device_at_a_time_never_a_blanket_rule():
     assert not any('TAG+="uaccess"' in ln and "usb" in ln for ln in text.splitlines()), "a blanket usb uaccess rule"
     assert ('"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-usb-grant grant *, '
             '/usr/local/bin/pc-usb-grant revoke *"') in text
-    assert "pc-usb-grant update-posterchan; do" in text, "the helper is not in the installed-helpers loop"
+    loop = re.search(r"for helper in ([^;\n]*); do", text)
+    assert loop and "pc-usb-grant" in loop.group(1).split(), "the helper is not in the installed-helpers loop"
     assert '"$PCOS_TREE/../app/services/vmhost/usb.py" "${TARGET}/usr/local/lib/posterchan/pc_usb_scan.py"' in text
     assert os.access(ROOT / "os" / "bin" / "pc-usb-grant", os.X_OK)
 

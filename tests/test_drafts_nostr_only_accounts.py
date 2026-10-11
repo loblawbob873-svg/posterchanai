@@ -8,7 +8,8 @@ import json
 import unittest
 from unittest import mock
 
-from tests.test_doc_endpoints_refuse_an_unreachable_relay import _Base, _Db, _LiveRelay
+from tests.test_doc_endpoints_refuse_an_unreachable_relay import _Base, _LiveRelay
+from app.routers import client as client_router
 from app.services import nip05_access, nostr_store
 
 
@@ -17,7 +18,10 @@ class _NoAccount(_Base):
 
     def setUp(self):
         super().setUp()
-        self.db = _Db(None)                                   # no User row: a Nostr-only account
+        # no account (#161: no user_table row): a Nostr-only member
+        p = mock.patch.object(client_router.user_table, "aby_npub", mock.AsyncMock(return_value=None))
+        p.start()
+        self.patches.append(p)
         self.keys = []
         p = mock.patch.object(nostr_store, "npub_storage_seckey", lambda npub: self.keys.append(npub) or b"\x02" * 32)
         p.start()

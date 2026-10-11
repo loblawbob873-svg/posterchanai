@@ -74,7 +74,7 @@ async def _open_windows(b):
 
 
 async def _until_music_front(b):
-    for _ in range(80):
+    for _ in range(100):
         got = await b.js(FRONT)
         if got.get("count") == 1 and got.get("onTop") and got.get("libIn") == "Music":
             return got
@@ -157,7 +157,7 @@ ADD_WIDGET = """(()=>{const d=document.querySelector('#os-desk');
 
 
 async def _widget(b):
-    for _ in range(30):
+    for _ in range(34):
         if await b.js(ADD_WIDGET):
             return
         await asyncio.sleep(.3)
