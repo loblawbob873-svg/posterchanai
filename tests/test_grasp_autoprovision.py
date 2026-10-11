@@ -107,6 +107,24 @@ class _Conn:
         pass
 
 
+def _lookups(monkeypatch, conn):
+    """The acceptance policy's two lookups (#161: the accounts DocTable and the relay's web-of-trust gate -- no
+    Postgres), answered from `conn` and recorded in `conn.sql` so a test can count them."""
+    def account(npub):
+        conn.sql.append(("account", npub))
+        if conn.no_users_table:
+            raise RuntimeError("the accounts could not be read")
+        return npub in conn.local_npubs
+
+    def wot(pk):
+        conn.sql.append(("wot", pk))
+        if getattr(conn, "wot_down", False):
+            raise OSError("connection refused")
+        return pk in conn.wot
+    monkeypatch.setattr(gh, "_has_local_account", account)
+    monkeypatch.setattr(gh, "_relay_wot_member", wot)
+
+
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     """A handler with a temp repo store; `probe()` runs the real `_autoprovision`."""
@@ -116,7 +134,7 @@ def host(tmp_path, monkeypatch):
     # "passed" by finding a repo it never created.
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(gh, "_CONFIG", {
-        "pg_dsn": "stub", "relay_port": 3052, "public_base": BASE, "allowlist": "",
+        "relay_port": 3052, "public_base": BASE, "allowlist": "",
         "auto_provision": True, "accept_policy": "local-or-wot", "port": 0}, raising=False)
     gh._prov_deny.clear()
     state = {}
@@ -125,8 +143,7 @@ def host(tmp_path, monkeypatch):
         gh._CONFIG.update(cfg)
         gh._prov_deny.clear()
         state["conn"] = conn
-        monkeypatch.setitem(sys.modules, "psycopg2",
-                            type("_PG", (), {"connect": staticmethod(lambda *a, **k: conn)}))
+        _lookups(monkeypatch, conn)
         monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: conn.relay)
         h = object.__new__(gh._Handler)
         h.headers = {}
@@ -235,21 +252,19 @@ def test_a_tampered_announcement_provisions_nothing(host):
     assert host(_Conn([bad], wot=[OWNER])) is False
 
 
-def test_a_database_we_cannot_ask_provisions_nothing(host, monkeypatch):
-    """Fail closed, like every other decision in this file."""
-    class _Boom:
-        @staticmethod
-        def connect(*a, **k):
-            raise OSError("connection refused")
+def test_a_web_of_trust_we_cannot_ask_provisions_nothing(host):
+    """Fail closed, like every other decision in this file: the relay's gate could not be asked."""
+    conn = _Conn([announcement()], wot=[OWNER])
+    conn.wot_down = True
+    assert host(conn) is False
+    assert not ghs.repo_exists(OWNER, REPO)
 
-    gh._CONFIG.update({"pg_dsn": "stub"})
-    gh._prov_deny.clear()
-    # setitem, never a bare assignment: the stub outlived this test and every later test in the process that
-    # imported psycopg2.extras (the PosterChanDB mirror's copy) failed with "_Boom has no attribute extras".
-    monkeypatch.setitem(sys.modules, "psycopg2", _Boom)
-    h = object.__new__(gh._Handler)
-    h.headers = {}
-    assert h._autoprovision(OWNER, REPO) is False
+
+def test_no_postgres_is_needed_to_accept_a_repo(host, monkeypatch):
+    """#161: a node with no SQL database at all (no DSN, no psycopg2) still accepts a web-of-trust author."""
+    gh._CONFIG.pop("pg_dsn", None)
+    monkeypatch.setitem(sys.modules, "psycopg2", None)      # importing it would now raise ImportError
+    assert host(_Conn([announcement()], wot=[OWNER])) is True
 
 
 def test_a_relay_we_cannot_ask_provisions_nothing(host):
@@ -290,13 +305,12 @@ def _serve(conn, tmp_path, monkeypatch, **cfg):
     from http.server import ThreadingHTTPServer
 
     monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
-    base_cfg = {"pg_dsn": "stub", "relay_port": 3052, "public_base": BASE, "allowlist": "",
+    base_cfg = {"relay_port": 3052, "public_base": BASE, "allowlist": "",
                 "auto_provision": True,
                 "accept_policy": "local-or-wot", "read_skew": 60, "write_skew": 120, "port": 0}
     base_cfg.update(cfg)
     monkeypatch.setattr(gh, "_CONFIG", base_cfg, raising=False)
-    monkeypatch.setitem(sys.modules, "psycopg2",
-                        type("_PG", (), {"connect": staticmethod(lambda *a, **k: conn)}))
+    _lookups(monkeypatch, conn)
     monkeypatch.setattr(git_auth, "node_relay", lambda port=None, timeout=5.0: conn.relay)
     gh._prov_deny.clear()
     gh._alias_cache.clear()

@@ -161,6 +161,7 @@ TESTS = (
     'tests/client/test_terminal_symbol_font.py',
     'tests/test_ptop.py',
     'tests/test_fresh_install_has_no_postgres.py',
+    'tests/test_git_acceptance_asks_the_relay.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new
