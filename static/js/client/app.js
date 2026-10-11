@@ -2150,7 +2150,10 @@
   // event still sets it, and passive because it only ever writes this flag.
   let _userActed = false;
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
-  function _webLink(entity){ return _serverOrigin() + '/' + entity; }
+  /* With NO instance `_serverOrigin()` is '' and this used to hand out a bare `/nevent1…` -- a path
+   * relative to whatever page the recipient happens to be on. `nostr:` is the address every client
+   * understands; git's Share already does the same. */
+  function _webLink(entity){ const o=_serverOrigin(); return o ? o + '/' + entity : 'nostr:' + entity; }
   /* `?e=<bech32>` — the same deep link, carried as a query instead of a path segment.
    * A bundled app (desktop Electron, the APK) has no router: its shell reads files off disk, so a
    * path segment after index.html is a 404 and nothing else. Anything that needs to point the app at

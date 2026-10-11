@@ -1501,7 +1501,7 @@
         if(entry.community_id!==room.cord.bundle.community_id||context.pubkey!==room.cord.bundle.owner)throw new Error('Only the original creator can recover this link');
         const status=await api.linkState(entry,guarded);if(!status.complete||status.retired)throw new Error('Existing link is retired or has not finished syncing');
         made={entry,event:await api.refreshEvent(entry,{...room.cord.bundle,channels:[],relays:registry.info.relays},status.events,guarded)};
-      }else made=await api.create({...room.cord.bundle,channels:[],relays:registry.info.relays},guarded,{base:location.origin});
+      }else made=await api.create({...room.cord.bundle,channels:[],relays:registry.info.relays},guarded,{base:publicInviteBase(p)});
       // Preserve the signing key before publishing a usable link, so failed registry delivery is recoverable.
       await api.remember(made.entry,guarded);links.add(api.details(made.entry).pubkey);
     }
@@ -1524,15 +1524,15 @@
       const list=root.querySelector('#cc-owned-links');
       const entries=read.list.entries.filter(e=>e.community_id===room.cord.bundle.community_id);
       if(!entries.length)list.textContent='No links created by this account.';
-      if(room.url){const copy=document.createElement('button');copy.className='btn';copy.textContent='Copy current community link';copy.onclick=()=>p.copyValue(room.url);list.appendChild(copy);}
+      if(room.url){const copy=document.createElement('button');copy.className='btn';copy.textContent='Copy current community link';copy.onclick=()=>p.copyValue(shareableInviteUrl(p,room.url));list.appendChild(copy);}
       const secrets=room.cord?.secrets;
       if(secrets?.token&&secrets?.linkSignerSk&&room.url&&room.cord.bundle.owner===scope.context.pubkey&&!entries.some(e=>e.token===secrets.token)&&!read.list.tombstones.some(e=>e.token===secrets.token)){
         const recover=document.createElement('button');recover.className='btn';recover.textContent='Manage original link';recover.onclick=async()=>{recover.disabled=true;try{await changeOwnedInviteLink(p,room,{token:secrets.token,signer_sk:secrets.linkSignerSk,community_id:room.cord.bundle.community_id,url:room.url},{adopt:true});p.closeModal();await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));recover.disabled=false;}};list.appendChild(recover);
       }
       for(const entry of entries){const row=document.createElement('div'),label=document.createElement('span');label.textContent=entry.label||'Invite link';row.appendChild(label);
-        for(const [text,action] of [['Copy',()=>p.copyValue(entry.url)],['Retire',()=>changeOwnedInviteLink(p,room,entry)]]){const button=document.createElement('button');button.className='btn';button.textContent=text;button.onclick=async()=>{button.disabled=true;try{const result=await action();if(text==='Retire'&&result){p.closeModal();p.toast('Invitation retired');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};row.appendChild(button);}list.appendChild(row);}
+        for(const [text,action] of [['Copy',()=>p.copyValue(shareableInviteUrl(p,entry.url))],['Retire',()=>changeOwnedInviteLink(p,room,entry)]]){const button=document.createElement('button');button.className='btn';button.textContent=text;button.onclick=async()=>{button.disabled=true;try{const result=await action();if(text==='Retire'&&result){p.closeModal();p.toast('Invitation retired');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};row.appendChild(button);}list.appendChild(row);}
       const mintButton=root.querySelector('#cc-mint-link');mintButton.disabled=!communityPermission(p,room,'inviteCreators');if(mintButton.disabled)mintButton.title='Only authorized community staff can create links';
-      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(entry.url);p.closeModal();p.toast('Invitation created and copied');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};
+      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(shareableInviteUrl(p,entry.url));p.closeModal();p.toast('Invitation created and copied');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};
     });
   }
   /* PUBLISH OUR OWN GUESTBOOK JOIN / LEAVE (CORD-02 §5, CORD-05 §6). Best effort by design: the
@@ -2423,6 +2423,31 @@
     let u; try{ u=new URL(String(raw||'').trim()); }catch(_){ return null; }
     const m=u.pathname.match(/\/invite\/(naddr1[023456789acdefghjklmnpqrstuvwxyz]+)\/?$/i);
     return m&&u.hash.length>3 ? {url:u.href,naddr:m[1],secret:u.hash.slice(1)} : null;
+  }
+  /* AN INVITE IS FOR SOMEBODY ELSE, SO ITS HOST MUST BE ONE THEY CAN REACH. Both mint paths passed
+   * `location.origin`, which is this instance in a browser tab and `https://localhost` in the APK
+   * (`app://posterchan` on the desktop) -- so every invite a phone ever minted pointed at the
+   * recipient's OWN phone. The instance the app talks to is `p.serverOrigin()`; with no instance
+   * (or one only this machine can reach) the canonical CORD-05 host is used, the same one
+   * `inviteRefUrl` builds for Armada's membership list. The host is never part of the secret: the
+   * naddr and the # fragment are the whole invitation, which is also why an invite ALREADY minted
+   * against localhost still opens (`inviteParts` reads the path, not the host) and is rewritten to a
+   * public host whenever it is copied again (`shareableInviteUrl`). */
+  const PUBLIC_INVITE_HOST='https://armada.buzz';
+  function unreachableOrigin(raw){
+    try{
+      const u=new URL(String(raw||''));if(!/^https?:$/.test(u.protocol))return true;
+      const h=u.hostname.replace(/^\[|\]$/g,'').toLowerCase();
+      return h==='localhost'||h.endsWith('.localhost')||h==='::1'||h==='0.0.0.0'||/^127\./.test(h);
+    }catch(_){ return true; }
+  }
+  function publicInviteBase(p){
+    let origin='';try{origin=String((p&&p.serverOrigin&&p.serverOrigin())||'');}catch(_){}
+    return origin&&!unreachableOrigin(origin)?new URL(origin).origin:PUBLIC_INVITE_HOST;
+  }
+  function shareableInviteUrl(p,raw){
+    const parts=inviteParts(raw);if(!parts||!unreachableOrigin(parts.url))return parts?parts.url:String(raw||'');
+    const u=new URL(parts.url);return publicInviteBase(p)+u.pathname+u.hash;
   }
   /* An invite is an in-app Concord action, not a web page.  Linkified chat text gives every URL a
    * normal anchor; on desktop a same-instance /invite link was therefore allowed through Electron
@@ -4945,7 +4970,7 @@
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const creator=p.cordDirectContext();
-    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:creator.sign});
+    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:publicInviteBase(p),signEvent:creator.sign});
     if(!creator.isCurrent())throw new Error('creating account changed');
     const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
     const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,name,url:made.url,cord:{bundle}};
@@ -5363,7 +5388,7 @@
       dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
     ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(shareableInviteUrl(p,room.url)); p.toast('public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     /* From the device: the picked file becomes a blob: URL in the same box, and saving turns it into
      * the encrypted ImageRef (sealImageRef) — one path for a typed URL and an upload. */
@@ -5630,7 +5655,7 @@
     };
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const manageLinks=$('#cc-manage-links');if(manageLinks)manageLinks.onclick=async()=>{const room=saved()[state.community];if(!room?.cord?.bundle)return;try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}};
-    const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(room.url);return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
+    const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(shareableInviteUrl(p,room.url));return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(shareableInviteUrl(p,room.url)); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(shareableInviteUrl(p,upgraded.url)); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>{$('#cc-settings-dialog').classList.add('hidden');if(backgroundRenderPending)backgroundRender();};
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)activeSet(String(state.community));else activeSet(null);render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};

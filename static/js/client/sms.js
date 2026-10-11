@@ -2395,8 +2395,11 @@
     let meta = cut[1];
     const sha = (head.match(/([0-9a-f]{64})/i) || [])[1];
     if(!sha) return '';
-    const base = String((typeof window !== 'undefined' && window.__PC_API_BASE__) || '')
-                 || (typeof location !== 'undefined' ? location.origin : '');
+    /* A BUNDLED app's own origin (`https://localhost`) is the recipient's own phone, never a link:
+     * with no instance there is no `/f/` page anywhere, so there is no link to make. */
+    const bundled = typeof window !== 'undefined' && typeof window.__PC_API_BASE__ !== 'undefined';
+    const base = bundled ? String(window.__PC_API_BASE__ || '')
+                         : (typeof location !== 'undefined' ? location.origin : '');
     if(!base) return '';
     let sameHost = false;
     try{ sameHost = new URL(head, base).origin === new URL(base).origin; }catch(_){ sameHost = false; }
