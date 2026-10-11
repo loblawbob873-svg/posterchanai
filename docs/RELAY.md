@@ -115,6 +115,18 @@ report as an ActivityPub `Flag` (see `docs/ACTIVITYPUB.md` → Reports). Admins 
 by or about a member under **Admin → Nostr Relay → Reports**; acting on one is the account blocklist
 above (or mute). Guests (not signed in) see the action, disabled, with the reason.
 
+The ⋯ on a **notification** card offers the same: "Report this post" for a reply, mention, quote or
+comment (their words), and "Report <name>" for each person behind a reaction, repost, zap or follow —
+never your own post, which is what such a card quotes.
+
+**Concord messages are different, on purpose.** A Concord room is private and encrypted, so a public
+kind 1984 naming or quoting one of its messages would publish the message and who is in the room. The 🚩
+in a message's actions opens the same sheet, but the report goes as **NIP-17 encrypted DMs** to the
+room's owner and moderators only (never the member reported), carrying the community, channel,
+member, reason, comment, the message text (they can already read the room) and an "Open the reported
+message" button that jumps to it. This server's admins get a copy only when the reporter ticks "also
+tell this server's admins", which is offered only when the room lives on this node's relay.
+
 ### Rate limiting (don't get blocked)
 Upstream requests are **paced** (a configurable delay between author batches during sync /
 profile fetch), and the **outbox is a bounded paced queue** (a minimum interval between

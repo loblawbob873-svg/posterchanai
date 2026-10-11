@@ -18,7 +18,7 @@ window.PCDmThreadFactory = function(dep){
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
     niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
-    uploadBlob, uploadSharedEnc, wireImgAttach,
+    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute,
   } = dep;
   // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
   // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
@@ -99,11 +99,24 @@ window.PCDmThreadFactory = function(dep){
         if(app){ text=text.replace(app.url,'').trim(); xdcCard=PCWebxdc.cardHtml(app); }
       }
     }catch(_){}
+    /* A CONCORD REPORT (concord.js reportText) names the message it is about as a route; the moderator
+     * gets a button that opens the room AT that message, instead of a string to copy. Only a well-formed
+     * concord: route is honoured -- anybody can DM this text, and all it can do is open a room you hold. */
+    let ccOpen='';
+    if(/^🚩 Concord report/.test(text)){
+      const om=/\nOpen: (concord:[A-Za-z0-9%._~:\-]{3,600})\s*$/.exec(text);
+      if(om){ text=text.slice(0,om.index); ccOpen=`<button type="button" class="btn btn-cyan small dm-cc-open" data-cc-route="${enc(om[1])}">Open the reported message</button>`; }
+    }
     const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(text);
     const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
     const body=mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(text));
-    return body+files+xdcCard;
+    return body+files+xdcCard+ccOpen;
   }
+  if(typeof document!=='undefined' && !window.__pcDmCcOpen && (window.__pcDmCcOpen=1)) document.addEventListener('click', e=>{
+    const b=e.target && e.target.closest && e.target.closest('.dm-cc-open'); if(!b) return;
+    e.preventDefault(); e.stopPropagation();
+    const r=String(b.dataset.ccRoute||''); if(/^concord:[A-Za-z0-9%._~:\-]{3,600}$/.test(r)) openOsNotificationRoute(r);
+  }, true);
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || S.VIEW!=='messages') return;
     _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null; if(S.VIEW!=='messages') return;

@@ -4322,6 +4322,7 @@
         if(q){ const id=q.dataset.id, pk=q.dataset.pk;
           if(q.dataset.q==='reply') compose({reply:id, replyPk:pk}); else pickEmoji(id, pk, q);
           return; }
+        const nm=e.target.closest('.notif-more'); if(nm){ notifMenu(nm); return; }   // ⋯ → Report (notifview.js)
         const nrow=e.target.closest('.notif');
         if(nrow){ const pf=e.target.closest('[data-prof]');                       // name/avatar → profile
           if(pf) renderProfileView(pf.dataset.prof);
@@ -11582,6 +11583,7 @@
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
+    openMenuPopover, openReport, reportItem,
   }; }
   function _notifviewMod(){ return _lzGet('notifview.js', 'PCNotifViewFactory', _notifviewDeps); }
   function _notifviewLoad(){ return _lzLoad('notifview.js', 'PCNotifViewFactory', _notifviewDeps); }
@@ -11593,6 +11595,7 @@
   function markNotifsRead(){ return _lzRun(_notifviewMod, _notifviewLoad, 'markNotifsRead', arguments); }
   function notifGrouped(){ return _lzRun(_notifviewMod, _notifviewLoad, 'notifGrouped', arguments); }
   function notifHtml(){ return _lzRun(_notifviewMod, _notifviewLoad, 'notifHtml', arguments); }
+  function notifMenu(){ return _lzRun(_notifviewMod, _notifviewLoad, 'notifMenu', arguments); }
   function renderNotifications(){ return _lzRun(_notifviewMod, _notifviewLoad, 'renderNotifications', arguments); }
   function renderNotificationsSoon(){ return _lzRun(_notifviewMod, _notifviewLoad, 'renderNotificationsSoon', arguments); }
   _notifviewMod();   // eager: notifview.js is built here, at boot — see its entry points above
@@ -11944,7 +11947,7 @@
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
     niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
-    uploadBlob, uploadSharedEnc, wireImgAttach,
+    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute,
   }; }
   function _dmThreadMod(){ return _lzGet('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
   function _dmThreadLoad(){ return _lzLoad('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
@@ -13911,6 +13914,9 @@
     /* /client/config as this page holds it. Virtual Machines reads `vmhost` from it (this instance's
      * own VM host); a bundle with no instance answers {} and the screen relies on the user's list. */
     clientConfig: () => CFG || {},
+    // The ONE report sheet (menus.js). Concord opens it in its PRIVATE mode -- a room message is never
+    // published as a public kind 1984; its report goes to the room's moderators as encrypted DMs.
+    openReport,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, kind0Tags: _kind0Tags, needProfile, niceNip05, LOGO, toast,
     viewer: () => {
       const stored = ME && ME.pubkey ? Store.profile(ME.pubkey) : null;

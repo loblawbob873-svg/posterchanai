@@ -410,21 +410,33 @@ window.PCMenusFactory = function(dep){
     return dep.isGuest() ? ['report', label+' — log in to report', '', {disabled:true, title:'Log in to file a report'}]
                          : ['report', label];
   }
-  function openReport(pk, id){
+  /* `opts.deliver` makes it a PRIVATE report (Concord): the same sheet, but nothing public is signed --
+   * `deliver({type, label, comment, alsoAdmins})` sends it (encrypted, to the people who moderate) and
+   * answers {ok, said, msg}. A private room's message must never become a public kind 1984: that would
+   * publish its text and who is in the room. `opts.adminOption` offers an OFF-by-default "also tell this
+   * server's admins"; `opts.ban` adds the room's own Ban to the after-send actions. */
+  function openReport(pk, id, opts){
+    opts=opts||{};
+    const priv=typeof opts.deliver==='function';
     if(dep.isGuest()){ toast('Log in to file a report'); return; }
     if(!/^[0-9a-f]{64}$/i.test(String(pk||''))) return;
     if(id && !/^[0-9a-f]{64}$/i.test(String(id))) id=null;
     const p=profOf(pk)||{};
     let who=p.display_name||p.name||''; if(!who){ try{ who=npubOf(pk).slice(0,14)+'…'; }catch(_){ who='this account'; } }
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-flag"></use></svg>${id?'Report post':'Report user'}</h3>
+    const title=opts.title || (id?'Report post':'Report user');
+    const subject=opts.subject || `${id?'A post by':'The account'} <b>${enc(who)}</b>`;
+    const note=priv ? (opts.note||'')
+      : 'Reports on Nostr are <b>public</b>: anyone can see that you filed it and what you wrote. It goes to your relays and this server’s admins — and if the account is on the fediverse, to its own server’s moderators too.';
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-flag"></use></svg>${enc(title)}</h3>
       <div class="rep-form">
-        <div class="muted small">${id?'A post by':'The account'} <b>${enc(who)}</b></div>
-        <fieldset class="rep-types"><legend class="small">Why are you reporting ${id?'it':'them'}?</legend>
+        <div class="muted small">${subject}</div>
+        <fieldset class="rep-types"><legend class="small">Why are you reporting ${id||opts.message?'it':'them'}?</legend>
           ${_REPORT_TYPES.map(([v,l,d])=>`<label class="rep-type"><input type="radio" name="rep-type" value="${v}"><span><b>${enc(l)}</b><small>${enc(d)}</small></span></label>`).join('')}
         </fieldset>
         <label class="small" for="rep-comment">Comment (optional)</label>
         <textarea id="rep-comment" class="rep-comment" rows="3" maxlength="1000" placeholder="Anything a moderator should know"></textarea>
-        <div class="rep-note small">Reports on Nostr are <b>public</b>: anyone can see that you filed it and what you wrote. It goes to your relays and this server’s admins — and if the account is on the fediverse, to its own server’s moderators too.</div>
+        <div class="rep-note small">${note}</div>
+        ${priv && opts.adminOption ? `<label class="rep-admins small"><input type="checkbox" id="rep-admins"> Also tell this server’s admins — they get the message text too</label>` : ''}
         <div class="rep-err small" role="alert"></div>
         <div class="row rep-acts"><button type="button" class="btn btn-cyan small" id="rep-cancel">Cancel</button><button type="button" class="btn btn-neon small" id="rep-submit">Submit report</button></div>
       </div>`, root=>{
@@ -435,29 +447,40 @@ window.PCMenusFactory = function(dep){
         const picked=root.querySelector('input[name=rep-type]:checked');
         if(!picked){ if(err) err.textContent='Pick a reason first.'; return; }
         const type=picked.value, comment=(root.querySelector('#rep-comment').value||'').trim().slice(0,1000);
-        const tags=id ? [['e', id, type], ['p', pk, type]] : [['p', pk, type]];
         sub.disabled=true; sub.textContent='Sending…'; if(err) err.textContent='';
-        let r=null;
-        try{ r=await publish(1984, comment, tags, {quiet:true}); }catch(_){ r=null; }
-        if(!(r && (r.ok || r.unconfirmed || r.queued))){
+        let r=null, said='';
+        if(priv){
+          const ab=root.querySelector('#rep-admins');
+          try{ r=await opts.deliver({type, label:(_REPORT_TYPES.find(t=>t[0]===type)||[])[1]||type, comment, alsoAdmins:!!(ab&&ab.checked)}); }
+          catch(e){ r={ok:false, msg:(e&&e.message)||String(e)}; }
+          said=(r&&r.said)||'Report sent.';
+        } else {
+          const tags=id ? [['e', id, type], ['p', pk, type]] : [['p', pk, type]];
+          try{ r=await publish(1984, comment, tags, {quiet:true}); }catch(_){ r=null; }
+          if(r && (r.ok || r.unconfirmed || r.queued)){
+            // This node's relay is in the pool on every normal session; when the user runs a relay list
+            // of their own it may not be, and the node's admins would never see the report.
+            try{ const home=dep.homeRelay(); if(home && r.ev) Relay.publishTo([home], r.ev).catch(()=>{}); }catch(_){}
+            r.ok=true;
+            said = r.queued ? 'Report saved — it will be sent when you are back online.'
+                 : r.unconfirmed ? 'Report sent — the relay has not confirmed it yet; it may already be there.' : 'Report sent.';
+          }
+        }
+        if(!(r && r.ok)){
           sub.disabled=false; sub.textContent='Submit report';
           if(err) err.textContent='Not sent: '+((r && r.msg) || 'could not reach a relay')+' — try again.';
           return;
         }
-        // This node's relay is in the pool on every normal session; when the user runs a relay list
-        // of their own it may not be, and the node's admins would never see the report.
-        try{ const home=dep.homeRelay(); if(home && r.ev) Relay.publishTo([home], r.ev).catch(()=>{}); }catch(_){}
         const form=root.querySelector('.rep-form'); if(!form) return;
-        const said = r.ok ? 'Report sent.' : r.queued ? 'Report saved — it will be sent when you are back online.'
-                          : 'Report sent — the relay has not confirmed it yet; it may already be there.';
         form.innerHTML=`<div class="rep-done"><p><b>${enc(said)}</b></p>
           <p class="muted small">You can also stop seeing ${enc(who)}.</p>
-          <div class="row">${isMutedAuthor(pk)?'':'<button type="button" class="btn btn-cyan small" id="rep-mute">🔇 Mute this user</button>'}${S.IS_ADMIN?'<button type="button" class="btn btn-cyan small danger" id="rep-block">🚫 Block on this relay</button>':''}<button type="button" class="btn btn-neon small" id="rep-close">Close</button></div></div>`;
+          <div class="row">${isMutedAuthor(pk)?'':'<button type="button" class="btn btn-cyan small" id="rep-mute">🔇 Mute this user</button>'}${typeof opts.ban==='function'?'<button type="button" class="btn btn-cyan small danger" id="rep-ban">🚫 Ban from this room</button>':(!priv&&S.IS_ADMIN?'<button type="button" class="btn btn-cyan small danger" id="rep-block">🚫 Block on this relay</button>':'')}<button type="button" class="btn btn-neon small" id="rep-close">Close</button></div></div>`;
         const mb=form.querySelector('#rep-mute');
         if(mb) mb.onclick=async()=>{ mb.disabled=true; try{ await toggleMute(pk); }catch(_){} mb.textContent=isMutedAuthor(pk)?'🔇 Muted':'🔇 Mute this user'; mb.disabled=isMutedAuthor(pk); };
         const bb=form.querySelector('#rep-block'); if(bb) bb.onclick=()=>doBlock(pk);
+        const nb=form.querySelector('#rep-ban'); if(nb) nb.onclick=()=>{ closeModal(); opts.ban(); };
         const cb=form.querySelector('#rep-close'); if(cb) cb.onclick=closeModal;
-        toast('🚩 report sent');
+        toast('🚩 '+said);
       };
     });
   }

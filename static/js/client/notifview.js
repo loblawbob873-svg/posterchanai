@@ -13,6 +13,7 @@ window.PCNotifViewFactory = function(dep){
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, timeAgo, zapAmount, zapSender,
+    openMenuPopover, openReport, reportItem,
   } = dep;
 
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
@@ -210,6 +211,7 @@ window.PCNotifViewFactory = function(dep){
      * id, so two different windows opened. The avatar binding below always stopped propagation. */
     feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=(ev)=>{ ev.stopPropagation(); n.dataset.route ? openOsNotificationRoute(n.dataset.route) : n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open); });
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
+    feed.querySelectorAll('.notif-more').forEach(b=> b.onclick=(ev)=>{ ev.stopPropagation(); notifMenu(b); });
     const more=$('#notif-more'); if(more) more.onclick=async ()=>{
       _notifShown+=25;
       // Reaching the end of what's loaded → fetch OLDER notifications from the relay (paginate back
@@ -340,7 +342,7 @@ window.PCNotifViewFactory = function(dep){
       const avWrap = actors.length>1 ? `<span class="notif-avs">${avs}</span>` : avs;
       // .notif-grid (client.css): the header sits beside the avatars, but the quoted post and the time
       // start UNDER the avatar column -- in the text column they moved right with every stacked face.
-      return `<div class="notif notif-grid ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div class="notif-main"><div class="notif-hd"><b>${who}</b> ${verb}</div>${_notifCtx(first)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div></div>`;
+      return `<div class="notif notif-grid ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div class="notif-main"><div class="notif-hd"><b>${who}</b> ${verb}</div>${_notifCtx(first)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div>${_notifMoreBtn('', actors)}</div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||S.LOGO;
@@ -371,12 +373,36 @@ window.PCNotifViewFactory = function(dep){
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif notif-grid ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img alt="" class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><div class="notif-main"><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div></div>`;
+    return `<div class="notif notif-grid ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img alt="" class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><div class="notif-main"><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div>${_notifMoreBtn(_NOTIF_POST_KINDS.has(e.kind)?e.id:'', [fromPk])}</div>`;
+  }
+  /* ⋯ ON A NOTIFICATION: REPORT what the notification is about (menus.js openReport, the ONE report
+   * sheet). What a person means differs by kind, so the menu offers exactly that:
+   *   a reply / mention / quote / comment / issue -- THEIR words: "Report this post" (e + p), and the person;
+   *   a reaction / repost / zap / follow / report -- there is no post of theirs here (the quoted post is
+   *     YOURS), so only the PERSON who did it; a grouped row names each of its people.
+   * The button stops the row's own click (which opens the post), and lives in the grid's last column so
+   * the quoted box keeps its one fixed indent. */
+  const _NOTIF_POST_KINDS = new Set([1, 1111, 1621, 1617]);
+  function _notifMoreBtn(postId, pks){
+    const ok=(pks||[]).filter(pk=>/^[0-9a-f]{64}$/i.test(pk||'') && pk!==(S.ME&&S.ME.pubkey));
+    if(!ok.length) return '';
+    return `<button type="button" class="notif-more" aria-label="More" title="More"${postId?` data-nev="${enc(postId)}"`:''} data-npks="${enc(ok.slice(0,10).join(','))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`;
+  }
+  function notifMenu(btn){
+    const ev=btn.dataset.nev||'', pks=String(btn.dataset.npks||'').split(',').filter(Boolean);
+    const name=pk=>{ const q=profOf(pk)||{}; if(q.display_name||q.name) return q.display_name||q.name; try{ return NT().nip19.npubEncode(pk).slice(0,12)+'…'; }catch(_){ return 'this account'; } };
+    const items=[];
+    if(ev && pks[0]){ const it=reportItem('🚩 Report this post'); it[0]='post:'+ev; items.push(it); }
+    pks.forEach(pk=>{ const it=reportItem('🚩 Report '+name(pk)); it[0]='user:'+pk; items.push(it); });
+    openMenuPopover(btn, items, a=>{
+      if(a.startsWith('post:')) return openReport(pks[0], a.slice(5));
+      if(a.startsWith('user:')) return openReport(a.slice(5), null);
+    });
   }
 
 
   return {
     _notifCtxHtml, _notifCtxId, _notifFreshEntry, _notifMatch, _updNotifHtml, markNotifsRead,
-    notifGrouped, notifHtml, renderNotifications, renderNotificationsSoon,
+    notifGrouped, notifHtml, notifMenu, renderNotifications, renderNotificationsSoon,
   };
 };

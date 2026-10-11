@@ -1467,6 +1467,8 @@ html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:bloc
 .modal textarea.rep-comment{width:100%;box-sizing:border-box;min-height:60px;height:72px;resize:vertical}
 .rep-note{margin:8px 0;padding:8px 10px;border-inline-start:3px solid var(--amber);background:rgba(var(--accent-rgb),.05);border-radius:0 8px 8px 0;line-height:1.4}
 .rep-err{color:var(--danger);min-height:1em}
+.rep-admins{display:flex;gap:8px;align-items:flex-start;margin:6px 0;line-height:1.35}
+.rep-admins input{margin-top:2px;flex:none}
 .rep-acts,.rep-done .row{justify-content:flex-end;gap:8px;margin-top:10px;flex-wrap:wrap}
 .rep-acts .btn,.rep-done .btn{margin:0}
 @media (max-width:420px){ .rep-acts .btn,.rep-done .btn{flex:1 1 auto} }
@@ -3095,6 +3097,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .notif-grid > .notif-main > .notif-hd{grid-row:1}
 .notif-grid > .notif-main > .notif-ctx,
 .notif-grid > .notif-main > .notif-ctx ~ *{grid-column:2 / -1}
+/* The ⋯ (Report, notifview.js notifMenu) is a FOURTH column on the header row only: the quoted box and
+   the time span `2 / -1`, so they still start under the avatar and still reach the right edge. */
+.notif.notif-grid:has(> .notif-more){grid-template-columns:auto auto minmax(0,1fr) auto}
+.notif-grid > .notif-more{grid-column:4;grid-row:1;align-self:start}
+.notif-more{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;margin:-4px -6px 0 0;padding:0;
+  border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer}
+.notif-more:hover,.notif-more:focus-visible{color:var(--text);background:var(--hover)}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
 .upd-notif{cursor:pointer;background:rgba(var(--accent-rgb),.08);border-inline-start:3px solid var(--cyan)}
 .upd-notif:hover{background:rgba(var(--accent-rgb),.14)}

@@ -5068,7 +5068,7 @@
           const _t=threadView(messages,state.thread);
           if(!_t.length){ state.thread=null; return messages; }
           return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b class="cc-message-author"${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${linkSparkleHtml(p,m)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}<!--/cc-list--></div>`:emptyChannelHtml(p,current))}`;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_ti=threadInfo(messages),_replies=(_ti.index.get(mid)||[]).length,_flat=threadsInChat(),_root=state.thread||!_flat?'':(_ti.rootOf.get(mid)||''),_inline=!state.thread&&!_flat&&_ti.rootOf.has(mid),_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}${_root?' cc-in-thread':''}${_inline?' cc-thread-inline':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}><div class="cc-message-body">${m.reply&&!(_inline&&replyParentId(m)===_ti.rootOf.get(mid))?`<div class="cc-message-reply">${_root?`<button type="button" class="cc-in-thread-tag" data-cc-thread="${p.enc(_root)}" title="Open this thread">\u21b3 in thread</button> `:''}<b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b class="cc-message-author"${m.pubkey?` data-cc-author="${p.enc(m.pubkey)}"`:''}>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${(m.tags||[]).some(t=>t[0]==='edited')?'<span class="cc-edited" title="This message was edited">(edited)</span>':''}${messageContentHtml(p,m,current,state.channel)}${linkSparkleHtml(p,m)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${m.pubkey&&viewer.pubkey&&m.pubkey!==viewer.pubkey&&current&&current.cord&&!current.local&&!m.pending&&!m.failed&&p.openReport?`<button data-cc-report="${p.enc(mid)}" title="Report to this room’s moderators">🚩</button>`:''}${canEditMessage(m,viewer,current)?`<button data-cc-edit="${p.enc(mid)}" title="Edit message">✎</button>`:''}${canPinHere(current,state.channel,viewer)&&!m.pending&&!m.failed&&(m.kind===9||m.kind===1111)?`<button data-cc-pin="${p.enc(mid)}" title="${pinsOf(current,state.channel).some(x=>x.id===mid)?'Unpin message':'Pin message'}">${pinsOf(current,state.channel).some(x=>x.id===mid)?'📍':'📌'}</button>`:''}${_replies&&!state.thread&&_flat?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>${_replies&&!state.thread&&!_flat?threadSummaryHtml(p,mid,_ti.index.get(mid)):''}`;}).join('')}<!--/cc-list--></div>`:emptyChannelHtml(p,current))}`;
   }
   let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
   let renderedAccount='';
@@ -5793,6 +5793,38 @@
   /* Your own text message, sent and confirmed, in a relay community: the ones a kind-3302 can edit
    * (the fold applies an edit only from the original author). */
   /* Does this member hold `permission` (a CORD Permissions key) with a Grant this device has synced? */
+  /* WHO HEARS A REPORT OF A MESSAGE: the room's owner and every member the control plane names as a
+   * moderator -- minus the reporter, and minus the member reported (a moderator reported is not the one
+   * to judge it). Hex keys only, deduplicated, bounded. */
+  function _reportHex(v){ v=String(v||''); if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase();
+    try{ const d=window.NostrTools&&NostrTools.nip19.decode(v); if(d&&d.type==='npub')return String(d.data).toLowerCase(); }catch(_){ } return ''; }
+  function reportRecipients(room,viewerPk,reported){
+    const b=room&&room.cord&&room.cord.bundle||{};
+    const all=[_reportHex(b.owner||b.creator_npub),...(Array.isArray(room&&room.moderators)?room.moderators:[]).map(_reportHex)].filter(Boolean);
+    return [...new Set(all)].filter(pk=>pk!==viewerPk&&pk!==reported).slice(0,20);
+  }
+  /* This node's admins, for the opt-in "also tell this server's admins": only when the room lives on
+   * THIS node's relay (otherwise they have no standing to see it) and the node names its admins. */
+  function reportAdmins(p,room,viewerPk,exclude){
+    try{ const cfg=(p.clientConfig&&p.clientConfig())||{},home=normalizeRelay(p.homeRelay&&p.homeRelay());
+      if(!home||!Array.isArray(cfg.admin_npubs)||!cfg.admin_npubs.length)return [];
+      if(!roomRelays(room&&room.cord&&room.cord.bundle).includes(home))return [];
+      const skip=new Set([viewerPk,...(exclude||[])]);
+      return [...new Set(cfg.admin_npubs.map(_reportHex).filter(Boolean))].filter(pk=>!skip.has(pk)).slice(0,10);
+    }catch(_){ return []; }
+  }
+  function reportText(p,room,channel,m,reporter,label,comment,toAdmins){
+    const name=pk=>{ const q=(p.profOf&&p.profOf(pk))||{}; const n=q.display_name||q.name||''; let np=pk; try{ np=NostrTools.nip19.npubEncode(pk); }catch(_){ } return (n?n+' ':'')+'nostr:'+np; };
+    const text=String(m.text||'').replace(/\s+/g,' ').trim().slice(0,1500);
+    return ['🚩 Concord report'+(toAdmins?' (also sent to this server’s admins)':''),
+      'Community: '+String(room&&room.name||'(unnamed)')+' · #'+channel,
+      'Reported member: '+name(m.pubkey),
+      'Reason: '+label,
+      comment?'Comment: '+comment:'',
+      'Message: “'+text+'”',
+      'Reported by: '+name(reporter),
+      'Open: '+notificationRoute(room,channel,m)].filter(Boolean).join('\n');
+  }
   function memberMay(room,pubkey,permission){
     try{ const r=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle; if(!r||!r.authorityCitation||!bundle||!pubkey)return false;
       r.authorityCitation(bundle,roomControls.get(room.communityId||room.naddr)||[],pubkey,permission); return true; }catch(_){ return false; }
@@ -5972,6 +6004,32 @@
             p.closeModal(); preserveChatScroll(()=>render());
           }catch(e){ save.disabled=false; p.toast('the edit was not sent: '+(e&&e.message||e)); } };
       }); });
+    /* 🚩 REPORT A MESSAGE -- PRIVATELY. The room is encrypted, so a public NIP-56 (kind 1984) naming or
+       quoting this message would publish its text and who is in the room. The report goes, as NIP-17
+       gift-wrapped DMs, to the room's owner and moderators (reportRecipients: they can already read
+       it), never to the member reported, and to this node's admins only when the person ticks the box.
+       The sheet is the app's ONE report sheet (menus.js openReport) in its private mode. */
+    $$('[data-cc-report]').forEach(b=>b.onclick=()=>{ closeMessageActions();
+      const viewer=p.viewer?p.viewer():{},room=saved()[state.community],found=activeMessages(room).find(x=>messageId(x)===b.dataset.ccReport);
+      if(!found||!found.pubkey||!viewer.pubkey||found.pubkey===viewer.pubkey||!p.openReport)return;
+      const channel=state.channel||'general',target=found.pubkey,mods=reportRecipients(room,viewer.pubkey,target),
+        admins=reportAdmins(p,room,viewer.pubkey,mods.concat([target]));
+      p.openReport(target,null,{message:true,title:'Report message',
+        subject:`A message in <b>${p.enc(room.name||'this community')}</b> · #${p.enc(channel)}`,
+        note:mods.length?`This report is <b>not public</b>. It goes, end-to-end encrypted, only to this room’s owner and moderators (${mods.length}) — they can already read the room. The member you report is not told.`
+                        :'This room has no other owner or moderator to send a report to. As its moderator you can remove the message or ban the member yourself.',
+        adminOption:admins.length>0,
+        deliver:async({label,comment,alsoAdmins})=>{
+          const to=mods.concat(alsoAdmins?admins:[]);
+          if(!to.length)return{ok:false,msg:'nobody in this room can receive a report'};
+          const text=reportText(p,room,channel,found,viewer.pubkey,label,comment,alsoAdmins);
+          let sent=0,last='';
+          for(const pk of to){ try{ await p.sendDm(pk,text); sent++; }catch(e){ last=(e&&e.message)||String(e); } }
+          if(!sent)return{ok:false,msg:last||'the report could not be sent'};
+          return{ok:true,said:sent===to.length?(alsoAdmins&&admins.length?'Report sent to the room’s moderators and this server’s admins.':'Report sent to the room’s moderators.')
+                                               :`Report sent to ${sent} of ${to.length} — the rest could not be reached.`};
+        }});
+    });
     $$('[data-cc-reply]').forEach(b=>b.onclick=()=>{ closeMessageActions();const room=saved()[state.community],m=activeMessages(room),found=m.find(x=>messageId(x)===b.dataset.ccReply); if(!found)return; replyTarget=found; render(); const box=$('#cc-input'); if(box)box.focus(); });
     $$('.cc-message-reply').forEach(b=>{ b.setAttribute('role','button');b.tabIndex=0;b.title='Show original message';const row=b.closest('.cc-message'),room=saved()[state.community],messages=activeMessages(room),message=row&&messages.find(x=>messageId(x)===row.dataset.messageId),original=message&&message.reply&&String(message.reply.id||'');const jump=()=>{const target=[...document.querySelectorAll('.cc-message[data-message-id]')].find(x=>x.dataset.messageId===original);if(!target){p.toast('original message is not in the loaded room history');return;}const st=readScroll(scrollKey());st.pinned=false;target.scrollIntoView({block:'center',behavior:'smooth'});target.classList.add('cc-message-target');setTimeout(()=>{if(target.isConnected)target.classList.remove('cc-message-target');},1800);setTimeout(()=>{const box=document.querySelector('.cc-messages');if(box){st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(scrollKey(),st);}},500);};b.onclick=jump;b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();jump();}}; });
     const toggleReaction=async(id,emoji)=>{ const room=saved()[state.community],storeId=channelStoreId(room,state.channel),m=testMessages(storeId),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={};
