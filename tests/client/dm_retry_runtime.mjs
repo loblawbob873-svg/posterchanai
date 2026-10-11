@@ -44,7 +44,7 @@ function harness({ failFirst, selfNote=false }){
       return { kind:14, pubkey:selfNote?ME_PK:PEER, created_at:1000, content:selfNote?'NIP-05 application received':'hi', tags:[['p',ME_PK]] };
     }},
     ClientSettings:{ get:(k,d)=>d, set(){} }, MUTED:new Set(), _autoMuteHas:()=>false,
-    _dmUnread:0, bumpDm(){}, _dmNotify(){}, dmNotify(){},
+    _dmUnread:0, bumpDm(){}, _dmNotify(){}, dmNotify(){}, dmSeenFor:()=>0,   // app.js: the device's or the account's (pcai:seen) mark
     dmUnread:new Map(), _dmBadge(){}, toast(){}, osNotify(){}, profOf:()=>({}),
     document:{ hidden:true, getElementById:()=>null, querySelector:()=>null },
     VIEW:'home', dmActive:'',

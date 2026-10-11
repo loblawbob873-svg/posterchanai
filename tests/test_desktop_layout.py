@@ -494,7 +494,8 @@ class RegistrationTests(unittest.TestCase):
 
     def test_a_relay_change_carries_it(self):
         src = APP_JS.read_text()
-        self.assertIn("pcai:desktop", src.split("_CARRY_D")[1][:400],
+        # The DEFINITION, not the first mention: comments elsewhere name _CARRY_D (the read-state doc's did).
+        self.assertIn("pcai:desktop", src.split("const _CARRY_D")[1][:400],
                       "app.js _CARRY_D does not carry pcai:desktop, so changing relays leaves the "
                       "desktop layout behind on a pool the client no longer queries")
 

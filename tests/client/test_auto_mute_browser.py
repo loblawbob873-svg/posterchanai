@@ -42,7 +42,7 @@ const key=n=>Uint8Array.from({length:32},(_,i)=>i===31?n:0), pub=n=>NT().getPubl
 let ME={pubkey:pub(1)}, GUEST=false, MUTED=new Set([pub(3)]), VIEW='messages', dmActive=pub(2);
 let _dmUnread=0, recounts=0, notifBumps=0, renderCalls=0, manualWrites=0;
 const dmPeers=new Map([[pub(2),[{mine:false,t:100}]], [pub(3),[{mine:false,t:100}]]]);
-const ClientSettings={get:()=>0}, bumpDm=()=>recounts++, bumpNotif=()=>notifBumps++;
+const ClientSettings={get:()=>0}, bumpDm=()=>recounts++, bumpNotif=()=>notifBumps++, dmSeenFor=()=>Number(ClientSettings.get('dmSeen',0))||0;   // app.js: the device's mark or the account's (pcai:seen) -- here, the device's
 const renderView=()=>{renderCalls++;document.querySelector('#dm-in')?.remove();};
 const enc=s=>String(s||''), profOf=()=>({name:'Peer'}), needProfile=()=>{}, niceNip05=()=>'', LOGO='', emojiName=(_pk,n)=>n, _dmWhen=()=>'', openDm=()=>{};
 const _tl={pages:0,eosed:true}, _FEED_MAX_CARDS=400, _tlMedia=false, _profObs=null;
