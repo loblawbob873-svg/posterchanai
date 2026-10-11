@@ -16,7 +16,7 @@ window.PCBlossomFactory = function(dep){
     $, $$, _LIVE_READ_PX, _applyMediaCacheBudget, _capPlugin, _flushPending, _postEffectsOn,
     _prefTouched, _pushPlugin, _standalone, _stopCelebrations, _updateNewPostsPill, applyMobileNav,
     applyNavGroups, applyNavHidden, applyNavOrder, enc, navHiddenSet, publish, pushState,
-    renderView, sign, stopNarration, switchView, toast,
+    renderView, sign, stopNarration, switchView, toast, _sbSync,
   } = dep;
 
   // ---------- Blossom uploads + file browser ----------
@@ -322,6 +322,15 @@ window.PCBlossomFactory = function(dep){
          && pr.rightPanel===window.PCRightPanel.hidden()){
         window.PCRightPanel.set(!pr.rightPanel);
         try{ const sw=$('#set-right-panel'); if(sw) sw.checked=pr.rightPanel; }catch(_){}
+      }
+      /* Search bar (app.js _sbSync). NEWEST WINS, like startupApps below: a change saved while the relays
+         could not answer was kept on this device only, so a device holding the newer choice puts it back up. */
+      if(!_prefTouched.has('searchBar')){
+        const remoteAt = Number(pr.searchBarAt) || 0, localAt = Number(ClientSettings.get('searchBarAt', 0)) || 0;
+        if((pr.searchBar==='hide' || pr.searchBar==='show') && remoteAt >= localAt){
+          ClientSettings.set('searchBar', pr.searchBar); ClientSettings.set('searchBarAt', remoteAt); _sbSync();
+          try{ const sel=$('#set-search-bar'); if(sel) sel.value=pr.searchBar; }catch(_){}
+        } else if(localAt > remoteAt) saveClientPrefsNostr({ searchBar: ClientSettings.get('searchBar','hide'), searchBarAt: localAt });
       }
       // Which revision of the Social set this account was moved to (app.js _migrateSocialSet). The migration
       // itself decides from `pr`; keeping the number here too lets this device know it without a re-read.

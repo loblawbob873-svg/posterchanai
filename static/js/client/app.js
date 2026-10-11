@@ -448,6 +448,75 @@
    * previous screen's answer. */
   function _syncTopSearch(){
     try{ document.body.classList.toggle('no-topsearch', !TOP_SEARCH_VIEWS.has(String(VIEW || ''))); }catch(_){}
+    try{ _sbSync(); }catch(_){}
+  }
+  /* THE PHONE'S TOP SEARCH BAR SLIDES AWAY WHILE YOU READ ("it's actually eating up valuable reading
+   * space at all times"). Scrolling the feed DOWN hides it; scrolling UP a little, reaching the top,
+   * the `/` shortcut, focusing it or a tap on the top edge (`.sb-peek`) brings it back. Never while the
+   * box is focused or holds text. Settings -> Timeline -> "Search bar" (`searchBar`: hide|show, synced
+   * in pcai:client-prefs with `searchBarAt`, newest wins -- blossom.js restoreClientPrefsNostr).
+   * HOW, and why that way: in this mode the bar is an OVERLAY (client.css `body.sb-auto`) above a feed
+   * padded by its height (`--sb-h`, measured by a ResizeObserver, never per scroll), and it moves by
+   * TRANSFORM -- so hiding gives the reading space back without moving the card under the finger,
+   * which a margin/height change would (and a scroll compensation for it kills momentum on iOS).
+   * The scroll listener is passive and rAF-throttled and reads only `scrollTop`. Phone widths only:
+   * on a desktop the search lives in the sidebar and never scrolls. */
+  const _SB_MQ = (()=>{ try{ return window.matchMedia('(max-width:820px)'); }catch(_){ return null; } })();
+  let _sbLast = 0, _sbAcc = 0, _sbRaf = 0, _sbH = 0, _sbView = null;
+  function _sbInput(){ return document.getElementById('search-input'); }
+  function _sbHeld(){ const i=_sbInput(); return !!(i && (document.activeElement===i || String(i.value||'').trim())); }
+  function _sbHide(h){
+    const b=document.body; if(!b) return;
+    if(h && _sbHeld()) h=false;
+    if(b.classList.contains('sb-hidden')!==h) b.classList.toggle('sb-hidden', h);
+  }
+  function _sbMeasure(){
+    const tb=document.querySelector('.main > .topbar'); if(!tb) return;
+    const h=tb.offsetHeight; if(h===_sbH) return; _sbH=h;
+    document.documentElement.style.setProperty('--sb-h', h+'px');
+  }
+  function _sbSync(){
+    const b=document.body; if(!b) return;
+    const on = !!(_SB_MQ && _SB_MQ.matches) && ClientSettings.get('searchBar','hide')!=='show'
+      && !b.classList.contains('no-topsearch') && !b.classList.contains('os-on')
+      && !document.documentElement.classList.contains('os-on') && !document.documentElement.classList.contains('pc-oswin')
+      && !b.classList.contains('embed') && !b.classList.contains('popout');
+    if(on && !b.classList.contains('sb-auto')) _sbMeasure();
+    b.classList.toggle('sb-auto', on);
+    const v=String(VIEW||'');
+    if(!on || v!==_sbView){ _sbView=v; _sbAcc=0; _sbHide(false); const f=document.getElementById('feed'); _sbLast=f?f.scrollTop:0; }
+  }
+  function _sbTick(){
+    _sbRaf=0;
+    if(!document.body.classList.contains('sb-auto')) return;
+    const f=document.getElementById('feed'); if(!f) return;
+    const st=f.scrollTop, d=st-_sbLast; _sbLast=st;
+    if(st <= _sbH){ _sbAcc=0; _sbHide(false); return; }   // at (or near) the top it is always there
+    if(!d) return;
+    if((d>0)!==(_sbAcc>0)) _sbAcc=0;                       // a change of direction starts a new count
+    _sbAcc+=d;
+    if(_sbAcc>24) _sbHide(true); else if(_sbAcc<-16) _sbHide(false);
+  }
+  function _sbBind(){
+    const f=document.getElementById('feed');
+    if(f) f.addEventListener('scroll', ()=>{
+      if(!_sbRaf && document.body.classList.contains('sb-auto')) _sbRaf=requestAnimationFrame(_sbTick); }, { passive:true });
+    const i=_sbInput();
+    // Focus from anywhere (`/`, Tab, the peek strip) shows it. `.main` is overflow:hidden but still
+    // scrollable by a focus that thought the input was off screen; put it back.
+    if(i) i.addEventListener('focus', ()=>{ _sbHide(false);
+      requestAnimationFrame(()=>{ const m=document.querySelector('.main'); if(m && m.scrollTop) m.scrollTop=0; }); });
+    const main=document.querySelector('.main');
+    if(main && !document.querySelector('.sb-peek')){
+      const p=document.createElement('button'); p.type='button'; p.className='sb-peek'; p.tabIndex=-1;
+      p.setAttribute('aria-label', 'Show search');
+      p.addEventListener('click', e=>{ e.preventDefault(); _sbHide(false); const x=_sbInput();
+        if(x){ try{ x.focus({preventScroll:true}); }catch(_){ x.focus(); } } });
+      main.insertBefore(p, main.firstChild);
+    }
+    try{ const tb=document.querySelector('.main > .topbar'); if(tb && window.ResizeObserver) new ResizeObserver(_sbMeasure).observe(tb); }catch(_){}
+    try{ _SB_MQ && _SB_MQ.addEventListener('change', _sbSync); }catch(_){}
+    _sbSync();
   }
   const INSTANCE_VIEWS = new Set(['ai', 'tg', 'translate', 'markets', 'news', 'torrents', 'media-center',
                                   /* The multi-chain wallet is held BY the node: with no instance there is
@@ -4323,6 +4392,7 @@
     bindFeedActions();
     bindDmMediaActions();
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
+    _sbBind();              // the phone's top search bar slides away while reading (see _sbSync)
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
@@ -10302,7 +10372,7 @@
     $, $$, _LIVE_READ_PX, _applyMediaCacheBudget, _capPlugin, _flushPending, _postEffectsOn,
     _prefTouched, _pushPlugin, _standalone, _stopCelebrations, _updateNewPostsPill, applyMobileNav,
     applyNavGroups, applyNavHidden, applyNavOrder, enc, navHiddenSet, publish, pushState,
-    renderView, sign, stopNarration, switchView, toast,
+    renderView, sign, stopNarration, switchView, toast, _sbSync,
   }; }
   function _blossomMod(){ return _lzGet('blossom.js', 'PCBlossomFactory', _blossomDeps); }
   function _blossomLoad(){ return _lzLoad('blossom.js', 'PCBlossomFactory', _blossomDeps); }
@@ -12598,7 +12668,7 @@
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
-    userRelays, saveBlobAs,
+    userRelays, saveBlobAs, _sbSync,
   }; }
   function _settingsMod(){ return _lzGet('settings.js', 'PCSettingsFactory', _settingsDeps); }
   function _settingsLoad(){ return _lzLoad('settings.js', 'PCSettingsFactory', _settingsDeps); }

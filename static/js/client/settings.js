@@ -30,7 +30,7 @@ window.PCSettingsFactory = function(dep){
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
-    userRelays, saveBlobAs,
+    userRelays, saveBlobAs, _sbSync,
   } = dep;
 
   /* The apps this device signs for — visible, and revocable one at a time.
@@ -712,6 +712,13 @@ window.PCSettingsFactory = function(dep){
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${S.AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-chevron-up"></use></svg>Show the “new posts” button<label class="switch"><input type="checkbox" id="set-new-posts-pill" ${S.NEW_POSTS_PILL?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-search"></use></svg>Search bar
+            <select class="input" id="set-search-bar">
+              <option value="hide"${ClientSettings.get('searchBar','hide')==='show'?'':' selected'}>Hide while scrolling (default)</option>
+              <option value="show"${ClientSettings.get('searchBar','hide')==='show'?' selected':''}>Always show</option>
+            </select>
+          </label>
+          <div class="muted small">On a phone, the search bar at the top slides away while you scroll down through posts, and comes back when you scroll up a little, reach the top, press <code>/</code> or tap the top edge of the screen. <b>Always show</b> keeps it in place. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Keeps replies out of Home and Nostrverse so the feed reads as posts rather than conversation. A reply is still there when you open the thread it belongs to, and your own notifications are unaffected. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-wand"></use></svg>Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
@@ -1051,6 +1058,15 @@ window.PCSettingsFactory = function(dep){
         toast(v==='social' ? 'opening on the timeline from now on' : 'opening on '+lbl+' from now on');
       }; }
     _wireNavHide();   // Settings → Profile → 🧭 Sidebar
+    // Search bar: per-device now + synced (newest wins on restore, so a save skipped while the relays
+    // could not answer is put back up by the next start -- blossom.js restoreClientPrefsNostr).
+    { const sb=$('#set-search-bar'); if(sb) sb.onchange=()=>{
+        const v = sb.value==='show' ? 'show' : 'hide', at = Date.now();
+        ClientSettings.set('searchBar', v); ClientSettings.set('searchBarAt', at); _prefTouched.add('searchBar');
+        saveClientPrefsNostr({ searchBar: v, searchBarAt: at });
+        _sbSync();
+        toast(v==='show' ? 'search bar always shown' : 'search bar hides while you scroll');
+      }; }
     { const hr=$('#set-hide-replies'); if(hr) hr.onchange=()=>{
         ClientSettings.set('hideReplies', hr.checked);
         _prefTouched.add('hideReplies'); saveClientPrefsNostr({ hideReplies: hr.checked });

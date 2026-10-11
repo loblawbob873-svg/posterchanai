@@ -148,6 +148,8 @@ TESTS = (
     'tests/client/test_mail_addresses_open_the_composer_full_app.py',
     'tests/client/test_mail_delete_is_instant_full_app.py',
     'tests/client/test_music_opens_in_front_full_app.py',
+    # 2026-10-11: the phone's top search bar slides away while reading (+ the synced pref round trip)
+    'tests/client/test_search_bar_autohide_full_app.py',
     'tests/client/test_office_local_needs_no_membership_full_app.py',
     'tests/client/test_posted_track_carries_its_tags_full_app.py',
     'tests/client/test_a_relay_is_not_an_instance_full_app.py',
