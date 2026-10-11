@@ -38,6 +38,11 @@
     const valid=await context.verify(copy);active(context);
     return valid.filter(event=>event.kind===kind&&event.pubkey===author&&Number.isSafeInteger(event.created_at)&&event.created_at>=0);
   }
+  /* "INCOMPLETE" MUST SAY WHO DID NOT ANSWER. A replaceable list written after a partial read can drop
+   * newer entries, so a read that missed a relay still refuses the write -- but "sync is incomplete"
+   * alone left a person nothing to act on. `incomplete` marks the error so a caller (community
+   * creation) can tell "the relays did not all answer" from a real fault. */
+  function incompleteError(what,missing){const list=[...new Set((missing||[]).filter(Boolean))];const error=new Error(what+' sync is incomplete'+(list.length?' — '+list.length+' relay(s) did not answer ('+list.join(', ')+')':'')+'; retry before changing it');error.incomplete=true;error.missing=list;return error;}
   const cached=new Map(),writes=new Map();
   const cacheKey=pubkey=>'pc.concord.invite-list.v1.'+pubkey;
   function cachedEvent(context){if(cached.has(context.pubkey))return cached.get(context.pubkey);try{const raw=localStorage.getItem(cacheKey(context.pubkey));return raw&&raw.length<150000?JSON.parse(raw):null;}catch(_){return null;}}
@@ -46,18 +51,18 @@
     const prior=cachedEvent(context),events=await verified([...(prior?[prior]:[]),...(query.events||[])],context,13303,context.pubkey);
     const docs=[];
     for(const event of events){const text=await context.decrypt(context.pubkey,event.content);active(context);if(new TextEncoder().encode(text).length>65535)throw new Error('Invite List exceeds NIP-44 size limit');docs.push(JSON.parse(text));}
-    return {list:mergeLists(docs.length?docs:[{entries:[],tombstones:[]}]),complete:query.complete===true,latest:Math.max(0,...events.map(event=>event.created_at))};
+    return {list:mergeLists(docs.length?docs:[{entries:[],tombstones:[]}]),complete:query.complete===true,missing:query.missing||[],latest:Math.max(0,...events.map(event=>event.created_at))};
   }
   async function writeList(context,mutate){
     active(context);const previous=writes.get(context.pubkey)||Promise.resolve();
     const job=previous.catch(()=>{}).then(async()=>{
-      const read=await readList(context);if(!read.complete)throw new Error('Invite List sync is incomplete; retry before changing it');
+      const read=await readList(context);if(!read.complete)throw incompleteError('Invite List',read.missing);
       const next=mergeLists([mutate(clone(read.list))]);const text=JSON.stringify(next);
       if(new TextEncoder().encode(text).length>65535)throw new Error('Invite List is too large; existing entries were preserved');
       const content=await context.encrypt(context.pubkey,text);active(context);
       const event=await context.sign({kind:13303,created_at:Math.max(Math.floor(Date.now()/1000),read.latest+1),tags:[],content});active(context);
       if(!(await verified([event],context,13303,context.pubkey)).length)throw new Error('Invalid Invite List signature');
-      const latest=await readList(context);if(!latest.complete||latest.latest!==read.latest||canonical(latest.list)!==canonical(read.list))throw new Error('Invite List changed while signing; retry to merge the latest entries');
+      const latest=await readList(context);if(!latest.complete)throw incompleteError('Invite List',latest.missing);if(latest.latest!==read.latest||canonical(latest.list)!==canonical(read.list))throw new Error('Invite List changed while signing; retry to merge the latest entries');
       const acknowledgment=await context.publish(event);active(context);if(acknowledgment!==true&&acknowledgment?.ok!==true)throw new Error('Invite List was not accepted by a relay');
       cached.set(context.pubkey,clone(event));try{localStorage.setItem(cacheKey(context.pubkey),JSON.stringify(event));}catch(_){}
       return next;
@@ -75,7 +80,7 @@
     const entry={token,signer_sk:toHex(sk),community_id:bundle.community_id,url:base+'/invite/'+pointer+'#'+fragment(bundle.relays,token),created_at:Math.floor(Date.now()/1000),...(options.label?{label:String(options.label)}:{}),...(bundle.expires_at!==undefined?{expires_at:bundle.expires_at}:{})};
     details(entry);return {entry,event:await refreshEvent(entry,bundle,[],context)};
   }
-  async function linkState(entry,context){const info=details(entry),query=await context.query(33301,info.pubkey,info.relays);active(context);const events=(await verified(query.events,context,33301,info.pubkey)).filter(event=>event.tags.filter(t=>t[0]==='d').length===1&&event.tags.some(t=>t[0]==='d'&&t[1]===''));return {events,complete:query.complete===true,retired:events.some(event=>event.tags.some(t=>t[0]==='vsk'&&t[1]==='9'))};}
+  async function linkState(entry,context){const info=details(entry),query=await context.query(33301,info.pubkey,info.relays);active(context);const events=(await verified(query.events,context,33301,info.pubkey)).filter(event=>event.tags.filter(t=>t[0]==='d').length===1&&event.tags.some(t=>t[0]==='d'&&t[1]===''));return {events,complete:query.complete===true,missing:query.missing||[],retired:events.some(event=>event.tags.some(t=>t[0]==='vsk'&&t[1]==='9'))};}
   async function refreshEvent(entry,input,observed,context){
     active(context);details(entry);const bundle=publicBundle({...input,...(entry.expires_at!==undefined?{expires_at:entry.expires_at}:{})});if(bundle.community_id!==entry.community_id)throw new Error('Invitation belongs to a different community');
     if(observed.some(event=>event.tags?.some(t=>t[0]==='vsk'&&t[1]==='9')))throw new Error('A retired link cannot be refreshed');
@@ -83,5 +88,5 @@
     return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','6']],content:NT().nip44.encrypt(globalThis.PosterCordReader.stringifyJoinMaterial(bundle),key)},fromHex(entry.signer_sk));
   }
   function revokeEvent(entry,observed,context){active(context);details(entry);return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','9']],content:''},fromHex(entry.signer_sk));}
-  globalThis.PCCordInviteLinks=Object.freeze({details,mergeLists,readList,remember,forget,create,linkState,refreshEvent,revokeEvent});
+  globalThis.PCCordInviteLinks=Object.freeze({incompleteError,details,mergeLists,readList,remember,forget,create,linkState,refreshEvent,revokeEvent});
 })();

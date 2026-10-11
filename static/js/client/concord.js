@@ -1566,9 +1566,10 @@
       query:async(kind,author,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
         const targets=[...new Set([...bootstrap,...relays])].slice(0,8),report={};
-        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report});
+        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
         if(!current())throw new Error('Concord membership changed');
-        return {events,complete:targets.length>0&&targets.every(url=>report.ok?.includes(url))};
+        const missing=unanswered(targets,report);
+        return {events,complete:targets.length>0&&!missing.length,missing};
       },
       publish:async(event,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
@@ -1579,21 +1580,36 @@
       }};
     return {api,context,relays};
   }
+  /* THESE READS GATE A WRITE OF A REPLACEABLE LIST, SO THEY ASK EVERY RELAY (`urgent`).
+   *
+   * `Relay.queryFrom` skips a relay, with no error, while another read of the same slot is in flight
+   * there and for a while after it failed once -- right for background sweeps, wrong here: a skipped
+   * relay is reported as one that did not answer, so the Invite List read was "incomplete" without
+   * anybody being asked, and creating a community failed ("Invite List sync is incomplete"). Every
+   * Armada/Vector community shares these relays and is swept in the background, so that was the
+   * ordinary case. An urgent read opens its own socket; a relay that is asked and does not answer
+   * still makes the read incomplete, and the error names it. */
+  function inviteSyncError(what,missing,api=null){
+    if(api&&api.incompleteError)return api.incompleteError(what,missing);
+    const list=[...new Set((missing||[]).filter(Boolean))],error=new Error(what+' sync is incomplete'+(list.length?' — '+list.length+' relay(s) did not answer ('+list.join(', ')+')':'')+'; retry before changing it');
+    error.incomplete=true;error.missing=list;return error;
+  }
+  function unanswered(relays,report){return (relays||[]).filter(url=>!report.ok?.includes(url));}
   async function refreshOwnedInviteLinks(p,room){
     const {api,context,relays}=await ownedInviteContext(p,room),reader=window.PosterCordReader,bundle=room.cord.bundle;
     const loadKey=room.communityId||room.naddr,known=roomControls.get(loadKey)||[],seed=reader.inspectControl(bundle,known);
     const report={};
-    const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report});
-    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
+    const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true});
+    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw inviteSyncError('Current invitation registry',unanswered(relays,report));
     if(!context.isCurrent())throw new Error('Concord membership changed');
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
     roomControls.set(loadKey,wraps);if(info.relaysAuthoritative)relays.splice(0,relays.length,...[...new Set([...info.relays,...CORD_RELAYS])].slice(0,8));const plane=cordPlaneContext(p,bundle,wraps,room),guarded={...context,isCurrent:()=>context.isCurrent()&&plane.current()};
-    const list=await api.readList(guarded);if(!list.complete)throw new Error('Invite List sync is incomplete');
+    const list=await api.readList(guarded);if(!list.complete)throw inviteSyncError('Invite List',list.missing,api);
     const live=new Set(info.registriesByCreator?.[context.pubkey]||[]);let refreshed=0;
     for(const entry of list.list.entries.filter(e=>e.community_id===bundle.community_id)){
       if(!context.isCurrent())throw new Error('Concord membership changed');
       const status=await api.linkState(entry,guarded);
-      if(!status.complete)throw new Error('Invitation relay sync is incomplete');
+      if(!status.complete)throw inviteSyncError('Invitation relay',status.missing,api);
       if(status.retired){await api.forget(entry,guarded);continue;}
       if(!live.has(api.details(entry).pubkey))continue;
       const event=await api.refreshEvent(entry,{...bundle,channels:[],relays:info.relays},status.events,guarded);
@@ -1605,9 +1621,9 @@
   async function ownedInviteRegistry(p,room,scope){
     const reader=window.PosterCordReader,bundle=room.cord.bundle,key=room.communityId||room.naddr;
     const known=roomControls.get(key)||[],seed=reader.inspectControl(bundle,known),report={};
-    const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report});
+    const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true});
     if(!scope.context.isCurrent())throw new Error('Concord membership changed');
-    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!scope.relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
+    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!scope.relays.every(url=>report.ok?.includes(url)))throw inviteSyncError('Current invitation registry',unanswered(scope.relays,report));
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
     if(!info.inviteCreators.includes(scope.context.pubkey))throw new Error('Your account cannot manage invite links');
     roomControls.set(key,wraps);
@@ -1628,7 +1644,7 @@
     let made,retirement=null;
     if(entry&&!adopt){
       if(entry.community_id!==room.cord.bundle.community_id||!links.has(api.details(entry).pubkey))throw new Error('This account does not own an active registry entry');
-      const state=await api.linkState(entry,guarded);if(!state.complete)throw new Error('Invitation relay sync is incomplete');
+      const state=await api.linkState(entry,guarded);if(!state.complete)throw inviteSyncError('Invitation relay',state.missing,api);
       made={entry,event:api.revokeEvent(entry,state.events,guarded)};links.delete(api.details(entry).pubkey);
       if(registry.info.liveInviteLinks.every(pk=>pk===api.details(entry).pubkey)){
         if(!window.PCConcord.reviewRefoundingRecipients||!window.PCConcord.refoundRoom||window.PCConcord.refoundingBeforeEvents!==true)throw new Error('Retiring the final link requires community refounding support');
@@ -5241,7 +5257,24 @@
     if(!await persistArmadaMembership(backup,draft))throw new Error('Owner membership backup was not accepted');
     const {api,context}=await ownedInviteContext(p,draft,creator.isCurrent);
     const entry={token:made.secrets.token,signer_sk:made.secrets.linkSignerSk,community_id:made.communityId,url:made.url,created_at:Math.floor(Date.now()/1000)};
-    await api.remember(entry,context);
+    /* THE COMMUNITY IS NOT HOSTAGE TO ITS INVITE LIST. Remembering the link's signing key in the
+     * creator's encrypted Invite List is bookkeeping for managing the link later; the key also stays
+     * in this room's own `cord.secrets`, and Links -> "Manage original link" saves it into the list
+     * from there. So a list that cannot be saved right now (a relay that did not answer: the list
+     * read is then incomplete and is rightly never written over) is retried a few times and then
+     * REPORTED -- it used to throw, and the whole new community was thrown away with it. Only an
+     * incomplete READ is tolerated: a relay that REFUSES the write would refuse the community too,
+     * and that still aborts before anything usable is published. */
+    const retries=[1000,3000];let inviteListPending='';
+    for(let attempt=0;;attempt++){
+      try{await api.remember(entry,context);break;}
+      catch(e){
+        if(!context.isCurrent()||!e||!e.incomplete)throw e;
+        if(attempt>=retries.length){inviteListPending='its invite link could not be saved to your Invite List yet ('+(e&&e.message||e)+') — retry from Links → Manage original link';console.warn('[concord] new community kept; Invite List save is pending',e);break;}
+        await new Promise(resolve=>setTimeout(resolve,retries[attempt]));
+        if(!context.isCurrent())throw new Error('creating account changed');
+      }
+    }
     const registry=await window.PosterCordReader.createInviteRegistryWrap(bundle,controls,[api.details(entry).pubkey],viewer.pubkey,creator.sign);
     if(!context.isCurrent())throw new Error('creating account changed');
     made.events=[...controls,registry.wrap,...made.events.filter(ev=>ev.kind!==1059)];
@@ -5258,7 +5291,7 @@
     const announced=await p.relayPublishRoom(DISCOVER_RELAYS,announcement);
     if(!context.isCurrent())throw new Error('creating account changed');
     if(!announced?.ok)throw new Error('Community was created but its discovery announcement was not accepted');
-    return {communityId:made.communityId,name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
+    return {communityId:made.communityId,name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle},...(inviteListPending?{inviteListPending}:{})};
   }
   async function activateJoinedRoom(p,index,inDrawer=false,expectedIdentity=''){
     let rooms=saved();
@@ -5681,7 +5714,7 @@
       dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
     ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(shareableInviteUrl(p,room.url)); p.toast('public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const pending=room.inviteListPending||''; delete room.inviteListPending; const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(shareableInviteUrl(p,room.url)); p.toast(pending?'public community created — invite link copied; '+pending:'public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     /* From the device: the picked file becomes a blob: URL in the same box, and saving turns it into
      * the encrypted ImageRef (sealImageRef) — one path for a typed URL and an upload. */
@@ -6617,7 +6650,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
+  window.PCConcord={legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

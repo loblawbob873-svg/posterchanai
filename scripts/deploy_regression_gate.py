@@ -173,6 +173,7 @@ TESTS = (
     'tests/test_acestep_logs_no_lyrics.py',
     'tests/client/test_concord_code.py',
     'tests/client/test_concord_unasked_relays.py',
+    'tests/client/test_concord_invite_list_create.py',
     'tests/client/test_save_never_opens_the_share_sheet.py',
     'tests/client/test_ai_download_native.py',
     'tests/test_drafts_nostr_only_accounts.py',
