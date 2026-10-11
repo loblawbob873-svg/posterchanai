@@ -1075,6 +1075,69 @@ async def client_voice_status(db: Session = Depends(get_db)):
     })
 
 
+async def _voice_reference_upload(reference: UploadFile, tmp: str):
+    """Spool an uploaded reference clip to disk and normalise it; returns ``(wav_path, wav_bytes)``.
+
+    Shared by /voice/speak and /voice/reference so the two cannot disagree on the cap or its wording.
+    The SIZE cap (voice_reference.MAX_REFERENCE_BYTES) sits far above a phone video and its refusal
+    names the size — it used to be 16 MB worded "that reference clip is too long", which refused a
+    usable phone-video sample for a one-word line. LENGTH is never refused: the clip is TRIMMED to
+    `voice_max_ref_seconds`. A saved voice is very often a VIDEO (the studio accepts video/*, and a
+    phone recording is webm/mp4) — ffmpeg pulls the audio out, which is why this normalisation can't
+    be skipped just because the model might cope.
+    """
+    from app.services import voice_reference
+    in_dir = os.path.join(tmp, "in")
+    os.makedirs(in_dir, exist_ok=True)
+    raw = os.path.join(in_dir, "src")
+    try:
+        size = await voice_reference.spool_upload(reference, raw)
+    except voice_reference.ReferenceTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    if not size:
+        raise HTTPException(status_code=400, detail="the reference clip is empty")
+    path, data, err = await voice_reference.normalize_reference_file(raw, tmp)
+    if err:
+        raise HTTPException(status_code=400, detail="couldn't read any audio out of that clip")
+    return path, data
+
+
+# ffmpeg over an upload of up to 200 MB is real CPU; a couple at a time is plenty for a once-per-voice step.
+_voice_norm_slots = asyncio.Semaphore(2)
+
+
+@router.post("/voice/reference")
+async def client_voice_reference(
+    reference: UploadFile = File(...),
+    pubkey: str = Form(...),
+    auth: str = Form(...),
+):
+    """A clip in, the voice reference out: mono 24 kHz WAV trimmed to `voice_max_ref_seconds`.
+
+    The studio calls this ONCE per voice — when a voice is saved, or the first time an older saved
+    voice (often a big phone video) is used — and keeps the small WAV on the user's drive, so a
+    multi-megabyte video is never re-uploaded with every line. CPU only (ffmpeg); it never touches the
+    voice model or the GPU lock. `X-Ref-Seconds` says how much speech the clip held.
+    """
+    import shutil
+    import tempfile
+    from app.services import voice_reference
+
+    pk = nostr_service.to_pubkey_hex(pubkey or "")
+    if not pk or not _verify_self_auth(auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=503, detail="voice cloning is switched off on this server")
+    tmp = tempfile.mkdtemp(prefix="voice_norm_")
+    try:
+        async with _voice_norm_slots:
+            _path, wav = await _voice_reference_upload(reference, tmp)
+        return Response(content=wav, media_type="audio/wav",
+                        headers={"X-Ref-Seconds": f"{voice_reference.wav_seconds(wav):.2f}"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @router.post("/voice/speak")
 async def client_voice_speak(
     reference: UploadFile = File(...),
@@ -1085,17 +1148,18 @@ async def client_voice_speak(
 ):
     """Speak `text` in the voice of the uploaded reference clip. Returns WAV bytes.
 
-    The clip is uploaded WITH each request rather than referenced by URL. That costs a couple of
-    hundred KB next to a ~45s GPU job, and buys two things worth more than that: the server never
+    The clip is uploaded WITH each request rather than referenced by URL. That costs at most ~1.4 MB
+    (the studio sends the voice's NORMALISED WAV — /voice/reference, above — never the phone video it
+    was made from) next to a ~45s GPU job, and buys two things worth more than that: the server never
     fetches a URL on a user's say-so (no SSRF surface on an endpoint that burns GPU), and the studio
     works identically for a saved voice and a clip you just recorded — the browser already holds the
-    bytes in both cases.
+    bytes in both cases. A raw clip (an older client, the fallback) is still accepted up to
+    voice_reference.MAX_REFERENCE_BYTES and normalised here.
     """
-    import os
     import tempfile
     import shutil
     import time as _time
-    from app.services import voice_local, voice_factory, media_service
+    from app.services import voice_local, voice_factory
 
     pk = nostr_service.to_pubkey_hex(pubkey or "")
     if not pk or not _verify_self_auth(auth, pk):
@@ -1120,36 +1184,12 @@ async def client_voice_speak(
         wait = int(_VOICE_COOLDOWN_S - (_time.monotonic() - last)) + 1
         raise HTTPException(status_code=429, detail=f"hang on {wait}s — voice generation holds the GPU")
 
-    data = await reference.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="the reference clip is empty")
-    if len(data) > 16 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="that reference clip is too long")
-
     tmp = tempfile.mkdtemp(prefix="voice_ref_")
-    raw = os.path.join(tmp, "src")
-    path = os.path.join(tmp, "ref.wav")
     _voice_busy.add(pk)
+    spent = False
     try:
-        with open(raw, "wb") as f:
-            f.write(data)
-        # Normalise to mono 24kHz and TRIM to voice_max_ref_seconds, exactly as the `voice` command
-        # does. Two reasons this can't be skipped just because the model happens to cope: a saved voice
-        # is very often a VIDEO clip (the studio accepts video/*, and a phone recording is webm/mp4),
-        # which only loads at all because librosa quietly falls back to audioread; and the length cap
-        # is otherwise unenforced here, so a ten-minute video gets decoded whole and forwarded whole to
-        # whichever node picks the job. The model reads a few seconds either way.
-        max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
-        ff = media_service.resolve_ffmpeg()
-        proc = await asyncio.create_subprocess_exec(
-            ff, "-y", "-i", raw, "-t", str(max_ref), "-ar", "24000", "-ac", "1", path,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        if proc.returncode != 0 or not os.path.exists(path):
-            raise HTTPException(status_code=400,
-                                detail="couldn't read any audio out of that clip")
-        with open(path, "rb") as f:
-            data = f.read()          # forward the NORMALISED clip, not the original upload
+        path, data = await _voice_reference_upload(reference, tmp)
+        spent = True       # only a clip that reaches the model starts the cooldown
         wav, where = await voice_factory.generate_voice(db, said, data, reference_path=path)
         logger.info("[voice] spoke %d chars for %s on %s", len(said), pk[:8], where)
         return Response(content=wav, media_type="audio/wav",
@@ -1161,7 +1201,8 @@ async def client_voice_speak(
         raise HTTPException(status_code=503, detail=str(e))
     finally:
         _voice_busy.discard(pk)
-        _voice_cooldown[pk] = _time.monotonic()
+        if spent:
+            _voice_cooldown[pk] = _time.monotonic()
         shutil.rmtree(tmp, ignore_errors=True)
 
 

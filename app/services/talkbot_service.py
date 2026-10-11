@@ -333,9 +333,13 @@ async def save_face(db, nsec: str, data: bytes) -> dict:
 async def save_voice(db, nsec: str, data: bytes, filename: str) -> dict:
     """Normalise the clip ONCE (the shared voice_reference rules) and store the result."""
     from app.services import blossom_service
-    from app.services.voice_reference import normalize_reference
-    if not data or len(data) > MAX_VOICE_BYTES:
-        raise ValueError("the clip is empty or too large (40 MB max)")
+    from app.services.voice_reference import normalize_reference, too_large
+    if not data:
+        raise ValueError("the clip is empty")
+    # Lower than voice_reference.MAX_REFERENCE_BYTES because this upload arrives as base64 inside a
+    # JSON body (admin-only), held whole in memory -- but worded by the same helper: a size, in MB.
+    if len(data) > MAX_VOICE_BYTES:
+        raise ValueError(too_large(MAX_VOICE_BYTES))
     tmp = tempfile.mkdtemp(prefix="talkbot_voice_")
     try:
         _path, wav, err = await normalize_reference(data, filename or "voice", tmp)

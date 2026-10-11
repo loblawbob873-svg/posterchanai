@@ -183,6 +183,8 @@ TESTS = (
     'tests/test_admin_reports.py',
     'tests/client/test_report_from_notification_full_app.py',
     'tests/client/test_concord_report_private_full_app.py',
+    'tests/test_voice_reference_size.py',
+    'tests/client/test_voice_reference_once_full_app.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

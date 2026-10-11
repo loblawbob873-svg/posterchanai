@@ -856,6 +856,85 @@ window.PCAiFactory = function(dep){
     catch(_){ return null; }
   }
 
+  // ---- the reference clip, normalised ONCE ----------------------------------------------------
+  // A saved voice is very often a phone VIDEO (Upload accepts video/*), and a few seconds of phone video
+  // is tens of MB. Uploading that with every line is what got a one-word line refused ("that reference
+  // clip is too long" — it was really about SIZE). So the server cuts the clip ONCE to what the model
+  // reads anyway — mono 24 kHz WAV, ≤ voice_max_ref_seconds (30 s, ~1.4 MB) — and the voice keeps that
+  // WAV as `ref`. `url` stays what it always was: the clip the person picked or uploaded.
+  //
+  // Answers {wav: Blob, seconds}, or throws an Error whose `.status` is the server's: 4xx means THIS
+  // CLIP is the problem (no audio in it, over the size cap) and the message says so; anything else —
+  // an older instance with no such endpoint (a bundled APK talks to whatever server it is pointed at),
+  // the network — is `.fallback`, i.e. carry on with the original clip exactly as before.
+  async function voiceNormalize(blob, name){
+    let r;
+    try{
+      const fd = new FormData();
+      fd.append('reference', blob, name || 'voice-sample');
+      fd.append('pubkey', S.ME.pubkey);
+      fd.append('auth', await selfProof());
+      r = await fetch('/client/voice/reference', { method:'POST', body: fd });
+    }catch(e){ const err = new Error((e&&e.message)||'network error'); err.fallback = true; throw err; }
+    if(!r.ok){
+      let msg = 'HTTP '+r.status;
+      try{ const j = await r.json(); msg = j.detail || j.error || msg; }catch(_){}
+      const err = new Error(msg); err.status = r.status;
+      err.fallback = !(r.status === 400 || r.status === 413);
+      throw err;
+    }
+    const wav = await r.blob();
+    return { wav: wav.type ? wav : new Blob([wav], {type:'audio/wav'}),
+             seconds: parseFloat(r.headers.get('X-Ref-Seconds')||'') || 0 };
+  }
+
+  // Put the normalised WAV on the drive (indexed in Files → Voices, so it is a file the person can see
+  // and nothing sweeps it as unreferenced) and answer its URL.
+  async function voiceKeepRef(wav, nm){
+    const f = new File([wav], String(nm||'voice').replace(/[^\w .-]/g,'_')+'.wav', {type:'audio/wav'});
+    const url = await uploadBlob(f);
+    try{
+      const sha=(String(url).split('/').pop()||'').split('.')[0].split('?')[0];
+      if(/^[0-9a-f]{64}$/i.test(sha)){
+        if(!FilesIdx.folders().includes('Voices')) FilesIdx.addFolder('Voices');
+        FilesIdx.setFile(sha, { name:nm+' (voice sample)', folder:'Voices',
+          mime:'audio/wav', size:wav.size, ts:Math.floor(Date.now()/1000) });
+      }
+    }catch(_){}   // indexing is a convenience — never lose the voice over it
+    return url;
+  }
+
+  // The clip to send with a line: the voice's small `ref` when it has one; otherwise its original,
+  // normalised now and REMEMBERED (a voice saved before this existed — often a big video — is cut once
+  // on first use, never again). Returns a Blob, or throws an Error with a sentence for the person.
+  async function voiceReferenceBlob(voice, say){
+    if(voice.ref){
+      try{
+        const rr = await fetch(voice.ref);
+        if(rr.ok){ const b = await rr.blob(); if(b && b.size) return b; }
+      }catch(_){}
+      // The small copy is gone from the drive; the original may still be there — fall through.
+    }
+    say && say('fetching the voice…');
+    // Check the fetch. A dead/expired Blossom URL returns an HTML error page with a 200-ish shape
+    // in some setups, and posting THAT as the reference gives a baffling "couldn't read audio"
+    // from the far end instead of "your sample is gone".
+    const rr = await fetch(voice.url);
+    if(!rr.ok) throw new Error('that voice’s sample is missing from your drive — re-record it');
+    const orig = await rr.blob();
+    if(!orig || !orig.size) throw new Error('that voice’s sample is empty — re-record it');
+    say && say('preparing the voice (once)…');
+    let n;
+    try{ n = await voiceNormalize(orig, 'voice-sample'); }
+    catch(e){ if(e && e.fallback) return orig; throw e; }
+    // Remember it. Best effort: a failed upload or relay write just means this happens again next time.
+    voiceKeepRef(n.wav, voice.name).then(ref =>
+      voicesSave(list => list.map(x => x.id === voice.id ? Object.assign({}, x, { ref }) : x))
+        .then(() => { voice.ref = ref; })
+    ).catch(()=>{});
+    return n.wav;
+  }
+
   // Record a reference clip with the mic. Same MediaRecorder shape as the Meme Builder's voice-over.
   async function voiceRecord(onDone){
     if(!navigator.mediaDevices || typeof MediaRecorder==='undefined'){
@@ -901,8 +980,18 @@ window.PCAiFactory = function(dep){
       if(name === null) return;
       const nm = (name||'').trim().slice(0,40) || 'untitled';
       try{
+        // Cut it once now, so speaking never re-sends a big video. The original stays where it is on
+        // the drive (it is the person's file); a failure here only means it is cut on first use instead.
+        let ref = '';
+        try{
+          toast('preparing the voice…');
+          const rr = await fetch(url);
+          if(rr.ok){ const n = await voiceNormalize(await rr.blob(), 'voice-sample'); ref = await voiceKeepRef(n.wav, nm); }
+        }catch(e){ if(e && e.status && !e.fallback){ toast('couldn’t use that clip: '+e.message); return; } }
         await voicesSave(list => {
-          list.push({ id:'v'+Date.now().toString(36), name:nm, url, created:Math.floor(Date.now()/1000) });
+          const v = { id:'v'+Date.now().toString(36), name:nm, url, created:Math.floor(Date.now()/1000) };
+          if(ref) v.ref = ref;
+          list.push(v);
           return list;
         });
         toast('voice saved');
@@ -921,6 +1010,24 @@ window.PCAiFactory = function(dep){
     if(name === null) return;
     const nm = (name||'').trim().slice(0,40) || 'untitled';
     try{
+      // Normalise FIRST: the voice is the ≤30 s mono WAV the model reads, so that is what goes on the
+      // drive — a 40 MB phone video picked from the gallery is never uploaded at all (it is still on the
+      // phone, untouched). A clip with no audio, or over the size cap, is refused HERE with the server's
+      // sentence, before anything is saved; an older instance without the endpoint keeps the old path.
+      toast('preparing the sample…');
+      let n = null;
+      try{ n = await voiceNormalize(file, file.name || 'voice-sample'); }
+      catch(e){ if(!(e && e.fallback)) throw e; }
+      if(n){
+        const ref = await voiceKeepRef(n.wav, nm);
+        await voicesSave(list => {
+          list.push({ id: 'v'+Date.now().toString(36), name: nm, url: ref, ref, created: Math.floor(Date.now()/1000) });
+          return list;
+        });
+        toast('voice saved');
+        openVoiceStudio(_voiceOpts);
+        return;
+      }
       toast('uploading the sample…');
       const url = await uploadBlob(file);
       // Register the clip in the FILE INDEX, not just in the voice list. Without this the sample is a
@@ -953,13 +1060,9 @@ window.PCAiFactory = function(dep){
     const say = (m)=>{ if(st) st.textContent = m; };
     try{
       say('fetching the voice…');
-      // Check the fetch. A dead/expired Blossom URL returns an HTML error page with a 200-ish shape
-      // in some setups, and posting THAT as the reference gives a baffling "couldn't read audio"
-      // from the far end instead of "your sample is gone".
-      const rr = await fetch(voice.url);
-      if(!rr.ok){ say(''); toast('that voice’s sample is missing from your drive — re-record it'); return; }
-      const ref = await rr.blob();
-      if(!ref || !ref.size){ say(''); toast('that voice’s sample is empty — re-record it'); return; }
+      let ref;
+      try{ ref = await voiceReferenceBlob(voice, say); }
+      catch(e){ say(''); toast((e&&e.message)||'couldn’t read that voice'); return; }
       const auth = await selfProof();
       const fd = new FormData();
       fd.append('reference', ref, 'ref.wav');

@@ -25,9 +25,9 @@ logger = logging.getLogger("voice_api")
 
 router = APIRouter(prefix="/api", tags=["voice"])
 
-# Longest reference clip we will accept from another node. A few seconds is all a zero-shot model
-# uses; anything past this is someone posting a podcast at us.
-_MAX_REF_BYTES = 16 * 1024 * 1024
+# The reference cap is voice_reference.MAX_REFERENCE_BYTES -- the same SIZE cap, with the same wording,
+# as the studio and the commands. A peer node forwards an already-normalised ~1 MB WAV; an API caller
+# may send a phone video, which is normalised here exactly as /client/voice/speak does.
 
 
 async def get_voice_auth(
@@ -116,19 +116,23 @@ async def generate_voice_endpoint(
         # installed" and moves calmly to the next candidate instead of counting it as a failure.
         return JSONResponse({"error": "voice model not installed on this node"}, status_code=404)
 
-    data = await reference.read()
-    if not data:
-        return JSONResponse({"error": "empty reference clip"}, status_code=400)
-    if len(data) > _MAX_REF_BYTES:
-        return JSONResponse({"error": "reference clip too large"}, status_code=413)
     if not (text or "").strip():
         return JSONResponse({"error": "nothing to say"}, status_code=400)
 
+    from app.services import voice_reference
     tmp = tempfile.mkdtemp(prefix="voice_ref_")
-    path = os.path.join(tmp, "ref.wav")
     try:
-        with open(path, "wb") as f:
-            f.write(data)
+        raw = os.path.join(tmp, "in", "src")
+        os.makedirs(os.path.dirname(raw), exist_ok=True)
+        try:
+            size = await voice_reference.spool_upload(reference, raw)
+        except voice_reference.ReferenceTooLarge as e:
+            return JSONResponse({"error": str(e)}, status_code=413)
+        if not size:
+            return JSONResponse({"error": "empty reference clip"}, status_code=400)
+        path, _wav, err = await voice_reference.normalize_reference_file(raw, tmp)
+        if err:
+            return JSONResponse({"error": "couldn't read any audio out of that clip"}, status_code=400)
         wav = await voice_factory._generate_local(db, text, path)
         return Response(content=wav, media_type="audio/wav")
     except Exception as e:
