@@ -162,6 +162,13 @@ TESTS = (
     'tests/test_ptop.py',
     'tests/test_fresh_install_has_no_postgres.py',
     'tests/test_git_acceptance_asks_the_relay.py',
+    'tests/test_posterchandb_words_off_lock.py',
+    'tests/test_musicgeni_keeps_your_words.py',
+    'tests/test_acestep_logs_no_lyrics.py',
+    'tests/client/test_concord_code.py',
+    'tests/client/test_save_never_opens_the_share_sheet.py',
+    'tests/client/test_ai_download_native.py',
+    'tests/test_drafts_nostr_only_accounts.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new
