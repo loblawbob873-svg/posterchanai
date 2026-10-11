@@ -104,7 +104,7 @@ def test_the_screen_shows_every_core_interface_and_disk_of_this_machine():
                          capture_output=True, text=True, env=env, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
-    for title in ("CPU", "MEMORY", "NETWORK", "DISK I/O", "PROCESSES", "r_await", "w_await"):
+    for title in ("CPU", "MEMORY", "NETWORK", "DISK I/O", "PROCESSES", "await", "aqu-sz", "IOWAIT", "iowait "):
         assert title in plain, title
     ncpu = sum(1 for ln in open("/proc/stat") if re.match(r"cpu\d+ ", ln))
     shown = set(re.findall(r"\bC(\d+)\b", plain))
@@ -220,5 +220,158 @@ def test_the_screen_lists_this_machines_filesystems_and_no_tmpfs():
         assert re.search(r"[│|]%s\s" % re.escape(mnt), plain), "%s is missing from the screen" % mnt
     assert not re.search(r"\btmpfs\b", plain), "a tmpfs is listed"
     panel = plain[plain.index("FILESYSTEMS"):]
-    rows = [ln for ln in panel.splitlines()[1:] if ln.strip().startswith(("│/", "|/"))]
+    rows = [m.group(0) for m in re.finditer(r"[│|]/\S*\s+(?:btrfs|ext4|xfs|vfat|zfs|f2fs|nfs4?|exfat)\b[^\n]*", panel)]
     assert rows and all(re.search(r"\d+\.\d%\s*[│|]\s*$", r) for r in rows), "a usage figure is cut off: %r" % rows
+
+
+def test_iowait_await_and_queue_depth_are_iostats(tmp_path, monkeypatch):
+    """%iowait (iostat avg-cpu), await (ms per I/O, reads+writes) and aqu-sz (average queue depth), from the counters."""
+    root = str(tmp_path)
+    proc, sysfs = _fake(root, cpu=[("cpu", [100, 0, 100, 700, 100, 0, 0, 0])], net=[],
+                        disk=[("sdd", 100, 1000, 50, 50, 4000, 500, 1000)])
+    _w(proc + "/diskstats", "   8 0 sdd 100 0 4000 1000 50 0 500 50 0 1000 3000\n")
+    m = _load(proc, sysfs)
+    clock = [10.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
+    s = m.Sampler()
+    s.sample()
+    # 2 s later: iowait +60 of +300 ticks; sdd +40 reads in 2000 ms, +10 writes in 1000 ms, weighted io +16000 ms
+    _w(proc + "/stat", "cpu 150 0 150 840 160 0 0 0\n")
+    _w(proc + "/diskstats", "   8 0 sdd 140 0 4400 3000 60 0 600 1050 0 2900 19000\n")
+    clock[0] += 2.0
+    snap = s.sample()
+    assert snap["iowait"]["cpu"] == pytest.approx(100.0 * 60 / 300)
+    d = snap["disks"]["sdd"]
+    assert d["await_ms"] == pytest.approx(3000 / 50)          # (2000 + 1000) ms over 40 + 10 I/Os
+    assert d["r_await_ms"] == pytest.approx(2000 / 40) and d["w_await_ms"] == pytest.approx(1000 / 10)
+    assert d["aqu_sz"] == pytest.approx(16000 / 2000)          # weighted ms / interval ms
+    assert d["util_pct"] == pytest.approx(1900 / 2000 * 100)
+
+
+def test_slash_searches_processes_interactively():
+    """Press `/`, type, Enter keeps the filter, Esc clears it -- driven through a real pty, like a person at btop."""
+    import fcntl
+    import pty
+    import select
+    import struct
+    import termios
+    import time
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe(sys.executable, [sys.executable, PTOP, "--interval", "0.5"],
+                   dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", LANG="C.UTF-8"))
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+
+    def screen(seconds):
+        buf, end = b"", time.time() + seconds
+        while time.time() < end:
+            if select.select([fd], [], [], 0.1)[0]:
+                try:
+                    buf += os.read(fd, 65536)
+                except OSError:
+                    break
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.decode("utf-8", "replace"))
+
+    try:
+        assert "PROCESSES" in screen(3)
+        os.write(fd, b"/")
+        os.write(fd, ("python").encode())
+        typed = screen(1.5)
+        assert "/python_" in typed, "the query being typed is not shown"
+        os.write(fd, b"\r")
+        kept = screen(1.5)
+        assert re.search(r"/python  \(\d+ match", kept), "Enter did not keep the filter"
+        os.write(fd, b"\x1b")
+        cleared = screen(1.5)
+        assert "/python" not in cleared.split("PROCESSES")[-1][:60], "Esc did not clear the filter"
+        os.write(fd, b"q")
+        # Keep READING while waiting: a terminal always drains, and a test that stops reading leaves ptop blocked
+        # writing its next frame into a full pty -- it never gets to the `q` (that hung a run for 15 minutes).
+        end = time.time() + 10
+        status = None
+        while time.time() < end:
+            if select.select([fd], [], [], 0.1)[0]:
+                try:
+                    os.read(fd, 65536)
+                except OSError:
+                    pass
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+                break
+        assert status is not None, "q did not quit ptop within 10 s"
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    finally:
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def test_the_filter_matches_name_command_or_pid():
+    m = _load()
+    p = {"pid": 4005680, "name": "tor", "cmd": "/usr/bin/tor -f /var/lib/posterchanai/tor2/torrc"}
+    assert m.proc_matches(p, "TOR") and m.proc_matches(p, "tor2/torrc") and m.proc_matches(p, "4005")
+    assert not m.proc_matches(p, "5680") and not m.proc_matches(p, "nginx")
+    assert m.proc_matches(p, "") and m.proc_matches(p, "  ")
+
+
+MDSTAT = """Personalities : [raid1] [raid5] [raid6]
+md0 : active raid5 sdd1[3] sdc1[1] sdb1[0]
+      23437502720 blocks super 1.2 level 5, 64k chunk, algorithm 2 [3/3] [UUU]
+      bitmap: 52/88 pages [208KB], 65536KB chunk
+
+md1 : active raid1 sdf1[2](F) sde1[0] sdg1[3](S)
+      976630464 blocks super 1.2 [2/1] [U_]
+      [=====>...............]  recovery = 27.5% (268700000/976630464) finish=58.3min speed=202345K/sec
+
+md2 : active raid6 sdh[0] sdi[1] sdj[2] sdk[3]
+      2000000000 blocks super 1.2 level 6, 512k chunk, algorithm 2 [4/4] [UUUU]
+        resync=DELAYED
+
+unused devices: <none>
+"""
+
+
+def test_mdstat_health_failures_and_rebuild_progress(tmp_path):
+    proc = str(tmp_path / "proc")
+    _w(proc + "/mdstat", MDSTAT)
+    m = _load(proc, str(tmp_path / "sys"))
+    a = {r["name"]: r for r in m.read_mdstat()}
+    assert a["md0"]["level"] == "raid5" and a["md0"]["health"] == "UUU" and (a["md0"]["total"], a["md0"]["up"]) == (3, 3)
+    assert a["md0"]["members"] == ["sdd1", "sdc1", "sdb1"] and not a["md0"]["failed"] and not a["md0"]["action"]
+    d = a["md1"]
+    assert (d["total"], d["up"], d["health"]) == (2, 1, "U_")
+    assert d["failed"] == ["sdf1"] and d["spares"] == ["sdg1"] and d["members"] == ["sde1"]
+    assert d["action"] == "recovery" and d["progress"] == pytest.approx(27.5)
+    assert d["finish"] == "58.3min" and d["speed"] == "202345K/sec"
+    assert a["md2"]["action"] == "resync pending" and a["md2"]["health"] == "UUUU"
+
+
+def test_the_raid_panel_says_degraded_and_shows_the_rebuild(tmp_path, monkeypatch):
+    proc = str(tmp_path / "proc")
+    _w(proc + "/mdstat", MDSTAT)
+    m = _load(proc, str(tmp_path / "sys"))
+    raid = m.read_mdstat()
+    m2 = _load()
+    snap = json_snap = None
+    out = subprocess.run([sys.executable, PTOP, "--json", "--interval", "0.3"], capture_output=True, text=True, timeout=60)
+    import json
+    snap = json.loads(out.stdout)
+    snap["raid"] = raid
+    lines = m2.render(snap, m2.Sampler(), 160, 70, m2.Paint("none"), False)
+    plain = "\n".join(lines)
+    assert "RAID" in plain
+    assert re.search(r"md0\s+raid5\s+\[3/3\] \[UUU\]\s+healthy", plain)
+    assert re.search(r"md1\s+raid1\s+\[2/1\] \[U_\]\s+DEGRADED", plain) and "failed: sdf1" in plain
+    assert re.search(r"recovery.*27\.5%.*eta 58\.3min", plain)
+    assert "resync pending" in plain
+
+
+def test_the_header_names_the_os_kernel_and_counts():
+    env = dict(os.environ, COLORTERM="truecolor", LANG="C.UTF-8")
+    out = subprocess.run([sys.executable, PTOP, "--once", "--interval", "0.3", "--size", "160x60"],
+                         capture_output=True, text=True, env=env, timeout=60)
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
+    assert "kernel " + os.uname().release in plain
+    assert re.search(r"procs \d+\s+threads \d+", plain) and "booted " in plain
