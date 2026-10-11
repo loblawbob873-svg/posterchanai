@@ -573,13 +573,16 @@ def proc_matches(p, query):
     return q in p["name"].lower() or q in p["cmd"].lower()
 
 
-def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", typing=False, logo_ok=True):
+def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", typing=False):
     sc = Screen(paint, ascii_mode)
     P = paint
     out = []
     # ---- header: the logo, the wordmark, the machine
     # The portrait needs ~17 rows. On a short terminal the stats come first: wordmark + system line only.
-    logo = logo_rows(P, ascii_mode) if (logo_ok and rows >= 48) else []
+    # The portrait depends on the TERMINAL only, never on the machine's data: it used to give way when this node's
+    # panels left fewer than 8 process rows, so at the same size server1 showed PosterChan and nas.lan did not, and
+    # the two looked like different programs (2026-10-10). The data panels shrink to fit instead (below).
+    logo = logo_rows(P, ascii_mode) if (rows >= 48 and cols >= 100) else []
     mark = wordmark(P, ascii_mode)
     temp = ((" %.0f" + ("C" if ascii_mode else "°C")) % snap["temp_c"]) if snap.get("temp_c") is not None else ""
     dot = "  -  " if ascii_mode else "  ·  "
@@ -616,6 +619,7 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
     inner = left_w - 2
     g = braille_graph(sampler.hist["cpu"], inner, 3, 100.0, ascii_mode)
     cpu_lines = [pad(P.fg(heat(sum(sampler.hist["cpu"][-1:]) / 100), ln), inner) for ln in g]
+    cpu_graph_rows = len(cpu_lines)
     cpu_lines.append(pad(P.fg("text", "TOTAL ", bold=True) + sc.bar(snap["cpu"].get("cpu", 0) / 100, inner - 13) +
                          P.fg(heat(snap["cpu"].get("cpu", 0) / 100), " %5.1f%%" % snap["cpu"].get("cpu", 0)), inner))
     iow = snap.get("iowait", {}).get("cpu", 0.0)
@@ -747,7 +751,7 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
     # ---- fit: both columns must leave room for a few processes, and FILESYSTEMS must stay on screen. A node with many
     # interfaces and disks (nas.lan: libvirt bridges, 11 block devices) pushed it off a 40-row screen. Shed in order of
     # least value: the network graphs (left), then the least busy disks (right; they are sorted worst-first).
-    budget = rows - len(out) - 6
+    budget = rows - len(out) - 3 - 6        # panel frame + header row, and at least 5 process rows
     if cols >= 100:
         left_h = lambda: len(cpu_box) + len(mem_box) + len(net_box)
         right_h = lambda: len(disk_box) + len(fs_box) + len(raid_box)
@@ -757,8 +761,19 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
     if max(left_h(), right_h()) > budget and net_graphs:
         net_lines = [ln for i, ln in enumerate(net_lines) if i not in net_graphs]
         net_box = sc.panel("NETWORK", net_lines, left_w, "yellow")
+    if max(left_h(), right_h()) > budget and cpu_graph_rows:
+        cpu_lines = cpu_lines[cpu_graph_rows:]                  # the history graph; every core's bar stays
+        cpu_box = sc.panel("CPU", cpu_lines, left_w, "cyan")
+    over = left_h() - budget if cols >= 100 else right_h() - budget
+    if over > 0 and len(net_lines) > 2:
+        # the busiest interfaces stay (they are sorted busiest first); the idle rest fold into one line
+        keep = max(1, len(net_lines) - over - 1)
+        hidden = len(net_lines) - keep
+        if hidden > 1:
+            net_lines = net_lines[:keep] + [pad(P.fg("dim", "  +%d more (idle)" % hidden), left_w - 2)]
+            net_box = sc.panel("NETWORK", net_lines, left_w, "yellow")
     if right_h() > max(budget, left_h()) and len(disk_lines) > 2:
-        keep = max(1, len(disk_lines) - 1 - (right_h() - max(budget, left_h())) - 1)
+        keep = max(2, len(disk_lines) - 1 - (right_h() - max(budget, left_h())) - 1)
         hidden = len(disk_lines) - 1 - keep
         if hidden > 0:
             disk_lines = disk_lines[:1 + keep] + [pad(P.fg("dim", "  +%d more (quietest)" % hidden), rin)]
@@ -775,9 +790,6 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
     # ---- processes fill what is left
     key = {"cpu": lambda p: -p["cpu_pct"], "mem": lambda p: -p["rss"], "pid": lambda p: p["pid"],
            "name": lambda p: p["name"].lower()}[sort]
-    if logo and rows - len(out) - 3 < 8:
-        # the portrait is decoration: when it would leave fewer than 8 process rows, the processes win
-        return render(snap, sampler, cols, rows, paint, ascii_mode, sort, query, typing, logo_ok=False)
     procs = [p for p in sorted(snap["procs"], key=key) if proc_matches(p, query)]
     room = max(3, rows - len(out) - 3)
     pin = cols - 2

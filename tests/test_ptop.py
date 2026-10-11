@@ -375,3 +375,34 @@ def test_the_header_names_the_os_kernel_and_counts():
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
     assert "kernel " + os.uname().release in plain
     assert re.search(r"procs \d+\s+threads \d+", plain) and "booted " in plain
+
+
+def test_the_header_is_decided_by_the_terminal_never_by_the_machine():
+    """At the same size every node draws the same header. The portrait used to give way when THIS node's panels left
+    under 8 process rows, so at 160x55 server1 showed PosterChan and nas.lan did not (2026-10-10). Two machines are
+    simulated by giving the same render very different data (2 vs 14 disks, 1 vs 8 interfaces, RAID or none)."""
+    import json
+    m = _load()
+    out = subprocess.run([sys.executable, PTOP, "--json", "--interval", "0.3"], capture_output=True, text=True,
+                         timeout=60)
+    base = json.loads(out.stdout)
+    small = dict(base, disks=dict(list(base["disks"].items())[:2]), raid=[],
+                 net={k: v for k, v in list(base["net"].items())[:1]})
+    disk = {"r_s": 1.0, "w_s": 1.0, "rkB_s": 1.0, "wkB_s": 1.0, "r_await_ms": 1.0, "w_await_ms": 1.0,
+            "await_ms": 1.0, "aqu_sz": 0.1, "util_pct": 1.0}
+    iface = {"rx_Bps": 1.0, "tx_Bps": 1.0, "rx_total": 1, "tx_total": 1, "up": True}
+    big = dict(base, disks={"sd%s" % chr(97 + i): dict(disk) for i in range(14)},
+               net={"eth%d" % i: dict(iface) for i in range(8)},
+               raid=[{"name": "md0", "state": "active", "level": "raid5", "members": ["sda1", "sdb1", "sdc1"],
+                      "failed": [], "spares": [], "total": 3, "up": 3, "health": "UUU", "action": "",
+                      "progress": None, "speed": "", "finish": ""}])
+    for cols, rows in ((120, 40), (160, 50), (160, 55), (200, 70)):
+        a = m.render(small, m.Sampler(), cols, rows, m.Paint("truecolor"), False)
+        b = m.render(big, m.Sampler(), cols, rows, m.Paint("truecolor"), False)
+        portrait = lambda lines: any("\x1b[48;2;" in ln for ln in lines[:20])
+        assert portrait(a) == portrait(b), "%dx%d: one node has the portrait, the other not" % (cols, rows)
+        assert portrait(a) == (rows >= 48 and cols >= 100)
+        for lines in (a, b):
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
+            assert "FILESYSTEMS" in plain and "PROCESSES" in plain, (cols, rows)
+            assert len(lines) <= rows
