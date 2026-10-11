@@ -269,9 +269,11 @@ def verify_receipt(path, root=ROOT):
 # 600s held until the list reached ~980 cases: green runs took ~570s on the Linux runner, and the
 # next commits' tests pushed it over, killed at 97% with no test named (2026-10-01). The list only
 # grows -- every new check joins it -- so the budget is sized for growth and overridable.
+# 1200s held until 2026-10-11, when ~30 full-app checks joined in one day (reports, Concord, prefs,
+# read state, admin persistence) and deploy 205's required stage was killed at 1200s with no failure: 2100s.
 # .github/workflows/desktop.yml's step limit must stay ABOVE this, or GitHub kills the step before
 # the gate can say what ran long; tests/test_deploy_regression_gate.py checks that.
-REQUIRED_TIMEOUT_S = int(os.environ.get('PC_REQUIRED_TIMEOUT') or 1200)
+REQUIRED_TIMEOUT_S = int(os.environ.get('PC_REQUIRED_TIMEOUT') or 2100)
 
 
 def _run_required_tests(command, root, env, log, timeout=None):
