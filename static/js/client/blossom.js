@@ -426,6 +426,8 @@ window.PCBlossomFactory = function(dep){
         ClientSettings.set('mobileNav', pr.mobileNav.map(v=>String(v==null?'':v).slice(0,60)).slice(0,4));
         applyMobileNav();
       }
+      // The Concord theme carries its own `at`, so concord.js decides which side is newer.
+      if(pr.concordTheme && typeof pr.concordTheme==='object' && window.PCConcordTheme) window.PCConcordTheme.adopt(pr.concordTheme, owner);
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));

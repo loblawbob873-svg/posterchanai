@@ -13899,6 +13899,8 @@
     // Concord draws its audio attachments with the same track card a post uses (cover, title, artist).
     trackCard: (url, label, preload) => _trackCard(enc(String(url||'')), label, preload),
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
+    // concord.js: the Concord theme follows the account (pcai:client-prefs `concordTheme`).
+    saveConcordTheme: v => saveClientPrefsNostr({ concordTheme: v }),
     saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     saveStartupApps: (v, at) => { try{ _prefTouched.add('startupApps'); }catch(_){}
       return saveClientPrefsNostr({ startupApps: v, startupAppsAt: Number(at) || Date.now() }); },

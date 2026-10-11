@@ -199,6 +199,8 @@ TESTS = (
     'tests/client/test_concord_banner_full_app.py',
     'tests/client/test_concord_forum_full_app.py',
     'tests/client/test_concord_voice_presence_full_app.py',
+    'tests/client/test_concord_themes_full_app.py',
+    'tests/client/test_concord_theme_tokens.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

@@ -5,9 +5,90 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=22'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=23'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
+  /* CONCORD THEMES. How Concord looks to ME (per account, never per community): a preset name plus an
+   * optional accent and background. The palette itself is CSS (concord.css, "CONCORD THEMES"); this only
+   * puts `data-cc-theme` and any custom colours on <html>, so the menus and sheets Concord opens outside
+   * its own root follow too. Painted from a localStorage copy at load -- before any relay is asked -- and
+   * synced in the account's `pcai:client-prefs` document as `concordTheme`; the newer `at` wins. */
+  const ccTheme=(()=>{
+    const PRESETS=[['cyberpunk','Cyberpunk'],['classic','Classic'],['synthwave','Synthwave'],['monero','Monero'],['light','Light'],['oled','OLED black'],['app','Match app theme']];
+    const IDS=PRESETS.map(x=>x[0]),DEF='cyberpunk',KEY='pc.concord.theme.v1.',LAST='pc.concord.theme.v1:last';
+    const hexOk=v=>/^#[0-9a-f]{6}$/i.test(String(v||''))?String(v).toLowerCase():'';
+    const clean=v=>v&&typeof v==='object'?{theme:IDS.includes(v.theme)?v.theme:DEF,accent:hexOk(v.accent),bg:hexOk(v.bg),at:Math.max(0,Number(v.at)||0)}:null;
+    const load=k=>{try{return clean(JSON.parse(localStorage.getItem(k)||'null'));}catch(_){return null;}};
+    const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(_){}};
+    const rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+    const hex=c=>'#'+c.map(x=>Math.round(Math.max(0,Math.min(255,x))).toString(16).padStart(2,'0')).join('');
+    const mix=(a,b,t)=>{const x=rgb(a),y=rgb(b);return hex(x.map((v,i)=>v+(y[i]-v)*t));};
+    const lum=h=>{const [r,g,b]=rgb(h).map(x=>{x/=255;return x<=.03928?x/12.92:((x+.055)/1.055)**2.4;});return .2126*r+.7152*g+.0722*b;};
+    /* Everything a custom background has to repaint: the core surfaces and, because Classic writes its
+     * roles as literals, every role that is a surface or text on one. Text is chosen from the
+     * background's own lightness so a custom colour cannot make the messages unreadable. */
+    function bgVars(bg){
+      const dark=lum(bg)<.3,ink=dark?'#eceefa':'#1b1f2e',k=dark?'#000000':'#000000',w=dark?'#ffffff':'#000000';
+      const s={main:bg,side:mix(bg,k,dark?.25:.04),rail:mix(bg,k,dark?.45:.1),hover:mix(bg,w,dark?.08:.07),raised:mix(bg,w,dark?.05:.025),
+        pop:mix(bg,k,dark?.2:0),sunk:mix(bg,k,dark?.35:.06),chip:mix(bg,w,dark?.12:.11),text:ink,strong:dark?'#ffffff':'#0a0c14',muted:mix(ink,bg,.3)};
+      const v={'--cct-tint-rgb':dark?'255,255,255':'20,30,60'};
+      for(const n of ['main','side','rail','hover','raised','pop','sunk','chip','text','strong','muted'])v['--cct-'+n]=s[n];
+      v['--cct-dim']=s.muted;
+      const as={raised:['compose','reply','card','room','joined'],hover:['room-hover','joined-hover','chip-2-hover'],chip:['chip-2','public-icon'],
+        pop:['toolbar','menu'],sunk:['identity','media'],strong:['title'],text:['fg-menu','input','label','icon','icon-2','react-fg'],
+        muted:['fg-2','fg-3','fg-4','discover-fg','section','hash','header-hash','welcome','placeholder','room-sub','reply-fg']};
+      for(const [from,roles] of Object.entries(as))for(const r of roles)v['--cct-'+r]=s[from];
+      return v;
+    }
+    let owner='',cur=load(LAST)||{theme:DEF,accent:'',bg:'',at:0},painted=[];
+    function paint(t){
+      /* Never fatal: Concord's node harnesses (and any odd embed) hand it a minimal document. */
+      const root=typeof document!=='undefined'&&document.documentElement;
+      if(!root||typeof root.setAttribute!=='function'||!root.style||typeof root.style.setProperty!=='function')return;
+      try{
+        root.setAttribute('data-cc-theme',t.theme);
+        for(const n of painted)root.style.removeProperty(n);
+        const v=t.bg?bgVars(t.bg):{};
+        if(t.accent){const c=rgb(t.accent);v['--cct-accent']=t.accent;v['--cct-accent-rgb']=c.join(',');v['--cct-on-accent']=lum(t.accent)>.36?'#05060b':'#ffffff';}
+        painted=Object.keys(v); for(const n of painted)root.style.setProperty(n,v[n]);
+      }catch(_){}
+      try{document.querySelectorAll('[data-cc-theme-pick]').forEach(b=>{const on=b.dataset.ccThemePick===t.theme;b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on));});}catch(_){}
+    }
+    function remember(t){cur=t;store(LAST,t);if(owner)store(KEY+owner,t);paint(t);}
+    function sync(){try{const p=PC();if(p&&p.saveConcordTheme&&owner)p.saveConcordTheme({theme:cur.theme,accent:cur.accent,bg:cur.bg,at:cur.at});}catch(_){}}
+    /* Concord's render tells us whose workspace this is; a different account gets ITS theme (or the default). */
+    function forOwner(pk){pk=String(pk||'');if(!pk||pk===owner)return;owner=pk;const mine=load(KEY+pk);remember(mine||{theme:DEF,accent:'',bg:'',at:0});}
+    function set(patch,{save=true}={}){const t=clean({...cur,...(patch||{}),at:Date.now()});if(!t)return cur;remember(t);if(save)sync();return t;}
+    /* From the account's synced prefs (blossom.js restoreClientPrefsNostr). Newer wins either way. */
+    function adopt(remote,pk){
+      const r=clean(remote); pk=String(pk||'');
+      if(!r||(pk&&owner&&pk!==owner))return;
+      if(pk&&!owner)owner=pk;
+      const mine=load(KEY+owner);
+      if(!mine||r.at>mine.at)remember(r);
+      else if(mine.at>r.at)sync();
+    }
+    function openPicker(p){
+      if(!p||!p.modal)return;
+      const tiles=PRESETS.map(([id,label])=>`<button type="button" class="cc-theme-swatch${cur.theme===id?' on':''}" data-cc-theme="${id}" data-cc-theme-pick="${id}" role="radio" aria-checked="${cur.theme===id}"><span class="cc-theme-prev" aria-hidden="true"><i></i><i></i><i><b></b><b></b></i></span><span>${label}${id===DEF?' <small>default</small>':''}</span></button>`).join('');
+      p.modal(`<h3>Concord theme</h3><p class="muted">How Concord looks to you, on every device you sign in to.</p>
+        <div class="cc-theme-grid" role="radiogroup" aria-label="Theme">${tiles}</div>
+        <div class="cc-theme-custom"><label>Accent colour<input type="color" id="cc-theme-accent" value="${cur.accent||'#00f0ff'}"></label><label>Background<input type="color" id="cc-theme-bg" value="${cur.bg||'#0e0c1f'}"></label>
+        <button type="button" class="btn btn-ghost" id="cc-theme-reset">Reset to preset colours</button></div>
+        <p class="cc-theme-note" id="cc-theme-note">${cur.accent||cur.bg?'Custom colours are on.':'Using the preset’s own colours.'}</p>
+        <div class="cc-join-actions"><button type="button" class="btn btn-neon" id="cc-theme-done">Done</button></div>`,box=>{
+        const note=()=>{const n=box.querySelector('#cc-theme-note');if(n)n.textContent=cur.accent||cur.bg?'Custom colours are on.':'Using the preset’s own colours.';};
+        box.querySelectorAll('[data-cc-theme-pick]').forEach(b=>b.onclick=()=>{set({theme:b.dataset.ccThemePick});note();});
+        for(const [id,key] of [['#cc-theme-accent','accent'],['#cc-theme-bg','bg']]){const i=box.querySelector(id);if(!i)continue;
+          i.oninput=()=>{set({[key]:i.value},{save:false});note();}; i.onchange=()=>{set({[key]:i.value});note();};}
+        const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{set({accent:'',bg:''});note();};
+        const done=box.querySelector('#cc-theme-done');if(done)done.onclick=()=>{try{p.closeModal&&p.closeModal();}catch(_){}};
+      });
+    }
+    paint(cur);
+    return {PRESETS,forOwner,set,adopt,openPicker,get:()=>({...cur})};
+  })();
+  window.PCConcordTheme=ccTheme;
   const concordScriptUrl=document.currentScript&&document.currentScript.src;
   const callModules=new Map();
   /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
@@ -5329,6 +5410,7 @@
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
     document.body.classList.add('concord-view','rb-off');
+    ccTheme.forOwner(p.viewer?.()?.pubkey);   // whose Concord this is decides its theme
     /* THE ACCOUNT ON SCREEN IS PART OF WHAT IS DRAWN. The switcher reloads, so this normally runs once
      * per page; should the signed-in key change under a live page anyway, the open room index belongs
      * to the OTHER account's list and must not be carried across. */
@@ -5443,7 +5525,7 @@
       <aside class="cc-communities" data-cc-sig="${p.enc(railSig(rooms))}"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${railHtml(p,rooms)}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
       <aside class="cc-channels">${roomBannerUrl(current)?`<div class="cc-banner"><img src="${p.enc(roomBannerUrl(current))}" alt=""></div>`:''}<header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}${canAddChannel(p,current)?'<button class="cc-head-btn" id="cc-add-channel" title="New channel" aria-label="New channel">+</button>':''}</header>
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
-        <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
+        <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-theme" title="Concord theme" aria-label="Concord theme"><svg class="ic"><use href="#i-palette"></use></svg></button><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button><button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="More" aria-label="More room actions">⋯</button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
@@ -5892,6 +5974,7 @@
     };
     bindRefoundingControl(p,$);
     bindBannerSettings(p,$);
+    const themeBtn=$('#cc-theme'); if(themeBtn)themeBtn.onclick=()=>ccTheme.openPicker(p);
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=async()=>{try{const room=saved()[state.community];if(room&&room.protocol==='nip29'){const me=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,me).filter(pk=>pk!==me);if(!peers.length){p.toast('No other community members are available to call yet');return;}p.startGroupCall(peers,false);return;}await startCordCall(p,room,state.channel||'general');}catch(e){p.toast(e.message||'The call could not start');}};
     /* The button gives its focus up: a focused control inside the feed DEFERS every background
