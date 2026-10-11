@@ -1,4 +1,9 @@
-# Minimal dependencies for the isolated deploy/browser gate; no running app or database needed.
+# Dependencies for the isolated deploy/browser gate; no running app or database needed.
+# The gate imports the real app, so its environment is a nostr node's plus the test tools below -- one list that
+# cannot fall behind the code (2026-10-10: numpy, Brotli, loguru, bs4, apscheduler, jose and bcrypt went missing one
+# at a time as tests touched new modules, and Desktop CI was red all day). Path is relative to this file.
+-r ../requirements-nostr.txt
+
 pytest==8.3.5
 httpx==0.28.1
 websockets==16.0
