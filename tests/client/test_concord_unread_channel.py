@@ -8,6 +8,7 @@ Concord drew "This is the start of this encrypted channel" over a conversation t
 could read in another app.
 """
 import pathlib
+import re
 import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -50,6 +51,6 @@ def test_the_reach_record_is_threaded_all_the_way_to_the_transport():
         "cordQuery must accept the report or neither read site can measure anything")
     assert concord.count("noteChannelReach(") >= 3, (
         "both the first history load and the live tick own the verdict for the channel they read")
-    assert "authScope,report})" in concord, "the plane branch is the one Concord actually uses"
+    assert re.search(r"exact:true,authScope,report[,}]", concord), "the plane branch is the one Concord actually uses"
     assert "clearQueryCooldown(urls)" in relay
     assert "relayRetryRelays" in app, "the retry needs a bridge or the button cannot lift anything"

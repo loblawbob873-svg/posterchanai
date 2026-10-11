@@ -91,7 +91,7 @@
     stop.ready=Promise.all(subscriptions.map(sub=>sub.ready)).then(results=>results.every(Boolean));
     return stop;
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null,urgent=false}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
@@ -128,7 +128,7 @@
           let events;
           try{
             events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
-              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report});
+              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report,urgent});
           }catch(err){ firstFailure=firstFailure||err; continue; }
           succeeded++;
           if(!plane.current())return [];
@@ -146,7 +146,7 @@
       return [...byId.values()];
     }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report,urgent})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -171,6 +171,41 @@
       all=merged;if(batch.length<1000||!Number.isFinite(oldest)||oldest<=0||until===oldest-1)break;until=oldest-1;
     }
     return all.sort((a,b)=>(Number(a.created_at)||0)-(Number(b.created_at)||0)).slice(-5000);
+  }
+  /* A ROOM THAT HOLDS NOTHING MUST ACTUALLY ASK — "no channels readable yet — 8 relay(s) asked, 0
+   * control event(s) held, 0 new", reported from the app over a community the bot (a member) read
+   * fine, was a room that asked NOBODY.
+   *
+   * `queryFrom` skips a relay, silently and with `[]`, while another read of the same slot is in
+   * flight there, and for thirty minutes after it failed once. A member's split-control plane has
+   * no AUTH key, so its slot is the bare relay URL -- shared with every other community on the same
+   * relays, which for Armada/Vector rooms is all of them, and they are swept in the background. So
+   * opening a room while another room's read was in flight, or within half an hour of one bad
+   * moment on a phone's radio, fetched nothing and blamed eight relays that were never asked. The
+   * on-device control cache hides it everywhere it exists, which is why a fresh install found it.
+   *
+   * While nothing at all is held the read is `urgent`: neither rule decides (its own socket, no
+   * waiting -- waiting here holds the live subscription back). With something held this is exactly
+   * the old read. The `reach` it returns is what was MEASURED, so the message can say which of the
+   * three things happened. tests/client/test_concord_unasked_relays.py */
+  async function queryControlUntilAsked(p,relays,authors,known,options={}){
+    const reach={},wraps=await queryEnvelopeHistory(p,relays,authors,known,{...options,report:reach,urgent:!(known||[]).length});
+    const ok=[...new Set(reach.ok||[])],failed=[...new Set(reach.failed||[])].filter(u=>!ok.includes(u)),
+      spoke=new Set([...ok,...failed]),unasked=[...new Set([...(reach.held||[]),...(reach.cooled||[])])].filter(u=>!spoke.has(u));
+    return {wraps,reach:{ok,failed,unasked,unheld:[...new Set(reach.unheld||[])]}};
+  }
+  /* SAY WHICH OF THE THREE IT WAS, AND WHAT TO DO ABOUT IT. Relays that answered with nothing this
+   * membership can open (keys rotated / a stale invite), relays that did not answer (the network),
+   * and relays that could not be asked yet (busy, resting) are three problems with three fixes. */
+  function unreadableControlMessage(reach,relays,held,fresh){
+    const n=[...new Set(relays||[])].length,host=u=>{try{return new URL(u).host;}catch(_){return String(u);}};
+    if(reach.unheld.length&&!reach.ok.length)
+      return 'no channels readable yet — this membership holds no key for the community\'s channel list. Ask a member for a fresh invite link and open it again';
+    if(reach.ok.length)
+      return `no channels readable yet — ${reach.ok.length} of ${n} relay(s) answered, but nothing they hold opens with your membership (${held} control event(s) held, ${fresh} new). If this lasts the community's keys were probably rotated: ask a member for a fresh invite link`;
+    if(reach.failed.length&&!reach.unasked.length)
+      return `no channels readable yet — none of this community's ${n} relay(s) answered (${reach.failed.slice(0,3).map(host).join(', ')}${reach.failed.length>3?'…':''}). Check your connection; the room keeps retrying on its own`;
+    return `no channels readable yet — ${reach.unasked.length||n} of ${n} relay(s) could not be asked yet${reach.failed.length?' and '+reach.failed.length+' did not answer':''}. The room keeps retrying on its own; if it lasts, check your connection`;
   }
   /* `thread` is the id of the root whose conversation is open, or null for the channel.
    * Cleared on every room/channel change — a thread belongs to one channel. */
@@ -4054,7 +4089,8 @@
         })();
       }
       try{
-      const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
+      const controlRead=await queryControlUntilAsked(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
+        completeControl=controlRead.wraps,fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       if(!currentOwner())return;
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       if(!currentOwner())return;
@@ -4068,9 +4104,7 @@
          *
          * The numbers are cheap and they are the whole diagnosis: relays tried, wraps held after
          * the fetch, and how many of those were new. */
-        throw new Error('no channels readable yet — ' + (relays||[]).length + ' relay(s) asked, '
-          + (controlWraps||[]).length + ' control event(s) held, '
-          + (fetchedControl||[]).length + ' new');
+        throw new Error(unreadableControlMessage(controlRead.reach,relays,(controlWraps||[]).length,(fetchedControl||[]).length));
       }
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       const fetchChannel=async channel=>{

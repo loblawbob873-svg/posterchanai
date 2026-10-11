@@ -1255,7 +1255,7 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
@@ -1263,7 +1263,7 @@
       const slot=u=>authScope?u+'\0plane:'+authScope.pubkey:u;
       const blocked=u=>{try{return this._queryFromBlockedHosts.has(new URL(String(u)).hostname.toLowerCase());}catch(_){return true;}},
         now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
-        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
+        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && (urgent || (!this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now)) && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
         .slice(0, max);
       /* AN EMPTY ANSWER IS NOT AN ANSWER UNLESS SOMEBODY ANSWERED — say which relays did.
        *
@@ -1281,6 +1281,12 @@
       if(report){for(const u of targets)note('asked',u);
         for(const u of [...new Set((urls||[]).filter(Boolean))])if(!targets.includes(u))
           note(Number(this._queryFromCooldown.get(slot(u))||0)>now?'cooled':'held',u);}
+      /* `urgent` IS FOR A CALLER THAT HOLDS NOTHING AT ALL. The failure cooldown and the one-read-per-
+       * relay rule protect relays from background ticks; they must not decide that a room somebody is
+       * looking at, with nothing on screen, gets no read because another room's read is in flight on
+       * the same relay or because the radio dropped once (Concord's control read passes it only while
+       * it holds no control event). Such a read opens its own socket, leaves the other read's marker
+       * alone, and still cools the relay down if it fails. */
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
@@ -1289,7 +1295,7 @@
         const stop = () => fin('abort');
         const fin = (outcome='failure') => { if (done) return;if(authScope&&!authScope.current())outcome='abort'; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (signal) signal.removeEventListener('abort', abort);
-          Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(slot(u));
+          Relay._queryFromStops.delete(stop);if(owns)Relay._queryFromActive.delete(slot(u));
           if(outcome==='failure'){
             note('failed',u);
             Relay._queryFromCooldown.set(slot(u),Date.now()+Math.max(30000,Number(failureCooldown)||0));
@@ -1302,7 +1308,7 @@
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve(got); };
         if (signal){ if (signal.aborted) return fin('abort'); signal.addEventListener('abort', abort, {once:true}); }
-        Relay._queryFromActive.add(slot(u));Relay._queryFromStops.add(stop);
+        const owns=!Relay._queryFromActive.has(slot(u));if(owns)Relay._queryFromActive.add(slot(u));Relay._queryFromStops.add(stop);
         /* Arm at construction, not only EOSE: switching windows may abort this socket before it
            answers, and the four-second owner timer must not immediately recreate it. */
         if(minInterval>0)Relay._queryFromPurposeCooldown.set(slot(u)+'\0'+purpose,Date.now()+minInterval);
