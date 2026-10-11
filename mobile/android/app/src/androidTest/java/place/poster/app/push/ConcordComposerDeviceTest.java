@@ -63,10 +63,16 @@ public class ConcordComposerDeviceTest {
                     nativeFocus.contains("true|visible"));
 
             String js = "(()=>{window.__ccDeviceResult='pending';"+
-                    "const old=localStorage.getItem('pc.concord.invites');"+
-                    "localStorage.setItem('pc.concord.invites',JSON.stringify([{name:'Device draft gate',"+
+                    // Communities belong to the signed-in ACCOUNT (pc.concord.rooms.v1.<pubkey>, since
+                    // 4d2c22f6e); the emulator runs signed out, so give Concord an account to keep the
+                    // room under -- this test is about the draft and focus surviving repaints, not identity.
+                    "const v0=__PC.viewer,pk=(v0().pubkey)||'d'.repeat(64);"+
+                    "if(!v0().pubkey)__PC.viewer=()=>Object.assign(v0(),{pubkey:pk,npub:'npub1devicetest'});"+
+                    "const RK='pc.concord.rooms.v1.'+pk;window.__ccDeviceRK=RK;"+
+                    "const old=localStorage.getItem(RK);"+
+                    "localStorage.setItem(RK,JSON.stringify([{name:'Device draft gate',"+
                     "naddr:'device-draft-gate',local:true,channels:[{name:'general',private:false}]}]));"+
-                    "localStorage.setItem('pc.concord.active','0');"+
+                    "localStorage.setItem('pc.concord.active.v1.'+pk,'0');"+
                     // Earlier device tests deliberately exercise desktop mode. MainActivity and its
                     // WebView survive between those tests, so switchView would correctly route the
                     // request into a desktop window while this test looked in the classic feed. Use
@@ -97,8 +103,8 @@ public class ConcordComposerDeviceTest {
                     "if(tries++<50){setTimeout(seed,100);return;}throw new Error('composer stayed hidden');}"+
                     "a.value='draft survives repaint';window.__ccDeviceOldInvites=old;"+
                     "window.__ccDeviceResult='ready-for-touch';"+
-                    "}catch(e){if(old===null)localStorage.removeItem('pc.concord.invites');"+
-                    "else localStorage.setItem('pc.concord.invites',old);window.__ccDeviceResult='error:'+e;}};"+
+                    "}catch(e){if(old===null)localStorage.removeItem(RK);"+
+                    "else localStorage.setItem(RK,old);window.__ccDeviceResult='error:'+e;}};"+
                     "seed();return true;})()";
             eval(web, js);
             String ready = "";
@@ -143,9 +149,9 @@ public class ConcordComposerDeviceTest {
                     + "requestAnimationFrame(()=>{requestAnimationFrame(()=>{const b=document.querySelector('#cc-input');"
                     + "window.__ccDeviceResult=JSON.stringify({value:b&&b.value,start:b&&b.selectionStart,"
                     + "end:b&&b.selectionEnd,initiallyFocused,focused:document.activeElement===b,replaced:a!==b});"
-                    + "if(old===null)localStorage.removeItem('pc.concord.invites');else localStorage.setItem('pc.concord.invites',old);"
+                    + "if(old===null)localStorage.removeItem(window.__ccDeviceRK);else localStorage.setItem(window.__ccDeviceRK,old);"
                     + "delete window.__ccDeviceOldInvites;});});}catch(e){"
-                    + "if(old===null)localStorage.removeItem('pc.concord.invites');else localStorage.setItem('pc.concord.invites',old);"
+                    + "if(old===null)localStorage.removeItem(window.__ccDeviceRK);else localStorage.setItem(window.__ccDeviceRK,old);"
                     + "delete window.__ccDeviceOldInvites;window.__ccDeviceResult='error:'+e;}})()");
             String result = "";
             for (int i = 0; i < 80; i++) {
