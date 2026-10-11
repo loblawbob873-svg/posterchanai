@@ -1252,9 +1252,27 @@ window.PCSettingsFactory = function(dep){
           const read=()=>H.screenReport().then(r=>{ rep=Object.assign({}, r||{}, {
                 cssTop:getComputedStyle(document.documentElement).getPropertyValue('padding-top')||'',
                 innerHeight:innerHeight, vvTop:Math.round((window.visualViewport||{}).offsetTop||0),
-                scrollTop:(document.scrollingElement||{}).scrollTop||0});
+                scrollTop:(document.scrollingElement||{}).scrollTop||0,
+                /* THE WIDTH HALF. A Fold's "image cuts off when unfolded" arrived with every bar inset and no
+                   width at all, so a page cut off at the side was invisible to the tool built to find it. */
+                innerWidth:innerWidth, devicePixelRatio:window.devicePixelRatio||1,
+                zoom:getComputedStyle(document.body).zoom||'1',
+                vvWidth:Math.round((window.visualViewport||{}).width||innerWidth), vvScale:(window.visualViewport||{}).scale||1,
+                ...(()=>{ /* content wider than the box that shows it. The page clips sideways overflow
+                   (overflow-x:hidden), so the document's own width never grows -- a cut-off is only
+                   visible as a container whose content is wider than itself; say which one. */
+                  let best=0, where='';
+                  for(const [n,el] of [['page',document.documentElement],['body',document.body],
+                      ['app',document.querySelector('.app')],['main',document.querySelector('.main')],['feed',document.querySelector('#feed')]]){
+                    if(!el) continue;
+                    const over=Math.max(0,(el.scrollWidth||0)-Math.max(el.clientWidth||0, n==='page'?innerWidth:0));
+                    if(over>best){ best=over; where=n; }
+                  }
+                  return { overflowX:best, overflowIn:where };
+                })()});
               if(sum) sum.textContent = rep.error ? ('could not measure: '+rep.error)
-                : (rep.model+' · Android API '+rep.sdk+' · status bar '+(rep.statusTopIgnoringVisibility!=null?rep.statusTopIgnoringVisibility:rep.stableTop)+'px · page starts at '+rep.pageTopOnScreen+'px · '+(rep.overlapTop>0?('⚠ '+rep.overlapTop+'px under the status bar'):'clear of the status bar'));
+                : (rep.model+' · Android API '+rep.sdk+' · status bar '+(rep.statusTopIgnoringVisibility!=null?rep.statusTopIgnoringVisibility:rep.stableTop)+'px · page starts at '+rep.pageTopOnScreen+'px · '+(rep.overlapTop>0?('⚠ '+rep.overlapTop+'px under the status bar'):'clear of the status bar')
+                   +' · page '+rep.innerWidth+'×'+rep.innerHeight+' (zoom '+rep.zoom+')'+(rep.overflowX>1?(' · ⚠ '+rep.overflowX+'px wider than the screen'):''));
             }).catch(e=>{ if(sum) sum.textContent='could not measure: '+((e&&e.message)||e); });
           read();
           if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'screen report copied'); });
