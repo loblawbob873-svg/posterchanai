@@ -33,34 +33,43 @@ NEON = {"cyan": (0, 240, 255), "magenta": (255, 43, 214), "yellow": (249, 248, 1
         "green": (57, 255, 136), "red": (255, 59, 92), "dim": (96, 104, 140), "text": (214, 222, 255),
         "panel": (34, 26, 64), "bg": (10, 9, 24)}
 
-# The PosterChan character, from static/icon-512.png (head and shoulders), 28x26 pixels: "......" is transparent.
+# The PosterChan character's head, from static/icon-512.png (box-then-lanczos downscale, light unsharp,
+# blacks lifted off a dark-violet backdrop so the hood keeps its shape on a black terminal), 32x34 pixels.
 LOGO = (
-    "........................................................................................................................................................................",
-    "....................................................................................000002..............................................................................",
-    "..............................................................................473e1eb59a01383017........................................................................",
-    "..............................................................................54481be2c20a82670d........................................................................",
-    "..................................................................462619..................37322142424b75737a58555e......................................................",
-    "....................................0705007b610437300a682607d45a02dc630bc14900a7410066300c......b1a9a3e5c9b7d8b39e404151................................................",
-    "..........................................e5ba0888631ede8027ffbe49e9ac48e8ac72f5b881f2832cac5808......9e7e76fdceb792848632333f..........................................",
-    "................................................67543ef4c265f9b655f0a130f5d8c2fcf9f8e7c6a9f5932dab5304......8d84806e6a7434353b..........................................",
-    "....................................52505c86838c77572bffa921ed9533dda461e1bc9df2e5dbd1bdb3c38957ec74137535000006175e5b66464546..........................................",
-    "..............................434352e3d2cb8d7c7a915011ff9009dd9f6bcfb6a6ecd3bdf2e5daddc4bcd9a37eb04d12aa4a03..................060605....................................",
-    "..............................4e505ff3cab26457538e480fee6e07c8814fdac2b4e2cdc0f8e4d8ffd1bae5b398ac4413823905....................................090a0a080809............",
-    "..............................6e6f77fae5d6413126843a0cd5600bc65316e7af95ffe6daf8e4dafff8edb68679d45b04563a1f........................070707..............................",
-    "..............................727077817b763c261a421c0dcb7617dc5c07b26655cdc0c3f0e7e2d8bebdb56e3c8a571a0304060d0c0b............0c0d0c..................030404060607......",
-    "......................................................9b5c20fd9b24d746008c350ac7998de6a88d9c6e3a371504070706..............................0b0b0b09090a000000............",
-    "..............................000000..................533419cb87336e340d9a4906ac7c57887160562004c15707....................................000000000000..................",
-    "......................................................392a1bc26c1b973b0853301200050c......65371eff941fd18724..............................030302........................",
-    "........................040404080809..................5a4624e17111d16009563c1c......42413f......664722ffc253c47821............0a0a0a0c0c0b..................6c4a386c4c36",
-    "..................0a0a0a0505050a0a0b..................b57c26fa8613874911......4d4c4d3a3a3b484747......bc8029da8318714013..........................................b46d2d",
-    "............090909......050506............02070d5a4122e89c35bb691a............4f4f513f40404e4c4c......774011e5750564350c......6d411a8e5f35..................885932af6d30",
-    "............0506090a08050000000c0c0b0b0c0c......9b703be3a543462d19............575758......494644......5f3413de6c074b2809......58270cfe8512d28931bf7d37d28430f88c225f3f31",
-    "............7759434a3730..................593d22b57c2cba741d..................444444......453d38......623411a951080e0703......48230ed04e01f57c0cff9f19e4781a773b20......",
-    "............b37b40..................4d4549a8702dc96906814511......0202023738383e3f40..................5e3111......050606......3b1c0bd1550594431fbe5f17ef9431484143......",
-    "............d9832a8d6742413737715743e79138bb5f10cd6309813c07040508......3c3c3e................................................2d1609d75c0882522f......ac6126ec9d3e......",
-    "............442c2ec87127d0762bec8421cb590e613f3d7a5238793709..................................................................251002b75c25b05e29............ec9534503d36",
-    "........................3b3139dc731e532825......4a4349........................................................................200d00774632844832............bf7732423334",
-    "........................4f4037d1661d........................32323f............................................................0e0a09......6a433b............814b2d......",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14343232441a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14342d2d331a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14343232382e2e2e2d2d2c3232471a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434302f422526232e2e2e2e2e2e33323e1a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14342e2e2e2d2d2f2e2e2e1a14342b2c431a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a1434252531333447262831584600f0ca047b60052e2e2f3534411a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14341a143431314335383c3336393c3c433c3947252c4d5f4f09ffff00fff600ffe2002e2e2e282a3d1a14341a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a14341a14343030422e312d1a14341a14341a1434302f282a2b31816503ffea00ffe500fffd00412e001a143427283c1a14341a14341a14341a14341a14341a14341a14341a1434",
+    "1a14341a14341a14341a14341a14341a14341a14341a14341a143435344830302e1a14341a14341a14341a14341a14341a14341a14341a1434765c0fffd700926a002b2b323736471a14341a143425252f1a14341a14341a14341a14341a1434",
+    "1a143426263e2a2a3e1a14341a14342d2d3b1a14341a14343d3d4f4343431a14341a14341a14341a14341a14341a14341a14341a14341a14342427351a1434533e0e2c2c2e1a143424242f2727302c2d401a14342424301a14341a14341a1434",
+    "3d3d46242523292929292a282c2c2b2d2e2e2b2b2a2625241a143427292e2424253c1b1877270778260252190a29212320272a1a14341a143434312c1a14341a14341a1434706f70c6beb9adb0abffffffdfcfbf1a14341a14341a14341a1434",
+    "3434402c2d2c2e2e2e2e2e2e2e2e2f2e2e2f2e2e2f292a2d2d2d2f722f01b62700db4a00ff6d00ff4a00f54f00f24900b12600631b0328232324282f1a14341a1434383d3efffffbfff3e4f7f7f1dbb79cffcfa79d9da42d2d2f1a14341a1434",
+    "1a14341a14342e2e2e2e2e2f9f7a02ffe900c0910b2c2c30793b0aff5c00ce3c03ff8700fd7600ea6c10a94204ea5000ff7f00f14c00ef5c00a94800331f182a2b2f1a1434cfc8c3a78577c0a396ccb3a6e0916bffffff3d45562c2c301a1434",
+    "1a1434343443292a2e362509ffff00ffff00c4a2022c2a2ff76a11ff6e00ff9800fbaa1cffcd4ff1cc58aa4409ea933cffbd1fd56711c63a00ff7500ff8300691e032e2e2e3e3532e1a49c8d5346c4b9b8da9d7ef7c9b0fff8e867616a1a1434",
+    "1a14341a1434393a442e2e2fae8202ffff003831085c2b2ff4911bffc112f4a227f9cf93ffd750eea922d69270fffffbefc89afdfae9e0a680c34000ff9e17ff91006e27012e2e2e5d5550cea197f2b69effc4abffc0a1a78c8a9d99a0898686",
+    "1a14341a14341a14341a14341a14348867053a303d846350ffcb50ffdf96f3bb67fecb7cffb82bfbac10f0b085fff8fcfdf5edfff3eaffffffecc29ee49a44fba021ffa0098f3d022e2e2e2e2e2e897c76fff1e6ffffed1a14342e2e2e323240",
+    "1a14341a14341a14341a14341a14342e2e2e686a7c422d13ffde76feca6ef4a131ffa126f5921effb018e49b61fffaf7fdebdafff3e6efd7ccdebdb5d79251b5561eff9216ff9e005b250a2e2e2e2e2e2e1a14349b97949f9da13c3d522f313d",
+    "1a14341a14341a14342425305e606d4c4c403e485a422804ffd849fea91cf58e0eff970bd47c31ffb32bca7c37fceae9fffff1e1c9bfe1b4a3fffffaf8c395c4660ee1701af47902ff81002a25262e2e2e1a14341a1434b2afa8f4ece2767571",
+    "1a14342929312b2b32989498fdeae2b6a9ae2d2d2fbd7821ffbd13fc9c15f68204ef9737d1b396dea451d8ad7acea48efffef6fff2e4f6ebdda99e9cad9588c6925ceb8e2da6400aff8400df62002e2e2e2931351a14342c2c3143424e383733",
+    "25252f424054d9d1d4ebe4e0e8c5bb1a14342c2625ff941bffa604ff9110e56b00eac5a7ede6eccf9757d8a97de0cec1fef5e8e8dbd26c5e58c6bfb7fffef6dda785dd8628ae4005bb4c06ff9600431e072b2c2e4d4a582626311a1434393c3c",
+    "2c2c30a8a6aaf7f2f1d8d6d3e0bca71a1434311e20fd7f0cff9a0aff8805dd6300ffdcc7f0d9d6cba38bd9a482fff9e7fffff4f9e3d8ffeedeffeee2e6c4bbb78163d06405be43065f1808ff89009441002e2e2e504c551a143427273c2e2f2a",
+    "2d2d30a5abb1f9c9adc27455ebcfc41a1434292323ff8506e96b06ff8a00e56b009c8073b0a19dcdb29ffdefddd5d3c9d7cdc7fff9eaffd7c4f0b5a1e8a895e8b190e6b46ec54c13401817f969035525001e272e3a394a1a14341a1434414144",
+    "2d2d30989da6ffe6d2e6935bdbb4a02d2d3052300cff7606c75808fc7e04ce4d00b99785fffee9ffefd3f6e4ceb7abaccbcacaffebdafdcbb2ffccadffc4a6ffd8bb9c7c65ae1f006d2008ff76032e2e2e38434d1a14341a14341a14341a1434",
+    "2d2d2f80838cfffff8ffca9d896c552e2e2ea15a0fd95f09d4670bf86400d34700cf7c45c1bab99f8b7ecf8e7affe2ccfffff3ffe7d7ffe0cefed6c1ffe2c9f8eeed730c01bd2d00e97207c65f032e2e2e3133441a14341a14341a14341a1434",
+    "525057e2e2ddfffffffac8a84b46462e2e2eee731472220acc5907ff7f00b52e02c73200c45727fab8a6ffceb7ffe2d8f9e4ddedd9d3edded6ffede1ffffffa88579910a00fa740aff971a2e2d2d2e39453030492a2a4136364c37374b33333a",
+    "2c2c31aeb0b3ffe1c3fff4cf4e5b69531a02672f103e1916cd690affa502d53a00c05e15e28b3cffeae7fff0eafff3eceeded8ebcfc6f6e1daffffffdddde0351f1fcb4106ffbe2767310f2e2e2e504e51302e341a14341a1434252625252523",
+    "1a14347f7f8dd9c1a933332e25252450230b371f16381d18984905ffba13fd6f009c1400b1522ad59a8beadedffffffffffffffffffffffffffffef4a26765411811ffd450e68b172e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2828282828291a1434",
+    "787577d4d7d72e2e2e1a143440444c6c2f0c522e19282a2ca53e03fe9c2bffc41df95200b11800590e0e521010392222948381eed5cdbfa19ac57970b56761ffcf69fa97292e2e2e2e2e2e2c2c2b2e2e2e2525252424241a14341a14341a1434",
+    "2e2e2e2e2e2e1a143436364a252a442d261e6b30086c3d15742406d96d1effde4aff8c00ff6400e04705c437002e2e2e3e1f29fba68dc97f69c88380f6c087f89e312e2e2e391c152c2a2a2e2e2e2a2a2a1a14341a14341a14341a14341a1434",
+    "2e2e2e2e2e2e5656601a14341a14342e344522252a2e2e2e2b2320c04e09ffd556d97b19ff7400ff7100ff7800cc59008a5839fbc5b7dea193ebbda3eeb1612b24202d2d30e051012926242e2e2f1a14341a14341a14341a14341a14341a1434",
+    "2b2b2b2e2e2e2325214848592525301a143431304b55546021282b652c0affbb43b278282d2d2f653911aa4d06fb7405ff9300ffbd7fffeae4e7b383371d13862a00311f1cff730094490a2d2d2f2624241a14341a14341a14341a14341a1434",
+    "2e2e2e2e2e2e48484c3c3c541a14343838451a14342424252e2e2e2d201dffa533d989212e2e2f2b2a2d2c2b2e2e2e2f2e2e2e3c26133738352a292922262be54e00662308ff7200ff8c002d24192d2d2f1a14341a14341a14341a14341a1434",
+    "1a14341a14345858661a14342f2f321a14341a14341a143423272a272627ff971ac76c0e6c1c01de4602f773042e2e2e1a14342e2e2f2e2e2e2e2e2e4f5f6b5f1c00f66000fd9314ffac16ff8f066f421227292e1a14341a14341a14341a1434",
+    "2828282b2c2c2525242626241a14341a14341a14341a14341a14341a1434ff9710ca5d037f2004d44e03f884052e2e2e525555302d2d2b2b2b1a14348f93922e2e2f873200ffa424ffc759ffb53fffa7005e381325292e1a14341a14341a1434",
 )
 
 
@@ -116,7 +125,7 @@ def _read(path, default=""):
 
 
 def read_cpu():
-    """{cpu name: (busy ticks, total ticks)} for 'cpu' and every 'cpuN'."""
+    """{cpu name: (busy ticks, total ticks, iowait ticks)} for 'cpu' and every 'cpuN'."""
     out = {}
     for line in _read(PROC + "/stat").splitlines():
         if not line.startswith("cpu"):
@@ -125,7 +134,7 @@ def read_cpu():
         vals = [int(v) for v in parts[1:]]
         idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
         total = sum(vals[:8])
-        out[parts[0]] = (total - idle, total)
+        out[parts[0]] = (total - idle, total, vals[4] if len(vals) > 4 else 0)
     return out
 
 
@@ -165,13 +174,14 @@ def disk_names():
 
 
 def read_disks():
-    """{device: (reads, read ms, writes, write ms, sectors read, sectors written, io ms)} from /proc/diskstats."""
+    """{device: (reads, read ms, writes, write ms, sectors read, sectors written, io ms, weighted io ms)} from
+    /proc/diskstats -- the counters iostat -x computes every column from."""
     want = set(disk_names())
     out = {}
     for line in _read(PROC + "/diskstats").splitlines():
         f = line.split()
         if len(f) >= 14 and (not want or f[2] in want):
-            out[f[2]] = (int(f[3]), int(f[6]), int(f[7]), int(f[10]), int(f[5]), int(f[9]), int(f[12]))
+            out[f[2]] = (int(f[3]), int(f[6]), int(f[7]), int(f[10]), int(f[5]), int(f[9]), int(f[12]), int(f[13]))
     return out
 
 
@@ -310,10 +320,13 @@ class Sampler:
     def _measure(self, a, b, dt):
         dt = max(dt, 1e-3)
         cpus = {}
-        for name, (busy, total) in b["cpu"].items():
+        iowait = {}
+        for name, (busy, total, iow) in b["cpu"].items():
             if name in a["cpu"]:
                 db, dtot = busy - a["cpu"][name][0], total - a["cpu"][name][1]
                 cpus[name] = 100.0 * db / dtot if dtot > 0 else 0.0
+                # iostat's %iowait: share of ALL cpu time spent idle with disk I/O outstanding
+                iowait[name] = 100.0 * (iow - a["cpu"][name][2]) / dtot if dtot > 0 else 0.0
         mem = read_mem()
         net = {}
         for name, (rx, tx) in b["net"].items():
@@ -326,10 +339,13 @@ class Sampler:
             if name not in a["disk"]:
                 continue
             p = a["disk"][name]
-            dr, drms, dw, dwms, dsr, dsw, dio = (v[i] - p[i] for i in range(7))
+            dr, drms, dw, dwms, dsr, dsw, dio, dwio = (v[i] - p[i] for i in range(8))
             disks[name] = {"r_s": dr / dt, "w_s": dw / dt,
                            "rkB_s": dsr * 512 / 1024 / dt, "wkB_s": dsw * 512 / 1024 / dt,
                            "r_await_ms": drms / dr if dr else 0.0, "w_await_ms": dwms / dw if dw else 0.0,
+                           # iostat's await: ms per I/O, reads and writes together; aqu-sz: average queue depth
+                           "await_ms": (drms + dwms) / (dr + dw) if (dr + dw) else 0.0,
+                           "aqu_sz": dwio / (dt * 1000),
                            "util_pct": min(100.0, dio / (dt * 1000) * 100)}
         procs = []
         ncpu = max(1, sum(1 for n in cpus if n != "cpu"))
@@ -347,7 +363,7 @@ class Sampler:
         up = float((_read(PROC + "/uptime").split() or ["0"])[0])
         return {"time": time.time(), "interval": dt, "host": socket.gethostname(), "uptime_s": up,
                 "load": [float(x) for x in load] if len(load) == 3 else [0, 0, 0], "ncpu": ncpu,
-                "cpu": cpus, "freq_ghz": core_freqs(), "temp_c": cpu_temp(), "model": cpu_model(),
+                "cpu": cpus, "iowait": iowait, "freq_ghz": core_freqs(), "temp_c": cpu_temp(), "model": cpu_model(),
                 "mem": {"total": mem.get("MemTotal", 0), "available": mem.get("MemAvailable", 0),
                         "cached": mem.get("Cached", 0) + mem.get("Buffers", 0), "free": mem.get("MemFree", 0),
                         "swap_total": mem.get("SwapTotal", 0), "swap_free": mem.get("SwapFree", 0)},
@@ -497,7 +513,8 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
     P = paint
     out = []
     # ---- header: the logo, the wordmark, the machine
-    logo = logo_rows(P, ascii_mode)
+    # The portrait needs ~17 rows. On a short terminal the stats come first: wordmark + system line only.
+    logo = logo_rows(P, ascii_mode) if rows >= 48 else []
     mark = wordmark(P, ascii_mode)
     temp = ((" %.0f" + ("C" if ascii_mode else "°C")) % snap["temp_c"]) if snap.get("temp_c") is not None else ""
     dot = "  -  " if ascii_mode else "  ·  "
@@ -505,7 +522,9 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         P.fg("text", "%s" % snap["host"], bold=True) + P.fg("dim", dot) + P.fg("violet", snap["model"] or ""),
         P.fg("dim", "up ") + P.fg("text", dur(snap["uptime_s"])) + P.fg("dim", "   load ") +
         P.fg(heat(snap["load"][0] / max(1, snap["ncpu"])), "%.2f %.2f %.2f" % tuple(snap["load"])) +
-        P.fg("dim", "   %d cores" % snap["ncpu"]) + P.fg("yellow", temp),
+        P.fg("dim", "   %d cores" % snap["ncpu"]) + P.fg("yellow", temp) +
+        P.fg("dim", "   iowait ") + P.fg(heat(min(1.0, snap.get("iowait", {}).get("cpu", 0.0) / 25.0)),
+                                          "%.1f%%" % snap.get("iowait", {}).get("cpu", 0.0), bold=True),
         P.fg("dim", "▸ " if not ascii_mode else "> ") + P.fg("magenta", "jack in") +
         P.fg("dim", ("  q quit%sc/m/p/n sort%s+/- %.1fs" % (dot.strip().join("  "), dot.strip().join("  "), snap["interval"]))),
     ]
@@ -526,6 +545,9 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
     cpu_lines = [pad(P.fg(heat(sum(sampler.hist["cpu"][-1:]) / 100), ln), inner) for ln in g]
     cpu_lines.append(pad(P.fg("text", "TOTAL ", bold=True) + sc.bar(snap["cpu"].get("cpu", 0) / 100, inner - 13) +
                          P.fg(heat(snap["cpu"].get("cpu", 0) / 100), " %5.1f%%" % snap["cpu"].get("cpu", 0)), inner))
+    iow = snap.get("iowait", {}).get("cpu", 0.0)
+    cpu_lines.append(pad(P.fg("text", "IOWAIT", bold=True) + sc.bar(min(1.0, iow / 50.0), inner - 13) +
+                         P.fg(heat(min(1.0, iow / 25.0)), " %5.1f%%" % iow, bold=iow >= 10), inner))
     per_col = 2 if inner >= 60 else 1
     cw = inner // per_col
     for i in range(0, len(cores), per_col):
@@ -562,6 +584,7 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
     nets = sorted(snap["net"].items(), key=lambda kv: (kv[0] == "lo", -(kv[1]["rx_Bps"] + kv[1]["tx_Bps"]), kv[0]))
     nets = [(n, v) for n, v in nets if v["up"] or v["rx_total"] or v["tx_total"]]
     net_lines = []
+    net_graphs: set = set()
     arrow_d, arrow_u = ("v", "^") if ascii_mode else ("▼", "▲")
     for name, v in nets[:8]:
         net_lines.append(pad(P.fg("yellow", "%-12s" % name[:12], bold=True) +
@@ -571,26 +594,38 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         hist = sampler.hist["net"].get(name, [])
         top = max(hist) if hist and max(hist) > 0 else 1
         if name != "lo":
+            net_graphs.add(len(net_lines))
             net_lines.append(pad(P.fg(_lerp(NEON["cyan"], NEON["magenta"], 0.5),
                                       braille_graph(hist, rin, 1, top, ascii_mode)[0]), rin))
     if not net_lines:
         net_lines.append(pad(P.fg("dim", "no interfaces"), rin))
     net_box = sc.panel("NETWORK", net_lines, right_w, "yellow")
 
-    # ---- disks: iostat -x
-    disk_lines = [pad(P.fg("dim", "%-10s %7s %7s %9s %9s %8s %8s %6s" %
-                           ("device", "r/s", "w/s", "rd/s", "wr/s", "r_await", "w_await", "util")), rin)]
-    for name, d in sorted(snap["disks"].items(), key=lambda kv: (-kv[1]["util_pct"], kv[0]))[:10]:
-        lat = max(d["r_await_ms"], d["w_await_ms"])
-        disk_lines.append(pad(
-            P.fg("yellow", "%-10s" % name[:10], bold=True) +
-            P.fg("text", " %7.1f %7.1f" % (d["r_s"], d["w_s"])) +
-            P.fg("cyan", " %9s" % human(d["rkB_s"] * 1024, "B", "/s")) +
-            P.fg("magenta", " %9s" % human(d["wkB_s"] * 1024, "B", "/s")) +
-            P.fg(heat(min(1, d["r_await_ms"] / 50)), " %6.1fms" % d["r_await_ms"]) +
-            P.fg(heat(min(1, d["w_await_ms"] / 50)), " %6.1fms" % d["w_await_ms"]) +
-            P.fg(heat(d["util_pct"] / 100), " %5.1f%%" % d["util_pct"]) +
-            ("" if lat < 100 else P.fg("red", " !")), rin))
+    # ---- disks: iostat -x. The worst latency first (await, then %util): the disk that is the bottleneck is the top
+    # row. await = ms per I/O, reads and writes together; aqu-sz = average queue depth. r_await/w_await when wide.
+    wide = rin >= 90
+    hdr = "%-10s %7s %7s %9s %9s %8s %6s" % ("device", "r/s", "w/s", "rd/s", "wr/s", "await", "aqu-sz")
+    if wide:
+        hdr += " %8s %8s" % ("r_await", "w_await")
+    disk_lines = [pad(P.fg("dim", hdr + " %6s" % "util"), rin)]
+
+    def lat_col(ms):                     # green under 5 ms, magenta by ~25, red from 50
+        return heat(min(1.0, ms / 50.0))
+    order = sorted(snap["disks"].items(), key=lambda kv: (-kv[1]["await_ms"], -kv[1]["util_pct"], kv[0]))
+    for name, d in order[:10]:
+        row = (P.fg("yellow", "%-10s" % name[:10], bold=True) +
+               P.fg("text", " %7.1f %7.1f" % (d["r_s"], d["w_s"])) +
+               P.fg("cyan", " %9s" % human(d["rkB_s"] * 1024, "B", "/s")) +
+               P.fg("magenta", " %9s" % human(d["wkB_s"] * 1024, "B", "/s")) +
+               P.fg(lat_col(d["await_ms"]), " %6.1fms" % d["await_ms"], bold=d["await_ms"] >= 20) +
+               P.fg(heat(min(1.0, d["aqu_sz"] / 8.0)), " %6.2f" % d["aqu_sz"]))
+        if wide:
+            row += P.fg(lat_col(d["r_await_ms"]), " %6.1fms" % d["r_await_ms"]) + \
+                P.fg(lat_col(d["w_await_ms"]), " %6.1fms" % d["w_await_ms"])
+        row += P.fg(heat(d["util_pct"] / 100), " %5.1f%%" % d["util_pct"])
+        if d["await_ms"] >= 100 or d["util_pct"] >= 95:
+            row += P.fg("red", " !", bold=True)
+        disk_lines.append(pad(row, rin))
     if len(disk_lines) == 1:
         disk_lines.append(pad(P.fg("dim", "no block devices"), rin))
     disk_box = sc.panel("DISK I/O - latency" if ascii_mode else "DISK I/O · latency", disk_lines, right_w, "violet")
@@ -608,6 +643,25 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
     if not fs_lines:
         fs_lines.append(pad(P.fg("dim", "no filesystems"), rin))
     fs_box = sc.panel("FILESYSTEMS", fs_lines, right_w, "green")
+
+    # ---- fit: the right column must leave room for the filesystems AND a few processes. A node with many
+    # interfaces and disks (nas.lan: libvirt bridges, 11 block devices) pushed FILESYSTEMS off a 40-row screen.
+    # Shed in order of least value: the network graphs, then the least busy disks (they are sorted by %util).
+    budget = rows - len(out) - 6
+    if cols >= 100:
+        budget = max(budget, len(cpu_box + mem_box))
+    stack = (lambda: len(net_box) + len(disk_box) + len(fs_box)) if cols >= 100 else \
+        (lambda: len(cpu_box) + len(mem_box) + len(net_box) + len(disk_box) + len(fs_box))
+    if stack() > budget and net_graphs:
+        net_lines = [ln for i, ln in enumerate(net_lines) if i not in net_graphs]
+        net_box = sc.panel("NETWORK", net_lines, right_w, "yellow")
+    if stack() > budget and len(disk_lines) > 2:
+        keep = max(1, len(disk_lines) - 1 - (stack() - budget) - 1)       # header row + kept rows + "more"
+        hidden = len(disk_lines) - 1 - keep
+        if hidden > 0:
+            disk_lines = disk_lines[:1 + keep] + [pad(P.fg("dim", "  +%d more (idle first)" % hidden), rin)]
+            disk_box = sc.panel("DISK I/O - latency" if ascii_mode else "DISK I/O · latency", disk_lines, right_w,
+                                "violet")
 
     if cols >= 100:
         left, right = cpu_box + mem_box, net_box + disk_box + fs_box
