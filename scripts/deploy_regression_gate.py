@@ -173,6 +173,11 @@ TESTS = (
     'tests/test_drafts_nostr_only_accounts.py',
     'tests/test_tor_pool_least_busy.py',
     'tests/client/test_note_media_stays_where_it_was_written_full_app.py',
+    'tests/test_musicgeni_mp3.py',
+    'tests/client/test_generated_song_to_mp3_full_app.py',
+    'tests/test_bot_musicgeni.py',
+    'tests/test_bot_runs_only_the_command_you_typed.py',
+    'tests/test_every_bot_command.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

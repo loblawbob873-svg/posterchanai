@@ -1828,7 +1828,7 @@ window.PCAiFactory = function(dep){
     // the server, not https://localhost, in the bundled app. The URL passed to _aiFileActions stays relative
     // so its fetch (re-upload) goes through the shim, which adds credentials for the authed /api/files/ call.
     src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u,'video',a)));
-    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio',a)));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></audio></div>`+_aiFileActions(u,'audio',a)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
     src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img alt="Generated image" src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image',a)));
@@ -2028,12 +2028,19 @@ window.PCAiFactory = function(dep){
       if(btn){ _btnText(btn, how==='shared'?'✓ shared':'✓ downloaded'); btn.disabled=false; }
     }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn, was||'Download'); } }
   }
+  /* The name the song travels under. `extractaudio` names its MP3 after the video it was given, and both
+   * Convert buttons used to hand it `song.mp4` — so every converted song came back as `song.mp3`, and a
+   * phone's Download folder filled with song.mp3, song (1).mp3, … that you have to play to tell apart. */
+  function _songFile(ext){
+    const d=new Date(), p=n=>String(n).padStart(2,'0');
+    return `posterchan-song-${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  }
   // Branded MP4 artifact → MP3, via the same `extractaudio` command a user could type.
   async function mp3FromFileUrl(u, btn){
     if(btn){ btn.disabled=true; _btnText(btn,'converting…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
-      await aiAddFiles([new File([blob], 'song.mp4', { type:blob.type||'video/mp4' })]);
+      await aiAddFiles([new File([blob], _songFile('mp4'), { type:blob.type||'video/mp4' })]);
       const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
       aiSend();
       if(btn){ _btnText(btn,'Convert to MP3'); btn.disabled=false; }
@@ -2181,7 +2188,7 @@ window.PCAiFactory = function(dep){
     if(btn){ btn.disabled=true; _btnText(btn,'converting…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      await aiAddFiles([new File([bin], 'song.'+m.ext, { type:m.mime })]);
+      await aiAddFiles([new File([bin], _songFile(m.ext||'mp4'), { type:m.mime })]);
       const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
       aiSend();
       if(btn){ _btnText(btn,'Convert to MP3'); btn.disabled=false; }

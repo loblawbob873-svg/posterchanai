@@ -59,6 +59,7 @@ get_thread_history = _pl.get_thread_history
 get_thread_images = _pl.get_thread_images
 download_image_from_url = _pl.download_image_from_url
 from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction
+from bot_commands import is_geni, command_word
 from searxng import search_web, smart_search, search_images, summarize_search_results, format_image_results, search_and_download_images
 from tts import generate_speech_with_retries, generate_narration_video
 from news import fetch_news_from_source
@@ -600,7 +601,13 @@ def process_notifications():
                     else:
                         send_reply(status, "Please provide a news source. Usage: news <source> (e.g., news drudge)", own_acct=own_acct, visibility=visibility)
 
-                elif "geni" in user_content.lower():
+                elif command_word(prompt_text, "musicgeni") or command_word(prompt_text, "videogeni"):
+                    # Song/video generation is NOT a fediverse-bot feature (an abuse surface, CLAUDE.md). It used
+                    # to fall into the image branch below ("musicgeni" contains "geni") and draw a picture.
+                    send_reply(status, "🎵 Songs and videos are made in the PosterChan app, not by this bot.",
+                               own_acct=own_acct, visibility=visibility)
+
+                elif is_geni(prompt_text):
                     if contains_bad:
                         print(
                             f"Image generation blocked due to BAD_WORD match in notification: {', '.join(BAD_WORDS)}"

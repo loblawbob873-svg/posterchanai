@@ -653,7 +653,8 @@ def _to_media_list(image_bytes=None, video_bytes=None, audio_bytes=None) -> list
                 media.append((img, "image/png"))
     if video_bytes:
         media.append((video_bytes, "video/mp4"))
-    elif audio_bytes:
+    # Not `elif`: a song is answered with its video AND its MP3. Every other caller passes one of the two.
+    if audio_bytes:
         media.append((audio_bytes, "audio/mpeg"))
     return media
 

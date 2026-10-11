@@ -225,6 +225,21 @@
         }
       }catch(_){}
     }
+    /* A <video>/<audio> of an instance ARTIFACT (/api/files/ — a musicgeni song, an effect clip) gets the
+     * same authenticated fetch. In the APK the page is https://localhost, so the media element cannot
+     * carry the session, and the branch below used to replace the player with a LINK — which opens the
+     * system browser, where there is no session either: "the links won't play / not authenticated in
+     * browser". Only our own /api/files/ path: the Bearer token is never sent to somebody else's host. */
+    if((el.tagName === 'VIDEO' || el.tagName === 'AUDIO') && !el.dataset.blobTried){
+      const url = (el.dataset.osrc || el.currentSrc || el.src || '').split('#')[0].replace(/[?&]_[ra]=\d+/g,'');
+      if(/\/api\/files\//.test(url)){
+        el.dataset.blobTried = '1';
+        try{
+          const r = await fetch(url, { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' });
+          if(r.ok){ el.src = URL.createObjectURL(await r.blob()); try{ el.load(); }catch(_){} return; }
+        }catch(_){}
+      }
+    }
     const src = el.currentSrc || el.src;
     if(el.tagName === 'IMG'){
       const v=document.createElement('video'); v.src=src; v.controls=true; v.playsInline=true;

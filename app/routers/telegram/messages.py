@@ -3,7 +3,7 @@ from .messages_command import _msg_command
 from .messages_chat import _msg_chat
 from ._common import ChatService, CommandService, _MEDIA_GROUP_CACHE, asyncio, datetime, logger, re, telegram_service, time
 
-from .senders import _send_png_as_document, _send_screenshot, asyncio, logger, re, telegram_service, time
+from .senders import _send_generated_video, _send_png_as_document, _send_screenshot, asyncio, logger, re, telegram_service, time
 
 # Telegram matches command words LITERALLY (it never calls parse_command), so it needs its own list —
 # but only of the NON-effect commands. The effects come from CommandService, because a second copy of
@@ -525,28 +525,9 @@ async def _handle_message(update, db):
                     if not await _send_png_as_document(chat_id, image_data, response_content):
                         await telegram_service.send_message(chat_id, f"{response_content}\n\n(Image failed to send)")
             elif response_type == "generated_video" and result.get("video"):
-                # Branded MP4 from musicgeni (song-over-bg) OR videogeni (generated clip): decode to
-                # a temp file and send as a Telegram video.
-                import base64 as _mv_b64, tempfile as _mv_tmp, os as _mv_os
-                _mv_path = None
-                try:
-                    _mv_bytes = _mv_b64.b64decode(result["video"])
-                    fd, _mv_path = _mv_tmp.mkstemp(prefix="tg_music_", suffix=".mp4")
-                    with _mv_os.fdopen(fd, "wb") as _f:
-                        _f.write(_mv_bytes)
-                    _mv_res = await telegram_service.send_video(chat_id, _mv_path, caption=response_content)
-                    if not _mv_res.get("ok"):
-                        logger.error(f"Failed to send generated music video: {_mv_res}")
-                        await telegram_service.send_message(chat_id, f"{response_content}\n\n(Song failed to send)")
-                except Exception as _mv_err:
-                    logger.error(f"Generated music video send error: {_mv_err}", exc_info=True)
-                    await telegram_service.send_message(chat_id, "🎵 Couldn't deliver the generated song.")
-                finally:
-                    if _mv_path and _mv_os.path.exists(_mv_path):
-                        try:
-                            _mv_os.unlink(_mv_path)
-                        except Exception:
-                            pass
+                # Branded MP4 from musicgeni (song-over-bg) OR videogeni (generated clip) — and a song's
+                # MP3 after it. The shared sender, so this and the pinned re-run cannot drift.
+                await _send_generated_video(chat_id, result, response_content)
             elif response_type == "generated_audio" and result.get("audio"):
                 # Generated song (musicgeni): decode the base64 audio to a temp file and send it
                 # as a Telegram audio message.

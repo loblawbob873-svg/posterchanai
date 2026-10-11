@@ -20,14 +20,14 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
 from config import NOSTR_NSEC, BOT_BLACKLIST, BOT_NOSTR_PUBKEYS
-from bot_commands import MEDIA_COMMANDS, NO_CAPTION_COMMANDS, BOT_HELP_TEXT
+from bot_commands import MEDIA_COMMANDS, NO_CAPTION_COMMANDS, BOT_HELP_TEXT, is_geni, command_word
 from rate_limit import SlidingWindowLimiter
 from ai import generate_reply, is_ai_configured
 import nostr as _nk
 from searxng import smart_search, summarize_search_results, search_and_download_images, web_query
 from news import fetch_news_from_source
 from core.utils import contains_bad_words, is_listed_bot
-from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction
+from posterchanai_api import process_media, capture_screenshot, fetch_ytdl_media, parse_ytdl_postaction, generate_song
 
 get_mentions = _nk.get_mentions
 get_note = _nk.get_note
@@ -47,6 +47,40 @@ _NOSTR_TOKEN_RE = re.compile(
 )
 _YTDL_COOLDOWN_SECONDS = 30
 _ytdl_last_request: dict = {}
+
+# A song holds the node's GPU for minutes, so one per person per ten minutes, and one at a time per bot (the
+# node queues behind its GPU lock anyway; a second request here would only wait in a reply nobody sees).
+_MUSIC_COOLDOWN_SECONDS = int(os.getenv("NOSTR_MUSIC_COOLDOWN", "600"))
+_music_last_request: dict = {}
+import threading as _threading
+_music_busy = _threading.Lock()
+
+
+def _musicgeni(reply, arg: str, sender: str):
+    """`musicgeni <style> [| lyrics]`: the node's own musicgeni (POST /api/media/song), answered as ONE reply
+    carrying the branded MP4 and the song as an MP3 -- a member asked for the MP3 of a song they made, and a
+    video was the only thing any surface handed them."""
+    if not arg:
+        reply("Usage: musicgeni <style> [| lyrics] -- e.g. musicgeni dreamy synthwave about the sea")
+        return
+    elapsed = time.monotonic() - _music_last_request.get(sender, -1e9)
+    if elapsed < _MUSIC_COOLDOWN_SECONDS:
+        reply(f"⏳ Please wait {int((_MUSIC_COOLDOWN_SECONDS - elapsed) / 60) + 1} min before another song.")
+        return
+    if not _music_busy.acquire(blocking=False):
+        reply("🎵 I'm already making a song -- ask me again in a few minutes.")
+        return
+    try:
+        _music_last_request[sender] = time.monotonic()
+        caption, video, mp3, err = generate_song(arg)
+    finally:
+        _music_busy.release()
+    if err or not mp3:
+        _music_last_request.pop(sender, None)    # nothing was delivered, so asking again is not "another song"
+        reply(f"🎵 I couldn't make that song: {err or 'no audio came back'}")
+        return
+    text = (caption or "🎵 Your song") + "\n\n" + ("🎬 The video, then 🎧 the MP3:" if video else "🎧 The MP3:")
+    reply(text, video_bytes=video, audio_bytes=mp3)
 
 # Abuse guard: Nostr is permissionless (anyone on any relay can mention the bot), so cap
 # requests per sender pubkey and globally. Tunable per-bot (Admin → Bots) via the
@@ -522,7 +556,18 @@ def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=Non
             reply(f"Sorry, there was an error fetching news: {e}")
         return
 
-    if "geni" in lower:
+    if command_word(lower, "musicgeni"):
+        _musicgeni(reply, prompt_text.strip()[len("musicgeni"):].strip(), sender_key)
+        return
+
+    if command_word(lower, "videogeni"):
+        # Not here: a video render holds the GPU for many minutes, and a public mention is not where that
+        # should be queued. Said, rather than falling through to the model, which would invent a video.
+        reply("🎬 Video generation is in the PosterChan app's AI chat -- I can't make videos here. "
+              "I can make you a song: musicgeni <style> [| lyrics]")
+        return
+
+    if is_geni(lower):
         if contains_bad_words(lower):
             reply("I cannot generate images for that content.")
             return

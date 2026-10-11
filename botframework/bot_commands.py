@@ -21,9 +21,33 @@ NO_CAPTION_COMMANDS = (
 # All commands that consume a file: the no-caption ones plus the generic transforms.
 MEDIA_COMMANDS = ("compress", "clip", "convert") + NO_CAPTION_COMMANDS
 
+import re as _re
+
+# `geni` is a COMMAND WORD, never a substring. Every dispatcher used to ask `"geni" in text`, and
+# "musicgeni" contains "geni": a member asked the bot in a Concord room for a song and got an IMAGE
+# (2026-10-11) -- as would "videogeni", "genius" or "ingenious". It opens the message, like every other
+# command here (the address is stripped before this is asked).
+_GENI = _re.compile(r"^\s*/?geni(?:\s|$)", _re.I)
+
+
+def is_geni(text) -> bool:
+    return bool(_GENI.match(str(text or "")))
+
+
+def clean_geni_prompt(text) -> str:
+    """The prompt with the leading command word removed -- and nothing else. `str.replace("geni", "")`
+    turned "a genius cat" into "a us cat"."""
+    return _GENI.sub("", str(text or ""), count=1).strip()
+
+
+def command_word(text, word) -> bool:
+    low = str(text or "").strip().lower()
+    return low == word or low.startswith(word + " ")
+
 BOT_HELP_TEXT = (
     "🤖 Poster-Chan — mention me with any of these:\n\n"
     "🔎 Info:  search <q> · images <q> · news <source> · geni <prompt> · screenshot <url>\n"
+    "🎵 musicgeni <style> [| lyrics] — a song, as a video and an MP3\n"
     "📥 Media (attach/link a file):  compress · clip <start> <end> · convert (img↔PDF)\n"
     "     ytdl <url> = audio, ytdl video <url> = video\n"
     "🖼 Image stamps (attach/link an image):  meme <text> · dildo · poo · cum · blood · fire · …\n"

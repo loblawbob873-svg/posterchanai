@@ -94,8 +94,9 @@ def generate_image_bytes(prompt):
         # Check if API key is set and not empty
         has_api_key = POSTERCHANAI_API_KEY and POSTERCHANAI_API_KEY.strip()
         
-        # Clean prompt (remove "geni" if present)
-        clean_prompt = prompt.replace("geni", "").strip()
+        # The leading command word only -- `.replace("geni", "")` also cut it out of "genius".
+        from bot_commands import clean_geni_prompt
+        clean_prompt = clean_geni_prompt(prompt)
 
         # Use the direct image generation endpoint
         img_url = f"{POSTERCHANAI_API_ENDPOINT}/api/generate-image"
@@ -376,6 +377,31 @@ def process_media(command, arg, media, brand_handle=None, brand_avatar=None):
         except Exception:
             continue
     return (result.get("summary", ""), out_files)
+
+
+def generate_song(prompt):
+    """`musicgeni` on this node: POST /api/media/song, which runs the SAME command as the AI chat and
+    Telegram and returns the branded MP4 and the song as an MP3.
+
+    Returns (caption, mp4_bytes_or_None, mp3_bytes, None) or (None, None, None, error_str). Slow -- a song
+    takes minutes on the GPU -- so the timeout is generous."""
+    api = f"{POSTERCHANAI_API_ENDPOINT}/api/media/song"
+    data = json.dumps({"prompt": prompt or ""}).encode("utf-8")
+    try:
+        req = request.Request(api, data=data, headers=_get_auth_headers(), method="POST")
+        resp = request.urlopen(req, timeout=1800)
+        result = json.loads(resp.read())
+    except request.HTTPError as e:
+        return (None, None, None, f"HTTP {e.code} {e.reason}")
+    except Exception as e:
+        return (None, None, None, str(e))
+    if not result.get("ok"):
+        return (None, None, None, result.get("error") or "no song was made")
+    try:
+        video = base64.b64decode(result["video"]) if result.get("video") else None
+        return (result.get("content") or "", video, base64.b64decode(result["mp3"]), None)
+    except Exception as e:
+        return (None, None, None, f"could not decode the song: {e}")
 
 
 def parse_ytdl_postaction(text):

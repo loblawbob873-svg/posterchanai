@@ -677,7 +677,14 @@ would have handled it fine).
   (`render_music_background`) then appends the `append_outro` end-card ("watermark"); result type
   `generated_video` (falls back to `generated_audio` if ffmpeg is missing). **Vocals** need lyrics,
   so with no `| lyrics` the LLM auto-writes them (`_music_write_lyrics`); `instrumental` skips that.
-  Web UI + Telegram only (NOT the fedi bots — abuse surface). The legacy REST client
+  Web UI, Telegram and the Nostr/Concord bot (NOT the fedi/Pleroma bots — abuse surface). **Every surface
+  hands over the MP3 too**: AI chat's "Convert to MP3" (`extractaudio` on the MP4, live and after reload —
+  the button rides the `!video[song]` label), Telegram sends the MP3 after the video
+  (`senders._send_generated_video`, keyed on the result's `kind: "song"`), and the bot's `musicgeni` calls
+  `POST /api/media/song` (the same command) and replies with the MP4 AND the MP3. All three use
+  `media_service.extract_audio`. **`geni` is a command WORD in the bots (`bot_commands.is_geni`), never a
+  substring** — `"geni" in text` turned `musicgeni` into an image in a Concord room;
+  `tests/test_bot_runs_only_the_command_you_typed.py` sends every app command to the bot. The legacy REST client
   (`music_service.generate_once`, only reachable via an explicit remote `music_api_base`) keeps its
   own gotchas: `/query_result` field is **`task_id_list`** (not `task_ids`), and its `result` is a
   **JSON-encoded string** whose items carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan

@@ -52,6 +52,8 @@ def bot(monkeypatch):
         "_sender_brand": (None, None),
         "_gather_media": ([("in.png", b"x", "image/png")], True),     # the mention carries a picture
         "is_ai_configured": True,
+        # musicgeni: the node's /api/media/song -- the branded MP4 and the song's MP3.
+        "generate_song": ("Generated song for: lofi rain", b"\x00\x00\x00\x18ftypmp42", b"ID3mp3", None),
     }
     state = {"stubs": stubs}
     for name, res in stubs.items():
@@ -60,6 +62,7 @@ def bot(monkeypatch):
     monkeypatch.setattr(nl, "_send_spoken", lambda reply, text: reply(text))
     monkeypatch.setattr(nl, "_TALK_ONLY", False)
     monkeypatch.setattr(nl, "_ytdl_last_request", {})
+    monkeypatch.setattr(nl, "_music_last_request", {})
     monkeypatch.setitem(sys.modules, "image_backend", types.SimpleNamespace(
         generate_image_bytes_with_retries=rec("geni", [PNG])))
     monkeypatch.setitem(sys.modules, "tts", types.SimpleNamespace(
@@ -110,6 +113,8 @@ ROWS = [
     ("what's happening in Denver?", "smart_search", "RESULTS for", None),
     ("please google rust 2.0", "smart_search", "RESULTS for rust 2.0", None),
     ("glow hello world", "process_media", "", "image_bytes"),
+    ("musicgeni lofi rain | la la la", "generate_song", "MP3", "audio_bytes"),
+    ("videogeni a cat surfing", None, "AI chat", None),
 ]
 
 
@@ -196,7 +201,8 @@ def test_every_command_the_dispatcher_knows_is_in_the_table():
     src = inspect.getsource(nl._dispatch)
     words = set()
     for line in src.splitlines():
-        if "lower" in line and ("startswith" in line or " in lower" in line or "lower ==" in line or "lower in" in line):
+        if "lower" in line and ("startswith" in line or " in lower" in line or "lower ==" in line or "lower in" in line
+                                or "command_word(lower" in line):
             words |= {w.strip() for w in re.findall(r'"(/?[a-z]+) ?"', line)}
     covered = {r[0].split()[0] for r in ROWS} | {"shot", "ss", "commands", "/help", "video", "mp3"}   # ytdl's own arguments
     missing = sorted(words - covered)

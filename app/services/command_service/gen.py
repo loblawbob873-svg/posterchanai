@@ -115,8 +115,10 @@ class _GenMixin:
     async def _musicgeni_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
         """Generate a song via the ACE-Step server. `musicgeni <style prompt> [| lyrics]`.
 
-        Returns the shared `generated_audio` shape so the web UI renders an <audio> player and
-        Telegram sends it via send_audio. Wired for web UI + Telegram only (not the fedi bots)."""
+        Returns the shared `generated_video` shape (the song over a branded PosterChan card) with
+        `has_audio` and `kind: "song"`: AI chat offers "Convert to MP3" on it (`extractaudio`), Telegram
+        sends the video AND the MP3 (`senders._send_generated_video`). Falls back to `generated_audio` when
+        the video cannot be made. Web UI + Telegram + the Nostr/Concord bot (never the fediverse bots)."""
         if not arg or not arg.strip():
             return {
                 "type": "text",
@@ -182,6 +184,9 @@ class _GenMixin:
                 # The branded MP4 wraps a real audio track, so the client can offer "Convert to MP3".
                 # videogeni's output is silent and deliberately does NOT set this.
                 "has_audio": True,
+                # A SONG, not just "a video with sound" (narrate/voice are too): Telegram follows the video
+                # with the song's MP3.
+                "kind": "song",
             }
         # Fallback: deliver the raw audio if video wrapping wasn't possible (e.g. no ffmpeg).
         return {

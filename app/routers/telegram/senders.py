@@ -82,6 +82,62 @@ async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
 
 
 
+def _song_mp3_name() -> str:
+    from datetime import datetime as _dt
+    return _dt.now().strftime("posterchan-song-%Y-%m-%d-%H%M%S.mp3")
+
+
+async def _send_song_mp3(chat_id: str, mp4: bytes) -> None:
+    """The song as an MP3 file, after its branded MP4. Telegram has no "Convert to MP3" button to fall back
+    on (the AI chat does), so a member who wanted the song itself had no way to get it here. The audio is
+    pulled out of the MP4 by the same `extract_audio` that `extractaudio` and the AI chat's Convert use --
+    one encoder for every surface. Best effort: the video has already been delivered."""
+    import os as _os, tempfile as _tmp
+    from app.services import media_service
+    path = None
+    try:
+        mp3 = await asyncio.to_thread(media_service.extract_audio, mp4, "song.mp4", "mp3")
+        fd, path = _tmp.mkstemp(prefix="tg_song_", suffix=".mp3")
+        with _os.fdopen(fd, "wb") as f:
+            f.write(mp3)
+        r = await telegram_service.send_audio(chat_id, path, title=_song_mp3_name(), caption="🎵 MP3 of the song")
+        if not r.get("ok"):
+            logger.error(f"Failed to send the song's MP3: {r}")
+    except Exception as e:
+        logger.error(f"Song MP3 extraction/send failed: {e}")
+    finally:
+        if path and _os.path.exists(path):
+            try: _os.unlink(path)
+            except OSError: pass
+
+
+async def _send_generated_video(chat_id: str, result: dict, caption: str) -> None:
+    """A `generated_video` result (musicgeni's branded MP4, videogeni's clip, narrate, effects) → a Telegram
+    video, and for a SONG (`kind == "song"`, set by musicgeni only) its MP3 as well. ONE sender for the chat
+    handler and the pinned re-run, so the two cannot drift apart again."""
+    import base64 as _b64, os as _os, tempfile as _tmp
+    data = _b64.b64decode(result["video"])
+    path = None
+    try:
+        fd, path = _tmp.mkstemp(prefix="tg_video_", suffix=".mp4")
+        with _os.fdopen(fd, "wb") as f:
+            f.write(data)
+        r = await telegram_service.send_video(chat_id, path, caption=caption)
+        if not r.get("ok"):
+            logger.error(f"Failed to send generated video: {r}")
+            await telegram_service.send_message(chat_id, f"{caption}\n\n(Video failed to send)", parse_mode="")
+    except Exception as e:
+        logger.error(f"Generated video send error: {e}", exc_info=True)
+        await telegram_service.send_message(chat_id, "Couldn't deliver the generated video.", parse_mode="")
+    finally:
+        if path and _os.path.exists(path):
+            try: _os.unlink(path)
+            except OSError: pass
+    # Even when the video was refused (too big for the Bot API, say): the MP3 is a fraction of its size.
+    if result.get("kind") == "song":
+        await _send_song_mp3(chat_id, data)
+
+
 async def _deliver_pin_result(chat_id: str, result: dict) -> None:
     """Deliver a re-run pinned command's result to a Telegram chat. Covers the result types a
     pinnable command produces (text / search / image / images / files / video / audio /
@@ -100,18 +156,7 @@ async def _deliver_pin_result(chat_id: str, result: dict) -> None:
         if not res.get("ok") and not await _send_png_as_document(chat_id, image, content or ""):
             await telegram_service.send_message(chat_id, f"{content}\n\n(Image failed to send)", parse_mode="")
     elif rtype == "generated_video" and result.get("video"):
-        path = None
-        try:
-            fd, path = _tmp.mkstemp(prefix="tg_pin_", suffix=".mp4")
-            with _os.fdopen(fd, "wb") as f:
-                f.write(_b64.b64decode(result["video"]))
-            r = await telegram_service.send_video(chat_id, path, caption=content)
-            if not r.get("ok"):
-                await telegram_service.send_message(chat_id, f"{content}\n\n(Video failed to send)", parse_mode="")
-        finally:
-            if path and _os.path.exists(path):
-                try: _os.unlink(path)
-                except OSError: pass
+        await _send_generated_video(chat_id, result, content)
     elif rtype == "generated_audio" and result.get("audio"):
         fmt = (result.get("format") or "mp3").lower()
         path = None

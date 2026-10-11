@@ -333,7 +333,8 @@ def _is_command(body: str) -> bool:
         return True
     if low.startswith(("screenshot ", "shot ", "ss ", "ytdl ", "search ", "images ", "news ")):
         return True
-    if "geni" in low or "/narrate" in low:
+    from bot_commands import is_geni, command_word
+    if is_geni(low) or command_word(low, "musicgeni") or command_word(low, "videogeni") or "/narrate" in low:
         return True
     return any(low == c or low.startswith(c + " ") for c in _media_commands())
 
@@ -514,6 +515,7 @@ def _room_reply(room, cid: str, publish, relays):
             if not url:
                 continue
             ext = (mime.split("/")[-1] or "bin").split(";")[0]
+            ext = {"mpeg": "mp3"}.get(ext, ext)
             tags.append(_imeta(url, info.get("mime") or mime, f"reply{i}.{ext}"))
 
         if items and not tags:

@@ -419,3 +419,54 @@ async def fetch_ytdl(
         "mime": result["mime"],
         "data": base64.b64encode(result["data"]).decode("ascii"),
     }
+
+
+class SongRequest(BaseModel):
+    prompt: str     # exactly what follows `musicgeni`: "<style> [| lyrics]"
+
+
+@router.post("/song")
+async def generate_song(
+    req: SongRequest,
+    db: Session = Depends(get_db),
+    _auth: bool = Depends(get_image_auth),
+):
+    """`musicgeni` for the Nostr/Concord bot: the SAME command the AI chat and Telegram run (the caption is the
+    member's own words, lyrics are written when none were given, the branded MP4, the GPU lock and the node
+    load balancer all come with it), returned as the video AND the song as an MP3.
+
+    The MP3 comes from `media_service.extract_audio` -- the encoder `extractaudio` and the AI chat's
+    "Convert to MP3" use -- so a song sounds the same whichever surface it came from. Authenticated by the
+    bot's API key like /ytdl. NOT wired into the fediverse (Pleroma) bots: an abuse surface (CLAUDE.md).
+
+    Response: {"ok": True, "content", "video"(b64 mp4 | None), "mp3"(b64)} or {"ok": False, "error"}.
+    """
+    from app.services.command_service import CommandService
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        return {"ok": False, "error": "Usage: musicgeni <style> [| lyrics]"}
+    logger.info("[MEDIA-API] song request (%d chars)", len(prompt))
+    try:
+        res = await CommandService(db)._musicgeni_command(prompt)
+    except Exception as e:
+        logger.error("[MEDIA-API] song failed: %s", e, exc_info=True)
+        return {"ok": False, "error": "Music generation failed -- try again in a moment."}
+    rtype = (res or {}).get("type")
+    if rtype == "generated_video" and res.get("video"):
+        media, name = base64.b64decode(res["video"]), "song.mp4"
+    elif rtype == "generated_audio" and res.get("audio"):
+        media, name = base64.b64decode(res["audio"]), "song." + (res.get("format") or "mp3")
+    else:
+        return {"ok": False, "error": (res or {}).get("content") or "No song was made."}
+    try:
+        mp3 = media if name.endswith(".mp3") else await asyncio.to_thread(
+            media_service.extract_audio, media, name, "mp3")
+    except Exception as e:
+        logger.error("[MEDIA-API] song MP3 extraction failed: %s", e)
+        return {"ok": False, "error": "The song was made but its MP3 could not be produced."}
+    return {
+        "ok": True,
+        "content": res.get("content") or "",
+        "video": res.get("video") if rtype == "generated_video" else None,
+        "mp3": base64.b64encode(mp3).decode("ascii"),
+    }
