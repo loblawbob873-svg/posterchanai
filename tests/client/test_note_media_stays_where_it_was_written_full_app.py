@@ -135,3 +135,41 @@ def test_pictures_render_in_the_order_they_were_written():
     assert not wrong, ("pictures are not drawn where the post put them", wrong)
     assert got["preview"] == cards["middle"], \
         ("the posted card and the composer's Preview disagree", {"preview": got["preview"], "card": cards["middle"]})
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_on_a_phone_the_inline_pictures_keep_their_order_and_fit_the_screen():
+    """The reporter is on a phone. At 390px the same cards must keep their order, and no picture,
+    text block or gallery may reach past the screen (a picture in the middle of a post is the new
+    shape on that screen: nothing drew one before)."""
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride',
+                     {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})
+        await desktop.login(b)
+        await b.js("__PC.switchView('global')")
+        await b.until("[...document.querySelectorAll('#feed article.note')].length>=%d" % len(CASES))
+        await b.until("[...document.querySelectorAll('#feed article.note img')].some(i=>i.complete&&i.naturalWidth>0)")
+        for _ in range(20):
+            got["cards"] = await b.js(CARDS)
+            if len(got["cards"]) == len(CASES):
+                break
+            await asyncio.sleep(.25)
+        got["over"] = await b.js(r"""(()=>{ const vw=document.documentElement.clientWidth, bad=[], cards=[];
+          // Measured against each CARD, not the screen: this harness is the desktop bundle, which may
+          // offset the feed by its own chrome. A card no wider than a phone, and nothing in it reaching
+          // past it, is the layout rule; a carousel's later slides sit off to the side by design.
+          for(const art of document.querySelectorAll('#feed article.note')){
+            const A=art.getBoundingClientRect(); cards.push(Math.round(A.width));
+            for(const el of art.querySelectorAll('.body img, .body .txt, .body .media-car')){
+              if(el.tagName==='IMG' && el.closest('.media-car')) continue;
+              const r=el.getBoundingClientRect(); if(r.width&&(r.right>A.right+1||r.left<A.left-1)) bad.push([el.className||el.tagName, Math.round(r.left-A.left), Math.round(r.right-A.right)]); }
+          }
+          return {vw, bad, widest: Math.max(...cards)}; })()""")
+
+    asyncio.run(desktop.with_browser("online", "", check, RELAY))
+    cards = got["cards"]
+    wrong = {k: {"expected": v[1], "drawn": cards.get(k)} for k, v in CASES.items() if cards.get(k) != v[1]}
+    assert not wrong, ("on a phone, pictures are not drawn where the post put them", wrong)
+    assert not got["over"]["bad"] and got["over"]["widest"] <= got["over"]["vw"], "a post's media reaches past a phone screen: " + json.dumps(got["over"])
