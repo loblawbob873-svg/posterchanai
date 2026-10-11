@@ -692,3 +692,59 @@
 /* An invite's # part is the room key: masked until Reveal, like the password field it replaced. */
 .bots-secret:not(.revealed){ -webkit-text-security:disc; }
 @supports not (-webkit-text-security:disc){ .bots-secret:not(.revealed):not(:focus){ filter:blur(5px); } }
+
+/* Sections inside a tab (static/js/admin-subnav.js; Admin → Relay). Pills that WRAP, never scroll sideways:
+   on a 390px phone the seven sections take three short rows. Hidden only once the script is running
+   (`.subnav-on`), so without it every section is still on the page. */
+.admin-subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 14px;
+    padding: 0 0 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+.admin-subnav .subnav-btn {
+    background: rgba(26, 26, 42, .7);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 7px 13px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    min-height: 36px;
+    max-width: 100%;
+    white-space: normal;
+}
+.admin-subnav .subnav-btn:hover { border-color: var(--accent); }
+.admin-subnav .subnav-btn.active {
+    background: var(--accent);
+    color: #04020c;
+    border-color: transparent;
+}
+.admin-subnav .subnav-all { margin-left: auto; }
+.tab-content.subnav-on > .admin-sec:not(.active) { display: none; }
+.tab-content.subnav-all > .admin-sec + .admin-sec { margin-top: 26px; }
+.admin-sec .pcdb-sub {
+    margin: 18px 0 8px;
+    font-size: 14px;
+    color: var(--accent);
+    letter-spacing: .3px;
+}
+.pcdb-stats {
+    display: grid;
+    grid-template-columns: minmax(9rem, max-content) minmax(0, 1fr);
+    gap: 4px 14px;
+    margin: 6px 0 8px;
+    font-size: 14px;
+}
+.pcdb-stats dt { color: var(--text-secondary); }
+.pcdb-stats dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+    .admin-subnav .subnav-btn { padding: 6px 11px; font-size: 13.5px; }
+    .admin-subnav .subnav-all { margin-left: 0; }
+    .pcdb-stats { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .pcdb-stats dd { margin: 0 0 8px; }
+}

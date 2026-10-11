@@ -24,6 +24,7 @@ from websockets.asyncio.server import serve
 
 from app.services.nostr import nostr_service
 from app.services import git_acceptance
+from app.services import relay_tunables
 from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
@@ -139,9 +140,10 @@ async def _collab_repo_announced(ev: dict, store) -> bool:
         return False
     return False
 
-# Per-connection protocol limits (constants — tune in code, not user-facing). Generous so
-# feature-rich clients (which open many simultaneous subscriptions for feed/notifs/profiles)
-# don't hit the cap and get a CLOSED, which some clients render as an unhealthy/red relay.
+# Per-connection protocol limits: the DEFAULTS of Admin → Relay → Limits (relay_tunables.LIMITS holds the same
+# numbers, and tests/test_relay_tunables.py holds the two together). Generous so feature-rich clients (which open
+# many simultaneous subscriptions for feed/notifs/profiles) don't hit the cap and get a CLOSED, which some clients
+# render as an unhealthy/red relay.
 _MAX_MESSAGE_SIZE = 512 * 1024
 _MAX_SUBS_PER_CONN = 500
 _MAX_FILTERS_PER_REQ = 25
@@ -320,6 +322,10 @@ def _read_config() -> dict:
         def gb(key, default=False):
             return str(g(key, str(default))).strip().lower() in ("1", "true", "yes", "on")
 
+        # The numeric knobs Admin → Relay → Limits / Database expose: one table (relay_tunables) for defaults,
+        # ranges and live-vs-restart, so a value stored out of range is clamped here rather than handed on.
+        tun = relay_tunables.read(lambda k: settings_store.get(k, None), log=logger.warning)
+
         seeds_raw = g("nostr_relay_wot_seeds", "")
         seeds = []
         for tok in seeds_raw.replace(",", "\n").split():
@@ -418,8 +424,11 @@ def _read_config() -> dict:
             # sample of answers) | serve (answer queries from RAM; Postgres still written first) | primary (PosterChanDB
             # ALONE, no Postgres: nostr_relay/pcdb_store.py, after scripts/posterchandb_promote.py). Env wins.
             "pcdb_mode": _pcdb_mode(g("posterchandb_mode", "") or ""),
-            "pcdb_cache_mb": gi("posterchandb_read_cache_mb", 0),
-            "pcdb_flush_s": gi("posterchandb_flush_seconds", 300),
+            "pcdb_cache_mb": tun["posterchandb_read_cache_mb"],
+            "pcdb_flush_s": tun["posterchandb_flush_seconds"],
+            # Every Database tunable, applied to whichever store is running (_configure_pcdb) -- at start AND by the
+            # live reload, since the relay process opens its store before any setting can be read.
+            "pcdb_tuning": {k: tun[k] for k in relay_tunables.PCDB},
             # No hard count cap on Postgres either (it's an age-agnostic RAM bound — would delete old
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
@@ -447,7 +456,7 @@ def _read_config() -> dict:
             "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
             "wot_max": gi("nostr_relay_wot_max", 50000),                  # cap on total members
             "wot_depth3_crawl_max": gi("nostr_relay_wot_depth3_crawl_max", 2500),  # depth-3: max FoF to crawl (flood guard)
-            "max_connections": gi("nostr_relay_max_connections", 5000),
+            "max_connections": tun["nostr_relay_max_connections"],
             # windowed ingestion
             "sync_window_sec": gi("nostr_relay_sync_window_sec", 600),
             "sync_interval_sec": gi("nostr_relay_sync_interval_sec", 120),
@@ -522,9 +531,9 @@ def _read_config() -> dict:
             "block_bridged": gb("nostr_relay_block_bridged", False),
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
             # New-post limits (spamguard.py), every route into the timeline. 0 = off.
-            "posts_per_min": gi("nostr_relay_posts_per_min", 10),
-            "same_per_hour": gi("nostr_relay_same_per_hour", 3),
-            "gift_per_recipient": gi("nostr_relay_gift_wraps_per_recipient", 300),
+            "posts_per_min": tun["nostr_relay_posts_per_min"],
+            "same_per_hour": tun["nostr_relay_same_per_hour"],
+            "gift_per_recipient": tun["nostr_relay_gift_wraps_per_recipient"],
             "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
                 ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
                  " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
@@ -555,10 +564,10 @@ def _read_config() -> dict:
             # rendered from this same value the provisioning gate enforces, so the advertisement
             # cannot drift from the rule. See app/services/git_acceptance.py.
             "repo_acceptance": g(git_acceptance.SETTING, git_acceptance.DEFAULT),
-            # protocol limits
-            "max_message_size": _MAX_MESSAGE_SIZE,
-            "max_subs_per_conn": _MAX_SUBS_PER_CONN,
-            "max_filters_per_req": _MAX_FILTERS_PER_REQ,
+            # protocol limits (Admin → Relay → Limits; defaults = the constants above)
+            "max_message_size": tun["nostr_relay_max_message_kb"] * 1024,
+            "max_subs_per_conn": tun["nostr_relay_max_subs_per_conn"],
+            "max_filters_per_req": tun["nostr_relay_max_filters_per_req"],
         }
         cfg["operator"] = _collect_operator_pubkeys(db)
         # Preserve is a SUPERSET of operator (adds NIP-05 holders + bridged users' puppets) and is
@@ -942,6 +951,8 @@ def _start_mirror(store, cfg: dict) -> None:
         m = pcdb_mirror.Mirror(path, mode, lambda: psycopg2.connect(dsn, connect_timeout=10),
                                flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
                                log=logger.info)
+        if cfg.get("pcdb_tuning"):
+            m.apply_tuning(cfg["pcdb_tuning"])
         store.attach_mirror(m)
         _mirror_ref["m"] = m
         logger.info("[nostr-relay] PosterChanDB mirror starting in %s mode at %s", mode, path)
@@ -951,6 +962,41 @@ def _start_mirror(store, cfg: dict) -> None:
 
 _mirror_ref: dict = {}
 _WS_CLOSE_WAIT = 3.0       # seconds the stop waits for clients' closing handshakes (systemd allows the whole stop 10)
+
+
+def _configure_pcdb(cfg: dict) -> dict:
+    """Admin → Relay → Database: apply cfg["pcdb_tuning"] to the RUNNING PosterChanDB (the primary store, or the
+    mirror beside Postgres). Needed at start because the relay process opens its store before it can read a
+    setting (open_store_for_settings), and after every Save by the live reload. Returns what was applied."""
+    t = cfg.get("pcdb_tuning") or {}
+    target = _mirror_ref.get("primary") or _mirror_ref.get("m")
+    if not t or target is None or not hasattr(target, "apply_tuning"):
+        return {}
+    try:
+        return target.apply_tuning(t)
+    except Exception as e:      # noqa: BLE001 -- tuning must never take the relay down
+        logger.warning("[nostr-relay] PosterChanDB tuning not applied: %s", e)
+        return {}
+
+
+# What the live reload (reload-store-config) copies from a fresh _read_config into the RUNNING config. The server
+# and its SpamGuard hold this same dict, so a limit changes for the next event/connection/REQ with no restart.
+_LIVE_CFG_KEYS = ("retention_days", "max_events", "paid_retention_enabled", "free_retention_days",
+                  "paid_retention_days", "posts_per_min", "same_per_hour", "gift_per_recipient",
+                  "max_connections", "max_subs_per_conn", "max_filters_per_req", "pcdb_tuning")
+
+
+def _apply_live_config(store, cfg: dict, fresh: dict) -> None:
+    """Admin saved the Relay tab: the settings that apply without a restart (retention, pay-to-stay, the posting
+    and protocol limits, PosterChanDB tuning) reach the running relay. max_message_size is NOT here -- websockets
+    fixed it when the listener started, so it restarts the relay instead (relay_tunables.RESTART_KEYS)."""
+    store.retention_days = fresh["retention_days"]
+    store.max_events = fresh["max_events"]
+    for k in _LIVE_CFG_KEYS:
+        if k in fresh:
+            cfg[k] = fresh[k]
+    _apply_tier_config(store, fresh)
+    _configure_pcdb(cfg)
 
 
 def mirror_stats() -> dict:
@@ -986,6 +1032,8 @@ def _open_store(cfg: dict, loop, start_mirror: bool = True):
                                max_events=cfg["max_events"], retention_days=cfg["retention_days"],
                                flush_interval=cfg.get("pcdb_flush_s") or 300, cache_mb=cfg.get("pcdb_cache_mb") or 0,
                                log=logger.info)
+        if cfg.get("pcdb_tuning"):
+            store.apply_tuning(cfg["pcdb_tuning"])
         try:
             store.open(loop)
         except PrimaryNotReady as e:
@@ -1021,6 +1069,8 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         # Opened by relay_main before the settings could be read (open_store_for_settings).
         store.max_events = cfg["max_events"]
         store.retention_days = cfg["retention_days"]
+        if _mirror_ref.get("primary") is store:
+            _configure_pcdb(cfg)    # opened with the defaults: the settings were not readable yet
         if _mirror_ref.get("primary") is not store:
             if cfg.get("pcdb_mode") == "primary":
                 cfg["pcdb_mode"] = "serve"      # primary was refused at the early open: Postgres + a serving mirror
@@ -1741,19 +1791,13 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                         # restart (symptom: "I set prune to 0 but old notes still get deleted").
                         try:
                             fresh = _read_config()
-                            store.retention_days = fresh["retention_days"]
-                            store.max_events = fresh["max_events"]
-                            cfg["retention_days"] = fresh["retention_days"]
-                            cfg["max_events"] = fresh["max_events"]
-                            # Pay-to-stay windows travel the same path (Admin saved the Relay tab).
-                            _apply_tier_config(store, fresh)
-                            for _k in ("paid_retention_enabled", "free_retention_days",
-                                       "paid_retention_days"):
-                                cfg[_k] = fresh[_k]
+                            # Retention, pay-to-stay, the posting/protocol limits and PosterChanDB tuning.
+                            _apply_live_config(store, cfg, fresh)
                             logger.info("[nostr-relay] control: store config reloaded "
                                         "(retention_days=%s, max_events=%s, pay-to-stay free=%sd "
-                                        "paid=%sd)", store.retention_days, store.max_events,
-                                        store.free_retention_days, store.paid_retention_days)
+                                        "paid=%sd, posts/min=%s, max_connections=%s)", store.retention_days,
+                                        store.max_events, store.free_retention_days, store.paid_retention_days,
+                                        cfg.get("posts_per_min"), cfg.get("max_connections"))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-store-config failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
@@ -2233,7 +2277,7 @@ def relay_status() -> dict:
                                     "accepted", "rejected", "started", "ts",
                                     "online_remote", "online_internal", "online_unknown",
                                     "online_loopback_conns", "online_confined",
-                                    "online_measured", "wot_depth") if k in st}
+                                    "online_measured", "wot_depth", "posterchandb") if k in st}
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:

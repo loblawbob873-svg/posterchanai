@@ -35,6 +35,7 @@ import numpy as np
 
 from app.services.posterchandb import cache as cache_mod
 from app.services.posterchandb import maintenance as maint_mod
+from app.services.posterchandb import tuning as tuning_mod
 from app.services.posterchandb.store import (DROPPED, ORIGINS, Store, _h, is_addressable,
                                              is_replaceable)
 
@@ -257,6 +258,21 @@ class PcdbRelayStore(RelayStore):
         self._maint = None
         self._gov = None
         self.lock_stats = {"max_hold_ms": 0.0}
+        self.words_batch = 25           # search words indexed per background step (Admin → Relay → Database)
+        self.tuning = {}                # relay_tunables values applied by apply_tuning, re-applied on open
+
+    def apply_tuning(self, t: dict) -> dict:
+        """Admin → Relay → Database, on the RUNNING store (relay_tunables.PCDB, already range-checked). Called at
+        relay start -- the relay process opens this store BEFORE it can read a setting (thread.open_store_for_settings),
+        so its constructor only ever saw the defaults -- and again by the live reload after every Save."""
+        self.tuning.update({k: v for k, v in (t or {}).items() if k.startswith("posterchandb_")})
+        if "posterchandb_flush_seconds" in self.tuning:
+            self.flush_interval = float(self.tuning["posterchandb_flush_seconds"])
+        if "posterchandb_read_cache_mb" in self.tuning:
+            self.cache_mb = float(self.tuning["posterchandb_read_cache_mb"] or 0)
+        if "posterchandb_words_batch" in self.tuning:
+            self.words_batch = max(1, int(self.tuning["posterchandb_words_batch"]))
+        return tuning_mod.apply(self.store, self._gov, self._maint, self.tuning)
 
     # ------------------------------------------------------------ lifecycle
     def open(self, loop) -> None:
@@ -281,6 +297,8 @@ class PcdbRelayStore(RelayStore):
         if self.maintenance:
             self._maint = _Housekeeper(self.store, log=self.log, snapshot_hours=1.0)
             self._maint.start()
+        if self.tuning:
+            tuning_mod.apply(self.store, self._gov, self._maint, self.tuning)
 
     def _flush_loop(self) -> None:
         while not self._stop.wait(1.0):
@@ -294,7 +312,7 @@ class PcdbRelayStore(RelayStore):
         st = self.store
         while not self._stop.is_set() and st.words_pending:
             t0 = time.perf_counter()
-            st.index_pending_words(25)
+            st.index_pending_words(self.words_batch)
             # At most a third of the GIL: a backlog of millions (a promotion) must not slow the queries being served
             # meanwhile. A search catches its own words up inline, so nothing waits on this pass.
             self._stop.wait(max(0.01, 2 * (time.perf_counter() - t0)))
@@ -349,6 +367,7 @@ class PcdbRelayStore(RelayStore):
             out.update({"wot": len(self.sidecar.wot), "kv_keys": len(self.sidecar.kv),
                         "bridge_puppets": len(self.sidecar.bridge_puppet)})
         out["max_lock_hold_ms"] = round(self.lock_stats["max_hold_ms"], 2)
+        out.update(tuning_mod.status_extras(self.store, self._gov, self._maint, words_batch=self.words_batch))
         return out
 
     # ------------------------------------------------------------ helpers: chunked access to the store

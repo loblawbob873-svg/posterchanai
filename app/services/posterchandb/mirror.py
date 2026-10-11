@@ -38,6 +38,7 @@ import time
 
 from . import cache as cache_mod
 from . import maintenance as maint_mod
+from . import tuning as tuning_mod
 from .store import DROPPED, Store
 
 CLEAN = "CLEAN"
@@ -93,6 +94,20 @@ class Mirror:
         self._words_thread = None
         self.last_diff = None
         self.pg_count = self.my_count = None
+        self.words_batch = 25
+        self.tuning = {}
+
+    def apply_tuning(self, t: dict) -> dict:
+        """Admin → Relay → Database (relay_tunables.PCDB). Kept, and re-applied when the store and the housekeeper
+        come up (they are built on the mirror's own thread, after this is first called)."""
+        self.tuning.update({k: v for k, v in (t or {}).items() if k.startswith("posterchandb_")})
+        if "posterchandb_flush_seconds" in self.tuning:
+            self.flush_interval = float(self.tuning["posterchandb_flush_seconds"])
+        if "posterchandb_read_cache_mb" in self.tuning:
+            self.cache_mb = float(self.tuning["posterchandb_read_cache_mb"] or 0)
+        if "posterchandb_words_batch" in self.tuning:
+            self.words_batch = max(1, int(self.tuning["posterchandb_words_batch"]))
+        return tuning_mod.apply(self.store, self._gov, self._maint, self.tuning)
 
     def needs_copy(self) -> bool:
         return not self.clean
@@ -120,6 +135,8 @@ class Mirror:
             self._gov = cache_mod.CacheGovernor(budget_mb=self.cache_mb, log=self.log)
             self.store = Store(self.path, flush_interval=self.flush_interval, admit=self._gov.admit, log=self.log)
             self._gov.store = self.store
+            if self.tuning:
+                tuning_mod.apply(self.store, self._gov, None, self.tuning)
             self._gov.start()
             if conn is not None:
                 self._set("copying", "copying Postgres")
@@ -146,6 +163,8 @@ class Mirror:
             # Snapshots HOURLY, never at shutdown: the stop must fit systemd's 10 s, and with a snapshot at most an
             # hour old the next start replays seconds of log instead of re-indexing everything.
             self._maint = maint_mod.Maintainer(self.store, pol, log=self.log, snapshot_hours=1.0)
+            if self.tuning:
+                tuning_mod.apply(None, None, self._maint, self.tuning)
             self._maint.start()
 
     def _index_words(self) -> None:
@@ -157,7 +176,7 @@ class Mirror:
         while not self._stop.is_set() and st.words_pending:
             # Small batches: each holds the store lock, and a query waits behind it. 300 at a time held it ~90 ms
             # (the Postgres-exact tokenizer is ~300 us an event); 25 is ~8 ms.
-            st.index_pending_words(25)
+            st.index_pending_words(self.words_batch)
             self._stop.wait(0.01)
         if self._stop.is_set():
             return
@@ -436,4 +455,8 @@ class Mirror:
                 out.update({k: v for k, v in self.store.stats().items() if isinstance(v, (int, float))})
             except Exception:      # noqa: BLE001
                 pass
+        try:
+            out.update(tuning_mod.status_extras(self.store, self._gov, self._maint, words_batch=self.words_batch))
+        except Exception:      # noqa: BLE001 -- the status line must never fail on its extras
+            pass
         return out

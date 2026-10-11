@@ -1,157 +1,622 @@
-<!-- Nostr Relay Tab -->
+<!-- Nostr Relay Tab: one section at a time (static/js/admin-subnav.js; "Show all" puts them back on one page).
+     Every input keeps its id and name, so admin.js hydrates and saves exactly as before
+     (tests/test_admin_relay_sections.py pins every key and id the tab had before it was split up). -->
 <div class="tab-content" id="tab-relay">
+    <nav class="admin-subnav" data-subnav="relay" aria-label="Relay sections">
+        <button type="button" class="subnav-btn" data-sec="general" aria-controls="relay-sec-general">General</button>
+        <button type="button" class="subnav-btn" data-sec="access" aria-controls="relay-sec-access">Access &amp; identity</button>
+        <button type="button" class="subnav-btn" data-sec="limits" aria-controls="relay-sec-limits">Limits</button>
+        <button type="button" class="subnav-btn" data-sec="sync" aria-controls="relay-sec-sync">Sync &amp; upstream</button>
+        <button type="button" class="subnav-btn" data-sec="retention" aria-controls="relay-sec-retention">Retention</button>
+        <button type="button" class="subnav-btn" data-sec="moderation" aria-controls="relay-sec-moderation">Moderation</button>
+        <button type="button" class="subnav-btn" data-sec="database" aria-controls="relay-sec-database">Database</button>
+        <button type="button" class="subnav-btn subnav-all" data-sec="all">Show all</button>
+    </nav>
+    <section class="admin-sec" id="relay-sec-general" data-sec="general" aria-label="General">
     <fieldset>
-        <legend>PosterChan client restriction</legend>
-        <label><input type="checkbox" id="nostr_relay_posterchan_clients_only" name="nostr_relay_posterchan_clients_only"> Allow PosterChan clients only (best-effort)</label>
-        <p>Accept PosterChan web/native origins or a PosterChan User-Agent. Internal bridge, bot and server connections remain available. Other connections receive: <strong>use a PosterChan client</strong>.</p>
-        <small>Client headers can be copied; this filter is not proof of which software is running. Saving a change restarts the relay and reconnects clients.</small>
-        <div class="form-group">
-            <label for="nostr_relay_posterchan_origins">Allowed PosterChan origins</label>
-            <textarea id="nostr_relay_posterchan_origins" name="nostr_relay_posterchan_origins" rows="3" placeholder="https://poster.place&#10;https://localhost&#10;capacitor://localhost&#10;app://posterchan"></textarea>
-            <small>One exact origin per line. Leave blank to use this relay's NIP-05 domain over HTTPS plus PosterChan's native app origins.</small>
-        </div>
-    </fieldset>
+            <legend>Built-in Nostr Relay (Web of Trust)</legend>
+            <div class="form-group">
+                <small>The built-in relay is this app's <strong>datastore</strong> (settings, users, bots, chats all live in its event store), so it <strong>always runs</strong> — there is no on/off toggle. It serves NIP-01 in its own thread at <code>/relay</code> on the port below, only accepts/syncs notes from a <strong>web of trust</strong>, and should be fronted with TLS (e.g. <code>wss://relay.yourdomain/</code>).</small>
+            </div>
+            <div class="form-group">
+                <label>Relay identity (operator key)</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <code id="relay-npub" class="muted small">loading…</code>
+                    <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('npub')">⧉ Copy npub</button>
+                    <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('nsec')">⧉ Copy nsec</button>
+                </div>
+                <small>This node's relay signs its datastore docs with this key. Add the <strong>npub</strong> to another node's <em>Web of Trust → Seed npubs</em> so that node accepts this one's events when used upstream. The <strong>nsec</strong> is secret — only for reusing the same operator identity across nodes.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_port">Listen port</label>
+                <input type="number" id="nostr_relay_port" name="nostr_relay_port" placeholder="3052">
+                <small>Internal port the relay binds (default 3052). Your reverse proxy upgrades <code>wss://relay.yourdomain/</code> → <code>127.0.0.1:&lt;port&gt;/relay</code>.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_disable_proxy">
+                    <input type="checkbox" id="nostr_relay_disable_proxy" name="nostr_relay_disable_proxy"> Bypass Tor proxy (connect to upstream relays directly)
+                </label>
+                <small>The relay's own sync/outbox/WoT traffic skips the built-in Tor proxy — faster and avoids the proxy-startup error spam. Doesn't affect the bots. <strong>Restart after changing.</strong></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_backup_datastore">
+                    <input type="checkbox" id="nostr_relay_backup_datastore" name="nostr_relay_backup_datastore"> Back up settings to upstream relays (disaster recovery)
+                </label>
+                <small>Broadcasts the app's <strong>encrypted</strong> config docs (settings, accounts, per-user settings, bots) to the upstream relays — they're NIP-44 ciphertext, readable only with the operator <code>nsec</code>. Lets a wiped node be rebuilt with the button below. Chat history &amp; uploads stay local. <strong>Restart after changing.</strong></small>
+                <div style="margin-top:8px">
+                    <button type="button" id="relay-backup-btn" class="btn btn-secondary">Back up settings to upstream now</button>
+                    <button type="button" id="relay-restore-btn" class="btn btn-secondary">Restore datastore from upstream</button>
+                    <span id="relay-restore-status" class="muted small"></span>
+                </div>
+                <small>Federation is incremental (only changed docs go up). <strong>Back up now</strong> re-publishes the full current config so it's all on upstream — paced over a few minutes.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_bind">Bind address</label>
+                <input type="text" id="nostr_relay_bind" name="nostr_relay_bind" placeholder="127.0.0.1">
+                <small>Default <code>127.0.0.1</code> (front with nginx). Use <code>0.0.0.0</code> only if exposing directly.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Relay info (NIP-11)</legend>
+            <div class="form-group">
+                <label for="nostr_relay_name">Name</label>
+                <input type="text" id="nostr_relay_name" name="nostr_relay_name" placeholder="PosterChanAI Relay">
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_description">Description</label>
+                <input type="text" id="nostr_relay_description" name="nostr_relay_description" placeholder="Web-of-trust relay">
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_pubkey">Admin pubkey (npub/hex)</label>
+                <input type="text" id="nostr_relay_pubkey" name="nostr_relay_pubkey" placeholder="npub1…">
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_contact">Contact</label>
+                <input type="text" id="nostr_relay_contact" name="nostr_relay_contact" placeholder="mailto:admin@…">
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_supported_grasps">Supported GRASPs</label>
+                <input type="text" id="nostr_relay_supported_grasps" name="nostr_relay_supported_grasps" placeholder="empty = claim none">
+                <small>Advertised to git-over-nostr clients as <code>supported_grasps</code>, e.g.
+                <code>GRASP-01 GRASP-08</code>. Claiming one claims every MUST in it — a capability that
+                isn't there costs a client a failed push and a wrong diagnosis, so this is empty until
+                the node earns it.</small>
+            </div>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-access" data-sec="access" aria-label="Access &amp; identity">
+    <fieldset>
+            <legend>NIP-05 identity server</legend>
+            <div class="form-group">
+                <label for="nostr_relay_nip05_enabled">
+                    <input type="checkbox" id="nostr_relay_nip05_enabled" name="nostr_relay_nip05_enabled"> Serve <code>/.well-known/nostr.json</code> from the relay
+                </label>
+                <small>The relay subprocess answers NIP-05 lookups so <code>name@yourdomain</code> verifies. Point your reverse proxy's <code>/.well-known/nostr.json</code> at the relay port (default 3052). Changes apply immediately (no restart).</small>
+            </div>
+            <div class="form-group">
+                <label for="ids_search">Identities</label>
+                <div id="ids_panel" class="blk-panel">
+                    <input type="search" id="ids_search" placeholder="Search by name, address, profile or npub…" autocomplete="off">
+                    <div class="ids-tools">
+                        <select id="ids_filter" aria-label="Show">
+                            <option value="">Everyone</option>
+                            <option value="never_posted">Never posted</option>
+                            <option value="inactive">No activity at all</option>
+                        </select>
+                        <button type="button" class="btn-secondary btn-small" id="ids_sel_all">Select shown</button>
+                        <button type="button" class="btn-secondary btn-small" id="ids_sel_none">None</button>
+                        <button type="button" class="btn-danger btn-small" id="ids_retire" disabled>Remove, unfollow &amp; block</button>
+                        <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
+                    </div>
+                    <div id="ids_list" class="blk-list"></div>
+                </div>
+                <details class="blk-raw">
+                    <summary>Edit as text (<code>name npub-or-hex</code>, one per line)</summary>
+                    <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="8" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
+                </details>
+                <small>A name here IS access to this node's features, whatever NIP-05 the person's profile shows (they may keep one of their own) — so every name listed is a member; the list just notes what their profile shows. One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_nip05_domain">Signup name domain</label>
+                <input type="text" id="nostr_relay_nip05_domain" name="nostr_relay_nip05_domain" placeholder="poster.place (blank = use the site's host)">
+                <small>Domain used for the <code>name@domain</code> auto-assigned to new web-client signups. Leave blank to use the host the client was served from.</small>
+            </div>
+            <div class="form-group">
+                <label for="nip05_grants_access">
+                    <input type="checkbox" id="nip05_grants_access" name="nip05_grants_access"> A NIP-05 identity granted here gives access to this node's features
+                </label>
+                <small>On (the default): anyone you granted a name above who has <strong>published that exact address in their own profile</strong> may use AI chat, image generation, music generation and Blossom uploads — no per-user tick in Admin → Users, no waiting for the access reconcile. The grant above is the authority; the profile only confirms they claimed it. Off: each account needs its own permissions.</small>
+            </div>
+            <div class="form-group">
+                <label for="apps_require_nip05">
+                    <input type="checkbox" id="apps_require_nip05" name="apps_require_nip05"> PosterChan apps require a NIP-05 name from this node
+                </label>
+                <small>On (the default): Mail, News, Files, Office, Git, Web Search, Torrents, Media Center, the Telegram client and render tools are for members only — a name granted above, published in their own profile. Off: <strong>any signed-in Nostr account</strong> may use them, except accounts blocked on this relay. The Monero and Exodus wallets stay members-only either way, and AI/image/music/Blossom follow the switch above.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_nip05_relays">Advertised relays</label>
+                <textarea id="nostr_relay_nip05_relays" name="nostr_relay_nip05_relays" rows="4" placeholder="wss://nos.lol/&#10;wss://relay.damus.io/"></textarea>
+                <small>Relay URLs returned for every identity above (NIP-05 <code>relays</code> hint), one per line. Blank = omit the hint.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>PosterChan client restriction</legend>
+            <label><input type="checkbox" id="nostr_relay_posterchan_clients_only" name="nostr_relay_posterchan_clients_only"> Allow PosterChan clients only (best-effort)</label>
+            <p>Accept PosterChan web/native origins or a PosterChan User-Agent. Internal bridge, bot and server connections remain available. Other connections receive: <strong>use a PosterChan client</strong>.</p>
+            <small>Client headers can be copied; this filter is not proof of which software is running. Saving a change restarts the relay and reconnects clients.</small>
+            <div class="form-group">
+                <label for="nostr_relay_posterchan_origins">Allowed PosterChan origins</label>
+                <textarea id="nostr_relay_posterchan_origins" name="nostr_relay_posterchan_origins" rows="3" placeholder="https://poster.place&#10;https://localhost&#10;capacitor://localhost&#10;app://posterchan"></textarea>
+                <small>One exact origin per line. Leave blank to use this relay's NIP-05 domain over HTTPS plus PosterChan's native app origins.</small>
+            </div>
+        </fieldset>
     <fieldset id="relay-access-policy">
-        <legend>AI, Blossom and Live Streaming access policy</legend>
-        <p>Grant AI, Blossom, image generation, music and Live Streaming access to accounts whose signed profile uses their registered NIP-05 address on this instance. Restore previously revoked access when they qualify again. Remove AI, Blossom and Live Streaming grants when they no longer qualify; accounts and stored files are preserved.</p>
-        <label><input type="checkbox" id="access-policy-enabled"> Automatically reconcile access every 15 minutes</label>
-        <div class="form-group"><label><input type="checkbox" id="access-policy-fedi" checked> Exempt Fediverse accounts</label></div>
-        <small>Admins, bots and configured processing peers keep their infrastructure access. Only names registered by this relay count; a profile claiming a name is insufficient. Disabling the policy does not restore revoked permissions.</small>
-        <div class="form-group">
-            <button type="button" id="access-policy-preview" class="btn-secondary">Preview affected access</button>
-            <button type="button" id="access-policy-run" class="btn-secondary">Reconcile access now</button>
-            <button type="button" id="access-policy-save" class="btn-primary">Save access policy</button>
-        </div>
-        <ul id="access-policy-affected" aria-label="Affected accounts"></ul>
-        <p id="access-policy-status" role="status" aria-live="polite">Open this tab to load the policy.</p>
-    </fieldset>
-
-    <fieldset>
-        <legend>Built-in Nostr Relay (Web of Trust)</legend>
-        <div class="form-group">
-            <small>The built-in relay is this app's <strong>datastore</strong> (settings, users, bots, chats all live in its event store), so it <strong>always runs</strong> — there is no on/off toggle. It serves NIP-01 in its own thread at <code>/relay</code> on the port below, only accepts/syncs notes from a <strong>web of trust</strong>, and should be fronted with TLS (e.g. <code>wss://relay.yourdomain/</code>).</small>
-        </div>
-        <div class="form-group">
-            <label>Relay identity (operator key)</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <code id="relay-npub" class="muted small">loading…</code>
-                <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('npub')">⧉ Copy npub</button>
-                <button type="button" class="btn-secondary btn-small" onclick="copyRelayKey('nsec')">⧉ Copy nsec</button>
+            <legend>AI, Blossom and Live Streaming access policy</legend>
+            <p>Grant AI, Blossom, image generation, music and Live Streaming access to accounts whose signed profile uses their registered NIP-05 address on this instance. Restore previously revoked access when they qualify again. Remove AI, Blossom and Live Streaming grants when they no longer qualify; accounts and stored files are preserved.</p>
+            <label><input type="checkbox" id="access-policy-enabled"> Automatically reconcile access every 15 minutes</label>
+            <div class="form-group"><label><input type="checkbox" id="access-policy-fedi" checked> Exempt Fediverse accounts</label></div>
+            <small>Admins, bots and configured processing peers keep their infrastructure access. Only names registered by this relay count; a profile claiming a name is insufficient. Disabling the policy does not restore revoked permissions.</small>
+            <div class="form-group">
+                <button type="button" id="access-policy-preview" class="btn-secondary">Preview affected access</button>
+                <button type="button" id="access-policy-run" class="btn-secondary">Reconcile access now</button>
+                <button type="button" id="access-policy-save" class="btn-primary">Save access policy</button>
             </div>
-            <small>This node's relay signs its datastore docs with this key. Add the <strong>npub</strong> to another node's <em>Web of Trust → Seed npubs</em> so that node accepts this one's events when used upstream. The <strong>nsec</strong> is secret — only for reusing the same operator identity across nodes.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_port">Listen port</label>
-            <input type="number" id="nostr_relay_port" name="nostr_relay_port" placeholder="3052">
-            <small>Internal port the relay binds (default 3052). Your reverse proxy upgrades <code>wss://relay.yourdomain/</code> → <code>127.0.0.1:&lt;port&gt;/relay</code>.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_disable_proxy">
-                <input type="checkbox" id="nostr_relay_disable_proxy" name="nostr_relay_disable_proxy"> Bypass Tor proxy (connect to upstream relays directly)
-            </label>
-            <small>The relay's own sync/outbox/WoT traffic skips the built-in Tor proxy — faster and avoids the proxy-startup error spam. Doesn't affect the bots. <strong>Restart after changing.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_backup_datastore">
-                <input type="checkbox" id="nostr_relay_backup_datastore" name="nostr_relay_backup_datastore"> Back up settings to upstream relays (disaster recovery)
-            </label>
-            <small>Broadcasts the app's <strong>encrypted</strong> config docs (settings, accounts, per-user settings, bots) to the upstream relays — they're NIP-44 ciphertext, readable only with the operator <code>nsec</code>. Lets a wiped node be rebuilt with the button below. Chat history &amp; uploads stay local. <strong>Restart after changing.</strong></small>
-            <div style="margin-top:8px">
-                <button type="button" id="relay-backup-btn" class="btn btn-secondary">Back up settings to upstream now</button>
-                <button type="button" id="relay-restore-btn" class="btn btn-secondary">Restore datastore from upstream</button>
-                <span id="relay-restore-status" class="muted small"></span>
+            <ul id="access-policy-affected" aria-label="Affected accounts"></ul>
+            <p id="access-policy-status" role="status" aria-live="polite">Open this tab to load the policy.</p>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-limits" data-sec="limits" aria-label="Limits">
+        <fieldset>
+            <legend>Posting limits (per author)</legend>
+            <p class="muted" style="margin:0 0 12px">Notes and replies from Nostr and the fediverse alike; past these an author's extra posts are not stored. People here post at most 5 a minute; above 10 are feed bots in bursts. Reactions, boosts and DMs are never counted.</p>
+            <div class="form-group">
+                <label for="nostr_relay_posts_per_min">New posts a minute, per author</label>
+                <input type="number" id="nostr_relay_posts_per_min" name="nostr_relay_posts_per_min" placeholder="10" min="0" max="10000">
+                <small>Default 10. Range 0–10000; <code>0</code> = off. <em>Applies within seconds of Save — no restart.</em></small>
             </div>
-            <small>Federation is incremental (only changed docs go up). <strong>Back up now</strong> re-publishes the full current config so it's all on upstream — paced over a few minutes.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_bind">Bind address</label>
-            <input type="text" id="nostr_relay_bind" name="nostr_relay_bind" placeholder="127.0.0.1">
-            <small>Default <code>127.0.0.1</code> (front with nginx). Use <code>0.0.0.0</code> only if exposing directly.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Web of Trust</legend>
-        <div class="form-group">
-            <label for="nostr_relay_wot_enabled">
-                <input type="checkbox" id="nostr_relay_wot_enabled" name="nostr_relay_wot_enabled"> Enforce Web of Trust (and run its background tasks)
-            </label>
-            <small>On: publishing is gated to the trust set, and the relay runs the trust-graph build, metadata backfill, firehose sync, and NIP-05 serving. <strong>Off</strong> (e.g. a processing node whose relay is internal): publishing is open and <strong>all of that background/cross-node work stops</strong> — the relay is a pure local store. <strong>Restart after changing.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_seeds">Seed npubs</label>
-            <textarea id="nostr_relay_wot_seeds" name="nostr_relay_wot_seeds" rows="6" placeholder="npub1…&#10;npub1…"></textarea>
-            <small>One per line (npub or hex). The trust set = these seeds <strong>+ everyone they follow</strong> (depth 1) + your own bots/users. Rebuilt automatically <strong>daily</strong>.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_depth">Depth</label>
-            <select id="nostr_relay_wot_depth" name="nostr_relay_wot_depth">
-                <option value="1">1 — seeds + their follows</option>
-                <option value="2">2 — also friends-of-friends</option>
-                <option value="3">3 — also friends-of-friends-of-friends</option>
-            </select>
-            <small>Depth 2 adds follows-of-follows; depth 3 adds another hop (much larger again). The graph rebuilds daily.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_refresh_sec">Rebuild frequency</label>
-            <select id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec">
-                <option value="86400">Daily</option>
-                <option value="604800">Weekly</option>
-                <option value="1209600">Every 2 weeks</option>
-            </select>
-            <small>How often the full follow-graph crawl runs (at the low-traffic UTC hour). New members are still admitted instantly all day; this only refreshes the friends-of-friends graph. Weekly is plenty for a deep (depth-2/3) graph.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_wot_depth3_crawl_max">Depth-3 crawl cap</label>
-            <input type="number" id="nostr_relay_wot_depth3_crawl_max" name="nostr_relay_wot_depth3_crawl_max" min="0" placeholder="2500">
-            <small>Depth-3 only: max friends-of-friends to crawl upstream (the most-trusted are kept). The FoF tier can be 30k+; crawling all of them floods upstream relays and pegs the CPU. Lower = safer. 0 = uncapped (not recommended).</small>
-        </div>
-        <div class="form-group">
-            <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>
-            <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
-            <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
-        </div>
-        <div class="form-group">
-            <label for="relayBackfillNpub">Sync a user's data</label>
-            <div style="display:flex;gap:8px">
-                <input type="text" id="relayBackfillNpub" placeholder="npub1… (one, or several comma/space separated)" style="flex:1">
-                <button type="button" id="relayBackfillBtn" class="btn-primary">⤓ Sync</button>
+            <div class="form-group">
+                <label for="nostr_relay_same_per_hour">The same post, per author per hour</label>
+                <input type="number" id="nostr_relay_same_per_hour" name="nostr_relay_same_per_hour" placeholder="3" min="0" max="10000">
+                <small>Default 3. Range 0–10000; <code>0</code> = off. <em>Applies within seconds of Save — no restart.</em></small>
             </div>
-            <span id="relayBackfillStatus" style="color:#9aa"></span>
-            <small>Pulls each user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes them resolvable/visible even if not yet reached by the backfill. Accepts <strong>one or several</strong> npubs/hex, comma- or space-separated, to batch a big sync.</small>
-        </div>
-    </fieldset>
+            <div class="form-group">
+                <label for="nostr_relay_gift_wraps_per_recipient">Gift wraps (private messages) per recipient, per 10 minutes</label>
+                <input type="number" id="nostr_relay_gift_wraps_per_recipient" name="nostr_relay_gift_wraps_per_recipient" placeholder="300" min="0" max="1000000">
+                <small>Stops a flood of encrypted gift wraps aimed at one person from filling the relay (one was seen at ~13,000 a minute). Counted by arrival, since gift wraps backdate themselves. 300 holds a busy inbox; Concord rooms are unaffected. Default 300. Range 0–1000000; <code>0</code> = off. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+        </fieldset>
 
+        <fieldset>
+            <legend>Connection &amp; protocol limits</legend>
+            <p class="muted" style="margin:0 0 12px">What one client may ask of the relay. They are advertised in the relay's NIP-11 <code>limitation</code>, so well-behaved clients stay under them. Generous on purpose: feature-rich clients open many subscriptions at once, and some draw a relay that answers CLOSED as broken.</p>
+            <div class="form-group">
+                <label for="nostr_relay_max_connections">Open connections, whole relay</label>
+                <input type="number" id="nostr_relay_max_connections" name="nostr_relay_max_connections" placeholder="5000" min="10" max="1000000">
+                <small>New sockets beyond this are refused. Default 5000. Range 10–1000000. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_max_subs_per_conn">Subscriptions open at once, per connection</label>
+                <input type="number" id="nostr_relay_max_subs_per_conn" name="nostr_relay_max_subs_per_conn" placeholder="500" min="1" max="10000">
+                <small>A REQ past this is answered CLOSED. Default 500. Range 1–10000. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_max_filters_per_req">Filters honoured in one REQ</label>
+                <input type="number" id="nostr_relay_max_filters_per_req" name="nostr_relay_max_filters_per_req" placeholder="25" min="1" max="1000">
+                <small>Extra filters in a REQ are ignored. Default 25. Range 1–1000. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_max_message_kb">Largest message (KB)</label>
+                <input type="number" id="nostr_relay_max_message_kb" name="nostr_relay_max_message_kb" placeholder="512" min="64" max="16384">
+                <small>The biggest single websocket message (an event plus its framing) the relay accepts. Default 512 KB. Range 64–16384. <strong>Saving a change restarts the relay</strong> (clients reconnect).</small>
+            </div>
+            <p class="muted small" style="margin:6px 0 0">Storage caps — feed age and the maximum number of feed events — are under <a href="#tab-relay/retention" data-sec-link="retention">Retention</a>; the depth-3 crawl cap is under <a href="#tab-relay/sync" data-sec-link="sync">Sync &amp; upstream</a>.</p>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-sync" data-sec="sync" aria-label="Sync &amp; upstream">
     <fieldset>
-        <legend>Distributed compute — share machines over Nostr</legend>
-        <div class="form-group">
-            <label for="nostr_dvm_enabled">
-                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Enable shared compute (use + serve the peers below)
-            </label>
-            <small>When on, this node joins a <strong>shared cluster</strong> with the peers below: it runs
-                AI jobs (chat / image / music / video) THEY send over Nostr, and it offloads ITS OWN jobs to
-                THEM (round-robin across itself + peers). <strong>Your own users are unaffected</strong> — this
-                node still serves them locally / via the IP LB; sharing only adds peer capacity both ways.
-                <strong>Restart to apply.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_dvm_peers">Shared peers (npub relay)</label>
-            <textarea id="nostr_dvm_peers" name="nostr_dvm_peers" rows="4" placeholder="npub1… wss://their-relay.example/relay&#10;npub1… wss://other.example/relay"></textarea>
-            <small>One peer per line: <strong>their npub + the relay URL to reach them on</strong> (space-separated).
-                <strong>Sharing is MUTUAL — if you list a peer, they may use your GPU AND you may use theirs.</strong>
-                Blank = no sharing. This is GPU-access trust, separate from the social Web of Trust above (a follow
-                does NOT grant access), and you do NOT need to add them to the seeds — the relay auto-accepts a
-                listed peer's compute jobs. (npub-only, no relay = they can use you, but you can't reach them.)
-                <strong>Restart to apply.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_dvm_blossom_url">Media (Blossom) URL</label>
-            <input type="text" id="nostr_dvm_blossom_url" name="nostr_dvm_blossom_url" placeholder="https://media.poster.place">
-            <small>image/music/video results are too big for a Nostr event (256KB cap), so the worker
-                uploads the bytes to a shared <strong>Blossom</strong> server and only the hash travels
-                over Nostr. Blank = this node's Blossom Public URL. Every node must reach ONE Blossom server.</small>
-        </div>
-    </fieldset>
+            <legend>Web of Trust</legend>
+            <div class="form-group">
+                <label for="nostr_relay_wot_enabled">
+                    <input type="checkbox" id="nostr_relay_wot_enabled" name="nostr_relay_wot_enabled"> Enforce Web of Trust (and run its background tasks)
+                </label>
+                <small>On: publishing is gated to the trust set, and the relay runs the trust-graph build, metadata backfill, firehose sync, and NIP-05 serving. <strong>Off</strong> (e.g. a processing node whose relay is internal): publishing is open and <strong>all of that background/cross-node work stops</strong> — the relay is a pure local store. <strong>Restart after changing.</strong></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_wot_seeds">Seed npubs</label>
+                <textarea id="nostr_relay_wot_seeds" name="nostr_relay_wot_seeds" rows="6" placeholder="npub1…&#10;npub1…"></textarea>
+                <small>One per line (npub or hex). The trust set = these seeds <strong>+ everyone they follow</strong> (depth 1) + your own bots/users. Rebuilt automatically <strong>daily</strong>.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_wot_depth">Depth</label>
+                <select id="nostr_relay_wot_depth" name="nostr_relay_wot_depth">
+                    <option value="1">1 — seeds + their follows</option>
+                    <option value="2">2 — also friends-of-friends</option>
+                    <option value="3">3 — also friends-of-friends-of-friends</option>
+                </select>
+                <small>Depth 2 adds follows-of-follows; depth 3 adds another hop (much larger again). The graph rebuilds daily.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_wot_refresh_sec">Rebuild frequency</label>
+                <select id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec">
+                    <option value="86400">Daily</option>
+                    <option value="604800">Weekly</option>
+                    <option value="1209600">Every 2 weeks</option>
+                </select>
+                <small>How often the full follow-graph crawl runs (at the low-traffic UTC hour). New members are still admitted instantly all day; this only refreshes the friends-of-friends graph. Weekly is plenty for a deep (depth-2/3) graph.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_wot_depth3_crawl_max">Depth-3 crawl cap</label>
+                <input type="number" id="nostr_relay_wot_depth3_crawl_max" name="nostr_relay_wot_depth3_crawl_max" min="0" placeholder="2500">
+                <small>Depth-3 only: max friends-of-friends to crawl upstream (the most-trusted are kept). The FoF tier can be 30k+; crawling all of them floods upstream relays and pegs the CPU. Lower = safer. 0 = uncapped (not recommended).</small>
+            </div>
+            <div class="form-group">
+                <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>
+                <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
+                <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
+            </div>
+            <div class="form-group">
+                <label for="relayBackfillNpub">Sync a user's data</label>
+                <div style="display:flex;gap:8px">
+                    <input type="text" id="relayBackfillNpub" placeholder="npub1… (one, or several comma/space separated)" style="flex:1">
+                    <button type="button" id="relayBackfillBtn" class="btn-primary">⤓ Sync</button>
+                </div>
+                <span id="relayBackfillStatus" style="color:#9aa"></span>
+                <small>Pulls each user's full history (profile, notes, contacts, reactions, relay list) from upstream into this relay — makes them resolvable/visible even if not yet reached by the backfill. Accepts <strong>one or several</strong> npubs/hex, comma- or space-separated, to batch a big sync.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Upstream relays (sync from / broadcast to)</legend>
+            <div class="form-group">
+                <label for="nostr_relay_upstream_relays">Relay URLs</label>
+                <textarea id="nostr_relay_upstream_relays" name="nostr_relay_upstream_relays" rows="4" placeholder="leave blank to use the same default relays as the bots"></textarea>
+                <small>One per line. <strong>Blank = the bots' default relay set.</strong> Used both to pull the WoT feed and to broadcast notes written here.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_private_relays">Private mirror relays</label>
+                <textarea id="nostr_relay_private_relays" name="nostr_relay_private_relays" rows="3" placeholder="blank = no mirroring (your notes and passwords stay on this node only)"></textarea>
+                <small>One per line. Where your users' <strong>encrypted libraries</strong> — Notes, Passwords, Budget, the files index — are copied for redundancy. They are the only data here with no second copy anywhere: everything public is already on the upstream relays above, while a note or a vault entry lives in exactly this one node, so losing this box loses it.
+                <br><strong>Point this at a relay you run</strong> (your other node), not at a public one. The bodies are ciphertext and nobody else can read them — but every event carries the author's pubkey, a stable id and a timestamp, so a copy on someone else's relay is a permanent public record of how many passwords each user has and when each one changed, and there is no taking it back. On your own relay that record is already yours. <strong>Restart after turning this on.</strong></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_send_only">
+                    <input type="checkbox" id="nostr_relay_send_only" name="nostr_relay_send_only"> Send-only — broadcast to these, don't mirror them
+                </label>
+                <small>Keeps <strong>broadcasting</strong> your own events to the relays above (outbox), but does <strong>not</strong> pull/store their events — so this node's local DB won't fill with a copy of upstream content. This is the <em>direction</em> control for the list above. Useful on a secondary node that just pushes to a primary relay. <strong>Restart after changing.</strong></small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Sync</legend>
+            <div class="form-group">
+                <label for="nostr_relay_ingest_kinds">Ingest kinds</label>
+                <input type="text" id="nostr_relay_ingest_kinds" name="nostr_relay_ingest_kinds" placeholder="1,6,7,1111,30023">
+                <small>Event kinds to sync (notes, reposts, reactions, comments, articles). Profiles, contacts &amp; relay lists are fetched automatically.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_fetch_ancestors">
+                    <input type="checkbox" id="nostr_relay_fetch_ancestors" name="nostr_relay_fetch_ancestors"> Backfill reply ancestors (complete threads)
+                </label>
+                <small>Fetch missing parent notes so replies aren't orphaned. The one place a non-WoT note is stored — only because a trusted member replied to it.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Distributed compute — share machines over Nostr</legend>
+            <div class="form-group">
+                <label for="nostr_dvm_enabled">
+                    <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Enable shared compute (use + serve the peers below)
+                </label>
+                <small>When on, this node joins a <strong>shared cluster</strong> with the peers below: it runs
+                    AI jobs (chat / image / music / video) THEY send over Nostr, and it offloads ITS OWN jobs to
+                    THEM (round-robin across itself + peers). <strong>Your own users are unaffected</strong> — this
+                    node still serves them locally / via the IP LB; sharing only adds peer capacity both ways.
+                    <strong>Restart to apply.</strong></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_dvm_peers">Shared peers (npub relay)</label>
+                <textarea id="nostr_dvm_peers" name="nostr_dvm_peers" rows="4" placeholder="npub1… wss://their-relay.example/relay&#10;npub1… wss://other.example/relay"></textarea>
+                <small>One peer per line: <strong>their npub + the relay URL to reach them on</strong> (space-separated).
+                    <strong>Sharing is MUTUAL — if you list a peer, they may use your GPU AND you may use theirs.</strong>
+                    Blank = no sharing. This is GPU-access trust, separate from the social Web of Trust above (a follow
+                    does NOT grant access), and you do NOT need to add them to the seeds — the relay auto-accepts a
+                    listed peer's compute jobs. (npub-only, no relay = they can use you, but you can't reach them.)
+                    <strong>Restart to apply.</strong></small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_dvm_blossom_url">Media (Blossom) URL</label>
+                <input type="text" id="nostr_dvm_blossom_url" name="nostr_dvm_blossom_url" placeholder="https://media.poster.place">
+                <small>image/music/video results are too big for a Nostr event (256KB cap), so the worker
+                    uploads the bytes to a shared <strong>Blossom</strong> server and only the hash travels
+                    over Nostr. Blank = this node's Blossom Public URL. Every node must reach ONE Blossom server.</small>
+            </div>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-retention" data-sec="retention" aria-label="Retention">
+    <fieldset>
+            <legend>Auto-clean (feed retention)</legend>
+            <p class="muted" style="margin:0 0 12px">Auto-clean only ever trims
+            high-volume <strong>feed</strong> content (notes/reactions/reposts/comments); <strong>profiles, contacts,
+            articles, DMs, and your local users' own events are kept forever.</strong></p>
+            <div class="form-group">
+                <label for="nostr_relay_retention_days">Auto-clean feed notes older than (days)</label>
+                <input type="number" id="nostr_relay_retention_days" name="nostr_relay_retention_days" placeholder="30">
+                <small>Deletes old <strong>notes/reactions/reposts/comments</strong> past this age. Set <code>0</code> to disable age-based cleanup.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
+                <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
+                <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>
+            </div>
+            <div class="form-group">
+                <button type="button" id="relayPruneDryBtn" class="btn-secondary">🔎 Preview auto-clean</button>
+                <button type="button" id="relayPruneBtn" class="btn-secondary">🧽 Run auto-clean now</button>
+                <span id="relayPruneStatus" style="margin-left:.5rem;"></span>
+                <small>Auto-clean runs on a schedule (shortly after each relay start, then daily). Use <strong>Preview</strong>
+                to count what the settings above would delete — do that first, it can be hundreds of thousands of notes —
+                then <strong>Run</strong> to apply it now. Save your changes before either; both read the <em>saved</em> settings.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Pay to stay (paid retention tier)</legend>
+            <p class="muted" style="margin:0 0 12px">Everything a visitor publishes <em>to this relay</em> is currently kept
+            <strong>forever</strong>. Turn this on to age out those posts after a free window, and let an author keep them
+            longer by <strong>zapping</strong> this relay's profile. <strong>Your own users are never affected</strong> —
+            accounts on this instance, NIP-05 holders, operators and bridged puppets are in the preserve set and no age rule
+            can touch them. Profiles, contacts, DMs and articles are never auto-deleted for anyone.</p>
+            <div class="form-group">
+                <label for="nostr_relay_paid_retention_enabled">
+                    <input type="checkbox" id="nostr_relay_paid_retention_enabled" name="nostr_relay_paid_retention_enabled"> Enable pay-to-stay
+                </label>
+                <small>Master switch. Off = nothing below has any effect and the prune behaves exactly as it does today.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_free_retention_days">Free tier — keep visitors' posts for (days)</label>
+                <input type="number" id="nostr_relay_free_retention_days" name="nostr_relay_free_retention_days" placeholder="0">
+                <small><strong>This is the setting that deletes things.</strong> <code>0</code> = keep forever (the default, and what
+                happens today) — nothing is ever deleted until you put a number here. Preview the auto-clean above after changing it.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_paid_retention_days">Paid tier — keep a subscriber's posts for (days)</label>
+                <input type="number" id="nostr_relay_paid_retention_days" name="nostr_relay_paid_retention_days" placeholder="0">
+                <small><code>0</code> = kept forever while subscribed. When a subscription lapses the free window applies again,
+                so a lapsed author's older posts go on the next auto-clean. A subscriber is <strong>also exempt from the feed
+                auto-clean and the count cap above</strong> — otherwise a copy of their note that reached us over the firehose,
+                rather than being published here, would still be deleted at the feed retention window. Moderation
+                (blocked words/languages/pubkeys) is <em>not</em> exempt: paying doesn't buy immunity from the block purge.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_paid_sats_per_month">Price (sats per month)</label>
+                <input type="number" id="nostr_relay_paid_sats_per_month" name="nostr_relay_paid_sats_per_month" placeholder="0">
+                <small><code>0</code> = nothing can be bought (grant days by hand below). Part-payments carry over, so small zaps add up.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_paid_lud16">Lightning address zaps are paid to</label>
+                <input type="text" id="nostr_relay_paid_lud16" name="nostr_relay_paid_lud16" placeholder="you@getalby.com">
+                <small>Required for automatic crediting: its LNURL endpoint publishes the <code>nostrPubkey</code> whose signature
+                on a zap receipt <strong>is</strong> the proof an invoice was paid. A receipt signed by anyone else is ignored.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_paid_pubkey">Zap target (npub/hex)</label>
+                <input type="text" id="nostr_relay_paid_pubkey" name="nostr_relay_paid_pubkey" placeholder="blank = this relay's admin/operator key">
+                <small>The profile people zap. Blank uses the NIP-11 admin pubkey (under General), else this node's operator key.
+                Only a <strong>profile</strong> zap counts — a zap on a single post stays an ordinary tip.</small>
+            </div>
+            <div class="form-group">
+                <button type="button" id="relayPaidRefresh" class="btn-secondary">👛 Subscribers</button>
+                <span id="relayPaidStatus" style="margin-left:.5rem;"></span>
+                <div id="relayPaidList" style="margin-top:.6rem;"></div>
+                <small>Reads the ledger (one operator-signed relay document, <code>pcai:kv:paid_retention</code>). Grant days by hand
+                for a payment that arrived another way — negative days take them back; the recipient is DMed either way.
+                <strong>You</strong> get a DM (and a Telegram message, if your admin account has one linked) on every payment;
+                subscribers are DMed on payment, <strong>7 days before expiry</strong>, and when it expires.</small>
+                <div style="margin-top:.5rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
+                    <input type="text" id="relayPaidGrantPk" placeholder="npub1… / hex" style="flex:1 1 18rem;min-width:0;">
+                    <input type="number" id="relayPaidGrantDays" placeholder="days" style="width:7rem;">
+                    <button type="button" id="relayPaidGrantBtn" class="btn-secondary">Grant</button>
+                </div>
+            </div>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-moderation" data-sec="moderation" aria-label="Moderation">
+    <fieldset>
+            <legend>Blocked languages</legend>
+            <small>Reject text notes (kind 1) written or synced in these languages. Non-Latin ones are detected by writing system (Cyrillic, CJK, Arabic, …); the Latin-script ones are detected by distinctive characters (Vietnamese) or high-frequency words (Tagalog). Click to toggle:</small>
+            <div class="lang-grid" id="relayLangGrid">
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ru"><span>Russian / Cyrillic</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="zh"><span>Chinese</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ja"><span>Japanese</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ko"><span>Korean</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ar"><span>Arabic</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="he"><span>Hebrew</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="el"><span>Greek</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="th"><span>Thai</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hi"><span>Hindi / Devanagari</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hy"><span>Armenian</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ka"><span>Georgian</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="vi"><span>Vietnamese</span></label>
+                <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="tl"><span>Tagalog / Filipino</span></label>
+            </div>
+            <input type="hidden" id="nostr_relay_blocked_langs" name="nostr_relay_blocked_langs">
+        </fieldset>
+    <fieldset>
+            <legend>Content &amp; account filters</legend>
+            <div class="form-group">
+                <label for="nostr_relay_blocked_words">Blocked words / phrases</label>
+                <textarea id="nostr_relay_blocked_words" name="nostr_relay_blocked_words" rows="5" placeholder="one word or phrase per line&#10;spammy phrase here"></textarea>
+                <small>Reject text notes (kind 1) whose content contains any of these (case-insensitive substring). One per line.</small>
+            </div>
+            <div class="form-group">
+                <label for="blk_search">Blocked accounts</label>
+                <div id="blk_panel" class="blk-panel">
+                    <input type="search" id="blk_search" placeholder="Search by name, NIP-05 or npub…" autocomplete="off">
+                    <div id="blk_summary" class="blk-summary">Open this tab to load the list.</div>
+                    <div id="blk_list" class="blk-list"></div>
+                </div>
+                <details class="blk-raw">
+                    <summary>Edit as text (npub or hex, one per line)</summary>
+                    <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="8" placeholder="npub1…&#10;or 64-char hex"></textarea>
+                </details>
+                <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong> (new posts blocked at ingest). Their already-stored notes are removed by the nightly purge or the “Purge now” button below. npub or hex, one per line.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_block_bridged">
+                    <input type="checkbox" id="nostr_relay_block_bridged" name="nostr_relay_block_bridged"> Block ALL fediverse / Bluesky-bridged posts
+                </label>
+                <small>Drops every post carrying a NIP-48 <code>proxy</code> tag (ActivityPub / atproto mirror content) — <strong>any</strong> bridge: mostr.pub, momostr.pink, ditto.pub, brid.gy, etc. This is the reliable catch-all: a mirror’s NIP-05 is on a normal domain and its proxy URL points at the original instance, so the domain list below can’t see it. Your own registered users’ cross-posts are exempt. With this on you don’t need to list the bridges below.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_block_json_posts">
+                    <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject machine-payload timeline posts — JSON blobs, base64 data blobs and notes made of hidden characters (anti-spam)
+                </label>
+                <small>Drops a note (kind 1) whose <strong>entire</strong> content is a JSON object <code>{…}</code> or array <code>[…]</code> — the shape spammers use to flood the timeline. A human note that merely mentions JSON is unaffected (it doesn’t parse whole), and this touches kind-1 notes ONLY, so profiles, contacts, app data, DVM jobs and reposts (whose content legitimately is JSON) are never rejected. On by default.</small>
+            </div>
+            <div class="form-group">
+                <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
+                <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
+                <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
+            </div>
+            <div class="form-group">
+                <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
+                <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
+                <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Reports</legend>
+            <div class="form-group">
+                <div class="blk-panel">
+                    <div class="ids-tools">
+                        <button type="button" class="btn-secondary btn-small" id="rep_reload">Reload</button>
+                        <div id="rep_summary" class="blk-summary">Open this tab to load the reports.</div>
+                    </div>
+                    <div id="rep_list" class="blk-list"></div>
+                </div>
+                <small>NIP-56 reports filed by or about a member of this node: from a post's or profile's ⋯ → Report in the app, and Flags other fediverse servers send about our accounts. A member's report about a fediverse account is also sent to that account's own server as a Flag. Reports on Nostr are public. To act on one, use Block / Mute, or the Identities list under Access &amp; identity.</small>
+            </div>
+        </fieldset>
+    </section>
+    <section class="admin-sec" id="relay-sec-database" data-sec="database" aria-label="Database">
+    <fieldset>
+            <legend>PosterChanDB (the relay's event store)</legend>
+            <p class="muted" style="margin:0 0 12px">PosterChanDB is where the relay keeps its events. A node with no
+            PostgreSQL configured (every fresh install) runs on it alone — <em>Automatic</em> chooses that. The other modes
+            exist only for a node that still has a PostgreSQL relay database (a <code>NOSTR_RELAY_PG_DSN</code>): there
+            PostgreSQL is written first and PosterChanDB mirrors it, answering queries from RAM in <em>Serve</em>.
+            <strong>Without a PostgreSQL DSN, Off/Shadow/Serve leave the relay with no store.</strong> Changing the <em>mode</em> restarts the relay; the tunables below apply to the running store.</p>
+            <div class="form-group">
+                <label for="posterchandb_mode">Mode</label>
+                <select id="posterchandb_mode" name="posterchandb_mode">
+                    <option value="">Automatic — PosterChanDB alone unless a PostgreSQL DSN is configured</option>
+                    <option value="primary">Primary — PosterChanDB alone</option>
+                    <option value="off">Off — PostgreSQL only (needs a DSN)</option>
+                    <option value="shadow">Shadow — PostgreSQL + mirror, compare a sample of answers (needs a DSN)</option>
+                    <option value="serve">Serve — PostgreSQL + mirror answering from RAM (needs a DSN)</option>
+                </select>
+                <small id="pcdb-status" class="muted" aria-live="polite"></small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_flush_seconds">Write delay (seconds)</label>
+                <input type="number" id="posterchandb_flush_seconds" name="posterchandb_flush_seconds" placeholder="300" min="1" max="3600">
+                <small>How long new events wait in RAM before being written to disk together. A clean stop (systemd) writes them
+                first; a crash or power loss can lose this window. (On a node mirroring a PostgreSQL, PostgreSQL has every
+                event and the next start reloads from it.) Default 300. Range 1–3600. <em>Applies within seconds of Save — no restart.</em></small>
+                <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
+                <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0" max="1048576">
+                <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
+                when the machine runs low on memory. Range 0–1048576. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <h4 class="pcdb-sub">Memory</h4>
+            <div class="form-group">
+                <label for="posterchandb_cache_low_water_mb">Free-RAM floor (MB)</label>
+                <input type="number" id="posterchandb_cache_low_water_mb" name="posterchandb_cache_low_water_mb" placeholder="0" min="0" max="1048576">
+                <small>When the machine has less free memory than this, the read cache hands segments back to the OS. <code>0</code> = automatic (the larger of 512 MB and 10% of RAM). Range 0–1048576. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <h4 class="pcdb-sub">Housekeeping</h4>
+            <p class="muted small" style="margin:0 0 10px">Compaction and index snapshots run on their own idle-priority thread. The ceilings below are what keep them from competing with the relay for disk and CPU.</p>
+            <div class="form-group">
+                <label for="posterchandb_maint_interval_sec">Pass every (seconds)</label>
+                <input type="number" id="posterchandb_maint_interval_sec" name="posterchandb_maint_interval_sec" placeholder="600" min="60" max="86400">
+                <small>How often housekeeping looks for work. Default 600. Range 60–86400. <em>Applies within seconds of Save — no restart.</em> (after the current wait)</small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_snapshot_hours">Index snapshot at most every (hours)</label>
+                <input type="number" id="posterchandb_snapshot_hours" name="posterchandb_snapshot_hours" placeholder="1" min="0.25" max="48" step="0.25">
+                <small>A snapshot lets a restart load the indexes instead of replaying the log. Longer = less disk writing, slower restarts. Default 1. Range 0.25–48. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_compact_dead_pct">Compact a segment once it is this % deleted</label>
+                <input type="number" id="posterchandb_compact_dead_pct" name="posterchandb_compact_dead_pct" placeholder="40" min="10" max="90">
+                <small>Rewrites a closed segment's live records to free its disk and RAM. Lower reclaims sooner and writes more. Default 40. Range 10–90. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_maint_io_mb_s">Write ceiling (MB/s)</label>
+                <input type="number" id="posterchandb_maint_io_mb_s" name="posterchandb_maint_io_mb_s" placeholder="8" min="1" max="1000" step="0.5">
+                <small>Housekeeping writes no faster than this. Default 8. Range 1–1000. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_maint_cpu_pct">CPU share (%)</label>
+                <input type="number" id="posterchandb_maint_cpu_pct" name="posterchandb_maint_cpu_pct" placeholder="10" min="1" max="100">
+                <small>Housekeeping sleeps enough to stay under this share of one core. Default 10. Range 1–100. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <div class="form-group">
+                <label for="posterchandb_maint_busy_load">Wait while load per CPU is above</label>
+                <input type="number" id="posterchandb_maint_busy_load" name="posterchandb_maint_busy_load" placeholder="0.75" min="0" max="16" step="0.05">
+                <small>Housekeeping pauses while the machine is busy. <code>0</code> = never wait. Default 0.75. Range 0–16. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <h4 class="pcdb-sub">Search index</h4>
+            <div class="form-group">
+                <label for="posterchandb_words_batch">Search words indexed per step (events)</label>
+                <input type="number" id="posterchandb_words_batch" name="posterchandb_words_batch" placeholder="25" min="1" max="2000">
+                <small>After a restart, events whose search words are not indexed yet are worked through in steps of this many. Bigger finishes sooner and holds the store lock longer per step (25 ≈ 8 ms). Default 25. Range 1–2000. <em>Applies within seconds of Save — no restart.</em></small>
+            </div>
+            <h4 class="pcdb-sub">Database status</h4>
+            <dl id="pcdb-stats" class="pcdb-stats" aria-live="polite"><dt>Status</dt><dd>loading…</dd></dl>
+            <small class="muted">Read from the relay's own status report (written every 15 seconds); nothing here scans the store.</small>
+            <script>
+            (function(){
+                var el=document.getElementById('pcdb-status'), dl=document.getElementById('pcdb-stats'); if(!el) return;
+                function nf(n){ try{ return Number(n).toLocaleString(); }catch(_){ return String(n); } }
+                function bytes(n){ n=Number(n); if(!isFinite(n)) return '—'; var u=['B','KB','MB','GB','TB'],i=0;
+                    while(n>=1024&&i<u.length-1){ n/=1024; i++; } return (i?n.toFixed(1):n)+' '+u[i]; }
+                function ago(s){ s=Math.max(0,Math.round(s)); if(s<90) return s+' s'; if(s<5400) return Math.round(s/60)+' min';
+                    if(s<172800) return (s/3600).toFixed(1)+' h'; return Math.round(s/86400)+' days'; }
+                function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+                /* The panel says what the relay REPORTED (its status file, written every 15 s -- no store scan per
+                   request). A field it did not report is left out, never shown as 0: an older relay build, or a
+                   mirror still copying, simply has none of them. */
+                function rows(p, ts){
+                    var r=[], has=function(k){ return p[k]!=null; };
+                    r.push(['Mode', p.mode+(p.state?' · '+p.state:'')+(p.why?' — '+p.why:'')]);
+                    if(has('live')) r.push(['Events', nf(p.live)+' live'+(has('dead')?' · '+nf(p.dead)+' deleted, not yet compacted':'')]);
+                    else if(has('mirror_count')) r.push(['Events', nf(p.mirror_count)+' (PostgreSQL '+nf(p.pg_count)+')']);
+                    if(has('unflushed')) r.push(['Waiting to be written', nf(p.unflushed)+' events'+(has('since_flush_s')?' · last write '+ago(p.since_flush_s)+' ago':'')]);
+                    if(has('search_words_pending')) r.push(['Search-word backlog', nf(p.search_words_pending)+' events']);
+                    if(has('disk_bytes')) r.push(['On disk', bytes(p.disk_bytes)+(has('segments')?' in '+nf(p.segments)+' segments':'')]);
+                    if(has('arena_bytes')||has('index_bytes')) r.push(['RAM', (has('arena_bytes')?bytes(p.arena_bytes)+' of records':'')
+                        +(has('index_bytes')?' + '+bytes(p.index_bytes)+' of indexes':'')+(has('cold_segments')?' · '+nf(p.cold_segments)+' segments on disk only':'')]);
+                    if(has('cache_budget_mb')) r.push(['Read cache', nf(p.cache_resident_mb)+' MB used of '+nf(p.cache_budget_mb)+' MB · '
+                        +nf(p.cache_available_mb)+' MB free on the machine'+(p.cache_psi!=null?' · memory pressure '+p.cache_psi+'%':'')]);
+                    if(has('last_snapshot')) r.push(['Last index snapshot', p.last_snapshot>0 && ts ? ago(ts-p.last_snapshot)+' ago' : 'none yet']);
+                    if(has('served')||has('fallback')) r.push(['Queries from RAM', nf(p.served||0)+' served, '+nf(p.fallback||0)+' fell back']);
+                    if(has('shadow_ok')||has('shadow_diff')) r.push(['Shadow compare', nf(p.shadow_ok||0)+' identical, '+nf(p.shadow_diff||0)+' different']);
+                    if(has('max_lock_hold_ms')) r.push(['Longest store-lock hold', p.max_lock_hold_ms+' ms']);
+                    return r;
+                }
+                function paint(){
+                    fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
+                        var p=(s&&s.posterchandb)||null;
+                        if(!p){ el.textContent='Not reported (the relay is not running, or is an older build).';
+                            if(dl) dl.innerHTML='<dt>Status</dt><dd>not reported</dd>'; return; }
+                        if(p.mode==='off'){ el.textContent='Off.'; if(dl) dl.innerHTML='<dt>Mode</dt><dd>off — PostgreSQL only</dd>'; return; }
+                        var bits=[p.mode, p.state]; if(p.why) bits.push(p.why);
+                        el.textContent=bits.filter(Boolean).join(' · ');
+                        if(dl) dl.innerHTML=rows(p, s.ts||Math.floor(Date.now()/1000)).map(function(x){
+                            return '<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>'; }).join('');
+                    }).catch(function(){ el.textContent='Status unavailable.'; if(dl) dl.innerHTML='<dt>Status</dt><dd>unavailable</dd>'; });
+                }
+                paint(); setInterval(function(){ if(!document.hidden && el.offsetParent) paint(); }, 15000);
+            })();
+            </script>
+        </fieldset>
+    </section>
     <script>
     (function(){
         function init(){
@@ -364,348 +829,6 @@
         else { init(); }
     })();
     </script>
-
-    <fieldset>
-        <legend>Blocked languages</legend>
-        <small>Reject text notes (kind 1) written or synced in these languages. Non-Latin ones are detected by writing system (Cyrillic, CJK, Arabic, …); the Latin-script ones are detected by distinctive characters (Vietnamese) or high-frequency words (Tagalog). Click to toggle:</small>
-        <div class="lang-grid" id="relayLangGrid">
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ru"><span>Russian / Cyrillic</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="zh"><span>Chinese</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ja"><span>Japanese</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ko"><span>Korean</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ar"><span>Arabic</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="he"><span>Hebrew</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="el"><span>Greek</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="th"><span>Thai</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hi"><span>Hindi / Devanagari</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hy"><span>Armenian</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ka"><span>Georgian</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="vi"><span>Vietnamese</span></label>
-            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="tl"><span>Tagalog / Filipino</span></label>
-        </div>
-        <input type="hidden" id="nostr_relay_blocked_langs" name="nostr_relay_blocked_langs">
-    </fieldset>
-
-    <fieldset>
-        <legend>Content &amp; account filters</legend>
-        <div class="form-group">
-            <label for="nostr_relay_blocked_words">Blocked words / phrases</label>
-            <textarea id="nostr_relay_blocked_words" name="nostr_relay_blocked_words" rows="5" placeholder="one word or phrase per line&#10;spammy phrase here"></textarea>
-            <small>Reject text notes (kind 1) whose content contains any of these (case-insensitive substring). One per line.</small>
-        </div>
-        <div class="form-group">
-            <label for="blk_search">Blocked accounts</label>
-            <div id="blk_panel" class="blk-panel">
-                <input type="search" id="blk_search" placeholder="Search by name, NIP-05 or npub…" autocomplete="off">
-                <div id="blk_summary" class="blk-summary">Open this tab to load the list.</div>
-                <div id="blk_list" class="blk-list"></div>
-            </div>
-            <details class="blk-raw">
-                <summary>Edit as text (npub or hex, one per line)</summary>
-                <textarea id="nostr_relay_blocked_pubkeys" name="nostr_relay_blocked_pubkeys" rows="8" placeholder="npub1…&#10;or 64-char hex"></textarea>
-            </details>
-            <small>Hard denylist — these accounts are rejected <strong>even if in the Web of Trust</strong> (new posts blocked at ingest). Their already-stored notes are removed by the nightly purge or the “Purge now” button below. npub or hex, one per line.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_block_bridged">
-                <input type="checkbox" id="nostr_relay_block_bridged" name="nostr_relay_block_bridged"> Block ALL fediverse / Bluesky-bridged posts
-            </label>
-            <small>Drops every post carrying a NIP-48 <code>proxy</code> tag (ActivityPub / atproto mirror content) — <strong>any</strong> bridge: mostr.pub, momostr.pink, ditto.pub, brid.gy, etc. This is the reliable catch-all: a mirror’s NIP-05 is on a normal domain and its proxy URL points at the original instance, so the domain list below can’t see it. Your own registered users’ cross-posts are exempt. With this on you don’t need to list the bridges below.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_block_json_posts">
-                <input type="checkbox" id="nostr_relay_block_json_posts" name="nostr_relay_block_json_posts"> Reject machine-payload timeline posts — JSON blobs, base64 data blobs and notes made of hidden characters (anti-spam)
-            </label>
-            <small>Drops a note (kind 1) whose <strong>entire</strong> content is a JSON object <code>{…}</code> or array <code>[…]</code> — the shape spammers use to flood the timeline. A human note that merely mentions JSON is unaffected (it doesn’t parse whole), and this touches kind-1 notes ONLY, so profiles, contacts, app data, DVM jobs and reposts (whose content legitimately is JSON) are never rejected. On by default.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
-            <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
-            <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
-        </div>
-        <div class="form-group">
-            <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
-            <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
-            <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Reports</legend>
-        <div class="form-group">
-            <div class="blk-panel">
-                <div class="ids-tools">
-                    <button type="button" class="btn-secondary btn-small" id="rep_reload">Reload</button>
-                    <div id="rep_summary" class="blk-summary">Open this tab to load the reports.</div>
-                </div>
-                <div id="rep_list" class="blk-list"></div>
-            </div>
-            <small>NIP-56 reports filed by or about a member of this node: from a post's or profile's ⋯ → Report in the app, and Flags other fediverse servers send about our accounts. A member's report about a fediverse account is also sent to that account's own server as a Flag. Reports on Nostr are public. To act on one, use Block / Mute or the identities list below.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>NIP-05 identity server</legend>
-        <div class="form-group">
-            <label for="nostr_relay_nip05_enabled">
-                <input type="checkbox" id="nostr_relay_nip05_enabled" name="nostr_relay_nip05_enabled"> Serve <code>/.well-known/nostr.json</code> from the relay
-            </label>
-            <small>The relay subprocess answers NIP-05 lookups so <code>name@yourdomain</code> verifies. Point your reverse proxy's <code>/.well-known/nostr.json</code> at the relay port (default 3052). Changes apply immediately (no restart).</small>
-        </div>
-        <div class="form-group">
-            <label for="ids_search">Identities</label>
-            <div id="ids_panel" class="blk-panel">
-                <input type="search" id="ids_search" placeholder="Search by name, address, profile or npub…" autocomplete="off">
-                <div class="ids-tools">
-                    <select id="ids_filter" aria-label="Show">
-                        <option value="">Everyone</option>
-                        <option value="never_posted">Never posted</option>
-                        <option value="inactive">No activity at all</option>
-                    </select>
-                    <button type="button" class="btn-secondary btn-small" id="ids_sel_all">Select shown</button>
-                    <button type="button" class="btn-secondary btn-small" id="ids_sel_none">None</button>
-                    <button type="button" class="btn-danger btn-small" id="ids_retire" disabled>Remove, unfollow &amp; block</button>
-                    <div id="ids_summary" class="blk-summary">Open this tab to load the list.</div>
-                </div>
-                <div id="ids_list" class="blk-list"></div>
-            </div>
-            <details class="blk-raw">
-                <summary>Edit as text (<code>name npub-or-hex</code>, one per line)</summary>
-                <textarea id="nostr_relay_nip05_names" name="nostr_relay_nip05_names" rows="8" placeholder="verita84 npub1…&#10;alice 64-char-hex"></textarea>
-            </details>
-            <small>A name here IS access to this node's features, whatever NIP-05 the person's profile shows (they may keep one of their own) — so every name listed is a member; the list just notes what their profile shows. One per line: <code>&lt;name&gt; &lt;npub-or-hex&gt;</code>. Use <code>_</code> as the name for the domain root identity (<code>_@yourdomain</code>). New web-client signups are auto-assigned a name here.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_nip05_domain">Signup name domain</label>
-            <input type="text" id="nostr_relay_nip05_domain" name="nostr_relay_nip05_domain" placeholder="poster.place (blank = use the site's host)">
-            <small>Domain used for the <code>name@domain</code> auto-assigned to new web-client signups. Leave blank to use the host the client was served from.</small>
-        </div>
-        <div class="form-group">
-            <label for="nip05_grants_access">
-                <input type="checkbox" id="nip05_grants_access" name="nip05_grants_access"> A NIP-05 identity granted here gives access to this node's features
-            </label>
-            <small>On (the default): anyone you granted a name above who has <strong>published that exact address in their own profile</strong> may use AI chat, image generation, music generation and Blossom uploads — no per-user tick in Admin → Users, no waiting for the access reconcile. The grant above is the authority; the profile only confirms they claimed it. Off: each account needs its own permissions.</small>
-        </div>
-        <div class="form-group">
-            <label for="apps_require_nip05">
-                <input type="checkbox" id="apps_require_nip05" name="apps_require_nip05"> PosterChan apps require a NIP-05 name from this node
-            </label>
-            <small>On (the default): Mail, News, Files, Office, Git, Web Search, Torrents, Media Center, the Telegram client and render tools are for members only — a name granted above, published in their own profile. Off: <strong>any signed-in Nostr account</strong> may use them, except accounts blocked on this relay. The Monero and Exodus wallets stay members-only either way, and AI/image/music/Blossom follow the switch above.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_nip05_relays">Advertised relays</label>
-            <textarea id="nostr_relay_nip05_relays" name="nostr_relay_nip05_relays" rows="4" placeholder="wss://nos.lol/&#10;wss://relay.damus.io/"></textarea>
-            <small>Relay URLs returned for every identity above (NIP-05 <code>relays</code> hint), one per line. Blank = omit the hint.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Upstream relays (sync from / broadcast to)</legend>
-        <div class="form-group">
-            <label for="nostr_relay_upstream_relays">Relay URLs</label>
-            <textarea id="nostr_relay_upstream_relays" name="nostr_relay_upstream_relays" rows="4" placeholder="leave blank to use the same default relays as the bots"></textarea>
-            <small>One per line. <strong>Blank = the bots' default relay set.</strong> Used both to pull the WoT feed and to broadcast notes written here.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_private_relays">Private mirror relays</label>
-            <textarea id="nostr_relay_private_relays" name="nostr_relay_private_relays" rows="3" placeholder="blank = no mirroring (your notes and passwords stay on this node only)"></textarea>
-            <small>One per line. Where your users' <strong>encrypted libraries</strong> — Notes, Passwords, Budget, the files index — are copied for redundancy. They are the only data here with no second copy anywhere: everything public is already on the upstream relays above, while a note or a vault entry lives in exactly this one node, so losing this box loses it.
-            <br><strong>Point this at a relay you run</strong> (your other node), not at a public one. The bodies are ciphertext and nobody else can read them — but every event carries the author's pubkey, a stable id and a timestamp, so a copy on someone else's relay is a permanent public record of how many passwords each user has and when each one changed, and there is no taking it back. On your own relay that record is already yours. <strong>Restart after turning this on.</strong></small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_send_only">
-                <input type="checkbox" id="nostr_relay_send_only" name="nostr_relay_send_only"> Send-only — broadcast to these, don't mirror them
-            </label>
-            <small>Keeps <strong>broadcasting</strong> your own events to the relays above (outbox), but does <strong>not</strong> pull/store their events — so this node's local DB won't fill with a copy of upstream content. This is the <em>direction</em> control for the list above. Useful on a secondary node that just pushes to a primary relay. <strong>Restart after changing.</strong></small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Sync</legend>
-        <div class="form-group">
-            <label for="nostr_relay_ingest_kinds">Ingest kinds</label>
-            <input type="text" id="nostr_relay_ingest_kinds" name="nostr_relay_ingest_kinds" placeholder="1,6,7,1111,30023">
-            <small>Event kinds to sync (notes, reposts, reactions, comments, articles). Profiles, contacts &amp; relay lists are fetched automatically.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_fetch_ancestors">
-                <input type="checkbox" id="nostr_relay_fetch_ancestors" name="nostr_relay_fetch_ancestors"> Backfill reply ancestors (complete threads)
-            </label>
-            <small>Fetch missing parent notes so replies aren't orphaned. The one place a non-WoT note is stored — only because a trusted member replied to it.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>PosterChanDB (the relay's event store)</legend>
-        <p class="muted" style="margin:0 0 12px">PosterChanDB is where the relay keeps its events. A node with no
-        PostgreSQL configured (every fresh install) runs on it alone — <em>Automatic</em> chooses that. The other modes
-        exist only for a node that still has a PostgreSQL relay database (a <code>NOSTR_RELAY_PG_DSN</code>): there
-        PostgreSQL is written first and PosterChanDB mirrors it, answering queries from RAM in <em>Serve</em>.
-        <strong>Without a PostgreSQL DSN, Off/Shadow/Serve leave the relay with no store.</strong> Saving restarts the relay.</p>
-        <div class="form-group">
-            <label for="posterchandb_mode">Mode</label>
-            <select id="posterchandb_mode" name="posterchandb_mode">
-                <option value="">Automatic — PosterChanDB alone unless a PostgreSQL DSN is configured</option>
-                <option value="primary">Primary — PosterChanDB alone</option>
-                <option value="off">Off — PostgreSQL only (needs a DSN)</option>
-                <option value="shadow">Shadow — PostgreSQL + mirror, compare a sample of answers (needs a DSN)</option>
-                <option value="serve">Serve — PostgreSQL + mirror answering from RAM (needs a DSN)</option>
-            </select>
-            <small id="pcdb-status" class="muted" aria-live="polite"></small>
-        </div>
-        <div class="form-group">
-            <label for="posterchandb_flush_seconds">Write delay (seconds)</label>
-            <input type="number" id="posterchandb_flush_seconds" name="posterchandb_flush_seconds" placeholder="300" min="1">
-            <small>How long new events wait in RAM before being written to disk together. A clean stop (systemd) writes them
-            first; a crash or power loss can lose this window. (On a node mirroring a PostgreSQL, PostgreSQL has every
-            event and the next start reloads from it.)</small>
-            <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
-            <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0">
-            <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
-            when the machine runs low on memory.</small>
-        </div>
-        <script>
-        (function(){
-            var el=document.getElementById('pcdb-status'); if(!el) return;
-            function paint(){
-                fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
-                    var p=(s&&s.posterchandb)||null;
-                    if(!p||p.mode==='off'){ el.textContent='Off.'; return; }
-                    var bits=[p.mode, p.state];
-                    if(p.why) bits.push(p.why);
-                    if(p.mirror_count!=null) bits.push(p.mirror_count+' events (PostgreSQL '+p.pg_count+')');
-                    if(p.served||p.fallback) bits.push(p.served+' queries served from RAM, '+p.fallback+' fell back');
-                    if(p.shadow_ok||p.shadow_diff) bits.push(p.shadow_ok+' sampled answers identical, '+p.shadow_diff+' different');
-                    el.textContent=bits.join(' · ');
-                }).catch(function(){ el.textContent='Status unavailable.'; });
-            }
-            paint(); setInterval(function(){ if(!document.hidden && el.offsetParent) paint(); }, 15000);
-        })();
-        </script>
-    </fieldset>
-
-    <fieldset>
-        <legend>Auto-clean (feed retention)</legend>
-        <p class="muted" style="margin:0 0 12px">Auto-clean only ever trims
-        high-volume <strong>feed</strong> content (notes/reactions/reposts/comments); <strong>profiles, contacts,
-        articles, DMs, and your local users' own events are kept forever.</strong></p>
-        <div class="form-group">
-            <label for="nostr_relay_retention_days">Auto-clean feed notes older than (days)</label>
-            <input type="number" id="nostr_relay_retention_days" name="nostr_relay_retention_days" placeholder="30">
-            <small>Deletes old <strong>notes/reactions/reposts/comments</strong> past this age. Set <code>0</code> to disable age-based cleanup.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_posts_per_min">New posts a minute, per author</label>
-            <input type="number" id="nostr_relay_posts_per_min" name="nostr_relay_posts_per_min" placeholder="10" min="0">
-            <label for="nostr_relay_same_per_hour">The same post, per author per hour</label>
-            <input type="number" id="nostr_relay_same_per_hour" name="nostr_relay_same_per_hour" placeholder="3" min="0">
-            <small class="muted">Notes and replies from Nostr and the fediverse alike; past these an author's extra posts are not stored. People here post at most 5 a minute; above 10 are feed bots in bursts. Reactions, boosts, DMs are never counted. 0 = off.</small>
-            <label for="nostr_relay_gift_wraps_per_recipient">Gift wraps (private messages) per recipient, per 10 minutes</label>
-            <input type="number" id="nostr_relay_gift_wraps_per_recipient" name="nostr_relay_gift_wraps_per_recipient" placeholder="300" min="0">
-            <small class="muted">Stops a flood of encrypted gift wraps aimed at one person from filling the relay (one was seen at ~13,000 a minute). Counted by arrival, since gift wraps backdate themselves. 300 holds a busy inbox; Concord rooms are unaffected. 0 = off.</small>
-            <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
-            <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
-            <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>
-        </div>
-        <div class="form-group">
-            <button type="button" id="relayPruneDryBtn" class="btn-secondary">🔎 Preview auto-clean</button>
-            <button type="button" id="relayPruneBtn" class="btn-secondary">🧽 Run auto-clean now</button>
-            <span id="relayPruneStatus" style="margin-left:.5rem;"></span>
-            <small>Auto-clean runs on a schedule (shortly after each relay start, then daily). Use <strong>Preview</strong>
-            to count what the settings above would delete — do that first, it can be hundreds of thousands of notes —
-            then <strong>Run</strong> to apply it now. Save your changes before either; both read the <em>saved</em> settings.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Pay to stay (paid retention tier)</legend>
-        <p class="muted" style="margin:0 0 12px">Everything a visitor publishes <em>to this relay</em> is currently kept
-        <strong>forever</strong>. Turn this on to age out those posts after a free window, and let an author keep them
-        longer by <strong>zapping</strong> this relay's profile. <strong>Your own users are never affected</strong> —
-        accounts on this instance, NIP-05 holders, operators and bridged puppets are in the preserve set and no age rule
-        can touch them. Profiles, contacts, DMs and articles are never auto-deleted for anyone.</p>
-        <div class="form-group">
-            <label for="nostr_relay_paid_retention_enabled">
-                <input type="checkbox" id="nostr_relay_paid_retention_enabled" name="nostr_relay_paid_retention_enabled"> Enable pay-to-stay
-            </label>
-            <small>Master switch. Off = nothing below has any effect and the prune behaves exactly as it does today.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_free_retention_days">Free tier — keep visitors' posts for (days)</label>
-            <input type="number" id="nostr_relay_free_retention_days" name="nostr_relay_free_retention_days" placeholder="0">
-            <small><strong>This is the setting that deletes things.</strong> <code>0</code> = keep forever (the default, and what
-            happens today) — nothing is ever deleted until you put a number here. Preview the auto-clean above after changing it.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_paid_retention_days">Paid tier — keep a subscriber's posts for (days)</label>
-            <input type="number" id="nostr_relay_paid_retention_days" name="nostr_relay_paid_retention_days" placeholder="0">
-            <small><code>0</code> = kept forever while subscribed. When a subscription lapses the free window applies again,
-            so a lapsed author's older posts go on the next auto-clean. A subscriber is <strong>also exempt from the feed
-            auto-clean and the count cap above</strong> — otherwise a copy of their note that reached us over the firehose,
-            rather than being published here, would still be deleted at the feed retention window. Moderation
-            (blocked words/languages/pubkeys) is <em>not</em> exempt: paying doesn't buy immunity from the block purge.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_paid_sats_per_month">Price (sats per month)</label>
-            <input type="number" id="nostr_relay_paid_sats_per_month" name="nostr_relay_paid_sats_per_month" placeholder="0">
-            <small><code>0</code> = nothing can be bought (grant days by hand below). Part-payments carry over, so small zaps add up.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_paid_lud16">Lightning address zaps are paid to</label>
-            <input type="text" id="nostr_relay_paid_lud16" name="nostr_relay_paid_lud16" placeholder="you@getalby.com">
-            <small>Required for automatic crediting: its LNURL endpoint publishes the <code>nostrPubkey</code> whose signature
-            on a zap receipt <strong>is</strong> the proof an invoice was paid. A receipt signed by anyone else is ignored.</small>
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_paid_pubkey">Zap target (npub/hex)</label>
-            <input type="text" id="nostr_relay_paid_pubkey" name="nostr_relay_paid_pubkey" placeholder="blank = this relay's admin/operator key">
-            <small>The profile people zap. Blank uses the NIP-11 admin pubkey above, else this node's operator key.
-            Only a <strong>profile</strong> zap counts — a zap on a single post stays an ordinary tip.</small>
-        </div>
-        <div class="form-group">
-            <button type="button" id="relayPaidRefresh" class="btn-secondary">👛 Subscribers</button>
-            <span id="relayPaidStatus" style="margin-left:.5rem;"></span>
-            <div id="relayPaidList" style="margin-top:.6rem;"></div>
-            <small>Reads the ledger (one operator-signed relay document, <code>pcai:kv:paid_retention</code>). Grant days by hand
-            for a payment that arrived another way — negative days take them back; the recipient is DMed either way.
-            <strong>You</strong> get a DM (and a Telegram message, if your admin account has one linked) on every payment;
-            subscribers are DMed on payment, <strong>7 days before expiry</strong>, and when it expires.</small>
-            <div style="margin-top:.5rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
-                <input type="text" id="relayPaidGrantPk" placeholder="npub1… / hex" style="flex:1 1 18rem;min-width:0;">
-                <input type="number" id="relayPaidGrantDays" placeholder="days" style="width:7rem;">
-                <button type="button" id="relayPaidGrantBtn" class="btn-secondary">Grant</button>
-            </div>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Relay info (NIP-11)</legend>
-        <div class="form-group">
-            <label for="nostr_relay_name">Name</label>
-            <input type="text" id="nostr_relay_name" name="nostr_relay_name" placeholder="PosterChanAI Relay">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_description">Description</label>
-            <input type="text" id="nostr_relay_description" name="nostr_relay_description" placeholder="Web-of-trust relay">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_pubkey">Admin pubkey (npub/hex)</label>
-            <input type="text" id="nostr_relay_pubkey" name="nostr_relay_pubkey" placeholder="npub1…">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_contact">Contact</label>
-            <input type="text" id="nostr_relay_contact" name="nostr_relay_contact" placeholder="mailto:admin@…">
-        </div>
-        <div class="form-group">
-            <label for="nostr_relay_supported_grasps">Supported GRASPs</label>
-            <input type="text" id="nostr_relay_supported_grasps" name="nostr_relay_supported_grasps" placeholder="empty = claim none">
-            <small>Advertised to git-over-nostr clients as <code>supported_grasps</code>, e.g.
-            <code>GRASP-01 GRASP-08</code>. Claiming one claims every MUST in it — a capability that
-            isn't there costs a client a failed push and a wrong diagnosis, so this is empty until
-            the node earns it.</small>
-        </div>
-    </fieldset>
-
     <style>
     #tab-relay .lang-grid{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}
     #tab-relay .lang-box{display:inline-flex;align-items:center;cursor:pointer;user-select:none;

@@ -59,7 +59,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // this one (admin.js is the first script), so a click dispatched inline here would hit nothing.
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
-        let want = (location.hash || '').replace(/^#tab-/, '');
+        // "#tab-relay/limits" names a SECTION inside the tab too (admin-subnav.js opens it); the tab is the first part.
+        let want = (location.hash || '').replace(/^#tab-/, '').split('/')[0];
         if (!want) { try { want = localStorage.getItem('pcaiAdminTab') || ''; } catch (_) { } }
         if (!want || want === 'ai') return;                   // 'ai' is already the default
         const btn = document.querySelector('.tab-btn[data-tab="' + want + '"]');
@@ -274,7 +275,10 @@ document.getElementById('settingsForm')?.addEventListener('submit', async (e) =>
             document.dispatchEvent(new CustomEvent('pc-admin-saved', { detail: { keys: Object.keys(settings) } }));
             pcAlert('Settings saved!');
         } else {
-            pcAlert('Failed to save settings');
+            // Say WHY: a refused value (e.g. a Relay limit out of range) names the field and its range.
+            let why = '';
+            try { const j = await response.json(); why = (j && typeof j.detail === 'string') ? j.detail : ''; } catch (_) { }
+            pcAlert(why || 'Failed to save settings');
         }
     } catch (err) {
         pcAlert('Error saving settings');

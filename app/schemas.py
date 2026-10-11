@@ -715,8 +715,18 @@ class SettingsResponse(BaseModel):
     nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
     posterchandb_mode: Optional[str] = None  # off | shadow | serve (posterchandb/mirror.py) | primary (nostr_relay/pcdb_store.py)
-    posterchandb_flush_seconds: Optional[int] = None  # write delay before new events reach disk (default 300)
-    posterchandb_read_cache_mb: Optional[int] = None  # RAM for older segments (0 = automatic, 30% of RAM)
+    # PosterChanDB tunables (Admin → Relay → Database). Defaults, ranges and live-vs-restart live in ONE table,
+    # app/services/relay_tunables.py -- tests/test_relay_tunables.py holds every default here equal to it.
+    posterchandb_flush_seconds: Optional[int] = 300   # write delay before new events reach disk
+    posterchandb_read_cache_mb: Optional[int] = 0     # RAM for older segments (0 = automatic, 30% of RAM)
+    posterchandb_cache_low_water_mb: Optional[int] = 0  # free-RAM floor the cache drains at (0 = automatic)
+    posterchandb_snapshot_hours: Optional[float] = 1.0  # index snapshot at most this often
+    posterchandb_compact_dead_pct: Optional[int] = 40   # rewrite a closed segment once this % is dead
+    posterchandb_maint_interval_sec: Optional[int] = 600  # housekeeping pass cadence
+    posterchandb_maint_io_mb_s: Optional[float] = 8.0   # housekeeping write ceiling
+    posterchandb_maint_cpu_pct: Optional[int] = 10      # housekeeping CPU share
+    posterchandb_maint_busy_load: Optional[float] = 0.75  # housekeeping waits above this load per CPU (0 = never)
+    posterchandb_words_batch: Optional[int] = 25        # search words indexed per background step
     nostr_relay_max_events: Optional[int] = None      # hard count cap on feed events (0=unlimited)
     # Pay-to-stay: an OPTIONAL paid retention tier for authors with no account here. All five are
     # inert until `_enabled` is on AND `_free_retention_days` is a non-zero number — see
@@ -734,7 +744,10 @@ class SettingsResponse(BaseModel):
     nostr_relay_wot_min_followers: Optional[int] = None
     nostr_relay_wot_max: Optional[int] = None
     nostr_relay_wot_depth3_crawl_max: Optional[int] = None
-    nostr_relay_max_connections: Optional[int] = None
+    nostr_relay_max_connections: Optional[int] = 5000
+    nostr_relay_max_subs_per_conn: Optional[int] = 500     # REQ subscriptions open at once per socket
+    nostr_relay_max_filters_per_req: Optional[int] = 25    # filters honoured in one REQ
+    nostr_relay_max_message_kb: Optional[int] = 512        # largest websocket message (restarts the relay)
     nostr_relay_fetch_ancestors: Optional[bool] = None
     nostr_relay_max_ancestors: Optional[int] = None
     nostr_relay_sync_window_sec: Optional[int] = None

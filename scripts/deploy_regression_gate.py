@@ -202,6 +202,9 @@ TESTS = (
     'tests/client/test_concord_voice_presence_full_app.py',
     'tests/client/test_concord_themes_full_app.py',
     'tests/client/test_concord_theme_tokens.py',
+    'tests/test_relay_tunables.py',
+    'tests/test_admin_relay_sections.py',
+    'tests/test_admin_relay_sections_browser.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

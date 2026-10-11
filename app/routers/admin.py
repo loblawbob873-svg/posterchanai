@@ -793,6 +793,13 @@ def update_settings(
     changed_keys = set()
     _vmhost_prev = {}   # durable VM-hosting keys → cached value before this save (None = absent)
 
+    # Admin → Relay → Limits / Database: a number outside its safe range is REFUSED, with nothing stored -- not
+    # clamped silently, not stored for the relay to trip over (app/services/relay_tunables.py).
+    from app.services import relay_tunables
+    _bad = relay_tunables.validate_many(data.settings)
+    if _bad:
+        raise HTTPException(status_code=400, detail="Not saved: " + "; ".join(_bad))
+
     try:
         from app.services import settings_store
         text_keys = _settings_text_keys()
@@ -852,8 +859,11 @@ def update_settings(
             "nostr_relay_mirror_feeds", "nostr_relay_disable_proxy",
             "nostr_relay_bind", "nostr_relay_port",
             "nostr_relay_posterchan_clients_only", "nostr_relay_posterchan_origins",
-            # PosterChanDB is opened (or left off) once, at relay start
-            "posterchandb_mode", "posterchandb_flush_seconds", "posterchandb_read_cache_mb",
+            # PosterChanDB is opened (or left off) once, at relay start. Its TUNABLES are not here: they apply
+            # to the running store (relay_tunables.LIVE_KEYS, below).
+            "posterchandb_mode",
+            # websockets fixes the largest message when the listener starts
+            *sorted(relay_tunables.RESTART_KEYS),
         )
         _relay_will_restart = any(k in changed_keys for k in _relay_topology_keys)
         # The trust-graph settings are re-read by every rebuild (thread._build_wot), so saving one starts a
@@ -945,9 +955,11 @@ def update_settings(
         # The pay-to-stay windows ride the same path — they are prune inputs like the two above, and
         # a tier change an admin can't see take effect until a restart is a tier change they will
         # assume is broken.
+        # The posting/protocol limits and the PosterChanDB tunables (relay_tunables.LIVE_KEYS) ride it too: the
+        # relay copies them into its running config / store (thread._apply_live_config), no restart.
         _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events",
                              "nostr_relay_paid_retention_enabled", "nostr_relay_free_retention_days",
-                             "nostr_relay_paid_retention_days")
+                             "nostr_relay_paid_retention_days", *sorted(relay_tunables.LIVE_KEYS))
         if not _relay_will_restart and any(k in changed_keys for k in _relay_store_keys):
             flushed = False
             try:
