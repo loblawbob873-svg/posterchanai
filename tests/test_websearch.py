@@ -592,7 +592,7 @@ class RouterTests(unittest.TestCase):
         ]
         for p in self.patches:
             p.start()
-        self.addCleanup(lambda: [p.stop() for p in self.patches])
+        self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
 
     def _search_service(self, results=None, page=None):
         svc = mock.Mock()

@@ -107,7 +107,12 @@ class _Base(unittest.TestCase):
         self.db = None      # no SQL behind the routes
 
     def tearDown(self):
-        for p in self.patches:
+        # LIFO, never in start order. test_drafts_nostr_only_accounts patches user_table.aby_npub a SECOND
+        # time on top of the one above; stopped first-to-last, the first stop put the real function back and
+        # the second then "restored" what IT had saved -- this file's AsyncMock(return_value=_User()) -- for
+        # the rest of the process. ~90 later tests in the gate's shard then signed in as a stub with no
+        # is_admin/username (deploy 205).
+        for p in reversed(self.patches):
             p.stop()
 
     def drafts(self, **kw):

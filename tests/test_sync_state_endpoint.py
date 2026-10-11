@@ -115,7 +115,7 @@ class SyncStateEndpoint(unittest.TestCase):
         self.db = _Db(_User())
 
     def tearDown(self):
-        for p in self.patches:
+        for p in reversed(self.patches):       # LIFO: a subclass may patch the same attribute again
             p.stop()
 
     def call(self, **kw):

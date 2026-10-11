@@ -59,7 +59,7 @@ def setUpModule():
 
 
 def tearDownModule():
-    for p in _PATCHES:
+    for p in reversed(_PATCHES):
         p.stop()
     _PATCHES.clear()
     if _MODULE_TMP:

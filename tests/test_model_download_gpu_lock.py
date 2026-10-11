@@ -166,7 +166,7 @@ class SyncLockExclusionTest(unittest.TestCase):
             p.start()
 
     def tearDown(self):
-        for p in self._patches:
+        for p in reversed(self._patches):
             p.stop()
         shutil.rmtree(self._tmp, ignore_errors=True)
 

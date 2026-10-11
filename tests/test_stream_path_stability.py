@@ -73,7 +73,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         ]
         for p in self.patches:
             p.start()
-        self.addCleanup(lambda: [p.stop() for p in self.patches])
+        self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
 
     async def resolve(self, token="tok"):
         return await R._upstream_path(token, hold=0.0)

@@ -89,7 +89,11 @@ def _accounts_from_the_fake_db(monkeypatch):
     """The operator account is looked up through user_table (#161: accounts are a relay DocTable); here it
     is whatever the fake session in the test carries."""
     from app.services import user_table
+    from app import auth as auth_mod
     monkeypatch.setattr(user_table, "operator", lambda db: getattr(db, "operator", None))
+    # _fresh_auth() clears the module-global operator-pubkey cache and the test then fills it with a FAKE
+    # operator key; without this that key stayed cached for every later test in the process.
+    monkeypatch.setattr(auth_mod, "_OPERATOR_PK", auth_mod._UNSET)
 
 
 @pytest.fixture
