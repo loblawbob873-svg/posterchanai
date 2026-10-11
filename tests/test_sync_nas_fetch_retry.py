@@ -67,10 +67,14 @@ def test_transient_fetch_retries_before_reset_and_only_restarts_selected_unit(tm
 def test_exhausted_fetch_stops_before_reset_target_resolution_or_services(tmp_path):
     result, calls = _run(tmp_path, failures=99)
     assert result.returncode != 0
-    assert 'ABORT: fetch failed after 5 attempts' in result.stderr
-    assert calls.count('git fetch origin') == 5
-    assert calls.count('sleep 3') == 4
-    assert all(c == 'git rev-parse HEAD' or c == 'git fetch origin' or c == 'sleep 3' for c in calls)
+    # 20 tries backing off 3, 6, 9 then 10 s (~2.5 min): the endpoint is server1's own app, which the deploy may be
+    # restarting -- 5 tries in 15 s gave up mid-restart and left nas a commit behind (2026-10-10).
+    assert 'ABORT: fetch failed after 20 attempts' in result.stderr
+    assert calls.count('git fetch origin') == 20
+    sleeps = [c for c in calls if c.startswith('sleep ')]
+    assert sleeps[:4] == ['sleep 3', 'sleep 6', 'sleep 9', 'sleep 10'] and len(sleeps) == 19
+    assert sum(int(c.split()[1]) for c in sleeps) >= 120
+    assert all(c == 'git rev-parse HEAD' or c == 'git fetch origin' or c.startswith('sleep ') for c in calls)
 
 
 def test_reset_failure_stops_before_target_resolution_or_services(tmp_path):
