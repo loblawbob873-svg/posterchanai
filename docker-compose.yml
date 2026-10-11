@@ -149,13 +149,10 @@ x-common: &common
     # the container running and this at 0 the editor is up and unreachable.
     - POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-1}
     - POSTERCHANAI_CODE_URL=${POSTERCHANAI_CODE_URL:-http://office:9980}
-    # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
-    # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
-    - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
-    - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
-  depends_on:
-    postgres:
-      condition: service_healthy
+    # NO DATABASE_URL / NOSTR_RELAY_PG_DSN, and no database container (#161): the app's tables are
+    # documents on the built-in relay, and the relay stores into PosterChanDB on the data volume
+    # (POSTERCHANDB_DIR, set in the Dockerfile). With no DSN the relay opens a fresh PosterChanDB
+    # primary on first start. tests/test_fresh_install_has_no_postgres.py.
   volumes:
     - pc-data:/var/lib/posterchanai
     - pc-rag:/app/data
@@ -194,25 +191,11 @@ services:
     tmpfs:
       - /tmp:size=1g,mode=1777
 
-  # The one and only database — backs the app AND the built-in Nostr relay. No profile, so it
-  # starts under every GPU profile; the app services wait for its healthcheck (depends_on above).
-  postgres:
-    image: postgres:18-alpine
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=posterchan
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-posterchan_local}
-      - POSTGRES_DB=posterchan_relay
-    volumes:
-      # postgres:18+ stores data in a major-version subdir and wants the mount at
-      # /var/lib/postgresql (NOT .../data, which it rejects as an "unused mount"). See
-      # docker-library/postgres#1259. One mount here = clean pg_upgrade later.
-      - pc-pg:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U posterchan -d posterchan_relay"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+  # NO `postgres` SERVICE (#161). A stack created before it was removed still has the container and
+  # its `pc-pg` volume; compose leaves both alone (nothing here deletes data). Once you no longer need
+  # it -- and only if nothing else uses it --
+  #   docker compose rm -sf postgres        # the orphaned container
+  #   docker volume rm posterchanai_pc-pg   # its data (irreversible)
 
   cpu:
     <<: *common
@@ -260,8 +243,6 @@ services:
       - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-1}
       - POSTERCHANAI_GIT=${POSTERCHANAI_GIT:-0}
       - POSTERCHANAI_GIT_PUBLIC_BASE=${POSTERCHANAI_GIT_PUBLIC_BASE:-}
-      - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
-      - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
   cuda:
     <<: *common
@@ -320,9 +301,8 @@ services:
       - /dev/dri
     # Set SOURCE_ONEAPI=1 instead if you want GPU LLM (SYCL) rather than image gen.
     # NOTE: a service-level `environment:` REPLACES the x-common one (YAML merge doesn't deep-merge
-    # lists), so every var this profile needs must be re-listed here — including DATABASE_URL /
-    # NOSTR_RELAY_PG_DSN (or the app falls back to the wrong DB) and the turnkey POSTERCHANAI_*
-    # flags — so intel behaves identically to cpu/cuda/rocm.
+    # lists), so every var this profile needs must be re-listed here — the turnkey POSTERCHANAI_*
+    # flags included — so intel behaves identically to cpu/cuda/rocm.
     environment:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
@@ -337,8 +317,6 @@ services:
       - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
       - POSTERCHANAI_GIT=${POSTERCHANAI_GIT:-0}
       - POSTERCHANAI_GIT_PUBLIC_BASE=${POSTERCHANAI_GIT_PUBLIC_BASE:-}
-      - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
-      - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
   # ACE-Step music server (the `musicgeni` command). Runs as its OWN service because ACE-Step needs
   # NOTE: the `acestep` / `acestep-rocm` / `acestep-intel` sidecars are GONE. Music generates inside
@@ -378,7 +356,6 @@ services:
         INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}"
     profiles: ["split"]
     restart: unless-stopped
-    depends_on: [postgres]
     volumes:
       - pc-data:/var/lib/posterchanai
       - pc-rag:/app/data
@@ -386,21 +363,18 @@ services:
     environment:
       - POSTERCHANAI_PORT=3051
       - POSTERCHANAI_ROLE=relay
-      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
 
   worker:
     <<: *split
     environment:
       - POSTERCHANAI_PORT=3051
       - POSTERCHANAI_ROLE=worker
-      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
 
   media:
     <<: *split
     environment:
       - POSTERCHANAI_PORT=3051
       - POSTERCHANAI_ROLE=media
-      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
 
   # TLS terminator: nginx + certbot, so a fresh VPS install serves HTTPS with no extra software to
   # install and no config to write. It comes up on a SELF-SIGNED certificate for example.com —
@@ -473,7 +447,6 @@ services:
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
-  pc-pg:   # PostgreSQL data (app + Nostr relay)
   pc-proxy-conf:  # the proxy's nginx config — seeded once, then owned by the operator + certbot
   pc-proxy-ssl:   # the proxy's certificates: /etc/letsencrypt (self-signed + anything certbot issues)
   # pc-searxng is gone with the container it belonged to (see the note above the `volumes:` key).

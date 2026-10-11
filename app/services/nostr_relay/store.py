@@ -21,14 +21,27 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import uuid
-import psycopg2
-import psycopg2.extras
-import psycopg2.errors
 
 from app.services.nostr.quotes import (quote_pubkeys, quoted_ids_without_author,
                                         remember_quote_authors)
 
 logger = logging.getLogger(__name__)
+
+
+_PSYCOPG2 = None
+
+
+def _pg():
+    """psycopg2, imported when a Postgres store is actually used. A fresh install has no Postgres (#161: the relay
+    runs on PosterChanDB, whose store subclasses this one), so importing this module must not need the driver.
+    tests/test_fresh_install_has_no_postgres.py"""
+    global _PSYCOPG2
+    if _PSYCOPG2 is None:
+        import psycopg2
+        import psycopg2.extras  # noqa: F401 -- the submodules are attributes only once imported
+        import psycopg2.errors  # noqa: F401
+        _PSYCOPG2 = psycopg2
+    return _PSYCOPG2
 
 # Passwordless localhost (PG `trust` auth) by default; deployments needing password auth (Docker/
 # remote PG) inject credentials via the NOSTR_RELAY_PG_DSN env var / the nostr_relay_pg_dsn setting.
@@ -55,7 +68,7 @@ class _PgConn:
         self._raw = raw
 
     def execute(self, sql, params=None):
-        cur = self._raw.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur = self._raw.cursor(cursor_factory=_pg().extras.DictCursor)
         if params is None:
             cur.execute(sql.replace("?", "%s"))               # no binds → don't touch literal %
         else:
@@ -441,7 +454,7 @@ class RelayStore:
             conn.execute("SET lock_timeout = '2s'")
             conn.execute(sql)
             conn.commit()
-        except psycopg2.errors.LockNotAvailable:
+        except _pg().errors.LockNotAvailable:
             conn.rollback()
             logger.warning("[nostr-relay] skipped busy-table housekeeping (next start retries): %s", sql)
         finally:
@@ -492,7 +505,7 @@ class RelayStore:
         the only place atomicity matters (bulk insert) flips autocommit off around its batch."""
         c = getattr(self._tls, "conn", None)
         if c is None or c._raw.closed:
-            raw = psycopg2.connect(self.dsn, connect_timeout=10)
+            raw = _pg().connect(self.dsn, connect_timeout=10)
             raw.autocommit = True
             c = _PgConn(raw)
             self._tls.conn = c

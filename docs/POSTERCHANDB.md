@@ -136,7 +136,7 @@ store is opened once at relay start, so saving any of them restarts the relay (`
 
 | setting | default | what it does |
 |---|---|---|
-| `posterchandb_mode` | **off** | `off` = Postgres only. `primary` = PosterChanDB alone, no Postgres (after a promotion, below). `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
+| `posterchandb_mode` | **automatic** (blank) | Blank = `primary` on a node with no Postgres DSN (every fresh install — no install path sets one up, #161), `off` on a node that has one. `off` = Postgres only. `primary` = PosterChanDB alone, no Postgres (after a promotion, below). `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
 | `posterchandb_flush_seconds` | **300** | The write delay. A clean stop flushes first; a crash loses at most this window from PosterChanDB only — Postgres has every event, and the next start copies again. |
 | `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older segments; drains by itself when the machine runs low (MemAvailable + PSI, cache.py). |
 
@@ -145,17 +145,18 @@ was proven against, queries served from RAM vs fallen back, and sampled answers 
 
 ## PosterChanOS
 
-A PosterChanOS machine that runs the PosterChan server today needs a whole PostgreSQL server for its
-relay (`app-misc/posterchan-server` depends on `dev-db/postgresql`). PosterChanDB needs no database daemon:
-the relay keeps its events in its own files under the server's data directory. What that buys a desktop
+A PosterChanOS machine that runs the PosterChan server needs no PostgreSQL server (`app-misc/posterchan-server`
+dropped its `dev-db/postgresql` dependency in -r6, and `pc-server enable` no longer initialises a cluster).
+PosterChanDB needs no database daemon: the relay keeps its events in its own files under
+`/var/lib/posterchandb`. What that buys a desktop
 or laptop:
 - **RAM sized to the machine** — the read cache is a setting, and `auto` takes 25–50% of RAM; indexes for
   a personal relay (tens of thousands of events, not millions) are a few MB.
 - **Laptop SSDs** — writes are batched (default every 5 minutes) and sequential; idle means zero writes.
 - **Offline and on battery** — no Postgres to start, no checkpoint I/O while the lid is shut; a clean
   shutdown flushes, and the next boot loads one snapshot.
-- **One less service** in the package and in the installer; Postgres stays only for the server's app
-  tables, and on a personal machine those could move into the same store later.
+- **One less service** in the package and in the installer; the app's tables are relay documents in the
+  same store.
 
 ## What has to move
 

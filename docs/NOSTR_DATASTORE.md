@@ -1,8 +1,10 @@
 # Nostr-as-datastore (COMPLETE — on `master`)
 
-The **built-in Web-of-Trust relay's event store is the system of record.** There is no SQLite and
-no separate "app DB" anymore: the app's relational tables AND the relay's signed Nostr events live
-in **one PostgreSQL database** (`posterchan_relay`). The Nostr web client (`/client`) is the face of
+The **built-in Web-of-Trust relay's event store is the system of record.** There is no SQLite, no
+PostgreSQL and no separate "app DB" anymore (#161): the app's tables are relay DocTables
+(`app/services/doc_table.py`) and the relay stores every event in **PosterChanDB**
+([POSTERCHANDB.md](POSTERCHANDB.md)). The sections below on SQL caches describe the history of the
+two nodes that were migrated off Postgres; a fresh install never has one. The Nostr web client (`/client`) is the face of
 the app; anyone signs up / logs in with a Nostr key; admins grant AI access per-user.
 
 This migration is **done** — the old phased `*_backend` flags (`settings_/users_/bots_/chat_/
@@ -78,13 +80,13 @@ access" → writes a request event + DMs admins; an admin approves from the prof
 admin / has `can_blossom`.
 
 ## Deployment
-- **PostgreSQL is required.** Bare metal: `run-intel.sh`/`run-nvidia.sh` export `DATABASE_URL` +
-  `NOSTR_RELAY_PG_DSN`; `scripts/install/postgres.sh` provisions the role+db (localhost trust).
-- **Docker: use `docker compose`, NOT `docker run`.** The compose `postgres:18` service + the
-  `DATABASE_URL`/`NOSTR_RELAY_PG_DSN` env only exist in compose; a bare `docker run` has no database
-  and exits with "connection refused". `docker compose --profile <cpu|cuda|rocm|intel|nostr> up -d
-  --build` brings up Postgres + the app wired together. (AMD/ROCm: the entrypoint auto-sets
-  `HSA_OVERRIDE_GFX_VERSION`, required or HIP throws "invalid device function".)
+- **No database server.** Neither `install.sh` nor `docker compose` installs, starts or configures
+  PostgreSQL. With no `NOSTR_RELAY_PG_DSN`/`DATABASE_URL` the relay opens a new PosterChanDB primary
+  store on first start (`nostr_relay/thread.py` `_pcdb_mode`). A node that still has a Postgres keeps
+  its DSN and its old behaviour until it is promoted (`scripts/posterchandb_promote.py`).
+- **Docker:** `docker compose --profile <cpu|cuda|rocm|intel|nostr> up -d --build`, or a bare
+  `docker run` with the two volumes. (AMD/ROCm: the entrypoint auto-sets `HSA_OVERRIDE_GFX_VERSION`,
+  required or HIP throws "invalid device function".)
 
 ## UI
 The standalone web UI is retired — AI chat is a **view inside the Nostr client** (`static/js/client/`)

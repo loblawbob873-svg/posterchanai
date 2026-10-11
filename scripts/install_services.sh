@@ -64,7 +64,7 @@ echo "[services] repo=$REPO user=$USER_NAME launcher=$LAUNCHER"
 
 for r in "${UNITS[@]}"; do
     case "$r" in
-        relay)  desc="Nostr relay";                              after="postgresql.service" ;;
+        relay)  desc="Nostr relay";                              after="network.target" ;;
         worker) desc="background worker (pollers/schedulers)";    after="posterchanai-relay.service" ;;
         media)  desc="streaming + TURN (mediamtx, pion-turn)";    after="network.target" ;;
         tor)    desc="Tor daemons (.onion + SOCKS egress)";       after="network.target" ;;

@@ -22,7 +22,7 @@ boot entries into them, so a shared file makes the second run's result depend on
 
 THE SERVER, FROM THE INSTALLED SYSTEM (`--server`). PosterChanOS carries the server's code and runs
 none of it until somebody presses System Settings → PosterChan Server → Enable, which is `pc-server
-enable`: a Postgres cluster, Tor, the project's own `install.sh --nostr-only`, a unit. That path runs
+enable`: Tor, the project's own `install.sh --nostr-only`, a unit (no database server -- #161). That path runs
 on an installed machine and nowhere else, so nothing here had ever exercised it -- an image whose
 server could not be switched on passed every gate. With `--server` the booted disk gets a root shell
 from the TEST (systemd's debug shell on a second serial port -- a finished install has no root login,
@@ -425,11 +425,13 @@ POSTS_WANTED = 5
 def _posts_flow(ask, evidence, *, clock, sleep, poll, timeout=900):
     """THE PASS CONDITION IS POSTS ARRIVING, NOT A UNIT BEING ACTIVE. A server can answer on 3051 with
     a relay that syncs nothing -- no upstream reachable, a database it cannot write, a gate that drops
-    everything -- and that node is useless. So it must be SEEN receiving Nostr posts (kind 1, into its
-    own Postgres). And the moment it is, the caller powers the guest off: a test node left syncing
-    spends this project's rate limits with every upstream relay it talks to."""
-    q = ("runuser -u postgres -- psql -d posterchan_relay -Atc "
-         "\"select 'POSTS=' || count(*) from events where kind=1\" 2>&1 | tail -n1")
+    everything -- and that node is useless. So it must be SEEN receiving Nostr posts (kind 1), counted by
+    asking the node's OWN relay (NIP-45 COUNT over its loopback socket, the app's relay_reader) -- there is
+    no Postgres on a fresh server to ask (#161). And the moment it is, the caller powers the guest off: a test
+    node left syncing spends this project's rate limits with every upstream relay it talks to."""
+    q = ("cd /opt/posterchan-server && P=$(ls venv*/bin/python | head -n1) && \"$P\" -c "
+         "\"from app.services import relay_reader as r; print('POSTS=%d' % r.counts([{'kinds': [1]}], port=3052)[0])\" "
+         "2>&1 | tail -n1")
     deadline = clock() + timeout
     seen = -1
     while clock() < deadline:

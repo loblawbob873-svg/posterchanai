@@ -218,7 +218,7 @@ create_default_run_script() {
 # CPU / Nostr-only / Ollama wrapper script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-# Local env overrides (DATABASE_URL, POSTERCHANAI_NOSTR_RELAY / _NOSTR_ONLY, …)
+# Local env overrides (POSTERCHANAI_NOSTR_RELAY / _NOSTR_ONLY, POSTERCHANDB_DIR, …)
 [ -f "$SCRIPT_DIR/data/secrets.env" ] && . "$SCRIPT_DIR/data/secrets.env"
 exec "$SCRIPT_DIR/venv/bin/python" run.py "$@"
 SCRIPT

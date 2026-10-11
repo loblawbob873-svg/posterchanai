@@ -111,7 +111,7 @@ def test_nostr_only_completes_with_no_terminal_and_writes_a_unit_for_the_named_a
     assert "systemctl daemon-reload" in " ".join(calls)
     assert not [c for c in calls if " enable " in f" {c} " or c.endswith(" start posterchanai")], \
         "--no-start: the caller decides when it runs"
-    assert any("CREATE DATABASE posterchan_relay" in c for c in calls)
+    assert not [c for c in calls if c.startswith("psql") or "posterchan_relay" in c], "no database is set up (#161)"
     # SearXNG is part of the NORMAL install on this path too, as on the Full one (Step 9d2).
     src = (ROOT / "install.sh").read_text()
     body = src[src.index("install_nostr_only() {"):src.index("\n}\n", src.index("install_nostr_only() {"))]

@@ -374,7 +374,8 @@ COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn
 COPY --from=streamdl /mediamtx /app/streamserver/mediamtx
 
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
-# (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
+# (the keyfile). Durable app/relay state is the relay's PosterChanDB store (POSTERCHANDB_DIR below) —
+# there is no SQL database (#161).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
              /var/lib/posterchanai/tor /var/lib/posterchanai/tor2 /var/lib/posterchanai/hf \
              /var/lib/posterchanai/git_repos /app/data

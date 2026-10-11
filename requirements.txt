@@ -32,8 +32,9 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 edge-tts>=6.1.10
-# PostgreSQL access for the merged bot framework (blockbot/welcome/report/engagement
-# read the Pleroma DB directly). See botframework/.
+# PostgreSQL CLIENT library (no server -- #161: the app and relay need no SQL database). For the merged
+# bot framework (blockbot/welcome/report/engagement read a Pleroma DB directly; see botframework/) and
+# the one-time copy scripts that read an old node's Postgres. The app imports it lazily.
 psycopg2-binary>=2.9.0
 pydantic>=2.5.0,<3.0.0
 pydantic-settings>=2.14.2

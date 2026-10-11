@@ -1,9 +1,11 @@
 """os/bin/pc-server — PosterChanOS's privileged door to the bundled server, RUN under bash with every system
 command stubbed.
 
-The stubs keep state (enabled/active units, the Postgres cluster, which users exist) in files, so a second
-`enable` sees what the first one did. `systemd-run` runs the job SYNCHRONOUSLY with the environment the real
-one would give it, so the whole enable → Postgres → installer → unit chain is observable from one call.
+The stubs keep state (enabled/active units, which users exist) in files, so a second `enable` sees what the
+first one did. `systemd-run` runs the job SYNCHRONOUSLY with the environment the real one would give it, so the
+whole enable → installer → unit chain is observable from one call. The Box has PostgreSQL INSTALLED (two slots),
+because the helper must leave a machine's PostgreSQL alone (#161): there is no database to set up any more.
+tests/test_fresh_install_has_no_postgres.py runs the same harness with every Postgres tool stubbed.
 
 What matters most here is what the helper REFUSES: it is reachable through a NOPASSWD sudo rule by every
 administrator's desktop, so an unknown verb, an unlisted feature, `__run` from outside a job and a mutating
@@ -57,7 +59,7 @@ echo "local all all trust" > "$STUB_PGETC/postgresql-$slot/pg_hba.conf"''',
 }
 
 FAKE_INSTALL = r'''#!/bin/bash
-echo "install.sh $* | DATABASE_URL=${DATABASE_URL:-} HOME=$HOME ACESTEP_DIR=$ACESTEP_DIR" >> "$STUB_LOG"
+echo "install.sh $* | dsn=${DATABASE_URL:-}${NOSTR_RELAY_PG_DSN:-} HOME=$HOME ACESTEP_DIR=$ACESTEP_DIR" >> "$STUB_LOG"
 [ -n "${STUB_INSTALL_FAIL:-}" ] && exit 1
 case "$1" in
   --nostr-only) mkdir -p venv/bin venv/lib/python3.13/site-packages; touch venv/bin/python; chmod +x venv/bin/python
@@ -159,54 +161,43 @@ def test_status_before_anything_is_set_up_says_so_rather_than_stopped(box):
     s = box.status()
     assert s["code"] is True and s["configured"] is False and s["venv"] is False
     assert s["port"] == 3051 and s["relayPort"] == 3052
-    assert s["postgres"]["slot"] == "18", "must pick the NEWEST installed server"
+    assert "postgres" not in s and s["database"] == "posterchandb", "no database server is part of the server"
     assert s["features"] == {f: False for f in ("ai", "music", "video", "voice", "searxng")}
     assert s["job"]["running"] is False
 
 
 # ---------------------------------------------------------------------------------------- enable
-def test_enable_initialises_postgres_runs_the_installer_and_starts_the_unit(box):
+def test_enable_runs_the_installer_and_starts_the_unit(box):
     rc, out, calls = box.run("enable")
     assert rc == 0, out
     log = box.job_log()
     assert "PosterChan server enabled" in log, log
     text = "\n".join(calls)
     assert "useradd --system" in text, "the service account must exist before anything is chowned to it"
-    assert "emerge --config dev-db/postgresql:18" in text
-    # The cluster it made never runs on initdb's trust default, and the only door in is peer.
-    hba = (box.pgetc / "postgresql-18" / "pg_hba.conf").read_text()
-    assert "trust" not in hba.replace("# Written", "")
-    assert "peer map=posterchan" in hba and "scram-sha-256" in hba
-    ident = (box.pgetc / "postgresql-18" / "pg_ident.conf").read_text()
-    assert "posterchan-server  posterchan" in ident
-    assert calls.index(next(c for c in calls if c.startswith("systemctl enable --now postgresql-18"))) < \
-        calls.index(next(c for c in calls if c.startswith("install.sh"))), "Postgres must be up before the installer"
     inst = next(c for c in calls if c.startswith("install.sh"))
     assert "install.sh --nostr-only --service-user posterchan-server --no-start" in inst
-    assert "host=/run/postgresql" in inst, "the installer's DB steps must use the peer-mapped socket"
+    assert "dsn= " in inst, "the installer is handed no database (#161)"
     assert "systemctl enable --now posterchanai.service" in text
+    assert "postgresql" not in text and "emerge --config" not in text, "the machine's PostgreSQL is not ours"
     secrets = (box.app / "data" / "secrets.env").read_text()
-    assert "DATABASE_URL='postgresql+psycopg2://posterchan@/posterchan_relay?host=/run/postgresql'" in secrets
-    assert "NOSTR_RELAY_PG_DSN='host=/run/postgresql dbname=posterchan_relay user=posterchan'" in secrets
+    assert "DATABASE_URL" not in secrets and "NOSTR_RELAY_PG_DSN" not in secrets, secrets
     assert f"chown -R posterchan-server:posterchan-server {box.app}" in text
     s = box.status()
     assert s["configured"] and s["venv"] and s["enabled"] == "enabled" and s["active"] == "active"
     assert s["nostrOnly"] is True and s["job"]["rc"] == "0"
 
 
-def test_a_second_enable_neither_reinitialises_postgres_nor_reinstalls(box):
+def test_a_second_enable_does_not_reinstall(box):
     assert box.run("enable")[0] == 0
     box.run("disable")
     rc, out, calls = box.run("enable")
     assert rc == 0, out
     text = "\n".join(calls)
-    assert "emerge --config" not in text, "re-initialising would destroy the database"
     assert not any(c.startswith("install.sh") for c in calls), "an installed server is only started"
     assert "systemctl enable --now posterchanai.service" in text
-    assert (box.app / "data" / "secrets.env").read_text().count("DATABASE_URL") == 1
 
 
-def test_a_cluster_that_was_already_there_is_used_as_it_is(box):
+def test_a_cluster_that_is_already_there_is_left_alone(box):
     data = box.pgdata / "18" / "data"
     data.mkdir(parents=True)
     (data / "PG_VERSION").write_text("18")
@@ -215,20 +206,22 @@ def test_a_cluster_that_was_already_there_is_used_as_it_is(box):
     (etc / "pg_hba.conf").write_text("somebody's own rules\n")
     rc, out, calls = box.run("enable")
     assert rc == 0, out
-    assert "emerge --config" not in "\n".join(calls)
+    assert not [c for c in calls if "postgresql" in c or c.startswith("emerge --config")], calls
     assert (etc / "pg_hba.conf").read_text() == "somebody's own rules\n"
     assert "DATABASE_URL" not in (box.app / "data" / "secrets.env").read_text()
     # …and turning the server off must not take somebody else's database down with it.
     _, _, calls = box.run("disable")
-    assert not [c for c in calls if "postgresql-18" in c]
+    assert not [c for c in calls if "postgresql" in c]
 
 
-def test_enable_without_postgres_fails_in_the_log_not_silently(tmp_path):
+def test_enable_on_a_machine_without_postgres_just_works(tmp_path):
+    """It used to stop here with "PostgreSQL is not installed"; a fresh PosterChanOS ships none (#161)."""
     b = Box(tmp_path, pg=False)
     rc, out, calls = b.run("enable")
-    assert "PostgreSQL is not installed" in b.job_log()
-    assert "rc=1" in (b.home / "job.state").read_text()
-    assert not any(c.startswith("install.sh") for c in calls)
+    assert rc == 0, out
+    assert "PosterChan server enabled" in b.job_log(), b.job_log()
+    assert "rc=0" in (b.home / "job.state").read_text()
+    assert any(c.startswith("install.sh --nostr-only") for c in calls)
 
 
 def test_a_failed_installer_is_reported_and_nothing_is_started(box):
@@ -280,12 +273,12 @@ def test_installing_a_feature_never_switches_a_stopped_server_on(box):
 
 
 # ---------------------------------------------------------------------------------------- off
-def test_disable_stops_the_server_and_the_database_it_brought_up(box):
+def test_disable_stops_the_server_and_nothing_else(box):
     box.run("enable")
     rc, out, calls = box.run("disable")
     assert rc == 0, out
     assert "systemctl disable --now posterchanai.service" in calls
-    assert "systemctl disable --now postgresql-18.service" in calls
+    assert not [c for c in calls if "postgresql" in c], calls
     s = box.status()
     assert s["enabled"] == "disabled" and s["active"] == "inactive"
 
@@ -330,12 +323,12 @@ def test_every_program_the_helper_runs_is_provided():
     import re
     src = HELPER.read_text()
     provided = {"systemctl": "sys-apps/systemd", "systemd-run": "sys-apps/systemd",
-                "journalctl": "sys-apps/systemd", "emerge": "sys-apps/portage", "runuser": "sys-apps/util-linux",
+                "journalctl": "sys-apps/systemd", "emerge": "sys-apps/portage",
                 "useradd": "sys-apps/shadow", "chown": "sys-apps/coreutils"}
     for cmd in provided:
         assert re.search(r"(^|[\s(|;])" + re.escape(cmd) + r"\s", src), f"{cmd} no longer used — drop it here"
     ebuild = next((ROOT / "os/overlay/app-misc/posterchan-server").glob("posterchan-server-*.ebuild")).read_text()
-    assert "dev-db/postgresql[server]" in ebuild, "psql/initdb come from the server package"
+    assert "dev-db/postgresql" not in ebuild, "the server needs no database server (#161)"
 
 
 def test_enable_brings_searxng_with_the_server_and_starts_it(box):
@@ -379,17 +372,14 @@ def test_searxng_gets_setuptools_before_its_no_isolation_build():
     assert a < b, "setuptools must be in the venv before the --no-build-isolation install"
 
 
-def test_searxng_runs_as_the_service_account_and_gets_the_database(box):
-    """Measured on the build VM: the SearXNG unit ran as root and fell back to 127.0.0.1:5432
-    ("fe_sendauth: no password supplied") — the peer-socket URL lives in secrets.env as `export`
-    lines, which systemd cannot read. The installer is told the service user; a drop-in carries the URL."""
+def test_searxng_runs_as_the_service_account_and_needs_no_database(box):
+    """Measured on the build VM: the SearXNG unit ran as root. The installer is told the service user. There used
+    to be a drop-in carrying the peer-socket DATABASE_URL too; with no database (#161) there is nothing to carry."""
     rc, out, calls = box.run("enable")
     assert rc == 0, box.job_log()
     inst = [c for c in calls if c.startswith("install.sh")]
     assert inst, calls
-    dropin = box.units / "posterchanai-searxng.service.d" / "pc-server.conf"
-    assert dropin.exists(), "the SearXNG unit gets the server's DATABASE_URL"
-    assert "host=/run/postgresql" in dropin.read_text()
+    assert not (box.units / "posterchanai-searxng.service.d").exists(), "no drop-in, no database URL"
     src = (ROOT / "os/bin/pc-server").read_text()
     assert 'PC_SERVICE_USER="$SVC_USER"' in src
 

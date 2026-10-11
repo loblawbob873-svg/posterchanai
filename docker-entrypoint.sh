@@ -3,8 +3,8 @@
 #   - prepares the runtime data dirs (mounted volume)
 #   - optionally sources Intel oneAPI (only needed for the SYCL llama.cpp LLM path)
 #   - then execs the CMD (python run.py)
-# The app + relay use PostgreSQL (the `postgres` service in docker-compose), not SQLite —
-# durable state lives in PG; the data volume holds uploads/models/HF caches + /app/data (keyfile).
+# There is no SQL database (#161): durable state is the built-in relay's PosterChanDB store on the data
+# volume, beside uploads/models/HF caches; /app/data holds the keyfile.
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
@@ -221,7 +221,7 @@ fi
 # Provision the relay's instance (operator) key + seed the Web of Trust with it, and print the
 # instance npub (idempotent). The app also mints this lazily on first start, but doing it here gives
 # parity with install.sh and surfaces the npub in the container logs. Best-effort — never block
-# startup (postgres is already healthy via compose depends_on by the time the entrypoint runs).
+# startup.
 if [ -f /app/scripts/init_instance_key.py ]; then
     python /app/scripts/init_instance_key.py || echo "[entrypoint] instance key init deferred to app start"
 fi
