@@ -175,7 +175,9 @@ def _run(harness, *, native, media_save=False):
         with open(page, "w") as fh:
             fh.write(page_src)
         out = subprocess.run(
-            [CHROME, "--headless", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=4000",
+            # 15 s of VIRTUAL time (it advances only while the page idles): 4 s ran out on a loaded CI runner
+            # before the third save had written its result, and the page dumped with no <title> (2026-10-11).
+            [CHROME, "--headless", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=15000",
              "--user-data-dir=" + os.path.join(d, "profile"), "--dump-dom", "file://" + page],
             capture_output=True, text=True, timeout=180).stdout
         m = re.search(r"<title>(.*?)</title>", out, re.S)
