@@ -172,3 +172,53 @@ readlink "$sed_dst"
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().splitlines()[-1] == PTOP
+
+
+def test_filesystems_are_the_real_ones_once_each(tmp_path, monkeypatch):
+    proc = str(tmp_path / "proc")
+    _w(proc + "/mounts", "\n".join([
+        "/dev/mapper/luks-a / btrfs rw,subvol=/@ 0 0",
+        "/dev/mapper/luks-a /home btrfs rw,subvol=/@home 0 0",          # same filesystem: one row, named '/'
+        "/dev/mapper/luks-a /.snapshots btrfs rw 0 0",
+        "/dev/nvme0n1p1 /boot vfat rw 0 0",
+        "/dev/md0 /mnt/my\\040drive ext4 rw 0 0",                        # octal-escaped space
+        "/dev/md0 /srv/bind ext4 rw 0 0",                                # a bind mount of it: still one row
+        "nas:/export /mnt/nas nfs4 rw 0 0",
+        "tmpfs /tmp tmpfs rw 0 0", "proc /proc proc rw 0 0", "sysfs /sys sysfs rw 0 0",
+        "cgroup2 /sys/fs/cgroup cgroup2 rw 0 0", "/dev/loop0 /snap/core/1 squashfs ro 0 0",
+        "devpts /dev/pts devpts rw 0 0", "overlay /var/lib/docker/x overlay rw 0 0",
+        "/dev/sdz1 /empty ext4 rw 0 0",                                  # zero-size: skipped
+    ]) + "\n")
+    m = _load(proc, str(tmp_path / "sys"))
+
+    class V:
+        def __init__(self, blocks, bfree, bavail):
+            self.f_blocks, self.f_bfree, self.f_bavail, self.f_frsize = blocks, bfree, bavail, 4096
+    sizes = {"/empty": V(0, 0, 0)}
+    monkeypatch.setattr(m.os, "statvfs", lambda p: sizes.get(p, V(1000, 400, 300)))
+    fs = m.read_filesystems()
+    assert [f["mount"] for f in fs] == ["/", "/boot", "/mnt/my drive", "/mnt/nas"], [f["mount"] for f in fs]
+    root = fs[0]
+    assert root["size"] == 1000 * 4096 and root["used"] == 600 * 4096 and root["avail"] == 300 * 4096
+    # a container's root overlay IS its filesystem
+    _w(proc + "/mounts", "overlay / overlay rw 0 0\nproc /proc proc rw 0 0\n")
+    assert [f["mount"] for f in m.read_filesystems()] == ["/"]
+
+
+def test_the_screen_lists_this_machines_filesystems_and_no_tmpfs():
+    env = dict(os.environ, COLORTERM="truecolor", LANG="C.UTF-8")
+    out = subprocess.run([sys.executable, PTOP, "--once", "--interval", "0.3", "--size", "160x70"],
+                         capture_output=True, text=True, env=env, timeout=60)
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
+    assert "FILESYSTEMS" in plain
+    real = []
+    for line in open("/proc/mounts"):
+        src, mnt, typ = line.split()[:3]
+        if typ in ("ext4", "btrfs", "xfs", "vfat") and mnt in ("/", "/boot"):
+            real.append(mnt)
+    for mnt in real:
+        assert re.search(r"[│|]%s\s" % re.escape(mnt), plain), "%s is missing from the screen" % mnt
+    assert not re.search(r"\btmpfs\b", plain), "a tmpfs is listed"
+    panel = plain[plain.index("FILESYSTEMS"):]
+    rows = [ln for ln in panel.splitlines()[1:] if ln.strip().startswith(("│/", "|/"))]
+    assert rows and all(re.search(r"\d+\.\d%\s*[│|]\s*$", r) for r in rows), "a usage figure is cut off: %r" % rows

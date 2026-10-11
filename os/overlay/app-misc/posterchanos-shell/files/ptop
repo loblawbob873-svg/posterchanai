@@ -175,6 +175,44 @@ def read_disks():
     return out
 
 
+# Filesystems worth a row: real storage only. An ALLOWLIST, so a pseudo filesystem the kernel adds next year
+# (proc, sysfs, cgroup2, tmpfs, devpts, tracefs, bpf, squashfs snaps, fuse.portal ...) can never appear.
+REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "bcachefs", "f2fs", "jfs", "reiserfs", "vfat", "exfat",
+           "ntfs", "ntfs3", "fuseblk", "nfs", "nfs4", "cifs", "smb3", "fuse.sshfs", "fuse.rclone"}
+
+
+def _unescape(path):
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), path)
+
+
+def read_filesystems():
+    """[{mount, source, type, size, used, avail}] for every real filesystem, once per source device (btrfs
+    subvolumes and bind mounts are one filesystem). Its FIRST mount names it -- /proc/mounts lists a filesystem
+    before its bind mounts -- unless one of them is `/`. `overlay` counts only as the root of a container."""
+    best = {}
+    for line in _read(PROC + "/mounts").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        source, mount, fstype = parts[0], _unescape(parts[1]), parts[2]
+        if fstype not in REAL_FS and not (fstype == "overlay" and mount == "/"):
+            continue
+        try:
+            st = os.statvfs(mount)
+        except OSError:
+            continue
+        if not st.f_blocks:
+            continue
+        size = st.f_blocks * st.f_frsize
+        used = (st.f_blocks - st.f_bfree) * st.f_frsize
+        avail = st.f_bavail * st.f_frsize
+        key = source if source not in ("none", "overlay") else mount
+        cur = best.get(key)
+        if cur is None or (mount == "/" and cur["mount"] != "/"):
+            best[key] = {"mount": mount, "source": source, "type": fstype, "size": size, "used": used, "avail": avail}
+    return sorted(best.values(), key=lambda f: f["mount"])
+
+
 _users: dict = {}
 
 
@@ -313,7 +351,7 @@ class Sampler:
                 "mem": {"total": mem.get("MemTotal", 0), "available": mem.get("MemAvailable", 0),
                         "cached": mem.get("Cached", 0) + mem.get("Buffers", 0), "free": mem.get("MemFree", 0),
                         "swap_total": mem.get("SwapTotal", 0), "swap_free": mem.get("SwapFree", 0)},
-                "net": net, "disks": disks, "procs": procs}
+                "net": net, "disks": disks, "fs": read_filesystems(), "procs": procs}
 
 
 # ---------------------------------------------------------------------------------------------------- drawing
@@ -557,12 +595,26 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         disk_lines.append(pad(P.fg("dim", "no block devices"), rin))
     disk_box = sc.panel("DISK I/O - latency" if ascii_mode else "DISK I/O · latency", disk_lines, right_w, "violet")
 
+    # ---- filesystems: usage of every real mounted filesystem
+    fs_lines = []
+    for f in snap.get("fs", []):
+        tot = (f["used"] + f["avail"]) or 1
+        frac = f["used"] / tot
+        name = f["mount"] if len(f["mount"]) <= 18 else "..." + f["mount"][-15:]
+        fs_lines.append(pad(P.fg("yellow", "%-18s" % name, bold=True) + P.fg("dim", " %-6s " % f["type"][:6]) +
+                            sc.bar(frac, max(6, rin - 54)) +   # 18 + 8 + bar + 21 + 7 = the row
+                            P.fg("text", " %8s / %-8s" % (human(f["used"]), human(f["size"]))) +
+                            P.fg(heat(frac), " %5.1f%%" % (frac * 100)), rin))
+    if not fs_lines:
+        fs_lines.append(pad(P.fg("dim", "no filesystems"), rin))
+    fs_box = sc.panel("FILESYSTEMS", fs_lines, right_w, "green")
+
     if cols >= 100:
-        left, right = cpu_box + mem_box, net_box + disk_box
+        left, right = cpu_box + mem_box, net_box + disk_box + fs_box
         for i in range(max(len(left), len(right))):
             out.append((left[i] if i < len(left) else " " * left_w) + (right[i] if i < len(right) else ""))
     else:
-        out += cpu_box + mem_box + net_box + disk_box
+        out += cpu_box + mem_box + net_box + disk_box + fs_box
 
     # ---- processes fill what is left
     key = {"cpu": lambda p: -p["cpu_pct"], "mem": lambda p: -p["rss"], "pid": lambda p: p["pid"],
