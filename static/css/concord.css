@@ -581,3 +581,8 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
   body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
   body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:none!important}
 }
+
+/* Starred channel: the same i-star icon, filled. Icons, not the \2606/\2605/\22EF text characters, which
+ * several system fonts (PosterChanOS, headless Chrome) have no glyph for and draw as empty boxes. */
+svg.ic.cc-starred{fill:currentColor}
+.cc-channel-more svg.ic,.cc-action-trigger svg.ic,.cc-head-more svg.ic{width:18px;height:18px}

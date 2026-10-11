@@ -56,6 +56,7 @@
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.2 10.6L12 3.4l8.8 7.2"/><path d="M5.6 9.4v10.2a1 1 0 001 1h10.8a1 1 0 001-1V9.4"/><path d="M9.6 20.6v-6h4.8v6"/></symbol>
   <symbol id="i-pen" viewBox="0 0 24 24"><path d="M11 4.4H6a2 2 0 00-2 2v11.4a2 2 0 002 2h11.4a2 2 0 002-2v-5"/><path d="M18.3 2.9a2 2 0 012.8 2.8l-8.6 8.6-3.5 1 1-3.5z"/></symbol>
   <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.6 20c0-3.6 3.4-5.7 7.4-5.7s7.4 2.1 7.4 5.7"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9.4 20.6H6a2 2 0 01-2-2V5.4a2 2 0 012-2h3.4"/><path d="M15.8 16.2l4.2-4.2-4.2-4.2"/><path d="M20 12H9.6"/></symbol>
   <!-- platform marks for the "Get the app" links -->
