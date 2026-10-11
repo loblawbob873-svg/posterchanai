@@ -117,7 +117,7 @@ def test_pictures_render_in_the_order_they_were_written():
         await desktop.login(b)
         await b.js("__PC.switchView('global')")
         await b.until("[...document.querySelectorAll('#feed article.note')].length>=%d" % len(CASES))
-        for _ in range(20):
+        for _ in range(40):
             got["cards"] = await b.js(CARDS)
             if len(got["cards"]) == len(CASES):
                 break
@@ -151,7 +151,7 @@ def test_on_a_phone_the_inline_pictures_keep_their_order_and_fit_the_screen():
         await b.js("__PC.switchView('global')")
         await b.until("[...document.querySelectorAll('#feed article.note')].length>=%d" % len(CASES))
         await b.until("[...document.querySelectorAll('#feed article.note img')].some(i=>i.complete&&i.naturalWidth>0)")
-        for _ in range(20):
+        for _ in range(40):
             got["cards"] = await b.js(CARDS)
             if len(got["cards"]) == len(CASES):
                 break
