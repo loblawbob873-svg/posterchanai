@@ -5926,9 +5926,14 @@
         const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,
           bundle=room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);
         let wraps=roomControls.get(loadKey);
-        if(!wraps){ const seed=reader.inspectControl(bundle,[]);
+        if(!wraps){ const seed=reader.inspectControl(bundle,[]),report={};
+          /* `urgent`: this read decides what the new channel event is built on. Without it a relay busy
+             with the room's own opening load (or resting after one failure) is SKIPPED and answers [],
+             and the channel is built on an empty control set -- refused as "not permitted", or worse
+             written on nothing. A write must not follow a read that asked nobody. */
           wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],
-            {timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)}); }
+            {timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room),report,urgent:true});
+          if(!(report.ok||[]).length&&!(wraps||[]).length)throw new Error('could not read this community from its relays yet — try again in a moment'); }
         const scope=cordPlaneContext(p,bundle,wraps||[],room),
           made=await reader.createChannelWrap(bundle,wraps||[],{name,view},viewer.pubkey,p.signTemplate);
         if(!scope.current())throw new Error('Concord membership changed while signing');
@@ -5952,7 +5957,7 @@
       p.modal(`<h3>#${p.enc(ch.name)}</h3><div class="cc-attach-choices"><button class="btn btn-ghost" data-cc-ch-rename>Rename</button><button class="btn btn-ghost danger" data-cc-ch-delete>Delete channel</button></div>`,root=>{
         const run=async(changes)=>{ try{
           const reader=window.PosterCordReader,bundle=room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle),roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{};
-          let wraps=roomControls.get(loadKey); if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)});}
+          let wraps=roomControls.get(loadKey); if(!wraps){const seed=reader.inspectControl(bundle,[]),report={};wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room),report,urgent:true});if(!(report.ok||[]).length&&!(wraps||[]).length)throw new Error('could not read this community from its relays yet — try again in a moment');}   // urgent: an edit built on a read that asked nobody (see channel creation above)
           const scope=cordPlaneContext(p,bundle,wraps||[],room),made=await reader.createChannelEditWrap(bundle,wraps||[],id,changes,viewer.pubkey,p.signTemplate);
           if(!scope.current())throw new Error('Concord membership changed while signing');
           const r=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!r||!r.ok)throw new Error('the community relays did not accept it');
