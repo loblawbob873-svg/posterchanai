@@ -257,9 +257,19 @@ window.PCBlossomFactory = function(dep){
      the change to us so it is saved to the account like the Settings switch. */
   try{ if(window.PCRightPanel) window.PCRightPanel.onchange = shown => { _prefTouched.add('rightPanel'); saveClientPrefsNostr({ rightPanel: !!shown }); }; }catch(_){}
   let _prefsSaveChain = Promise.resolve();
+  /* UNSENT CHANGES ARE KEPT UNTIL A RELAY TAKES THEM. A save that cannot read the document skips the
+     write (above), and a publish can be refused -- and each save only ever sent ITS OWN patch, so the
+     change was simply never synced: a Concord theme (or any pref) picked during one bad moment stayed
+     on that device for good, and another device never saw it. Every patch is recorded here first, per
+     account; every later save and every successful restore sends the whole set; a key is dropped only
+     once a relay accepted the document carrying exactly that value. Also: a restore must not revert a
+     pending key to the relay's OLDER value, so pending keys count as this device's newer choice. */
   function saveClientPrefsNostr(patch){
     if(!_S.ME || !_S.ME.pubkey) return Promise.resolve();
     const owner=_S.ME.pubkey;
+    // notificationPrefs is NOT tracked here: it has its own per-key dirty set and clock (_syncNotificationPreferences).
+    if(patch && typeof patch==='object'){ const p2={...patch}; delete p2.notificationPrefs;
+      if(Object.keys(p2).length) _setPendingPrefs(owner, {..._pendingPrefs(owner), ...p2}); }
     // SERIALIZE writes: each read-modify-write runs after the previous one's publish, so two concurrent
     // saves (e.g. a data-saver toggle + a presets Save) can't each read a stale `cur` and clobber the other.
     _prefsSaveChain = _prefsSaveChain.catch(()=>{}).then(async()=>{
@@ -271,23 +281,86 @@ window.PCBlossomFactory = function(dep){
         // Nothing answered — skip the write instead of replacing the document with this patch alone.
         // What the user just set is already in ClientSettings on this device, so nothing they did is
         // lost here; the next save that CAN read the document carries it up.
-        if(cur === null || !_S.ME || _S.ME.pubkey!==owner) return;
+        if(cur === null || !_S.ME || _S.ME.pubkey!==owner){ _schedulePendingRetry(owner); return; }
         const state=_notificationState(owner);
         const createdAt=Math.max(Math.floor(Date.now()/1000),state.clock+1,(cur._pcPrefsCreatedAt||0)+1);
-        const merged={...cur,...(patch||{})};
+        /* The patch is already IN pending (recorded above, before this waited its turn); pending goes
+           LAST so a newer value recorded by a later save while this one waited is not overwritten
+           with this save's older one. The patch is still merged, under it, for a device whose
+           localStorage refused the write. */
+        const pending=_pendingAgainst(owner, cur);
+        const p0={...(patch||{})}; _dropStale(p0, cur);
+        const merged={...cur,...p0,...pending};
         if(cur._pcPrefsCreatedAt && cur._pcPrefsCreatedAt<state.clock)
           merged.notificationPrefs={..._notificationClean(cur.notificationPrefs),...state.values,...state.dirty};
         const result=await publish(30078, JSON.stringify(merged), [['d','pcai:client-prefs']],{createdAt});
-        if(result && result.ok){const latest=_notificationState(owner);latest.clock=Math.max(latest.clock,createdAt);_notificationStore(owner,latest);}
-      }catch(_){}
+        if(result && result.ok){const latest=_notificationState(owner);latest.clock=Math.max(latest.clock,createdAt);_notificationStore(owner,latest);
+          _pendingSent(owner, merged); _pendingRetryDone();}
+        else _schedulePendingRetry(owner);
+      }catch(_){ try{ _schedulePendingRetry(owner); }catch(_){} }
     });
     return _prefsSaveChain;
   }
+  // ---- the unsent-prefs map (used by saveClientPrefsNostr above and the restore below) ----
+  function _PENDING_KEY(owner){ return 'pc.prefs.pending.' + owner; }
+  function _pendingPrefs(owner){
+    try{ const v=JSON.parse(localStorage.getItem(_PENDING_KEY(owner))||'{}'); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }
+    catch(_){ return {}; }
+  }
+  function _setPendingPrefs(owner, v){
+    try{ if(Object.keys(v).length) localStorage.setItem(_PENDING_KEY(owner), JSON.stringify(v));
+         else localStorage.removeItem(_PENDING_KEY(owner)); }catch(_){}
+  }
+  /* TWO PREFS CARRY THEIR OWN CLOCK, and for those an unsent value is not automatically the newer
+     one: a Concord theme picked here while offline, then a different one picked on the phone an hour
+     later, must not overwrite the phone's choice when this device finally gets through -- and
+     concord.js would then keep re-asserting the newer one, so the document would flip back and forth.
+     Everything else has no clock and the unsent local change wins, as it always did locally. */
+  function _dropStale(local, remote){   // removes from `local` what `remote` holds a NEWER copy of; true if it did
+    const r=remote||{}, at=v=>Number(v&&v.at)||0; let changed=false;
+    if('concordTheme' in local && r.concordTheme && typeof r.concordTheme==='object' && at(r.concordTheme)>at(local.concordTheme)){
+      delete local.concordTheme; changed=true; }
+    if(('startupApps' in local || 'startupAppsAt' in local) && (Number(r.startupAppsAt)||0)>(Number(local.startupAppsAt)||0)){
+      delete local.startupApps; delete local.startupAppsAt; changed=true; }
+    return changed;
+  }
+  function _pendingAgainst(owner, remote){
+    const pending=_pendingPrefs(owner);
+    if(_dropStale(pending, remote)) _setPendingPrefs(owner, pending);
+    return pending;
+  }
+  // Sent: forget exactly what went out. A key changed again meanwhile keeps its newer value pending.
+  function _pendingSent(owner, doc){
+    const now=_pendingPrefs(owner);
+    for(const k of Object.keys(now)) if(k in doc && JSON.stringify(now[k])===JSON.stringify(doc[k])) delete now[k];
+    _setPendingPrefs(owner, now);
+  }
+  /* AND SOMETHING HAS TO SEND THEM WITHOUT BEING ASKED. Keeping the change only helps if a later
+     save or a reload comes along to carry it -- on a desktop left open for days, neither does, and
+     a theme picked during one dropped connection stays on this machine until somebody happens to
+     touch another setting. So a save that could not land schedules its own retry (backed off,
+     bounded per page so a relay that refuses for good is not asked -- and a remote signer not
+     prompted -- for ever); any successful save cancels it. */
+  let _pendingRetryT=null, _pendingRetries=0;
+  function _schedulePendingRetry(owner){
+    if(_pendingRetryT || _pendingRetries>=8 || !Object.keys(_pendingPrefs(owner)).length) return;
+    const delay=Math.min(300000, 10000*Math.pow(2,_pendingRetries++));
+    _pendingRetryT=setTimeout(()=>{ _pendingRetryT=null;
+      if(_S.ME && _S.ME.pubkey===owner && Object.keys(_pendingPrefs(owner)).length) saveClientPrefsNostr({}); }, delay);
+  }
+  function _pendingRetryDone(){ if(_pendingRetryT){ clearTimeout(_pendingRetryT); _pendingRetryT=null; } _pendingRetries=0; }
   async function restoreClientPrefsNostr(){
     if(!_S.ME || !_S.ME.pubkey) return;
     const owner=_S.ME.pubkey;
     const pr = await _readPrefs(owner);
     if(!pr || owner!==_notificationOwner()) return;
+    /* This device's unsent value is the newer one: it is what `pr` answers with (so the callers --
+       the Social-set migration reads `pr.navHidden` -- decide from what this device holds, never from
+       the older copy it is about to replace), it is marked touched (so no clause below reverts it),
+       and now that a read worked, it is sent. */
+    const pending=_pendingAgainst(owner, pr);
+    for(const k of Object.keys(pending)){ try{ _prefTouched.add(k); }catch(_){} pr[k]=pending[k]; }
+    if(Object.keys(pending).length) saveClientPrefsNostr({});
     _hydrateNotificationPreferences(owner,pr.notificationPrefs,pr._pcPrefsCreatedAt);
     if(Object.keys(_notificationState(owner).dirty).length)_syncNotificationPreferences(owner);
     try{
@@ -741,11 +814,12 @@ window.PCBlossomFactory = function(dep){
         const merged={...base,...patch};
         // Equal-second replaceable events choose the lower ID, not the last submitted choice.
         const createdAt=Math.max(Math.floor(Date.now()/1000),state.clock+1,(remote._pcPrefsCreatedAt||0)+1);
-        const ev=await sign(30078,JSON.stringify({...remote,notificationPrefs:merged}),[['d','pcai:client-prefs']],createdAt);
+        const doc={...remote,..._pendingAgainst(owner, remote),notificationPrefs:merged};   // never publish over an unsent pref
+        const ev=await sign(30078,JSON.stringify(doc),[['d','pcai:client-prefs']],createdAt);
         if(owner!==_notificationOwner() || !ev || ev.pubkey!==owner)return false;
         const result=await Relay.publish(ev);
         if(!result || !result.ok)return false;
-        Store.saveEvent(ev);
+        Store.saveEvent(ev); _pendingSent(owner, doc);
         const latest=_notificationState(owner);
         for(const [key,value] of Object.entries(patch))if(latest.dirty[key]===value)delete latest.dirty[key];
         latest.values={...merged,...latest.dirty};latest.clock=Math.max(latest.clock,createdAt);_notificationStore(owner,latest);

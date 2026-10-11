@@ -80,6 +80,11 @@ def _run(js):
 #: answered) and `publish` — and records what it tried to write.
 PREFS_HARNESS = """
 globalThis.ME = { pubkey: 'ab'.repeat(32) };
+{ const m = new Map();   // the unsent-prefs map lives in localStorage
+  globalThis.localStorage = { getItem: k => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, String(v)),
+                              removeItem: k => m.delete(k) }; }
+{ const st = globalThis.setTimeout;   // a save that could not land re-arms itself; never keep node alive for it
+  globalThis.setTimeout = (f, ms, ...a) => { const t = st(f, ms, ...a); if (ms >= 5000 && t.unref) t.unref(); return t; }; }
 globalThis.published = [];
 globalThis.publish = async (kind, content, tags) => {
   published.push({ kind, content: JSON.parse(content), tags });
@@ -104,7 +109,9 @@ globalThis.Relay = {
 def _prefs(script, answer):
     src = _src()
     # Both live in blossom.js now, where app.js's live ME reads as _S.ME: the shim reads the global.
-    lifted = _lift("_readPrefs", src) + "\n" + _lift("saveClientPrefsNostr", src)
+    # The save comes with the unsent-prefs helpers that follow it (up to the restore).
+    save = src[src.index("  function saveClientPrefsNostr(patch){"):src.index("  async function restoreClientPrefsNostr(){")]
+    lifted = _lift("_readPrefs", src) + "\n" + save
     return _run(PREFS_HARNESS
                 + "globalThis.answer = %s;\n" % json.dumps(answer)
                 + state_shims(lifted) + "\n" + lifted
