@@ -81,7 +81,11 @@ class Checkout:
     def run(self, *args, stdin=None, **extra):
         self.log.write_text("")
         env = {"PATH": f"{self.bin}:{self.real}", "HOME": str(self.tmp), "STUB_LOG": str(self.log),
-               "STUB_ROOT": str(self.root), "POSTERCHANAI_DATA": str(self.tmp / "data-root"), **extra}
+               "STUB_ROOT": str(self.root), "POSTERCHANAI_DATA": str(self.tmp / "data-root"),
+               # PosterChanDB's directory too: unset, the installer aimed at the REAL /var/lib/posterchandb -- which
+               # exists on server1 (so this passed there, touching the live relay's directory) and does not on a
+               # clean CI runner, where every install test stopped at that step (Desktop CI, 2026-10-11).
+               "POSTERCHANDB_DIR": str(self.tmp / "data-root" / "posterchandb"), **extra}
         p = subprocess.run(["bash", str(self.src / "install.sh"), *args], cwd=self.src, env=env,
                            input=stdin if stdin is not None else "", capture_output=True, text=True, timeout=120)
         return p.returncode, p.stdout + p.stderr, self.log.read_text().splitlines()
@@ -181,3 +185,12 @@ def test_every_prompt_in_the_installer_goes_through_ask():
             if ("read -p" in s or "read -r -p" in s) and 'read -p "$__prompt"' not in s:
                 offenders.append(f"{f.name}:{n}: {s}")
     assert not offenders, offenders
+
+
+def test_the_harness_never_touches_the_live_posterchandb_directory(co):
+    """The install tests run on server1, beside a LIVE relay whose store is /var/lib/posterchandb. The installer must
+    be pointed at a directory inside the test, and must actually use it -- this fails if the redirect is lost."""
+    rc, out, _ = co.run("--nostr-only", "--service-user", "nobody", "--no-start")
+    assert rc == 0, out[-2000:]
+    assert (co.tmp / "data-root" / "posterchandb").is_dir(), "the installer did not use the test's PosterChanDB dir"
+    assert "/var/lib/posterchandb" not in out, "the installer still names the live directory"
