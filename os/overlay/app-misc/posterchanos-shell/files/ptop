@@ -253,11 +253,12 @@ def read_procs():
         try:
             ticks = int(f[11]) + int(f[12])
             rss = int(f[21]) * PAGE
+            threads = int(f[17])
             uid = os.stat("%s/%s" % (PROC, pid)).st_uid
         except (IndexError, ValueError, OSError):
             continue
         cmd = _read("%s/%s/cmdline" % (PROC, pid)).replace("\x00", " ").strip() or "[%s]" % name
-        out[int(pid)] = (ticks, rss, _user(uid), name, cmd)
+        out[int(pid)] = (ticks, rss, _user(uid), name, cmd, threads)
     return out
 
 
@@ -290,6 +291,58 @@ def cpu_temp():
             if v.lstrip("-").isdigit():
                 return int(v) / 1000
     return None
+
+
+def os_info():
+    """{kernel, os, boot} -- what the header shows beside the machine's name."""
+    rel = {}
+    for line in _read("/etc/os-release").splitlines():
+        k, _, v = line.partition("=")
+        rel[k] = v.strip().strip('"').strip("'")
+    boot = 0
+    for line in _read(PROC + "/stat").splitlines():
+        if line.startswith("btime "):
+            boot = int(line.split()[1])
+    return {"kernel": _read(PROC + "/sys/kernel/osrelease").strip() or os.uname().release,
+            "os": rel.get("PRETTY_NAME") or rel.get("NAME") or "Linux", "boot": boot}
+
+
+def read_mdstat():
+    """Every software RAID array in /proc/mdstat: [{name, state, level, members, failed, spares, total, up, health,
+    action, progress, speed, finish}]. `health` is mdadm's own [UU_] string; `action` is a running resync, recovery,
+    check, reshape or repair with its progress."""
+    arrays, cur = [], None
+    for line in _read(PROC + "/mdstat").splitlines():
+        m = re.match(r"^(md\S+)\s*:\s*(\S+)\s+(?:\((?:auto-)?read-only\)\s+)?(\S+)\s+(.*)$", line)
+        if m:
+            name, state, level, rest = m.groups()
+            if not level.startswith("raid") and level not in ("linear", "multipath"):
+                rest, level = level + " " + rest, "?"
+            members, failed, spares = [], [], []
+            for d in rest.split():
+                dm = re.match(r"([^\[]+)\[\d+\](\([A-Z]\))?", d)
+                if dm:
+                    (failed if dm.group(2) == "(F)" else spares if dm.group(2) == "(S)" else members).append(dm.group(1))
+            cur = {"name": name, "state": state, "level": level, "members": members, "failed": failed,
+                   "spares": spares, "total": 0, "up": 0, "health": "", "action": "", "progress": None,
+                   "speed": "", "finish": ""}
+            arrays.append(cur)
+            continue
+        if cur is None:
+            continue
+        hm = re.search(r"\[(\d+)/(\d+)\]\s*\[([U_]+)\]", line)
+        if hm:
+            cur["total"], cur["up"], cur["health"] = int(hm.group(1)), int(hm.group(2)), hm.group(3)
+        am = re.search(r"(resync|recovery|check|reshape|repair)\s*=\s*([\d.]+)%", line)
+        if am:
+            cur["action"], cur["progress"] = am.group(1), float(am.group(2))
+            fm = re.search(r"finish=(\S+)", line)
+            sm = re.search(r"speed=(\S+)", line)
+            cur["finish"] = fm.group(1) if fm else ""
+            cur["speed"] = sm.group(1) if sm else ""
+        elif re.search(r"(resync|recovery|check|reshape)\s*=\s*(DELAYED|PENDING)", line):
+            cur["action"] = re.search(r"(resync|recovery|check|reshape)", line).group(1) + " pending"
+    return arrays
 
 
 def cpu_model():
@@ -350,7 +403,7 @@ class Sampler:
                            "util_pct": min(100.0, dio / (dt * 1000) * 100)}
         procs = []
         ncpu = max(1, sum(1 for n in cpus if n != "cpu"))
-        for pid, (ticks, rss, user, name, cmd) in b["proc"].items():
+        for pid, (ticks, rss, user, name, cmd, _thr) in b["proc"].items():
             prev = a["proc"].get(pid)
             cpu = 100.0 * (ticks - prev[0]) / CLK / dt if prev and prev[3] == name else 0.0
             procs.append({"pid": pid, "user": user, "name": name, "cmd": cmd, "cpu_pct": max(0.0, cpu),
@@ -364,7 +417,8 @@ class Sampler:
         up = float((_read(PROC + "/uptime").split() or ["0"])[0])
         return {"time": time.time(), "interval": dt, "host": socket.gethostname(), "uptime_s": up,
                 "load": [float(x) for x in load] if len(load) == 3 else [0, 0, 0], "ncpu": ncpu,
-                "cpu": cpus, "iowait": iowait, "freq_ghz": core_freqs(), "temp_c": cpu_temp(), "model": cpu_model(),
+                "cpu": cpus, "iowait": iowait, "freq_ghz": core_freqs(), "sys": os_info(), "raid": read_mdstat(),
+                "threads": sum(v[5] for v in b["proc"].values()), "temp_c": cpu_temp(), "model": cpu_model(),
                 "mem": {"total": mem.get("MemTotal", 0), "available": mem.get("MemAvailable", 0),
                         "cached": mem.get("Cached", 0) + mem.get("Buffers", 0), "free": mem.get("MemFree", 0),
                         "swap_total": mem.get("SwapTotal", 0), "swap_free": mem.get("SwapFree", 0)},
@@ -536,6 +590,13 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
         P.fg("dim", "   %d cores" % snap["ncpu"]) + P.fg("yellow", temp) +
         P.fg("dim", "   iowait ") + P.fg(heat(min(1.0, snap.get("iowait", {}).get("cpu", 0.0) / 25.0)),
                                           "%.1f%%" % snap.get("iowait", {}).get("cpu", 0.0), bold=True),
+        P.fg("cyan", snap.get("sys", {}).get("os", "")) + P.fg("dim", dot + "kernel ") +
+        P.fg("text", snap.get("sys", {}).get("kernel", "")) + P.fg("dim", dot + "booted ") +
+        P.fg("text", time.strftime("%Y-%m-%d %H:%M", time.localtime(snap.get("sys", {}).get("boot", 0) or 0))),
+        P.fg("dim", "procs ") + P.fg("text", "%d" % len(snap["procs"])) + P.fg("dim", "   threads ") +
+        P.fg("text", "%d" % snap.get("threads", 0)) + P.fg("dim", "   swap ") +
+        P.fg("text", human(snap["mem"]["swap_total"] - snap["mem"]["swap_free"]) + " / " + human(snap["mem"]["swap_total"])
+             if snap["mem"]["swap_total"] else "none"),
         P.fg("dim", "▸ " if not ascii_mode else "> ") + P.fg("magenta", "jack in") +
         P.fg("dim", ("  q quit%s/ search%sc/m/p/n sort%s+/- %.1fs" % (dot.strip().join("  "), dot.strip().join("  "),
                                                                  dot.strip().join("  "), snap["interval"]))),
@@ -658,16 +719,41 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
         fs_lines.append(pad(P.fg("dim", "no filesystems"), rin))
     fs_box = sc.panel("FILESYSTEMS", fs_lines, right_w, "green")
 
+    # ---- RAID: /proc/mdstat, every array's level, health ([UU_]) and members; a resync/recovery shows progress
+    raid_lines = []
+    for a in snap.get("raid", []):
+        ok = a["total"] and a["up"] == a["total"] and not a["failed"]
+        health = a["health"] or "?"
+        hcol = "green" if ok else "red"
+        state = "healthy" if ok else ("DEGRADED" if a["total"] else a["state"])
+        raid_lines.append(pad(
+            P.fg("yellow", "%-6s" % a["name"], bold=True) + P.fg("violet", " %-7s" % a["level"]) +
+            P.fg(hcol, " [%d/%d] [%s]" % (a["total"], a["up"], health), bold=True) +
+            P.fg(hcol, " %-8s" % state, bold=not ok) +
+            P.fg("text", " " + " ".join(a["members"])) +
+            (P.fg("red", "  failed: " + " ".join(a["failed"]), bold=True) if a["failed"] else "") +
+            (P.fg("dim", "  spare: " + " ".join(a["spares"])) if a["spares"] else ""), rin))
+        if a["action"]:
+            if a["progress"] is not None:
+                raid_lines.append(pad(P.fg("magenta", "   %-9s" % a["action"], bold=True) +
+                                      sc.bar(a["progress"] / 100, max(6, rin - 46)) +
+                                      P.fg("text", " %5.1f%%" % a["progress"]) +
+                                      P.fg("dim", "  %s  eta %s" % (a["speed"], a["finish"])), rin))
+            else:
+                raid_lines.append(pad(P.fg("magenta", "   " + a["action"]), rin))
+    raid_box = sc.panel("RAID · /proc/mdstat" if not ascii_mode else "RAID - /proc/mdstat", raid_lines, right_w,
+                        "magenta") if raid_lines else []
+
     # ---- fit: both columns must leave room for a few processes, and FILESYSTEMS must stay on screen. A node with many
     # interfaces and disks (nas.lan: libvirt bridges, 11 block devices) pushed it off a 40-row screen. Shed in order of
     # least value: the network graphs (left), then the least busy disks (right; they are sorted worst-first).
     budget = rows - len(out) - 6
     if cols >= 100:
         left_h = lambda: len(cpu_box) + len(mem_box) + len(net_box)
-        right_h = lambda: len(disk_box) + len(fs_box)
+        right_h = lambda: len(disk_box) + len(fs_box) + len(raid_box)
     else:
         left_h = lambda: 0
-        right_h = lambda: len(cpu_box) + len(mem_box) + len(net_box) + len(disk_box) + len(fs_box)
+        right_h = lambda: len(cpu_box) + len(mem_box) + len(net_box) + len(disk_box) + len(fs_box) + len(raid_box)
     if max(left_h(), right_h()) > budget and net_graphs:
         net_lines = [ln for i, ln in enumerate(net_lines) if i not in net_graphs]
         net_box = sc.panel("NETWORK", net_lines, left_w, "yellow")
@@ -680,11 +766,11 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", t
                                 "violet")
 
     if cols >= 100:
-        left, right = cpu_box + mem_box + net_box, disk_box + fs_box
+        left, right = cpu_box + mem_box + net_box, disk_box + fs_box + raid_box
         for i in range(max(len(left), len(right))):
             out.append((left[i] if i < len(left) else " " * left_w) + (right[i] if i < len(right) else ""))
     else:
-        out += cpu_box + mem_box + net_box + disk_box + fs_box
+        out += cpu_box + mem_box + net_box + disk_box + fs_box + raid_box
 
     # ---- processes fill what is left
     key = {"cpu": lambda p: -p["cpu_pct"], "mem": lambda p: -p["rss"], "pid": lambda p: p["pid"],
