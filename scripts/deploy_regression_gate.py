@@ -108,6 +108,7 @@ TESTS = (
     'tests/client/test_reminder_notifications_runtime.py',
     'tests/client/test_reminder_cache_expiry.py',
     'tests/client/test_notification_author_route_full_app.py',
+    'tests/client/test_notification_quote_box_fixed_indent_full_app.py',
     'tests/client/test_desktop_notification_history_full_app.py',
     'tests/client/test_android_early_launcher_full_app.py',
     'tests/test_calendar_move_api.py',

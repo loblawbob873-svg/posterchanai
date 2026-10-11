@@ -3061,6 +3061,20 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .notif > .notif-avs .notif-av:first-child{margin-inline-start:0}
 .notif > div{flex:1;min-width:0}
 .notif .ic{font-size:20px;width:26px;text-align:center}
+/* Post notifications (notifHtml) are a GRID: icon | avatar(s) | header on the first row, and the quoted
+   post + its time on the rows below, starting UNDER the avatar column and running to the right edge.
+   As one flex column the box sat beside the avatars, so one reactor put it at one x, a 3-face stack
+   pushed it ~46px right and narrower, and a list of notifications read as a ragged staircase of boxes
+   (issue "Reorder notifications"). .notif-main is display:contents so its children are grid items;
+   the time follows the box only when there IS a box -- a follow row keeps it under its own text. */
+.notif.notif-grid{display:grid;grid-template-columns:auto auto minmax(0,1fr);column-gap:12px;row-gap:0}
+.notif-grid > .ic{grid-column:1;grid-row:1}
+.notif-grid > .notif-av,.notif-grid > .notif-avs{grid-column:2;grid-row:1}
+.notif-grid > .notif-main{display:contents}
+.notif-grid > .notif-main > *{grid-column:3;min-width:0}
+.notif-grid > .notif-main > .notif-hd{grid-row:1}
+.notif-grid > .notif-main > .notif-ctx,
+.notif-grid > .notif-main > .notif-ctx ~ *{grid-column:2 / -1}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
 .upd-notif{cursor:pointer;background:rgba(var(--accent-rgb),.08);border-inline-start:3px solid var(--cyan)}
 .upd-notif:hover{background:rgba(var(--accent-rgb),.14)}

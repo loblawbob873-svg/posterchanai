@@ -338,7 +338,9 @@ window.PCNotifViewFactory = function(dep){
       const avs = actors.slice(0,3).map(pk=>
         `<img alt="" class="notif-av" data-pk="${pk}" src="${enc(profOf(pk).picture||S.LOGO)}" title="${enc(rawName(pk))}" onerror="this.src='${S.LOGO}'">`).join('');
       const avWrap = actors.length>1 ? `<span class="notif-avs">${avs}</span>` : avs;
-      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div><b>${who}</b> ${verb}${_notifCtx(first)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+      // .notif-grid (client.css): the header sits beside the avatars, but the quoted post and the time
+      // start UNDER the avatar column -- in the text column they moved right with every stacked face.
+      return `<div class="notif notif-grid ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div class="notif-main"><div class="notif-hd"><b>${who}</b> ${verb}</div>${_notifCtx(first)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div></div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||S.LOGO;
@@ -369,7 +371,7 @@ window.PCNotifViewFactory = function(dep){
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img alt="" class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><div><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+    return `<div class="notif notif-grid ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img alt="" class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><div class="notif-main"><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div></div>`;
   }
 
 
