@@ -175,8 +175,8 @@ browser; repos announced from GitHub/Gitea show their README and the Nostr issue
 **Header** — the clone URL with a ⧉ copy button, a **Share** menu, and a **⎇ branch button**. Tap the
 branch button to switch branch or tag; the file list and commit list both follow your choice.
 **⬇ Source** beside it downloads the whole tree at the selected ref as a `.tar.gz` or `.zip` — the
-way to get a copy of a project without installing git. (In the Android app the archive comes out
-through the share sheet, because the WebView cannot save a download on its own.)
+way to get a copy of a project without installing git. (In the Android app the archive is saved to
+`Download/PosterChan/Files`, or comes out through the share sheet on a phone older than Android 10.)
 
 **📖 README** — rendered markdown.
 

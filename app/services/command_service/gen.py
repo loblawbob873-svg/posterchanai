@@ -361,9 +361,12 @@ class _GenMixin:
             if video_bytes:
                 return {"type": "generated_video", "content": said,
                         "video": _b64.b64encode(video_bytes).decode(), "format": "mp4",
-                        "prompt": said, "has_audio": True}
+                        "prompt": said, "has_audio": True,
+                        # A VOICE, not a song: a phone saves it under Download/PosterChan/Voices.
+                        "kind": "voice"}
             return {"type": "generated_audio", "content": said,
-                    "audio": _b64.b64encode(wav).decode(), "format": "wav", "prompt": said}
+                    "audio": _b64.b64encode(wav).decode(), "format": "wav", "prompt": said,
+                    "kind": "voice"}
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

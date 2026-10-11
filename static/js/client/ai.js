@@ -558,7 +558,7 @@ window.PCAiFactory = function(dep){
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
       const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf, svf.dataset.kind, svf.dataset.name); return; }   // artifact → drive, or the music library
       const ntf=e.target.closest('.ai-notefile'); if(ntf){ e.preventDefault(); notesFromFileUrl(ntf.dataset.url, ntf, ntf.dataset.name); return; }     // artifact → the private notebook
-      const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf, dlf.dataset.name); return; }       // artifact → device
+      const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf, dlf.dataset.name, dlf.dataset.kind); return; }       // artifact → device
       const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
       const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
       const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
@@ -1165,6 +1165,13 @@ window.PCAiFactory = function(dep){
             toast('saved to your drive');
           }catch(e){ keep.disabled=false; toast('couldn’t save: '+((e&&e.message)||e)); }
         };
+        // ⬇ goes through saveBlobAs, SAYING it is a voice: in the APK a bare <a download> of a blob is
+        // ignored by the WebView, and MediaSave can only file a take under Download/PosterChan/Voices
+        // if it is told — the bytes are an ordinary wav.
+        const dlA = row.querySelector('.vs-dl');
+        if(dlA) dlA.onclick = (ev)=>{ ev.preventDefault();
+          saveBlobAs(blob, `${voice.name}`.replace(/[^\w .-]/g,'_')+'.wav', { kind:'voice' })
+            .catch(e=>toast('download failed: '+((e&&e.message)||e))); };
         out.appendChild(row);
         row.scrollIntoView({ block:'nearest' });
       }
@@ -1980,7 +1987,7 @@ window.PCAiFactory = function(dep){
    * Two labels are MARKERS, not names: `song` and `video`, which is how this row knows whether an
    * MP4 has an audio track. A generated song has no filename to preserve, so they resolve to none
    * rather than to a file called "song.mp4". */
-  const _AI_LABEL_MARKER = /^(song|video|image|audio|file|media)$/i;
+  const _AI_LABEL_MARKER = /^(song|voice|video|image|audio|file|media)$/i;
   function _artName(label, u){
     let n = String(label || '').trim();
     if(!n || _AI_LABEL_MARKER.test(n)) return '';
@@ -2009,12 +2016,15 @@ window.PCAiFactory = function(dep){
     // persisted markdown that carries nothing else to tell a song from a screenshot.
     // data-name: …and nothing else to tell it what the song is CALLED (see _artName).
     const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Files</button>`;
-    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
+    // data-kind="voice": a cloned-voice line (`!video[voice]`/`!audio[voice]`) is SAID to be one, so a
+    // phone files it under Download/PosterChan/Voices — the bytes alone read as a song.
+    const isVoice=/^voice$/i.test(String(label||'').trim());
+    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}" data-name="${nm}"${isVoice?' data-kind="voice"':''}><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
     const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
     // carries no payload fields — so the distinction rides in the label the server writes:
     // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
-    const mp3=(kind==='video' && /song|music|narrat/i.test(label||''))
+    const mp3=(kind==='video' && /song|music|narrat|voice/i.test(label||''))
       ? `<button class="btn btn-cyan small ai-mp3file" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-music"></use></svg>Convert to MP3</button>` : '';
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Send the Reply</button>`:'';
     // Keep working on a result instead of it being a dead end: an effect output was final here, so
@@ -2112,11 +2122,19 @@ window.PCAiFactory = function(dep){
       if(btn){ btn.disabled=false; _btnText(btn,'Save to Notes'); }
     }
   }
-  async function downloadFileUrl(u, btn, name){
+  async function downloadFileUrl(u, btn, name, kind){
     const was=_btnLabel(btn);
     if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
-      const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+      /* The app's Bearer token on our OWN artifacts, every time. A root-relative URL gets it from the
+       * APK's fetch shim, but an ABSOLUTE one (an artifact link the server spelled out in full) is left
+       * alone by the shim, and credentials:'include' alone does not authenticate from https://localhost
+       * — the cookie is not this origin's to send. Never to somebody else's host. */
+      const org=_serverOrigin()||'';
+      const own=/^\/(?!\/)/.test(String(u)) || (!!org && String(u).indexOf(org+'/')===0);
+      const tok=S._aiToken||'';
+      const blob=await fetch(u, { credentials:'include', headers:(own && tok) ? {'Authorization':'Bearer '+tok} : {} })
+        .then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
       /* saveBlobAs, NEVER a bare <a download>. The APK's WebView IGNORES a programmatic download
        * (MainActivity registers no DownloadListener) and reports nothing back, so this claimed
@@ -2127,7 +2145,7 @@ window.PCAiFactory = function(dep){
        *
        * The song's own name when the label carried one (see _artName) — a downloads folder full of
        * `posterchan-1786…mp3` is a folder you have to play to identify. */
-      const how=await saveBlobAs(blob, name||('posterchan-'+Date.now()+'.'+ext));
+      const how=await saveBlobAs(blob, name||('posterchan-'+Date.now()+'.'+ext), kind==='voice' ? { kind:'voice' } : undefined);
       if(btn){ _btnText(btn, how==='shared'?'✓ shared':'✓ downloaded'); btn.disabled=false; }
     }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn, was||'Download'); } }
   }
@@ -2250,7 +2268,9 @@ window.PCAiFactory = function(dep){
     if(!b64) return '';
     const o=opts||{};
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
-    _ai.fxMedia[mid]={ b64, mime, ext, hasAudio: !!o.hasAudio };
+    // `kind` is the server's word for what this is (`voice` for a cloned-voice line): the bytes are an
+    // ordinary wav/mp4, so a phone's save can only file it under Voices if the page says so.
+    _ai.fxMedia[mid]={ b64, mime, ext, hasAudio: !!o.hasAudio, kind: o.kind==='voice' ? 'voice' : '' };
     // 🎵 Only where there IS an audio track to pull: a song / narration wrapped in the branded MP4.
     // videogeni output is silent, so offering it there would just fail — the server marks the ones
     // that carry audio (has_audio) rather than the client guessing from the mp4 container.
@@ -2278,7 +2298,8 @@ window.PCAiFactory = function(dep){
     if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
-      const how=await saveBlobAs(new Blob([bin], { type:m.mime }), 'posterchan-'+Date.now()+'.'+m.ext);
+      const how=await saveBlobAs(new Blob([bin], { type:m.mime }), 'posterchan-'+Date.now()+'.'+m.ext,
+                                 m.kind==='voice' ? { kind:'voice' } : undefined);
       if(btn){ _btnText(btn, how==='shared'?'✓ shared':'✓ downloaded'); btn.disabled=false; }
     }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn, was||'Download'); } }
   }
@@ -2392,11 +2413,11 @@ window.PCAiFactory = function(dep){
     // APK meeting one) send no mime, so fall back to the PNG this always used to be.
     if(d.type==='generated_image' && d.image){ const im=d.mime||'image/png'; const iext=im==='image/jpeg'?'jpg':'png';
       return head+`<div class="ai-media"><img src="data:${im};base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,im,iext); }
-    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4',{hasAudio:!!d.has_audio});
+    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4',{hasAudio:!!d.has_audio, kind:d.kind});
     // Generated audio had NO buttons at all — a song you could play once and then lose. Same row as
     // every other generated medium, so it can be downloaded, kept on Blossom, or posted.
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
-      return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`+_fxReplyBtn(d.audio,mime,fmt); }
+      return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`+_fxReplyBtn(d.audio,mime,fmt,{kind:d.kind}); }
     if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='mail_attachment' && d.data){ const mime=d.mime_type||'application/octet-stream';
       if(mime.startsWith('image/')) return head+`<div class="ai-media"><img alt="Generated image" src="data:${mime};base64,${d.data}"></div>`;

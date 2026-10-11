@@ -679,19 +679,22 @@ window.PCUploadFactory = function(dep){
   /* SAVE MEANS THE DEVICE, NOT THE SHARE SHEET. A WebView ignores <a download>, so in the APK every
    * Download/Save used to open the share sheet ("when you hit download it should save automatically not
    * go into share & ask how you want to share it because that's not downloading"). The APK ships
-   * MediaSave (MediaStore with RELATIVE_PATH, no permission on Android 10+): pictures land in
-   * Pictures/PosterChan, videos in Movies/PosterChan, everything else in Download/PosterChan, and the
-   * toast says where. Only a phone that cannot save directly (Android 9, an APK older than MediaSave, a
-   * failed write) gets the share sheet -- still a way to keep the file, and saying so beats a dead
-   * button. Returns 'saved:<where>' | 'shared' | 'saved'. `quiet` leaves the toast to the caller. */
-  async function saveToDevice(blob, name){ return saveBlobAs(blob, name, { quiet:true }); }
+   * MediaSave (MediaStore with RELATIVE_PATH, no permission on Android 10+): ONE PosterChan tree,
+   * Download/PosterChan/{Images,Videos,Music,Voices,Files} by type (MediaSaveRules), and the toast says
+   * where. `opts.kind:'voice'` is how a caller SAYS a file is a voice line -- the bytes are an ordinary
+   * wav/mp4, so MediaSave cannot tell it from a song. Only a phone that cannot save directly (Android 9,
+   * an APK older than MediaSave, a failed write) gets the share sheet -- still a way to keep the file,
+   * and saying so beats a dead button. Returns 'saved:<where>' | 'shared' | 'saved'. `quiet` leaves the
+   * toast to the caller. */
+  async function saveToDevice(blob, name, opts){ return saveBlobAs(blob, name, Object.assign({}, opts||{}, { quiet:true })); }
   async function saveBlobAs(blob, name, opts){
     name=name||'file';
     if(_isNativeApp()){
       try{
         const P=(window.Capacitor&&Capacitor.Plugins)||{}, M=P.MediaSave;
         if(M && typeof M.available==='function' && ((await M.available())||{}).ok){
-          const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'' });
+          const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'',
+                                 hint: (opts && opts.kind) ? String(opts.kind) : '' });
           if(r && r.ok){
             const where=String(r.where||('Download/PosterChan/'+name));
             if(!(opts&&opts.quiet)) try{ toast('saved to '+where); }catch(_){ }

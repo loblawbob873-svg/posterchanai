@@ -10356,14 +10356,33 @@
    * Registered unconditionally: the event only ever fires from the native shell, and a listener that
    * exists everywhere cannot be the thing that was forgotten on the one build that needs it. */
   try{
+    /* …and, since 2026-10-11, a download on THIS instance. The ⋮ → Download on an AI-chat MP3 player
+     * went to Android's DownloadManager, which fetches with no session and no Bearer token: a 401,
+     * "download failed", and a stub file on the phone, while the orange Download beside it worked.
+     * MainActivity now hands those here (DownloadRoute), and fetchMediaBlob carries the app's auth.
+     * The bytes are saved only once they have ALL arrived and the instance said yes — a refusal is
+     * never written as the file (this listener used to save a 401's error body), it is said. */
     window.addEventListener('pcNativeDownload', async (e)=>{
-      const url = (e && e.detail && e.detail.url) || '';
+      const d = (e && e.detail) || {};
+      const url = d.url || '';
       if(!url) return;
       try{
-        const r = await fetch(url);
-        const blob = await r.blob();
-        await saveBlobAs(blob, fileNameFor(url, blob, '', '', await sniffExt(blob)));
-      }catch(err){ toast('could not save that file'); }
+        let blob, disp = d.contentDisposition || '';
+        if(/^(blob|data):/i.test(url)){
+          const r = await fetch(url);
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          blob = await r.blob();
+        } else {
+          const got = await fetchMediaBlob(url);
+          blob = got.blob; disp = got.disp || disp;
+        }
+        if(!blob || !blob.size) throw new Error('the server sent an empty file');
+        // The WebView knew the type even when the response carried none; MediaSave files by it.
+        const t = String(d.mime||'').split(';')[0].trim();
+        if((!blob.type || blob.type === 'application/octet-stream') && /^[a-z]+\/[\w.+-]+$/i.test(t))
+          blob = new Blob([blob], { type: t });
+        await saveBlobAs(blob, fileNameFor(url, blob, '', disp, await sniffExt(blob)));
+      }catch(err){ toast('could not save that file: '+((err&&err.message)||err)); }
     });
   }catch(_){}
 

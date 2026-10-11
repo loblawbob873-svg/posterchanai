@@ -71,7 +71,7 @@ __PC.ensureAiSession=async()=>({can_ai:true});
 # above is the ordinary one.
 NATIVE = r'''window.Capacitor={isNativePlatform:()=>true,Plugins:{
   MediaSave:{available:async()=>({ok:true}),save:async o=>{__saved.push({name:o.name,mime:o.mime,
-     bytes:atob(o.data||'').length,head:atob(o.data||'').slice(0,3)});return{ok:true,where:'Download/PosterChan/'+o.name};}},
+     bytes:atob(o.data||'').length,head:atob(o.data||'').slice(0,3)});return{ok:true,where:'Download/PosterChan/Music/'+o.name};}},
   Filesystem:{writeFile:async o=>({uri:'file:///cache/'+o.path})},
   Share:{share:async o=>{__shares.push(o);}}}};'''
 

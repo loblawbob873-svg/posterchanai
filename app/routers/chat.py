@@ -318,6 +318,10 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
                 # videogeni's silent clip stays `video` and doesn't.
                 _mmd, _mlabel = ("!video", "song" if result.get("has_audio") else "video") \
                     if _mkey == "video" else ("!audio", "song")
+                # A cloned-voice line says so after a reload too: the client's Download files it under
+                # Download/PosterChan/Voices on a phone, and still offers Convert to MP3.
+                if result.get("kind") == "voice":
+                    _mlabel = "voice"
                 save_content = (save_content + f"\n\n{_mmd}[{_mlabel}]({_artifact_url(_mrel, conversation_id)})").strip()
             else:
                 logger.warning(f"[CHAT] generated {_mkey} not persisted (Blossom store failed)")

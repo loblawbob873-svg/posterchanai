@@ -23,7 +23,7 @@ def bundled_assets():
 
 NATIVE = r"""(gallery=>{window.__saved=[];window.__shared=[];
   window.Capacitor={isNativePlatform:()=>true,Plugins:{
-    MediaSave:{available:async()=>({ok:gallery}),save:async o=>{__saved.push({mime:o.mime,name:o.name,len:(o.data||'').length});return {ok:true,where:'Pictures/PosterChan/'+o.name};}},
+    MediaSave:{available:async()=>({ok:gallery}),save:async o=>{__saved.push({mime:o.mime,name:o.name,len:(o.data||'').length});return {ok:true,where:'Download/PosterChan/Images/'+o.name};}},
     Share:{share:async o=>{__shared.push(o);return {};}},
     Filesystem:{writeFile:async o=>({uri:'file:///cache/'+o.path})}}};})"""
 

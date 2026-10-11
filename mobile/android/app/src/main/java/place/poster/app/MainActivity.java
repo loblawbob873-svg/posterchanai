@@ -266,56 +266,104 @@ public class MainActivity extends BridgeActivity {
      * everything WE render already routed around the missing listener, so only the controls Android
      * draws for us were broken.
      *
-     * http(s) goes to DownloadManager, which is the platform's own downloader: it survives the app
-     * being backgrounded, retries, writes into the public Downloads folder and posts its own
-     * notification. `blob:` and `data:` cannot — they are WebView-internal and DownloadManager has no
-     * way to read them — so those are handed back to the page, which already knows how to save bytes
-     * it holds. Falling through silently is what this method exists to stop.
+     * Somebody else's http(s) host goes to DownloadManager, which is the platform's own downloader: it
+     * survives the app being backgrounded, retries, writes into the public Downloads folder and posts
+     * its own notification. Everything DownloadManager cannot read goes back to the page
+     * (`pcNativeDownload`), which saves through MediaSave: `blob:`/`data:` (WebView-internal) and —
+     * since 2026-10-11 — any URL on this app's own instance, which is behind the user's auth that
+     * DownloadManager does not carry (DownloadRoute.decide; tests/test_android_download_route.py).
+     * Falling through silently is what this method exists to stop.
      */
     private void catchWebViewDownloads() {
         try {
             getBridge().getWebView().setDownloadListener(new DownloadListener() {
                 @Override
-                public void onDownloadStart(String url, String userAgent, String contentDisposition,
-                                            String mimeType, long contentLength) {
+                public void onDownloadStart(final String url, final String userAgent,
+                                            final String contentDisposition, final String mimeType,
+                                            long contentLength) {
                     if (url == null) return;
                     String low = url.toLowerCase();
                     if (low.startsWith("blob:") || low.startsWith("data:")) {
                         // The page holds these bytes; the platform does not. Ask it to save them the
                         // way every button in the client already does.
-                        final String js = "window.dispatchEvent(new CustomEvent('pcNativeDownload',"
-                                + "{detail:{url:" + JSONObject.quote(url) + "}}))";
-                        getBridge().getWebView().post(new Runnable() {
-                            @Override public void run() {
-                                try { getBridge().getWebView().evaluateJavascript(js, null); }
-                                catch (Throwable ignored) { }
-                            }
-                        });
+                        handToPage(url, contentDisposition, mimeType);
                         return;
                     }
+                    /* AN ARTIFACT ON THIS APP'S OWN INSTANCE IS BEHIND THE USER'S AUTH, and
+                     * DownloadManager fetches with none: the ⋮ → Download on an AI-chat MP3 player
+                     * got a 401, "download failed", and a stub file in Downloads, while the app's own
+                     * Download button beside it worked. The instance is chosen at RUNTIME (kept in the
+                     * page's localStorage), so ask the live page which one it is and let DownloadRoute
+                     * decide; the page then fetches WITH the app's session. */
                     try {
-                        String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                        DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
-                        req.setMimeType(mimeType);
-                        if (userAgent != null) req.addRequestHeader("User-Agent", userAgent);
-                        req.setNotificationVisibility(
-                                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                        req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
-                        DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-                        if (dm == null) return;
-                        dm.enqueue(req);
-                        Toast.makeText(MainActivity.this, "Downloading " + name,
-                                       Toast.LENGTH_SHORT).show();
+                        getBridge().getWebView().evaluateJavascript(INSTANCE_JS,
+                            new android.webkit.ValueCallback<String>() {
+                                @Override public void onReceiveValue(String value) {
+                                    String[] parts = DownloadRoute.unquote(value).split("\n", 2);
+                                    String base = parts.length > 0 ? parts[0] : "";
+                                    String page = parts.length > 1 ? parts[1] : "";
+                                    if (DownloadRoute.PAGE.equals(DownloadRoute.decide(url, base, page))) {
+                                        handToPage(url, contentDisposition, mimeType);
+                                    } else {
+                                        enqueueDownload(url, userAgent, contentDisposition, mimeType);
+                                    }
+                                }
+                            });
                     } catch (Throwable t) {
-                        // SAY SO. The entire bug this fixes was a failure that produced no sign of
-                        // itself; replacing it with a different silent one would be no fix at all.
-                        Toast.makeText(MainActivity.this, "Could not start that download",
-                                       Toast.LENGTH_SHORT).show();
+                        enqueueDownload(url, userAgent, contentDisposition, mimeType);
                     }
                 }
             });
         } catch (Throwable ignored) {
             // Never fatal: worst case is the behaviour that shipped before this method existed.
+        }
+    }
+
+    /** The instance the page talks to (`__PC_API_BASE__`) and the page's own origin, newline-separated. */
+    private static final String INSTANCE_JS =
+        "(function(){try{return String(window.__PC_API_BASE__||'')+'\\n'+location.origin}catch(e){return ''}})()";
+
+    /** The page saves it: `pcNativeDownload` in app.js fetches with the app's auth and goes out through
+     *  saveBlobAs → MediaSave, so the file lands in Download/PosterChan/<type> complete or not at all. */
+    private void handToPage(String url, String contentDisposition, String mimeType) {
+        try {
+            JSONObject d = new JSONObject();
+            d.put("url", url);
+            d.put("contentDisposition", contentDisposition == null ? "" : contentDisposition);
+            d.put("mime", mimeType == null ? "" : mimeType);
+            final String js = "window.dispatchEvent(new CustomEvent('pcNativeDownload',{detail:" + d + "}))";
+            getBridge().getWebView().post(new Runnable() {
+                @Override public void run() {
+                    try { getBridge().getWebView().evaluateJavascript(js, null); }
+                    catch (Throwable ignored) { }
+                }
+            });
+        } catch (Throwable t) {
+            Toast.makeText(MainActivity.this, "Could not start that download", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Somebody else's host: public, possibly huge -- the platform downloader streams it to disk,
+     *  survives backgrounding and posts its own notification. */
+    private void enqueueDownload(String url, String userAgent, String contentDisposition, String mimeType) {
+        try {
+            String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+            req.setMimeType(mimeType);
+            if (userAgent != null) req.addRequestHeader("User-Agent", userAgent);
+            req.setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (dm == null) return;
+            dm.enqueue(req);
+            Toast.makeText(MainActivity.this, "Downloading " + name,
+                           Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            // SAY SO. The entire bug this fixes was a failure that produced no sign of
+            // itself; replacing it with a different silent one would be no fix at all.
+            Toast.makeText(MainActivity.this, "Could not start that download",
+                           Toast.LENGTH_SHORT).show();
         }
     }
 

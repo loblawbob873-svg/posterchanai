@@ -65,11 +65,14 @@ def _fn(src, name, opener):
 STUBS = r"""
 const log = { writes:[], shares:[], clicks:[], toasts:[] };
 const toast = m => log.toasts.push(String(m));
+// The module's live state and instance: downloadFileUrl sends the session's Bearer to OUR artifacts.
+const S = { _aiToken: 'fixture-token' };
+const _serverOrigin = () => 'https://poster.place';
 const _ai = { fxMedia: { fx1: { b64: btoa('song-bytes'), mime:'audio/mpeg', ext:'mp3' } } };
 // Never let a click actually navigate/download in the harness — record it, which is also the only
 // way to see the pre-fix behaviour at all (a WebView shows nothing either way).
 HTMLAnchorElement.prototype.click = function(){ log.clicks.push({ href:this.href, download:this.download }); };
-window.fetch = async (u, opts) => ({ ok:true, status:200, url:u,
+window.fetch = async (u, opts) => (log.auth = ((opts && opts.headers) || {}).Authorization || '', { ok:true, status:200, url:u,
   blob: async () => new Blob([new Uint8Array([31,139,8,0,0,0,0,0])], { type:'application/gzip' }) });
 function nativeShell(){
   window.Capacitor = {
@@ -117,7 +120,7 @@ def _harness(src, *, with_fix=True):
         _fn(src, "saveBlobAs", "async function saveBlobAs("),
         _fn(src, "_btnText", "function _btnText(btn, text){"),
         _fn(src, "_btnLabel", "function _btnLabel(btn){"),
-        _fn(src, "downloadFileUrl", "async function downloadFileUrl(u, btn, name){"),
+        _fn(src, "downloadFileUrl", "async function downloadFileUrl("),
         _fn(src, "downloadEffectMedia", "async function downloadEffectMedia(mid, btn){"),
     ])
     if not with_fix:
@@ -133,12 +136,22 @@ const out = {};
     %s
     const b = btn('sandbox-workspace.tar.gz');
     await downloadFileUrl(%s, b, 'sandbox-workspace.tar.gz');
+    out.auth = log.auth;
     out.label = labelOf(b);
     out.disabled = b.disabled;
 
     const fb = btn('Download');
     await downloadEffectMedia('fx1', fb);
     out.fxLabel = labelOf(fb);
+
+    // Who receives the session token -- recorded, then the two extra saves are taken back out of the
+    // log so the counts the other assertions read are exactly the two saves above.
+    const keep = { w: log.writes.length, s: log.shares.length, c: log.clicks.length, v: (log.saved||[]).length };
+    const ab = btn('abs');
+    await downloadFileUrl('https://poster.place/api/files/a/1/enc_x.gz', ab, 'abs.gz'); out.absAuth = log.auth;
+    await downloadFileUrl('https://nostr.build/x.gz', ab, 'other.gz'); out.otherAuth = log.auth;
+    log.writes.length = keep.w; log.shares.length = keep.s; log.clicks.length = keep.c;
+    if (log.saved) log.saved.length = keep.v;
 
     // A download that fails must give the button back the label it FOUND.
     window.fetch = async () => { throw new Error('offline'); };
@@ -206,6 +219,17 @@ class AiDownloadNative(unittest.TestCase):
         self.assertEqual(o["clicks"], [],
                          "a programmatic <a download> was clicked in the APK, which the WebView "
                          "ignores: " + repr(o["clicks"]))
+        # The artifact is behind the session: credentials:'include' does not authenticate from the
+        # APK's https://localhost, so the Bearer must ride the request itself.
+        self.assertEqual(o.get("auth"), "Bearer fixture-token",
+                         "the artifact was fetched without the app's Bearer token")
+
+    def test_absolute_own_url_also_carries_the_token_and_others_never_do(self):
+        """An ABSOLUTE instance URL is left alone by the APK's fetch shim, so the handler must add the
+        token itself; somebody else's host must never receive it."""
+        o = _run(self.harness, native=True, media_save=True)
+        self.assertEqual(o.get("absAuth"), "Bearer fixture-token", repr(o.get("absAuth")))
+        self.assertEqual(o.get("otherAuth"), "", "the session token was sent to a third-party host")
 
     def test_native_says_shared(self):
         o = _run(self.harness, native=True)

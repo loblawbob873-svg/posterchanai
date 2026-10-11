@@ -19,8 +19,9 @@ import java.io.OutputStream;
 /**
  * SAVE A PICTURE OR A VIDEO INTO THE PHONE'S GALLERY ("opening an image on android: first two buttons
  * share, do the same action"). The image viewer's Save went through saveBlobAs, which on the APK is the
- * share sheet -- the same thing its Share button does. This writes the bytes into MediaStore instead:
- * images to Pictures/PosterChan, video to Movies/PosterChan, anything else to Download/PosterChan.
+ * share sheet -- the same thing its Share button does. This writes the bytes into MediaStore instead,
+ * into ONE PosterChan tree with a subfolder per type: Download/PosterChan/{Images,Videos,Music,Voices,
+ * Files} (MediaSaveRules). A voice is whatever the page SAYS is one (`hint: "voice"`).
  *
  * MediaStore with RELATIVE_PATH needs NO storage permission on Android 10+ (API 29). Below that a
  * public directory needs WRITE_EXTERNAL_STORAGE, which this app does not ask for, so `available`
@@ -38,6 +39,7 @@ public final class MediaSavePlugin extends Plugin {
   @PluginMethod public void save(PluginCall call) {
     final String encoded = call.getString("data", ""), mime = MediaSaveRules.mime(call.getString("mime", ""));
     final String name = MediaSaveRules.name(call.getString("name", ""), mime);
+    final String hint = call.getString("hint", "");
     if (Build.VERSION.SDK_INT < 29) { call.reject("saving to the gallery needs Android 10 or newer"); return; }
     new Thread(() -> {
       Uri uri = null;
@@ -46,10 +48,11 @@ public final class MediaSavePlugin extends Plugin {
         if (encoded.isEmpty() || encoded.length() > MAX_ENCODED) throw new IllegalArgumentException("file is empty or too large");
         byte[] bytes = Base64.decode(encoded, Base64.DEFAULT);
         if (bytes.length == 0 || bytes.length > MAX) throw new IllegalArgumentException("file is empty or too large");
-        String kind = MediaSaveRules.kind(mime);
-        Uri collection = "image".equals(kind) ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            : "video".equals(kind) ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+        String kind = MediaSaveRules.kind(mime, hint);
+        // ONE tree: every type goes into the Downloads collection, the only one that accepts any MIME
+        // under Download/ (Images/Video/Audio refuse a RELATIVE_PATH outside their own top folders).
+        // The scanner still files the rows by type, so the gallery and music apps list them.
+        Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
         ContentValues v = new ContentValues();
         v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         v.put(MediaStore.MediaColumns.MIME_TYPE, mime);

@@ -495,6 +495,36 @@ sets. No emoji anywhere — `tests/test_android_icon_sprite.py` fails on one in 
 
 ---
 
+## Where a saved file goes
+
+Every Download / Save in the app goes through `saveBlobAs` → the `MediaSave` plugin, which writes
+into ONE folder tree with a subfolder per type (`MediaSaveRules`):
+
+| Type | Folder |
+|------|--------|
+| pictures (`image/*`) | `Download/PosterChan/Images` |
+| videos (`video/*`) | `Download/PosterChan/Videos` |
+| songs and other audio (`audio/*`) | `Download/PosterChan/Music` |
+| voice lines (the page passes `kind:'voice'`) | `Download/PosterChan/Voices` |
+| anything else | `Download/PosterChan/Files` |
+
+It lives under `Download/` because a top-level `/PosterChan` is not writable through MediaStore on
+Android 10+ without `MANAGE_EXTERNAL_STORAGE`, which the app does not ask for; the Downloads
+collection is the one that accepts every type there, and the media scanner still lists the pictures,
+videos and songs in gallery and music apps. A voice line is an ordinary wav or MP4, so it only goes to
+Voices when the caller SAYS it is one — the AI chat's cloned-voice results (`kind: "voice"` from the
+server, `!video[voice]` after a reload) and the voice studio's take download do.
+
+**The ⋮ → Download that Android draws on a `<video>`/`<audio>`** goes through `MainActivity`'s
+DownloadListener. A URL on this app's own instance (and any `blob:`/`data:`) is handed back to the
+page as `pcNativeDownload`, which fetches it with the app's session and saves it the same way;
+only somebody else's host goes to Android's DownloadManager. That split is `DownloadRoute.decide`:
+DownloadManager carries no session, so an AI-chat artifact (`/api/files/…`) handed to it was a 401 —
+"download failed" and a stub file on the phone, while the app's own Download button beside the
+player worked.
+
+---
+
 ## Tests
 
 | What | Where |

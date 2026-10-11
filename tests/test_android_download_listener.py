@@ -82,16 +82,25 @@ def test_the_page_actually_listens_for_that_hand_back():
     """The other half. An event nobody hears is the same silence, moved."""
     js = client_source()
     assert "'pcNativeDownload'" in js, "the native side hands blob downloads to nobody"
-    seg = js[js.index("'pcNativeDownload'"): js.index("'pcNativeDownload'") + 700]
+    at = js.index("addEventListener('pcNativeDownload'")
+    seg = js[at: js.index("\n    });", at)]    # the listener's own body, however long it grows
     assert "saveBlobAs" in seg, "the hand-back does not reach the app's save pipeline"
+    # A URL on the instance arrives here too (DownloadRoute), and it is behind the session: the fetch
+    # must go through the auth-aware helper, never a bare fetch() that DownloadManager's 401 came from.
+    assert "fetchMediaBlob(" in seg, "an instance URL is fetched without the app's auth"
 
 
 def test_a_failed_download_says_so():
     """The whole defect was a failure with no sign of itself."""
     src = _java()
-    seg = src[src.index("private void catchWebViewDownloads()"):]
+    # The DownloadManager half moved into its own method when own-instance URLs started going to the
+    # page (DownloadRoute); the rule is the same -- its failure path must say so.
+    seg = src[src.index("private void enqueueDownload("):]
     catch = seg[seg.index("catch (Throwable t)"):]
     assert "Toast" in catch[:400], "a download that cannot start fails as silently as before"
+    hand = src[src.index("private void handToPage("):]
+    hand = hand[hand.index("catch (Throwable t)"):]
+    assert "Toast" in hand[:300], "a hand-off to the page that cannot start fails silently"
 
 
 def test_the_imports_it_needs_are_present():

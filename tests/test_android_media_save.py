@@ -18,9 +18,10 @@ JAVAC, JAVA = shutil.which("javac"), shutil.which("java")
 H = r"""
 import place.poster.app.preview.MediaSaveRules;
 public class MS { public static void main(String[] a){
-  String[][] c = {{"image/png","shot"},{"image/jpeg; charset=x","photo.jpeg"},{"video/mp4","clip.webm"},{"application/pdf","doc.pdf"},{"","../../etc/passwd"},{"IMAGE/PNG","a.png"}};
+  String[][] c = {{"image/png","shot",""},{"image/jpeg; charset=x","photo.jpeg",""},{"video/mp4","clip.webm",""},{"application/pdf","doc.pdf",""},{"","../../etc/passwd",""},{"IMAGE/PNG","a.png",""},
+                  {"audio/mpeg","posterchan-song-2026","" },{"audio/wav","take.wav","voice"},{"video/mp4","voice-line","voice"},{"audio/mp4","tune.m4a",""},{"audio/ogg","x.oga",""},{"audio/flac","a.flac","VOICE"}};
   StringBuilder o=new StringBuilder();
-  for(String[] x:c){ String m=MediaSaveRules.mime(x[0]); String k=MediaSaveRules.kind(m);
+  for(String[] x:c){ String m=MediaSaveRules.mime(x[0]); String k=MediaSaveRules.kind(m, x[2]);
     o.append(m).append('|').append(MediaSaveRules.folder(k)).append('|').append(MediaSaveRules.name(x[1],m)).append('\n'); }
   System.out.print(o);
 }}
@@ -35,12 +36,34 @@ def test_saved_files_land_in_the_right_folder_with_the_right_name():
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     out = subprocess.run([JAVA, "-cp", tmp, "MS"], capture_output=True, text=True).stdout.splitlines()
-    assert out[0] == "image/png|Pictures/PosterChan/|shot.png"
-    assert out[1] == "image/jpeg|Pictures/PosterChan/|photo.jpg"
-    assert out[2] == "video/mp4|Movies/PosterChan/|clip.mp4"
-    assert out[3] == "application/pdf|Download/PosterChan/|doc.pdf"
-    assert out[4].startswith("application/octet-stream|Download/PosterChan/|") and "/" not in out[4].split("|")[2]
-    assert out[5] == "image/png|Pictures/PosterChan/|a.png"
+    # ONE PosterChan tree with a subfolder per type (operator, 2026-10-11) -- it used to be
+    # Pictures/PosterChan, Movies/PosterChan and Download/PosterChan: three places to look. A top-level
+    # /PosterChan needs MANAGE_EXTERNAL_STORAGE on Android 10+, so the tree lives under Download/.
+    assert out[0] == "image/png|Download/PosterChan/Images/|shot.png"
+    assert out[1] == "image/jpeg|Download/PosterChan/Images/|photo.jpg"
+    assert out[2] == "video/mp4|Download/PosterChan/Videos/|clip.mp4"
+    assert out[3] == "application/pdf|Download/PosterChan/Files/|doc.pdf"
+    assert out[4].startswith("application/octet-stream|Download/PosterChan/Files/|") and "/" not in out[4].split("|")[2]
+    assert out[5] == "image/png|Download/PosterChan/Images/|a.png"
+    # Songs go to Music, with the extension a music app needs to list them.
+    assert out[6] == "audio/mpeg|Download/PosterChan/Music/|posterchan-song-2026.mp3"
+    # A voice is SAID by the page (the hint), never guessed from the bytes -- audio OR an MP4 line.
+    assert out[7] == "audio/wav|Download/PosterChan/Voices/|take.wav"
+    assert out[8] == "video/mp4|Download/PosterChan/Voices/|voice-line.mp4"
+    assert out[9] == "audio/mp4|Download/PosterChan/Music/|tune.m4a"
+    assert out[10] == "audio/ogg|Download/PosterChan/Music/|x.ogg"
+    assert out[11] == "audio/flac|Download/PosterChan/Voices/|a.flac"
+
+
+def test_every_save_goes_into_the_one_downloads_tree():
+    """Images/Videos/Music collections refuse a RELATIVE_PATH under Download/; the Downloads collection
+    takes any type there. So every save is inserted into MediaStore.Downloads, and the page's hint
+    reaches the rule."""
+    plugin = open(os.path.join(SRC, "MediaSavePlugin.java")).read()
+    save = plugin[plugin.index("public void save("):]
+    assert "MediaStore.Downloads.EXTERNAL_CONTENT_URI" in save
+    assert "Images.Media.EXTERNAL_CONTENT_URI" not in save and "Video.Media.EXTERNAL_CONTENT_URI" not in save
+    assert 'call.getString("hint"' in save and "MediaSaveRules.kind(mime, hint)" in save
 
 
 def test_the_plugin_is_registered_and_never_asks_for_storage_permission():

@@ -87,7 +87,7 @@ def test_a_finger_drags_a_signature_and_its_corner_resizes_it():
 
 STUB = r"""(()=>{window.__ms=null;window.__shared=0;
   window.Capacitor={isNativePlatform:()=>true,Plugins:{
-    MediaSave:{available:async()=>({ok:true}),save:async o=>{window.__ms=o;return {ok:true,where:'Download/PosterChan/'+o.name};}},
+    MediaSave:{available:async()=>({ok:true}),save:async o=>{window.__ms=o;return {ok:true,where:'Download/PosterChan/Files/'+o.name};}},
     Filesystem:{writeFile:async()=>{window.__shared++;return {uri:'file:///x'};}},
     Share:{share:async()=>{window.__shared++;}}}};})()"""
 
