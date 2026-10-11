@@ -1,0 +1,681 @@
+#!/usr/bin/env python3
+"""ptop -- PosterChan top. A cyberpunk system monitor for PosterChan servers and PosterChanOS.
+
+Every CPU core, memory, per-interface network bandwidth, iostat-style disk I/O (IOPS, throughput, await latency,
+utilisation per disk) and the busiest processes, under the PosterChan logo. Python 3 standard library only: it reads
+/proc and /sys directly, so it runs on any PosterChan node without installing anything.
+
+    ptop                 interactive (q quit, c/m/p/n sort by cpu/mem/pid/name, +/- refresh interval)
+    ptop --once          one frame to stdout and exit (scripts, screenshots)
+    ptop --json          one measured snapshot as JSON (what the screen is drawn from)
+    ptop --ascii         no Unicode graphics; --colors 256 for terminals without truecolor
+"""
+import argparse
+import json
+import os
+import pwd
+import re
+import select
+import shutil
+import signal
+import socket
+import sys
+import time
+
+VERSION = "1.0"
+CLK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+PAGE = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
+PROC = os.environ.get("PTOP_PROC", "/proc")          # overridable for tests
+SYS = os.environ.get("PTOP_SYS", "/sys")
+
+# ---------------------------------------------------------------------------------------------------- palette
+NEON = {"cyan": (0, 240, 255), "magenta": (255, 43, 214), "yellow": (249, 248, 113), "violet": (155, 92, 255),
+        "green": (57, 255, 136), "red": (255, 59, 92), "dim": (96, 104, 140), "text": (214, 222, 255),
+        "panel": (34, 26, 64), "bg": (10, 9, 24)}
+
+# The PosterChan character, from static/icon-512.png (head and shoulders), 28x26 pixels: "......" is transparent.
+LOGO = (
+    "........................................................................................................................................................................",
+    "....................................................................................000002..............................................................................",
+    "..............................................................................473e1eb59a01383017........................................................................",
+    "..............................................................................54481be2c20a82670d........................................................................",
+    "..................................................................462619..................37322142424b75737a58555e......................................................",
+    "....................................0705007b610437300a682607d45a02dc630bc14900a7410066300c......b1a9a3e5c9b7d8b39e404151................................................",
+    "..........................................e5ba0888631ede8027ffbe49e9ac48e8ac72f5b881f2832cac5808......9e7e76fdceb792848632333f..........................................",
+    "................................................67543ef4c265f9b655f0a130f5d8c2fcf9f8e7c6a9f5932dab5304......8d84806e6a7434353b..........................................",
+    "....................................52505c86838c77572bffa921ed9533dda461e1bc9df2e5dbd1bdb3c38957ec74137535000006175e5b66464546..........................................",
+    "..............................434352e3d2cb8d7c7a915011ff9009dd9f6bcfb6a6ecd3bdf2e5daddc4bcd9a37eb04d12aa4a03..................060605....................................",
+    "..............................4e505ff3cab26457538e480fee6e07c8814fdac2b4e2cdc0f8e4d8ffd1bae5b398ac4413823905....................................090a0a080809............",
+    "..............................6e6f77fae5d6413126843a0cd5600bc65316e7af95ffe6daf8e4dafff8edb68679d45b04563a1f........................070707..............................",
+    "..............................727077817b763c261a421c0dcb7617dc5c07b26655cdc0c3f0e7e2d8bebdb56e3c8a571a0304060d0c0b............0c0d0c..................030404060607......",
+    "......................................................9b5c20fd9b24d746008c350ac7998de6a88d9c6e3a371504070706..............................0b0b0b09090a000000............",
+    "..............................000000..................533419cb87336e340d9a4906ac7c57887160562004c15707....................................000000000000..................",
+    "......................................................392a1bc26c1b973b0853301200050c......65371eff941fd18724..............................030302........................",
+    "........................040404080809..................5a4624e17111d16009563c1c......42413f......664722ffc253c47821............0a0a0a0c0c0b..................6c4a386c4c36",
+    "..................0a0a0a0505050a0a0b..................b57c26fa8613874911......4d4c4d3a3a3b484747......bc8029da8318714013..........................................b46d2d",
+    "............090909......050506............02070d5a4122e89c35bb691a............4f4f513f40404e4c4c......774011e5750564350c......6d411a8e5f35..................885932af6d30",
+    "............0506090a08050000000c0c0b0b0c0c......9b703be3a543462d19............575758......494644......5f3413de6c074b2809......58270cfe8512d28931bf7d37d28430f88c225f3f31",
+    "............7759434a3730..................593d22b57c2cba741d..................444444......453d38......623411a951080e0703......48230ed04e01f57c0cff9f19e4781a773b20......",
+    "............b37b40..................4d4549a8702dc96906814511......0202023738383e3f40..................5e3111......050606......3b1c0bd1550594431fbe5f17ef9431484143......",
+    "............d9832a8d6742413737715743e79138bb5f10cd6309813c07040508......3c3c3e................................................2d1609d75c0882522f......ac6126ec9d3e......",
+    "............442c2ec87127d0762bec8421cb590e613f3d7a5238793709..................................................................251002b75c25b05e29............ec9534503d36",
+    "........................3b3139dc731e532825......4a4349........................................................................200d00774632844832............bf7732423334",
+    "........................4f4037d1661d........................32323f............................................................0e0a09......6a433b............814b2d......",
+)
+
+
+def _rgb(name_or_rgb):
+    return NEON[name_or_rgb] if isinstance(name_or_rgb, str) else name_or_rgb
+
+
+class Paint:
+    """ANSI colour, in truecolor, 256 colours, or none."""
+
+    def __init__(self, mode):
+        self.mode = mode
+
+    def _code(self, rgb, bg=False):
+        r, g, b = rgb
+        if self.mode == "truecolor":
+            return "\x1b[%d;2;%d;%d;%dm" % (48 if bg else 38, r, g, b)
+        if self.mode == "256":
+            idx = 16 + 36 * round(r / 255 * 5) + 6 * round(g / 255 * 5) + round(b / 255 * 5)
+            return "\x1b[%d;5;%dm" % (48 if bg else 38, idx)
+        return ""
+
+    def fg(self, c, text, bold=False):
+        if self.mode == "none":
+            return text
+        return "%s%s%s\x1b[0m" % ("\x1b[1m" if bold else "", self._code(_rgb(c)), text)
+
+    def fgbg(self, fgc, bgc, text):
+        if self.mode == "none":
+            return text
+        return "%s%s%s\x1b[0m" % (self._code(_rgb(fgc)), self._code(_rgb(bgc), True), text)
+
+
+def _lerp(a, b, t):
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def heat(frac):
+    """0 -> cyan, 0.5 -> magenta, 1 -> red: the load colour of a bar or a number."""
+    frac = max(0.0, min(1.0, frac))
+    if frac < 0.5:
+        return _lerp(NEON["cyan"], NEON["magenta"], frac * 2)
+    return _lerp(NEON["magenta"], NEON["red"], (frac - 0.5) * 2)
+
+
+# ---------------------------------------------------------------------------------------------------- reading /proc
+def _read(path, default=""):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return default
+
+
+def read_cpu():
+    """{cpu name: (busy ticks, total ticks)} for 'cpu' and every 'cpuN'."""
+    out = {}
+    for line in _read(PROC + "/stat").splitlines():
+        if not line.startswith("cpu"):
+            continue
+        parts = line.split()
+        vals = [int(v) for v in parts[1:]]
+        idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+        total = sum(vals[:8])
+        out[parts[0]] = (total - idle, total)
+    return out
+
+
+def read_mem():
+    m = {}
+    for line in _read(PROC + "/meminfo").splitlines():
+        k, _, v = line.partition(":")
+        try:
+            m[k] = int(v.split()[0]) * 1024
+        except (ValueError, IndexError):
+            pass
+    return m
+
+
+def read_net():
+    """{iface: (rx bytes, tx bytes)}."""
+    out = {}
+    for line in _read(PROC + "/net/dev").splitlines()[2:]:
+        name, _, rest = line.partition(":")
+        f = rest.split()
+        if len(f) >= 9:
+            out[name.strip()] = (int(f[0]), int(f[8]))
+    return out
+
+
+def iface_up(name):
+    return _read("%s/class/net/%s/operstate" % (SYS, name)).strip() in ("up", "unknown")
+
+
+def disk_names():
+    """Whole block devices, as iostat lists them (no partitions, loops or RAM disks)."""
+    try:
+        names = sorted(os.listdir(SYS + "/block"))
+    except OSError:
+        names = []
+    return [n for n in names if not re.match(r"(loop|ram|zram|fd|sr)\d*", n)]
+
+
+def read_disks():
+    """{device: (reads, read ms, writes, write ms, sectors read, sectors written, io ms)} from /proc/diskstats."""
+    want = set(disk_names())
+    out = {}
+    for line in _read(PROC + "/diskstats").splitlines():
+        f = line.split()
+        if len(f) >= 14 and (not want or f[2] in want):
+            out[f[2]] = (int(f[3]), int(f[6]), int(f[7]), int(f[10]), int(f[5]), int(f[9]), int(f[12]))
+    return out
+
+
+_users: dict = {}
+
+
+def _user(uid):
+    if uid not in _users:
+        try:
+            _users[uid] = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            _users[uid] = str(uid)
+    return _users[uid]
+
+
+def read_procs():
+    """{pid: (cpu ticks, rss bytes, user, name, cmdline)}."""
+    out = {}
+    try:
+        pids = [p for p in os.listdir(PROC) if p.isdigit()]
+    except OSError:
+        return out
+    for pid in pids:
+        stat = _read("%s/%s/stat" % (PROC, pid))
+        if not stat:
+            continue
+        r = stat.rfind(")")
+        name = stat[stat.find("(") + 1:r]
+        f = stat[r + 2:].split()
+        try:
+            ticks = int(f[11]) + int(f[12])
+            rss = int(f[21]) * PAGE
+            uid = os.stat("%s/%s" % (PROC, pid)).st_uid
+        except (IndexError, ValueError, OSError):
+            continue
+        cmd = _read("%s/%s/cmdline" % (PROC, pid)).replace("\x00", " ").strip() or "[%s]" % name
+        out[int(pid)] = (ticks, rss, _user(uid), name, cmd)
+    return out
+
+
+def core_freqs():
+    out = {}
+    base = SYS + "/devices/system/cpu"
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return out
+    for n in names:
+        if re.fullmatch(r"cpu\d+", n):
+            v = _read("%s/%s/cpufreq/scaling_cur_freq" % (base, n)).strip()
+            if v.isdigit():
+                out[n] = int(v) / 1e6           # GHz
+    return out
+
+
+def cpu_temp():
+    """The package temperature (°C) from hwmon, or None."""
+    base = SYS + "/class/hwmon"
+    try:
+        mons = os.listdir(base)
+    except OSError:
+        return None
+    for m in mons:
+        name = _read("%s/%s/name" % (base, m)).strip()
+        if name in ("k10temp", "coretemp", "zenpower", "cpu_thermal", "acpitz"):
+            v = _read("%s/%s/temp1_input" % (base, m)).strip()
+            if v.lstrip("-").isdigit():
+                return int(v) / 1000
+    return None
+
+
+def cpu_model():
+    for line in _read(PROC + "/cpuinfo").splitlines():
+        if line.startswith("model name"):
+            return re.sub(r"\s+", " ", line.split(":", 1)[1]).strip()
+    return ""
+
+
+# ---------------------------------------------------------------------------------------------------- the sampler
+class Sampler:
+    """Two readings make one measurement: every rate here is a difference over the interval."""
+
+    def __init__(self, history=120):
+        self.prev = None
+        self.prev_t = None
+        self.history = history
+        self.hist = {"cpu": [], "net": {}}
+
+    def sample(self):
+        now = time.monotonic()
+        cur = {"cpu": read_cpu(), "net": read_net(), "disk": read_disks(), "proc": read_procs()}
+        snap = None
+        if self.prev is not None:
+            snap = self._measure(self.prev, cur, now - self.prev_t)
+        self.prev, self.prev_t = cur, now
+        return snap
+
+    def _measure(self, a, b, dt):
+        dt = max(dt, 1e-3)
+        cpus = {}
+        for name, (busy, total) in b["cpu"].items():
+            if name in a["cpu"]:
+                db, dtot = busy - a["cpu"][name][0], total - a["cpu"][name][1]
+                cpus[name] = 100.0 * db / dtot if dtot > 0 else 0.0
+        mem = read_mem()
+        net = {}
+        for name, (rx, tx) in b["net"].items():
+            if name in a["net"]:
+                net[name] = {"rx_Bps": max(0, rx - a["net"][name][0]) / dt,
+                             "tx_Bps": max(0, tx - a["net"][name][1]) / dt,
+                             "rx_total": rx, "tx_total": tx, "up": iface_up(name)}
+        disks = {}
+        for name, v in b["disk"].items():
+            if name not in a["disk"]:
+                continue
+            p = a["disk"][name]
+            dr, drms, dw, dwms, dsr, dsw, dio = (v[i] - p[i] for i in range(7))
+            disks[name] = {"r_s": dr / dt, "w_s": dw / dt,
+                           "rkB_s": dsr * 512 / 1024 / dt, "wkB_s": dsw * 512 / 1024 / dt,
+                           "r_await_ms": drms / dr if dr else 0.0, "w_await_ms": dwms / dw if dw else 0.0,
+                           "util_pct": min(100.0, dio / (dt * 1000) * 100)}
+        procs = []
+        ncpu = max(1, sum(1 for n in cpus if n != "cpu"))
+        for pid, (ticks, rss, user, name, cmd) in b["proc"].items():
+            prev = a["proc"].get(pid)
+            cpu = 100.0 * (ticks - prev[0]) / CLK / dt if prev and prev[3] == name else 0.0
+            procs.append({"pid": pid, "user": user, "name": name, "cmd": cmd, "cpu_pct": max(0.0, cpu),
+                          "rss": rss})
+        self.hist["cpu"] = (self.hist["cpu"] + [cpus.get("cpu", 0.0)])[-self.history:]
+        for name, n in net.items():
+            h = self.hist["net"].setdefault(name, [])
+            h.append(n["rx_Bps"] + n["tx_Bps"])
+            del h[:-self.history]
+        load = _read(PROC + "/loadavg").split()[:3]
+        up = float((_read(PROC + "/uptime").split() or ["0"])[0])
+        return {"time": time.time(), "interval": dt, "host": socket.gethostname(), "uptime_s": up,
+                "load": [float(x) for x in load] if len(load) == 3 else [0, 0, 0], "ncpu": ncpu,
+                "cpu": cpus, "freq_ghz": core_freqs(), "temp_c": cpu_temp(), "model": cpu_model(),
+                "mem": {"total": mem.get("MemTotal", 0), "available": mem.get("MemAvailable", 0),
+                        "cached": mem.get("Cached", 0) + mem.get("Buffers", 0), "free": mem.get("MemFree", 0),
+                        "swap_total": mem.get("SwapTotal", 0), "swap_free": mem.get("SwapFree", 0)},
+                "net": net, "disks": disks, "procs": procs}
+
+
+# ---------------------------------------------------------------------------------------------------- drawing
+def human(n, unit="B", per=""):
+    n = float(n)
+    for u in ("", "K", "M", "G", "T", "P"):
+        if abs(n) < 1024 or u == "P":
+            return ("%.0f%s%s%s" % (n, u, unit, per)) if u == "" else ("%.1f%s%s%s" % (n, u, unit, per))
+        n /= 1024
+
+
+def dur(s):
+    d, s = divmod(int(s), 86400)
+    h, s = divmod(s, 3600)
+    m, _ = divmod(s, 60)
+    return ("%dd " % d if d else "") + "%02d:%02d" % (h, m)
+
+
+_BRAILLE_ROWS = ((0x01, 0x08), (0x02, 0x10), (0x04, 0x20), (0x40, 0x80))   # dot bits, top row first
+
+
+def braille_graph(values, width, height, top, ascii_mode=False):
+    """A filled area graph, newest value on the right: `height` rows of braille (2 x 4 dots per cell)."""
+    if ascii_mode:
+        cols = values[-width:]
+        rows = []
+        for r in range(height):
+            lim = (height - r - 0.5) / height
+            rows.append("".join("#" if top and v / top >= lim else " " for v in cols).rjust(width))
+        return rows
+    vals = values[-width * 2:]
+    vals = [0.0] * (width * 2 - len(vals)) + vals
+    dots = height * 4
+    lv = [min(dots, round(v / top * dots)) if top else 0 for v in vals]
+    rows = []
+    for r in range(height):
+        line = []
+        for c in range(width):
+            code = 0
+            for half in (0, 1):
+                level = lv[c * 2 + half]
+                for k in range(4):
+                    dot_from_bottom = (height - 1 - r) * 4 + (3 - k)
+                    if dot_from_bottom < level:
+                        code |= _BRAILLE_ROWS[k][half]
+            line.append(chr(0x2800 + code))
+        rows.append("".join(line))
+    return rows
+
+
+class Screen:
+    def __init__(self, paint, ascii_mode):
+        self.p = paint
+        self.a = ascii_mode
+        self.B = dict(tl="+", tr="+", bl="+", br="+", h="-", v="|") if ascii_mode else \
+            dict(tl="╭", tr="╮", bl="╰", br="╯", h="─", v="│")
+
+    def bar(self, frac, width):
+        frac = max(0.0, min(1.0, frac))
+        n = frac * width
+        full = int(n)
+        if self.a:
+            return self.p.fg(heat(frac), "#" * full) + self.p.fg("dim", "." * (width - full))
+        parts = " ▏▎▍▌▋▊▉"
+        rem = parts[int((n - full) * 8)] if full < width else ""
+        filled = "█" * full + (rem if rem.strip() else "")
+        return self.p.fg(heat(frac), filled) + self.p.fg("panel", "░" * (width - len(filled)))
+
+    def panel(self, title, lines, width, accent="cyan"):
+        """A box `width` wide around `lines` (each already exactly width-2 visible columns)."""
+        B = self.B
+        t = " %s " % title
+        head = self.p.fg(accent, B["tl"] + B["h"]) + self.p.fg(accent, t, bold=True) + \
+            self.p.fg(accent, B["h"] * max(0, width - 3 - len(t)) + B["tr"])
+        out = [head]
+        for ln in lines:
+            out.append(self.p.fg(accent, B["v"]) + ln + self.p.fg(accent, B["v"]))
+        out.append(self.p.fg(accent, B["bl"] + B["h"] * (width - 2) + B["br"]))
+        return out
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def vis(s):
+    return len(_ANSI.sub("", s))
+
+
+def pad(s, width):
+    """Exactly `width` visible columns: padded, or cut WITHOUT dropping the colours of what is kept."""
+    n = vis(s)
+    if n <= width:
+        return s + " " * (width - n)
+    out, seen, i = [], 0, 0
+    while i < len(s) and seen < width:
+        m = _ANSI.match(s, i)
+        if m:
+            out.append(m.group(0)); i = m.end(); continue
+        out.append(s[i]); seen += 1; i += 1
+    return "".join(out) + ("\x1b[0m" if "\x1b[" in s else "")
+
+
+def logo_rows(paint, ascii_mode):
+    if ascii_mode or paint.mode == "none":
+        return []
+    rows = []
+    for y in range(0, len(LOGO), 2):
+        top, bot = LOGO[y], LOGO[y + 1] if y + 1 < len(LOGO) else "." * len(LOGO[y])
+        line = []
+        for x in range(0, len(top), 6):
+            t, b = top[x:x + 6], bot[x:x + 6]
+            tc = None if t == "......" else tuple(int(t[i:i + 2], 16) for i in (0, 2, 4))
+            bc = None if b == "......" else tuple(int(b[i:i + 2], 16) for i in (0, 2, 4))
+            if tc and bc:
+                line.append(paint.fgbg(tc, bc, "▀"))
+            elif tc:
+                line.append(paint.fg(tc, "▀"))
+            elif bc:
+                line.append(paint.fg(bc, "▄"))
+            else:
+                line.append(" ")
+        rows.append("".join(line))
+    return rows
+
+
+def wordmark(paint, ascii_mode):
+    if ascii_mode:
+        return ["POSTERCHAN TOP"]
+    art = ("█▀█ █▀█ █▀ ▀█▀ █▀▀ █▀█ █▀▀ █ █ ▄▀█ █▄ █   ▀█▀ █▀█ █▀█",
+           "█▀▀ █▄█ ▄█  █  ██▄ █▀▄ █▄▄ █▀█ █▀█ █ ▀█    █  █▄█ █▀▀")
+    out = []
+    for row in art:
+        line = []
+        n = max(1, len(row) - 1)
+        for i, ch in enumerate(row):
+            line.append(paint.fg(_lerp(NEON["cyan"], NEON["magenta"], i / n), ch, bold=True) if ch != " " else " ")
+        out.append("".join(line))
+    return out
+
+
+def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
+    sc = Screen(paint, ascii_mode)
+    P = paint
+    out = []
+    # ---- header: the logo, the wordmark, the machine
+    logo = logo_rows(P, ascii_mode)
+    mark = wordmark(P, ascii_mode)
+    temp = ((" %.0f" + ("C" if ascii_mode else "°C")) % snap["temp_c"]) if snap.get("temp_c") is not None else ""
+    dot = "  -  " if ascii_mode else "  ·  "
+    info = [
+        P.fg("text", "%s" % snap["host"], bold=True) + P.fg("dim", dot) + P.fg("violet", snap["model"] or ""),
+        P.fg("dim", "up ") + P.fg("text", dur(snap["uptime_s"])) + P.fg("dim", "   load ") +
+        P.fg(heat(snap["load"][0] / max(1, snap["ncpu"])), "%.2f %.2f %.2f" % tuple(snap["load"])) +
+        P.fg("dim", "   %d cores" % snap["ncpu"]) + P.fg("yellow", temp),
+        P.fg("dim", "▸ " if not ascii_mode else "> ") + P.fg("magenta", "jack in") +
+        P.fg("dim", ("  q quit%sc/m/p/n sort%s+/- %.1fs" % (dot.strip().join("  "), dot.strip().join("  "), snap["interval"]))),
+    ]
+    head = mark + [""] + info
+    lw = (len(LOGO[0]) // 6 + 2) if logo else 0
+    for i in range(max(len(logo), len(head))):
+        left = logo[i] if i < len(logo) else " " * (lw - 2)
+        right = head[i] if i < len(head) else ""
+        out.append(pad((left + "  " if logo else "") + right, cols))
+    out.append("")
+
+    half = max(40, cols // 2)
+    left_w, right_w = (half, cols - half) if cols >= 100 else (cols, cols)
+    # ---- CPU: total graph + every core
+    cores = sorted((n for n in snap["cpu"] if n != "cpu"), key=lambda n: int(n[3:]))
+    inner = left_w - 2
+    g = braille_graph(sampler.hist["cpu"], inner, 3, 100.0, ascii_mode)
+    cpu_lines = [pad(P.fg(heat(sum(sampler.hist["cpu"][-1:]) / 100), ln), inner) for ln in g]
+    cpu_lines.append(pad(P.fg("text", "TOTAL ", bold=True) + sc.bar(snap["cpu"].get("cpu", 0) / 100, inner - 13) +
+                         P.fg(heat(snap["cpu"].get("cpu", 0) / 100), " %5.1f%%" % snap["cpu"].get("cpu", 0)), inner))
+    per_col = 2 if inner >= 60 else 1
+    cw = inner // per_col
+    for i in range(0, len(cores), per_col):
+        cells = []
+        for n in cores[i:i + per_col]:
+            v = snap["cpu"][n]
+            f = snap["freq_ghz"].get(n)
+            label = P.fg("dim", "C%-3s" % n[3:])
+            ftxt = P.fg("violet", "%.1fG" % f) if f else P.fg("dim", "    ")
+            cells.append(pad(label + sc.bar(v / 100, cw - 17) + P.fg(heat(v / 100), " %5.1f%% " % v) + ftxt, cw))
+        cpu_lines.append(pad("".join(cells), inner))
+    cpu_box = sc.panel("CPU", cpu_lines, left_w, "cyan")
+
+    # ---- memory
+    m = snap["mem"]
+    tot = m["total"] or 1
+    used = tot - m["available"]
+    iw = inner
+    mem_lines = []
+    for label, val, base, col in (("used", used, tot, None), ("cache", m["cached"], tot, "violet"),
+                                  ("avail", m["available"], tot, "green")):
+        frac = val / base if base else 0
+        b = sc.bar(frac, iw - 26) if col is None else P.fg(col, ("█" if not ascii_mode else "#") * int(frac * (iw - 26))) + \
+            " " * (iw - 26 - int(frac * (iw - 26)))
+        mem_lines.append(pad(P.fg("dim", "%-6s" % label) + b + P.fg("text", " %8s / %-8s" % (human(val), human(base))), iw))
+    if m["swap_total"]:
+        su = m["swap_total"] - m["swap_free"]
+        mem_lines.append(pad(P.fg("dim", "%-6s" % "swap") + sc.bar(su / m["swap_total"], iw - 26) +
+                             P.fg("text", " %8s / %-8s" % (human(su), human(m["swap_total"]))), iw))
+    mem_box = sc.panel("MEMORY", mem_lines, left_w, "magenta")
+
+    # ---- network: every interface that is up or moved bytes, busiest first
+    rin = right_w - 2
+    nets = sorted(snap["net"].items(), key=lambda kv: (kv[0] == "lo", -(kv[1]["rx_Bps"] + kv[1]["tx_Bps"]), kv[0]))
+    nets = [(n, v) for n, v in nets if v["up"] or v["rx_total"] or v["tx_total"]]
+    net_lines = []
+    arrow_d, arrow_u = ("v", "^") if ascii_mode else ("▼", "▲")
+    for name, v in nets[:8]:
+        net_lines.append(pad(P.fg("yellow", "%-12s" % name[:12], bold=True) +
+                             P.fg("cyan", " %s %10s" % (arrow_d, human(v["rx_Bps"], "B", "/s"))) +
+                             P.fg("magenta", " %s %10s" % (arrow_u, human(v["tx_Bps"], "B", "/s"))) +
+                             P.fg("dim", "  %s %s/%s" % ("total" if ascii_mode else "Σ", human(v["rx_total"]), human(v["tx_total"]))), rin))
+        hist = sampler.hist["net"].get(name, [])
+        top = max(hist) if hist and max(hist) > 0 else 1
+        if name != "lo":
+            net_lines.append(pad(P.fg(_lerp(NEON["cyan"], NEON["magenta"], 0.5),
+                                      braille_graph(hist, rin, 1, top, ascii_mode)[0]), rin))
+    if not net_lines:
+        net_lines.append(pad(P.fg("dim", "no interfaces"), rin))
+    net_box = sc.panel("NETWORK", net_lines, right_w, "yellow")
+
+    # ---- disks: iostat -x
+    disk_lines = [pad(P.fg("dim", "%-10s %7s %7s %9s %9s %8s %8s %6s" %
+                           ("device", "r/s", "w/s", "rd/s", "wr/s", "r_await", "w_await", "util")), rin)]
+    for name, d in sorted(snap["disks"].items(), key=lambda kv: (-kv[1]["util_pct"], kv[0]))[:10]:
+        lat = max(d["r_await_ms"], d["w_await_ms"])
+        disk_lines.append(pad(
+            P.fg("yellow", "%-10s" % name[:10], bold=True) +
+            P.fg("text", " %7.1f %7.1f" % (d["r_s"], d["w_s"])) +
+            P.fg("cyan", " %9s" % human(d["rkB_s"] * 1024, "B", "/s")) +
+            P.fg("magenta", " %9s" % human(d["wkB_s"] * 1024, "B", "/s")) +
+            P.fg(heat(min(1, d["r_await_ms"] / 50)), " %6.1fms" % d["r_await_ms"]) +
+            P.fg(heat(min(1, d["w_await_ms"] / 50)), " %6.1fms" % d["w_await_ms"]) +
+            P.fg(heat(d["util_pct"] / 100), " %5.1f%%" % d["util_pct"]) +
+            ("" if lat < 100 else P.fg("red", " !")), rin))
+    if len(disk_lines) == 1:
+        disk_lines.append(pad(P.fg("dim", "no block devices"), rin))
+    disk_box = sc.panel("DISK I/O - latency" if ascii_mode else "DISK I/O · latency", disk_lines, right_w, "violet")
+
+    if cols >= 100:
+        left, right = cpu_box + mem_box, net_box + disk_box
+        for i in range(max(len(left), len(right))):
+            out.append((left[i] if i < len(left) else " " * left_w) + (right[i] if i < len(right) else ""))
+    else:
+        out += cpu_box + mem_box + net_box + disk_box
+
+    # ---- processes fill what is left
+    key = {"cpu": lambda p: -p["cpu_pct"], "mem": lambda p: -p["rss"], "pid": lambda p: p["pid"],
+           "name": lambda p: p["name"].lower()}[sort]
+    procs = sorted(snap["procs"], key=key)
+    room = max(3, rows - len(out) - 3)
+    pin = cols - 2
+    plines = [pad(P.fg("dim", "%7s %-10s %6s %8s  %s" % ("PID", "USER", "CPU%", "MEM", "COMMAND  (sort: %s)" % sort)), pin)]
+    for p in procs[:room]:
+        plines.append(pad(P.fg("dim", "%7d " % p["pid"]) + P.fg("violet", "%-10s" % p["user"][:10]) +
+                          P.fg(heat(p["cpu_pct"] / 100), " %6.1f" % p["cpu_pct"]) +
+                          P.fg("text", " %8s  " % human(p["rss"])) + P.fg("cyan", p["name"][:16], bold=True) +
+                          P.fg("dim", "  " + p["cmd"]), pin))
+    out += sc.panel("PROCESSES", plines, cols, "green")
+    return out[:rows]
+
+
+# ---------------------------------------------------------------------------------------------------- main
+def _color_mode(arg):
+    if arg:
+        return arg
+    if os.environ.get("NO_COLOR"):
+        return "none"
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return "truecolor"
+    return "256"
+
+
+def _utf8():
+    for k in ("LC_ALL", "LC_CTYPE", "LANG"):
+        v = os.environ.get(k)
+        if v:
+            return re.sub(r"[-_]", "", v.lower()).endswith("utf8")
+    return False
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="ptop", description="PosterChan top -- a cyberpunk system monitor")
+    ap.add_argument("--once", action="store_true", help="print one frame and exit")
+    ap.add_argument("--json", action="store_true", help="print one measured snapshot as JSON and exit")
+    ap.add_argument("--interval", type=float, default=1.5, help="seconds between samples (default 1.5)")
+    ap.add_argument("--ascii", action="store_true", help="no Unicode graphics")
+    ap.add_argument("--colors", choices=("truecolor", "256", "none"))
+    ap.add_argument("--sort", choices=("cpu", "mem", "pid", "name"), default="cpu")
+    ap.add_argument("--size", help="COLSxROWS for --once (default: the terminal's)")
+    ap.add_argument("--version", action="version", version="ptop " + VERSION)
+    a = ap.parse_args(argv)
+
+    sampler = Sampler()
+    sampler.sample()
+    if a.once or a.json:
+        time.sleep(max(0.2, min(a.interval, 2.0)))
+        snap = sampler.sample()
+        if a.json:
+            print(json.dumps(snap, default=str))
+            return 0
+        size = shutil.get_terminal_size((120, 40))
+        cols, rows = size.columns, size.lines
+        if a.size:
+            cols, rows = (int(x) for x in a.size.lower().split("x"))
+        print("\n".join(render(snap, sampler, cols, rows, Paint(_color_mode(a.colors)), a.ascii or not _utf8(), a.sort)))
+        return 0
+
+    if not sys.stdout.isatty():
+        print("ptop: not a terminal (use --once or --json)", file=sys.stderr)
+        return 2
+    import termios
+    import tty
+    paint = Paint(_color_mode(a.colors))
+    ascii_mode = a.ascii or not _utf8()
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    interval, sort = a.interval, a.sort
+    resized = [True]
+    signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
+    sys.stdout.write("\x1b[?1049h\x1b[?25l")
+    try:
+        tty.setcbreak(fd)
+        snap = None
+        next_t = time.monotonic()
+        while True:
+            now = time.monotonic()
+            if now >= next_t:
+                s = sampler.sample()
+                snap = s or snap
+                next_t = now + interval
+            if snap:
+                size = shutil.get_terminal_size((120, 40))
+                frame = render(snap, sampler, size.columns, size.lines, paint, ascii_mode, sort)
+                if resized[0]:
+                    sys.stdout.write("\x1b[2J")
+                    resized[0] = False
+                sys.stdout.write("\x1b[H" + "\x1b[K\n".join(frame) + "\x1b[K\x1b[J")
+                sys.stdout.flush()
+            r, _, _ = select.select([sys.stdin], [], [], max(0.05, next_t - time.monotonic()))
+            if r:
+                ch = os.read(fd, 1).decode(errors="ignore")
+                if ch in ("q", "Q", "\x03"):
+                    break
+                if ch in "cmpn":
+                    sort = {"c": "cpu", "m": "mem", "p": "pid", "n": "name"}[ch]
+                elif ch == "+":
+                    interval = min(10.0, interval + 0.5)
+                elif ch == "-":
+                    interval = max(0.5, interval - 0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\x1b[0m\x1b[?25h\x1b[?1049l")
+        sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

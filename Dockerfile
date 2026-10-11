@@ -359,6 +359,12 @@ RUN test -s /app/templates/media_center_app.html \
 RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh \
  && find /app -maxdepth 2 -name '*.sh' -exec sed -i 's/\r$//' {} +
 
+# ptop -- PosterChan top, the system monitor every PosterChan node ships (`docker exec -it <c> ptop`). One source:
+# the PosterChanOS overlay helper, linked rather than copied (install.sh does the same on bare metal).
+RUN sed -i 's/\r$//' /app/os/overlay/app-misc/posterchanos-shell/files/ptop \
+ && chmod 0755 /app/os/overlay/app-misc/posterchanos-shell/files/ptop \
+ && ln -sfn /app/os/overlay/app-misc/posterchanos-shell/files/ptop /usr/local/bin/ptop
+
 # Built-in TURN relay binary (compiled in the turnbuild stage). The app supervises it (turn_service.py)
 # when POSTERCHANAI_TURN=1 + a public IP is set; it's a no-op otherwise.
 COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn

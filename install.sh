@@ -39,6 +39,7 @@ source "$INSTALL_DIR/video.sh"
 source "$INSTALL_DIR/voice.sh"
 source "$INSTALL_DIR/turn.sh"
 source "$INSTALL_DIR/stream.sh"
+source "$INSTALL_DIR/ptop.sh"
 source "$INSTALL_DIR/sandbox.sh"
 source "$INSTALL_DIR/searxng.sh"
 source "$INSTALL_DIR/webxdc.sh"
@@ -291,6 +292,9 @@ main() {
 
     # Step 1b: ensure the system clock is correct (a wrong clock makes the relay show no posts)
     ensure_system_clock
+
+    # ptop (PosterChan top) on every node, whatever is installed below -- nostr-only, full or an update
+    install_ptop
 
     # Step 2: Detect GPU
     detect_gpu

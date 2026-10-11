@@ -97,7 +97,7 @@ def test_a_machine_without_udisks_is_told_how_to_fix_it():
 
 
 def test_the_os_installs_udisks_and_lets_the_user_mount_removable_media():
-    eb = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r5.ebuild").read_text()
+    eb = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r6.ebuild").read_text()
     assert "sys-fs/udisks:2" in eb and "sys-fs/exfatprogs" in eb
     assert "50-posterchan-removable-drives.rules" in eb
     rule = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/50-posterchan-removable-drives.rules").read_text()
