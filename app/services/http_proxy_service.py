@@ -84,7 +84,17 @@ class HttpToSocksProxy:
         # connection) so torrent traffic can't leak the real IP.
         _specs = socks_ports or [socks_port]
         self.socks_targets = [_socks_target(s, socks_host) for s in _specs] or [(socks_host, socks_port, str(socks_port))]
-        self._rr = 0   # round-robin cursor across socks_targets
+        self._seq = 0  # tie-break: the backend chosen longest ago goes first, so idle ones share evenly
+        # LEAST-BUSY, NOT ROUND-ROBIN. Round-robin balances the NUMBER of connections, and one torrent
+        # or video connection costs a Tor daemon more than a hundred API calls -- measured on nas.lan,
+        # tor2 at 100% of a core while tor1 idled at 2%. Each backend's load is its open connections
+        # plus the bytes it carried lately (decaying, half-life _HALF_LIFE s), and a new connection
+        # goes to the lowest. Bytes are what tor's one thread actually spends its time on.
+        self._open = [0] * len(self.socks_targets)
+        self._bytes = [0.0] * len(self.socks_targets)
+        self._bytes_t = [0.0] * len(self.socks_targets)
+        self._picked = [0] * len(self.socks_targets)
+        self._lease = {}        # id(remote writer) -> backend index, released when the tunnel closes
         self._stats = {}        # label -> [ok, fail] since the last health summary
         self._stats_since = 0.0
 
@@ -240,6 +250,7 @@ class HttpToSocksProxy:
         except Exception as e:
             logger.error(f"[PROXY] CONNECT tunnel to {target} failed: {type(e).__name__}: {e}")
         finally:
+            self._release(remote_writer)
             try:
                 remote_writer.close()
                 await remote_writer.wait_closed()
@@ -319,6 +330,7 @@ class HttpToSocksProxy:
                 data = await asyncio.wait_for(remote_reader.read(65536), timeout=60)
                 if not data:
                     break
+                self._carried(remote_writer, len(data))
                 writer.write(data)
                 await writer.drain()
 
@@ -330,6 +342,7 @@ class HttpToSocksProxy:
             except Exception:
                 pass
         finally:
+            self._release(remote_writer)
             try:
                 remote_writer.close()
                 await remote_writer.wait_closed()
@@ -342,15 +355,13 @@ class HttpToSocksProxy:
         backend fails it RAISES — it never falls back to a direct connection, so torrent traffic can't
         leak the real IP."""
         targets = self.socks_targets
-        n = len(targets)
-        start = self._rr % n
-        self._rr = (self._rr + 1) % n
         tried = []
         last_err = None
-        for k in range(n):
-            sh, sp, label = targets[(start + k) % n]
+        for i in self._by_load():
+            sh, sp, label = targets[i]
             try:
                 rw = await self._socks_connect_one(sh, sp, host, port)
+                self._take(i, rw[1])
                 self._record(label, True)
                 if tried:   # we failed over from another circuit — say which one actually worked
                     logger.info(f"[PROXY] {host}:{port} served via Tor[{label}]:{sp} (after {', '.join(tried)} failed)")
@@ -370,6 +381,40 @@ class HttpToSocksProxy:
             self._record("direct", True)
             return rw
         raise Exception(f"all Tor backends failed ({', '.join(tried)}): {last_err}")
+
+    _HALF_LIFE = 10.0           # seconds for a backend's recent-bytes figure to halve
+    _OPEN_COST = 256 * 1024     # one open connection weighs as much as 256 KB of recent traffic
+
+    def _recent(self, i, now):
+        dt = now - self._bytes_t[i]
+        if dt > 0:
+            self._bytes[i] *= 0.5 ** (dt / self._HALF_LIFE)
+            self._bytes_t[i] = now
+        return self._bytes[i]
+
+    def _by_load(self):
+        """Backend indices, least-loaded first; the order of the rest is the failover order. Ties
+        go to the backend chosen longest ago, so idle backends take turns."""
+        now = time.monotonic()
+        return sorted(range(len(self.socks_targets)),
+                      key=lambda i: (self._recent(i, now) + self._open[i] * self._OPEN_COST, self._picked[i]))
+
+    def _take(self, i, writer):
+        self._seq += 1
+        self._picked[i] = self._seq
+        self._open[i] += 1
+        self._lease[id(writer)] = i
+
+    def _release(self, writer):
+        i = self._lease.pop(id(writer), None)
+        if i is not None:
+            self._open[i] -= 1
+
+    def _carried(self, writer, n):
+        """Bytes moved through a tunnel, charged to the backend that carries it."""
+        i = self._lease.get(id(writer))
+        if i is not None:
+            self._bytes[i] = self._recent(i, time.monotonic()) + n
 
     def _record(self, label, ok):
         """Tally per-backend ok/fail and, every ~2 min of traffic, log a one-line health summary so
@@ -465,6 +510,7 @@ class HttpToSocksProxy:
                     data = await src.read(65536)
                     if not data:
                         break
+                    self._carried(remote_writer, len(data))
                     dst.write(data)
                     await dst.drain()
             except Exception:
@@ -678,6 +724,9 @@ def start_from_settings() -> bool:
     if _ss.get_bool("tor_enabled", _tor_default) and _ss.get_bool("tor2_enabled", _tor2_default):
         _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
         _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
+    if _ss.get_bool("tor_enabled", _tor_default):
+        from app.services.tor_service import pool_plan
+        _socks_ports += [f"{d['socks']}:{d['label']}" for d in pool_plan(_ss)]
     # Second listener: Tor1 → Tor2 → DIRECT. This is what the node's own SearXNG points at, so a
     # search rides Tor when Tor is up and still works when it isn't — SearXNG has no fallback of its
     # own, so without this a Tor outage turns every search (AI web lookups, news, the bots, the Web

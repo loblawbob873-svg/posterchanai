@@ -631,6 +631,9 @@ class SettingsResponse(BaseModel):
     tor2_control_port: str = "9063"
     tor2_exit_nodes: str = "{ca}"
     tor2_data_dir: str = "/var/lib/posterchanai/tor2"
+    # Extra Tor daemons beyond tor1/tor2 (one tor process = one core). "auto" = one per three cores in
+    # total, 2..6; a number is honoured (max 8). The proxy sends each connection to the least-busy one.
+    tor_extra_daemons: str = "auto"
     # Onion (v3 hidden service) — expose this deployment at a persistent .onion address (primary Tor
     # daemon hosts it; keys persist in the tor data dir → same address across restarts).
     onion_enabled: str = "false"

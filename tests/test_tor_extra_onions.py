@@ -81,8 +81,12 @@ def test_start_from_settings_actually_starts(monkeypatch, tmp_path):
     monkeypatch.setattr(store, "get_int", lambda k, d=0: int(values.get(k, d)))
 
     assert ts.start_from_settings() is True, "the tor role could not start"
-    assert started["service"].extra_onions == [("akkoma", 80, "127.0.0.1:8099")], \
+    assert started, "no daemon was started"
+    assert ts.primary_service().extra_onions == [("akkoma", 80, "127.0.0.1:8099")], \
         "the setting never reached the daemon that publishes the onion"
+    # The extra pool daemons (tor_service.pool_plan) carry traffic only; a second copy of a hidden
+    # service's keys in another daemon would publish the same onion twice.
+    assert all(not s.extra_onions and not s.onion_enabled for s in ts._services[1:])
 
 
 def test_the_factory_takes_every_argument_the_call_site_gives_it():

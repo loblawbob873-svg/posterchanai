@@ -357,6 +357,7 @@ class ProxyBootDefaults(unittest.TestCase):
              mock.patch.object(settings_store, "get", side_effect=missing), \
              mock.patch.object(settings_store, "get_int", side_effect=missing), \
              mock.patch.object(proxy, "start_http_proxy_process") as start, \
+             mock.patch("app.services.tor_service.os.cpu_count", return_value=12), \
              mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("POSTERCHANAI_PROXY_ENABLED", None)
             os.environ.pop("POSTERCHANAI_PROXY_SOCKS_HOST", None)
@@ -365,7 +366,8 @@ class ProxyBootDefaults(unittest.TestCase):
         kwargs = start.call_args.kwargs
         self.assertEqual(kwargs["listen_port"], 8118)
         self.assertEqual(kwargs["socks_host"], "127.0.0.1")
-        self.assertEqual(kwargs["socks_ports"], ["9052:us", "9062:ca"])
+        # tor1 + tor2, plus the auto pool (one Tor daemon per three cores: 4 in total on 12 cores).
+        self.assertEqual(kwargs["socks_ports"], ["9052:us", "9062:ca", "9072:us3", "9082:ca4"])
 
     def test_proxy_explicit_off_still_wins(self):
         from app.services import http_proxy_service as proxy
@@ -387,14 +389,13 @@ class ProxyBootDefaults(unittest.TestCase):
              mock.patch.object(settings_store, "get", side_effect=missing), \
              mock.patch.object(settings_store, "get_int", side_effect=missing), \
              mock.patch.object(tor_service, "start_tor_service", return_value=object()) as start, \
+             mock.patch.object(tor_service.os, "cpu_count", return_value=12), \
              mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("POSTERCHANAI_TOR_ENABLED", None)
             os.environ.pop("POSTERCHANAI_TOR2_ENABLED", None)
             self.assertTrue(tor_service.start_from_settings())
 
-        self.assertEqual(start.call_count, 2)
-        self.assertEqual(start.call_args_list[0].kwargs["socks_port"], 9052)
-        self.assertEqual(start.call_args_list[1].kwargs["socks_port"], 9062)
+        self.assertEqual([c.kwargs["socks_port"] for c in start.call_args_list], [9052, 9062, 9072, 9082])
 
     def test_installed_proxy_unit_pulls_in_tor(self):
         root = os.path.dirname(os.path.dirname(__file__))

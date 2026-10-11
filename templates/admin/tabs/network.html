@@ -99,7 +99,7 @@
             <label for="tor2_enabled">
                 <input type="checkbox" id="tor2_enabled" name="tor2_enabled"> Run a second Tor daemon
             </label>
-            <small>Runs a second <code>tor</code> instance with its own circuit/exit IP (only when Auto-start Tor above is on). The built-in HTTP proxy round-robins across both — exit-IP diversity that dodges per-IP rate limits and geo-blocks. Torrent traffic stays Tor-only (never falls back to direct).</small>
+            <small>Runs a second <code>tor</code> instance with its own circuit/exit IP (only when Auto-start Tor above is on). The built-in HTTP proxy sends each connection to the least-busy daemon — exit-IP diversity that dodges per-IP rate limits and geo-blocks. Torrent traffic stays Tor-only (never falls back to direct).</small>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -119,6 +119,11 @@
         <div class="form-group">
             <label for="tor2_data_dir">Tor Data Directory</label>
             <input type="text" id="tor2_data_dir" name="tor2_data_dir" value="/var/lib/posterchanai/tor2">
+        </div>
+        <div class="form-group">
+            <label for="tor_extra_daemons">Extra Tor daemons</label>
+            <input type="text" id="tor_extra_daemons" name="tor_extra_daemons" value="auto" placeholder="auto">
+            <small>One Tor process can only ever use one CPU core, so a busy node runs more of them. <code>auto</code> runs one per three cores in total (2 to 6); a number runs exactly that many extra (max 8, <code>0</code> = none). They use SOCKS ports 9072, 9082, … and alternate the two exit regions above. The proxy sends each new connection to the least-busy daemon. Takes effect after the Tor and proxy services restart.</small>
         </div>
     </fieldset>
 

@@ -170,6 +170,7 @@ TESTS = (
     'tests/client/test_save_never_opens_the_share_sheet.py',
     'tests/client/test_ai_download_native.py',
     'tests/test_drafts_nostr_only_accounts.py',
+    'tests/test_tor_pool_least_busy.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

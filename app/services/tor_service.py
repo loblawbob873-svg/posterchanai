@@ -596,7 +596,64 @@ def start_from_settings() -> bool:
             data_dir=_ss.get("tor2_data_dir", "/var/lib/posterchanai/tor2"))
         logger.info("[TOR] built-in Tor #2 %s (SOCKS5 on %s:%s, exits=%s)",
                     "started" if ok2 else "FAILED to start", listen_host, t2_socks, t2_exits)
+    # The pool: more daemons so tor's single thread stops being the node's ceiling (see pool_plan).
+    for d in pool_plan(_ss):
+        ok = start_tor_service(listen_host=listen_host, socks_port=d["socks"], control_port=d["control"],
+                               dns_port=d["dns"], exit_nodes=d["exits"], data_dir=d["data_dir"])
+        logger.info("[TOR] built-in Tor %s %s (SOCKS5 on %s:%s, exits=%s)", d["label"],
+                    "started" if ok else "FAILED to start", listen_host, d["socks"], d["exits"])
     return bool(primary)
+
+
+#: ONE TOR PROCESS IS ONE CORE, and no setting changes that: tor moves every cell on its main thread
+#: (`NumCPUs` only parallelises a RELAY's onion-skin crypto, which a client never does). Measured on
+#: nas.lan 2026-10-10: tor2 at 100% of a core while tor1 idled at 2%, because a few heavy connections
+#: had landed on it. So the way to use more cores is more daemons, with the proxy sending each new
+#: connection to the least-loaded one. These are the daemons BEYOND tor1/tor2.
+POOL_MAX_EXTRA = 8
+POOL_BASE_PORT = 9072     # extra #i: SOCKS base+10i, control +1, DNS +3 (tor1 = 9052, tor2 = 9062)
+
+
+def pool_extra_count(raw, cpus, tor2_on: bool) -> int:
+    """How many extra daemons to run. `raw` is the `tor_extra_daemons` setting: a number is honoured
+    (capped at POOL_MAX_EXTRA), anything else -- blank, "auto", garbage -- means one daemon per three
+    cores in total, at least the two that always ran and at most six, so a small box adds nothing."""
+    s = str(raw if raw is not None else "auto").strip().lower()
+    if s.isdigit():
+        return min(int(s), POOL_MAX_EXTRA)
+    total = max(2, min(6, int(cpus or 0) // 3))
+    return max(0, total - (2 if tor2_on else 1))
+
+
+def pool_plan(ss=None, cpus=None) -> list:
+    """The extra daemons this node runs, read from settings. The tor role starts exactly these and the
+    proxy load-balances onto exactly these -- one function, so the two processes cannot disagree about
+    which ports exist (a port the proxy lists and no tor owns is a backend that refuses every connect).
+
+    Exit regions alternate between tor1's and tor2's, so the pool keeps the exit diversity the second
+    daemon was added for. Each is a plain dict: socks/control/dns ports, exits, data_dir, label."""
+    if ss is None:
+        from app.services import settings_store as ss
+    _tor2_default = os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    tor2_on = bool(ss.get_bool("tor2_enabled", _tor2_default))
+    n = pool_extra_count(ss.get("tor_extra_daemons", "auto"), os.cpu_count() if cpus is None else cpus,
+                         tor2_on)
+    if n <= 0:
+        return []
+    exits = [ss.get("tor_exit_nodes", "{us}") or "{us}"]
+    if tor2_on:
+        exits.append(ss.get("tor2_exit_nodes", "{ca}") or "{ca}")
+    base = ss.get_int("tor_pool_base_port", POOL_BASE_PORT) or POOL_BASE_PORT
+    root = Path(ss.get("tor_data_dir", "/var/lib/posterchanai/tor") or "/var/lib/posterchanai/tor").parent
+    plan = []
+    for i in range(n):
+        ex = exits[i % len(exits)]
+        region = (ex.strip().strip("{}").split(",")[0] or "tor").strip("{} ")
+        socks = base + 10 * i
+        plan.append({"socks": socks, "control": socks + 1, "dns": socks + 3, "exits": ex,
+                     "data_dir": str(root / f"tor{i + 3}"), "label": f"{region}{i + 3}"})
+    return plan
 
 
 def get_onion_address_global():
