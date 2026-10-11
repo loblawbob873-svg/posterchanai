@@ -298,6 +298,28 @@ def _settings_text_keys() -> set:
     return out
 
 
+def _settings_response(settings: dict) -> SettingsResponse:
+    """SettingsResponse from the stored strings. A stored value the schema cannot parse (an int field holding
+    "junk" or "2.5" -- written before Save checked it, restored from a backup, typed by hand) is shown as its
+    DEFAULT and logged, never allowed to fail the whole response: one bad document used to 500 GET, the admin page
+    then hydrated NOTHING, and its next Save posted `false` over every checkbox on it."""
+    from pydantic import ValidationError
+    settings = dict(settings)
+    for _ in range(len(SettingsResponse.model_fields) + 1):
+        try:
+            return SettingsResponse(**settings)
+        except ValidationError as e:
+            bad = {str(err["loc"][0]) for err in e.errors() if err.get("loc")}
+            bad &= set(settings)
+            if not bad:
+                raise
+            for k in bad:
+                logger.warning(f"[Admin] stored setting {k}={str(settings[k])[:40]!r} is not a valid "
+                               f"{SettingsResponse.model_fields[k].annotation} -- showing the default")
+                settings.pop(k, None)
+    return SettingsResponse(**settings)
+
+
 @router.get("/settings", response_model=SettingsResponse)
 def get_settings(
     db: Session = Depends(get_db),
@@ -305,7 +327,7 @@ def get_settings(
 ):
     from app.database import safe_query_settings
     settings = safe_query_settings(db)
-    resp = SettingsResponse(**settings)
+    resp = _settings_response(settings)
     # Mask secret tokens that are set OUT-OF-BAND (OAuth) so the admin form doesn't pre-fill them and
     # then re-submit a STALE value on Save, clobbering a freshly-connected token. These keys are
     # excluded from the clearable text-keys, so a blank field on Save means "leave as-is".
@@ -795,10 +817,21 @@ def update_settings(
 
     # Admin → Relay → Limits / Database: a number outside its safe range is REFUSED, with nothing stored -- not
     # clamped silently, not stored for the relay to trip over (app/services/relay_tunables.py).
-    from app.services import relay_tunables
+    from app.services import relay_tunables, tor_service
     _bad = relay_tunables.validate_many(data.settings)
+    if "tor_extra_daemons" in data.settings:
+        _tor_bad = tor_service.extra_daemons_error(data.settings["tor_extra_daemons"])
+        if _tor_bad:
+            _bad.append(_tor_bad)
     if _bad:
         raise HTTPException(status_code=400, detail="Not saved: " + "; ".join(_bad))
+    # ...and an ACCEPTED value is stored in the one form GET can read back ("1e3" is a valid 1000 to the range
+    # check, but stored verbatim SettingsResponse cannot parse it and GET -- the whole admin page -- answered 500).
+    for _k in list(data.settings):
+        if _k in relay_tunables.ALL:
+            data.settings[_k] = relay_tunables.normalize(_k, data.settings[_k])
+        elif _k == "tor_extra_daemons":
+            data.settings[_k] = tor_service.normalize_extra_daemons(data.settings[_k])
 
     try:
         from app.services import settings_store

@@ -625,6 +625,22 @@ def pool_extra_count(raw, cpus, tor2_on: bool) -> int:
     return max(0, total - (2 if tor2_on else 1))
 
 
+def extra_daemons_error(raw) -> str | None:
+    """Admin Save's check of `tor_extra_daemons`: None when it may be stored (blank or "auto" = automatic, or a
+    whole number 0..POOL_MAX_EXTRA), else the sentence Save answers with. pool_extra_count reads anything else as
+    "auto" (or caps it), so "12" or "lots" used to be stored and silently run something the admin never asked for."""
+    s = str(raw if raw is not None else "").strip().lower()
+    if s in ("", "auto") or (s.isdigit() and int(s) <= POOL_MAX_EXTRA):
+        return None
+    return "tor_extra_daemons must be auto or a whole number from 0 to %d" % POOL_MAX_EXTRA
+
+
+def normalize_extra_daemons(raw):
+    """The stored form of an accepted value: " AUTO " -> "auto", "08" -> "8"; blank stays blank (= auto)."""
+    s = str(raw if raw is not None else "").strip().lower()
+    return str(int(s)) if s.isdigit() else s
+
+
 def pool_plan(ss=None, cpus=None) -> list:
     """The extra daemons this node runs, read from settings. The tor role starts exactly these and the
     proxy load-balances onto exactly these -- one function, so the two processes cannot disagree about

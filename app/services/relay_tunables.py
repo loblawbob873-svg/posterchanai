@@ -89,6 +89,19 @@ def validate(key: str, raw) -> str | None:
     return None
 
 
+def normalize(key: str, raw):
+    """The form `raw` is STORED in once `validate` accepted it: "1e3" -> "1000", "300.0" -> "300", " 7 " -> "7".
+
+    A browser number input hands over whatever was typed, and "1e3" is a valid 1000 to the range check -- but
+    stored verbatim, SettingsResponse (an int field) cannot parse it, so GET /api/admin/settings answered 500 and
+    the whole admin page stopped loading. Blank and keys this module does not know are returned unchanged."""
+    knob = ALL.get(key)
+    if knob is None or raw is None or str(raw).strip() == "":
+        return raw
+    v = _parse(knob, raw)
+    return str(int(v)) if knob.kind is int else _fmt(v)
+
+
 def validate_many(settings: dict) -> list:
     return [e for e in (validate(k, v) for k, v in (settings or {}).items()) if e]
 

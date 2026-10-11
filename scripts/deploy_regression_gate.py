@@ -211,6 +211,8 @@ TESTS = (
     'tests/test_relay_tunables.py',
     'tests/test_admin_relay_sections.py',
     'tests/test_admin_relay_sections_browser.py',
+    'tests/test_admin_settings_persist_today.py',
+    'tests/test_admin_settings_persist_browser.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

@@ -57,6 +57,7 @@ class FakeRelay:
         self.max_filters = max_filters_per_req
         self.log: list = []          # every message type received, in order
         self.auths: list = []        # pubkeys that authenticated
+        self.writes: list = []       # every EVENT accepted (signature checked), in order
         self._srv = serve(self._handle, "127.0.0.1", 0)
         self.port = self._srv.socket.getsockname()[1]
         threading.Thread(target=self._srv.serve_forever, daemon=True).start()
@@ -97,6 +98,11 @@ class FakeRelay:
                         continue        # served only to the author
                     ws.send(json.dumps(["EVENT", sub, ev]))
                 ws.send(json.dumps(["EOSE", sub]))
+            elif msg[0] == "EVENT" and len(msg) >= 2 and isinstance(msg[1], dict):
+                # A WRITE (nostr_store.put_doc): accepted only with a valid signature, and a parameterized
+                # replaceable event (30000-39999) replaces the older version with the same author/kind/d --
+                # so a test can Save through the shipped writer and hydrate back what this relay kept.
+                self._store(ws, msg[1])
             elif msg[0] == "COUNT":
                 sub, f = msg[1], msg[2]
                 if self.operator and self.operator in authed:
@@ -106,6 +112,28 @@ class FakeRelay:
                 explicit = any(int(k) in NIP78 for k in (f.get("kinds") or []))
                 n = sum(1 for e in self.events if _matches(e, f) and (explicit or int(e["kind"]) not in NIP78))
                 ws.send(json.dumps(["COUNT", sub, {"count": n}]))
+
+
+    def _store(self, ws, event):
+        from app.services.nostr.event import verify_event
+        if not verify_event(event):
+            ws.send(json.dumps(["OK", event.get("id"), False, "invalid: bad signature"]))
+            return
+        self.writes.append(event)
+        kind = int(event.get("kind", -1))
+        if 30000 <= kind < 40000:
+            d = next((t[1] for t in event.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
+            same = [e for e in self.events if e["pubkey"] == event["pubkey"] and int(e["kind"]) == kind
+                    and next((t[1] for t in e.get("tags", []) if len(t) >= 2 and t[0] == "d"), "") == d]
+            newer = [e for e in same if (e["created_at"], e["id"]) != (event["created_at"], event["id"])
+                     and (e["created_at"] > event["created_at"]
+                          or (e["created_at"] == event["created_at"] and e["id"] < event["id"]))]
+            if newer:
+                ws.send(json.dumps(["OK", event["id"], False, "duplicate: not stored, a newer version exists"]))
+                return
+            self.events = [e for e in self.events if e not in same]
+        self.events.append(event)
+        ws.send(json.dumps(["OK", event["id"], True, ""]))
 
 
 _seq = [0]
