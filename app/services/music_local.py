@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 _save_shim_installed = False
 
 
+_acestep_quiet = False
+
+
+def _quiet_acestep_logs() -> None:
+    """ACE-Step logs every song's caption and full lyrics (and its LM's formatted prompt) at INFO through
+    loguru, from several modules -- i.e. members' requests in the journal. Our own [music] lines carry the
+    sizes and timings; a failure still raises, and is logged here. Called before every `acestep` import."""
+    global _acestep_quiet
+    if _acestep_quiet:
+        return
+    try:
+        from loguru import logger as _loguru
+        _loguru.disable("acestep")
+    except Exception:       # no loguru = no ACE-Step either
+        pass
+    _acestep_quiet = True
+
+
 def _install_torchaudio_save_shim() -> None:
     """Make `torchaudio.save` write through soundfile, before ACE-Step is imported.
 
@@ -212,6 +230,7 @@ class MusicService:
             # weights ARE loadable, just through the upstream handler, which is the same code that
             # server ran. Importing it instead of talking HTTP to it is the whole point.
             _install_torchaudio_save_shim()
+            _quiet_acestep_logs()
             from acestep.handler import AceStepHandler
             handler = AceStepHandler()
             msg, ok = handler.initialize_service(
@@ -286,6 +305,7 @@ class MusicService:
             if self._pipe is None:
                 raise MusicLocalError("music model failed to load")
             import tempfile, shutil, os as _os
+            _quiet_acestep_logs()
             from acestep.inference import generate_music, GenerationParams, GenerationConfig
             dur = float(duration or cfg["duration"])
             n_steps = int(steps or cfg["steps"])
