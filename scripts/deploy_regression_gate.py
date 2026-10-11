@@ -158,6 +158,7 @@ TESTS = (
     'tests/test_relay_starts_before_bridge_scans.py',
     'tests/test_fedi_lookups_never_scan.py',
     'tests/test_loopback_relay_sockets_are_uncompressed.py',
+    'tests/client/test_terminal_symbol_font.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

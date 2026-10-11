@@ -9,6 +9,11 @@
 /* Self-hosted fonts (no Google Fonts dependency) — variable woff2, one file per family. */
 @font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;src:url('/static/fonts/inter.woff2') format('woff2')}
 @font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('/static/fonts/orbitron.woff2') format('woff2')}
+/* The terminal's SYMBOLS: box drawing (incl. the rounded corners), blocks, geometric shapes, arrows and braille --
+   a DejaVu Sans Mono subset with the 256 braille patterns drawn on its own cell. No font in the terminal's stack has
+   braille, so every btop/htop graph rendered as rows of empty "missing glyph" squares (2026-10-10). Scoped by
+   unicode-range, so letters still come from the terminal's monospace fonts (which is also what xterm measures). */
+@font-face{font-family:'PC Term Symbols';font-style:normal;font-weight:100 900;font-display:block;src:url('/static/fonts/term-symbols.woff2') format('woff2');unicode-range:U+2190-21FF,U+2500-25FF,U+2800-28FF}
 :root{
   /* THE SOLID ACCENT, as every theme already defines it in --accent-rgb. Thirty-six rules (Telegram,
      the calculator, the ✨ AI button, the Print Screen prompt, Alt+Tab, System Settings) were written

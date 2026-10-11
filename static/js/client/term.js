@@ -102,7 +102,7 @@
     };
     /* No monospace face is bundled (static/fonts holds Inter and Orbitron), so this is the best
      * installed one: the coding faces first, then the platform defaults every OS has. */
-    const TERM_FONT = '"JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, SFMono-Regular, '
+    const TERM_FONT = '"PC Term Symbols", "JetBrains Mono", "Cascadia Code", "Fira Code", ui-monospace, SFMono-Regular, '
                     + 'Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace';
 
     /* The cursor wears the THEME's neon — but only when it can be seen on the terminal's dark
