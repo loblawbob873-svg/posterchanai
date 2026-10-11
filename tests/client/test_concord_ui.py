@@ -487,7 +487,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-channel-visibility" disabled' in CONCORD, "a local UI toggle must not claim to rotate channel keys"
     assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD
-    assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(room.url)' in CONCORD
+    assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(shareableInviteUrl(p,room.url))' in CONCORD
     assert 'upgrading this room to a public relay community' in CONCORD
     assert 'mintPublicRoom(p,room.name,room.icon)' in CONCORD
     assert 'await hydrateInvite(p,raw)' in CONCORD

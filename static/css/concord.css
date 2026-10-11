@@ -378,3 +378,13 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
   border-radius:8px;background:rgba(0,0,0,.35);border:1px solid var(--line,rgba(127,127,160,.25));
   overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:pre!important;overflow-wrap:normal!important;word-break:normal!important}
 .cc-message-body .cc-codeblock code{font-family:var(--mono,monospace);font-size:.86em;line-height:1.45;white-space:pre;background:none;border:0;padding:0;word-break:normal}
+/* Icon upload state under "Upload image…": uploading / uploaded (with the picture) / failed + Retry. */
+.cc-icon-status{display:flex!important;align-items:center!important;gap:10px!important;margin-top:8px!important;padding:8px 10px!important;border-radius:10px!important;background:rgba(255,255,255,.05)!important;font-size:13px!important;min-width:0!important}
+.cc-icon-status[hidden]{display:none!important}
+.cc-icon-status img{flex:0 0 40px!important;width:40px!important;height:40px!important;border-radius:10px!important;object-fit:cover!important}
+.cc-icon-status span{flex:1 1 auto!important;min-width:0!important;overflow-wrap:anywhere!important}
+.cc-icon-status.uploading span::before{content:""!important;display:inline-block!important;width:10px!important;height:10px!important;margin-inline-end:7px!important;border:2px solid var(--neon,#2dd4bf)!important;border-right-color:transparent!important;border-radius:50%!important;animation:ccIconSpin .8s linear infinite!important;vertical-align:-1px!important}
+.cc-icon-status.done span{color:var(--neon,#2dd4bf)!important}
+.cc-icon-status.failed{background:rgba(239,68,68,.12)!important}
+.cc-icon-status.failed span{color:#fca5a5!important}
+@keyframes ccIconSpin{to{transform:rotate(360deg)}}
