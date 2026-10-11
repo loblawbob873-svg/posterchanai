@@ -59,7 +59,12 @@ async def run():
                 await b.until("window.__feedCards() >= 8")
                 assert await b.js("typeof window.PCScrollReport") == "function", "the recorder is not loaded"
                 f = "document.getElementById('feed')"
+                # The scenario needs 900px of scroll and a card fully above the top after pulling back 300.
+                # Eight cards is not always that much (measured: 634px max, the top card straddling the edge),
+                # so wait for the content, not a card count.
+                await b.until(f"{f}.scrollHeight-{f}.clientHeight >= 1100")
                 await b.js(f"{f}.scrollTop=900")
+                await b.until(f"{f}.scrollTop >= 890")
                 await asyncio.sleep(.3)
                 # A finger goes down and starts scrolling DOWN (moving up the screen)...
                 await b.call("Input.dispatchTouchEvent", dict(type="touchStart", touchPoints=[dict(x=200, y=600)]))
