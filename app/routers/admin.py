@@ -368,6 +368,19 @@ async def relay_identities(request: Request, db: Session = Depends(get_db), admi
     return await nip05_registry.rows(_nip05_domain(request, db))
 
 
+@router.get("/relay/reports")
+async def relay_reports(since: int = 0, admin: User = Depends(get_admin_user)):
+    """NIP-56 reports (kind 1984) filed by, or about, this node's members -- Admin → Nostr Relay →
+    Reports. The same strict read the report bot uses (community_stats.reports); a relay that could
+    not be asked is a 503, never an empty list that reads as "nobody reported anything"."""
+    from app.services import community_stats
+    try:
+        rows = await community_stats.reports(since)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"could not read the relay: {type(e).__name__}")
+    return {"reports": sorted(rows, key=lambda r: -int(r.get("at") or 0))}
+
+
 async def _revoke_removed(db, r: dict) -> dict:
     """After identities are removed, take away the access they carried (relay_access_policy
     .revoke_identities) and say how it went. The names are already gone either way; a failed revoke is

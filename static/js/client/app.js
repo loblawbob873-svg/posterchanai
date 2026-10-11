@@ -1748,7 +1748,7 @@
   }
   // Social kinds are bound to the account that started them: a signer switched mid-publish must not
   // post as somebody else.
-  const _SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
+  const _SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,1984,30023,30311]);
   // A "fediverse-only" event: the retired Pleroma mode signed these and never published them to a
   // relay. None are made any more; the marker is still read so an old one is never sent anywhere.
   function _fediOnlyEvent(ev){ return !!(ev && (ev.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')); }
@@ -9057,6 +9057,9 @@
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
     postImageUrl, profOf, publish, repostWithWarning, requestBlossomAccess, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
+    // Report (NIP-56): a guest sees it disabled with the reason; a report also goes to THIS node's relay.
+    isGuest: () => GUEST || !signer,
+    homeRelay: () => (CFG && CFG.relay_url) || '',
   }; }
   function _menusMod(){ return _lzGet('menus.js', 'PCMenusFactory', _menusDeps); }
   function _menusLoad(){ return _lzLoad('menus.js', 'PCMenusFactory', _menusDeps); }
@@ -9066,6 +9069,11 @@
   function openEmojiPopover(){ return _lzRun(_menusMod, _menusLoad, 'openEmojiPopover', arguments); }
   function openMenuPopover(){ return _lzRun(_menusMod, _menusLoad, 'openMenuPopover', arguments); }
   function openPostMenu(){ return _lzRun(_menusMod, _menusLoad, 'openPostMenu', arguments); }
+  function openReport(){ return _lzRun(_menusMod, _menusLoad, 'openReport', arguments); }
+  // The ⋯ menu's Report row, built by the module that files it (so a guest's disabled row and its
+  // reason are written once). Synchronous for a menu that is about to open: the module is loaded by then.
+  function reportItem(label){ const m=_menusMod(); return m ? m.reportItem(label)
+    : ((GUEST || !signer) ? ['report', label+' — log in to report', '', {disabled:true, title:'Log in to file a report'}] : ['report', label]); }
   function pickEmoji(){ return _lzRun(_menusMod, _menusLoad, 'pickEmoji', arguments); }
   function stopNarration(){ const m=_menusMod(); if(m) return m.stopNarration.apply(null, arguments); }   // nothing to do until it has loaded
   function translatePost(){ return _lzRun(_menusMod, _menusLoad, 'translatePost', arguments); }
@@ -11983,7 +11991,7 @@
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
-    timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf,
+    timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf, openReport, reportItem,
     markRelayBlocked: pks => { if(_relayBlocked) (pks||[]).forEach(p => _relayBlocked.add(p)); },
   }; }
   function _profileMod(){ return _lzGet('profile.js', 'PCProfileFactory', _profileDeps); }

@@ -269,7 +269,9 @@ window.PCMenusFactory = function(dep){
      * default action. So an item may carry `{htmlFor:'<input id>'}` and is rendered as one. */
     pop.innerHTML=items.map(([a,label,cls,extra])=> extra && extra.htmlFor
       ? `<label for="${enc(extra.htmlFor)}" data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</label>`
-      : `<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
+      /* `{disabled, title}`: shown but not usable, WITH the reason (a guest's Report) -- an action that
+       * simply is not there reads as "this app cannot do that". */
+      : `<button data-m="${a}"${cls?` class="${cls}"`:''}${extra && extra.disabled?` disabled aria-disabled="true"`:''}${extra && extra.title?` title="${enc(extra.title)}"`:''}>${enc(label)}</button>`).join('');
     _scalePop(pop);                              // desktop scale, BEFORE insertion (see _scalePop)
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
@@ -360,6 +362,7 @@ window.PCMenusFactory = function(dep){
     { const _r=_rootIdOf(Store.get(id))||id;
       items.push(['mutethread', S.MUTED_THREADS.has(_r)?'🔔 Unmute conversation':'🔕 Mute conversation']); }
     if(!mine) items.push(['mute', isMutedAuthor(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
+    if(!mine) items.push(reportItem('🚩 Report post'));   // NIP-56; a fediverse author's server also gets a Flag
     if(S.IS_ADMIN && !mine) items.push(isRelayBlocked(pk) ? ['unblock','✅ Unblock author'] : ['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', S.BOOKMARKS.has(id)); }); return; }
@@ -380,8 +383,82 @@ window.PCMenusFactory = function(dep){
       if(a==='delete') return doDelete(id, art);
       if(a==='mutethread') return toggleMuteThread(_rootIdOf(Store.get(id))||id);
       if(a==='mute') return toggleMute(pk);
+      if(a==='report') return openReport(pk, id);
       if(a==='block') return doBlock(pk);
       if(a==='unblock') return doUnblock(pk);
+    });
+  }
+  /* ---------- 🚩 Report (NIP-56, kind 1984) ----------
+   * "we need a way to file reports on users posts. make sure works on fedi/nostr". A post report is
+   * ['e', <post>, <type>] + ['p', <author>, <type>]; a user report is ['p', <pubkey>, <type>]; the
+   * comment is the content -- NIP-56 exactly, nothing else (its NIP-32 labels are optional and no
+   * reader here uses them). It goes to the relay pool (the user's relays) and to THIS node's relay,
+   * where its admins (Admin → Nostr Relay → Reports) and the report bot read it, and from which the
+   * ActivityPub worker sends a fediverse author's own server a Flag. A report on Nostr is PUBLIC, and
+   * the sheet says so before anything is signed. */
+  const _REPORT_TYPES = [
+    ['spam','Spam','Ads, scams, repeated junk'],
+    ['nudity','Nudity','Sexual or explicit content'],
+    ['profanity','Profanity / hate','Abusive or hateful speech'],
+    ['illegal','Illegal','May be illegal where you are'],
+    ['impersonation','Impersonation','Pretends to be someone else'],
+    ['malware','Malware / phishing','Malicious links or files'],
+    ['other','Other','Something else — say what below'],
+  ];
+  // The menu row: a guest SEES it, disabled, with the reason -- signing is the one thing a guest cannot do.
+  function reportItem(label){
+    return dep.isGuest() ? ['report', label+' — log in to report', '', {disabled:true, title:'Log in to file a report'}]
+                         : ['report', label];
+  }
+  function openReport(pk, id){
+    if(dep.isGuest()){ toast('Log in to file a report'); return; }
+    if(!/^[0-9a-f]{64}$/i.test(String(pk||''))) return;
+    if(id && !/^[0-9a-f]{64}$/i.test(String(id))) id=null;
+    const p=profOf(pk)||{};
+    let who=p.display_name||p.name||''; if(!who){ try{ who=npubOf(pk).slice(0,14)+'…'; }catch(_){ who='this account'; } }
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-flag"></use></svg>${id?'Report post':'Report user'}</h3>
+      <div class="rep-form">
+        <div class="muted small">${id?'A post by':'The account'} <b>${enc(who)}</b></div>
+        <fieldset class="rep-types"><legend class="small">Why are you reporting ${id?'it':'them'}?</legend>
+          ${_REPORT_TYPES.map(([v,l,d])=>`<label class="rep-type"><input type="radio" name="rep-type" value="${v}"><span><b>${enc(l)}</b><small>${enc(d)}</small></span></label>`).join('')}
+        </fieldset>
+        <label class="small" for="rep-comment">Comment (optional)</label>
+        <textarea id="rep-comment" class="rep-comment" rows="3" maxlength="1000" placeholder="Anything a moderator should know"></textarea>
+        <div class="rep-note small">Reports on Nostr are <b>public</b>: anyone can see that you filed it and what you wrote. It goes to your relays and this server’s admins — and if the account is on the fediverse, to its own server’s moderators too.</div>
+        <div class="rep-err small" role="alert"></div>
+        <div class="row rep-acts"><button type="button" class="btn btn-cyan small" id="rep-cancel">Cancel</button><button type="button" class="btn btn-neon small" id="rep-submit">Submit report</button></div>
+      </div>`, root=>{
+      const err=root.querySelector('.rep-err'), sub=root.querySelector('#rep-submit');
+      const cancel=root.querySelector('#rep-cancel'); if(cancel) cancel.onclick=closeModal;
+      root.querySelectorAll('input[name=rep-type]').forEach(r=> r.onchange=()=>{ if(err) err.textContent=''; });
+      if(sub) sub.onclick=async()=>{
+        const picked=root.querySelector('input[name=rep-type]:checked');
+        if(!picked){ if(err) err.textContent='Pick a reason first.'; return; }
+        const type=picked.value, comment=(root.querySelector('#rep-comment').value||'').trim().slice(0,1000);
+        const tags=id ? [['e', id, type], ['p', pk, type]] : [['p', pk, type]];
+        sub.disabled=true; sub.textContent='Sending…'; if(err) err.textContent='';
+        let r=null;
+        try{ r=await publish(1984, comment, tags, {quiet:true}); }catch(_){ r=null; }
+        if(!(r && (r.ok || r.unconfirmed || r.queued))){
+          sub.disabled=false; sub.textContent='Submit report';
+          if(err) err.textContent='Not sent: '+((r && r.msg) || 'could not reach a relay')+' — try again.';
+          return;
+        }
+        // This node's relay is in the pool on every normal session; when the user runs a relay list
+        // of their own it may not be, and the node's admins would never see the report.
+        try{ const home=dep.homeRelay(); if(home && r.ev) Relay.publishTo([home], r.ev).catch(()=>{}); }catch(_){}
+        const form=root.querySelector('.rep-form'); if(!form) return;
+        const said = r.ok ? 'Report sent.' : r.queued ? 'Report saved — it will be sent when you are back online.'
+                          : 'Report sent — the relay has not confirmed it yet; it may already be there.';
+        form.innerHTML=`<div class="rep-done"><p><b>${enc(said)}</b></p>
+          <p class="muted small">You can also stop seeing ${enc(who)}.</p>
+          <div class="row">${isMutedAuthor(pk)?'':'<button type="button" class="btn btn-cyan small" id="rep-mute">🔇 Mute this user</button>'}${S.IS_ADMIN?'<button type="button" class="btn btn-cyan small danger" id="rep-block">🚫 Block on this relay</button>':''}<button type="button" class="btn btn-neon small" id="rep-close">Close</button></div></div>`;
+        const mb=form.querySelector('#rep-mute');
+        if(mb) mb.onclick=async()=>{ mb.disabled=true; try{ await toggleMute(pk); }catch(_){} mb.textContent=isMutedAuthor(pk)?'🔇 Muted':'🔇 Mute this user'; mb.disabled=isMutedAuthor(pk); };
+        const bb=form.querySelector('#rep-block'); if(bb) bb.onclick=()=>doBlock(pk);
+        const cb=form.querySelector('#rep-close'); if(cb) cb.onclick=closeModal;
+        toast('🚩 report sent');
+      };
     });
   }
   // 🧾 Raw event — the signed object exactly as it sits on the relay. Nostr is a protocol of plain JSON and
@@ -695,6 +772,6 @@ window.PCMenusFactory = function(dep){
 
   return {
     attachEmojiAutocomplete, composeTranslate, narratePost, openEmojiPopover, openMenuPopover,
-    openPostMenu, pickEmoji, stopNarration, translatePost,
+    openPostMenu, openReport, pickEmoji, reportItem, stopNarration, translatePost,
   };
 };

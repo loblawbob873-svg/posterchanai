@@ -104,6 +104,17 @@ Three independent filters, all in Admin → Relay, all applied to **both writes 
 - **Account blocklist** — a hard denylist of pubkeys (npub/hex), rejected **even if they're in
   the Web of Trust**; their stored notes are purged on restart.
 
+### Reports (NIP-56)
+Anyone signed in can report a post (its ⋯ menu → **Report post**) or an account (profile ⋯ →
+**Report user**): pick a reason (spam, nudity, profanity/hate, illegal, impersonation,
+malware/phishing, other), optionally add a comment, submit. The app publishes a NIP-56 kind 1984 to
+your relays and this node's relay — **a Nostr report is public**: anyone can see who filed it and
+what it says, and the sheet says so before anything is signed. Afterwards it offers to mute the
+account. If the reported account is on the fediverse, its own server's moderators also receive the
+report as an ActivityPub `Flag` (see `docs/ACTIVITYPUB.md` → Reports). Admins see every report filed
+by or about a member under **Admin → Nostr Relay → Reports**; acting on one is the account blocklist
+above (or mute). Guests (not signed in) see the action, disabled, with the reason.
+
 ### Rate limiting (don't get blocked)
 Upstream requests are **paced** (a configurable delay between author batches during sync /
 profile fetch), and the **outbox is a bounded paced queue** (a minimum interval between

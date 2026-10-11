@@ -129,6 +129,40 @@ following it there is sent as an ActivityPub Follow, and their posts arrive from
 | a deletion (5) | Delete / Undo — only of the deleter's OWN events |
 | a profile (0) | Update(Person) |
 | a contact list (3) | Follow / Undo(Follow) for fediverse accounts added or removed |
+| a report (1984, NIP-56) of a fediverse account or its posts | `Flag` to that account's own server (shared inbox), signed as the member who filed it — see "Reports" below |
+
+### Reports (Flag)
+
+A member files a report from a post's or a profile's ⋯ → **Report** (the client publishes a NIP-56
+kind 1984: `["e", <post>, <type>]` + `["p", <author>, <type>]`, or `["p", <pubkey>, <type>]` alone;
+the comment is the content). When the reported account is a fediverse account bridged here (a
+puppet), the worker sends its server ONE `Flag` per reported account:
+
+```json
+{"type": "Flag", "id": "https://<us>/ap/activities/<report id>/flag",
+ "actor": "https://<us>/ap/users/<member>", "to": ["<their account uri>"],
+ "object": ["<their account uri>", "<status uri>", "..."],
+ "content": "[spam] the reporter's comment"}
+```
+
+* `object` is a LIST of URI STRINGS, the account first: Akkoma/Pleroma reduce over it with
+  `User.get_cached_by_ap_id` (an embedded object or a bare string breaks that) and take the first local
+  user as the account and the rest as statuses; Mastodon maps every entry and keeps its own.
+* `content` is the comment, led by the NIP-56 type in brackets — neither server has a field for the
+  category, so this is how their moderators see it (and how our own inbox reads it back as the type).
+* The `id` is on OUR host: Mastodon keeps a report's uri only when it is on the actor's host.
+* It is signed with the member's own key, which the receiving server fetches from their actor — so on
+  Akkoma the report appears under **Moderation → Reports** filed by `@<member>@<our domain>`, naming the
+  reported account, the reported status(es) and the comment.
+* Sent ONCE (`pcai:ap:sent:<report id>` records it, kind 1984); a kind-5 of a report sends nothing — a
+  Flag cannot be withdrawn. A report of a native Nostr user or of a member sends no Flag (there is no
+  other server to tell), and a blocked server, or a blocked account, gets none.
+
+Incoming, a `Flag` about one of ours becomes a kind 1984 signed by the reporter's puppet (Mastodon and
+Akkoma forward reports as their INSTANCE actor, so that puppet is the server's); a leading `[type]` in
+its content is read as the NIP-56 type, anything else is `other`. Admins see every report filed by or
+about a member under **Admin → Nostr Relay → Reports**. `tests/test_activitypub_flag.py` sends our
+own Flag over a real signed request into our own inbox and checks the report that comes out.
 
 **Settings → "Delete all my posts"** publishes one kind-5 per hundred events (posts, polls, comments,
 reactions, reposts). Each becomes a Delete / Undo to every follower inbox and every server the event
@@ -255,4 +289,4 @@ the `Host` header and path untouched and uncached — see `nginx/posterchanai.co
 are under `/ap/` so they never collide with a `/inbox` 410 rule left behind by a retired Pleroma.
 
 Code: `app/services/activitypub/` (the module docstrings are the detail), `app/routers/activitypub.py`.
-Tests: `tests/test_activitypub.py`, `tests/test_community_bots.py`.
+Tests: `tests/test_activitypub.py`, `tests/test_activitypub_flag.py`, `tests/test_community_bots.py`.

@@ -15,6 +15,8 @@ the relay by the same id (`/ap/objects/<event id>`), so there is exactly one cop
     kind 0         → Update(Person)
     kind 3         → Follow / Undo(Follow) for fediverse accounts (puppets) added to or removed from
                                     the contact list -- which is what brings their posts in
+    kind 1984      → Flag           a NIP-56 report of a fediverse account (and its posts), to that
+                                    account's own server, whose moderators are the ones who can act
 
 Anything carrying a `proxy` tag is a mirror of somebody else's words (a note that arrived from the
 fediverse, or another bridge's copy), never a member's own, so it is never sent back out.
@@ -31,7 +33,7 @@ from app.services.activitypub import actors, config, convert, remote, state
 
 logger = logging.getLogger(__name__)
 
-KINDS = [0, 1, 3, 5, 6, 7, 1018, 1068, 1111]
+KINDS = [0, 1, 3, 5, 6, 7, 1018, 1068, 1111, 1984]
 POST_KINDS = (1, 1111, 1068)     # what becomes an ActivityPub object (Note / Question)
 _TICK_SECONDS = 30
 _PAGE = 500
@@ -394,6 +396,8 @@ async def plan(ev: dict, member: str) -> list:
                 if still and still.get("pubkey") != member:
                     continue
             was = str(rec.get("kind") or "")
+            if was == "1984" or (not was and "1984" in kinds):
+                continue                       # a Flag cannot be withdrawn, and is not a Note to Delete
             if not was:
                 was = "7" if ("7" in kinds and "1" not in kinds) else "6" if ("6" in kinds and "1" not in kinds) else "1"
             extra = set(rec.get("inboxes") or [])
@@ -428,6 +432,63 @@ async def plan(ev: dict, member: str) -> list:
 
     elif kind == 3:
         out = await _follows(ev, member, me)
+
+    elif kind == 1984:
+        out = await _flag(ev, member, me)
+    return out
+
+
+REPORT_TYPES = ("nudity", "malware", "profanity", "illegal", "spam", "impersonation", "other")
+
+
+async def _flag(ev: dict, member: str, me: str) -> list:
+    """A member's NIP-56 report (kind 1984) about a FEDIVERSE account → a `Flag` to that account's own
+    server: its moderators are the only ones who can act on it, and on Nostr alone they never hear of it.
+
+    One Flag per reported account, the shape Mastodon and Akkoma both read: `object` is a LIST of URI
+    STRINGS -- the account first, then its reported statuses (Akkoma reduces over ap_id strings and
+    takes the first local user as the account; Mastodon maps every entry and keeps its own); `content`
+    is the comment, led by the NIP-56 type in brackets (`[spam] …`) so their moderators see the
+    category and our own inbox reads it back (inbox._flag). The id is under OUR host: Mastodon keeps a
+    report's uri only when it is on the actor's. Sent ONCE: the sent ledger records it, and a report
+    already recorded plans nothing. A report of a native Nostr user or of a member sends nothing --
+    there is no other server to tell."""
+    base = config.base_url()
+    if (await _sent_rec(ev["id"])).get("kind") == 1984:
+        return []
+    tags = [t for t in ev.get("tags") or [] if isinstance(t, list) and len(t) > 1 and isinstance(t[1], str)]
+    rtype = next((str(t[2]).lower() for t in tags if t[0] in ("e", "p") and len(t) > 2
+                  and str(t[2]).lower() in REPORT_TYPES), "other")
+    accounts: dict = {}                          # canonical actor id -> [status uri, ...]
+    for t in tags:
+        if t[0] == "p" and len(t[1]) == 64:
+            who = await resolve_pubkey(t[1])
+            if who.get("remote") and who.get("href"):
+                accounts.setdefault(who["href"], [])
+    for t in tags:
+        if t[0] == "e" and len(t[1]) == 64:
+            target = await resolve_event(t[1])
+            if target.get("remote") and target.get("actor") and target.get("uri"):
+                accounts.setdefault(target["actor"], []).append(target["uri"])
+    if not accounts:
+        return []
+    comment = " ".join((ev.get("content") or "").split())[:4000]
+    content = f"[{rtype}] {comment}".strip()
+    out, inboxes = [], set()
+    for account, statuses in list(accounts.items())[:10]:
+        if config.host_blocked(remote.host_of(account)) or actors.puppet_blocked(account):
+            continue
+        inbox_url = await _inbox_for(account)
+        if not inbox_url:
+            continue
+        flag = {"@context": convert.AS_CONTEXT,
+                "id": convert.activity_url(base, ev["id"], "flag") + (f"#{_h(account)}" if len(accounts) > 1 else ""),
+                "type": "Flag", "actor": me, "to": [account], "content": content,
+                "object": [account] + list(dict.fromkeys(statuses))[:20]}
+        out.append((inbox_url, flag))
+        inboxes.add(inbox_url)
+    if out:
+        await _remember_sent(ev["id"], inboxes, kind=1984, by=member, target=out[0][1]["object"][0])
     return out
 
 

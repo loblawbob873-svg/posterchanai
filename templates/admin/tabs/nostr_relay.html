@@ -431,6 +431,20 @@
     </fieldset>
 
     <fieldset>
+        <legend>Reports</legend>
+        <div class="form-group">
+            <div class="blk-panel">
+                <div class="ids-tools">
+                    <button type="button" class="btn-secondary btn-small" id="rep_reload">Reload</button>
+                    <div id="rep_summary" class="blk-summary">Open this tab to load the reports.</div>
+                </div>
+                <div id="rep_list" class="blk-list"></div>
+            </div>
+            <small>NIP-56 reports filed by or about a member of this node: from a post's or profile's ⋯ → Report in the app, and Flags other fediverse servers send about our accounts. A member's report about a fediverse account is also sent to that account's own server as a Flag. Reports on Nostr are public. To act on one, use Block / Mute or the identities list below.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>NIP-05 identity server</legend>
         <div class="form-group">
             <label for="nostr_relay_nip05_enabled">

@@ -20,6 +20,7 @@ window.PCProfileFactory = function(dep){
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,
     renderMe, renderView, showPaymentTargets, sign, startCall, streamCard, streamHost, switchView,
     timeAgo, toast, toggleFollow, toggleMute, uiConfirm, uploadBlob, xmrOf, markRelayBlocked,
+    openReport, reportItem,
   } = dep;
 
 
@@ -709,6 +710,7 @@ window.PCProfileFactory = function(dep){
       ['follow', S.FOLLOWS.has(pk)?'➖ Unfollow':'➕ Follow'],
       ['message','✉️ Message'],
       ['mute', isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'],
+      reportItem('🚩 Report user'),   // NIP-56 kind 1984 (menus.js openReport)
       ['reports','🚩 Reports received'],
     ];
     items.push(['relays','🖧 Relays']);   // view the relays this user publishes to (NIP-65)
@@ -725,6 +727,7 @@ window.PCProfileFactory = function(dep){
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
       if(a==='message'){ openDMWith(pk); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
+      if(a==='report') return openReport(pk, null);
       if(a==='reports') return showReports(pk);
       if(a==='relays') return showRelays(pk);
       if(a==='caps') return openPermissions(pk);

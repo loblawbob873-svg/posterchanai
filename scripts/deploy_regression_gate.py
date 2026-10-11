@@ -178,6 +178,9 @@ TESTS = (
     'tests/test_bot_runs_only_the_command_you_typed.py',
     'tests/test_every_bot_command.py',
     'tests/test_generation_endpoints_require_auth.py',
+    'tests/client/test_report_post_full_app.py',
+    'tests/test_activitypub_flag.py',
+    'tests/test_admin_reports.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

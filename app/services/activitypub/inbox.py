@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from urllib.parse import urlparse
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _tasks: set = set()
 _ACTOR_PATH = "/ap/users/"
+_REPORT_TYPES = ("nudity", "malware", "profanity", "illegal", "spam", "impersonation", "other")   # NIP-56
 
 
 def _port() -> int:
@@ -1217,7 +1219,13 @@ async def _flag(activity: dict, signer: str) -> str:
     if not puppet:
         return "ignored: no puppet"
     reason = " ".join(str(activity.get("content") or "").split())[:1000]
-    tags = [["p", pk, "other"] for pk in people[:10]] + [["e", eid, "other"] for eid in posts[:10]]
+    # A NIP-56 type leading the comment in brackets ("[spam] bot account") is how OUR outbound Flag
+    # carries the category (outbox._flag); Mastodon and Akkoma send none, so theirs stay "other".
+    rtype = "other"
+    m = re.match(r"\[(\w+)\]\s*", reason)
+    if m and m.group(1).lower() in _REPORT_TYPES:
+        rtype, reason = m.group(1).lower(), reason[m.end():]
+    tags = [["p", pk, rtype] for pk in people[:10]] + [["e", eid, rtype] for eid in posts[:10]]
     ev = build_event(puppet, 1984, reason, tags=tags, broadcast=False)
     ok, msg = await publish(_port(), ev)
     logger.info("[activitypub] report from %s about %d account(s)%s", remote.host_of(signer), len(people),
