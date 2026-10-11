@@ -246,3 +246,57 @@ def test_iowait_await_and_queue_depth_are_iostats(tmp_path, monkeypatch):
     assert d["r_await_ms"] == pytest.approx(2000 / 40) and d["w_await_ms"] == pytest.approx(1000 / 10)
     assert d["aqu_sz"] == pytest.approx(16000 / 2000)          # weighted ms / interval ms
     assert d["util_pct"] == pytest.approx(1900 / 2000 * 100)
+
+
+def test_slash_searches_processes_interactively():
+    """Press `/`, type, Enter keeps the filter, Esc clears it -- driven through a real pty, like a person at btop."""
+    import fcntl
+    import pty
+    import select
+    import struct
+    import termios
+    import time
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe(sys.executable, [sys.executable, PTOP, "--interval", "0.5"],
+                   dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", LANG="C.UTF-8"))
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+
+    def screen(seconds):
+        buf, end = b"", time.time() + seconds
+        while time.time() < end:
+            if select.select([fd], [], [], 0.1)[0]:
+                try:
+                    buf += os.read(fd, 65536)
+                except OSError:
+                    break
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.decode("utf-8", "replace"))
+
+    try:
+        assert "PROCESSES" in screen(3)
+        os.write(fd, b"/")
+        os.write(fd, ("python").encode())
+        typed = screen(1.5)
+        assert "/python_" in typed, "the query being typed is not shown"
+        os.write(fd, b"\r")
+        kept = screen(1.5)
+        assert re.search(r"/python  \(\d+ match", kept), "Enter did not keep the filter"
+        os.write(fd, b"\x1b")
+        cleared = screen(1.5)
+        assert "/python" not in cleared.split("PROCESSES")[-1][:60], "Esc did not clear the filter"
+        os.write(fd, b"q")
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    finally:
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+def test_the_filter_matches_name_command_or_pid():
+    m = _load()
+    p = {"pid": 4005680, "name": "tor", "cmd": "/usr/bin/tor -f /var/lib/posterchanai/tor2/torrc"}
+    assert m.proc_matches(p, "TOR") and m.proc_matches(p, "tor2/torrc") and m.proc_matches(p, "4005")
+    assert not m.proc_matches(p, "5680") and not m.proc_matches(p, "nginx")
+    assert m.proc_matches(p, "") and m.proc_matches(p, "  ")

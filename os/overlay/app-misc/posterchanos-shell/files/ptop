@@ -5,7 +5,7 @@ Every CPU core, memory, per-interface network bandwidth, iostat-style disk I/O (
 utilisation per disk) and the busiest processes, under the PosterChan logo. Python 3 standard library only: it reads
 /proc and /sys directly, so it runs on any PosterChan node without installing anything.
 
-    ptop                 interactive (q quit, c/m/p/n sort by cpu/mem/pid/name, +/- refresh interval)
+    ptop                 interactive (q quit, / search by name/command/PID, c/m/p/n sort, +/- refresh interval)
     ptop --once          one frame to stdout and exit (scripts, screenshots)
     ptop --json          one measured snapshot as JSON (what the screen is drawn from)
     ptop --ascii         no Unicode graphics; --colors 256 for terminals without truecolor
@@ -508,13 +508,23 @@ def wordmark(paint, ascii_mode):
     return out
 
 
-def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
+def proc_matches(p, query):
+    """btop's `/` filter: a PID (by its leading digits), or part of the name or command line, case-insensitive."""
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    if q.isdigit() and str(p["pid"]).startswith(q):
+        return True
+    return q in p["name"].lower() or q in p["cmd"].lower()
+
+
+def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu", query="", typing=False, logo_ok=True):
     sc = Screen(paint, ascii_mode)
     P = paint
     out = []
     # ---- header: the logo, the wordmark, the machine
     # The portrait needs ~17 rows. On a short terminal the stats come first: wordmark + system line only.
-    logo = logo_rows(P, ascii_mode) if rows >= 48 else []
+    logo = logo_rows(P, ascii_mode) if (logo_ok and rows >= 48) else []
     mark = wordmark(P, ascii_mode)
     temp = ((" %.0f" + ("C" if ascii_mode else "°C")) % snap["temp_c"]) if snap.get("temp_c") is not None else ""
     dot = "  -  " if ascii_mode else "  ·  "
@@ -526,7 +536,8 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         P.fg("dim", "   iowait ") + P.fg(heat(min(1.0, snap.get("iowait", {}).get("cpu", 0.0) / 25.0)),
                                           "%.1f%%" % snap.get("iowait", {}).get("cpu", 0.0), bold=True),
         P.fg("dim", "▸ " if not ascii_mode else "> ") + P.fg("magenta", "jack in") +
-        P.fg("dim", ("  q quit%sc/m/p/n sort%s+/- %.1fs" % (dot.strip().join("  "), dot.strip().join("  "), snap["interval"]))),
+        P.fg("dim", ("  q quit%s/ search%sc/m/p/n sort%s+/- %.1fs" % (dot.strip().join("  "), dot.strip().join("  "),
+                                                                 dot.strip().join("  "), snap["interval"]))),
     ]
     head = mark + [""] + info
     lw = (len(LOGO[0]) // 6 + 2) if logo else 0
@@ -581,6 +592,8 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
 
     # ---- network: every interface that is up or moved bytes, busiest first
     rin = right_w - 2
+    # NETWORK sits under MEMORY in the left column (the left side had the room; the right was the tall one)
+    nin = left_w - 2
     nets = sorted(snap["net"].items(), key=lambda kv: (kv[0] == "lo", -(kv[1]["rx_Bps"] + kv[1]["tx_Bps"]), kv[0]))
     nets = [(n, v) for n, v in nets if v["up"] or v["rx_total"] or v["tx_total"]]
     net_lines = []
@@ -590,16 +603,16 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         net_lines.append(pad(P.fg("yellow", "%-12s" % name[:12], bold=True) +
                              P.fg("cyan", " %s %10s" % (arrow_d, human(v["rx_Bps"], "B", "/s"))) +
                              P.fg("magenta", " %s %10s" % (arrow_u, human(v["tx_Bps"], "B", "/s"))) +
-                             P.fg("dim", "  %s %s/%s" % ("total" if ascii_mode else "Σ", human(v["rx_total"]), human(v["tx_total"]))), rin))
+                             P.fg("dim", "  %s %s/%s" % ("total" if ascii_mode else "Σ", human(v["rx_total"]), human(v["tx_total"]))), nin))
         hist = sampler.hist["net"].get(name, [])
         top = max(hist) if hist and max(hist) > 0 else 1
         if name != "lo":
             net_graphs.add(len(net_lines))
             net_lines.append(pad(P.fg(_lerp(NEON["cyan"], NEON["magenta"], 0.5),
-                                      braille_graph(hist, rin, 1, top, ascii_mode)[0]), rin))
+                                      braille_graph(hist, nin, 1, top, ascii_mode)[0]), nin))
     if not net_lines:
-        net_lines.append(pad(P.fg("dim", "no interfaces"), rin))
-    net_box = sc.panel("NETWORK", net_lines, right_w, "yellow")
+        net_lines.append(pad(P.fg("dim", "no interfaces"), nin))
+    net_box = sc.panel("NETWORK", net_lines, left_w, "yellow")
 
     # ---- disks: iostat -x. The worst latency first (await, then %util): the disk that is the bottleneck is the top
     # row. await = ms per I/O, reads and writes together; aqu-sz = average queue depth. r_await/w_await when wide.
@@ -644,27 +657,29 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
         fs_lines.append(pad(P.fg("dim", "no filesystems"), rin))
     fs_box = sc.panel("FILESYSTEMS", fs_lines, right_w, "green")
 
-    # ---- fit: the right column must leave room for the filesystems AND a few processes. A node with many
-    # interfaces and disks (nas.lan: libvirt bridges, 11 block devices) pushed FILESYSTEMS off a 40-row screen.
-    # Shed in order of least value: the network graphs, then the least busy disks (they are sorted by %util).
+    # ---- fit: both columns must leave room for a few processes, and FILESYSTEMS must stay on screen. A node with many
+    # interfaces and disks (nas.lan: libvirt bridges, 11 block devices) pushed it off a 40-row screen. Shed in order of
+    # least value: the network graphs (left), then the least busy disks (right; they are sorted worst-first).
     budget = rows - len(out) - 6
     if cols >= 100:
-        budget = max(budget, len(cpu_box + mem_box))
-    stack = (lambda: len(net_box) + len(disk_box) + len(fs_box)) if cols >= 100 else \
-        (lambda: len(cpu_box) + len(mem_box) + len(net_box) + len(disk_box) + len(fs_box))
-    if stack() > budget and net_graphs:
+        left_h = lambda: len(cpu_box) + len(mem_box) + len(net_box)
+        right_h = lambda: len(disk_box) + len(fs_box)
+    else:
+        left_h = lambda: 0
+        right_h = lambda: len(cpu_box) + len(mem_box) + len(net_box) + len(disk_box) + len(fs_box)
+    if max(left_h(), right_h()) > budget and net_graphs:
         net_lines = [ln for i, ln in enumerate(net_lines) if i not in net_graphs]
-        net_box = sc.panel("NETWORK", net_lines, right_w, "yellow")
-    if stack() > budget and len(disk_lines) > 2:
-        keep = max(1, len(disk_lines) - 1 - (stack() - budget) - 1)       # header row + kept rows + "more"
+        net_box = sc.panel("NETWORK", net_lines, left_w, "yellow")
+    if right_h() > max(budget, left_h()) and len(disk_lines) > 2:
+        keep = max(1, len(disk_lines) - 1 - (right_h() - max(budget, left_h())) - 1)
         hidden = len(disk_lines) - 1 - keep
         if hidden > 0:
-            disk_lines = disk_lines[:1 + keep] + [pad(P.fg("dim", "  +%d more (idle first)" % hidden), rin)]
+            disk_lines = disk_lines[:1 + keep] + [pad(P.fg("dim", "  +%d more (quietest)" % hidden), rin)]
             disk_box = sc.panel("DISK I/O - latency" if ascii_mode else "DISK I/O · latency", disk_lines, right_w,
                                 "violet")
 
     if cols >= 100:
-        left, right = cpu_box + mem_box, net_box + disk_box + fs_box
+        left, right = cpu_box + mem_box + net_box, disk_box + fs_box
         for i in range(max(len(left), len(right))):
             out.append((left[i] if i < len(left) else " " * left_w) + (right[i] if i < len(right) else ""))
     else:
@@ -673,16 +688,26 @@ def render(snap, sampler, cols, rows, paint, ascii_mode, sort="cpu"):
     # ---- processes fill what is left
     key = {"cpu": lambda p: -p["cpu_pct"], "mem": lambda p: -p["rss"], "pid": lambda p: p["pid"],
            "name": lambda p: p["name"].lower()}[sort]
-    procs = sorted(snap["procs"], key=key)
+    if logo and rows - len(out) - 3 < 8:
+        # the portrait is decoration: when it would leave fewer than 8 process rows, the processes win
+        return render(snap, sampler, cols, rows, paint, ascii_mode, sort, query, typing, logo_ok=False)
+    procs = [p for p in sorted(snap["procs"], key=key) if proc_matches(p, query)]
     room = max(3, rows - len(out) - 3)
     pin = cols - 2
     plines = [pad(P.fg("dim", "%7s %-10s %6s %8s  %s" % ("PID", "USER", "CPU%", "MEM", "COMMAND  (sort: %s)" % sort)), pin)]
+    if not procs and query:
+        plines.append(pad(P.fg("dim", "  no process matches %r" % query), pin))
     for p in procs[:room]:
         plines.append(pad(P.fg("dim", "%7d " % p["pid"]) + P.fg("violet", "%-10s" % p["user"][:10]) +
                           P.fg(heat(p["cpu_pct"] / 100), " %6.1f" % p["cpu_pct"]) +
                           P.fg("text", " %8s  " % human(p["rss"])) + P.fg("cyan", p["name"][:16], bold=True) +
                           P.fg("dim", "  " + p["cmd"]), pin))
-    out += sc.panel("PROCESSES", plines, cols, "green")
+    title = "PROCESSES"
+    if typing or query:
+        cursor = "_" if typing else ""
+        title += "  /%s%s  (%d match%s%s)" % (query, cursor, len(procs), "" if len(procs) == 1 else "es",
+                                             ", Enter keep · Esc clear" if typing else ", Esc clear")
+    out += sc.panel(title, plines, cols, "magenta" if (typing or query) else "green")
     return out[:rows]
 
 
@@ -714,6 +739,7 @@ def main(argv=None):
     ap.add_argument("--colors", choices=("truecolor", "256", "none"))
     ap.add_argument("--sort", choices=("cpu", "mem", "pid", "name"), default="cpu")
     ap.add_argument("--size", help="COLSxROWS for --once (default: the terminal's)")
+    ap.add_argument("--filter", default="", help="show only processes matching this name, command or PID")
     ap.add_argument("--version", action="version", version="ptop " + VERSION)
     a = ap.parse_args(argv)
 
@@ -729,7 +755,8 @@ def main(argv=None):
         cols, rows = size.columns, size.lines
         if a.size:
             cols, rows = (int(x) for x in a.size.lower().split("x"))
-        print("\n".join(render(snap, sampler, cols, rows, Paint(_color_mode(a.colors)), a.ascii or not _utf8(), a.sort)))
+        print("\n".join(render(snap, sampler, cols, rows, Paint(_color_mode(a.colors)), a.ascii or not _utf8(), a.sort,
+                               query=a.filter)))
         return 0
 
     if not sys.stdout.isatty():
@@ -742,6 +769,7 @@ def main(argv=None):
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     interval, sort = a.interval, a.sort
+    query, typing = a.filter, False
     resized = [True]
     signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
     sys.stdout.write("\x1b[?1049h\x1b[?25l")
@@ -757,7 +785,7 @@ def main(argv=None):
                 next_t = now + interval
             if snap:
                 size = shutil.get_terminal_size((120, 40))
-                frame = render(snap, sampler, size.columns, size.lines, paint, ascii_mode, sort)
+                frame = render(snap, sampler, size.columns, size.lines, paint, ascii_mode, sort, query, typing)
                 if resized[0]:
                     sys.stdout.write("\x1b[2J")
                     resized[0] = False
@@ -766,6 +794,25 @@ def main(argv=None):
             r, _, _ = select.select([sys.stdin], [], [], max(0.05, next_t - time.monotonic()))
             if r:
                 ch = os.read(fd, 1).decode(errors="ignore")
+                if ch == "\x1b":
+                    # Esc alone, or the start of an arrow/function key: swallow the rest of the sequence
+                    while select.select([sys.stdin], [], [], 0.02)[0]:
+                        os.read(fd, 16)
+                    query, typing = "", False
+                    continue
+                if typing:
+                    if ch in ("\r", "\n"):
+                        typing = False
+                    elif ch in ("\x7f", "\x08"):
+                        query = query[:-1]
+                    elif ch == "\x03":
+                        break
+                    elif ch.isprintable():
+                        query += ch
+                    continue
+                if ch == "/":
+                    typing = True
+                    continue
                 if ch in ("q", "Q", "\x03"):
                     break
                 if ch in "cmpn":
