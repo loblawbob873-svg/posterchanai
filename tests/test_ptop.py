@@ -104,7 +104,7 @@ def test_the_screen_shows_every_core_interface_and_disk_of_this_machine():
                          capture_output=True, text=True, env=env, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
-    for title in ("CPU", "MEMORY", "NETWORK", "DISK I/O", "PROCESSES", "r_await", "w_await"):
+    for title in ("CPU", "MEMORY", "NETWORK", "DISK I/O", "PROCESSES", "await", "aqu-sz", "IOWAIT", "iowait "):
         assert title in plain, title
     ncpu = sum(1 for ln in open("/proc/stat") if re.match(r"cpu\d+ ", ln))
     shown = set(re.findall(r"\bC(\d+)\b", plain))
@@ -220,5 +220,29 @@ def test_the_screen_lists_this_machines_filesystems_and_no_tmpfs():
         assert re.search(r"[│|]%s\s" % re.escape(mnt), plain), "%s is missing from the screen" % mnt
     assert not re.search(r"\btmpfs\b", plain), "a tmpfs is listed"
     panel = plain[plain.index("FILESYSTEMS"):]
-    rows = [ln for ln in panel.splitlines()[1:] if ln.strip().startswith(("│/", "|/"))]
+    rows = [m.group(0) for m in re.finditer(r"[│|]/\S*\s+(?:btrfs|ext4|xfs|vfat|zfs|f2fs|nfs4?|exfat)\b[^\n]*", panel)]
     assert rows and all(re.search(r"\d+\.\d%\s*[│|]\s*$", r) for r in rows), "a usage figure is cut off: %r" % rows
+
+
+def test_iowait_await_and_queue_depth_are_iostats(tmp_path, monkeypatch):
+    """%iowait (iostat avg-cpu), await (ms per I/O, reads+writes) and aqu-sz (average queue depth), from the counters."""
+    root = str(tmp_path)
+    proc, sysfs = _fake(root, cpu=[("cpu", [100, 0, 100, 700, 100, 0, 0, 0])], net=[],
+                        disk=[("sdd", 100, 1000, 50, 50, 4000, 500, 1000)])
+    _w(proc + "/diskstats", "   8 0 sdd 100 0 4000 1000 50 0 500 50 0 1000 3000\n")
+    m = _load(proc, sysfs)
+    clock = [10.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
+    s = m.Sampler()
+    s.sample()
+    # 2 s later: iowait +60 of +300 ticks; sdd +40 reads in 2000 ms, +10 writes in 1000 ms, weighted io +16000 ms
+    _w(proc + "/stat", "cpu 150 0 150 840 160 0 0 0\n")
+    _w(proc + "/diskstats", "   8 0 sdd 140 0 4400 3000 60 0 600 1050 0 2900 19000\n")
+    clock[0] += 2.0
+    snap = s.sample()
+    assert snap["iowait"]["cpu"] == pytest.approx(100.0 * 60 / 300)
+    d = snap["disks"]["sdd"]
+    assert d["await_ms"] == pytest.approx(3000 / 50)          # (2000 + 1000) ms over 40 + 10 I/Os
+    assert d["r_await_ms"] == pytest.approx(2000 / 40) and d["w_await_ms"] == pytest.approx(1000 / 10)
+    assert d["aqu_sz"] == pytest.approx(16000 / 2000)          # weighted ms / interval ms
+    assert d["util_pct"] == pytest.approx(1900 / 2000 * 100)
