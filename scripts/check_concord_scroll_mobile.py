@@ -51,8 +51,8 @@ const $=(s,r)=>(r||document).querySelector(s), $$=(s,r)=>[...(r||document).query
 const enc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const room={name:'PosterChan Community',icon:'#',description:'history to read back through',
   channels:[{name:'general',private:false,id:'general-id'}],local:true,naddr:'naddr-scroll-check'};
-localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
-localStorage.setItem('pc.concord.active','0');
+localStorage.setItem('pc.concord.rooms.v1.'+'a'.repeat(64),JSON.stringify([room]));
+localStorage.setItem('pc.concord.active.v1.'+'a'.repeat(64),'0');
 // Enough history that a fling has somewhere to go, and varied lengths so rows are not uniform.
 const body=i=>'Message '+i+' '+'word '.repeat(6+(i%11));
 window.__fixture=Array.from({length:140},(_,i)=>({id:'message-'+i,pubkey:(i%9===0?'a':'b').repeat(64),

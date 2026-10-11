@@ -31,8 +31,8 @@ const enc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const room={name:'PosterChan Community',icon:'🕊',description:'A real community description that has to clamp cleanly.',
   channels:[{name:'general',private:false,id:'general-id'},{name:'support-and-long-room-name',private:false,id:'support-id'}],
   local:true,naddr:'naddr-mobile-layout'};
-localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
-localStorage.setItem('pc.concord.active','0');
+localStorage.setItem('pc.concord.rooms.v1.'+'a'.repeat(64),JSON.stringify([room]));
+localStorage.setItem('pc.concord.active.v1.'+'a'.repeat(64),'0');
 const fixtureMessages=Array.from({length:36},(_,i)=>({id:'message-'+i,pubkey:(i===35?'a':'b').repeat(64),by:i===35?'Me':'Alexandria Long Username',at:i+1,
  text:i===0?'A message with https://example.test/a/very/long/path/that/must/not/push/the/phone/sideways and enough words to wrap naturally.':'Message '+i+' with enough text to give the chat a real scroll range.',tags:[],reactions:i===0?{'👍':['b'.repeat(64)]}:{}}));
 localStorage.setItem('pc.concord.test.'+room.naddr,JSON.stringify(fixtureMessages));
