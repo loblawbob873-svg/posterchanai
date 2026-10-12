@@ -138,6 +138,7 @@
     return changed;
   }
 
+  const _homeAnswered = got => { try{ const R = window.Relay; return !!(R && R.homeAnswered && R.homeAnswered(got)); }catch(_){ return false; } };
   async function readDoc(){
     const pk = S.pk;
     if(!pk || S.doc.read) return;
@@ -154,8 +155,12 @@
         mergeHosts((j && j.hosts) || [], 'added');
         S.doc.ok = true; S.doc.at = newest.created_at;
       }catch(_){ /* a signer that would not decrypt: NOT ok — never write over it */ }
-    }else if(evs.complete){
-      S.doc.ok = true;             // every relay answered, and there is genuinely no document yet
+    }else if(evs.complete || _homeAnswered(evs)){
+      /* Every relay answered, and there is genuinely no document yet — or THIS NODE'S relay answered
+       * (relay.js homeAnswered), which holds the list since every save goes to it. `complete` alone
+       * left a member with their own relay list (one relay in it never answers) unable to save a
+       * host for good: "your host list could not be read from your relays". */
+      S.doc.ok = true;
     }
     S.doc.read = true;
     saveCache();
@@ -164,6 +169,10 @@
   }
 
   async function writeDoc(){
+    /* A host added while the first read is still out (with a relay in the pool that never answers, that
+     * read takes the query's whole timeout) WAITS for it rather than being told "not saved there" --
+     * nothing ever retried that save, so the host stayed on this device for good. */
+    if(!S.doc.read){ try{ await readDoc(); }catch(_){} }
     if(!S.doc.ok){ toast('your host list could not be read from your relays, so it was not saved there — it is kept on this device'); return false; }
     const pk = S.pk;
     const hosts = S.hosts.filter(h => h.source !== 'instance' && h.source !== 'local').map(h => ({ pubkey: h.pubkey, relay: h.relay, name: h.name || '' }));

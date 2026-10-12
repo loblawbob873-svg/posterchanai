@@ -239,12 +239,17 @@ window.PCBlossomFactory = function(dep){
      is REPLACEABLE, so merging a patch onto an empty read republishes it as JUST that patch and
      takes every pref this device did not load with it — one flaky moment while remembering a Monero
      tip amount would drop the zap presets, the BCH presets and the data-saver. `Relay.query` marks
-     a set `complete` when every relay EOSE'd, which is the only thing that separates the two. */
+     a set `complete` when every relay EOSE'd, which is the only thing that separates the two.
+     …OR when THIS NODE'S relay EOSE'd (Relay.homeAnswered): it holds this document, since every
+     save goes to it, and with "use my own relays" one relay in the pool that never answers (an
+     AUTH that hangs, a REQ dropped) made `complete` false on every read for ever -- so the first
+     pref an account ever saved was held as "pending" and never sent. */
+  const _homeAnswered = got => { try{ return !!(window.Relay && Relay.homeAnswered && Relay.homeAnswered(got)); }catch(_){ return false; } };
   async function _readPrefs(owner=(_S.ME&&_S.ME.pubkey)){   // read the current prefs event, with retries (a laggy first REQ can EOSE empty)
     let ev=null, answered=false;
     for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{ const evs=await Relay.query([{ authors:[owner], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
-        if(evs && evs.complete === true) answered=true;
+        if(evs && (evs.complete === true || _homeAnswered(evs))) answered=true;
         ev=(evs||[]).sort((x,y)=>(y.created_at-x.created_at)||String(x.id||'').localeCompare(String(y.id||'')))[0]||null; }catch(_){} }
     if(!ev) return answered ? {} : null;
     try{ const value=JSON.parse(ev.content||'{}')||{};

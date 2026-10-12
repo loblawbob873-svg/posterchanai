@@ -282,6 +282,23 @@ gave up for the rest of the visit. The second half of the fix is the same `compl
 uses: a query that no relay EOSE'd is "the relays never spoke", never "nothing is trending", so it must
 not spend a window or latch anything — `_tr.unreachable` says so on screen with a retry.
 
+**A WRITE OVER ONE OF THE ACCOUNT'S OWN DOCUMENTS WAITS FOR AN ANSWER, AND THIS NODE'S RELAY ANSWERING
+IS ONE — `got.complete === true || Relay.homeAnswered(got)`, never `complete` alone and never "the query
+resolved".** `complete` is "every relay in the pool EOSE'd"; with "use my own relays" one relay that never
+does (a hanging AUTH, a dropped REQ) made it false for ever, so client prefs, the vault key, the DM cache
+key, read markers, music-share answers, VM hosts, Concord folders/read marks, Budget, go-live templates,
+the auto-mute switch and the AI's tasks/voices were each blocked or "try again" for good — while the
+node's relay, which holds every one of them, had answered. The OTHER half is the wipe: Budget, the
+templates, auto-mute and the AI docs took ANY resolved read (`query()` never rejects; nobody answering is
+`[]` + `complete:false`) as an answer and armed the writer. With no instance (no home relay) it is
+`complete` alone, as before. A module that writes a kind-30078 doc is DISCOVERED by
+`tests/client/test_private_doc_write_gates_hear_the_home_relay.py` and must be driven by
+`home_relay_write_gates_runtime.mjs` or say `HOME-RELAY WRITE GATE: none -- <why>` in its source; the
+browser half (persist → fresh profile shows it, and nothing published when nobody answers) is
+`test_private_docs_save_with_a_silent_relay_full_app.py`. **`wallpaper_harness.py` points every
+non-loopback WebSocket at a closed port** — `Network.setBlockedURLs` does not cover WebSockets, and the
+client's fallback `wss://relay.poster.place` was answering (and receiving writes from) these tests.
+
 **ONE BAD EVENT MUST NOT COST A SCREEN, and `noteCard`'s try/catch was never enough.** It only ever
 covered kind 1: a poll (1068), an article (30023), a community (34550), a channel (40) or a webxdc
 1063 threw straight out of `noteHtml` and out of whatever was building the list. On a PROFILE that is

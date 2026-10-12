@@ -64,7 +64,7 @@
   }
 
   /* The account copy. `deps` = { owner, query(filters)->events|null, publish(kind,content,tags)->{ok},
-   * enc(pk,text), dec(pk,text), local: {get(), set(list)} }. Every dependency is injected so the
+   * enc(pk,text), dec(pk,text), local: {get(), set(list)}, homeAnswered(events)->bool }. Every dependency is injected so the
    * replaceable-doc rule can be tested against a fake relay. */
   function store(deps){
     let read = false;                  // a relay ANSWERED: only now may the document be replaced
@@ -78,7 +78,14 @@
         try{ evs = await Promise.race([deps.query([{ authors: [deps.owner], kinds: [30078], '#d': [D], limit: 1 }]), giveUp(9000)]); }
         catch(_){ return list(); }     // could not ask — never "there is nothing"
         if(!Array.isArray(evs)) return list();
-        read = true;
+        /* ANSWERED, not merely resolved: a query that timed out with nobody EOSE'ing resolves [] marked
+         * `complete:false`, and taking that as a read let the next save replace the account's templates
+         * with this device's. An answer is every relay EOSE'ing, or this node's own relay doing so
+         * (deps.homeAnswered = relay.js homeAnswered) -- it holds the document, every save goes to it,
+         * so a member whose own relay list has one relay that never answers can still save. */
+        let home = false;
+        try{ home = !!(deps.homeAnswered && deps.homeAnswered(evs)); }catch(_){ home = false; }
+        if(evs.complete !== false || home) read = true;
         const ev = evs.sort((a, b) => b.created_at - a.created_at)[0];
         if(!ev || !ev.content) return list();
         let doc = null;

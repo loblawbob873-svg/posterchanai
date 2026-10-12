@@ -203,7 +203,12 @@ window.PCAiFactory = function(dep){
       if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{
         const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[_AGT_D], limit:1 }]);
-        sawRelay = true;
+        /* An ANSWER, not a resolved query: Relay.query never rejects, it resolves [] marked
+         * `complete:false` when nobody EOSE'd -- and counting that as "saw the relay" armed the writer,
+         * so the local cache was published over the account's tasks. Every relay answered, or this
+         * node's own relay did (relay.js homeAnswered -- it holds the doc, every save goes to it, and
+         * one relay in a member's own list that never answers must not lock the tasks for good). */
+        if((Array.isArray(evs) && (evs.complete !== false || (typeof Relay !== 'undefined' && !!Relay.homeAnswered && Relay.homeAnswered(evs))))) sawRelay = true;
         ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
       }catch(_){}
     }
@@ -823,16 +828,21 @@ window.PCAiFactory = function(dep){
     // can be live and still read empty for a moment — freshly connected, EOSE racing the event — and
     // returning [] on that first look would let the next save replace a real library with one entry.
     // The cost is ~1.4s on a genuinely first save; the alternative is silently losing someone's voices.
+    let answered = false;
     for(let a=0; a<3; a++){
       if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{
         const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[VOICES_D], limit:1 }]);
         const ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
         if(ev){ try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; } }
+        // A live socket is not an answer: a read nobody EOSE'd resolves [] (`complete:false`). An
+        // answer is every relay EOSE'ing, or this node's relay doing so (relay.js homeAnswered).
+        if((Array.isArray(evs) && (evs.complete !== false || (typeof Relay !== 'undefined' && !!Relay.homeAnswered && Relay.homeAnswered(evs))))) answered = true;
       }catch(_){}                 // the QUERY failed (not "found nothing") → retry
     }
-    // Three live reads, nothing there. Now it is genuinely an empty library, so a first save can start.
-    return [];
+    // Three live reads, nothing there, and a relay that holds this document SAID so: genuinely an empty
+    // library, so a first save can start. Nobody answering is "could not ask" -- null, never [].
+    return answered ? [] : null;
   }
   let _voicesChain = Promise.resolve();
   // Serialised read-modify-write, and it REFUSES to write when the read failed. This doc is

@@ -1,3 +1,4 @@
+// HOME-RELAY WRITE GATE: none -- one document PER PLAYLIST; a save replaces only that playlist, never a library read-modified-written, so no read's completeness decides a write here (tests/client/test_private_doc_write_gates_hear_the_home_relay.py).
 /* Playlists for the encrypted Music library.
  *
  * A playlist is a NAME and an ORDER over tracks the library already holds. It stores sha256s and

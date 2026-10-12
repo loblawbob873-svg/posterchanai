@@ -383,8 +383,11 @@ window.PCDmsFactory = function(dep){
           const evs = await Relay.query([flt]);
           /* AN ANSWER IS A COMPLETE QUERY, NOT A RESOLVED ONE. Relay.query resolves [] when it times
            * out (`complete === false`), and reading that as "you have no key" minted a replacement —
-           * on a flaky link even published it — leaving every other device's cache unreadable. */
-          if((evs && evs.length) || (evs && evs.complete === true)) sawRelay = true;
+           * on a flaky link even published it — leaving every other device's cache unreadable.
+           * …or one THIS NODE'S relay answered: it holds the key (the mint below publishes to it), and
+           * with "use my own relays" a single relay in the pool that never EOSEs made `complete` false
+           * for ever, so an account with such a list never got a DM cache at all. */
+          if((evs && evs.length) || (Array.isArray(evs) && (evs.complete === true || (typeof Relay !== 'undefined' && !!Relay.homeAnswered && Relay.homeAnswered(evs))))) sawRelay = true;
           ev = newest(evs);
         }catch(_){}
       }
@@ -537,6 +540,23 @@ window.PCDmsFactory = function(dep){
       }catch(_){ return 0; }
     },
 
+    /* The pointer as the relays hold it: {have, oldSha}, or null when that could not be learned.
+     * "Could not ask" is not "nothing published": a timed-out read used to come back as have=0, and
+     * the push below then replaced a bigger published cache with this device's smaller one. An
+     * answer is a complete read, or one this node's relay answered (homeAnswered); a pointer that
+     * DID arrive is an answer either way. */
+    async _published(){
+      try{
+        const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[this.SHARE_D], limit:1 }]);
+        const ev = (evs || []).slice().sort((a, b) => b.created_at - a.created_at)[0];
+        if(!ev && !(Array.isArray(evs) && (evs.complete === true || (typeof Relay !== 'undefined' && !!Relay.homeAnswered && Relay.homeAnswered(evs))))) return null;
+        let have = 0, oldSha = '';
+        if(ev){ const p = JSON.parse(ev.content || '{}'); have = Number(p && p.n) || 0;
+                oldSha = /^[0-9a-f]{64}$/i.test(String(p && p.sha || '')) ? String(p.sha).toLowerCase() : ''; }
+        return { have, oldSha };
+      }catch(_){ return null; }
+    },
+
     /* Publish what this device holds. Called after a pass finishes, at most every few minutes.
      *
      * REFUSES TO SHRINK. The pointer carries `n`, so a device whose cache is smaller than what is
@@ -593,13 +613,9 @@ window.PCDmsFactory = function(dep){
         }
         if(!held) return false;
         // What is already out there? Never replace more than we hold.
-        let have = 0, oldSha = '';
-        try{
-          const evs = await Relay.query([{ authors:[S.ME.pubkey], kinds:[30078], '#d':[this.SHARE_D], limit:1 }]);
-          const ev = (evs || []).sort((a, b) => b.created_at - a.created_at)[0];
-          if(ev){ const p = JSON.parse(ev.content || '{}'); have = Number(p && p.n) || 0;
-                  oldSha = /^[0-9a-f]{64}$/i.test(String(p && p.sha || '')) ? String(p.sha).toLowerCase() : ''; }
-        }catch(_){ return false; }          // could not ask → do not write
+        const pub = await this._published();
+        if(!pub) return false;              // could not ask → do not write
+        const { have, oldSha } = pub;
         /* ONLY WHEN THERE IS SOMETHING NEW, AND NOT FROM EVERY WINDOW. This used to push whenever it
          * held at least as much as was published — i.e. also when NOTHING had changed — and every
          * push is a fresh encryption (new IV) of the whole cache: a brand-new ~1.5MB blob, uploaded

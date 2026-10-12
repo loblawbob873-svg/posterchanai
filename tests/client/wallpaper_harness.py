@@ -10,6 +10,10 @@ Knobs (`STATE`), each a way the user's own layout read or write can go wrong:
   hold_layout  None | 'late' | 'never' -- a REQ for pcai:desktop is held (answered on release()) or
                never answered at all (no EVENT, no EOSE)
   refuse_layout  publish of pcai:desktop is answered OK=false
+  hold_docs    a set of d-tags (an entry ending in ':' is a prefix) or l-tags: a REQ naming one is never
+               answered by THIS relay either -- with the SilentRelay in the pool, nobody answers it
+  api          url path -> JSON the instance answers with (an endpoint a scenario needs, e.g. Go Live)
+Every kind-30078 event the relay is SENT is kept in STATE['pubs'], accepted or not.
 """
 import asyncio
 import hashlib
@@ -36,7 +40,7 @@ OVERRIDES = {}      # url path -> local file served in its place
 def reset():
     STATE.clear()
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
-                 held=[], layout_pubs=[], lock=threading.Lock())
+                 held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock())
 
 
 reset()
@@ -71,6 +75,33 @@ def _match(f, ev):
 
 def _layout_req(filters):
     return any('pcai:desktop' in (f.get('#d') or []) for f in filters)
+
+
+def _held_doc_req(filters):
+    """Does this REQ ask for a document `hold_docs` names (by d-tag, d-prefix or l-tag)?"""
+    held = STATE.get('hold_docs') or ()
+    for f in filters:
+        for d in (f.get('#d') or []) + (f.get('#l') or []):
+            if any(d == h or (h.endswith(':') and str(d).startswith(h)) for h in held):
+                return True
+    return False
+
+
+def _dmatch(d):
+    return (lambda x: x.startswith(d)) if d.endswith(':') else (lambda x: x == d)
+
+
+def docs(d):
+    """Every STORED kind-30078 event of this d-tag (or d-prefix ending in ':'), newest first."""
+    m = _dmatch(d)
+    return sorted((e for e in STATE['events'] if e.get('kind') == 30078 and m(_d(e))),
+                  key=lambda e: -e['created_at'])
+
+
+def pubs(d):
+    """Every kind-30078 event of this d-tag (or prefix) the relay was SENT, accepted or not."""
+    m = _dmatch(d)
+    return [e for e in STATE['pubs'] if m(_d(e))]
 
 
 class Relay:
@@ -125,6 +156,8 @@ class Relay:
                     subid, filters = m[1], [f for f in m[2:] if isinstance(f, dict)]
                     self.subs[(ws, subid)] = filters
                     hold = STATE['hold_layout'] if _layout_req(filters) else None
+                    if _held_doc_req(filters):
+                        hold = 'never'
                     if hold == 'late':
                         STATE['held'].append((ws, subid, filters))
                     elif hold == 'never':
@@ -135,6 +168,8 @@ class Relay:
                     self.subs.pop((ws, m[1]), None)
                 elif m[0] == 'EVENT':
                     ev = m[1]
+                    if isinstance(ev, dict) and ev.get('kind') == 30078:
+                        STATE['pubs'].append(ev)
                     if _is_layout(ev):
                         STATE['layout_pubs'].append(ev)
                         if STATE['refuse_layout']:
@@ -206,8 +241,31 @@ class SilentRelay(Relay):
             pass
 
 
+class EmptyRelay(Relay):
+    """Stands in for every relay OFF this machine (see LOOPBACK_ONLY): up, answers every REQ with an
+    EOSE and nothing else, takes every EVENT and keeps none -- a reachable public relay that holds
+    nothing of this account's."""
+
+    async def handler(self, ws):
+        try:
+            async for raw in ws:
+                try:
+                    m = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(m, list) or not m:
+                    continue
+                if m[0] == 'REQ':
+                    await ws.send(json.dumps(['EOSE', m[1]]))
+                elif m[0] == 'EVENT' and isinstance(m[1], dict):
+                    await ws.send(json.dumps(['OK', m[1].get('id', ''), True, '']))
+        except websockets.ConnectionClosed:
+            pass
+
+
 RELAY = None
 SILENT = None
+EMPTY = None
 
 
 class Instance(full.Handler):
@@ -241,6 +299,8 @@ class Instance(full.Handler):
                                'blossom_enabled': True})
         if p == '/client/blossom-access':
             return self._json({'allowed': True, 'whitelisted': True})
+        if p in STATE.get('api', {}):
+            return self._json(STATE['api'][p])
         m = re.match(r'^/blossom/([0-9a-f]{64})(\.[a-z0-9]+)?$', p)
         if m:
             data = STATE['blobs'].get(m.group(1))
@@ -297,12 +357,14 @@ HTTP = None
 
 
 def start():
-    global RELAY, SILENT, HTTP
+    global RELAY, SILENT, EMPTY, HTTP
     reset()
     if RELAY is None:
         RELAY = Relay().start()
     if SILENT is None:
         SILENT = SilentRelay().start()
+    if EMPTY is None:
+        EMPTY = EmptyRelay().start()
     if HTTP is None:
         full.ROOT = ROOT
         HTTP = ThreadingHTTPServer(('127.0.0.1', 0), Instance)
@@ -310,7 +372,20 @@ def start():
     return HTTP.server_address[1]
 
 
-PAGE_INIT = full.FIRST_RUN_DONE + r'''
+# NOTHING LEAVES THE MACHINE. `Network.setBlockedURLs` does not apply to WebSockets, and the client's own
+# fallback relay (wss://relay.poster.place, app.js FALLBACK_RELAYS) joins every "use my own relays" pool --
+# measured: that pool's reads were answered by PRODUCTION (it holds documents earlier runs published for
+# this fixed test key) and its writes went there too. Any socket not on loopback is pointed at the local
+# EmptyRelay instead -- a reachable relay holding nothing. (A CLOSED port was tried first: the client's
+# reconnect handling of a dozen failing discovery sockets then cost the round-trip test its live update.)
+LOOPBACK_ONLY = r'''
+(()=>{const W=window.WebSocket;if(!W||W.__pcLoopback)return;
+  const L=function(u,p){if(!/^wss?:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(String(u)))u='ws://127.0.0.1:__EMPTY__/';
+    return p===undefined?new W(u):new W(u,p);};
+  L.prototype=W.prototype;L.CONNECTING=0;L.OPEN=1;L.CLOSING=2;L.CLOSED=3;L.__pcLoopback=true;window.WebSocket=L;})();
+'''
+
+PAGE_INIT = full.FIRST_RUN_DONE + LOOPBACK_ONLY + r'''
 window.__errors=[];addEventListener('error',e=>__errors.push(String(e.message||e)));
 window.__toasts=[];
 '''
@@ -360,7 +435,7 @@ class Device:
             await b.call('Network.setBlockedURLs', {'urls': ['https://*', 'wss://*']})
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=self.width, height=self.height,
                      deviceScaleFactor=1, mobile=False, screenWidth=self.width, screenHeight=self.height))
-        init = PAGE_INIT
+        init = PAGE_INIT.replace('__EMPTY__', str(EMPTY.port))
         if self.own_relays:
             # "Use my own relays" ON, with a list holding one more relay than the node's: the pool is
             # then the user's list + the node's relay (connectRelays), as on a real account.
@@ -417,6 +492,17 @@ async def wait(b, expression, seconds=40, state=None):
         "({errors:window.__errors,toasts:window.__toasts,"
         "desk:(document.querySelector('#os-desk')||{}).className,"
         "bg:((document.querySelector('#os-desk')||{}).style||{}).backgroundImage})")})
+
+
+PROMPT_OK = r"""(v=>{const i=document.querySelector('.uiconfirm-bg .uiprompt-in');i.value=v;
+  i.dispatchEvent(new Event('input',{bubbles:true}));
+  document.querySelector('.uiconfirm-bg [data-uc="1"]').click();return true})"""
+
+
+async def answer_prompt(b, value, seconds=20):
+    """Type into the app's own prompt dialog (uiPrompt) and press its OK button, as a person does."""
+    await wait(b, "!!document.querySelector('.uiconfirm-bg .uiprompt-in')", seconds)
+    await b.js(PROMPT_OK + '(%s)' % json.dumps(value))
 
 
 def png(rgb, size=4):

@@ -707,7 +707,13 @@ window.PCFilesFactory = function(dep){
       const me = _S.ME && _S.ME.pubkey; if(!me) return null;
       const evs = await Relay.query([{ authors:[me], kinds:[30078], '#d':['pcai:dmcache'], limit:1 }]);
       const ev = (evs || []).slice().sort((a, b) => b.created_at - a.created_at)[0];
-      if(!ev) return (evs && evs.complete === false) ? null : '';
+      // "Nothing there" needs an answer: every relay EOSE'd, or this node's relay did (relay.js
+      // homeAnswered) -- it holds the pointer, Messages publishes it there. `complete` alone withheld
+      // the reclaim offer for good from anyone whose own relay list has one relay that never answers.
+      if(!ev){
+        if(!(evs && evs.complete === false)) return '';
+        try{ return (Relay.homeAnswered && Relay.homeAnswered(evs)) ? '' : null; }catch(_){ return null; }
+      }
       const sha = String((JSON.parse(ev.content || '{}') || {}).sha || '').toLowerCase();
       return /^[0-9a-f]{64}$/.test(sha) ? sha : '';
     }catch(_){ return null; }

@@ -2128,13 +2128,22 @@
   const railDoc={owner:'',answered:false,layout:[],fromArmada:false,loading:null,saving:null,ops:[]};
   function railOpen(){ try{ return new Set(JSON.parse(localStorage.getItem(RAIL_OPEN_KEY)||'[]')); }catch(_){ return new Set(); } }
   function setRailOpen(set){ try{ localStorage.setItem(RAIL_OPEN_KEY,JSON.stringify([...set].slice(0,64))); }catch(_){} }
+  /* Did the relays ANSWER a read of one of the account's own documents (the rail, the read marks)?
+   * Every relay EOSE'd -- or THIS NODE'S relay did (relay.js homeAnswered): it holds them, every write
+   * goes to it, and with "use my own relays" one relay in the pool that never answers made `complete`
+   * false for ever, so the first folder or read mark an account ever saved was never written. */
+  function docAnswered(evs){
+    if(!Array.isArray(evs))return false;
+    if(evs.complete!==false)return true;
+    try{ const R=window.Relay; return !!(R&&R.homeAnswered&&R.homeAnswered(evs)); }catch(_){ return false; }
+  }
   async function fetchRailDoc(p,owner,d){
     if(!p.relayQuery||!p.nip44dec)return null;
     let evs=null;
     try{ evs=await p.relayQuery([{authors:[owner],kinds:[30078],'#d':[d],limit:1}],8000); }catch(_){ evs=null; }
     let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([{authors:[owner],kinds:[30078],'#d':[d]}])||[]:[];}catch(_){}
     const all=[...(Array.isArray(evs)?evs:[]),...cached].filter(e=>e&&e.pubkey===owner&&typeof e.content==='string');
-    if(!all.length&&(!Array.isArray(evs)||evs.complete===false))return null;     // could not ask: never "no folders"
+    if(!all.length&&!docAnswered(evs))return null;     // could not ask: never "no folders"
     const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
     if(!ev)return {layout:null};
     try{ const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
@@ -2696,7 +2705,7 @@
     let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([{authors:[owner],kinds:[30078],'#d':[READ_D]}])||[]:[];}catch(_){}
     const all=[...(Array.isArray(evs)?evs:[]),...cached].filter(e=>e&&e.pubkey===owner&&typeof e.content==='string');
     // "Nothing came back" counts as an answer only when the relays SAID so; a timeout is not "no doc".
-    if(!all.length&&(!Array.isArray(evs)||evs.complete===false))return null;
+    if(!all.length&&!docAnswered(evs))return null;
     const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
     if(!ev)return {marks:{}};
     try{

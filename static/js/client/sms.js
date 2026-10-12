@@ -1,3 +1,4 @@
+// HOME-RELAY WRITE GATE: none -- one document per message / outbox request / device status, written from what THIS handset read off its own message store, never from a relay read, so no read's completeness decides a write here (tests/client/test_private_doc_write_gates_hear_the_home_relay.py).
 /* #texts — the phone's text messages, on every device the person owns.
  *
  * WHAT IS AUTHORITATIVE, STATED FIRST, because getting this wrong is what cost this project five

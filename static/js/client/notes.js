@@ -1,3 +1,4 @@
+// HOME-RELAY WRITE GATE: none -- one document PER NOTE/folder; a save replaces only the note being edited, never a library read-modified-written, and the offline queue drops anything the library holds newer, so no read's completeness decides a write here (tests/client/test_private_doc_write_gates_hear_the_home_relay.py).
 /* Notes — private, encrypted, offline-first note taking.
  *
  * STORAGE. One kind-30078 event PER NOTE, `d = pcai:note:<id>`, whose content is the note JSON

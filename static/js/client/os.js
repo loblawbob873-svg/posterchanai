@@ -976,7 +976,12 @@
         JSON.stringify(Object.assign({}, next, { updated: Math.floor(Date.now() / 1000) })));
       // noQueue: publish()'s Outbox refuses replaceable kinds on purpose (blind replay is what
       // caused the follows wipe), and saying so here keeps this from depending on that.
-      const r = await PC().publish(LAY_KIND, ct, [['d', D_LAY]], { quiet: true, noQueue: true });
+      /* STRICTLY NEWER than the version this device last saw or wrote. Two changes in one second (a
+       * picture, then Default) signed the same created_at: the relay kept the later one, and every
+       * OTHER device's live watcher (`created_at <= _docAt` → ignore) dropped it as already seen, so
+       * it went on showing the picture. tests/client/test_desktop_wallpaper_full_app.py, round trip. */
+      const createdAt = Math.max(Math.floor(Date.now() / 1000), (_docAt || 0) + 1);
+      const r = await PC().publish(LAY_KIND, ct, [['d', D_LAY]], { quiet: true, noQueue: true, createdAt });
       if(!(r && r.ok)) throw new Error('relay rejected the layout');
       if(r.ev) _docAt = r.ev.created_at;
     });
@@ -13912,6 +13917,9 @@
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc, machine) => computeLayout(list, doc, machine),
+                  /* The layout's WRITE GATE, for tests/client/home_relay_write_gates_runtime.mjs: read
+                   * the document the way the desktop does, then say whether a save may follow. */
+                  __loadLayout: () => loadLayout(), __layoutWritable: () => _wr,
                   __normDoc: (d) => _normDoc(d), __orderNow: (lay) => _orderNow(lay),
                   __actEncode: (s) => _actEncode(s),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),

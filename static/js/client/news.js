@@ -1,3 +1,4 @@
+// HOME-RELAY WRITE GATE: none -- the feed list and read ids are published from this device's copy and are NOT gated on any read today (a separate, known gap: a save after a read nobody answered publishes this device's list), so there is no completeness gate here to widen to the home relay (tests/client/test_private_doc_write_gates_hear_the_home_relay.py).
 /* #news — the built-in RSS News reader for the Nostr client. Kept OUT of app.js (own file, like the
  * games) to avoid bloating the core. Uses app.js's shared surface window.__PC + window.Relay/Store.
  * Feeds are fetched SERVER-SIDE (/api/rss — proxy→direct, shared cache, structured JSON). Your feed

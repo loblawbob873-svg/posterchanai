@@ -1530,6 +1530,7 @@
         owner: pk,
         storage: { get: k => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) },
         query: filters => Relay.query(filters, 8000),
+        homeAnswered: got => !!(Relay.homeAnswered && Relay.homeAnswered(got)),
         cached: () => (window.Store && Store.query) ? Store.query([{ authors:[pk], kinds:[30078], '#d':[PCSeen.D] }]) : [],
         decrypt: ct => (signer && signer.nip44dec) ? signer.nip44dec(pk, ct) : Promise.reject(new Error('no nip44')),
         encrypt: text => (signer && signer.nip44enc) ? signer.nip44enc(pk, text) : Promise.reject(new Error('no nip44')),
@@ -5817,7 +5818,14 @@
              giveUp(9000)]); }
       catch(_){ return null; }              // could not ask — never "there is nothing"
       if(!Array.isArray(evs)) return null;
-      _autoMuteDocRead = true; _autoMuteDocPk = owner;   // the relay answered; writes are allowed
+      /* ANSWERED means every relay EOSE'd, or THIS NODE'S relay did (relay.js homeAnswered) -- it holds
+       * this document, every save goes to it. NOT merely "query() resolved": it resolves on its timer
+       * with nobody having answered (`complete:false`), and that used to arm the writer, so the next
+       * flip of the switch replaced the account's preference with this device's. And not `complete`
+       * alone either: one relay in a member's own list that never answers made it false for ever. */
+      if(evs.complete !== false || (Relay.homeAnswered && Relay.homeAnswered(evs))){
+        _autoMuteDocRead = true; _autoMuteDocPk = owner;   // the relay answered; writes are allowed
+      }
       const ev = evs.sort((a,b)=>b.created_at-a.created_at)[0] || null;
       if(!ev || typeof ev.content !== 'string' || !ev.content) return null;
       if(!signer || !signer.nip44dec) return null;

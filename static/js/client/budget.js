@@ -45,6 +45,7 @@
   // helpers are NOT globals — take them off window.__PC once it exists.
   let PC=null, $, enc, toast, uiConfirm, modal, closeModal, publish;
   const Relay = () => window.Relay;
+  const _homeAnswered = got => { try{ const R = Relay(); return !!(R && R.homeAnswered && R.homeAnswered(got)); }catch(_){ return false; } };
 
   let _booted = false;
   function boot(){
@@ -117,7 +118,12 @@
       if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{
         const evs = await Relay().query([{ authors:[ME().pubkey], kinds:[KIND], '#d':[D_TAG], limit:1 }]);
-        sawRelay = true;
+        /* AN ANSWER, NOT A RESOLVED QUERY. Relay.query never rejects: when nobody EOSEs it resolves []
+         * marked `complete:false`, and counting that as "saw the relay" handed back a BLANK budget whose
+         * first save replaced the real one. An answer is every relay EOSE'ing, or this node's own relay
+         * doing so (relay.js homeAnswered) -- it holds the budget, every save goes to it, and with "use
+         * my own relays" one relay in the list that never answers would otherwise lock Budget for good. */
+        if(evs && (evs.complete !== false || _homeAnswered(evs))) sawRelay = true;
         ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
       }catch(_){}
     }

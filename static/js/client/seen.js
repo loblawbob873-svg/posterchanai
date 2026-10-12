@@ -103,7 +103,13 @@
         if(!state) state = { notif: 0, dmAll: 0, dm: {} };
         merge(state, doc);
       }
-      return { ok: Array.isArray(evs) && evs.complete !== false && !bad, state };
+      /* "Answered" = every relay EOSE'd, OR this node's own relay did (o.homeAnswered, relay.js). The
+       * node's relay holds this document -- every write goes to it -- and with "use my own relays" a
+       * single relay in the pool that never answers made every read incomplete, so the marks of an
+       * account with such a list were never synced at all. */
+      let home = false;
+      try{ home = !!(o.homeAnswered && Array.isArray(evs) && o.homeAnswered(evs)); }catch(_){ home = false; }
+      return { ok: Array.isArray(evs) && (evs.complete !== false || home) && !bad, state };
     }
     function adopt(state){ if(state && merge(st, state)){ trim(st); changed(); } }
     function load(){

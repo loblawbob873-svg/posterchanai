@@ -72,6 +72,11 @@
   const V = () => window.PCVaultCore;
   const Relay = () => window.Relay;
   const Store = () => window.Store;
+  /* Did THIS NODE'S relay answer a read (relay.js homeAnswered)? It holds the vault -- every write here
+   * goes to it -- so its EOSE is an answer even when another relay in a member's own list never sends
+   * one; `complete` alone made the vault uncreatable, and Android's autofill copy never refreshed, for
+   * anyone with such a relay in their pool. False on any doubt, and with no instance (no home relay). */
+  const _homeAnswered = got => { try{ const R = Relay(); return !!(R && R.homeAnswered && R.homeAnswered(got)); }catch(_){ return false; } };
   const ME = () => PC.ME;
   const now = () => Math.floor(Date.now()/1000);
   const uid = () => (crypto.getRandomValues(new Uint8Array(16)));
@@ -122,6 +127,9 @@
        * vault as an OLDER build left it — there is no other way to test a migration, and testing
        * one by hand is how a migration ships broken. */
       __seed: (obj) => { if(_lib) _lib.items.set(obj.id, obj); },
+      /* The vault KEY's write gate, for tests/client/home_relay_write_gates_runtime.mjs: unwrap the
+       * account's key, or mint and publish one ONLY after a relay answered that there is none. */
+      __ensureKey: (create) => ensureKey(create !== false),
     };
     window.addEventListener('online', () => { flushPending(); syncBackground(); });
     document.addEventListener('visibilitychange', () => {
@@ -256,7 +264,7 @@
           // answer. An empty array from a catch carries no `complete` marker, so testing the marker
           // alone read a thrown query as a definitive "you have no vault" — which is the exact
           // remint this guard exists to prevent, reintroduced inside the guard itself.
-          if(!threw && got.complete !== false) answered = true;
+          if(!threw && (got.complete !== false || _homeAnswered(got))) answered = true;
           evs = got;
         }
         const ev = evs.sort((a,b)=>(b.created_at||0)-(a.created_at||0))[0];
@@ -346,7 +354,7 @@
         if(PC.VIEW === 'vault' && !_dirty) _paint();
       }
       // Even unchanged entries must be written after a cold start. Incomplete reads are not a snapshot.
-      if(evs && evs.complete !== false && !_unreadable){
+      if(evs && (evs.complete !== false || _homeAnswered(evs)) && !_unreadable){
         _snapshotReady = true;
         return await _syncAndroid();
       }

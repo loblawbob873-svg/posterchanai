@@ -968,6 +968,7 @@ window.PCStreamsFactory = function(dep){
     const key='pc_live_tpl:'+owner;
     const s=window.PCLiveTpl.store({ owner,
       query:f=>Relay.query(f),
+      homeAnswered:got=>!!(Relay.homeAnswered && Relay.homeAnswered(got)),
       publish:(k,c,t)=>publish(k,c,t,{quiet:true}),
       enc:(pk,t)=>S.signer.nip44enc(pk,t), dec:(pk,t)=>S.signer.nip44dec(pk,t),
       local:{ get:()=>{ try{ return JSON.parse(localStorage.getItem(key)||'[]'); }catch(_){ return []; } },

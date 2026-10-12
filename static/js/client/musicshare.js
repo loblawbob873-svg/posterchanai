@@ -195,7 +195,7 @@
     const job = { owner };
     job.promise = (async () => {
       try{
-        const { evs, complete } = await _query({ kinds:[KIND], authors:[owner], '#d':[DECIDE_D] });
+        const { evs, answered } = await _query({ kinds:[KIND], authors:[owner], '#d':[DECIDE_D] });
         // newestBy hands back a MAP, not an array — indexing it like one reads every
         // document as absent, which is silent: the answers simply never arrive.
         // Only the account's OWN document: nobody else can encrypt to its self-conversation key, but
@@ -210,7 +210,7 @@
         // A relay that ANSWERED and holds nothing means this account has never decided anywhere
         // else, so ours is the only copy and may be published. One that did not answer means
         // nothing at all, and must not be read as "there is none".
-        else if(complete) _decRead = true;
+        else if(answered) _decRead = true;
       }catch(_){}
       _decLoading = null;
       return decisions();
@@ -292,26 +292,33 @@
   const _changed = () => { for(const fn of _watchers){ try{ fn(); }catch(_){} } };
   const serial = fn => { const p = _chain.then(fn, fn); _chain = p.catch(() => {}); return p; };
 
+  /* {evs, complete, answered}. `complete` = every relay EOSE'd; `answered` = that, OR this node's own
+   * relay EOSE'd (relay.js homeAnswered). A read of MY OWN documents (my shares, my decisions) gates a
+   * write on `answered`: the node's relay holds them -- every write here goes to it -- and with "use my
+   * own relays" one relay in the pool that never answers made `complete` false for ever, so sharing
+   * ("couldn't read this share from the relays") and every accept/reject sync were refused for good.
+   * Shares OTHER people wrote can sit on relays this node never saw, so the inbox keeps `complete`. */
   async function _query(filter){
     const R = Relay(), S = Store();
     let local = [];
     try{ local = (S && S.query([filter])) || []; }catch(_){}
-    let remote = [], complete = false;
+    let remote = [], complete = false, answered = false;
     try{
       if(R && R.ready) await R.ready();
       remote = (R && await R.query([filter])) || [];
       complete = remote.complete !== false;
-    }catch(_){ remote = []; complete = false; }
+      answered = complete || !!(R.homeAnswered && R.homeAnswered(remote));
+    }catch(_){ remote = []; complete = false; answered = false; }
     const byId = new Map();
     for(const e of local.concat(remote)) if(e && e.id) byId.set(e.id, e);
     for(const e of remote){ try{ if(S && S.saveEvent) S.saveEvent(e); }catch(_){} }
-    return { evs: [...byId.values()], complete };
+    return { evs: [...byId.values()], complete, answered };
   }
 
   async function loadOut(){
     if(!_boot() || !ME()) return [];
     const me = ME().pubkey;
-    const { evs, complete } = await _query({ kinds:[KIND], authors:[me], '#l':[L_TAG] });
+    const { evs, answered: complete } = await _query({ kinds:[KIND], authors:[me], '#l':[L_TAG] });
     const out = new Map();
     const docs = newestBy(evs.filter(e => e.pubkey === me), e => { const p = parseD(tagOf(e, 'd')); return p ? tagOf(e, 'd') : ''; });
     // Newest live doc per share carries the body; one decrypt per share, not per recipient.
