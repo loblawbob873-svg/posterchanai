@@ -201,6 +201,7 @@ TESTS = (
     'tests/test_generation_endpoints_require_auth.py',
     'tests/client/test_report_post_full_app.py',
     'tests/test_activitypub_flag.py',
+    'tests/test_activitypub_app_doc_deletions.py',
     'tests/test_admin_reports.py',
     'tests/client/test_report_from_notification_full_app.py',
     'tests/client/test_concord_report_private_full_app.py',

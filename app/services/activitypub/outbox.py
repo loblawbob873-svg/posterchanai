@@ -378,6 +378,13 @@ async def plan(ev: dict, member: str) -> list:
 
     elif kind == 5:
         kinds = {t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "k"}
+        # A deletion that names only kinds the fediverse never received -- above all the node's own
+        # 30078 app documents, deleted under the operator key, which on a node whose operator has an
+        # account IS a member -- is not a post deletion. Read as one it cost two relay reads and a
+        # Delete to every follower apiece, ~9,400 a day, and stalled delivery for everybody.
+        named = kinds | {t[1].split(":", 1)[0] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "a"}
+        if named and not named & {str(k) for k in KINDS}:
+            return []
         for t in ev.get("tags") or []:
             if len(t) < 2 or t[0] != "e":
                 continue
@@ -1192,6 +1199,7 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
                  key=lambda e: (e.get("created_at", 0), e["id"]))
     wanted = await qualifies(evs) if qualifies is not None else None
     handled, newest, sent_any = 0, min(since, now), False
+    saved_at = time.monotonic()
     sem = asyncio.Semaphore(8)
 
     async def one(inbox, act, member):
@@ -1243,6 +1251,12 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
         _seen[ev["id"]] = time.time()
         newest = max(newest, int(ev.get("created_at", 0)))
         handled += 1
+        if time.monotonic() - saved_at >= _SAVE_EVERY:
+            # A pass that outruns the tick's time limit is cancelled where it stands, and the save at
+            # the end never happens: a long backlog was re-read from the same cursor every tick, for
+            # 22 hours, by a worker that was making progress the whole time.
+            await _save_cursor(cursor_key, min(newest, now), done)
+            saved_at = time.monotonic()
     if len(_seen) > 40000:
         for k in sorted(_seen, key=_seen.get)[:20000]:
             _seen.pop(k, None)
@@ -1259,6 +1273,7 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
 
 _failures: dict = {}
 _MAX_PAGES = 20
+_SAVE_EVERY = 20                 # seconds of a pass between cursor saves
 
 
 async def _since(members, since: int, kinds: list = None) -> list:
