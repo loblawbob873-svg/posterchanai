@@ -285,6 +285,10 @@ if (isOurPage) {
     /* Was an instance CHOSEN, or is `instanceSync` the built-in default? Only the first-run wizard
      * cares: every other reader wants a URL that works. */
     instanceChosen: instanceChosenSync,
+    /* PosterChanOS's local relay (the `posterchan-relay` user service): its loopback ws:// URL once it is
+     * listening, else ''. Asked at the moment the client's Store starts, not at preload time -- the service
+     * may come up a moment after the window. Store treats '' (or a dead socket) as "use IndexedDB". */
+    localRelay: () => { try { return ipcRenderer.sendSync('pc:localrelay:url') || ''; } catch (_) { return ''; } },
     /* Multi-monitor PosterChanOS has one renderer per output. Only the primary may run unattended
      * services such as folder sync; otherwise every extra monitor becomes another filesystem
      * writer with the same device identity. */

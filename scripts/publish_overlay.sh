@@ -181,6 +181,13 @@ install -m 0755 "$(dirname "$SRC")/bin/pc-server" "$TMP/app-misc/posterchan-serv
 "$(dirname "$SRC")/../scripts/pin_server_overlay.sh" "$TMP" "$PREV_OVERLAY" \
     "$(git -C "$(dirname "$SRC")/.." rev-parse HEAD)"
 
+# The local relay's launcher has ONE source as well (os/bin/pc-local-relay), and its package takes a timestamp
+# version for the same reason as the shell's below: a changed launcher under an unchanged version never installs.
+install -m 0755 "$(dirname "$SRC")/bin/pc-local-relay" "$TMP/app-misc/posterchan-relay/files/pc-local-relay"
+RELAY_DIR="$TMP/app-misc/posterchan-relay"
+RELAY_EBUILD=$(find "$RELAY_DIR" -maxdepth 1 -name 'posterchan-relay-*.ebuild' -print -quit)
+mv "$RELAY_EBUILD" "$RELAY_DIR/posterchan-relay-1.0.$(date -u +%Y%m%d%H%M%S).ebuild"
+
 # A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
 # ever, which is why installed machines said “Already up to date” while keeping an old launcher.
 # Timestamp versions are monotonic and make each published session (helpers + gentoo.sh) upgradable.

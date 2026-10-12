@@ -1,0 +1,44 @@
+#!/bin/sh
+# pc-local-relay — PosterChanOS's local relay for THIS account: the desktop's event cache.
+#
+# Run by the `posterchan-relay` systemd USER unit (one per signed-in account, ordered before the graphical
+# session; pc-shell-start-wayfire waits for it). It is the PosterChan server's own relay code in its
+# `--os-mode` (app/services/nostr_relay/osmode.py): loopback only, PosterChanDB, synced only from the
+# instance chosen on the welcome screen, and nothing else a server node runs. The code comes from
+# app-misc/posterchan-server (/opt/posterchan-server) and runs on the OS's own Python with numpy,
+# websockets and httpx -- the server's venv is NOT needed, so this works on every machine whether or not
+# "PosterChan Server" was ever enabled.
+#
+#   exit 78 (EX_CONFIG)  the server code or the Python modules are missing: the unit does not restart-loop
+#                        on that (RestartPreventExitStatus=78), and the desktop keeps its IndexedDB cache.
+set -u
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
+CODE="${PC_RELAY_CODE:-/opt/posterchan-server}"
+DIR="${PC_RELAY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/posterchan/relay}"
+
+[ -f "$CODE/relay_main.py" ] || { echo "pc-local-relay: no PosterChan server code at $CODE" >&2; exit 78; }
+# The first Python that HAS the modules: Portage builds dev-python/* for the profile's PYTHON_TARGETS, which
+# need not include whatever `python3` points at on the day of an upgrade.
+PY=''
+for cand in ${PC_RELAY_PYTHON:-python3 python3.14 python3.13 python3.12}; do
+	command -v "$cand" >/dev/null 2>&1 || continue
+	"$cand" -c 'import numpy, websockets, httpx' 2>/dev/null && { PY=$cand; break; }
+done
+[ -n "$PY" ] || { echo "pc-local-relay: no Python here has numpy, websockets and httpx (app-misc/posterchan-relay pulls them in)" >&2; exit 78; }
+
+# THE CACHE DIRECTORY IS NOCOW ON BTRFS, like every other PosterChanDB directory (pc-server prepare_pcdb,
+# install.sh): btrfs fragments an append-only log, and that fragmentation is write amplification -- the
+# thing this relay exists to take away from LevelDB. `chattr +C` only reaches files created after it, so
+# recursively while the directory is empty, and on the directory itself once it holds data.
+mkdir -p -m 700 "$DIR" || exit 1
+if [ "$(stat -f -c %T "$DIR" 2>/dev/null)" = "btrfs" ]; then
+	if [ -z "$(ls -A "$DIR" 2>/dev/null)" ]; then
+		chattr -R +C "$DIR" 2>/dev/null || echo "pc-local-relay: could not set NOCOW on $DIR" >&2
+	else
+		chattr +C "$DIR" 2>/dev/null || :
+	fi
+fi
+
+export PC_RELAY_DIR="$DIR"
+cd "$CODE" || exit 78
+exec "$PY" relay_main.py --os-mode

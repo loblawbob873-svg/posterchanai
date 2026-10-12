@@ -1,0 +1,29 @@
+# PosterChanOS's local relay: this account's event cache, for every window of the desktop.
+#
+# A USER unit, because everything about it is per account: its store lives in the account's home
+# (~/.local/share/posterchan/relay), it is scoped to whoever signs in to the desktop, and two accounts on
+# one machine must not share a cache. Enabled globally by app-misc/posterchan-relay (`systemctl --global
+# enable`), so every account -- including ones created at their first sign-in -- gets one.
+#
+# Ordered BEFORE the graphical session, and pc-shell-start-wayfire additionally WAITS (bounded) for the URL
+# file this writes once its loopback socket is listening. If it is not there in time the desktop starts
+# anyway and the client keeps using IndexedDB: a cache that did not start must never be a black screen.
+[Unit]
+Description=PosterChan local relay (this desktop's event cache)
+Before=graphical-session-pre.target graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pc-local-relay
+Restart=on-failure
+RestartSec=2
+# 78 = the code or the Python modules are not installed: restarting cannot fix that.
+RestartPreventExitStatus=78
+# A cache, not the desktop: it yields the CPU and the disk to whatever the person is doing.
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

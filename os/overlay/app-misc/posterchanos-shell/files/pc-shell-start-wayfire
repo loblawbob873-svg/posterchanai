@@ -232,6 +232,36 @@ terminate(){
 }
 trap cleanup EXIT
 trap 'terminate; exit 1' HUP INT TERM
+# >>> wait-for-local-relay
+# THE DESKTOP'S EVENT CACHE IS UP BEFORE THE DESKTOP. The `posterchan-relay` user unit (app-misc/
+# posterchan-relay) is the client's store on PosterChanOS; it writes its loopback URL into
+# $XDG_RUNTIME_DIR/posterchan-relay.url only once its socket is listening, and removes it when it stops.
+# Waiting here means the first window's Store finds it and hydrates from it instead of from IndexedDB.
+# BOUNDED, and never a refusal: a relay that is not installed is not waited for at all, and one that does
+# not come up in time costs the wait and nothing else -- the client falls back to IndexedDB and paints the
+# same timeline it always did. "Listening" is the file AND an active unit, because a relay that was
+# SIGKILLed leaves its file behind. PC_SYSTEMCTL / PC_RELAY_READY_FILE / PC_LOCAL_RELAY_WAIT_TENTHS let
+# tests/test_shell_waits_for_local_relay.py drive this with stubs.
+pc_wait_local_relay() {
+	_sc=${PC_SYSTEMCTL:-systemctl}
+	_ready=${PC_RELAY_READY_FILE:-$XDG_RUNTIME_DIR/posterchan-relay.url}
+	_tenths=${PC_LOCAL_RELAY_WAIT_TENTHS:-80}
+	"$_sc" --user cat posterchan-relay.service >/dev/null 2>&1 || return 0
+	"$_sc" --user start --no-block posterchan-relay.service >/dev/null 2>&1 || :
+	_n=0
+	while [ "$_n" -lt "$_tenths" ]; do
+		if [ -s "$_ready" ] && "$_sc" --user is-active --quiet posterchan-relay.service 2>/dev/null; then
+			echo "PosterChan local relay listening at $(cat "$_ready")"
+			return 0
+		fi
+		sleep 0.1
+		_n=$((_n + 1))
+	done
+	echo "PosterChan local relay not listening after $((_tenths / 10))s -- the desktop keeps its IndexedDB cache" >&2
+	return 0
+}
+# <<< wait-for-local-relay
+pc_wait_local_relay
 attempt=0
 while [ "$attempt" -lt 2 ]; do
 	attempt=$((attempt + 1))

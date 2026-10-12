@@ -358,12 +358,119 @@
     }
     return out;
   }
-  // batched IndexedDB writes — one transaction per burst instead of per event (busy-feed perf)
+  /* ---- PosterChanOS: THE LOCAL RELAY IS THIS CACHE'S DISK, AND INDEXEDDB IS ITS FALLBACK. ----
+   *
+   * Measured on the desktop and the laptop (2026-10-12): Chromium's LevelDB rewrote this origin's
+   * IndexedDB tens to hundreds of MB a minute in compactions. On PosterChanOS a `posterchan-relay` user
+   * service (app/services/nostr_relay/osmode.py) is ONE append-only PosterChanDB store on loopback for
+   * every window, so the events this cache would have put into IndexedDB go to it instead, as ordinary
+   * signed EVENTs. Three rules make that safe:
+   *   1. FALLBACK, NEVER A GAP. The relay is only used while its socket is OPEN. Every event sent is held
+   *      until the relay answers OK; a socket that closes, or a refusal, puts what it held back into the
+   *      IndexedDB batch. With the relay down at boot this file behaves exactly as it always did, and a
+   *      timeline is never blank because a service did not start.
+   *   2. THE USER'S OWN DOCUMENTS STAY ON THIS DEVICE TOO. Pinned events (`_isPinned`: notes, the vault, the
+   *      drive index…) are written to IndexedDB as well, so a relay that is down at the next boot costs
+   *      nothing that cannot be refetched. They are few and rarely written.
+   *   3. ONLY A LOOPBACK URL, ONLY FROM THE SHELL. The URL comes from the desktop's preload
+   *      (`pcShell.localRelay`, read from the file the relay writes once it is listening); anything that is
+   *      not ws:// on 127.0.0.1/::1 is ignored, so a page can never be pointed at a remote "cache".
+   * Profiles follow the same path (a kind-0 IS an event): while the relay holds them the profile store
+   * in IndexedDB is not rewritten per sighting, except for the viewer's own. */
+  const LR = { url: '', ws: null, up: false, sent: new Set(), pending: new Map(), retry: 600, timer: null,
+               reqs: new Map(), stats: { relay: 0, idb: 0, refused: 0, fellBack: 0, opened: 0 } };
+  function _lrUrl(){
+    try {
+      const sh = window.pcShell;
+      const u = String((sh && typeof sh.localRelay === 'function') ? (sh.localRelay() || '') : '');
+      return /^ws:\/\/(127\.0\.0\.1|\[::1\]):\d{2,5}\/?$/.test(u) ? u : '';
+    } catch(_){ return ''; }
+  }
+  function _lrLive(){ return !!(LR.up && LR.ws && LR.ws.readyState === 1); }
+  /* What the relay was holding goes back to IndexedDB: a closed socket proves nothing was stored. */
+  /* Straight into IndexedDB, never back through the batch: a batch may find the relay up again and hand
+     the same event to it, and an event the relay REFUSED would go round that loop for ever. */
+  function _idbPut(list){
+    if (!db || !list.length) return;
+    LR.stats.idb += list.length;
+    try { const s = db.transaction('events','readwrite').objectStore('events'); for (const ev of list) s.put(ev); } catch(_){}
+  }
+  function _lrFallBack(){
+    if (!LR.pending.size) return;
+    const back = [...LR.pending.values()];
+    LR.pending.clear();
+    for (const ev of back){ LR.sent.delete(ev.id); LR.stats.fellBack++; }
+    _idbPut(back);
+  }
+  function _lrOpen(){
+    if (!LR.url || LR.ws) return;
+    let ws;
+    try { ws = new WebSocket(LR.url); } catch(_){ return _lrRetry(); }
+    LR.ws = ws;
+    ws.onopen = () => { LR.up = true; LR.retry = 600; LR.stats.opened++; };
+    ws.onmessage = (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch(_){ return; }
+      if (!Array.isArray(msg)) return;
+      if (msg[0] === 'OK'){
+        const ev = LR.pending.get(msg[1]); if (!ev) return;
+        LR.pending.delete(msg[1]);
+        // A duplicate is a success (it is already there); any other refusal keeps the device copy.
+        if (!msg[2] && !/^duplicate/i.test(String(msg[3] || ''))){
+          LR.stats.refused++; _idbPut([ev]);
+        }
+      } else if (msg[0] === 'EVENT' || msg[0] === 'EOSE' || msg[0] === 'CLOSED'){
+        const r = LR.reqs.get(msg[1]); if (!r) return;
+        if (msg[0] === 'EVENT') r.events.push(msg[2]); else { LR.reqs.delete(msg[1]); r.done(r.events); }
+      }
+    };
+    ws.onclose = ws.onerror = () => {
+      if (LR.ws !== ws) return;
+      LR.ws = null; LR.up = false;
+      for (const r of LR.reqs.values()) r.done(r.events);
+      LR.reqs.clear();
+      _lrFallBack();
+      _lrRetry();
+    };
+  }
+  function _lrRetry(){
+    clearTimeout(LR.timer);
+    LR.timer = setTimeout(_lrOpen, LR.retry);
+    LR.retry = Math.min(30000, LR.retry * 2);
+  }
+  function _lrSend(ev){
+    if (LR.sent.has(ev.id)) return true;
+    try { LR.ws.send(JSON.stringify(['EVENT', ev])); } catch(_){ return false; }
+    if (LR.sent.size > 50000) LR.sent.clear();
+    LR.sent.add(ev.id); LR.pending.set(ev.id, ev); LR.stats.relay++;
+    return true;
+  }
+  /* One REQ on the store's own socket (the hydrate at boot); resolves [] when the relay is not there. */
+  function _lrQuery(filters, ms){
+    return new Promise(res => {
+      if (!_lrLive()) return res([]);
+      const id = 'st' + Math.random().toString(36).slice(2, 9);
+      let t = null;
+      const done = (evs) => { clearTimeout(t); res(evs || []); };
+      LR.reqs.set(id, { events: [], done });
+      t = setTimeout(() => { const r = LR.reqs.get(id); LR.reqs.delete(id); try { LR.ws.send(JSON.stringify(['CLOSE', id])); } catch(_){} done(r ? r.events : []); }, ms || 2500);
+      try { LR.ws.send(JSON.stringify(['REQ', id].concat(filters))); } catch(_){ LR.reqs.delete(id); done([]); }
+    });
+  }
+  function _lrWait(ms){
+    return new Promise(res => { const t0 = Date.now(); const iv = setInterval(() => {
+      if (_lrLive() || !LR.ws || Date.now() - t0 > ms){ clearInterval(iv); res(_lrLive()); } }, 25); });
+  }
+  // batched writes — one transaction (or one burst of frames) per burst instead of per event
   let _wbuf = [], _wt = null;
   function _flushWrites(){
-    _wt = null; if (!db || !_wbuf.length) return;
+    _wt = null; if (!_wbuf.length) return;
     const batch = _wbuf; _wbuf = [];
-    try { const s = db.transaction('events','readwrite').objectStore('events'); for (const ev of batch) s.put(ev); } catch(_){}
+    const idb = [];
+    for (const ev of batch){
+      if (_lrLive() && ev && ev.sig && _lrSend(ev)){ if (_isPinned(ev)) idb.push(ev); }
+      else idb.push(ev);
+    }
+    _idbPut(idb);
   }
   // Keep the on-disk event store bounded too (otherwise it balloons over weeks → slow reloads).
   const IDB_CAP = 8000, IDB_KEEP = 5000;
@@ -490,9 +597,45 @@
     } catch(e){ console.warn('IDB prune failed', e); }
   }
 
+  /* A kind-0 the local relay now holds needs no IndexedDB profile record -- the hydrate below reads them
+     back from the relay. The viewer's own profile always keeps its device copy (see _profVictims). */
+  function _profToRelay(ev){
+    if (!_lrLive() || !ev || !ev.sig || ev.kind !== 0 || ev.pubkey === _pinnedViewer()) return false;
+    return _lrSend(ev);
+  }
+  /* The boot hydrate's second half: what the local relay holds that IndexedDB no longer does (it stops
+     receiving the firehose once the relay takes over). Bounded like the IndexedDB hydrate; a relay that is
+     not up within a moment costs nothing -- the IndexedDB copy has already been read. */
+  async function _hydrateFromLocalRelay(){
+    if (!LR.url || !(await _lrWait(1500))) return;
+    try {
+      const [evs, profs] = await Promise.all([
+        _lrQuery([{ limit: 2000 }], 2500),
+        _lrQuery([{ kinds: [0], limit: 3000 }], 2500)]);
+      let added = 0;
+      for (const ev of evs){
+        if (!ev || typeof ev.id !== 'string' || mem.events.has(ev.id)) continue;
+        LR.sent.add(ev.id); mem.events.set(ev.id, _normEvent(ev)); added++;
+      }
+      if (added) _reindex();
+      const now = Math.floor(Date.now() / 1000);
+      for (const ev of profs){
+        if (!ev || ev.kind !== 0) continue;
+        LR.sent.add(ev.id);
+        const cur = mem.profiles.get(ev.pubkey);
+        if (cur && cur.created_at >= ev.created_at) continue;
+        let meta = {}; try { meta = JSON.parse(ev.content || '{}') || {}; } catch(_){}
+        mem.profiles.set(ev.pubkey, { pubkey: ev.pubkey, created_at: ev.created_at, meta, at: now });
+      }
+      if (mem.events.size > MEM_MAX) _evictMem();
+    } catch(e){ console.warn('local relay hydrate failed', e); }
+  }
+
   const Store = {
     async init(){
-      try { db = await open(); } catch(e){ console.warn('IDB open failed, memory-only', e); return; }
+      LR.url = _lrUrl();
+      if (LR.url) _lrOpen();
+      try { db = await open(); } catch(e){ console.warn('IDB open failed, memory-only', e); await _hydrateFromLocalRelay(); return; }
       // hydrate recent notes + all profiles into memory
       try {
         const evs = await pr(tx('events','readonly').getAll());
@@ -507,8 +650,15 @@
         _reindex();   // build the local query indexes over the hydrated events
         await _hydrateProfiles();
       } catch(e){ console.warn('hydrate failed', e); }
+      await _hydrateFromLocalRelay();
       setTimeout(() => { _pruneIDB(); _pruneProfiles(); }, 8000);   // trim the on-disk stores after startup (non-blocking)
     },
+    /* Where this cache is writing: 'relay' while the PosterChanOS local relay's socket is open, else
+       'idb'. `backendStats()` counts what went where (and how much fell back) -- the numbers a report of
+       "my timeline was empty" needs first. */
+    backend(){ return _lrLive() ? 'relay' : 'idb'; },
+    backendStats(){ return Object.assign({ backend: _lrLive() ? 'relay' : 'idb', url: LR.url, pending: LR.pending.size }, LR.stats); },
+    localRelayUrl(){ return LR.url; },
     has(id){ return mem.events.has(id); },
     get(id){ return mem.events.get(id); },
     saveEvent(ev){
@@ -518,7 +668,7 @@
       mem.events.set(ev.id, ev);
       _indexAdd(ev);
       if (mem.events.size > MEM_MAX) _evictMem();   // bound in-memory cache (also reindexes)
-      if (db){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch IDB writes
+      if (db || LR.url){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch writes (relay or IDB)
       return true;
     },
     /* Remove every event matching a predicate, from memory AND from disk. Store.query() collapses
@@ -608,7 +758,7 @@
              nothing. */
           const seen = Number(cur.at) || 0;
           cur.at = now;
-          if ((ch || seen < now - 86400) && db) try { tx('profiles','readwrite').put(cur); } catch(_){}
+          if ((ch || seen < now - 86400) && db && !_profToRelay(ev)) try { tx('profiles','readwrite').put(cur); } catch(_){}
           return;
         }
         const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta, at: now };
@@ -616,7 +766,7 @@
         if (proxy) rec._proxy = proxy[1];
         mem.profiles.set(ev.pubkey, rec);
         if (mem.profiles.size > PROF_CAP) _evictProfiles();
-        if (db) try { tx('profiles','readwrite').put(rec); } catch(_){}
+        if (db && !_profToRelay(ev)) try { tx('profiles','readwrite').put(rec); } catch(_){}
       } catch(_){}
     },
     /* WHAT A NAME LOOKS LIKE ON SCREEN — never what it is. A "Zalgo" display name buries every letter

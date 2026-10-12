@@ -253,6 +253,16 @@ TESTS = (
     'tests/client/test_client_prefs_sync_full_app.py',
     # 2026-10-12: signed in, a notification / reply opens the WHOLE thread (held replies are expanded too)
     'tests/client/test_notification_opens_the_whole_thread_full_app.py',
+    # 2026-10-12: PosterChanOS's local relay (osmode.py) -- the desktop's event cache instead of IndexedDB
+    'tests/test_os_relay_contacts_only_the_instance.py',
+    'tests/test_os_relay_private_docs_survive.py',
+    'tests/test_os_relay_pins_match_the_client.py',
+    'tests/test_os_relay_import_closure.py',
+    'tests/test_os_relay_packaging.py',
+    'tests/test_os_relay_write_volume.py',
+    'tests/test_shell_waits_for_local_relay.py',
+    'tests/client/test_store_local_relay_backend.py',
+    'tests/client/test_local_relay_cache_full_app.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new

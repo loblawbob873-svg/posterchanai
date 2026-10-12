@@ -4937,8 +4937,21 @@
      * managed relay, rather than doing a one-shot supplemental query that would fix initial paint
      * and then silently stop receiving new posts. */
     if(list.length) list = [...new Set([...list, ...defaultRelays().filter(Boolean)])];
-    if (!list.length && CFG && CFG.relay_url) return Relay.connect(CFG.relay_url);
+    /* POSTERCHANOS'S LOCAL RELAY JOINS THE POOL, LAST. Store reads and writes it as its disk
+     * (store.js `LR`); in the pool it answers every query from loopback in milliseconds and receives
+     * every publish -- so the client reads and writes it first in practice, while the network still gets
+     * every write. LAST, never first: `Relay.url` (urls[0]) is "this instance's relay, where the other
+     * player is" for webxdc realtime packets, and the cache is not where anybody else is listening.
+     * `setLocalRelay` also names the ONE relay URL whose NIP-42 challenge it may sign on the user's
+     * behalf when the local relay asks (it syncs this account's private documents from the instance). */
+    const local = (window.Store && Store.localRelayUrl) ? Store.localRelayUrl() : '';
+    try{ if(Relay.setLocalRelay) Relay.setLocalRelay(local, (CFG && CFG.relay_url) || ''); }catch(_){}
+    if (!list.length && CFG && CFG.relay_url){
+      if(local) return Relay.configure({ urls: [CFG.relay_url, local], verify: false });
+      return Relay.connect(CFG.relay_url);
+    }
     if (!list.length) list = defaultRelays().filter(Boolean);
+    if (local && list.length) list = [...list.filter(u => u !== local), local];
     if (list.length) Relay.configure({ urls: list, verify: true, home: (CFG && CFG.relay_url) || '' });
   }
 

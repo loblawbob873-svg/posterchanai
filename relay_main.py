@@ -10,6 +10,11 @@ Reuses thread._read_config() + thread._main() verbatim; the app talks to this pr
 status file + control dir that _main maintains (so Admin → Relay still works cross-process). The
 relay is a child of the app's cgroup, so a `systemctl restart` takes it down with the app and the
 new app instance spawns a fresh one — code changes apply on deploy, logs land in the journal.
+
+`--os-mode` is a different program that shares the relay's code: PosterChanOS's loopback event cache
+(app/services/nostr_relay/osmode.py), run by the `posterchan-relay` user unit. It is dispatched BEFORE
+thread.py is imported, because that import is the whole server -- settings, WoT, firehose -- and the OS
+runs this on its own Python with nothing but numpy and websockets.
 """
 import os
 import sys
@@ -21,7 +26,11 @@ _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from app.services.nostr_relay import thread as _t
+if __name__ == "__main__" and "--os-mode" in sys.argv[1:]:
+    from app.services.nostr_relay import osmode
+    sys.exit(osmode.main(sys.argv[1:]))
+
+from app.services.nostr_relay import thread as _t  # noqa: E402
 
 
 def main() -> None:

@@ -232,3 +232,61 @@ def _split_range(out, state, items, lo_idx, hi_idx, upper: Bound) -> None:
         else:
             next_bound = _minimal_bound(items[curr - 1], items[curr])
         _append_range(out, state, next_bound, 1, _fingerprint(bucket))
+
+
+# --- initiator (client side) ------------------------------------------------
+
+class Initiator:
+    """The INITIATOR role, for a relay that syncs FROM another relay (PosterChanOS's local relay pulling
+    from its instance, `osmode.py`). The same algorithm as static/js/client/negentropy.js, decision for
+    decision: open with the whole set split into fingerprinted buckets, answer every mismatched range by
+    splitting it again, and resolve an IdList range locally -- `need` collects what the other side holds and
+    we do not, `have` the reverse. Nothing here talks to a socket; the caller sends `initiate()` as NEG-OPEN
+    and each `reconcile()` answer as NEG-MSG until it returns None."""
+
+    def __init__(self, items):
+        # items: iterable of (timestamp, 32-byte id) -- sorted here, as the relay side sorts its own.
+        self.items = sorted((int(ts), bytes(eid)) for ts, eid in items)
+        self.need: set = set()
+        self.have: set = set()
+
+    def initiate(self) -> bytes:
+        out = bytearray([PROTOCOL_VERSION])
+        _split_range(out, [0], self.items, 0, len(self.items), Bound.infinity())
+        return bytes(out)
+
+    def reconcile(self, msg: bytes):
+        """Process one message from the other side; the next message to send, or None when done."""
+        r = _Reader(msg)
+        version = r.read(1)[0]
+        if version != PROTOCOL_VERSION:
+            raise ValueError(f"negentropy: unsupported version {version:#x}")
+        out = bytearray([PROTOCOL_VERSION])
+        out_state, in_state = [0], [0]
+        lower = Bound(0, b"")
+        work = False
+        while r.remaining() > 0:
+            upper = _decode_bound(r, in_state)
+            mode = r.read_varint()
+            lo_idx = _lower_index(self.items, lower)
+            hi_idx = _lower_index(self.items, upper)
+            if mode == 0:
+                _append_range(out, out_state, upper, 0, b"")
+            elif mode == 1:
+                theirs = r.read(FINGERPRINT_SIZE)
+                if _fingerprint([self.items[i][1] for i in range(lo_idx, hi_idx)]) == theirs:
+                    _append_range(out, out_state, upper, 0, b"")
+                else:
+                    work = True
+                    _split_range(out, out_state, self.items, lo_idx, hi_idx, upper)
+            elif mode == 2:
+                count = r.read_varint()
+                theirs = {r.read(ID_SIZE) for _ in range(count)}
+                ours = {self.items[i][1] for i in range(lo_idx, hi_idx)}
+                self.need.update(theirs - ours)
+                self.have.update(ours - theirs)
+                _append_range(out, out_state, upper, 0, b"")
+            else:
+                raise ValueError(f"negentropy: unknown mode {mode}")
+            lower = upper
+        return bytes(out) if work else None

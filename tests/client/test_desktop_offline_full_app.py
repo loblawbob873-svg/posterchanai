@@ -131,7 +131,7 @@ async def wait_browser_target(proc, port, log, timeout=15, request_timeout=2):
                          f'timeout={timeout}s, attempts={attempts}, last={last}): {detail}')
 
 
-async def with_browser(mode,route,check,extra_init=""):
+async def with_browser(mode,route,check,extra_init="",pre_init=""):
     server=ThreadingHTTPServer(('127.0.0.1',0),BundleHandler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
     with tempfile.TemporaryDirectory(prefix='pc-offline-desktop-') as profile, tempfile.TemporaryFile(mode='w+b') as chrome_log:
@@ -144,6 +144,9 @@ async def with_browser(mode,route,check,extra_init=""):
                 try:
                     await b.call('Page.enable');await b.call('Network.enable')
                     await b.call('Network.setBlockedURLs',{'urls':['https://*','wss://*']})
+                    # Runs BEFORE the network fixture replaces WebSocket (e.g. to keep the native one for a
+                    # real loopback relay).
+                    if pre_init:await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':pre_init})
                     await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':NETWORK_FIXTURE.replace('nostr_only:false,relay_url:', 'nostr_only:(window.__freshPolicy??false),relay_url:')+OFFLINE.replace('MODE',mode)+extra_init})
                     await b.call('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/index.html'+route})
                     await b.until('!!window.__PC && !!window.PCOS')
