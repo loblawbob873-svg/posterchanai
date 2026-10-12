@@ -406,3 +406,74 @@ def test_the_header_is_decided_by_the_terminal_never_by_the_machine():
             plain = re.sub(r"\x1b\[[0-9;]*m", "", "\n".join(lines))
             assert "FILESYSTEMS" in plain and "PROCESSES" in plain, (cols, rows)
             assert len(lines) <= rows
+
+
+# ---- what it looks like over SSH -----------------------------------------------------------------------------
+# "server1's ptop don't even have a posterchan logo, its like a sphere and all the colors are jacked" (2026-10-11).
+# ssh does not forward COLORTERM, so every node opened over SSH fell back to 256 colours; the fallback rounded each
+# channel onto a LINEAR 0..5 scale while the xterm cube's levels are 0,95,135,175,215,255 (and ignored the grey
+# ramp), so skin and hair became speckle and the portrait -- a face close-up in a ring -- read as a ball.
+
+_CUBE = (0, 95, 135, 175, 215, 255)
+
+
+def _xterm_rgb(idx):
+    if idx >= 232:
+        v = 8 + 10 * (idx - 232)
+        return (v, v, v)
+    i = idx - 16
+    return (_CUBE[i // 36], _CUBE[(i // 6) % 6], _CUBE[i % 6])
+
+
+def _logo_pixels(m):
+    for row in m.LOGO:
+        for x in range(0, len(row), 6):
+            t = row[x:x + 6]
+            if t != "......":
+                yield tuple(int(t[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def test_over_ssh_without_colorterm_a_modern_terminal_still_gets_truecolor(monkeypatch):
+    m = _load()
+    monkeypatch.delenv("COLORTERM", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    for term in ("xterm-256color", "xterm", "tmux-256color", "alacritty", "xterm-kitty"):
+        monkeypatch.setenv("TERM", term)
+        assert m._color_mode(None) == "truecolor", term
+    for term in ("linux", "vt100", "screen"):
+        monkeypatch.setenv("TERM", term)
+        assert m._color_mode(None) == "256", term
+    monkeypatch.setenv("TERM", "xterm-256color")
+    assert m._color_mode("256") == "256"                      # --colors still decides
+
+
+def test_the_256_colour_fallback_picks_the_nearest_xterm_colour():
+    m = _load()
+    p = m.Paint("256")
+    errs = []
+    for rgb in _logo_pixels(m):
+        idx = int(re.search(r"\[38;5;(\d+)m", p._code(rgb)).group(1))
+        got = _xterm_rgb(idx)
+        errs.append(sum(abs(a - b) for a, b in zip(rgb, got)))
+    assert sum(errs) / len(errs) < 30, "mean error %.1f per pixel" % (sum(errs) / len(errs))
+    # and greys use the grey ramp, not a tinted cube colour
+    idx = int(re.search(r"\[38;5;(\d+)m", p._code((128, 128, 128))).group(1))
+    assert _xterm_rgb(idx) == (128, 128, 128)
+
+
+def test_the_portrait_is_posterchan_from_the_app_icon_with_no_box_around_her():
+    """The portrait is PosterChan as the app icon draws her -- cat-ear hood, orange hair, black hoodie -- rebuilt by
+    scripts/make_ptop_logo.py, transparent outside her outline so no square or ring is painted around her."""
+    pytest.importorskip("PIL")
+    m = _load()
+    loader = importlib.machinery.SourceFileLoader("make_ptop_logo", os.path.join(ROOT, "scripts", "make_ptop_logo.py"))
+    spec = importlib.util.spec_from_loader("make_ptop_logo", loader)
+    gen = importlib.util.module_from_spec(spec)
+    loader.exec_module(gen)
+    assert tuple(gen.build()) == tuple(m.LOGO), "LOGO is not the app icon's PosterChan -- rerun scripts/make_ptop_logo.py"
+    for row in (m.LOGO[0], m.LOGO[-1]):
+        assert row.startswith("......") and row.endswith("......")
+    px = list(_logo_pixels(m))
+    orange = sum(1 for r, g, b in px if r > 180 and 70 < g < 170 and b < 90)
+    dark = sum(1 for r, g, b in px if max(r, g, b) < 60)
+    assert orange > len(px) * 0.07 and dark > len(px) * 0.2, (orange, dark, len(px))
