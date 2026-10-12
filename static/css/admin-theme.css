@@ -221,9 +221,13 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 .ids-ok{ background: rgba(46,204,113,.18); color:#2ecc71; }
 .ids-no{ background: rgba(231,76,60,.15); color:#e74c3c; }
 /* Admin → Relay list settings (admin-relay-lists.js) */
-.rl-add{ display:flex; gap:6px; align-items:center; }
-.rl-add .rl-add-input{ flex:1 1 auto; min-width:0; box-sizing:border-box; }
-.rl-add .rl-add-btn{ flex:0 0 auto; }
+/* ONE "Search or add…" box per list: it filters, and offers "+ Add" right under itself. */
+.blk-panel .list-query{ width:100%; box-sizing:border-box; }
+.blk-panel .list-add-action{ display:block; width:100%; box-sizing:border-box; text-align:left; min-height:40px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+.blk-panel .list-add-action[hidden], .blk-panel .list-exists[hidden]{ display:none; }
+.blk-panel .list-exists{ font-size:.85em; color: var(--text-secondary); }
+.blk-row.rl-new{ background: rgba(46,204,113,.18); transition: background .6s; }
 .rl-val{ white-space:nowrap; }
 .rl-msg{ font-size:.85em; color: var(--text-secondary); min-height:0; }
 .rl-msg:empty{ display:none; }

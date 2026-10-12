@@ -229,6 +229,9 @@ TESTS = (
     'tests/test_admin_relay_sections_browser.py',
     'tests/test_admin_settings_persist_today.py',
     'tests/test_admin_settings_persist_browser.py',
+    # 2026-10-11: every admin list is ONE "Search or add" box (Enter / "+ Add", no duplicates, persists)
+    'tests/test_admin_search_or_add_browser.py',
+    'tests/client/test_bot_list_fields_full_app.py',
     # 2026-10-11: every synced client pref persists + hydrates; unsent changes survive a bad moment
     'tests/client/test_client_prefs_sync_full_app.py',
 )

@@ -9,8 +9,8 @@ stylesheets, admin-bots.js and admin-list-fields.js -- in a real Chrome, against
   * opening a bot fills every list as ROWS (accounts with their name; topics split on lines AND commas,
     as the bot reads them);
   * a Concord room row never shows its key until Reveal, and hides it again on Hide;
-  * the search box narrows a long list;
-  * Enter in an Add box adds (and submits nothing); a bad entry is refused with a reason and changes
+  * the one search-or-add box is always shown and narrows a long list;
+  * Enter in that box adds (and submits nothing); a bad entry is refused with a reason and changes
     nothing; Remove takes one row and leaves the rest -- and each edit lands in the textarea the bot's
     Save reads;
   * nothing overflows a 390px phone, every Remove button is on screen.
@@ -94,8 +94,8 @@ STATE = r"""(()=>{const out={};
     if(!p){out[k]=null;continue;}
     const rows=[...p.querySelectorAll('.rl-row')];
     out[k]={rows:rows.map(r=>r.querySelector('.blk-name').textContent.trim()),
-            searchShown:!p.querySelector('.lf-search').hidden,
-            msg:p.querySelector('.lf-msg').textContent,value:ta.value,
+            searchShown:(()=>{const q=p.querySelector('.lf-query');return !!q&&!q.hidden&&q.getBoundingClientRect().width>0})(),
+            msg:p.querySelector('.lf-msg').textContent,value:ta.value,query:p.querySelector('.lf-query').value,
             removeOnScreen:rows.every(r=>{const b=r.querySelector('.lf-remove').getBoundingClientRect();
               return b.width>0&&b.right<=innerWidth+1&&b.left>=0;})};
   }
@@ -144,20 +144,21 @@ async def _run(base, width):
                 await _settle(b, 100)
                 got["hidden_again"] = (await b.js(STATE))["invite"]
                 # search the topics
-                await b.js("(()=>{const s=document.querySelector('.lf-panel[data-for=bot_f_auto_post_topics] .lf-search');"
+                await b.js("(()=>{const s=document.querySelector('.lf-panel[data-for=bot_f_auto_post_topics] .lf-query');"
                            "if(!s)return;s.value='COMIC';s.dispatchEvent(new Event('input',{bubbles:true}));})()")
                 await _settle(b, 100)
                 got["searched"] = (await b.js(STATE))["topics"]
-                await b.js("(()=>{const s=document.querySelector('.lf-panel[data-for=bot_f_auto_post_topics] .lf-search');"
+                await b.js("(()=>{const s=document.querySelector('.lf-panel[data-for=bot_f_auto_post_topics] .lf-query');"
                            "if(!s)return;s.value='';s.dispatchEvent(new Event('input',{bubbles:true}));})()")
-                # a bad host, by clicking Add
+                # a bad host, typed once into the search-or-add box and added with its "+ Add" action
                 await b.js("(()=>{const p=document.querySelector('.lf-panel[data-for=bot_f_trusted_media_hosts]');"
-                           "if(!p)return;p.querySelector('.lf-add-input').value='not a host!';p.querySelector('.lf-add-btn').click();})()")
+                           "if(!p)return;const q=p.querySelector('.lf-query');q.value='not a host!';"
+                           "q.dispatchEvent(new Event('input',{bubbles:true}));p.querySelector('.lf-add-action').click();})()")
                 await _settle(b)
                 got["bad_host"] = (await b.js(STATE))["hosts"]
-                # a good host, by pressing Enter in the Add box
-                await b.js("(()=>{const i=document.querySelector('.lf-panel[data-for=bot_f_trusted_media_hosts] .lf-add-input');"
-                           "if(i){i.value='media.lan';i.focus();}})()")
+                # a good host, by pressing Enter in the same box
+                await b.js("(()=>{const i=document.querySelector('.lf-panel[data-for=bot_f_trusted_media_hosts] .lf-query');"
+                           "if(i){i.value='media.lan';i.dispatchEvent(new Event('input',{bubbles:true}));i.focus();}})()")
                 await b.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter",
                                                         "windowsVirtualKeyCode": 13})
                 await b.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter",
@@ -207,14 +208,15 @@ def test_every_bot_list_is_a_searchable_list_like_the_relay_tab(server, width):
     assert not any("SECRETKEY" in r for r in got["hidden_again"]["rows"]), got["hidden_again"]
     assert o["topics"]["searchShown"] and got["searched"]["rows"] == ["comics"], got["searched"]
     bad = got["bad_host"]
-    assert bad["rows"] == ["nas.lan", "192.168.0.85"] and "Could not add" in bad["msg"], bad
+    # refused: said why, and the typed text stays in the box to be corrected (so it filters the list to nothing)
+    assert bad["query"] == "not a host!" and "Could not add" in bad["msg"], bad
     assert bad["value"] == CONFIG["trusted_media_hosts"], "a refused entry changed what Save sends"
     add = got["added_host"]
-    assert add["rows"] == ["nas.lan", "192.168.0.85", "media.lan"], add
+    assert add["rows"] == ["nas.lan", "192.168.0.85", "media.lan"] and add["query"] == "", add  # cleared, whole list shown
     assert "media.lan" in add["value"].split(), "the added host is not in what the bot's Save reads"
     end = got["removed_topic"]
     assert "comics" not in end["topics"]["rows"] and len(end["topics"]["rows"]) == 6, end["topics"]
     assert "comics" not in end["topics"]["value"] and "gaming" in end["topics"]["value"]
-    assert end["submits"] == 0, "Enter in an Add box submitted the form"
+    assert end["submits"] == 0, "Enter in the search-or-add box submitted the form"
     assert not end["pageOverflow"], width
     assert not end["errors"], end["errors"]

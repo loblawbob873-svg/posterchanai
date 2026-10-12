@@ -1,6 +1,7 @@
 // LIST FIELDS that are not global settings -- Admin → Bots → Edit (rate-limit exempt accounts, Concord
-// rooms, topics to rotate, trusted media hosts) -- drawn exactly like Admin → Relay's lists: a searchable
-// list, an Add box and a Remove per row, accounts shown with their picture and name.
+// rooms, topics to rotate, trusted media hosts) -- drawn exactly like Admin → Relay's lists: ONE
+// "Search or add…" box that filters the rows and, when the text is not already an entry, offers "+ Add"
+// (Enter does the same), and a Remove per row; accounts shown with their picture and name.
 //
 // The difference from admin-relay-lists.js is WHERE the value lives. A relay list is a setting, so an
 // Add/Remove there is saved the moment it is clicked. These belong to ONE BOT and are saved with the bot,
@@ -27,6 +28,30 @@
         server: ['server', 'https://example.com'],
         word: ['word or phrase', 'a word or phrase'],
     };
+
+    /* What an entry MEANS, for "is this already in the list" -- a mirror of relay_lists.same() (and of
+     * admin-relay-lists.js's copy). The server stays the authority: it refuses a duplicate itself. */
+    function sameKey(kind, s) {
+        s = String(s || '');
+        const e = (kind === 'word' || kind === 'topic') ? s.trim() : s.split(/\s+/).filter(Boolean).join(' ');
+        if (kind === 'word' || kind === 'topic') return e.toLowerCase();
+        if (kind === 'invite') return e;
+        if (kind === 'host') return e.toLowerCase().replace(/\.+$/, '');
+        if (kind === 'domain') return e.replace(/^[a-z]+:\/\//i, '').split('/')[0].replace(/^\.+|\.+$/g, '').toLowerCase();
+        return e.toLowerCase().replace(/\/+$/, '');            // relay, origin, server, pubkey
+    }
+    // The row the typed text already IS, or null. An account matches by its npub or its hex as well.
+    function exactRow(kind, rows, typed) {
+        const t = String(typed || '').trim();
+        if (!t) return null;
+        const k = sameKey(kind, t);
+        return (rows || []).find(r => sameKey(kind, r.value) === k
+            || (kind === 'pubkey' && [r.npub, r.pubkey].some(v => v && String(v).toLowerCase() === k))) || null;
+    }
+    // What the "+ Add" action may SAY about the typed text: never a Concord room's key while it is hidden.
+    function shownTyped(kind, v, revealed) {
+        return kind === 'invite' && !revealed && v.includes('#') ? v.split('#')[0] + '#••••••' : v;
+    }
 
     function matches(row, q) {
         q = String(q || '').trim().toLowerCase();
@@ -68,16 +93,16 @@
         const panel = document.createElement('div');
         panel.className = 'blk-panel rl-panel lf-panel';
         panel.dataset.for = ta.id;
-        // The add box has NO id/name: the bot's Save must never read it.
+        // The search-or-add box has NO id/name: the bot's Save must never read it. A room invite's box is
+        // masked like the invite field itself (its `#` part is the room's key).
         panel.innerHTML = `
-            <input type="search" class="rl-search lf-search" placeholder="Search…" autocomplete="off" aria-label="Search this list">
+            <input type="${kind === 'invite' ? 'text' : 'search'}" class="lf-query list-query${kind === 'invite' ? ' bots-secret' : ''}"
+                   placeholder="Search or add… e.g. ${esc(ph)}" autocomplete="off" spellcheck="false" autocapitalize="off"
+                   enterkeyhint="done" aria-label="Search or add a ${esc(noun)}">
+            <button type="button" class="btn-secondary btn-small lf-add-action list-add-action" hidden></button>
+            <div class="lf-exists list-exists" hidden>Already in the list</div>
             <div class="blk-summary rl-summary lf-summary"></div>
             <div class="blk-list rl-list lf-list"></div>
-            <div class="rl-add">
-                <input type="text" class="rl-add-input lf-add-input${kind === 'invite' ? ' bots-secret' : ''}" placeholder="${esc(ph)}"
-                       autocomplete="off" spellcheck="false" aria-label="Add a ${esc(noun)}">
-                <button type="button" class="btn-secondary btn-small lf-add-btn">Add</button>
-            </div>
             <div class="rl-msg lf-msg" role="status" aria-live="polite"></div>`;
         const det = document.createElement('details');
         det.className = 'blk-raw lf-raw';
@@ -96,20 +121,47 @@
         if (!panel || !st) return;
         const kind = ta.dataset.listKind, noun = (KINDS[kind] || ['entry'])[0];
         const revealed = ta.classList.contains('revealed');
-        const addIn = panel.querySelector('.lf-add-input');
-        if (addIn) addIn.classList.toggle('revealed', revealed);
-        const q = panel.querySelector('.lf-search').value || '';
+        const box = panel.querySelector('.lf-query');
+        box.classList.toggle('revealed', revealed);
+        const q = box.value || '';
         const shown = st.rows.filter(r => matches(r, q));
         const bad = st.rows.filter(r => r.valid === false).length;
         panel.querySelector('.lf-summary').textContent = st.rows.length
             ? (q ? `${shown.length} of ${st.rows.length} match` : `${st.rows.length} ${noun}${st.rows.length === 1 ? '' : 's'}`)
               + (bad ? ` · ${bad} invalid` : '') + (st.complete ? '' : ' (some profiles could not be read from the relay)')
             : 'The list is empty.';
-        panel.querySelector('.lf-search').hidden = st.rows.length < 6;
         const list = panel.querySelector('.lf-list');
         list.innerHTML = shown.slice(0, 300).map(r => rowHtml(kind, r, revealed)).join('')
             + (shown.length > 300 ? `<div class="blk-more">${shown.length - 300} more — search to narrow it down</div>` : '');
-        list.hidden = !st.rows.length;
+        list.hidden = !shown.length;
+        if (st.flash) {
+            const fl = st.flash;
+            st.flash = null;
+            flashRows(Array.from(list.querySelectorAll('.rl-row')).filter(r => fl.includes(r.dataset.value)));
+        }
+        offer(ta);
+    }
+
+    // The "+ Add" action and the "already in the list" note, for what is typed now.
+    function offer(ta) {
+        const panel = panelOf(ta), st = state.get(ta);
+        if (!panel || !st) return;
+        const kind = ta.dataset.listKind;
+        const v = (panel.querySelector('.lf-query').value || '').trim();
+        const act = panel.querySelector('.lf-add-action'), ex = panel.querySelector('.lf-exists');
+        const hit = v ? exactRow(kind, st.rows, v) : null;
+        act.hidden = !v || !!hit;
+        act.textContent = v ? `+ Add "${shownTyped(kind, v, ta.classList.contains('revealed'))}"` : '';
+        ex.hidden = !hit;
+    }
+
+    // Briefly mark rows (a new one, or the one an exact match points at) and bring them into view.
+    function flashRows(rows) {
+        rows.forEach(r => {
+            r.classList.add('rl-new');
+            setTimeout(() => r.classList.remove('rl-new'), 2200);
+        });
+        if (rows[0] && rows[0].scrollIntoView) rows[0].scrollIntoView({block: 'nearest'});
     }
 
     function msg(ta, text, bad) {
@@ -138,6 +190,10 @@
             if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
             st.rows = j.items || [];
             st.complete = j.names_complete !== false;
+            if (st.flashFrom) {          // the row(s) an Add just created (an older answer has none)
+                const fresh = st.rows.filter(r => !st.flashFrom.has(r.value)).map(r => r.value);
+                if (fresh.length) { st.flash = fresh; st.flashFrom = null; }
+            }
             draw(ta);
         } catch (e) {
             if (seq !== st.seq) return;
@@ -156,7 +212,7 @@
         if (det) { det.open = true; const sm = det.querySelector('summary'); if (sm) sm.textContent = 'One per line'; }
     }
 
-    async function edit(ta, body, btn) {
+    async function edit(ta, body, btn, onDone) {
         if (btn) btn.disabled = true;
         try {
             const r = await post('apply', Object.assign({kind: ta.dataset.listKind, raw: ta.value || ''}, body));
@@ -165,6 +221,7 @@
             ta.value = j.value || '';
             ta.dispatchEvent(new Event('input', {bubbles: true}));   // the bot form sees it exactly as typing
             msg(ta, (body.add ? 'Added' : 'Removed') + ' — press Save to keep it.');
+            if (onDone) onDone();
             await load(ta);
             return true;
         } catch (e) {
@@ -173,19 +230,42 @@
         } finally { if (btn) btn.disabled = false; }
     }
 
+    /* Add what is typed in the one box. An exact match adds nothing (it points at the row instead). On
+     * success the box is cleared, the WHOLE list is drawn again and the new row is highlighted; on a
+     * refusal the text stays so it can be corrected. */
     async function add(panel) {
-        const ta = document.getElementById(panel.dataset.for), inp = panel.querySelector('.lf-add-input');
+        const ta = panel && document.getElementById(panel.dataset.for), st = ta && state.get(ta);
+        if (!st || panel.dataset.busy) return;
+        const inp = panel.querySelector('.lf-query');
         const v = (inp.value || '').trim();
-        if (!ta) return;
         if (!v) { inp.focus(); return; }
-        if (await edit(ta, {add: v}, panel.querySelector('.lf-add-btn'))) inp.value = '';
+        const hit = exactRow(ta.dataset.listKind, st.rows, v);
+        if (hit) {
+            offer(ta);
+            flashRows(Array.from(panel.querySelectorAll('.rl-row')).filter(r => r.dataset.value === hit.value));
+            return;
+        }
+        const before = new Set(st.rows.map(r => r.value));
+        panel.dataset.busy = '1';
+        try {
+            await edit(ta, {add: v}, panel.querySelector('.lf-add-action'), () => {
+                inp.value = '';
+                st.flashFrom = before;
+            });
+        } finally { delete panel.dataset.busy; }
     }
 
     function all() { return Array.from(document.querySelectorAll('textarea[data-list-kind]')); }
 
     // Called after a form is filled programmatically (the bot modal opening): `.value =` fires no event.
     function refresh(ta) {
-        (ta ? [ta] : all()).forEach(t => { mount(t); msg(t, ''); load(t); });
+        (ta ? [ta] : all()).forEach(t => {
+            mount(t);
+            msg(t, '');
+            const q = panelOf(t) && panelOf(t).querySelector('.lf-query');
+            if (q) q.value = '';            // another bot's form: nothing typed for the last one carries over
+            load(t);
+        });
     }
     // Redraw without asking the server (a reveal/hide of a secret list).
     function redraw(ta) { (ta ? [ta] : all()).forEach(t => { if (state.get(t)) draw(t); }); }
@@ -201,22 +281,25 @@
                 if (ta && row) edit(ta, {remove: row.dataset.value}, rm);
                 return;
             }
-            const ad = t.closest('.lf-add-btn');
+            const ad = t.closest('.lf-add-action');
             if (ad) add(ad.closest('.lf-panel'));
         });
         document.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('lf-add-input')) {
+            if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('lf-query')) {
                 e.preventDefault();
                 add(e.target.closest('.lf-panel'));
             }
         });
-        document.addEventListener('input', e => {
-            const p = e.target && e.target.classList && e.target.classList.contains('lf-search') && e.target.closest('.lf-panel');
-            if (p) { const ta = document.getElementById(p.dataset.for); if (ta) draw(ta); }
-        });
+        // Typing filters the rows and offers the Add (`search` is a search box's clear-×).
+        const typed = e => {
+            const p = e.target && e.target.classList && e.target.classList.contains('lf-query') && e.target.closest('.lf-panel');
+            if (p) { const ta = document.getElementById(p.dataset.for); if (ta && state.get(ta)) draw(ta); }
+        };
+        document.addEventListener('input', typed);
+        document.addEventListener('search', typed, true);
         const boot = () => all().forEach(mount);
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
         window.PCListFields = { refresh, redraw };
     }
-    if (typeof module !== 'undefined') module.exports = { KINDS, matches, rowHtml };
+    if (typeof module !== 'undefined') module.exports = { KINDS, matches, rowHtml, sameKey, exactRow, shownTyped };
 })();

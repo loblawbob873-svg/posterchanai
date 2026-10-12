@@ -5,11 +5,11 @@ Renders the SHIPPED Relay tab (templates/admin/tabs/nostr_relay.html) with the s
 stylesheets and the shipped admin-identities.js / admin-relay-lists.js, against a stubbed
 /api/admin/* that behaves like the real endpoints. At 360px and 1280px it asserts, in a real Chrome:
 
-  * all eight list textareas became a list with an Add box, and each textarea is still in the form
+  * all eight list textareas became a list with ONE "Search or add" box, and each textarea is still in the form
     (folded into "Edit as text") with its name, so Save still sends it;
   * rows are drawn with the entries the server holds (profiles for key lists), nothing overflows
     the viewport and every Remove/Add button is on screen and tappable;
-  * Enter in an Add box adds (POST) and does NOT submit the settings form; the text box and Save's
+  * Enter in that box adds (POST) and does NOT submit the settings form; the text box and Save's
     baseline both become the server's new value; Remove does the same;
   * Identities offers NO "Remove all not in profile": a name here is membership whatever the profile
     shows (people may keep an identity of their own), so that bulk action would take their access.
@@ -107,16 +107,20 @@ for(const k of KEYS){
   // Open the folded text box too: it must fit as well.
   if(det)det.open=true;
   const rows=panel?[...panel.querySelectorAll('.rl-row')]:[];
-  const add=panel&&panel.querySelector('.rl-add-input'), addBtn=panel&&panel.querySelector('.rl-add-btn');
+  const add=panel&&panel.querySelector('.rl-query'), addBtn=panel&&panel.querySelector('.rl-add-action');
   out.keys[k]={panel:!!panel, inForm:!!(ta&&ta.form&&ta.name===k), folded:!!det,
     rows:rows.length, removeOnScreen:rows.every(x=>onScreen(x.querySelector('.rl-remove'))),
-    rowsFit:rows.every(x=>r(x).right<=innerWidth+1), addOnScreen:vis(add)&&onScreen(addBtn)&&r(add).width>=120,
+    rowsFit:rows.every(x=>r(x).right<=innerWidth+1), addHiddenWhenEmpty:!!addBtn&&addBtn.hidden,
     addNamed:!!(add&&add.name), taFits:!ta||r(ta).right<=innerWidth+1};
+  // The one box offers "+ Add" once something not in the list is typed: that action must be on screen too.
+  if(add){add.value='zz-probe-not-in-the-list';add.dispatchEvent(new Event('input',{bubbles:true}));}
+  out.keys[k].addOnScreen=vis(add)&&!!addBtn&&!addBtn.hidden&&onScreen(addBtn)&&r(add).width>=120;
+  if(add){add.value='';add.dispatchEvent(new Event('input',{bubbles:true}));}
 }
 // A fediverse line says whether it blocks an instance or one account.
 out.fediTypes=[...document.querySelectorAll('.rl-panel[data-key="fedi_bridge_blocked_domains"] .rl-type')].map(x=>x.textContent);
 // Add by Enter in the blocked-words box.
-const wp=document.querySelector('.rl-panel[data-key="nostr_relay_blocked_words"]'), wi=wp.querySelector('.rl-add-input');
+const wp=document.querySelector('.rl-panel[data-key="nostr_relay_blocked_words"]'), wi=wp.querySelector('.rl-query');
 wi.value='free crypto'; wi.focus();
 const ev=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}); wi.dispatchEvent(ev);
 // A real Enter in a text input submits the form unless prevented -- emulate the browser's default.
@@ -146,7 +150,7 @@ out.removed={posted:JSON.stringify(window.__posts.at(-1)), text:document.getElem
 out.prune={exists:!!document.getElementById('ids_prune'),
            offered:/not in profile/i.test((document.getElementById('tab-relay')||document.body).innerText)};
 // Admin → Blossom: a person added to the upload whitelist with Enter is saved to THAT list and drawn.
-{ const bp=document.querySelector('.rl-panel[data-key="blossom_whitelist"]'), bi=bp.querySelector('.rl-add-input');
+{ const bp=document.querySelector('.rl-panel[data-key="blossom_whitelist"]'), bi=bp.querySelector('.rl-query');
   const before=bp.querySelectorAll('.rl-row').length, subs=window.__submits;
   bi.value='npub1'+'z'.repeat(58);
   bi.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
@@ -236,7 +240,7 @@ async def run():
                     fails.append((where, "horizontal overflow"))
                 for k, v in out["keys"].items():
                     want = {"panel": True, "inForm": True, "folded": True, "removeOnScreen": True, "rowsFit": True,
-                            "addOnScreen": True, "addNamed": False, "taFits": True}
+                            "addOnScreen": True, "addHiddenWhenEmpty": True, "addNamed": False, "taFits": True}
                     bad = {x: v[x] for x in want if v[x] != want[x]}
                     if bad:
                         fails.append((where, k, bad))

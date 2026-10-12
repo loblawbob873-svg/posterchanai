@@ -2,7 +2,14 @@
 //
 // Origins, WoT seeds, GPU-sharing peers, blocked words, blocked bridge domains and the four relay URL
 // lists were bare textareas. Each is now a searchable list with an Add box and a Remove per row; key
-// lists show the owner's picture and name from this relay. Add/Remove go to the server
+// lists show the owner's picture and name from this relay.
+//
+// ONE BOX PER LIST: "Search or add…". There used to be a Search box above the list AND an Add box below
+// it, so adding meant typing the same text twice ("to add an item, I have to search and then enter it
+// again below"). Typing now filters the rows; when the text is not already an entry a "+ Add" action
+// appears under the box and Enter does the same. An exact match says "already in the list" and adds
+// nothing. The box is always shown (it hid on short lists when it was only a search box) and, like the
+// Add box before it, has NO id/name, so Save never reads it. Add/Remove go to the server
 // (/api/admin/relay/list, app/services/relay_lists.py), which edits the value it holds NOW, applies it
 // through the same path as Save and writes it through to the relay -- then the textarea (still there
 // under "Edit as text", still what Save sends) is rewritten AND taken as the new baseline, so the next
@@ -31,6 +38,42 @@
     };
 
     // Pure, so they can be tested.
+    /* What an entry MEANS, for "is this already in the list" -- a mirror of relay_lists.same(). The
+     * server is still the authority (it refuses a duplicate with "already in the list"); this only
+     * decides whether to OFFER the Add. */
+    function sameKey(kind, s) {
+        s = String(s || '');
+        const e = (kind === 'word' || kind === 'topic') ? s.trim() : s.split(/\s+/).filter(Boolean).join(' ');
+        if (kind === 'word' || kind === 'topic') return e.toLowerCase();
+        if (kind === 'invite') return e;
+        if (kind === 'host') return e.toLowerCase().replace(/\.+$/, '');
+        if (kind === 'domain') return e.replace(/^[a-z]+:\/\//i, '').split('/')[0].replace(/^\.+|\.+$/g, '').toLowerCase();
+        if (kind === 'fedi') {
+            const f = e.toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '').replace(/^\*\./, '').replace(/^@/, '');
+            const m = f.match(/^([^/]+)\/@([^/]+)$/);         // https://host/@user -> user@host
+            return m ? m[2] + '@' + m[1] : f;
+        }
+        if (kind === 'peer') {
+            const t = e.split(' ');
+            return t[0].toLowerCase() + ' ' + (t[1] || '').toLowerCase().replace(/\/+$/, '');
+        }
+        return e.toLowerCase().replace(/\/+$/, '');            // relay, origin, server, pubkey
+    }
+    /* The row the typed text already IS, or null. A key matches by its npub or its hex as well. */
+    function exactRow(kind, rows, typed) {
+        const t = String(typed || '').trim();
+        if (!t) return null;
+        const k = sameKey(kind, t);
+        return (rows || []).find(r => {
+            if (sameKey(kind, r.value) === k) return true;
+            if (kind === 'pubkey' || kind === 'peer') {
+                const pk = kind === 'peer' ? k.split(' ')[0] : k;
+                const relOk = kind !== 'peer' || sameKey('relay', r.relay || '') === (k.split(' ')[1] || '');
+                return relOk && [r.npub, r.pubkey].some(v => v && String(v).toLowerCase() === pk);
+            }
+            return false;
+        }) || null;
+    }
     function matches(row, q) {
         q = String(q || '').trim().toLowerCase();
         if (!q) return true;
@@ -74,15 +117,14 @@
         const panel = document.createElement('div');
         panel.className = 'blk-panel rl-panel';
         panel.dataset.key = key;
-        // The add box has NO name: Save must never send it.
+        // The search-or-add box has NO id/name: Save must never send it.
         panel.innerHTML = `
-            <input type="search" class="rl-search" placeholder="Search…" autocomplete="off" aria-label="Search this list">
+            <input type="search" class="rl-query list-query" placeholder="Search or add… e.g. ${esc(ph)}" autocomplete="off"
+                   spellcheck="false" autocapitalize="off" enterkeyhint="done" aria-label="Search or add a ${esc(noun)}">
+            <button type="button" class="btn-secondary btn-small rl-add-action list-add-action" hidden></button>
+            <div class="rl-exists list-exists" hidden>Already in the list</div>
             <div class="blk-summary rl-summary">Open this tab to load the list.</div>
             <div class="blk-list rl-list"></div>
-            <div class="rl-add">
-                <input type="text" class="rl-add-input" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false" aria-label="Add a ${esc(noun)}">
-                <button type="button" class="btn-secondary btn-small rl-add-btn">Add</button>
-            </div>
             <div class="rl-msg" role="status" aria-live="polite"></div>`;
         const det = document.createElement('details');
         det.className = 'blk-raw';
@@ -93,10 +135,24 @@
         state[key] = { rows: [], loading: false, complete: true, kind };
     }
 
-    function draw(key) {
-        const panel = document.querySelector(`.rl-panel[data-key="${key}"]`), st = state[key];
+    function panelOf(key) { return document.querySelector(`.rl-panel[data-key="${key}"]`); }
+
+    // The "+ Add" action and the "already in the list" note, for what is typed now.
+    function offer(key) {
+        const panel = panelOf(key), st = state[key];
         if (!panel || !st) return;
-        const q = panel.querySelector('.rl-search').value || '';
+        const v = (panel.querySelector('.rl-query').value || '').trim();
+        const act = panel.querySelector('.rl-add-action'), ex = panel.querySelector('.rl-exists');
+        const hit = v ? exactRow(st.kind, st.rows, v) : null;
+        act.hidden = !v || !!hit;
+        act.textContent = v ? `+ Add "${v}"` : '';
+        ex.hidden = !hit;
+    }
+
+    function draw(key) {
+        const panel = panelOf(key), st = state[key];
+        if (!panel || !st) return;
+        const q = panel.querySelector('.rl-query').value || '';
         const shown = st.rows.filter(r => matches(r, q));
         const noun = LISTS[key][1];
         const sum = panel.querySelector('.rl-summary');
@@ -105,14 +161,28 @@
             ? (q ? `${shown.length} of ${st.rows.length} match` : `${st.rows.length} ${noun}${st.rows.length === 1 ? '' : 's'}`)
               + (bad ? ` · ${bad} invalid` : '') + (st.complete ? '' : ' (some profiles could not be read from the relay)')
             : 'The list is empty.';
-        panel.querySelector('.rl-search').hidden = st.rows.length < 6;
         panel.querySelector('.rl-list').innerHTML = shown.slice(0, 300).map(r => rowHtml(st.kind, r)).join('')
             + (shown.length > 300 ? `<div class="blk-more">${shown.length - 300} more — search to narrow it down</div>` : '');
-        panel.querySelector('.rl-list').hidden = !st.rows.length;
+        panel.querySelector('.rl-list').hidden = !shown.length;
+        if (st.flash) {
+            const fl = st.flash;
+            st.flash = null;
+            flashRows(Array.from(panel.querySelectorAll('.rl-row')).filter(r => fl.includes(r.dataset.value)));
+        }
+        offer(key);
+    }
+
+    // Briefly mark rows (a new one, or the one an exact match points at) and bring them into view.
+    function flashRows(rows) {
+        rows.forEach(r => {
+            r.classList.add('rl-new');
+            setTimeout(() => r.classList.remove('rl-new'), 2200);
+        });
+        if (rows[0] && rows[0].scrollIntoView) rows[0].scrollIntoView({block: 'nearest'});
     }
 
     function msg(key, text, bad) {
-        const el = document.querySelector(`.rl-panel[data-key="${key}"] .rl-msg`);
+        const el = panelOf(key) && panelOf(key).querySelector('.rl-msg');
         if (el) { el.textContent = text || ''; el.classList.toggle('rl-err', !!bad); }
     }
 
@@ -142,6 +212,10 @@
             if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
             st.rows = j.items || [];
             st.complete = j.names_complete !== false;
+            if (st.flashFrom) {          // the row(s) an Add just created (a read begun before it has none)
+                const fresh = st.rows.filter(r => !st.flashFrom.has(r.value)).map(r => r.value);
+                if (fresh.length) { st.flash = fresh; st.flashFrom = null; }
+            }
             draw(key);
         } catch (e) {
             if (sum) sum.textContent = 'Could not load the list: ' + e.message;
@@ -162,7 +236,7 @@
     }
     function loadAll() { Object.keys(LISTS).forEach(k => { mount(k); load(k); }); }
 
-    async function edit(key, body, btn) {
+    async function edit(key, body, btn, onDone) {
         if (btn) btn.disabled = true;
         msg(key, 'Saving…');
         try {
@@ -179,6 +253,7 @@
             msg(key, j.durable === false
                 ? `✓ ${what} — applied; the relay has not confirmed it yet and it retries in the background.`
                 : `✓ Saved — ${what}. No need to press Save.`);
+            if (onDone) onDone();
             await load(key);
             return true;
         } catch (e) {
@@ -187,11 +262,29 @@
         } finally { if (btn) btn.disabled = false; }
     }
 
+    /* Add what is typed in the one box. An exact match adds nothing (it points at the row instead). On
+     * success the box is cleared, the WHOLE list is drawn again and the new row is highlighted; on a
+     * refusal the text stays so it can be corrected. */
     async function add(panel) {
-        const key = panel.dataset.key, inp = panel.querySelector('.rl-add-input');
+        const key = panel && panel.dataset.key, st = state[key];
+        if (!st || panel.dataset.busy) return;
+        const inp = panel.querySelector('.rl-query');
         const v = (inp.value || '').trim();
         if (!v) { inp.focus(); return; }
-        if (await edit(key, {add: v}, panel.querySelector('.rl-add-btn'))) inp.value = '';
+        const hit = exactRow(st.kind, st.rows, v);
+        if (hit) {
+            offer(key);
+            flashRows(Array.from(panel.querySelectorAll('.rl-row')).filter(r => r.dataset.value === hit.value));
+            return;
+        }
+        const before = new Set(st.rows.map(r => r.value));
+        panel.dataset.busy = '1';
+        try {
+            await edit(key, {add: v}, panel.querySelector('.rl-add-action'), () => {
+                inp.value = '';
+                st.flashFrom = before;
+            });
+        } finally { delete panel.dataset.busy; }
     }
 
     if (typeof document !== 'undefined') {
@@ -204,21 +297,24 @@
                 if (panel && row) edit(panel.dataset.key, {remove: row.dataset.value}, rm);
                 return;
             }
-            const ad = t.closest('.rl-add-btn');
+            const ad = t.closest('.rl-add-action');
             if (ad) { add(ad.closest('.rl-panel')); return; }
             if (t.closest('[data-tab="relay"],[data-tab="blossom"],[data-tab="social"]')) loadAll();
         });
-        // Enter in the Add box adds -- it must not submit the whole settings form.
+        // Enter in the box adds -- it must not submit the whole settings form.
         document.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('rl-add-input')) {
+            if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('rl-query')) {
                 e.preventDefault();
                 add(e.target.closest('.rl-panel'));
             }
         });
-        document.addEventListener('input', e => {
-            const s = e.target && e.target.classList && e.target.classList.contains('rl-search') && e.target.closest('.rl-panel');
-            if (s) draw(s.dataset.key);
-        });
+        // Typing filters the rows and offers the Add (`search` is a search box's clear-×).
+        const typed = e => {
+            const s = e.target && e.target.classList && e.target.classList.contains('rl-query') && e.target.closest('.rl-panel');
+            if (s && state[s.dataset.key]) draw(s.dataset.key);
+        };
+        document.addEventListener('input', typed);
+        document.addEventListener('search', typed, true);
         // A Save of the text boxes changes what the server holds: redraw from it.
         document.addEventListener('pc-admin-saved', ev => {
             const keys = (ev.detail && ev.detail.keys) || [];
@@ -230,5 +326,5 @@
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     }
-    if (typeof module !== 'undefined') module.exports = { LISTS, matches, rowHtml };
+    if (typeof module !== 'undefined') module.exports = { LISTS, matches, rowHtml, sameKey, exactRow };
 })();
