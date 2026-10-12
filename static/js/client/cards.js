@@ -72,6 +72,24 @@ window.PCCardsFactory = function(dep){
     const when = ts ? `<span class="rt-when" title="${enc(new Date(ts*1000).toLocaleString())}">${enc(timeAgo(ts))}</span>` : '';
     return `<div class="repost-tag">${RT_ICON} <span class="name" data-prof="${enc(pk)}">${nm}</span> reposted${when}</div>`;
   }
+  /* NIP-68 PICTURE (20) AND NIP-71 VIDEO (21, 22 = short/vertical) POSTS KEEP THEIR MEDIA IN `imeta` ONLY.
+   * The content is a caption; noteCard turns URLs found in the TEXT into media, so these drew the caption and
+   * nothing else ("video is missing from this post and amethyst shows it but not posterchan", an Amethyst
+   * kind-22 short). The card is drawn from the same event with each imeta url appended (and a 21/22's
+   * `title` put first): the imeta tags stay on it, so the media's type (`m`), box (`dim`) and blurhash come
+   * from the post exactly as they do for a kind-1 attachment. Same id, so every action still targets it. */
+  function _mediaPostAsNote(ev){
+    const tags=Array.isArray(ev.tags)?ev.tags:[], text=String(ev.content||'');
+    const urls=[];
+    for(const t of tags){
+      if(!t || t[0]!=='imeta') continue;
+      const u=(t.slice(1).find(x=>typeof x==='string' && x.startsWith('url '))||'').slice(4).trim();
+      if(/^https?:\/\//i.test(u) && !text.includes(u) && !urls.includes(u)) urls.push(u);
+    }
+    const title=(tags.find(t=>t && t[0]==='title')||[])[1];
+    const head=(title && !text.includes(title)) ? title+'\n\n' : '';
+    return Object.assign({}, ev, { content: head + text + (urls.length ? '\n'+urls.join('\n') : '') });
+  }
   function _noteHtml(ev){
     if(_repostDeleted(ev))return '';
     if (ev.kind===6){  // repost
@@ -93,6 +111,7 @@ window.PCCardsFactory = function(dep){
     if (ev.kind===1063 && webxdcCardHtml(ev)) return webxdcFileCard(ev);
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
+    if (ev.kind===20 || ev.kind===21 || ev.kind===22) return noteCard(_mediaPostAsNote(ev));
     return noteCard(ev);
   }
   // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
