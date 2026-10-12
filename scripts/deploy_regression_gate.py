@@ -219,6 +219,8 @@ TESTS = (
     'tests/client/test_concord_voice_presence_full_app.py',
     'tests/client/test_concord_themes_full_app.py',
     'tests/client/test_concord_theme_tokens.py',
+    # 2026-10-11: "No way to leave Community Settings" -- close/back/Escape/Android back, Save closes or says why
+    'tests/client/test_concord_settings_has_a_way_out_full_app.py',
     'tests/test_relay_tunables.py',
     'tests/test_admin_relay_sections.py',
     'tests/test_admin_relay_sections_browser.py',

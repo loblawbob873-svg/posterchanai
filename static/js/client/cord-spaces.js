@@ -224,7 +224,7 @@
 .cc-banner-preview img{display:block;width:100%;height:100%;object-fit:cover}
 .cc-banner-preview.empty{display:grid;place-items:center;color:var(--muted,#9298a8);font-size:12.5px}
 .cc-banner-actions{display:flex;flex-wrap:wrap;gap:8px}
-#cc-settings-dialog .cc-join-card>.cc-join-actions{position:sticky;bottom:-26px;z-index:1;margin:12px -4px -6px;padding:10px 4px 6px;background:#20242e;box-shadow:0 -10px 14px -10px rgba(0,0,0,.5)}
+#cc-settings-dialog .cc-join-card>.cc-join-actions{position:sticky;bottom:-26px;z-index:1;margin:12px -4px -6px;padding:10px 4px 6px;background:var(--cct-card,#20242e);box-shadow:0 -10px 14px -10px rgba(0,0,0,.5)}
 @media(max-width:820px){#cc-settings-dialog .cc-join-card>.cc-join-actions{bottom:-20px}}
 .cc-invite-banner{height:72px;margin:-4px -4px 10px;border-radius:12px;overflow:hidden}.cc-invite-banner img{display:block;width:100%;height:100%;object-fit:cover}
 @media(max-width:600px){.cc-view-choice{grid-template-columns:1fr}.cc-forum-post{padding:12px}}

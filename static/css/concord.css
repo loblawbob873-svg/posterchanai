@@ -586,3 +586,24 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
  * several system fonts (PosterChanOS, headless Chrome) have no glyph for and draw as empty boxes. */
 svg.ic.cc-starred{fill:currentColor}
 .cc-channel-more svg.ic,.cc-action-trigger svg.ic,.cc-head-more svg.ic{width:18px;height:18px}
+
+/* COMMUNITY SETTINGS HAS A WAY OUT AT THE TOP. The sheet scrolls, and its only exit used to be a
+ * "Cancel" among five look-alike buttons at the bottom. The header sticks to the top of the card
+ * while it scrolls, so the close button is always on screen; on a phone the ‹ (the same back glyph as the room
+ * header's) leads it. */
+#cc-settings-dialog .cc-sheet-head{position:sticky;top:-26px;z-index:2;display:flex;align-items:center;gap:8px;margin:-26px -26px 12px;padding:16px 16px 10px 26px;background:var(--cct-card);border-bottom:1px solid rgba(var(--cct-tint-rgb),.08)}
+#cc-settings-dialog .cc-sheet-head h2{flex:1 1 auto;min-width:0;margin:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#cc-settings-dialog .cc-sheet-close,#cc-settings-dialog .cc-sheet-back{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;margin:0;padding:0;border:0;border-radius:calc(8px*var(--cct-round));background:transparent;color:var(--cct-fg-2);font:inherit;font-size:20px;font-weight:700;line-height:1;cursor:pointer}
+#cc-settings-dialog .cc-sheet-back{display:none;font-size:26px;font-weight:800}
+#cc-settings-dialog .cc-sheet-close .ic{width:20px;height:20px}
+#cc-settings-dialog .cc-sheet-close:hover,#cc-settings-dialog .cc-sheet-back:hover,#cc-settings-dialog .cc-sheet-close:focus-visible,#cc-settings-dialog .cc-sheet-back:focus-visible{background:var(--cc-hover,rgba(var(--cct-tint-rgb),.08));color:var(--cct-strong)}
+#cc-settings-dialog .cc-sheet-close:focus-visible,#cc-settings-dialog .cc-sheet-back:focus-visible{outline:2px solid rgb(var(--cct-accent-rgb));outline-offset:1px}
+/* A refused save is written INSIDE the sticky action bar, above Save, so it is on screen wherever the card is scrolled. */
+#cc-settings-dialog .cc-settings-error{flex:1 0 100%;order:-1;margin:0 0 4px;color:var(--cct-error);font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+#cc-settings-dialog .cc-settings-error[hidden]{display:none}
+@media(max-width:820px){
+  #cc-settings-dialog .cc-sheet-head{top:-20px;margin:-20px -16px 12px;padding:10px 8px 8px}
+  #cc-settings-dialog .cc-sheet-head h2{font-size:19px!important}
+  #cc-settings-dialog .cc-sheet-back{display:grid;flex-basis:44px;width:44px;height:44px}
+  #cc-settings-dialog .cc-sheet-close{flex-basis:44px;width:44px;height:44px}
+}

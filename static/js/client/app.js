@@ -4348,6 +4348,9 @@
           // A VM console is a full-window overlay over the Virtual Machines screen: Back closes the
           // console and returns to the VM, never leaves the view with a guest's screen still up.
           if(window.PCVms && PCVms.consoleOpen && PCVms.consoleOpen()){ try{ PCVms.closeConsole(); }catch(_){} return; }
+          // Concord's Community settings is a sheet over the community: Back closes it and leaves the
+          // person on that community. Without this Back walked the history out from under it.
+          if(window.PCConcord && PCConcord.communitySettingsOpen && PCConcord.communitySettingsOpen()){ try{ PCConcord.closeCommunitySettings(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           /* Walk the app's own history first — every screen is an entry now, so this is what makes
