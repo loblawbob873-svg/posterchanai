@@ -75,21 +75,25 @@ FALLBACK_ROASTS = (
 )
 
 # ---- the guard -----------------------------------------------------------------------------------
-# A roast that matches any of these is not posted. Deliberately broad: a false refusal costs a
-# canned roast, a false pass costs the community a slur or a threat with this node's name on it.
+# A roast that matches any of these is not posted. A false refusal costs a canned roast, a false
+# pass costs the community a slur or a threat with this node's name on it -- but the first version
+# refused ordinary roast words ("dead on arrival", "bombed", "white-bread", "boomer") and the owner
+# asked for it looser. So: slurs always; a protected GROUP named (colour words only as people);
+# threats aimed at a person, never figurative death or violence about the post.
 _SLURS = re.compile(
     r"n[i1!|][gq]{2}|f[a@4]gg?[o0e]t|\bf[a@4]g\b|r[e3]t[a@4]rd|tr[a@4]nn(?:y|ie)|\bk[i1]ke|\bsp[i1]c\b|"
     r"\bch[i1]nk|wetback|towel\s*head|\bdyke|\bc[u*]nt|\bwh[o0]re|\bsl[u*]t|\btr[a@4]p\b|\bgypp?ed\b", re.I)
+_PEOPLE = r"(?:people|persons?|folks?|m[ae]n|wom[ae]n|guys?|dudes?|girls?|boys?|kids?|famil(?:y|ies))"
 _TRAITS = re.compile(
     r"\b(?:race|racial|racis\w*|ethnic\w*|religio\w*|jew\w*|muslim\w*|islam\w*|christian\w*|hindu\w*|"
-    r"buddhis\w*|atheis\w*|black|white|brown|asian\w*|african\w*|latin[oax]\w*|hispanic\w*|mexican\w*|"
-    r"arab\w*|gay|lesbian\w*|homo\w*|trans|transgender\w*|queer\w*|bisexual\w*|sexuality|gender\w*|"
-    r"women|woman|girl\w*|disab\w*|crippl\w*|autis\w*|downs?\s+syndrome|wheelchair\w*|blind|deaf|"
-    r"immigra\w*|foreign\w*|nationality|ugly|fat|obese|old\s+(?:man|woman|lady|geezer)|boomer\w*)\b", re.I)
+    r"buddhis\w*|atheis\w*|asian\w*|african\w*|latin[oax]\w*|hispanic\w*|mexican\w*|arab\w*|"
+    r"gay|lesbian\w*|homo\w*|trans|transgender\w*|queer\w*|bisexual\w*|sexuality|"
+    r"disab\w*|crippl\w*|autis\w*|downs?\s+syndrome|immigra\w*|nationality)\b"
+    r"|\b(?:black|white|brown|yellow|red)\s+" + _PEOPLE + r"\b", re.I)
 _THREATS = re.compile(
-    r"\b(?:kill\w*|murder\w*|shoot\w*|stab\w*|die|dies|died|dead|death|kys|hang\s+yourself|"
-    r"hurt\s+you|beat\s+you|rape\w*|suicid\w*|end\s+(?:it|yourself)|bomb\w*|doxx?\w*|"
-    r"find\s+where\s+you\s+live)\b", re.I)
+    r"\b(?:kill\s+(?:yo)?urself|kys|(?:should|go|hope\s+(?:you|they|he|she|op)|please)\s+(?:\w+\s+)?die\b|"
+    r"hang\s+(?:yo)?urself|end\s+(?:yo)?urself|suicid\w*|rape\w*|doxx?\w*|find\s+where\s+(?:you|they)\s+live|"
+    r"(?:hurt|beat|shoot|stab|murder|kill)\s+(?:you|them|him|her|op)\b)", re.I)
 _CJK = re.compile(r"[一-鿿぀-ゟ゠-ヿ가-힯]")
 MAX_ROAST = 500
 

@@ -219,12 +219,32 @@ def test_the_published_event_carries_the_authors_p_tag(bot, monkeypatch):
     "What a retarded take.",                                             # slur
     "Only a gay man would write this.",                                  # protected trait
     "Typical immigrant logic.",
+    "Must be a Jew thing.",
+    "Black people post like this.",
     "Whoever wrote this should die.",                                    # threat
+    "Kill yourself, OP.",
+    "Hope you die before your next post.",
     "I'll find where you live and explain it slowly.",
     "x" * 600,                                                           # an essay, not a roast
 ])
 def test_the_guard_refuses_a_roast_that_goes_after_the_person(bot, bad):
     assert not bot.roast_ok(bad)
+
+
+@pytest.mark.parametrize("ok", [
+    "This post died on arrival and nobody called the coroner.",          # figurative death
+    "Dead on arrival, like the thread it started.",
+    "This take bombed harder than a 2am open mic.",
+    "This post killed the vibe, the room and the group chat.",
+    "A take so white-bread it needs mayonnaise.",                        # colour words, not a person
+    "Even a boomer forwarding chain emails would scroll past this.",
+    "Tone-deaf and proud of it.",
+    "This post is fat with filler and ugly in the light.",
+])
+def test_ordinary_roast_language_is_not_refused(bot, ok):
+    """The owner found the first guard too strict ("loosen the roast guard a bit"): it refused words
+    like "dead" or "white", so most model roasts were swapped for canned ones."""
+    assert bot.roast_ok(ok), ok
 
 
 def test_a_refused_roast_is_replaced_and_a_clean_one_kept(bot, monkeypatch):
