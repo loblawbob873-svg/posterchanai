@@ -166,18 +166,14 @@ async def _widget(b):
 
 @CHROME
 def test_the_widget_plays_through_the_music_window_not_beside_it():
+    """While a Music window holds the music, the widget is its remote. With NO Music window the
+    widget plays on the desk instead of opening one -- see test_desktop_music_widget_plays_full_app,
+    which is where "clicking play opens the music app" is driven with real presses and real audio."""
     async def check(b):
         await _ready(b)
         await b.until("!!document.querySelector('#os-desk')")
         await _widget(b)
         await b.js(PEER)
-        # No Music window anywhere: ▶ opens one and leaves THIS page's player alone.
-        await b.js("document.querySelector('.os-wgt[data-type=\"music\"] [data-m=\"toggle\"]').click()")
-        await b.until("__opened.some(u=>u.includes('pcwin=__music'))")
-        assert await b.js("!__PC.music().now()"), "the widget started a second player in the desktop page"
-        # …and the press is handed to the window once it says it has loaded.
-        await b.js("__peerCh.postMessage({hello:true})")
-        await b.until("__peer.some(m=>m.cmd==='toggle')")
 
         # The window says what it is playing: the widget shows it, and its buttons drive the window.
         await b.js("__peerCh.postMessage({state:{now:{title:'Remote Song',playing:true,t:10,d:100,next:'',pos:1,total:3},shuffling:false}})")

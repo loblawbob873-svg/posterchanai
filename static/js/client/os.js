@@ -9485,6 +9485,7 @@
   // shape as `syncPlayer`. Cheap: it touches two nodes of one widget.
   function musicChanged(){
     if(_isMusicPage()) _musicSay();
+    _musicClaim();
     for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
   }
 
@@ -9494,14 +9495,45 @@
    * MusicPlayer and its <audio> are in THAT page, and the widget on the desk reads this one's. Left
    * alone the widget said "Nothing playing" over a song that was playing, and its ▶ started a SECOND
    * song in the desktop page. So the Music window says what it is playing on a BroadcastChannel
-   * (every page here shares the app:// origin), the widget draws that and sends its presses back,
-   * and a press with no Music window anywhere OPENS Music and hands the press over once it has
-   * loaded, so there is only ever one player on a desk that gives Music its own window. Everywhere
-   * else (the web, a tablet, a desk without toplevels) nothing changes: the local player is used. */
+   * (every page here shares the app:// origin), the widget draws that and sends its presses back.
+   *
+   * WITH NO MUSIC WINDOW HOLDING A TRACK, THE WIDGET PLAYS RIGHT HERE. It used to open the Music
+   * window and hand the press over when that window said hello — "clicking play or shuffle opens up
+   * the music app instead of playing or shuffling". Both halves of that were wrong: the compositor
+   * maps a new toplevel in front and focuses it (Wayfire activates every window it maps, showInactive
+   * or not — measured, see desktop/buddy-host.js), so a press on a corner widget put an app in your
+   * face; and the hello went out while the Music page was still LOADING, before it had signed in or
+   * loaded a library, so the press it was handed played nothing at all (measured: hello at
+   * readyState=loading with no account; the press answered now:null). The desk page is the one
+   * renderer that is always there, already holds the library, and is where the press was made.
+   *
+   * One sound at a time is kept by `exclusive`: a page that starts sounding says so, and every other
+   * page on the desk pauses — a song started from the widget stops when you press play in the Music
+   * window, and the other way round. Off this desk (the web, a tablet, toplevels off) none of this
+   * runs: there is only ever the one page. */
   const MUSIC_CH = 'pc-music-window';
-  let _musicCh = null, _remoteMusic = null, _musicPending = null;
+  const _musicId = Math.random().toString(36).slice(2);
+  let _musicCh = null, _remoteMusic = null, _musicSounding = false;
   function _isMusicPage(){
     try{ return !!(window.PCOSWin && PCOSWin.isWindow() && PCOSWin.viewOf() === '__music'); }catch(_){ return false; }
+  }
+  // A desk where Music can be another renderer: the Music window itself, or the desk that opens one.
+  function _musicShared(){ return _isMusicPage() || _extraOpensAsWindow('__music'); }
+  function _localMusic(){ try{ return (PC().music && PC().music()) || null; }catch(_){ return null; } }
+  function _localSounding(){
+    try{ const P = _localMusic(), n = P && P.now && P.now(); return !!(n && n.playing); }catch(_){ return false; }
+  }
+  // This page has just started sounding: every other page on the desk stops.
+  function _musicClaim(){
+    const now = _localSounding(), was = _musicSounding;
+    _musicSounding = now;
+    if(!now || was || !_musicShared()) return;
+    const ch = _musicChannel();
+    try{ if(ch) ch.postMessage({ exclusive: _musicId }); }catch(_){ }
+  }
+  function _musicYield(d){
+    if(!d || !d.exclusive || d.exclusive === _musicId || !_localSounding()) return;
+    try{ const P = _localMusic(); if(P && P.pause) P.pause(); }catch(_){ }
   }
   function _musicChannel(){
     if(_musicCh || typeof BroadcastChannel !== 'function') return _musicCh;
@@ -9510,8 +9542,9 @@
     try{ if(typeof _musicCh.unref === 'function') _musicCh.unref(); }catch(_){ }
     _musicCh.onmessage = (e) => {
       const d = (e && e.data) || {};
+      if(d.exclusive){ _musicYield(d); return; }
       if(_isMusicPage()){
-        const P = (PC().music && PC().music()) || null;
+        const P = _localMusic();
         if(!P) return;
         if(d.cmd === 'ask'){ _musicSay(); return; }
         let r = null;
@@ -9521,12 +9554,6 @@
           else return;
         }catch(_){ }
         Promise.resolve(r).then(() => _musicSay(), () => _musicSay());
-        return;
-      }
-      if(d.hello){
-        // A Music window just loaded: give it the press that opened it, if it is still fresh.
-        const p = _musicPending; _musicPending = null;
-        if(p && Date.now() - p.at < 20000) _musicCh.postMessage({ cmd: p.cmd, arg: p.arg });
         return;
       }
       if(d.state){
@@ -9540,34 +9567,31 @@
     const ch = _musicChannel(); if(!ch) return;
     let state = { gone: true };
     if(!gone){
-      const P = (PC().music && PC().music()) || null;
+      const P = _localMusic();
       state = { now: (P && P.now) ? P.now() : null, shuffling: !!(P && P.shuffling && P.shuffling()) };
     }
     try{ ch.postMessage({ state }); }catch(_){ }
   }
+  /* WHICH PLAYER THE WIDGET WORKS: the one that is SOUNDING, else the one holding a track, else this
+   * page's. So it shows what you hear, drives the Music window while that window holds the music
+   * (never a second player beside it), and with no track anywhere plays here (see above). */
   function _widgetPlayer(){
-    const local = (PC().music && PC().music()) || null;
-    try{ if(local && local.now && local.now()) return local; }catch(_){ }   // this page IS playing
+    const local = _localMusic();
+    let ln = null;
+    try{ ln = local && local.now ? local.now() : null; }catch(_){ ln = null; }
+    const rn = (_remoteMusic && _remoteMusic.now) || null;
+    if(!rn || (ln && (ln.playing || !rn.playing))) return local;
     const send = (cmd, arg) => { const ch = _musicChannel(); if(ch) ch.postMessage({ cmd, arg }); };
-    if(_remoteMusic) return {
+    return {
       now: () => (_remoteMusic && _remoteMusic.now) || null,
       shuffling: () => !!(_remoteMusic && _remoteMusic.shuffling),
       toggle: () => send('toggle'), prev: () => send('prev'), next: () => send('next'),
       shuffle: () => send('shuffle'), seek: (f) => send('seek', f), close: () => {},
     };
-    if(!_extraOpensAsWindow('__music') || !_musicChannel()) return local;
-    // Music would open as its own window and none is open: open it, and let IT play.
-    const viaWindow = (cmd, arg) => { _musicPending = { cmd, arg, at: Date.now() }; openApp('__music'); };
-    return {
-      now: () => null, shuffling: () => false,
-      toggle: () => viaWindow('toggle'), prev: () => viaWindow('toggle'), next: () => viaWindow('toggle'),
-      shuffle: () => viaWindow('shuffle'), seek: () => {}, close: () => {},
-    };
   }
   try{
     if(_isMusicPage()){
-      _musicChannel();
-      try{ if(_musicCh) _musicCh.postMessage({ hello: true }); }catch(_){ }
+      _musicSay();
       window.addEventListener('pagehide', () => _musicSay(true));
     } else if(_musicChannel()){
       _musicCh.postMessage({ cmd: 'ask' });     // a desktop that loaded after the Music window did

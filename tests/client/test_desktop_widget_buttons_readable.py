@@ -60,7 +60,9 @@ def _music_code():
     # the widget asks _widgetPlayer() for the player (the local one, or a Music window elsewhere); the real
     # helper runs here with no other window: no channel, no remote player
     i = OSJS.index("  function _widgetPlayer(")
-    helper = "let _remoteMusic=null;const _musicChannel=()=>null;\n" + OSJS[i:i + len(_block(OSJS, i)) + (OSJS.index("{", i) - i)]
+    lm = OSJS.index("  function _localMusic(")
+    helper = ("let _remoteMusic=null;const _musicChannel=()=>null;\n" + OSJS[lm:OSJS.index("\n", lm) + 1]
+              + OSJS[i:i + len(_block(OSJS, i)) + (OSJS.index("{", i) - i)])
     return helper + "\nconst MUSIC=" + _block(OSJS, OSJS.index("    music: {"))
 
 

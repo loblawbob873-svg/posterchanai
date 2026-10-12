@@ -14895,6 +14895,9 @@
        * there is no player left to leave paused, so the native media session and its notification
        * go too — buttons that work on nothing are worse than none (see MusicPlayer.close). */
       close: () => MusicPlayer.close(),
+      /* Stop SOUNDING and keep the track: another page on the desk has started playing (os.js
+       * `exclusive`), and one sound at a time is the rule. Not toggle(), which would START a paused one. */
+      pause: () => { if(_audioEl && !_audioEl.paused) _audioEl.pause(); },
       /* Shuffle the whole library and start somewhere in it — what the Music app's own Shuffle-all
        * button does, so the two cannot mean different things. Pulls the library first for the same
        * reason `toggle` does: the drive index is loaded once per session by whichever screen needs it
