@@ -499,6 +499,25 @@
   const _SIGNER_RETRY_AT = [20000, 45000, 90000, 180000];
   let _noticeSaid = '';         // the reason last announced, so a retry ladder says it once
   let _layLoading = null, _layLoadingPk = '', _laySub = null, _layChain = Promise.resolve();
+  /* CHANGES MADE BEFORE THE LAYOUT HAS BEEN READ ARE HELD, AS OPERATIONS — never refused, and never
+   * saved as a snapshot.
+   *
+   * With a layout in the local cache the desktop draws at once, while its own relay read may take
+   * seconds (or never answer). Every arrangement used to be refused in that window with "still
+   * loading your desktop layout — try that again in a moment", which on a desktop that LOOKS ready
+   * reads as one that is broken. Saving the cached copy instead would be the replaceable-doc wipe:
+   * the relay may hold a NEWER layout from another device, and publishing over it deletes that.
+   *
+   * So a change is kept as the function that makes it (`_pend`) and drawn at once on top of what
+   * was read (`_base`); when a relay answers, every held change is re-applied to the layout the
+   * relay RETURNED — exactly as if it had been made after the read — and the result is saved once.
+   * A read that could not be asked keeps them held and says so; nothing is published over a layout
+   * nobody has seen. They live in memory: a reload before a relay answers loses them, as it would
+   * lose any change nothing has stored yet. */
+  let _pend = [];          // [{fn}] — the held operations, oldest first
+  let _base = null;        // the layout as READ, beneath the held operations (null: nothing read)
+  let _pendRetry = 0, _pendSaid = '';
+  const _PEND_RETRY_AT = [8000, 20000, 45000, 90000, 180000, 300000, 300000, 300000];
 
   /* NEVER name a local binding `Relay` (or `Store`) in this file.
    *
@@ -717,7 +736,9 @@
     // The signer-retry budget belongs to the ACCOUNT, not the page: switching accounts asks a
     // different key to decrypt a different document, and that deserves its own second chance.
     if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = 0;
-                       _noticeSaid = ''; _docPk = pk; unwatchLayout(); }
+                       _noticeSaid = ''; _docPk = pk; unwatchLayout();
+                       // Held changes belong to the account that made them, never to the next one.
+                       _pend = []; _base = null; _pendRetry = 0; _pendSaid = ''; }
     _lay = computeLayout(launchApps(), _doc, _machineList());
     return _lay;
   }
@@ -795,7 +816,7 @@
         const c = cached.sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
         if(c && c.created_at > _docAt){
           const d = await _decode(c);
-          if(d && pk === ((me() || {}).pubkey || '')){ _doc = d; _docPk = pk; _docAt = c.created_at; refreshIcons(); }
+          if(d && pk === ((me() || {}).pubkey || '')){ _adopt(d); _docPk = pk; _docAt = c.created_at; refreshIcons(); }
         }
       }catch(_){}
       /* A query fired at a socket that is still CONNECTING is silently dropped, so waiting for the
@@ -821,7 +842,7 @@
       let unreadable = false;
       if(ev && ev.created_at >= _docAt){
         const d = await _decode(ev);
-        if(d){ _doc = d; _docAt = ev.created_at; }
+        if(d){ _adopt(d); _docAt = ev.created_at; }
         // A document that ARRIVED and would not decrypt is the one case that must never reach the
         // line below: an Amber/NIP-46 prompt that timed out or was dismissed leaves a perfectly
         // good layout on the relay, and treating it as "no layout" would publish the defaults over
@@ -838,7 +859,11 @@
        * message indefinitely while the same account arranged itself fine on two other devices —
        * which is a fact about that device, and the message has to be able to say which one. */
       _layWhy = !answered ? 'relay' : unreadable ? 'signer' : '';
-      if(answered && !unreadable){ _wr = true; if(!_doc){ _doc = BLANK(); _docPk = pk; } }
+      if(answered && !unreadable){
+        _wr = true;
+        // With changes held, `_doc` is the optimistic copy; whether anything was READ is `_base`.
+        if(_pend.length ? !_base : !_doc){ _adopt(BLANK()); _docPk = pk; }
+      }
       /* KEEP TRYING while the signer is the problem, on a ladder — it used to be ONE retry at 20s.
        *
        * The usual cause was assumed to be a prompt not approved YET (a phone face down, a
@@ -856,6 +881,7 @@
         setTimeout(() => { if(!_wr && me()) loadLayout().catch(() => {}); }, at);
       }
       refreshIcons(); watchLayout(); arrangeHint(); layoutNotice();
+      _settleHeld();
       return _doc;
     })();
     const p = _layLoading;
@@ -878,6 +904,7 @@
   function layoutNotice(){
     try{
       if(!on || _wr || !_layWhy) return;
+      if(_pend.length) return;          // _settleHeld says it, and says what happened to the change
       if(_noticeSaid === _layWhy) return;
       _noticeSaid = _layWhy;
       PC().toast && PC().toast(_layWhy === 'signer'
@@ -915,7 +942,7 @@
         if(!ev || ev.created_at <= _docAt) return;
         const d = await _decode(ev);
         if(!d) return;
-        _doc = d; _docAt = ev.created_at;
+        _adopt(d); _docAt = ev.created_at;
         refreshIcons();
       }});
     }catch(_){ _laySub = null; }
@@ -1007,26 +1034,77 @@
      * defaults-derived layout over the NEW account's real one. */
     const lay = layout();
     if(!_wr){
-      /* Not "it didn't work" — the layout has not been READ yet, and saying so is the difference
-       * between a desktop that looks broken and one that is still waking up. But "in a moment" is a
-       * promise, and two of the three reasons never come good on their own: name them, so somebody
-       * on the device it is happening to can act instead of waiting. */
-      try{
-        PC().toast(_layWhy === 'signer'
-          ? 'your desktop layout is on the relay but this device could not decrypt it — approve the '
-            + 'request in your signer (Amber/nsec.app), then try again'
-          : _layWhy === 'relay'
-            ? 'no relay has answered with your desktop layout yet — check Settings → Relays; nothing '
-              + 'will be saved until one does'
-            : 'still loading your desktop layout — try that again in a moment');
-      }catch(_){}
+      /* Not read yet: HOLD the change (see `_pend`). It is drawn now, on top of what this device
+       * has, and re-applied to whatever the relay returns when it answers. */
+      const next = _applyOp(_doc || BLANK(), lay, fn);
+      if(!next) return Promise.resolve(false);
+      if(!_pend.length) _base = _doc;
+      _pend.push({ fn });
+      _doc = next;
+      refreshIcons();
+      if(_layWhy) _sayHeld();           // the read already failed: say where the change is
       loadLayout().catch(() => {});
-      return Promise.resolve(false);
+      return Promise.resolve(true);
     }
-    const doc = _clone(_doc || BLANK());
-    if(fn(doc, lay) === false) return Promise.resolve(false);
-    _collapse(doc);
-    return saveLayout(_normDoc(doc)).then(() => true, () => false);
+    const next = _applyOp(_doc || BLANK(), lay, fn);
+    if(!next) return Promise.resolve(false);
+    return saveLayout(next).then(() => true, () => false);
+  }
+
+  /* One operation against one document: a NEW document, or null when the operation declined (it
+   * returned false — nothing to change). `lay` is the arrangement as drawn from `doc`, which is what
+   * every mutation is expressed against. */
+  function _applyOp(doc, lay, fn){
+    const d = _clone(doc || BLANK());
+    if(fn(d, lay || computeLayout(launchApps(), d, _machineList())) === false) return null;
+    _collapse(d);
+    return _normDoc(d);
+  }
+  // The held operations, replayed in order on top of `base`.
+  function _replay(base){
+    let doc = _normDoc(base || BLANK());
+    for(const op of _pend){
+      const next = _applyOp(doc, null, op.fn);
+      if(next) doc = next;
+    }
+    return doc;
+  }
+  /* A layout READ from the cache or a relay. With changes held, it becomes the base they sit on and
+   * they are re-applied to it — so a newer layout from another device is built on, never replaced. */
+  function _adopt(d){
+    if(!_pend.length){ _doc = d; return; }
+    _base = d;
+    _doc = _replay(d);
+  }
+  function _sayHeld(){
+    const why = _layWhy || 'relay';
+    if(_pendSaid === why) return;
+    _pendSaid = why;
+    try{
+      PC().toast && PC().toast(why === 'signer'
+        ? 'saved on this device — will sync when your signer can decrypt your desktop layout'
+        : 'saved on this device — will sync when your relays answer');
+    }catch(_){}
+  }
+  /* After every read: a relay answered → rebase the held changes onto what it returned and save
+   * ONCE; it did not → keep them, say so, and ask again later (any new change asks too). */
+  function _settleHeld(){
+    if(!_pend.length) return;
+    if(!_wr){
+      if(!_layWhy) return;              // still being asked
+      _sayHeld();
+      if(_pendRetry < _PEND_RETRY_AT.length){
+        const at = _PEND_RETRY_AT[_pendRetry++];
+        setTimeout(() => { if(!_wr && _pend.length && me()) loadLayout().catch(() => {}); }, at);
+      }
+      return;
+    }
+    const base = _base || BLANK();
+    const next = _replay(base);
+    _pend = []; _base = null; _pendRetry = 0; _pendSaid = '';
+    _doc = base;                        // what the relay holds: a failed save rolls back to THIS
+    if(JSON.stringify(next) === JSON.stringify(_normDoc(base))){ refreshIcons(); return; }
+    saveLayout(next).catch(() => {});
   }
 
   // Onto the desktop, at a position — which is also how a member LEAVES a folder.
@@ -1061,10 +1139,12 @@
    * name, because a drop that waits on a dialog is a drop that a cancelled dialog throws away. */
   function mergeInto(dragKey, targetKey){
     if(targetKey.indexOf('folder:') === 0) return toFolder(targetKey.slice(7), dragKey, null, false).then(() => '');
-    let made = '';
+    /* Minted ONCE, outside the operation: a change made before the layout is read is REPLAYED onto
+     * the layout a relay returns, and a fresh key per replay would leave the rename that follows
+     * naming a folder that no longer exists. */
+    const made = 'u' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
     return _apply((doc, lay) => {
       if(!dragKey || dragKey === targetKey || dragKey.indexOf('folder:') === 0) return false;
-      made = 'u' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
       _pluck(doc, dragKey); _pluck(doc, targetKey);
       doc.folders.push({ key: made, label: 'New folder', icon: '#i-folder', views: [targetKey, dragKey] });
       const order = _orderNow(lay).filter(k => k !== dragKey);
@@ -9652,6 +9732,8 @@
 
   function addWidget(type){
     if(!WIDGETS[type]) return Promise.resolve(false);
+    // Minted outside the operation, for the same reason as a new folder's key (see mergeInto).
+    const wid = type + '-' + Math.random().toString(36).slice(2, 8);
     return _apply((doc) => {
       if(!Array.isArray(doc.widgets)) doc.widgets = [];
       if(doc.widgets.length >= WGT_MAX){
@@ -9671,7 +9753,7 @@
        * that draws them, so the answer is the slot a person would have picked: under the last one,
        * against the same edge. Pure, and tested at real tablet and monitor sizes. */
       const spot = nextWidgetSpot(doc.widgets, type, 'm');
-      doc.widgets.push({ id: type + '-' + Math.random().toString(36).slice(2, 8), type,
+      doc.widgets.push({ id: wid, type,
                          x: spot.x, y: spot.y, size: 'm', cfg: {} });
     }).then(ok => { if(ok) drawWidgets(); return ok; });
   }

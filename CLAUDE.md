@@ -1263,7 +1263,11 @@ would have handled it fine).
   (app.js) — every private doc here has missed one at least once, and the symptom is the DEFAULT
   desktop drawing, which is indistinguishable from never having arranged one; (2) a write is only
   allowed once a relay has ANSWERED (`_wr`), or an unreachable pool publishes the defaults over the
-  real layout (the replaceable-doc wipe); (3) a refused save is ROLLED BACK on screen and said out
+  real layout (the replaceable-doc wipe) — but a change made BEFORE that is HELD, never refused: kept
+  as the OPERATION (`_pend`, never a snapshot), drawn at once, re-applied onto whatever layout the
+  relay returns (`_adopt`/`_settleHeld`) and saved once; a read that fails keeps it held ("saved on
+  this device — will sync when your relays answer") and publishes nothing
+  (`tests/client/test_desktop_queued_layout_edits_full_app.py`); (3) a refused save is ROLLED BACK on screen and said out
   loud, since an icon that moves and moves back on the next reload is worse than one that refuses;
   (4) the in-flight read is shared **per pubkey** — a read that finds nothing retries for ~1.4s,
   which is long enough for the account switcher to run inside it, and handing the new account that
