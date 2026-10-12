@@ -13057,7 +13057,17 @@
       for(const x of (Store.query([{ kinds:[1, 1111], '#e':[root.id, ev.id] }]) || []))
         if(x && x.id && !merged.has(x.id)) merged.set(x.id, x);
     }catch(_){ }
-    let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id), ...(lostTop ? [lostTop] : [])])];
+    /* EVERY POST THE THREAD HOLDS IS ASKED FOR ITS REPLIES, INCLUDING THE ONES THE STORE HANDED OVER.
+     * The frontier used to be only the root, the clicked post and its ancestors, then only what each round
+     * returned NEW. The held replies above went into `merged` but never into the frontier -- so when the
+     * relay's answer to round one was exactly what the Store already had (which, signed in, it nearly
+     * always is: the timeline and the notification list put those replies there), round one found
+     * "nothing new", the expansion stopped, and every reply to a held reply was never asked for. Logged
+     * out the Store is empty, every reply arrives "new", and the whole thread drew -- which is why it only
+     * broke signed in, and worst from a notification ("clicking on a notification should show the post
+     * with all replies"). Now: whatever is in `merged` and has not been asked about is the next batch. */
+    const asked=new Set();
+    const unasked=()=>[...new Set([...(lostTop ? [lostTop] : []), ...merged.keys()])].filter(x=>!asked.has(x));
     /* WHETHER THE RELAYS EVER ACTUALLY ANSWERED. A `#e` query that times out instead of EOSEing
      * comes back as a SHORT LIST, not as an error, and rendering that as the conversation is how
      * replies "go missing" — worst on a phone radio, which is why this reads as an Android-only
@@ -13066,8 +13076,10 @@
      * never established. Same rule as the timeline and Trending — a query no relay EOSE'd means
      * "the relays never spoke", never "there is nothing there". */
     let expandedFully=true;
-    for(let round=0; round<4 && frontier.length; round++){
-      const batch=frontier.slice(0,60);                     // one REQ per round, not one per node
+    for(let round=0; round<8; round++){
+      const batch=unasked().slice(0,60);                    // one REQ per round, not one per node
+      if(!batch.length) break;                              // every post held has been asked about
+      batch.forEach(x=>asked.add(x));
       // kinds 1 AND 1111: a NIP-22 comment that e-tags a post IS a reply to it, so a kind-1-only query
       // rendered every comment thread as just the ancestors — the tapped comment's siblings, and often the
       // comment itself, were simply absent. That is what made a community/thread mention impossible to
@@ -13081,10 +13093,7 @@
         if(!(retry && retry.complete===true)) expandedFully=false;
       }
       if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away / opened another thread mid-expansion
-      const fresh=[];
-      for(const x of (got||[])){ if(!merged.has(x.id)){ merged.set(x.id, x); fresh.push(x.id); } }
-      if(!fresh.length) break;
-      frontier=fresh;
+      for(const x of (got||[])){ if(x && x.id && !merged.has(x.id)) merged.set(x.id, x); }
     }
     /* FETCH THE PARENTS THE REPLY QUERY DID NOT RETURN. Replies are found by `#e` against posts already
      * held, so a deep reply (which tags the root) arrives while its DIRECT parent may not -- a parent

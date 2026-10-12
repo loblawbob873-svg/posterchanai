@@ -241,6 +241,8 @@ TESTS = (
     'tests/client/test_bot_list_fields_full_app.py',
     # 2026-10-11: every synced client pref persists + hydrates; unsent changes survive a bad moment
     'tests/client/test_client_prefs_sync_full_app.py',
+    # 2026-10-12: signed in, a notification / reply opens the WHOLE thread (held replies are expanded too)
+    'tests/client/test_notification_opens_the_whole_thread_full_app.py',
 )
 
 # Protocol and UI changes ship together. Include every Concord regression so new
