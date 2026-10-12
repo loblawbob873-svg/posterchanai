@@ -87,6 +87,13 @@ def main():
         "--report-print", action="store_true", help="Run report bot in print-only mode once"
     )
     parser.add_argument(
+        "--badpost", action="store_true",
+        help="Start the Bad Post of the Day daemon (Nostr; announces the most-voted post of each window, every 4h by default)"
+    )
+    parser.add_argument(
+        "--badpost-print", action="store_true", help="Preview the Bad Post of the Day announcement once"
+    )
+    parser.add_argument(
         "--hashtagbot", action="store_true", help="Start the Hashtag Bot daemon (posts at 6am and 6pm)"
     )
     parser.add_argument(
@@ -162,7 +169,7 @@ def main():
     threads = []
 
     # Define daemon modes once for reuse
-    daemon_modes = (args.blockbot, args.welcome, args.unfollowbot, args.report, args.hashtagbot)
+    daemon_modes = (args.blockbot, args.welcome, args.unfollowbot, args.report, args.hashtagbot, args.badpost)
     has_daemon = any(daemon_modes)
 
     # THE FIRST LISTENER USED TO TAKE THE MAIN THREAD AND NEVER GIVE IT BACK.
@@ -525,6 +532,10 @@ def main():
         else:
             from nostr_reportbot import reports
             reports(print_only=True)
+    elif args.badpost_print:
+        # Nostr only: the votes are NIP-32 labels on this node's relay (nostr_badpostbot.py).
+        from nostr_badpostbot import preview
+        preview()
     elif args.hashtagbot_print:
         from hashtagbot import post_trending_hashtags, get_config
         get_config()
@@ -585,6 +596,13 @@ def _daemon_plan(args) -> list:
             add("Nostr report bot", nostr_reportbot)
         else:
             print("ERROR: the report bot needs PLEROMA_ENDPOINT or NOSTR_NSEC")
+    if args.badpost:
+        if NOSTR_NSEC:
+            # The most-voted post of each voting window (BADPOST_INTERVAL_HOURS) -- nostr_badpostbot.py.
+            import nostr_badpostbot
+            add("Bad Post of the Day bot", nostr_badpostbot)
+        else:
+            print("ERROR: the Bad Post of the Day bot needs NOSTR_NSEC (it is a Nostr bot)")
     if args.hashtagbot:
         import hashtagbot
         add("Hashtag bot (posts at 6am and 6pm)", hashtagbot, hashtagbot.get_config)

@@ -9218,6 +9218,8 @@
     // Report (NIP-56): a guest sees it disabled with the reason; a report also goes to THIS node's relay.
     isGuest: () => GUEST || !signer,
     homeRelay: () => (CFG && CFG.relay_url) || '',
+    // Bad Post of the Day: the vote is signed here and sent to THIS node's relay alone (menus.js).
+    sign: (kind, content, tags) => sign(kind, content, tags),
   }; }
   function _menusMod(){ return _lzGet('menus.js', 'PCMenusFactory', _menusDeps); }
   function _menusLoad(){ return _lzLoad('menus.js', 'PCMenusFactory', _menusDeps); }

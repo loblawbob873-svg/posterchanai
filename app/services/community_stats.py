@@ -504,3 +504,96 @@ async def reports(since: int = 0) -> list:
                     "reported_handle": handle(f["reported"], known, puppets),
                     "reporter_ref": _ref(reporter), "reported_ref": _ref(f["reported"])})
     return out
+
+
+# ---- Bad Post of the Day (the badpost bot) -------------------------------------------------------
+#
+# A vote is a NIP-32 label the web client publishes to THIS node's relay from a post's ⋯ menu:
+# kind 1985, ["L", BADPOST_NS], ["l", BADPOST_LABEL, BADPOST_NS], ["e", <post>], ["p", <author>].
+# Unvoting is a NIP-09 deletion of the label, which the relay applies, so a withdrawn vote is simply
+# not returned. COUNTING (one per voter per post per day) is the bot's job; this only reads.
+
+BADPOST_NS = "pcai.badpost"
+BADPOST_LABEL = "bad-post-of-the-day"
+_HEX = set("0123456789abcdef")
+
+
+def _hex64(s) -> bool:
+    return isinstance(s, str) and len(s) == 64 and set(s.lower()) <= _HEX
+
+
+def _badpost_fields(ev: dict) -> dict | None:
+    tags = [t for t in ev.get("tags") or [] if isinstance(t, list) and len(t) >= 2 and isinstance(t[1], str)]
+    if not any(t[0] == "L" and t[1] == BADPOST_NS for t in tags):
+        return None
+    if not any(t[0] == "l" and t[1] == BADPOST_LABEL and (len(t) < 3 or t[2] == BADPOST_NS) for t in tags):
+        return None
+    e = next((t[1].lower() for t in tags if t[0] == "e" and _hex64(t[1])), "")
+    p = next((t[1].lower() for t in tags if t[0] == "p" and _hex64(t[1])), "")
+    return {"post": e, "author": p} if e and p else None
+
+
+async def badpost_votes(since: int = 0, until: int = 0) -> list:
+    """[{id, voter, post, author, at}] -- every Bad Post vote on this relay cast in [since, until). A
+    vote for your own post, and one cast by this node's own bots, is not a vote. Raises when the relay
+    cannot be read: "could not ask" is never "nobody voted"."""
+    window = {"since": int(since)} if since else {}
+    if until:
+        window["until"] = int(until) - 1                  # NIP-01 `until` is inclusive
+    evs = await _query([{"kinds": [1985], "#L": [BADPOST_NS], "limit": 5000, **window}])
+    bots = bot_pubkeys()
+    out, seen = [], set()
+    for ev in sorted(evs, key=lambda e: (e.get("created_at", 0), e.get("id", ""))):
+        if ev.get("id") in seen or ev.get("kind") != 1985:
+            continue
+        seen.add(ev.get("id"))
+        f = _badpost_fields(ev)
+        voter = ev.get("pubkey") or ""
+        if not f or not voter or voter == f["author"] or voter in bots:
+            continue
+        out.append({"id": ev["id"], "voter": voter, "post": f["post"], "author": f["author"],
+                    "at": int(ev.get("created_at") or 0)})
+    return out
+
+
+def _first_image(ev: dict) -> str:
+    for t in ev.get("tags") or []:
+        if isinstance(t, list) and t and t[0] == "imeta":
+            url = next((x[4:] for x in t[1:] if isinstance(x, str) and x.startswith("url ")), "")
+            mime = next((x[2:] for x in t[1:] if isinstance(x, str) and x.startswith("m ")), "")
+            if url and (not mime or mime.startswith("image/")):
+                return url
+    import re as _re
+    m = _re.search(r"https?://\S+?\.(?:png|jpe?g|gif|webp)(?:\?\S*)?(?=\s|$)", ev.get("content") or "", _re.I)
+    return m.group(0) if m else ""
+
+
+async def badpost_post(event_id: str) -> dict | None:
+    """The voted-on post and how to name its author: {id, pubkey, text, created_at, handle, ref,
+    note_ref, name, picture, image}, or None when the relay does not hold it (deleted, or never
+    stored). Raises when the relay cannot be read."""
+    event_id = (event_id or "").strip().lower()
+    if not _hex64(event_id):
+        return None
+    evs = [e for e in await _query([{"ids": [event_id], "limit": 1}]) if e.get("id") == event_id]
+    if not evs or evs[0].get("kind") not in (1, 1111):
+        return None
+    ev = evs[0]
+    pk = ev.get("pubkey") or ""
+    meta: dict = {}
+    prof = await _query([{"kinds": [0], "authors": [pk], "limit": 1}])
+    if prof:
+        import json as _json
+        try:
+            meta = _json.loads(max(prof, key=lambda e: e.get("created_at", 0)).get("content") or "{}") or {}
+        except (ValueError, TypeError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    puppets = await _puppet_accts([pk])
+    name = str(meta.get("display_name") or meta.get("name") or "").strip()
+    return {"id": event_id, "pubkey": pk, "text": ev.get("content") or "",
+            "created_at": int(ev.get("created_at") or 0),
+            "handle": handle(pk, members(), puppets), "ref": _ref(pk),
+            "note_ref": "nostr:" + bech32.encode("note", bytes.fromhex(event_id)),
+            "name": name[:80], "picture": str(meta.get("picture") or ""), "image": _first_image(ev)}

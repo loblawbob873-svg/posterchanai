@@ -290,6 +290,7 @@
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
                     <label title="Nostr: announces NIP-56 reports filed by or about this instance's members. Pleroma: the instance's open reports."><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
                     <label><input type="checkbox" id="bot_ft_hashtag" onchange="onBotFormChange()"> Hashtag bot</label>
+                    <label title="Nostr: people vote from a post's ⋯ menu (Vote Bad Post of the Day). Every 4 hours (configurable below; windows start at this server's local midnight) the bot announces the post with the most votes cast in that window: a screenshot of it, PosterChan facepalming, the author tagged, and an AI roast of the post. No votes, no post; a post is never announced twice."><input type="checkbox" id="bot_ft_badpost" onchange="onBotFormChange()"> Bad Post of the Day</label>
                     <label><input type="checkbox" id="bot_ft_unfollow" onchange="onBotFormChange()"> Unfollow bot</label>
                     <label title="Fulfil Nostr NIP-90 job requests (kind 5xxx) from the network using this node's AI: text generation, summarization, and image generation (kind 5100 → image uploaded to Blossom)"><input type="checkbox" id="bot_ft_dvm" onchange="onBotFormChange()"> Data Vending Machine</label>
                     <label title="#chesstr — referee chess games between two Nostr users: someone posts 'chess @opponent' tagging the bot, players reply with moves (e.g. '1 d4'), the bot posts a cyberpunk board after each move and announces checkmate. Games never expire."><input type="checkbox" id="bot_ft_chess" onchange="onBotFormChange()"> Chess</label>
@@ -452,6 +453,14 @@
                 <div class="form-group">
                     <label for="bot_f_report_image">Report image path <span class="bots-dim">(optional)</span></label>
                     <input type="text" id="bot_f_report_image">
+                </div>
+            </div>
+
+            <!-- Bad Post of the Day -->
+            <div id="bot_grp_badpost" style="display:none">
+                <div class="form-group">
+                    <label for="bot_f_badpost_interval_hours">Voting window, hours <span class="bots-dim">(1-24; blank = 4 — windows start at local midnight, the most-voted post of each window is announced when it closes)</span></label>
+                    <input type="number" min="1" max="24" step="1" id="bot_f_badpost_interval_hours" placeholder="4">
                 </div>
             </div>
 

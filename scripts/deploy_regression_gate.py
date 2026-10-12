@@ -207,6 +207,10 @@ TESTS = (
     'tests/test_admin_reports.py',
     'tests/client/test_report_from_notification_full_app.py',
     'tests/client/test_concord_report_private_full_app.py',
+    # 2026-10-11: Bad Post of the Day -- the ⋯ vote (NIP-32 label) and the bot that announces it
+    'tests/client/test_badpost_vote_full_app.py',
+    'tests/test_badpost_bot.py',
+    'tests/test_community_bots.py',
     'tests/test_voice_reference_size.py',
     'tests/client/test_voice_reference_once_full_app.py',
     # 2026-10-11: Concord banners, forum channels, voice presence on the channel list

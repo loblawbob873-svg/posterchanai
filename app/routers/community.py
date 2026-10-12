@@ -91,6 +91,48 @@ async def reports(since: int = 0, _auth: bool = Depends(get_bot_auth)):
     return {"reports": await _read(community_stats.reports(since))}
 
 
+@router.get("/badpost-votes")
+async def badpost_votes(since: int = 0, until: int = 0, _auth: bool = Depends(get_bot_auth)):
+    """Bad Post of the Day votes (NIP-32 labels from the client's post menu) cast in [since, until)."""
+    return {"votes": await _read(community_stats.badpost_votes(since, until))}
+
+
+@router.get("/badpost-card")
+async def badpost_card(id: str = "", _auth: bool = Depends(get_bot_auth)):
+    """The voted-on post, plus a screenshot of it rendered by the SAME card renderer as the client's
+    ⋯ → Screenshot (`_render_post_card_png`, avatar and image fetched behind its SSRF guard). `post`
+    is null when the relay no longer holds it; `card` is null when nothing could render it -- the bot
+    still posts then, it just has no picture of the post."""
+    post = await _read(community_stats.badpost_post(id))
+    if not post:
+        return {"post": None, "card": None}
+    import asyncio
+    import base64
+    import logging
+    from datetime import datetime, timezone
+    from urllib.parse import urlparse
+    from app.routers.client import _img_data_uri
+    from app.services import settings_store
+    from app.services.command_service import _render_post_card_png
+    site_host = (urlparse(settings_store.get("site_url") or "").hostname or "").lower()
+    base_domain = ".".join(site_host.split(".")[-2:]) if site_host else ""
+    card = None
+    try:
+        avatar = await _img_data_uri(post.get("picture") or "", base_domain)
+        media = await _img_data_uri(post.get("image") or "", base_domain)
+        when = datetime.fromtimestamp(post["created_at"], tz=timezone.utc).strftime("%b %d, %Y") \
+            if post.get("created_at") else ""
+        png = await asyncio.wait_for(asyncio.to_thread(
+            _render_post_card_png, post.get("name") or post.get("handle") or "", post.get("handle") or "",
+            post.get("text") or "", when, media, avatar), timeout=60)
+        if png:
+            card = base64.b64encode(png).decode()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[community] badpost card for {post['id'][:12]} failed: "
+                                            f"{type(e).__name__}")
+    return {"post": post, "card": card, "content_type": "image/png"}
+
+
 @router.get("/members")
 async def members(_auth: bool = Depends(get_bot_auth)):
     async def roll():

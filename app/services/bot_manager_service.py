@@ -542,6 +542,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         setif("welcome_prompt", "WELCOME_PROMPT")
         setif("report_image", "REPORT_IMAGE")
         setif("report_prompt", "REPORT_PROMPT")
+        setif("badpost_interval_hours", "BADPOST_INTERVAL_HOURS")   # Bad Post of the Day voting window
         setif("unfollow_image", "UNFOLLOW_IMAGE")
         if bot_dict.get("unfollow_silent_mode") is not None:
             env["UNFOLLOW_SILENT_MODE"] = str(bot_dict["unfollow_silent_mode"]).lower()

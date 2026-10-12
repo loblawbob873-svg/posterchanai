@@ -202,6 +202,18 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
   kind 3 without the member (proved from their own list -- a list gone from the relay is no evidence), a fediverse
   one is the AP server's Undo(Follow) tombstone; a contact-list wipe (<half, from 10+), >5 members dropped by one
   author and >20 in one pass announce nothing; the server refuses a capped page. `tests/test_nostr_unfollowbot.py`.
+  **`--badpost` (Bad Post of the Day, `nostr_badpostbot.py`, Nostr only, Admin → Bots "Bad Post of the Day").**
+  The vote is the client's post ⋯ → "Vote Bad Post of the Day" (menus.js): a NIP-32 kind **1985**
+  `["L","pcai.badpost"]` `["l","bad-post-of-the-day","pcai.badpost"]` + `e`/`p`, sent to THIS node's relay only,
+  a toggle (withdraw = NIP-09 kind 5 of that vote); 1985 is in signer.js's pairing kinds. The day is cut into
+  windows of `badpost_interval_hours` (default 4, from local midnight); when one closes the bot counts the votes
+  CAST IN IT (`/api/community/badpost-votes`, one per voter per post, never your own post, never a bot's), takes
+  the top post's card from `/api/community/badpost-card` (`_render_post_card_png`, the ⋯ → Screenshot renderer)
+  and posts it with `static/mascot/badpost-facepalm.png` (built by `scripts/make_badpost_facepalm.py` from the
+  dance frames), the author TAGGED (`nostr:npub` → `p`) and a model roast. No votes = no post; "could not ask"
+  leaves the window open (retried each minute, up to a day); a post is announced once EVER (written before the
+  publish). The headline is code; the roast passes `roast_ok` (no names/slurs/protected traits/threats) or is
+  replaced by a canned one. `tests/test_badpost_bot.py`, `tests/client/test_badpost_vote_full_app.py`.
 - **Master kill-switch:** `bots_manager_enabled` (default **off**). The manager runs NO bots
   until it's on — so deploying the merged code is safe while the legacy `posterchan.service`
   still owns the bots. **Cutover per node:** retire `posterchan.service` (stop+disable), then flip

@@ -363,6 +363,7 @@ window.PCMenusFactory = function(dep){
       items.push(['mutethread', S.MUTED_THREADS.has(_r)?'🔔 Unmute conversation':'🔕 Mute conversation']); }
     if(!mine) items.push(['mute', isMutedAuthor(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
     if(!mine) items.push(reportItem('🚩 Report post'));   // NIP-56; a fediverse author's server also gets a Flag
+    if(!mine && dep.homeRelay()) items.push(badPostItem(id));   // NIP-32 vote, to THIS node's relay only
     if(S.IS_ADMIN && !mine) items.push(isRelayBlocked(pk) ? ['unblock','✅ Unblock author'] : ['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', S.BOOKMARKS.has(id)); }); return; }
@@ -384,9 +385,53 @@ window.PCMenusFactory = function(dep){
       if(a==='mutethread') return toggleMuteThread(_rootIdOf(Store.get(id))||id);
       if(a==='mute') return toggleMute(pk);
       if(a==='report') return openReport(pk, id);
+      if(a==='badpost') return toggleBadPostVote(id, pk);
       if(a==='block') return doBlock(pk);
       if(a==='unblock') return doUnblock(pk);
     });
+  }
+  /* ---------- 🤦 Bad Post of the Day (NIP-32 label, kind 1985) ----------
+   * "users can vote for their 'Bad Post of the Day' by clicking on post hamburger menu". A vote is a
+   * label in the `pcai.badpost` namespace naming the post (`e`) and its author (`p`), sent to THIS
+   * node's relay alone -- the bot that announces the winner at noon and 6 PM reads it there
+   * (botframework/nostr_badpostbot.py), and nobody else's relay has any use for it. The row is a
+   * TOGGLE: with your own vote on this post from today it withdraws it (a NIP-09 deletion of that
+   * label, same relay), so a second tap never stacks votes. Nothing is marked voted until the relay
+   * has said OK -- the toast says which of the three things happened. */
+  const BADPOST_NS='pcai.badpost', BADPOST_LABEL='bad-post-of-the-day';
+  function _localDayStart(){ const d=new Date(); d.setHours(0,0,0,0); return Math.floor(d.getTime()/1000); }
+  function myBadPostVote(id){
+    if(!S.ME || !S.ME.pubkey) return null;
+    try{ return (Store.query([{kinds:[1985], authors:[S.ME.pubkey], '#e':[id], '#L':[BADPOST_NS], since:_localDayStart()}])||[])[0]||null; }
+    catch(_){ return null; }
+  }
+  function badPostItem(id){
+    if(dep.isGuest()) return ['badpost','🤦 Vote Bad Post of the Day — log in to vote','',{disabled:true, title:'Log in to vote'}];
+    return ['badpost', myBadPostVote(id) ? '🤦 Withdraw Bad Post vote' : '🤦 Vote Bad Post of the Day'];
+  }
+  let _badPostBusy=false;
+  async function toggleBadPostVote(id, pk){
+    if(dep.isGuest()){ toast('Log in to vote'); return; }
+    const home=dep.homeRelay();
+    if(!home){ toast('Bad Post voting needs this server'); return; }
+    if(!/^[0-9a-f]{64}$/i.test(String(id||'')) || !/^[0-9a-f]{64}$/i.test(String(pk||''))) return;
+    if(_badPostBusy) return;
+    _badPostBusy=true;
+    try{
+      const prev=myBadPostVote(id);
+      if(prev){
+        const del=await dep.sign(5, '', [['e', prev.id], ['k', '1985']]);
+        const r=await Relay.publishTo([home], del, {includeManaged:true, detailed:true});
+        if(r && r.ok){ Store.removeEvent(prev.id); toast('🤦 Bad Post vote withdrawn'); }
+        else toast(r && r.uncertain ? 'not confirmed yet — the relay hasn’t answered' : 'couldn’t withdraw the vote — try again');
+        return;
+      }
+      const ev=await dep.sign(1985, '', [['L', BADPOST_NS], ['l', BADPOST_LABEL, BADPOST_NS], ['e', id], ['p', pk]]);
+      const r=await Relay.publishTo([home], ev, {includeManaged:true, detailed:true});
+      if(r && r.ok){ Store.saveEvent(ev); toast('🤦 Voted Bad Post of the Day — the winner is announced at noon and 6 PM'); }
+      else toast(r && r.uncertain ? 'not confirmed yet — the relay hasn’t answered; it may already be counted' : 'couldn’t send the vote — try again');
+    }catch(_){ toast('vote not sent'); }
+    finally{ _badPostBusy=false; }
   }
   /* ---------- 🚩 Report (NIP-56, kind 1984) ----------
    * "we need a way to file reports on users posts. make sure works on fedi/nostr". A post report is

@@ -18,6 +18,7 @@ const BOT_KNOWN_KEYS = [
     'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
+    'badpost_interval_hours',   // Bad Post of the Day: hours per voting window (blank = 4)
     // Talking replies: the face + voice are Blossom hashes set by the upload buttons, the mouth is a
     // JSON placement set by dragging — hidden fields, so the ordinary Save persists all three.
     'talk_faces', 'talk_voice_sha', 'talk_max_words',
@@ -32,7 +33,7 @@ const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_ena
 const BOT_FEATURES = {
     bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
     bot_ft_report: '--report', bot_ft_hashtag: '--hashtagbot', bot_ft_unfollow: '--unfollowbot',
-    bot_ft_concord: '--concord',
+    bot_ft_concord: '--concord', bot_ft_badpost: '--badpost',
     bot_ft_dvm: '--dvm', bot_ft_chess: '--chess', bot_ft_ttt: '--ttt', bot_ft_hangman: '--hangman', bot_ft_connect4: '--connect4', bot_ft_blackjack: '--blackjack', bot_ft_holdem: '--holdem',
 };
 
@@ -172,7 +173,7 @@ function onBotFormChange() {
         if (!on && c.checked) c.checked = false;
     };
     ['unfollow'].forEach(f => showFeat(f, isFedi));
-    ['dvm', 'concord', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
+    ['dvm', 'concord', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats', 'badpost'].forEach(f => showFeat(f, isNostr));
     // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
     /* THE INVITE FIELD IS VISIBLE FOR ANY NOSTR BOT, not only once the feature is ticked.
@@ -237,6 +238,7 @@ function onBotFormChange() {
     show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
     show('bot_grp_report', !isImage && ck('bot_ft_report'));
+    show('bot_grp_badpost', !isImage && isNostr && ck('bot_ft_badpost'));
     show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
     show('bot_grp_media', !isImage && ck('bot_ft_reply'));
     show('bot_grp_voice', !isImage);
