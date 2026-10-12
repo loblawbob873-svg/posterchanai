@@ -530,6 +530,9 @@
    * never goes through here. Shipped exactly once, by the desktop-layout change.
    * Asserted by tests/test_desktop_layout.py::ShadowTests. */
   const RelayOf = () => window.Relay;
+  // Did the instance's own relay EOSE this query (relay.js homeAnswered)? False on any doubt.
+  const _homeAnswered = (got) => { try{ const R = RelayOf(); return !!(R && R.homeAnswered && R.homeAnswered(got)); }
+                                   catch(_){ return false; } };
   const StoreOf = () => window.Store;
   const LFILTER = () => ({ authors: [me().pubkey], kinds: [LAY_KIND], '#d': [D_LAY], limit: 1 });
   const _clone = o => JSON.parse(JSON.stringify(o));
@@ -835,7 +838,17 @@
          * the first icon dragged would publish the DEFAULTS over the real document — on every
          * device, since the event is addressable. An empty array from the catch carries no
          * `complete` marker, which is why the throw is tracked separately. */
-        if(!threw && got.complete !== false) answered = true;
+        /* …OR THIS NODE'S OWN RELAY ANSWERED, and that is what made the layout unwritable for a member
+         * with their own relay list. `complete` means EVERY relay in the pool EOSE'd; with "use my
+         * own relays" on, one that never does (a paid relay's AUTH that hangs, one that drops the REQ)
+         * made every read incomplete for the whole session — so before deploy 206 each wallpaper or
+         * icon change was refused and drawn back, and after it each was held "until your relays
+         * answer", which they never did, and lost at the next reload. Measured on the reporter's
+         * 26-relay list: complete:false on every read, the node's relay answering in milliseconds.
+         * The relay that HOLDS this document is the node's own (every save goes to it), so its EOSE
+         * is the answer the write gate is asking for; events any other relay sent in the window are
+         * in `got` too, and the newest of them still wins below. */
+        if(!threw && (got.complete !== false || _homeAnswered(got))) answered = true;
         ev = got.sort((x, y) => (y.created_at || 0) - (x.created_at || 0))[0] || null;
       }
       if(pk !== ((me() || {}).pubkey || '')) return _doc;      // signed out / switched mid-read

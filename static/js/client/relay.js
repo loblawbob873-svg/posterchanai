@@ -321,6 +321,19 @@
     // telling ANOTHER device (the password extension) where else the same events can be read, so a
     // single relay being down is not a single point of failure for it.
     urls(){ return [...this._conns.keys()]; },
+    /* DID THIS INSTANCE'S OWN RELAY ANSWER a query()? True only for a real EOSE from `home`.
+     *
+     * `complete` is "EVERY relay in the pool EOSE'd", and with "use my own relays" on that pool is
+     * whatever list the person keeps — measured for one member's 26-relay list: filter.nostr.wine
+     * answers a private read with `auth-required` and the AUTH it provokes waits 8s for an OK that
+     * never comes, rss.nos.social never answers at all, so every read of their own app documents came
+     * back `complete:false` after the full 6s, for ever, while this node's relay had answered in
+     * milliseconds. A caller asking "may I write over this replaceable document now?" is asking
+     * whether the relay that HOLDS it has spoken — the node's relay, which every one of this client's
+     * writes goes to. A CLOSED (rate limit, refused AUTH) is never an answer here. */
+    homeAnswered(got){
+      return !!(this._home && got && Array.isArray(got.answeredBy) && got.answeredBy.includes(this._home));
+    },
 
     _watchers: [],
     /* Subscribe to connection changes; returns an unsubscribe.
@@ -581,6 +594,10 @@
           return;
         }
         sub.eosed.add(conn.url);
+        // Who actually ANSWERED, kept apart from `eosed`: a CLOSED (rate-limited, restricted, an
+        // AUTH that was refused) also settles the gate above, but it is not a relay saying "this is
+        // everything I hold" — see homeAnswered().
+        if (typ === 'EOSE') (sub.answered || (sub.answered = new Set())).add(conn.url);
         if (sub.onEose && this._eoseDone(sub)){
           // for untrusted relays, drain pending verifications so the last events aren't lost
           const fire = () => this._fireEose(sub);
@@ -821,6 +838,8 @@
           // timer instead, and the result may be PARTIAL — a REQ fired at a still-CONNECTING socket is
           // silently dropped by _send and never draws an EOSE. Non-enumerable so spreads/JSON ignore it.
           try{ Object.defineProperty(got, 'complete', { value: !viaTimeout && pageComplete, enumerable: false, configurable: true }); }catch(_){}
+          // …and WHICH relays EOSE'd, for homeAnswered(). Non-enumerable for the same reason.
+          try{ Object.defineProperty(got, 'answeredBy', { value: Object.freeze([...((sub && sub.answered) || [])]), enumerable: false, configurable: true }); }catch(_){}
           res(got);
         };
         const finish = (viaTimeout) => { if (done) return;

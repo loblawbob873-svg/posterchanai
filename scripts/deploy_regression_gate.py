@@ -117,6 +117,8 @@ TESTS = (
     'tests/client/test_notification_quote_box_fixed_indent_full_app.py',
     'tests/client/test_desktop_notification_history_full_app.py',
     'tests/client/test_desktop_queued_layout_edits_full_app.py',
+    'tests/client/test_desktop_wallpaper_full_app.py',
+    'tests/test_client_relay_eose_gate.py',
     'tests/client/test_android_early_launcher_full_app.py',
     'tests/test_calendar_move_api.py',
     'tests/client/test_calendar_default_and_move_full_app.py',

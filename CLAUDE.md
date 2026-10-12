@@ -1279,7 +1279,14 @@ would have handled it fine).
   as the OPERATION (`_pend`, never a snapshot), drawn at once, re-applied onto whatever layout the
   relay returns (`_adopt`/`_settleHeld`) and saved once; a read that fails keeps it held ("saved on
   this device — will sync when your relays answer") and publishes nothing
-  (`tests/client/test_desktop_queued_layout_edits_full_app.py`); (3) a refused save is ROLLED BACK on screen and said out
+  (`tests/client/test_desktop_queued_layout_edits_full_app.py`). **"A relay answered" means THIS
+  NODE'S relay EOSE'd (`Relay.homeAnswered(got)`), not `got.complete`** — `complete` is "every relay
+  in the pool EOSE'd", and with "use my own relays" one relay that never does (measured on a member's
+  26-relay list: filter.nostr.wine's AUTH hangs 8s, rss.nos.social never answers) made every read
+  incomplete for the whole session, so no wallpaper or icon change could EVER be saved — refused
+  before deploy 206, held and lost at reload after it. A CLOSED from home is not an answer
+  (`tests/client/test_desktop_wallpaper_full_app.py`, real relay + instance + second profile, and
+  `tests/test_client_relay_eose_gate.py`); (3) a refused save is ROLLED BACK on screen and said out
   loud, since an icon that moves and moves back on the next reload is worse than one that refuses;
   (4) the in-flight read is shared **per pubkey** — a read that finds nothing retries for ~1.4s,
   which is long enough for the account switcher to run inside it, and handing the new account that

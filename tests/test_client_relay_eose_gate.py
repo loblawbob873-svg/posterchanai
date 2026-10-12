@@ -224,3 +224,61 @@ def test_a_live_relay_that_never_answers_still_holds_the_gate():
     """ % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "bn": json.dumps(LIVE_B)})
     assert r["ms"] >= 700, f"resolved in {r['ms']}ms — it stopped waiting for a relay that is up"
     assert r["complete"] is False, "it gave up on the timer, so the result is partial and must say so"
+
+
+# THE NODE'S OWN RELAY ANSWERING IS ITS OWN QUESTION (homeAnswered).
+#
+# `complete` stays "every relay we asked EOSE'd" -- the test above pins that. But a caller about to
+# overwrite a REPLACEABLE document of the account's (the desktop layout) is asking whether the relay
+# that HOLDS it has spoken, and with "use my own relays" one relay in a 26-relay list that never
+# answers made `complete` false on every read, for ever, so the desktop could never be saved. The
+# node's relay (`home`) answering is that answer -- an EOSE from it, never a CLOSED.
+BODY_HOME = """
+    Relay.configure({ urls: [%(a)s, %(b)s], verify: false, home: %(home)s });
+    await sleep(120);
+    const sock = u => FakeWS.opened.filter(w => w.readyState === 1 && w.url === u)[0];
+    %(setup)s
+    const evs = await Relay.query([{ ids: ['deadbeef'] }], 600);
+    out({ complete: evs.complete !== false, home: Relay.homeAnswered(evs), by: evs.answeredBy || null,
+          keys: Object.keys(evs) });
+"""
+
+
+def _home(setup, home=LIVE_A_IN):
+    return _run(BODY_HOME % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN),
+                             "home": json.dumps(home), "setup": setup})
+
+
+def test_the_home_relay_answering_is_known_when_another_relay_never_does():
+    r = _home("sock(%s)._stall = true;" % json.dumps(LIVE_B))
+    assert r["complete"] is False                       # the pool did not all answer -- still said
+    assert r["home"] is True, r
+    assert r["by"] == [LIVE_A], r
+    assert r["keys"] == [], "answeredBy must not show up in a spread or JSON of the result"
+
+
+def test_the_home_relay_not_answering_is_not_an_answer():
+    r = _home("sock(%s)._stall = true;" % json.dumps(LIVE_A))
+    assert r["complete"] is False and r["home"] is False, r
+
+
+def test_a_closed_from_the_home_relay_is_not_an_answer():
+    """A rate limit or a refused AUTH settles the EOSE gate, but it is not the relay saying "this is
+    everything I hold" -- read as one, a layout nobody could read would be written over."""
+    r = _home("""
+        const h = sock(%s); h._stall = true;
+        const send = h.send.bind(h);
+        h.send = function(s){ send(s); let m; try{ m = JSON.parse(s); }catch(_){ return; }
+          if (m[0] === 'REQ') setTimeout(() => this.onmessage({ data: JSON.stringify(['CLOSED', m[1], 'rate-limited: slow down']) }), 5); };
+    """ % json.dumps(LIVE_A))
+    assert r["home"] is False, r
+
+
+def test_no_home_relay_configured_answers_false():
+    r = _run("""
+        Relay.configure({ urls: [%(a)s], verify: false });
+        await sleep(120);
+        const evs = await Relay.query([{ ids: ['deadbeef'] }], 600);
+        out({ complete: evs.complete !== false, home: Relay.homeAnswered(evs) });
+    """ % {"a": json.dumps(LIVE_A_IN)})
+    assert r == {"complete": True, "home": False}
