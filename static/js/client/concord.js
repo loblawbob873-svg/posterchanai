@@ -1287,7 +1287,7 @@
    * and on `animationstart` for an element that only starts later (the phone's drawer, opened). */
   const BEAT_ANIMATIONS=new Set(['ccThemePulse','ccUnreadGlow']);
   function onTheBeat(anim){ try{ if(anim&&BEAT_ANIMATIONS.has(anim.animationName)&&anim.startTime!==0)anim.startTime=0; }catch(_){ } }
-  function retainCommunityRailPulses(root){
+  function keepGlowsOnTheBeat(root){
     try{
       if(!root||!root.querySelectorAll)return;
       for(const el of root.querySelectorAll('.cc-channel.active,.cc-server.unread'))
@@ -5667,7 +5667,7 @@
     feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
     try{ const nb=feed.querySelector('.cc-messages'); if(nb&&nb.dataset)nb.dataset.ccScrollKey=scrollKey(); }catch(_){ }
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
-    retainCommunityRailPulses(feed);
+    keepGlowsOnTheBeat(feed);
     try{ keepVideos(oldVideos,feed); }catch(_){}
     try{ const nl=feed.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
     try{

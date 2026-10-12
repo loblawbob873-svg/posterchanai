@@ -65,7 +65,8 @@ def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_ch
     assert "mobileChatOpen=false" in CONCORD
     assert "mobileDrawerOpen=false" in CONCORD
     assert "mobileChatOpen||state.community==null?' show-chat'" in CONCORD
-    assert "mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom()" in CONCORD
+    # pinned before the paint -- test_concord_switch_is_steady_full_app.py
+    assert "mobileChatOpen=true; mobileDrawerOpen=false; enterChatBottom(); render();" in CONCORD
     assert "setMobileDrawer(!mobileDrawerOpen)" in CONCORD  # a class flip, measured: test_concord_menus_stay_smooth_full_app.py
     assert 'id="cc-drawer-backdrop"' in CONCORD
     assert 'body.concord-view .cc-app{position:fixed!important' in CONCORD_CSS

@@ -23,7 +23,9 @@ def test_explicit_room_and_channel_entry_mark_the_scroller_pinned():
     # Entering a room is an explicit navigation action, even from the mobile drawer. It must not
     # restore an old mid-history position, and the delayed relay hydration must not undo the jump.
     assert 'activateJoinedRoom(p,i,inDrawer)' in server
-    assert "render();enterChatBottom();" in activation
+    # Pinned BEFORE the paint, so the first painted frame is already at the bottom
+    # (test_concord_switch_is_steady_full_app.py measures it).
+    assert "enterChatBottom();render();" in activation
     # The pin in the `finally` runs AFTER the hydration awaits, so it is marked late: on a real
     # community it lands seconds after entry, and an unmarked one re-pinned a reader who had
     # already scrolled back into the history.

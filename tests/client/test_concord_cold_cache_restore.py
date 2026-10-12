@@ -22,7 +22,9 @@ def test_saved_active_room_uses_direct_automatic_hydration_not_a_dom_click():
     assert "activateJoinedRoom(p,autoOpen,false,identity)" in render
     assert "querySelector(`[data-cc-server" not in render
     assert "hydrateRoomStreams(p,index,identity)" in activate
-    assert "render();enterChatBottom();" in activate
+    # The pin is written BEFORE the paint, so render() lands the room at its newest message in the
+    # same task (test_concord_switch_is_steady_full_app.py).
+    assert "enterChatBottom();render();" in activate
     assert "expectedIdentity" in activate and "findIndex" in activate
 
 
