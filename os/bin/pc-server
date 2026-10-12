@@ -150,17 +150,35 @@ installer(){ # installer <args…> — the project's own install.sh, as root, to
 own_tree(){ # the service writes into its own tree (data/, state files); the installer ran as root
   chown -R "$SVC_USER:$SVC_USER" "$APP"
   [ -d /var/lib/posterchanai ] && chown -R "$SVC_USER:$SVC_USER" /var/lib/posterchanai
-  [ -d /var/lib/posterchandb ] && chown -R "$SVC_USER:$SVC_USER" /var/lib/posterchandb
+  [ -d "$PCDB" ] && chown -R "$SVC_USER:$SVC_USER" "$PCDB"
+  return 0
+}
+
+# PosterChanDB's directory is made NOCOW HERE, on every enable, not only by install.sh: an enable on a box that
+# is "already set up" never runs the installer, and the relay would then create the directory itself with
+# copy-on-write on (btrfs fragments an append-only log). `chattr +C` only reaches files created after it, so
+# it is set recursively while the directory is empty and, once it holds data, on the directory so every new
+# segment inherits it. Btrfs only; anything else is left alone.
+PCDB="${PC_PCDB_DIR:-/var/lib/posterchandb}"
+prepare_pcdb(){
+  mkdir -p -m 700 "$PCDB" 2>/dev/null || return 0
+  [ "$(stat -f -c %T "$PCDB" 2>/dev/null)" = "btrfs" ] || return 0
+  if [ -z "$(ls -A "$PCDB" 2>/dev/null)" ]; then
+    chattr -R +C "$PCDB" 2>/dev/null || echo "could not set NOCOW on $PCDB (btrfs will copy-on-write its log)"
+  else
+    chattr +C "$PCDB" 2>/dev/null || true
+  fi
   return 0
 }
 
 do_enable(){
   [ -f "$APP/install.sh" ] || { echo "the server code is not installed (app-misc/posterchan-server)"; return 1; }
+  prepare_pcdb
   ensure_account || return 1
   ensure_tor
   # PosterChanDB (the relay's RAM-first store) lives beside the other system state, where
   # gentoo.sh's btrfs tweaks already made it NOCOW; install.sh creates it and re-checks +C.
-  set_secret POSTERCHANDB_DIR "/var/lib/posterchandb"
+  set_secret POSTERCHANDB_DIR "$PCDB"
   if configured && venv_dir >/dev/null; then
     echo "already set up — starting it"
   else

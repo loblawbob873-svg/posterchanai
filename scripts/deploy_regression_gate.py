@@ -118,6 +118,7 @@ TESTS = (
     'tests/client/test_desktop_notification_history_full_app.py',
     'tests/client/test_desktop_queued_layout_edits_full_app.py',
     'tests/client/test_desktop_wallpaper_full_app.py',
+    'tests/client/test_drive_file_found_on_another_server_full_app.py',
     'tests/test_client_relay_eose_gate.py',
     'tests/client/test_private_doc_write_gates_hear_the_home_relay.py',
     'tests/client/test_private_docs_save_with_a_silent_relay_full_app.py',

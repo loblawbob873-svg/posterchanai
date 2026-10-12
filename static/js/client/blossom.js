@@ -219,7 +219,15 @@ window.PCBlossomFactory = function(dep){
       for(let attempt=0; attempt<3 && !rMedia; attempt++){
         if(attempt>0) await new Promise(r=>setTimeout(r, 500*attempt));
         const evs=await Relay.query([{ authors:[_S.ME.pubkey], kinds:[10063,10096], limit:4 }]);
-        rMedia=evs.filter(e=>e.kind===10063||e.kind===10096).sort((a,b)=>b.created_at-a.created_at)[0];
+        /* ONLY A LIST THIS APP PUBLISHED CHOOSES THIS APP'S UPLOAD SERVER. "Default" is stored as blank, and
+         * a blank used to adopt the newest 10063/10096 of ANY client -- another app's Blossom list switched
+         * members to blossom.jumble.social / blossom.nostr.build without them choosing it, their uploads
+         * followed, and Settings then re-published it as theirs (cryptowolf, 2026-10-08: "that was a bug
+         * that changed it, he wants to use default"). Another client's list is a fine place to LOOK for a
+         * file (files.js _driveBlobSources), never a decision about where to PUT one. An empty list of ours
+         * (newest) is the user choosing Default and ends the search. */
+        rMedia=evs.filter(e=>(e.kind===10063||e.kind===10096) && (e.tags||[]).some(t=>t[0]==='client' && /^PosterChan/i.test(t[1]||'')))
+          .sort((a,b)=>b.created_at-a.created_at)[0];
       }
       const srv=rMedia && (rMedia.tags.find(t=>t[0]==='server')||[])[1];
       if(!srv) return;

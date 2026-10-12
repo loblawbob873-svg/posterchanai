@@ -3760,6 +3760,32 @@ window.PCFilesFactory = function(dep){
     }
     return await _masterDecrypt(await FilesIdx._ensureMK(), bytes);
   }
+  /* A DRIVE FILE IS WHEREVER IT WAS UPLOADED, NOT WHEREVER THE MEDIA SERVER POINTS TODAY.
+   * Reads asked mediaServer() alone, but uploads have more than one destination: a person's own server
+   * while one is set, this instance's Blossom by default, and nostr.build (NIP-96) whenever the upload
+   * permission check said no (blossom.js uploadTarget). Measured 2026-10-12 for one member: his
+   * Backgrounds pictures were on nostr.build (200), the instance and blossom.nostr.build said 404, so every
+   * wallpaper pick failed "blob HTTP 404" -- before AND after he switched back to the default server.
+   * The bytes are encrypted and addressed by hash, so asking another server can only find the same file.
+   * "Not found" is reported only when EVERY place says 404/410; a server that could not be asked keeps
+   * its own status in the message instead of reading as "missing". */
+  function _driveBlobSources(){
+    const out=[], add=u=>{ u=String(u||'').replace(/\/+$/,''); if(u && !out.includes(u)) out.push(u); };
+    add(mediaServer());
+    if(!_standalone()){ try{ add(_instanceBase()+'/blossom'); }catch(_){ } add(_S.CFG && _S.CFG.blossom_url); }
+    add('https://nostr.build');
+    return out;
+  }
+  async function _fetchDriveBlob(sha){
+    let other=0;
+    for(const base of _driveBlobSources()){
+      let r;
+      try{ r=await fetch(base+'/'+sha); }catch(_){ other=other||'unreachable'; continue; }
+      if(r.ok) return r;
+      if(r.status!==404 && r.status!==410) other=other||r.status;
+    }
+    throw new Error(other ? 'blob HTTP '+other : 'blob HTTP 404 on every server');
+  }
   async function _encFileUrl(sha, mimeHint){
     // mimeHint: the drive index is not the only record of a blob any more — a Notes attachment also
     // stores its own name/mime on the note. If a bulk import was interrupted before the index was
@@ -3767,7 +3793,7 @@ window.PCFilesFactory = function(dep){
     // an <img>. The note's own copy of the type keeps the picture showing.
     let rec=FilesIdx.meta(sha);
     let m=rec || (mimeHint ? {mime:mimeHint} : null);
-    const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
+    const r=await _fetchDriveBlob(sha);
     const blob=new Uint8Array(await r.arrayBuffer());
     let plain;
     try{

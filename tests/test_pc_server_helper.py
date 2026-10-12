@@ -388,3 +388,44 @@ def test_searxng_deps_include_curl_cffi():
     req = (ROOT / "requirements.txt").read_text()
     block = req[req.index("# >>> searxng-deps"):req.index("# <<< searxng-deps")]
     assert "curl_cffi" in block, "upstream SearXNG imports curl_cffi; without it the instance never starts"
+
+
+# ---- PosterChanDB's directory is NOCOW on btrfs, on EVERY enable ----------------------------------------
+# "make sure to do chattr -R +C on the posterchandb dir on the machines and default install": install.sh and
+# gentoo.sh set it, but an enable on a box that is already set up never runs the installer, so the relay would
+# create /var/lib/posterchandb itself with copy-on-write on.
+NOCOW_STUBS = {
+    "stat": '''if [ "$1" = "-f" ]; then echo "${STUB_FS:-btrfs}"; exit 0; fi; exec /usr/bin/stat "$@"''',
+    "chattr": 'echo "chattr $*" >> "$STUB_LOG"',
+}
+
+
+@pytest.mark.parametrize("fs,expect", [("btrfs", True), ("ext2/ext3", False)])
+def test_every_enable_makes_the_posterchandb_dir_nocow_on_btrfs(box, fs, expect):
+    for name, body in NOCOW_STUBS.items():
+        (box.bin / name).write_text("#!/bin/bash\n" + body + "\n")
+        (box.bin / name).chmod(0o755)
+    pcdb = box.tmp / "var" / "lib" / "posterchandb"
+    env = {"PC_PCDB_DIR": str(pcdb), "STUB_FS": fs}
+    assert box.run("enable", **env)[0] == 0
+    box.run("disable", **env)
+    (pcdb / "segment-0001.log").write_text("x")             # the relay has written since
+    rc, out, calls = box.run("enable", **env)                 # already set up: the installer is NOT run
+    assert rc == 0, out
+    assert not any(c.startswith("install.sh") for c in calls)
+    assert pcdb.is_dir()
+    chattrs = [c for c in calls if c.startswith("chattr")]
+    if expect:
+        assert chattrs == [f"chattr +C {pcdb}"], calls       # holds data: new files inherit it
+    else:
+        assert not chattrs, calls
+
+
+def test_an_empty_posterchandb_dir_gets_nocow_recursively(box):
+    for name, body in NOCOW_STUBS.items():
+        (box.bin / name).write_text("#!/bin/bash\n" + body + "\n")
+        (box.bin / name).chmod(0o755)
+    pcdb = box.tmp / "var" / "lib" / "posterchandb"
+    rc, out, calls = box.run("enable", PC_PCDB_DIR=str(pcdb))
+    assert rc == 0, out
+    assert f"chattr -R +C {pcdb}" in calls, calls
