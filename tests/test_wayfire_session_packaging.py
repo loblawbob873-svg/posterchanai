@@ -75,7 +75,11 @@ def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None, restartin
     # They passed alone and timed out inside the full suite, which reads as a broken supervisor
     # rather than a loaded machine. The assertions below, not this number, are what bound the
     # behaviour; this only has to be longer than a slow run.
-    done = subprocess.run(["/bin/sh", str(LAUNCHER)], env=env, text=True,
+    # cwd + no core: the crash test kills the fake compositor with SIGSEGV on purpose, and with the
+    # kernel's default core_pattern ("core") that dropped a core file into the REPO ROOT on every gate run.
+    import resource
+    done = subprocess.run(["/bin/sh", str(LAUNCHER)], env=env, text=True, cwd=str(tmp_path),
+                          preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)),
                           capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
     return done, calls.read_text(encoding="utf-8").splitlines()
 
