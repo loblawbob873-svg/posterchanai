@@ -146,7 +146,8 @@ Keep summaries very concise - one sentence only. Focus on key facts. Output form
             ping=False,
             thread_history=None,
             narrate_mode=False,
-            custom_system_prompt=system_prompt
+            custom_system_prompt=system_prompt,
+            in_character=False,     # a headline summary is not the persona talking
         )
         
         if result:

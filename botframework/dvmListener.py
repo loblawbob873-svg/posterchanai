@@ -131,7 +131,7 @@ def process_job_requests():
             else:
                 if ev["kind"] in _SUMMARIZE:
                     prompt = "Summarize the following clearly and concisely:\n\n" + prompt
-                output = (generate_reply(prompt, thread_history=None, ping=False) or "").strip()
+                output = (generate_reply(prompt, thread_history=None, ping=False, in_character=False) or "").strip()
             if not output:
                 _feedback(ev, "error", "empty result")
                 continue

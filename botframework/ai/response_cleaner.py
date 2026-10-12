@@ -356,13 +356,13 @@ def clean_ai_response(text, debug_mode=False):
     )
     
     if has_error_phrase and has_generation_failure:
-        print(f"[RESPONSE_CLEANER] Detected error message (direct check), returning None to prevent posting: {response_text[:100]}...")
+        print(f"[RESPONSE_CLEANER] Detected error message (direct check), returning None to prevent posting ({len(response_text)} chars)")
         return None
     
     # Pattern-based check (more flexible)
     for pattern in ERROR_MESSAGE_PATTERNS:
         if pattern.search(response_text):
-            print(f"[RESPONSE_CLEANER] Detected error message (pattern match), returning None to prevent posting: {response_text[:100]}...")
+            print(f"[RESPONSE_CLEANER] Detected error message (pattern match), returning None to prevent posting ({len(response_text)} chars)")
             return None
 
     # Remove thinking tags
