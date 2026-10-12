@@ -88,6 +88,9 @@ def test_every_install_path_prepares_it_and_posterchanos_points_at_a_nocow_dir()
     g = (ROOT / "os" / "gentoo.sh").read_text()
     assert '"/var/lib/posterchandb"' in g.split("DISABLE_COW=(", 1)[1].split(")", 1)[0]
     pcs = (ROOT / "os" / "bin" / "pc-server").read_text()
-    assert 'set_secret POSTERCHANDB_DIR "/var/lib/posterchandb"' in pcs
+    # pc-server points the server at /var/lib/posterchandb (overridable only for its own tests) and prepares it
+    # NOCOW on every enable (prepare_pcdb), not only when install.sh runs.
+    assert 'PCDB="${PC_PCDB_DIR:-/var/lib/posterchandb}"' in pcs
+    assert 'set_secret POSTERCHANDB_DIR "$PCDB"' in pcs and "prepare_pcdb" in pcs.split("do_enable(){", 1)[1]
     assert "POSTERCHANDB_DIR=/var/lib/posterchanai/posterchandb" in (ROOT / "Dockerfile").read_text()
     assert 'chattr -R +C "$PCDB_DIR"' in (ROOT / "docker-entrypoint.sh").read_text()
