@@ -478,6 +478,9 @@ class SettingsResponse(BaseModel):
     activitypub_via_proxy: bool = True  # federation through the proxy's Tor1 → Tor2 → direct listener
     activitypub_relays: str = ""       # relay INBOX urls, one per line (app/services/activitypub/relays.py)
     activitypub_relay_scope: str = "local"   # local = accounts with a name here; everyone = every account served
+    # Tell the admin (Telegram + NIP-17 DM, the uptime alert recipients) once when outbound delivery
+    # stalls and once when it recovers (activitypub/health.py). ON unless explicitly off.
+    activitypub_alerts: bool = True
     # ---- "Sign in with an account" on the client login page ----
     # Both are OFF by default: they are the only paths where an identity is created by the SERVER
     # rather than in the browser, so a node opts in deliberately.

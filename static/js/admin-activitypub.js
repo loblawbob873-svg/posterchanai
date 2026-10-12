@@ -22,8 +22,15 @@
         const on = (j.members || []).filter(m => m.member);
         const rows = on.map(m => `<tr><td><code>${esc(m.handle)}</code></td><td>${m.followers}</td></tr>`).join('');
         const d = j.delivery || {};
+        // Is anything actually going OUT? Measured by the worker (activitypub/health.py): green when
+        // members' events are delivered, red when they have waited too long or ticks keep failing.
+        const h = j.delivery_health || {};
+        const hColor = h.ok === true ? '#2e9d4f' : h.ok === false ? '#d64545' : '#c99a12';
+        const hDot = h.ok === true ? '🟢' : h.ok === false ? '🔴' : '🟡';
+        const healthLine = h.text ? `<div id="ap_delivery_health" data-ok="${h.ok === true ? 'true' : h.ok === false ? 'false' : 'unknown'}" style="margin-top:6px;font-weight:600;color:${hColor}">${hDot} ${esc(h.text)}</div>` : '';
         box.innerHTML = `<div>On — <strong>${on.length}</strong> member(s) on the fediverse as <code>@name@${esc(j.domain)}</code>.</div>`
             + (rows ? `<table class="ap-table" style="margin-top:6px"><tr><th>Handle</th><th>Followers</th></tr>${rows}</table>` : '')
+            + healthLine
             + `<div style="margin-top:6px">Delivered ${d.delivered || 0}, failed ${d.failed || 0}, waiting to retry ${d.queued || 0}${d.deleting ? `, deletions being sent ${d.deleting}` : ''}`
             + (d.last_error ? ` — last problem: ${esc(d.last_error)}` : '') + '</div>'
             + ((j.relays || []).length ? `<div style="margin-top:6px">Relays (${esc(j.relay_scope === 'everyone' ? 'every account' : 'named accounts')}): `

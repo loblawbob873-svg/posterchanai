@@ -1687,6 +1687,29 @@ would have handled it fine).
   Undo(Follow), a relay-persisted retry queue, DM retries. The relay's puppet kind list gained
   1018/1068/1984. `build_object` is the ONE Note/Question builder for delivery, `/ap/objects`, the
   outbox and `featured`.
+  **OUTBOUND DELIVERY STALLED FOR ~23 HOURS (2026-10-11) AND NOBODY WAS TOLD.** ~9,400 operator kind-5s
+  a day (DocTables deleting app docs; the operator is a member) filled the window, every tick hit the
+  worker's 240s `wait_for` before `_pass` saved its cursor, the newest-first read capped at 10,000
+  events then DROPPED the oldest ~16h of real posts/likes/a report, and the only trace was
+  `delivery tick failed: TimeoutError` in **`journalctl -u posterchanai-worker.service`** (the worker's
+  journal — NOT `posterchanai.service`). Now, structurally: `tick()` runs to a BUDGET with per-stage
+  deadlines (`_STAGE_END`: members' pass FIRST, then retries, everyone, deletions, relays); a junk
+  kind-5 is `_inert_deletion` (decided from tags before any read); `_windows` reads a backlog
+  OLDEST-FIRST in narrowing time windows (nothing is ever dropped by a cap); each event's plan has a
+  time limit and its sends a window (`_deliver`): not-started sends go to the persistent retry queue,
+  an in-flight one is never cancelled but handed off (retry written FIRST) and its host marked slow, so
+  one slow inbox costs one window, not every event; the cursor saves every `_SAVE_EVERY`s and on
+  cancellation. **Health is MEASURED** (`activitypub/health.py`, run by the worker after every tick via
+  `run_tick`): a canary = the oldest federatable member event NEWER than the cursor (a quiet node is
+  "caught up"; "could not ask" is `unknown`, never green), consecutive failed ticks (a tick that could
+  not run counts), sends/min — written into `pcai:ap:stats`, shown as the green/red line in Admin →
+  Fediverse (`health.view`, also red when the worker stops reporting) and as the measured 🌐 Federation
+  row of the health board. The admin is alerted ONCE on stall (>15 min or 5 failed ticks) and once on
+  recovery, over `uptime_service.send_admin_alert` (Telegram linked chat + NIP-17 to
+  `uptime_alert_npubs`/admin npub), switch `activitypub_alerts` (blank = ON); "alerted" persists in the
+  doc so a restart mid-stall does not re-alert. `scripts/ap_redeliver.py` (`outbox.redeliver`) re-sends
+  what a stall stranded, skipping `done`, `pcai:ap:sent:` records and its own progress doc.
+  `tests/test_activitypub_delivery_never_stalls.py` drives the shipped tick against the production shape.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

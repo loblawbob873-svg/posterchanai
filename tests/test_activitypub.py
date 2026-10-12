@@ -70,6 +70,9 @@ def world(monkeypatch):
     outbox._seen.clear()
     outbox._retries.clear()
     outbox._down.clear()
+    outbox._slow.clear()
+    outbox._drain_plans.clear()
+    outbox._pass_report.clear()
     outbox._gone_cache.update(at=0.0, set=frozenset())
     inbox._pending_by_host.clear()
     inbox._new_followers.clear()
@@ -1119,8 +1122,10 @@ def test_an_unreadable_follower_list_stops_the_everyone_pass_where_it_is(world, 
     state._nonlocal_cache["at"] = 0.0
     world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
     world["docs"]["pcai:ap:cursor:everyone"] = {"since": 1_700_000_000}
-    with pytest.raises(RuntimeError):
-        run(outbox.tick())
+    # The everyone pass stops where it is -- and no longer takes the members' pass, the retry queue
+    # and the deletions down with it: the tick reports the failure (the health check counts it).
+    run(outbox.tick())
+    assert outbox._last_outcome["ok"] is False and "everyone pass" in outbox._last_outcome["why"]
     assert world["docs"]["pcai:ap:cursor:everyone"]["since"] == 1_700_000_000
 
 
@@ -1227,7 +1232,7 @@ def test_the_delivery_pass_hands_a_contact_list_to_the_catch_up_and_keeps_going(
     world["relay"][k3["id"]] = k3
     world["relay"][post["id"]] = post
 
-    async def since(members, since, kinds=None):
+    async def since(members, since, kinds=None, **kw):
         return [e for e in world["relay"].values() if e["created_at"] > since and e["kind"] in (kinds or outbox.KINDS)
                 and (members is None or e["pubkey"] in members)]
     monkeypatch.setattr(outbox, "_since", since)

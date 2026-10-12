@@ -146,10 +146,13 @@ _ERROR_SAMPLE_MAX = 8
 # Deterministic status board — Python owns the emojis + layout so they're identical on every node.
 # The model only supplies a status word + short detail per subsystem (an easy single-shot task);
 # the icons and ordering below are never the model's job.
-_BOARD_ICON = {"disk": "💾", "smart": "🔧", "raid": "💿", "services": "⚙️", "swap": "🔄", "errors": "📜"}
+_BOARD_ICON = {"disk": "💾", "smart": "🔧", "raid": "💿", "services": "⚙️", "swap": "🔄", "errors": "📜",
+               "federation": "🌐"}
 _BOARD_LABEL = {"disk": "Disk", "smart": "SMART", "raid": "RAID", "services": "Services",
-                "swap": "Swap", "errors": "Errors (6h)"}
-_BOARD_ORDER = ["disk", "smart", "raid", "services", "swap", "errors"]
+                "swap": "Swap", "errors": "Errors (6h)", "federation": "Federation"}
+# `federation` is MEASURED ONLY (this node's delivery report, activitypub/health.py) and only for the
+# local node: the model is never asked for it, so a model line can never put it on the board.
+_BOARD_ORDER = ["disk", "smart", "raid", "services", "swap", "errors", "federation"]
 _STATUS_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", "none": "⚪"}
 
 _BOARD_SYS = (
@@ -557,6 +560,25 @@ async def _health_probe(db, admin, name: str, target: str) -> tuple:
         return {}, ""
 
 
+async def _federation_row() -> Optional[tuple]:
+    """THIS node's outbound fediverse delivery, from the report its worker writes after every tick
+    (`pcai:ap:stats`, activitypub/health.py) -- a measured row, never a model's. None when ActivityPub
+    is off here. An unreadable report is said as such (yellow), never read as healthy."""
+    try:
+        from app.services.activitypub import config as ap_config, health as ap_health
+        if not ap_config.enabled() or not ap_config.base_url():
+            return None
+    except Exception:
+        return None
+    try:
+        from app.services import nostr_store, settings_store
+        doc = await nostr_store.get_doc(settings_store._port(), ap_health.DOC, strict=True,
+                                        seckey=settings_store._operator_seckey(None))
+    except Exception:
+        return ("yellow", "could not read the delivery report (relay did not answer)")
+    return ap_health.board_row(doc)
+
+
 async def _error_samples(db, admin, name: str, target: str) -> list:
     """Top journal/dmesg error groups for a node, each with one verbatim sample line.
 
@@ -778,6 +800,10 @@ async def build_health_report(db, admin: User, notify=None) -> str:
         # Measured first, and independently of the agent: these are the rows the board is corrected
         # against, and they're also the only rows a node whose agent leg dies still gets.
         probe, probe_raw = await _health_probe(db, admin, name, target)
+        if target == "local":
+            fed = await _federation_row()
+            if fed:
+                probe = dict(probe or {}, federation=fed)
         try:
             if _nostr:
                 summary = await node_service.run_agent_over_nostr(target[6:], _HEALTH_GOAL, mode="agent", report=True)

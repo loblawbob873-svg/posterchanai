@@ -98,7 +98,7 @@ def test_a_report_is_flagged_once_and_cannot_be_deleted_into_a_delete(world, mon
     rep = _report([["e", MIRROR_ID, "spam"], ["p", carol, "spam"]])
     world["relay"][rep["id"]] = rep
 
-    async def since(members, since, kinds=None):
+    async def since(members, since, kinds=None, **kw):
         return [e for e in world["relay"].values() if e["created_at"] > since and e["kind"] in (kinds or outbox.KINDS)
                 and (members is None or e["pubkey"] in members)]
     monkeypatch.setattr(outbox, "_since", since)

@@ -8,6 +8,12 @@
             <div id="ap_status" class="ap-status" role="status" style="color:#888;">Open this tab to load the status.</div>
             <button type="button" class="btn-secondary" id="ap_status_refresh" style="margin-top:8px">Check again</button>
         </div>
+        <div class="form-group">
+            <label for="activitypub_alerts">
+                <input type="checkbox" id="activitypub_alerts" name="activitypub_alerts"> Alert me when delivery to the fediverse stalls <span class="muted">(on by default)</span>
+            </label>
+            <small>The delivery worker checks after every round whether members' posts are actually going out. If one has waited more than 15 minutes, or five rounds in a row fail, you get ONE message — and one more when it has caught up. Sent over Telegram (your linked chat) and as a Nostr DM to the addresses under Nodes → Uptime alerts (your own npub when that is empty).</small>
+        </div>
     </fieldset>
 
     <fieldset>

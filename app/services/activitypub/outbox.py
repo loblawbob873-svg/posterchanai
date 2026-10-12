@@ -24,6 +24,7 @@ fediverse, or another bridge's copy), never a member's own, so it is never sent 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import time
@@ -288,10 +289,18 @@ async def _tally_of(poll_id: str) -> dict:
         return {}
 
 
+_fol_memo: dict | None = None    # member -> follower inboxes, held for ONE delivery pass (see _pass)
+
+
 async def _follower_inboxes(member: str) -> list:
+    if _fol_memo is not None and member in _fol_memo:
+        return list(_fol_memo[member])
     gone = await _gone()
-    return [f["inbox"] for f in await state.followers(member)
-            if not _blocked_cached(f.get("actor", "")) and f.get("actor") not in gone]
+    out = [f["inbox"] for f in await state.followers(member)
+           if not _blocked_cached(f.get("actor", "")) and f.get("actor") not in gone]
+    if _fol_memo is not None:
+        _fol_memo[member] = list(out)     # a FAILED read raised above and is never remembered
+    return out
 
 
 async def _copies_of(post_id: str) -> set:
@@ -308,10 +317,26 @@ async def _copies_of(post_id: str) -> set:
     return set(await _follower_inboxes(post["pubkey"])) | set((await _sent_rec(post_id)).get("inboxes") or [])
 
 
+_FEDERATED_KIND_NAMES = frozenset(str(k) for k in KINDS)
+
+
+def _inert_deletion(ev: dict) -> bool:
+    """A kind-5 that names only kinds the fediverse never received -- above all the node's own 30078
+    app documents, deleted under the operator key, which on a node whose operator has an account IS a
+    member. Decided from the tags alone, so it costs no relay read: ~9,400 of these a day each paid a
+    strict follower-list read (every follower document decrypted) before anything looked at the tags."""
+    if ev.get("kind") != 5:
+        return False
+    tags = ev.get("tags") or []
+    named = {t[1] for t in tags if len(t) > 1 and t[0] == "k"} | \
+        {str(t[1]).split(":", 1)[0] for t in tags if len(t) > 1 and t[0] == "a"}
+    return bool(named) and not named & _FEDERATED_KIND_NAMES
+
+
 async def plan(ev: dict, member: str) -> list:
     """[(inbox, activity)] to send for one event. Empty when there is nothing to federate."""
     base = config.base_url()
-    if not base or not actors.handle(member) or _is_mirror(ev) or _protected(ev):
+    if not base or not actors.handle(member) or _is_mirror(ev) or _protected(ev) or _inert_deletion(ev):
         return []
     if not actors.is_actor(member) and ev.get("kind") == 3:
         return []          # a non-local user's follows would bring posts only to THIS relay, which they do not read
@@ -378,13 +403,8 @@ async def plan(ev: dict, member: str) -> list:
 
     elif kind == 5:
         kinds = {t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "k"}
-        # A deletion that names only kinds the fediverse never received -- above all the node's own
-        # 30078 app documents, deleted under the operator key, which on a node whose operator has an
-        # account IS a member -- is not a post deletion. Read as one it cost two relay reads and a
-        # Delete to every follower apiece, ~9,400 a day, and stalled delivery for everybody.
-        named = kinds | {t[1].split(":", 1)[0] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "a"}
-        if named and not named & {str(k) for k in KINDS}:
-            return []
+        # (A deletion naming only kinds the fediverse never received returned [] at the top --
+        # `_inert_deletion` -- before the follower read.)
         for t in ev.get("tags") or []:
             if len(t) < 2 or t[0] != "e":
                 continue
@@ -789,27 +809,29 @@ async def _load_retries() -> None:
                              int(e.get("attempt") or 1), key))
 
 
-async def _send(inbox: str, activity: dict, member: str, attempt: int = 0, key: str = "") -> None:
+async def _send(inbox: str, activity: dict, member: str, attempt: int = 0, key: str = "") -> bool:
+    """Deliver once. True when nothing more is owed (delivered, or an answer retrying cannot change);
+    False when it is still owed (queued for a retry, or out of retries)."""
     host = remote.host_of(inbox)
     resting = _host_resting(host)
     if resting:
         if attempt < len(_RETRY_DELAYS):
             await _queue_retry(time.time() + max(resting, _RETRY_DELAYS[attempt]), inbox, activity, member, attempt + 1)
         _stats["failed"] += 1
-        return
+        return False
     keys = await state.keypair(member)               # driven by an event on this relay: never limited
     key_id, priv = await actors.signing(member, keys)
     status = await remote.deliver(inbox, activity, key_id=key_id, private_pem=priv)
     _note_result(host, 200 <= status < 500 and status not in (408, 429))
     if 200 <= status < 300:
         _stats["delivered"] += 1
-        return
+        return True
     _stats["failed"] += 1
     _stats["last_error"] = f"HTTP {status} from {remote.host_of(inbox)}"
     # 4xx other than 408/429 is an answer, not an outage: retrying it only makes us the storm.
     if (status == 0 or status >= 500 or status in (408, 429)) and attempt < len(_RETRY_DELAYS):
         await _queue_retry(time.time() + _RETRY_DELAYS[attempt], inbox, activity, member, attempt + 1)
-        return
+        return False
     # Given up. A Follow that never arrived must not stay recorded as asked-for, or the member's
     # next contact-list change would think it already sent and never try again.
     if activity.get("type") == "Follow":
@@ -817,21 +839,158 @@ async def _send(inbox: str, activity: dict, member: str, attempt: int = 0, key: 
             await state.drop_following(member, convert.id_of(activity.get("object")))
         except Exception:
             pass
+    return 200 <= status < 500 and status not in (408, 429)
 
 
-async def _flush_retries(limit: int = 200) -> None:
+# ------------------------------------------------------------------------------- the time budget
+#
+# 2026-10-11: delivery stalled for ~23 hours. Every tick ran out of the worker's time limit before its
+# pass saved the cursor, so the next tick started from the same place, for ever, and nothing said so
+# except one INFO line in the WORKER's journal. The tick is now built so that cannot happen again:
+#   * the whole tick works to a BUDGET under the worker's limit, and every stage has its own deadline
+#     -- the members' pass first (it is the one that must never wait), then the retry queue, then the
+#     everyone pass, the large deletions, and last the relay subscriptions;
+#   * no single event can eat the tick: its plan has a time limit, and its sends get a window --
+#     whatever has not STARTED when the window closes goes to the persistent retry queue (it is owed,
+#     not lost), so the cursor may move past it, exactly as it always could past a failed send;
+#   * the reader takes the backlog oldest-first in time windows (`_windows`), so a flood of one kind
+#     can never push older posts out of a capped read;
+#   * the cursor is saved every _SAVE_EVERY seconds AND when a stage stops, so a cut-off keeps its work.
+
+def _limit() -> float:
+    """The worker's hard limit on one tick (`_job`'s wait_for)."""
+    return _TICK_SECONDS * 8
+
+
+# Cumulative deadlines, as fractions of _limit() from the tick's start. A stage that finishes early
+# leaves its time to the next; one that overruns (a send already in flight is never cut off -- it is
+# bounded by remote.deliver's own total deadline) eats only the stages after it.
+_STAGE_END = {"members": 0.55, "retries": 0.65, "everyone": 0.72, "deletions": 0.78, "relays": 0.8}
+
+
+def _event_window() -> float:
+    """Seconds one event's sends may take before the rest are handed to the retry queue."""
+    return _limit() / 12
+
+
+def _plan_limit() -> float:
+    """Seconds one event's plan may take (actor and parent lookups on slow servers)."""
+    return _limit() / 4
+
+
+_inflight: set = set()           # sends handed off past their event's window, still running
+_INFLIGHT_MAX = 64
+_slow: dict = {}                 # host -> monotonic time until which its new sends go to the retry queue
+_SLOW_FOR = 120.0
+
+
+def _host_slow(host: str) -> bool:
+    until = _slow.get(host)
+    if until and until > time.monotonic():
+        return True
+    _slow.pop(host, None)
+    return False
+
+
+async def _deliver(jobs: list, member: str, deadline: float, *, width: int = 8, requeue: bool = True,
+                   detach: bool = True) -> list:
+    """Send [(inbox, activity)] at most `width` at a time, and stop waiting at `deadline`:
+      * a send that has not STARTED by then is not started -- with `requeue` it goes to the persistent
+        retry queue, due now (owed, not lost); either way it is returned, in order;
+      * a send already IN FLIGHT is never cancelled (a cut-off POST may have landed and could then only
+        be repeated blind). With `detach` it is left running in the background, its retry written
+        FIRST so a restart cannot lose it, and its server is marked slow: that server's next sends go
+        straight to the retry queue instead of costing every following event the same wait. Without
+        `detach` it is awaited (remote.deliver bounds it).
+    2026-10-11: one slow inbox made every event wait for it, and every event behind it waited too."""
+    if not jobs:
+        return []
+    sem = asyncio.Semaphore(width)
+    late: list = []
+    started: set = set()
+    handed_off: set = set()
+
+    async def one(idx, job):
+        if _host_slow(remote.host_of(job[0])):
+            late.append((idx, job))
+            return
+        async with sem:
+            if time.monotonic() >= deadline:
+                late.append((idx, job))
+                return
+            started.add(idx)
+            try:
+                ok = await _send(job[0], job[1], member)
+            except Exception as e:
+                # _send failed BEFORE it could queue its own retry (a key read, a signature): owed.
+                _stats["last_error"] = f"send failed: {type(e).__name__}"[:200]
+                await _queue_retry(time.time() + _RETRY_DELAYS[0], job[0], job[1], member, 1)
+                return
+            if ok and idx in handed_off:
+                key = _retry_key(job[0], job[1])     # it landed after all: the safety copy is not owed
+                _retries[:] = [r for r in _retries if r[5] != key]
+                await _forget_retry(key)
+
+    tasks = [asyncio.ensure_future(one(i, j)) for i, j in enumerate(jobs)]
+    try:
+        _, pending = await asyncio.wait(tasks, timeout=max(0.0, deadline - time.monotonic()))
+    except asyncio.CancelledError:
+        for i, t in enumerate(tasks):
+            if i not in started:
+                t.cancel()                           # a POST in flight is left to finish (see above)
+        raise
+    wait_for: list = []
+    for t in pending:
+        idx = tasks.index(t)
+        if idx not in started:
+            t.cancel()                               # waiting for a slot: never started, nothing sent
+            late.append((idx, jobs[idx]))
+        elif detach and len(_inflight) < _INFLIGHT_MAX:
+            inbox, act = jobs[idx]
+            await _queue_retry(time.time() + remote._TOTAL_SECONDS + 60, inbox, act, member, 1)
+            handed_off.add(idx)
+            _slow[remote.host_of(inbox)] = time.monotonic() + _SLOW_FOR
+            _inflight.add(t)
+            t.add_done_callback(_inflight.discard)
+            _stats["handed_off"] = _stats.get("handed_off", 0) + 1
+        else:
+            wait_for.append(t)
+    if wait_for:
+        await asyncio.gather(*wait_for, return_exceptions=True)
+    late = [j for _, j in sorted(late, key=lambda x: x[0])]
+    if requeue:
+        for inbox, act in late:
+            await _queue_retry(time.time(), inbox, act, member, 0)
+        _stats["handed_to_retry"] = _stats.get("handed_to_retry", 0) + len(late)
+    return late
+
+
+async def _flush_retries(limit: int = 200, deadline: float = 0.0) -> None:
     """Send what is due -- up to `limit` of them, concurrently; the rest stay queued for the next
-    tick rather than being dropped."""
-    await _load_retries()
+    tick rather than being dropped. Nothing is STARTED after `deadline`: what is left goes back on the
+    queue unchanged (its relay document was never removed)."""
+    deadline = deadline or (time.monotonic() + _limit())
+    try:
+        await asyncio.wait_for(_load_retries(), timeout=max(1.0, deadline - time.monotonic()))
+    except (asyncio.TimeoutError, TimeoutError):
+        pass                                      # try again next tick; memory still has the queue
     now = time.time()
-    due = [r for r in _retries if r[0] <= now][:limit]
+    due = sorted((r for r in _retries if r[0] <= now), key=lambda r: r[0])[:limit]
     for r in due:
         _retries.remove(r)
     sem = asyncio.Semaphore(8)
 
     async def one(r):
         async with sem:
-            await _send(r[1], r[2], r[3], r[4])
+            if time.monotonic() >= deadline:
+                _retries.append(r)               # not started: still owed, document untouched
+                return
+            try:
+                await _send(r[1], r[2], r[3], r[4])
+            except Exception as e:
+                _stats["last_error"] = f"retry failed: {type(e).__name__}"[:200]
+                _retries.append((time.time() + _RETRY_DELAYS[0],) + tuple(r[1:]))
+                return
             if not any(x[5] == r[5] for x in _retries):
                 await _forget_retry(r[5])        # sent or given up (a re-queue keeps its document)
     await asyncio.gather(*(one(r) for r in due))
@@ -843,74 +1002,109 @@ async def _members() -> list:
     return actors.all_actors()
 
 
+_last_outcome = {"ok": True, "why": ""}          # what the last tick could do -- read by run_tick
+
+
 async def tick() -> int:
     """One round: local users' events, then (in `everyone` mode) what other Nostr users on this relay
     addressed to the fediverse. Each pass has its own cursor. Returns events handled."""
+    _last_outcome.update(ok=True, why="")
     if not config.enabled() or not config.base_url():
         return 0
     if not settings_store.is_hydrated():
+        _last_outcome.update(ok=False, why="settings not loaded")
         return 0          # "is the Pleroma bridge on?" and friends cannot be answered yet -- decide nothing
     from app.services import fedi_tables
     from app.services.relay_reader import Unavailable
+    start = time.monotonic()
+
+    def until(stage: str) -> float:
+        return start + _limit() * _STAGE_END[stage]
     try:
         await fedi_tables.aready()
     except Unavailable as e:
         # "Is this a puppet / a mirrored note?" cannot be answered: deliver nothing, move no cursor.
         logger.info("[activitypub] delivery waits: %s", e)
+        _last_outcome.update(ok=False, why=f"waiting: {e}"[:200])
         return 0
     _stats["last_tick"] = int(time.time())
-    await _flush_retries()
-    try:
-        from app.services.activitypub import relays
-        await relays.reconcile()
-    except Exception as e:
-        logger.info("[activitypub] relay subscriptions not reconciled: %s: %s", type(e).__name__, e)
-    handled = await _pass(state.CURSOR, await _members(), KINDS, None)
-    if config.everyone():
-        handled += await _pass(state.CURSOR_EVERYONE, None, _EVERYONE_KINDS, await _everyone_filter())
-    try:
-        await drain_deletions()
-    except Exception as e:
-        logger.info("[activitypub] deletion backlog not drained: %s: %s", type(e).__name__, e)
+    # The MEMBERS' pass first. It used to run after the retry queue (200 sends, each up to 30s on a
+    # dead server) and the relay subscriptions, so a full queue of slow inboxes could spend the tick
+    # before a single fresh post was looked at.
+    handled = await _pass(state.CURSOR, await _members(), KINDS, None, deadline=until("members"))
+    await _flush_retries(deadline=until("retries"))
+    if config.everyone() and time.monotonic() < until("everyone"):
+        try:
+            handled += await _pass(state.CURSOR_EVERYONE, None, _EVERYONE_KINDS, await _everyone_filter(),
+                                   deadline=until("everyone"))
+        except Exception as e:
+            # Its own cursor, its own failure: it must never take the members' delivery down with it.
+            logger.info("[activitypub] everyone pass failed: %s: %s", type(e).__name__, e)
+            _stats["last_error"] = f"everyone pass: {type(e).__name__}"[:200]
+            _last_outcome.update(ok=False, why=_stats["last_error"])
+    if time.monotonic() < until("deletions"):
+        try:
+            await drain_deletions(deadline=until("deletions"))
+        except Exception as e:
+            logger.info("[activitypub] deletion backlog not drained: %s: %s", type(e).__name__, e)
+    left = until("relays") - time.monotonic()
+    if left > 2:
+        try:
+            from app.services.activitypub import relays
+            await asyncio.wait_for(relays.reconcile(), timeout=left)
+        except Exception as e:
+            logger.info("[activitypub] relay subscriptions not reconciled: %s: %s", type(e).__name__, e)
     return handled
 
 
 _INLINE_DELETION = 300        # deliveries a kind-5 may send inside the pass; more goes to the backlog
 _DRAIN_PER_TICK = 1500        # backlog deliveries per tick (~30s at 16 at a time)
+_drain_plans: dict = {}       # deletion id -> its plan, so a big one is planned once, not every tick
 
 
-async def drain_deletions(budget: int = 0) -> int:
+async def drain_deletions(budget: int = 0, deadline: float = 0.0) -> int:
     """Send the next slice of the queued large deletions, oldest first. The kind-5 is re-read and
     re-planned (the plan is deterministic: per deleted id, sorted inboxes) and resumed at the saved
-    position, so a restart continues where it stopped; a re-sent Delete is harmless, a lost one is not."""
+    position, so a restart continues where it stopped; a re-sent Delete is harmless, a lost one is not.
+    Nothing is started after `deadline`; the position only moves over what was started."""
     budget = budget or _DRAIN_PER_TICK
+    deadline = deadline or (time.monotonic() + _limit())
     queue = await state.deletions()
     _stats["deleting"] = len(queue)
     sent = 0
-    sem = asyncio.Semaphore(16)
-
-    async def one(inbox, act, member):
-        async with sem:
-            await _send(inbox, act, member)
-
     for eid, entry in sorted(queue.items(), key=lambda kv: (kv[1].get("at", 0), kv[0])):
-        if sent >= budget:
+        if sent >= budget or time.monotonic() >= deadline:
             break
         ev = await _event(eid, strict=True)
         if not ev or ev.get("kind") != 5 or ev.get("pubkey") != entry.get("member"):
             await state.finish_deletion(eid)          # not a deletion by the member it was queued for
+            _drain_plans.pop(eid, None)
             continue
-        jobs = await plan(ev, ev["pubkey"])
+        jobs = _drain_plans.get(eid)
+        if jobs is None:
+            try:
+                jobs = await asyncio.wait_for(plan(ev, ev["pubkey"]), timeout=max(1.0, deadline - time.monotonic()))
+            except (asyncio.TimeoutError, TimeoutError):
+                break                                  # planned again next tick; nothing was sent
+            _drain_plans[eid] = jobs
         pos = max(0, int(entry.get("pos") or 0))
         chunk = jobs[pos:pos + budget - sent]
-        await asyncio.gather(*(one(i, a, ev["pubkey"]) for i, a in chunk), return_exceptions=True)
-        pos += len(chunk)
-        sent += len(chunk)
+        late = await _deliver(chunk, ev["pubkey"], deadline, width=16, requeue=False, detach=False)
+        # The position moves over the run of jobs that were all started; anything after the first one
+        # that was not is sent again next time (a repeated Delete is harmless, a skipped one is not).
+        skipped = {id(j) for j in late}
+        started = next((i for i, j in enumerate(chunk) if id(j) in skipped), len(chunk))
+        pos += started
+        sent += started
         if pos >= len(jobs):
             await state.finish_deletion(eid)
+            _drain_plans.pop(eid, None)
             _stats["deleting"] = max(0, _stats.get("deleting", 1) - 1)
         else:
             await state.deletion_progress(eid, dict(entry, pos=pos, total=len(jobs)))
+    if len(_drain_plans) > 50:
+        for k in list(_drain_plans)[:-50]:
+            _drain_plans.pop(k, None)
     return sent
 
 
@@ -1175,88 +1369,141 @@ async def _save_cursor(cursor_key: str, since: int, done: dict) -> None:
     await state._put(cursor_key, {"since": int(since), "done": dict(keep)})
 
 
-async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
+_pass_report: dict = {}          # cursor key -> {"cursor", "stopped", "at"}: what the last pass did (health)
+
+
+async def _pass(cursor_key: str, authors, kinds: list, qualifies, deadline: float = 0.0) -> int:
     """Read since `cursor_key` (minus the overlap window), translate, deliver, advance. `authors` None
-    = every author (the everyone pass), narrowed by `qualifies`."""
+    = every author (the everyone pass), narrowed by `qualifies`. Stops at `deadline` with the cursor
+    saved at the last event it finished, so the next tick carries on from there."""
+    global _fol_memo
+    deadline = deadline or (time.monotonic() + _limit())
     try:
         since, saved_done = await _cursor_doc(cursor_key)
     except Exception as e:
         _stats["last_error"] = f"cursor unreadable: {type(e).__name__}"
+        _pass_report[cursor_key] = {"cursor": 0, "stopped": "cursor unreadable", "at": int(time.time())}
         return 0                                   # never deliver from a guessed position
     now = int(time.time())
     if not since:
         await _save_cursor(cursor_key, now, {})    # first run: no backfill of everything ever posted
+        _pass_report[cursor_key] = {"cursor": now, "stopped": "", "at": now}
         return 0
     if authors is not None and not authors:
         await _save_cursor(cursor_key, min(max(since, now - 60), now), saved_done)
+        _pass_report[cursor_key] = {"cursor": min(max(since, now - 60), now), "stopped": "", "at": now}
         return 0
     overlap = _OVERLAP.get(cursor_key, 900)
     done = _done.setdefault(cursor_key, {})
     for k, v in saved_done.items():
         done.setdefault(k, v)
-    evs = await _since(authors, max(1, min(since, now) - overlap), kinds)
-    evs = sorted((e for e in evs if e.get("id") not in _seen and e.get("id", "")[:16] not in done),
-                 key=lambda e: (e.get("created_at", 0), e["id"]))
-    wanted = await qualifies(evs) if qualifies is not None else None
     handled, newest, sent_any = 0, min(since, now), False
     saved_at = time.monotonic()
-    sem = asyncio.Semaphore(8)
+    stopped = ""                                   # why the pass ended before the present ("" = it didn't)
 
-    async def one(inbox, act, member):
-        async with sem:
-            await _send(inbox, act, member)
-
-    for ev in evs:
-        if wanted is not None and ev["id"] not in wanted:
-            _seen[ev["id"]] = time.time()
-            newest = max(newest, int(ev.get("created_at", 0)))
-            continue
-        if ev.get("kind") == 3 and authors is not None:
-            # A member's contact list is the catch-up's job, never the tick's. Turning a list of a few
-            # hundred fediverse accounts into Follows is a few hundred actor fetches; inside the tick's
-            # time limit it timed out, the cursor never moved, and every post, reply and like queued
-            # behind it waited too ("I didn't see anything on DRC"). The catch-up has no limit and runs
-            # every minute; it sees this list as newer than its marker and handles it there.
-            _caught_up.discard(ev["pubkey"])
-            _seen[ev["id"]] = time.time()
-            newest = max(newest, int(ev.get("created_at", 0)))
-            handled += 1
-            continue
-        try:
-            jobs = await plan(ev, ev["pubkey"])
-            if ev.get("kind") == 5 and len(jobs) > _INLINE_DELETION:
-                # "Delete all my posts": sent a slice per tick by drain_deletions. Inline, one of these
-                # outran the tick's time limit, was cancelled before being marked done, and was sent
-                # again from the top every tick -- with every post queued behind it never going out.
-                await state.queue_deletion(ev["id"], ev["pubkey"], len(jobs))
-                jobs = []
-                done[ev["id"][:16]] = int(ev.get("created_at", 0))
-                sent_any = True
-        except Exception as e:
-            # STOP HERE rather than step over it: the usual cause is a relay read that failed (the
-            # follower list is read strictly), and moving the cursor past the event would lose it
-            # for good. One event that fails every time is skipped after three tries, and said so.
-            n = _failures[ev["id"]] = _failures.get(ev["id"], 0) + 1
-            logger.info("[activitypub] could not translate %s (try %d): %s: %s",
-                        ev.get("id", "")[:12], n, type(e).__name__, e)
-            if n < 3:
-                break
-            _stats["last_error"] = f"skipped {ev['id'][:12]} after 3 failures: {type(e).__name__}"
-            jobs = []
-        if jobs:
-            await asyncio.gather(*(one(i, a, ev["pubkey"]) for i, a in jobs))
-            done[ev["id"][:16]] = int(ev.get("created_at", 0))
-            sent_any = True
-        _failures.pop(ev["id"], None)
+    def finished(ev) -> None:
+        nonlocal newest, handled
         _seen[ev["id"]] = time.time()
         newest = max(newest, int(ev.get("created_at", 0)))
         handled += 1
-        if time.monotonic() - saved_at >= _SAVE_EVERY:
-            # A pass that outruns the tick's time limit is cancelled where it stands, and the save at
-            # the end never happens: a long backlog was re-read from the same cursor every tick, for
-            # 22 hours, by a worker that was making progress the whole time.
-            await _save_cursor(cursor_key, min(newest, now), done)
-            saved_at = time.monotonic()
+
+    _fol_memo = {}
+    try:
+        async with contextlib.aclosing(_windows(authors, max(1, min(since, now) - overlap), kinds, now)) as batches:
+            async for batch in batches:
+                evs = sorted((e for e in batch if e.get("id") not in _seen and e.get("id", "")[:16] not in done),
+                             key=lambda e: (e.get("created_at", 0), e["id"]))
+                for at in range(0, len(evs), _PAGE):
+                    chunk = evs[at:at + _PAGE]
+                    if time.monotonic() >= deadline:
+                        stopped = "time budget"
+                        break
+                    wanted = None
+                    if qualifies is not None:
+                        try:
+                            wanted = await asyncio.wait_for(qualifies(chunk),
+                                                            timeout=max(1.0, deadline - time.monotonic()))
+                        except (asyncio.TimeoutError, TimeoutError):
+                            stopped = "time budget"
+                            break
+                    for ev in chunk:
+                        if time.monotonic() >= deadline:
+                            stopped = "time budget"
+                            break
+                        if _inert_deletion(ev) or (wanted is not None and ev["id"] not in wanted):
+                            finished(ev)           # nothing to send, decided without a read
+                            continue
+                        if ev.get("kind") == 3 and authors is not None:
+                            # A member's contact list is the catch-up's job, never the tick's. Turning a
+                            # list of a few hundred fediverse accounts into Follows is a few hundred actor
+                            # fetches; inside the tick's time limit it timed out, the cursor never moved,
+                            # and every post, reply and like queued behind it waited too ("I didn't see
+                            # anything on DRC"). The catch-up has no limit and runs every minute; it sees
+                            # this list as newer than its marker and handles it there.
+                            _caught_up.discard(ev["pubkey"])
+                            finished(ev)
+                            continue
+                        try:
+                            # ONE EVENT MUST NOT EAT THE TICK: a reply naming thirty people on slow servers
+                            # is thirty actor fetches. Out of time it counts as a failed try, like any other.
+                            jobs = await asyncio.wait_for(plan(ev, ev["pubkey"]), timeout=_plan_limit())
+                            if ev.get("kind") == 5 and len(jobs) > _INLINE_DELETION:
+                                # "Delete all my posts": sent a slice per tick by drain_deletions. Inline,
+                                # one of these outran the tick's time limit, was cancelled before being
+                                # marked done, and was sent again from the top every tick -- with every
+                                # post queued behind it never going out.
+                                await state.queue_deletion(ev["id"], ev["pubkey"], len(jobs))
+                                _drain_plans[ev["id"]] = jobs
+                                jobs = []
+                                done[ev["id"][:16]] = int(ev.get("created_at", 0))
+                                sent_any = True
+                        except Exception as e:
+                            # STOP HERE rather than step over it: the usual cause is a relay read that
+                            # failed (the follower list is read strictly), and moving the cursor past the
+                            # event would lose it for good. One event that fails every time is skipped
+                            # after three tries, and said so.
+                            n = _failures[ev["id"]] = _failures.get(ev["id"], 0) + 1
+                            logger.info("[activitypub] could not translate %s (try %d): %s: %s",
+                                        ev.get("id", "")[:12], n, type(e).__name__, e)
+                            if n < 3:
+                                stopped = f"could not translate an event: {type(e).__name__}"
+                                break
+                            _stats["last_error"] = f"skipped {ev['id'][:12]} after 3 failures: {type(e).__name__}"
+                            jobs = []
+                        if jobs:
+                            # The sends get a window; what has not started when it closes is OWED, in the
+                            # persistent retry queue -- a dead or slow inbox costs this event its window,
+                            # never the tick.
+                            await _deliver(jobs, ev["pubkey"], min(deadline, time.monotonic() + _event_window()))
+                            done[ev["id"][:16]] = int(ev.get("created_at", 0))
+                            sent_any = True
+                        _failures.pop(ev["id"], None)
+                        finished(ev)
+                        if time.monotonic() - saved_at >= _SAVE_EVERY:
+                            # A pass that outruns the tick's time limit is cancelled where it stands, and
+                            # the save at the end never happens: a long backlog was re-read from the same
+                            # cursor every tick, for 22 hours, by a worker making progress the whole time.
+                            await _save_cursor(cursor_key, min(newest, now), done)
+                            saved_at = time.monotonic()
+                    if stopped:
+                        break
+                if stopped:
+                    break
+    except asyncio.CancelledError:
+        # Cut off by the worker's hard limit after all: keep what was finished, then go.
+        try:
+            await asyncio.shield(_save_cursor(cursor_key, min(newest, now), done))
+        except BaseException:
+            pass
+        raise
+    except Exception as e:
+        # A relay read that failed part-way: what was finished before it still counts (saved below);
+        # nothing after it is guessed at.
+        stopped = f"relay read failed: {type(e).__name__}"
+        _stats["last_error"] = stopped[:200]
+        logger.info("[activitypub] delivery read stopped: %s: %s", type(e).__name__, e)
+    finally:
+        _fol_memo = None
     if len(_seen) > 40000:
         for k in sorted(_seen, key=_seen.get)[:20000]:
             _seen.pop(k, None)
@@ -1266,24 +1513,32 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies) -> int:
     floor = min(newest, now) - overlap
     for k in [k for k, v in done.items() if v < floor]:
         done.pop(k, None)
-    if newest != since or sent_any:
+    saved = newest != since or sent_any
+    if saved:
         await _save_cursor(cursor_key, newest, done)
+    _pass_report[cursor_key] = {"cursor": newest if saved else since, "stopped": stopped, "at": int(time.time())}
+    if stopped:
+        logger.info("[activitypub] %s pass stopped at %d (%ds behind): %s", cursor_key, newest,
+                    max(0, now - newest), stopped)
     return handled
 
 
 _failures: dict = {}
 _MAX_PAGES = 20
+_WINDOW_PAGES = 8                # pages one time window may take before it is narrowed
 _SAVE_EVERY = 20                 # seconds of a pass between cursor saves
+_last_read = {"complete": True}
 
 
-async def _since(members, since: int, kinds: list = None) -> list:
-    """Everything members published since `since`. The relay answers NEWEST FIRST with a limit, so
-    one query after a long quiet spell (worker down, a busy bot) would return only the newest page,
-    and a cursor moved to it would skip everything older. So it pages backwards with `until` until a
-    page comes back short. Bounded: past _MAX_PAGES the backlog is too old to be worth sending, and
-    the oldest part is dropped with a note rather than holding delivery up for ever."""
-    out, seen_ids, until = [], set(), None
-    for _ in range(_MAX_PAGES):
+async def _since(members, since: int, kinds: list = None, *, until: int | None = None,
+                 pages: int = _MAX_PAGES) -> list:
+    """Everything members published in [since, until]. The relay answers NEWEST FIRST with a limit,
+    so this pages backwards with `until` until a page comes back short. When `pages` run out first the
+    read is INCOMPLETE -- its oldest part is missing -- and `_last_read["complete"]` says so; the
+    caller (`_windows`) then asks for a narrower window instead of delivering from a partial one."""
+    out, seen_ids = [], set()
+    _last_read["complete"] = True
+    for _ in range(pages):
         flt = {"kinds": kinds or KINDS, "since": since, "limit": _PAGE}
         if members is not None:
             flt["authors"] = members
@@ -1297,8 +1552,140 @@ async def _since(members, since: int, kinds: list = None) -> list:
         if len(page) < _PAGE or not fresh:
             return out
         until = min(int(e.get("created_at", 0)) for e in page)
-    _stats["last_error"] = f"backlog over {_MAX_PAGES * _PAGE} events; the oldest were not sent"
+    _last_read["complete"] = False
     return out
+
+
+async def _windows(members, since: int, kinds: list, now: int, *, until: int | None = None):
+    """The events from `since` on, OLDEST WINDOW FIRST, as batches. A capped newest-first read of a
+    long backlog (2026-10-11: ~9,400 operator kind-5s a day, then 10,000 events max) handed over only
+    the NEWEST part, and the cursor moved past the oldest ~16 hours of real posts, likes and a report:
+    they were never sent. A window that does not fit in _WINDOW_PAGES is narrowed and asked again, so
+    nothing is dropped however the backlog is made up; only a single SECOND holding more than
+    _MAX_PAGES pages could be, and that is said out loud. The last window is open-ended (a clock a
+    little ahead is still read), unless `until` closes it."""
+    hi = now if until is None else min(until, now)
+    start, span = since, max(0, hi - since)
+    while start <= hi:
+        end = min(hi, start + span)
+        last = end >= hi and until is None
+        _last_read["complete"] = True        # set by _since; a stand-in that never says must not inherit a stale "no"
+        evs = await _since(members, start, kinds, until=None if last else end,
+                           pages=_WINDOW_PAGES if end > start else _MAX_PAGES)
+        if not _last_read["complete"] and end > start:
+            span = (end - start) // 4
+            continue
+        if not _last_read["complete"]:
+            _stats["last_error"] = f"over {_MAX_PAGES * _PAGE} events in second {start}; the oldest of them were not sent"
+            logger.warning("[activitypub] %s", _stats["last_error"])
+        yield evs
+        start = end + 1
+        span = max(span * 2, 600)
+
+
+# ------------------------------------------------------------------------------ redelivery
+
+_REDELIVER = "pcai:ap:redeliver:"
+
+
+async def capped_read_boundary(cursor: int, pass_at: int) -> int:
+    """Where the OLD capped reader stopped: the oldest `created_at` that a read of the members' events
+    from `cursor` minus the overlap, as of `pass_at`, newest first, capped at _MAX_PAGES pages, handed
+    over. Everything older than it in that window was dropped by that reader. Returns `cursor` when the
+    read was not capped (nothing was dropped)."""
+    members = await _members()
+    evs = await _since(members, max(1, cursor - _OVERLAP[state.CURSOR]), KINDS, until=pass_at, pages=_MAX_PAGES)
+    if _last_read["complete"] or not evs:
+        return cursor
+    return min(int(e.get("created_at", 0)) for e in evs)
+
+
+async def redeliver(since: int, until: int | None = None, *, dry_run: bool = False, log=None) -> dict:
+    """Send every member event in [since, until] that never went out -- the repair for a stall, run by
+    hand (scripts/ap_redeliver.py), never by the tick. What counts as ALREADY SENT: an id in the
+    delivery cursor's `done` set, an event with a `pcai:ap:sent:` record (written when it was planned:
+    every boost, like, vote and report, and every post that went beyond the followers -- which is what
+    keeps a report from being filed twice), and anything an earlier run of this same window sent (its
+    own progress document, so a rerun or a crash part-way resumes rather than repeats). A plain post
+    may still have gone out with no record of it (a stalled tick that got that far); a second Create of
+    the same object id is ignored by Mastodon, Pleroma, Akkoma and Misskey alike.
+    Returns counts only -- never content."""
+    global _fol_memo
+    say = log or (lambda *_: None)
+    now = int(time.time())
+    hi = min(until or now, now)
+    members = await _members()
+    _, done = await _cursor_doc(state.CURSOR)              # raises: never "nothing was sent"
+    key = f"{_REDELIVER}{int(since)}:{int(hi)}"
+    prog = await state._get(key) or {}
+    sent_ids = set(prog.get("sent") or [])
+    out = {"window": [int(since), int(hi)], "read": 0, "already_sent": 0, "recorded": 0, "nothing_to_send": 0,
+           "delivered": 0, "deletions_queued": 0, "by_kind": {}, "dry_run": dry_run}
+
+    async def save():
+        if not dry_run:
+            await state._put(key, {"sent": sorted(sent_ids), "at": int(time.time())})
+
+    _fol_memo = {}
+    try:
+        async with contextlib.aclosing(_windows(members, int(since), KINDS, now, until=hi)) as batches:
+            async for batch in batches:
+                for ev in sorted(batch, key=lambda e: (e.get("created_at", 0), e["id"])):
+                    created = int(ev.get("created_at", 0))
+                    if created < since or created > hi:
+                        continue
+                    out["read"] += 1
+                    if ev.get("kind") == 3 or _inert_deletion(ev) or _is_mirror(ev) or _protected(ev):
+                        continue                  # the catch-up's job / nothing the fediverse ever had
+                    short = ev["id"][:16]
+                    if short in done or short in sent_ids:
+                        out["already_sent"] += 1
+                        continue
+                    if (await _sent_rec(ev["id"])).get("kind"):
+                        out["recorded"] += 1      # planned by a pass before, so it went out then
+                        continue
+                    k = str(ev.get("kind"))
+                    out["by_kind"][k] = out["by_kind"].get(k, 0) + 1
+                    if dry_run:
+                        continue
+                    jobs = await plan(ev, ev["pubkey"])
+                    if not jobs:
+                        out["nothing_to_send"] += 1
+                    elif ev.get("kind") == 5 and len(jobs) > _INLINE_DELETION:
+                        await state.queue_deletion(ev["id"], ev["pubkey"], len(jobs))
+                        out["deletions_queued"] += 1
+                    else:
+                        await _deliver(jobs, ev["pubkey"], time.monotonic() + _event_window(), detach=False)
+                        out["delivered"] += 1
+                    sent_ids.add(short)
+                    if len(sent_ids) % 20 == 0:
+                        await save()
+                        say(f"  ... {out['delivered']} delivered so far")
+    finally:
+        _fol_memo = None
+    await save()
+    return out
+
+
+async def run_tick() -> dict:
+    """What the worker runs every _TICK_SECONDS: one tick under the hard limit, then the health check
+    (activitypub/health.py), which measures whether members' events are actually going out, writes
+    `pcai:ap:stats` for Admin and the health board, and alerts the admin once on a stall and once on
+    recovery. Returns the health verdict."""
+    ok, why = True, ""
+    try:
+        await asyncio.wait_for(tick(), timeout=_limit())
+        ok, why = _last_outcome["ok"], _last_outcome["why"]
+    except Exception as e:
+        ok, why = False, f"{type(e).__name__}: {e}"[:200]
+        _stats["last_error"] = why
+        logger.warning("[activitypub] delivery tick failed: %s", why)
+    from app.services.activitypub import health
+    try:
+        return await health.after_tick(stats(), ok=ok, why=why)
+    except Exception as e:
+        logger.warning("[activitypub] delivery health check failed: %s: %s", type(e).__name__, e)
+        return {}
 
 
 def start_activitypub_delivery() -> None:
@@ -1310,23 +1697,7 @@ def start_activitypub_delivery() -> None:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     async def _job():
-        try:
-            await asyncio.wait_for(tick(), timeout=_TICK_SECONDS * 8)
-        except Exception as e:
-            _stats["last_error"] = f"{type(e).__name__}: {e}"[:200]
-            logger.info("[activitypub] delivery tick failed: %s: %s", type(e).__name__, e)
-        # The admin panel reads this (the app process cannot see the worker's memory). Only while
-        # the feature is on, and only when something moved -- not a document every 30 seconds.
-        snap = stats()
-        snap.pop("last_tick", None)
-        if config.enabled() and snap != _job.last:
-            try:
-                await nostr_store.put_doc(settings_store._port(), settings_store._operator_seckey(None),
-                                          "pcai:ap:stats", dict(snap, at=int(time.time())))
-                _job.last = snap
-            except Exception:
-                pass
-    _job.last = None
+        await run_tick()
 
     async def _catchup():
         try:

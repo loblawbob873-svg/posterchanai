@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from app.auth import get_admin_user, get_current_user
-from app.services.activitypub import actors, config, convert, httpsig, inbox, remote, state
+from app.services.activitypub import actors, config, convert, health, httpsig, inbox, remote, state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["activitypub"])
@@ -756,10 +756,12 @@ async def admin_status(user=Depends(get_admin_user)):
             rows.append({"name": name, "handle": f"@{name}@{config.domain()}", "member": member,
                          "followers": await state.follower_count(pk) if member else 0})
     try:
-        report = await nostr_store.get_doc(settings_store._port(), "pcai:ap:stats",
+        report = await nostr_store.get_doc(settings_store._port(), health.DOC, strict=True,
                                            seckey=settings_store._operator_seckey(None)) or {}
+        line = health.view(report)
     except Exception:
         report = {}
+        line = {"ok": None, "state": "unknown", "text": "Delivery: could not read the delivery report (relay did not answer)"}
     from app.services.activitypub import relays
     try:
         subs = await relays.subscriptions(strict=False)
@@ -769,4 +771,6 @@ async def admin_status(user=Depends(get_admin_user)):
     return {"enabled": config.enabled(), "domain": config.domain(), "base": base,
             "relays": relay_rows, "relay_scope": relays.scope(),
             "webfinger": f"{base}/.well-known/webfinger?resource=acct:NAME@{config.domain()}" if base else "",
-            "blocked_instances": sorted(config.blocked_domains()), "members": rows, "delivery": report}
+            "blocked_instances": sorted(config.blocked_domains()), "members": rows, "delivery": report,
+            # ONE wording for the green/red line, shared with the health board (activitypub/health.py).
+            "delivery_health": line}

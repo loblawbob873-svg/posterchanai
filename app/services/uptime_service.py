@@ -273,12 +273,19 @@ async def _alert(rec: dict, kind: str) -> None:
     delivered must never stop the poller (or the other channel) — every path is caught."""
     from app.services import settings_store
     text = _alert_text(rec, kind)
+    _refresh_settings()
+    await send_admin_alert(text, telegram=settings_store.get_bool("uptime_alert_telegram", False),
+                           nostr=settings_store.get_bool("uptime_alert_nostr", False),
+                           tag=f"uptime {rec['name']} {kind}")
 
-    # Refresh the settings cache FIRST. This process is the worker, whose cache only re-syncs every
-    # 120s (app/worker.py), so a transition inside that window was judged against up-to-two-minutes-old
-    # config — enable the alerts and the very next outage can still go out to nobody, silently, because
-    # the flag hadn't landed yet. Transitions are rare, and hydrate_from_db is one loopback relay read,
-    # so paying for one here buys alerts that obey the CURRENT configuration.
+
+def _refresh_settings() -> None:
+    """Refresh the settings cache before deciding where an alert goes. This process is the worker,
+    whose cache only re-syncs every 120s (app/worker.py), so a transition inside that window was judged
+    against up-to-two-minutes-old config — enable the alerts and the very next outage can still go out
+    to nobody, silently, because the flag hadn't landed yet. Transitions are rare, and hydrate_from_db
+    is one loopback relay read, so paying for one here buys alerts that obey the CURRENT configuration."""
+    from app.services import settings_store
     try:
         from app.database import SessionLocal
         db = SessionLocal()
@@ -289,8 +296,18 @@ async def _alert(rec: dict, kind: str) -> None:
     except Exception as e:
         logger.debug("[uptime] pre-alert settings refresh failed: %s", e)
 
-    if not settings_store.get_bool("uptime_alert_telegram", False):
-        logger.info("[uptime] %s %s — Telegram alert not sent (channel off)", rec["name"], kind)
+
+async def send_admin_alert(text: str, *, telegram: bool, nostr: bool, tag: str = "alert") -> dict:
+    """Send one alert to the admin over the channels asked for: Telegram (the admin account's linked
+    chat) and NIP-17 DMs (`uptime_alert_npubs`, else the admin's own npub, from the SYSTEM identity).
+    Shared by the uptime monitors and the federation health check (activitypub/health.py), so the two
+    reach the same person the same way. Never raises. Returns {"telegram": r, "nostr": r} where r is
+    True (handed over), False (tried and failed) or None (channel off, or nobody to send it to) — the
+    caller tells "could not send" from "had nowhere to send" by that difference."""
+    from app.services import settings_store
+    out = {"telegram": None, "nostr": None}
+    if not telegram:
+        logger.info("[uptime] %s — Telegram alert not sent (channel off)", tag)
     else:
         try:
             from app.database import SessionLocal
@@ -303,8 +320,7 @@ async def _alert(rec: dict, kind: str) -> None:
                 if not enabled:
                     # The channel is ON but the admin account has no usable Telegram — another way to
                     # get silence from a working alert path.
-                    logger.warning("[uptime] %s %s — Telegram alert not sent: admin has no linked chat",
-                                   rec["name"], kind)
+                    logger.warning("[uptime] %s — Telegram alert not sent: admin has no linked chat", tag)
                 else:
                     from app.services.telegram_service import telegram_service, configure_from_settings
                     token = settings_store.get("telegram_bot_token", "")
@@ -317,25 +333,31 @@ async def _alert(rec: dict, kind: str) -> None:
                     # fallback in send_message, but a DOWN alert is the last message that should be
                     # spending a round trip discovering that.
                     await telegram_service.send_message(chat_id, text, parse_mode="")
+                    out["telegram"] = True
             finally:
                 db.close()
         except Exception as e:
+            out["telegram"] = False
             logger.warning("[uptime] telegram alert failed: %s", e)
 
-    if settings_store.get_bool("uptime_alert_nostr", False):
+    if nostr:
         try:
-            await _alert_nostr(text)
+            n = await _alert_nostr(text)
+            out["nostr"] = True if n else (None if n is None else False)
         except Exception as e:
+            out["nostr"] = False
             logger.warning("[uptime] nostr alert failed: %s", e)
     else:
         # Say it out loud. A silently skipped alert is indistinguishable from a broken one, and
         # "my service went down and I got nothing" is not a question the logs could answer before.
-        logger.info("[uptime] %s %s — Nostr alert not sent (channel off)", rec["name"], kind)
+        logger.info("[uptime] %s — Nostr alert not sent (channel off)", tag)
+    return out
 
 
-async def _alert_nostr(text: str) -> None:
+async def _alert_nostr(text: str):
     """NIP-17 gift-wrapped DM to each configured npub (default: the admin's own npub), sent from this
-    node's SYSTEM identity via system_dm — NOT the operator key.
+    node's SYSTEM identity via system_dm — NOT the operator key. Returns how many went out, or None
+    when there was nobody to send to.
 
     The operator key is usually the admin's OWN key on a single-admin node, and a DM from you to you
     is a self-DM: the client files it under note-to-self, with no unread count and no notification. An
@@ -357,10 +379,13 @@ async def _alert_nostr(text: str) -> None:
         if npub:
             targets = [npub]
     if not targets:
-        return
+        return None
+    sent = 0
     for t in targets:
         if await system_dm.send(t, text):
+            sent += 1
             logger.info("[uptime] alert DM sent to %s…", t[:16])
+    return sent
 
 
 # ---- the tick -----------------------------------------------------------
