@@ -113,12 +113,16 @@ VARIANTS = [(1280, 'page'), (390, 'page'), (1280, 'desk')]
 ROUTES = ['close button', 'back arrow', 'Escape', 'Android back', 'Cancel']
 
 
+# The back arrow is the phone layout (desktop has the close button), so it is only PARAMETRISED at phone
+# width: a skipped case in the required list is reported as a failure by the deploy gate.
+_EXITS = [(w, where, route, '%s-%s' % (vid, route))
+          for (w, where), vid in zip(VARIANTS, ['desktop', 'phone', 'desktop-mode-window'])
+          for route in ROUTES if not (route == 'back arrow' and w >= 600)]
+
+
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('route', ROUTES)
-@pytest.mark.parametrize('width,where', VARIANTS, ids=['desktop', 'phone', 'desktop-mode-window'])
+@pytest.mark.parametrize('width,where,route', [e[:3] for e in _EXITS], ids=[e[3] for e in _EXITS])
 def test_every_way_out_of_community_settings_lands_on_the_community(width, where, route):
-    if route == 'back arrow' and width >= 600:
-        pytest.skip('the back arrow is the phone layout; desktop has the close button')
     got = {}
 
     async def check(b):
