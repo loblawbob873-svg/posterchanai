@@ -393,7 +393,7 @@ window.PCMenusFactory = function(dep){
   /* ---------- 🤦 Bad Post of the Day (NIP-32 label, kind 1985) ----------
    * "users can vote for their 'Bad Post of the Day' by clicking on post hamburger menu". A vote is a
    * label in the `pcai.badpost` namespace naming the post (`e`) and its author (`p`), sent to THIS
-   * node's relay alone -- the bot that announces the winner at noon and 6 PM reads it there
+   * node's relay alone -- the bot that announces each 4-hour window's most-voted post reads it there
    * (botframework/nostr_badpostbot.py), and nobody else's relay has any use for it. The row is a
    * TOGGLE: with your own vote on this post from today it withdraws it (a NIP-09 deletion of that
    * label, same relay), so a second tap never stacks votes. Nothing is marked voted until the relay
@@ -428,7 +428,7 @@ window.PCMenusFactory = function(dep){
       }
       const ev=await dep.sign(1985, '', [['L', BADPOST_NS], ['l', BADPOST_LABEL, BADPOST_NS], ['e', id], ['p', pk]]);
       const r=await Relay.publishTo([home], ev, {includeManaged:true, detailed:true});
-      if(r && r.ok){ Store.saveEvent(ev); toast('🤦 Voted Bad Post of the Day — the winner is announced at noon and 6 PM'); }
+      if(r && r.ok){ Store.saveEvent(ev); toast('🤦 Voted Bad Post of the Day — the most-voted post is announced when this 4-hour window closes'); }
       else toast(r && r.uncertain ? 'not confirmed yet — the relay hasn’t answered; it may already be counted' : 'couldn’t send the vote — try again');
     }catch(_){ toast('vote not sent'); }
     finally{ _badPostBusy=false; }

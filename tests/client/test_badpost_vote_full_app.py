@@ -81,6 +81,10 @@ def test_vote_publishes_the_label_to_this_relay_and_toggles(width):
         wire = await b.js("__wire.filter(w=>w.id===" + json.dumps(vote["id"]) + ").map(w=>w.url)")
         assert wire and all("fixture.invalid" in u for u in wire), ("not sent to this node's relay", wire)
         await b.until("[...document.querySelectorAll('#toast-root .toast')].some(t=>/Voted Bad Post/.test(t.textContent))")
+        # The schedule the voter is told is the bot's: 4-hour windows ("i said to do it every 4 hours"), never
+        # the noon/6 PM plan it replaced.
+        said = await _toasts(b)
+        assert "4-hour window" in said and "noon" not in said and "6 PM" not in said, said
         # Reopened: the row withdraws, and withdrawing deletes exactly that vote.
         await _open_menu(b)
         assert "Withdraw" in await b.js(ROW + ".innerText")
