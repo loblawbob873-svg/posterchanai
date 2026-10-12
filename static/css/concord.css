@@ -579,16 +579,28 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
 .cc-icon-status.failed span{color:var(--cct-error)!important}
 @keyframes ccIconSpin{to{transform:rotate(360deg)}}
 /* The phone drawer is a class flip now (setMobileDrawer), so it can slide instead of popping in.
-   Transform only -- never opacity, so a frozen or disabled animation can never leave it invisible. */
+   Transform only -- never opacity, so a frozen or disabled animation can never leave it invisible.
+   THE SLIDE IS KEYED ON `drawer-opening`, WHICH ONLY THE OPEN GESTURE SETS -- never on `drawer-open`,
+   which every rebuild of the workspace carries. Keyed on the state, the drawer slid in from -28px again
+   on EVERY render while it was open, and switching community from inside it renders two or three times
+   (the switch, the cached history, the network history): measured, the channel list jerked sideways
+   x=30->58 twice per switch -- "concord shakes when changing room/community". */
 @media(max-width:820px){
-  body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
-  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:ccDrawerIn .16s ease-out}
+  body.concord-view .cc-app.show-chat.drawer-open.drawer-opening .cc-communities,
+  body.concord-view .cc-app.show-chat.drawer-open.drawer-opening .cc-channels{animation:ccDrawerIn .16s ease-out}
 }
 @keyframes ccDrawerIn{from{transform:translateX(-28px)}to{transform:none}}
 @media (prefers-reduced-motion:reduce){
   body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
   body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:none!important}
 }
+/* A scrollbar that comes and goes changes the width of everything beside it: a short channel has none,
+   a long one has one, so the rows re-wrapped on every switch on a desktop. The gutter is always kept. */
+.cc-messages,.cc-channel-list,.cc-members-scroll{scrollbar-gutter:stable}
+/* A plain (unencrypted) picture with an imeta `dim` reserves its box before it loads, like an
+   encrypted one (`data-cc-sized` carries --cc-w/--cc-ar, see attachmentBoxStyle). */
+.cc-plain-attachment[data-cc-sized]{width:var(--cc-w)!important;max-width:100%!important;aspect-ratio:var(--cc-ar)!important;box-sizing:border-box!important}
+.cc-plain-attachment[data-cc-sized] img{width:100%!important;height:100%!important;max-height:none!important}
 
 /* Starred channel: the same i-star icon, filled. Icons, not the \2606/\2605/\22EF text characters, which
  * several system fonts (PosterChanOS, headless Chrome) have no glyph for and draw as empty boxes. */

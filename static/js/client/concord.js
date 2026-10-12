@@ -1255,9 +1255,9 @@
   function setMobileDrawer(open){
     const app=document.querySelector?document.querySelector('.cc-app'):null,room=state.community==null?null:saved()[state.community];
     mobileDrawerOpen=!!open;
-    if(!app||!room||!mobileChatOpen||backgroundRenderPending||!app.classList){render();return;}
+    if(!app||!room||!mobileChatOpen||backgroundRenderPending||!app.classList){render();drawerSlide();return;}
     app.classList.toggle('drawer-open',mobileDrawerOpen);
-    if(mobileDrawerOpen)return;
+    if(mobileDrawerOpen){drawerSlide();return;}
     const name=state.channel||'general';markRead(room,name);
     try{
       const row=[...app.querySelectorAll('[data-cc-channel]')].find(b=>b.dataset.ccChannel===name);if(row)row.classList.remove('unread');
@@ -1265,6 +1265,37 @@
     }catch(_){}
     paintUnreadBadge();
   }
+  /* THE DRAWER SLIDES WHEN SOMEBODY OPENS IT, NOT WHEN IT IS REDRAWN. The slide is keyed on
+   * `drawer-opening` (concord.css), set here and nowhere in render()'s markup: keyed on `drawer-open`,
+   * every rebuild while the drawer stood open replayed it, and a community switch from inside the
+   * drawer rebuilds two or three times -- the list jerked 28px sideways each time. */
+  function drawerSlide(){
+    const app=document.querySelector?document.querySelector('.cc-app'):null;
+    if(!app||!app.classList||!mobileDrawerOpen)return;
+    app.classList.add('drawer-opening');
+    const done=()=>{if(app.classList)app.classList.remove('drawer-opening');};
+    try{app.addEventListener('animationend',done,{once:true});}catch(_){}
+    setTimeout(done,400);
+  }
+  /* THE GLOWS KEEP THEIR BEAT ACROSS A REBUILD. The active channel's pulse and an unread community's
+   * glow are infinite animations on elements every render() replaces, so each switch restarted them
+   * from their first keyframe -- a visible blink in the channel list on every room change. Every one
+   * of them is put on the DOCUMENT's clock instead (startTime 0), so a freshly built element is at
+   * exactly the phase a never-replaced one would be: a rebuild, a retained rail being re-inserted
+   * (which restarts its animations too) and a drawer opening onto the list are all invisible. Done
+   * twice: straight after the rebuild for what is on screen (no frame is drawn at the wrong phase),
+   * and on `animationstart` for an element that only starts later (the phone's drawer, opened). */
+  const BEAT_ANIMATIONS=new Set(['ccThemePulse','ccUnreadGlow']);
+  function onTheBeat(anim){ try{ if(anim&&BEAT_ANIMATIONS.has(anim.animationName)&&anim.startTime!==0)anim.startTime=0; }catch(_){ } }
+  function retainCommunityRailPulses(root){
+    try{
+      if(!root||!root.querySelectorAll)return;
+      for(const el of root.querySelectorAll('.cc-channel.active,.cc-server.unread'))
+        if(el.getAnimations)for(const anim of el.getAnimations())onTheBeat(anim);
+    }catch(_){ }
+  }
+  try{ document.addEventListener('animationstart',e=>{ if(!BEAT_ANIMATIONS.has(e.animationName)||!e.target||!e.target.getAnimations)return;
+    for(const anim of e.target.getAnimations())if(anim.animationName===e.animationName)onTheBeat(anim); },true); }catch(_){ }
   function conversationIsVisible(narrow,chatOpen,drawerOpen){ return !narrow||(!!chatOpen&&!drawerOpen); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
   function imetaFields(tag){
@@ -1324,7 +1355,8 @@
       const f=imetaFields(tag),mime=String(f.m||'').toLowerCase();
       if(f['encryption-algorithm']||mime==='application/x-webxdc'||mime==='application/webxdc+zip'||mime==='application/vnd.webxdc+zip'||!/^https:\/\//i.test(f.url||''))continue;
       if(!/^[\w.+-]+\/[\w.+-]+$/.test(mime))continue;
-      out.push({url:f.url,mime,name:String(f.name||'attachment').slice(0,120)});
+      const dm=/^(\d{1,5})x(\d{1,5})$/.exec(String(f.dim||''));
+      out.push({url:f.url,mime,name:String(f.name||'attachment').slice(0,120),w:dm?+dm[1]:0,h:dm?+dm[2]:0});
     }
     return out;
   }
@@ -1436,7 +1468,7 @@
       body=out.join('')+(p.linkCardHtml?p.linkCardHtml(plain):'');
     }
     const poll=pollHtml(p,m);
-    const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/'))return `<div class="cc-plain-attachment"><img src="${url}" alt="${label}" loading="lazy"></div>`;if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment">${p.trackCard?p.trackCard(f.url,f.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`}</div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
+    const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/')){/* `dim` reserves the box before the picture arrives -- see attachmentBoxStyle */const box=attachmentBoxStyle(f);return `<div class="cc-plain-attachment"${box?' data-cc-sized':''}${box}><img src="${url}" alt="${label}" loading="lazy"></div>`;}if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment">${p.trackCard?p.trackCard(f.url,f.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`}</div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
     const media=files.map((f,i)=>{ const vis=f.mime.startsWith('image/')||f.mime.startsWith('video/'),got=vis?attachmentCache.get(attachmentKey(f)):null, d=vis?attachmentSize(f):null;
       return `<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"${got?' data-cc-ready="1"':''}>${got?(f.mime.startsWith('video/')?attachmentVideoHtml(p,f,got):attachmentImageHtml(p,f,got))
         :`<span class="cc-attachment-wait${d?' cc-sized':''}"${attachmentBoxStyle(f)}>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span>`}</div>`; }).join('');
@@ -1537,7 +1569,7 @@
       let best=null;for(const [ck,w] of attachmentWaiting)if(!best||w.distance<best[1].distance)best=[ck,w];
       const [ck,{file}]=best;attachmentWaiting.delete(ck);attachmentActive++;
       decryptAttachment(file).then(async got=>{await learnImageSize(file,got);for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);},
-        ()=>{for(const h of attachmentHostsFor(ck))h.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';})
+        ()=>{for(const h of attachmentHostsFor(ck))keepPlaceAround(h,()=>{h.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';});})
         .finally(()=>{attachmentActive--;pumpAttachments();});
     }
   }
@@ -1550,8 +1582,29 @@
     if(!got||!String(got.mime||'').startsWith('image/')||attachmentSize(file))return;
     try{const im=new Image();im.src=got.url;await im.decode();if(im.naturalWidth&&im.naturalHeight)attachmentDims.set(attachmentKey(file),{w:im.naturalWidth,h:im.naturalHeight});}catch(_){}
   }
+  /* A PICTURE THAT LANDS MOVES NOTHING THE READER CAN SEE. A decrypted attachment replaces its
+   * placeholder in a promise task, and the scroller's own correction (watchPinnedRoomGrowth) is a
+   * ResizeObserver that answers a frame later -- so for one frame a reader at the newest message saw
+   * the room 154px above it, then a jump back: measured on a 390px phone opening a channel, a layout
+   * shift of 0.15 from one picture with no `dim`. The place is now put back in the SAME task as the
+   * swap: pinned stays at the bottom, and growth wholly above an unpinned reader is added to their
+   * offset. A hand on the scroller is left alone (writing scrollTop kills a fling); the observer
+   * still corrects once it lets go. */
+  function keepPlaceAround(host,fn){
+    const box=host&&host.closest?host.closest('.cc-messages'):null;
+    if(!box||chatHandOn()){fn();return;}
+    const key=box.dataset&&box.dataset.ccScrollKey||scrollKey(),st=readScroll(key),top0=box.scrollTop,h0=host.offsetHeight,
+      atBottom=box.scrollHeight-box.clientHeight-box.scrollTop<=2,above=host.getBoundingClientRect().bottom<=box.getBoundingClientRect().top+1;
+    fn();
+    if(!box.isConnected||key!==scrollKey())return;
+    if(st.pinned!==false||atBottom){if(Math.abs(box.scrollHeight-box.clientHeight-box.scrollTop)>1)setProgrammaticScroll(box,box.scrollHeight);}
+    else if(above){const d=host.offsetHeight-h0;if(d)setProgrammaticScroll(box,top0+d);}
+  }
   function paintAttachmentHost(host,file,got){
     if(!host.isConnected)return;
+    keepPlaceAround(host,()=>paintAttachmentHostNow(host,file,got));
+  }
+  function paintAttachmentHostNow(host,file,got){
     try{const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1'){host.innerHTML=attachmentImageHtml(p,file,got);host.dataset.ccReady='1';}const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/')){/* Built ONCE, like the video: a repaint that rewrote it stopped a playing track. */if(host.dataset.ccReady!=='1'||!host.querySelector('audio')){host.innerHTML=p.trackCard?p.trackCard(got.url,got.name||file.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`;host.dataset.ccReady='1';}}else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(e){console.warn('Concord attachment paint failed',e);}
   }
   function channelStarKey(room,name){ return `${STAR_KEY}${accountPk()}.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
@@ -5325,7 +5378,8 @@
     let room=rooms[index];if(!room)return false;
     const identity=roomIdentity(room);
     discoveryOpen=false;activeSet(String(index));state.thread=null;state.community=index;state.channel='general';mobileChatOpen=!!inDrawer;mobileDrawerOpen=!!inDrawer;
-    render();enterChatBottom();
+    /* Pin FIRST, so render() lands the new room at its newest message in the same task. */
+    enterChatBottom();render();
     try{
       if(room.url&&(!room.cord||!room.cord.bundle)){room=mergeRoom(room,await hydrateInvite(p,room.url));rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity||sameRoom(item,room));if(at<0)return false;const selected=rooms[state.community];rooms[at]=room;save(rooms);index=rooms.findIndex(item=>sameRoom(item,room));if(sameRoom(selected,room)){state.community=index;render();}}
       if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,roomIdentity(room));
@@ -5563,7 +5617,10 @@
        written in the same task as the rebuild, so no frame can ever see the top of the history; the
        rAF passes still run afterwards and refine it (anchors, late images). */
     let keepScroll=null;
-    try{ const ob=feed.querySelector('.cc-messages'); if(ob)keepScroll={key:scrollKey(),top:ob.scrollTop,
+    /* `key` is the conversation that scroller SHOWS, not the one about to be drawn: a switch has already
+       changed state.channel/community by now, and keyed on scrollKey() the old channel's offset was
+       carried into the new one. */
+    try{ const ob=feed.querySelector('.cc-messages'); if(ob)keepScroll={key:ob.dataset&&ob.dataset.ccScrollKey||'',top:ob.scrollTop,
       atBottom:ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; }catch(_){ }
     /* AN OPEN "…" MENU SURVIVES A REPAINT. Every message that arrived, and every channel refresh,
        rebuilt the room and dropped `cc-actions-open` with it — the menu shut under the person using
@@ -5608,7 +5665,9 @@
      * the list's rows are stamped so the next LIVE tick (patchMessageList) can keep every unchanged one. */
     const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
     feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
+    try{ const nb=feed.querySelector('.cc-messages'); if(nb&&nb.dataset)nb.dataset.ccScrollKey=scrollKey(); }catch(_){ }
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
+    retainCommunityRailPulses(feed);
     try{ keepVideos(oldVideos,feed); }catch(_){}
     try{ const nl=feed.querySelector('.cc-message-list'); if(nl)stampList(nl); }catch(_){}
     try{
@@ -5622,6 +5681,14 @@
       if(keepScroll&&keepScroll.key===scrollKey()){ const nb=feed.querySelector('.cc-messages');
         if(nb){ const st=readScroll(keepScroll.key);
           setProgrammaticScroll(nb,st.pinned!==false||keepScroll.atBottom?nb.scrollHeight:keepScroll.top); } }
+      /* A SWITCHED-TO ROOM OR CHANNEL LANDS IN THIS TASK TOO. The same-room case above was already
+         written here; a switch was left to restoreChatScroll's rAF, and the first frame of the new
+         channel was drawn wherever the browser had put the fresh scroller (measured on a desktop:
+         136px above the newest message, then a jump down) -- one of the two steps of "concord shakes
+         when changing room/community". Pinned (the default for a room entered) means the bottom. */
+      else if(current){ const nb=feed.querySelector('.cc-messages');
+        if(nb){ const st=readScroll(scrollKey());
+          setProgrammaticScroll(nb,st.pinned!==false?nb.scrollHeight:Math.max(0,Number(st.top)||0)); } }
     }catch(_){ }
     try{
       const byId=id=>feed.querySelector('[id="'+String(id).replace(/["\\]/g,'')+'"]');
@@ -6157,7 +6224,7 @@
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
       const v=discovered[+b.dataset.ccDiscover];if(!v)return;
       const a=saved();let i=a.findIndex(x=>sameRoom(x,v));if(i<0){a.push(v);i=a.length-1;}
-      save(a);i=a.findIndex(x=>sameRoom(x,v));state.community=i;state.channel='general';render();enterChatBottom();
+      save(a);i=a.findIndex(x=>sameRoom(x,v));state.community=i;state.channel='general';enterChatBottom();render();
       p.toast('fetching and decrypting community…');
       try{
         const hydrated=await hydrateInvite(p,v.url),latest=saved(),selected=latest[state.community],at=latest.findIndex(x=>sameRoom(x,v));
@@ -6171,7 +6238,7 @@
       }catch(e){p.toast('could not load community: '+(e&&e.message||e));}
       finally{if(sameRoom(saved()[state.community],v))enterChatBottom(true);}
     });
-    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(true); });
+    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; enterChatBottom(); render(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(true); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){setMobileDrawer(!mobileDrawerOpen);return;}else mobileChatOpen=true; render(); };
