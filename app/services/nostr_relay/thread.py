@@ -530,6 +530,13 @@ def _read_config() -> dict:
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
+            # CONCORD MIRROR (concord_mirror.py): members' joined communities are mirrored into this relay so their
+            # clients read only here. BLANK = ON (g() maps "" to the default). It dials out ONLY through the proxy's
+            # FALLBACK listener (Tor 1 -> Tor 2 -> direct, never the Tor-only main port torrents share, never a raw
+            # socket): with the proxy off there is no URL here and the mirror refuses every registration.
+            "concord_mirror": gb("nostr_relay_concord_mirror", True),
+            "concord_mirror_proxy": _fallback_proxy_url(g, gi, gb),
+            "nip05_domain": g("nostr_relay_nip05_domain", ""),
             # New-post limits (spamguard.py), every route into the timeline. 0 = off.
             "posts_per_min": tun["nostr_relay_posts_per_min"],
             "same_per_hour": tun["nostr_relay_same_per_hour"],
@@ -590,6 +597,16 @@ def _read_config() -> dict:
         return cfg
     finally:
         db.close()
+
+
+def _fallback_proxy_url(g, gi, gb) -> str:
+    """The proxy's Tor 1 -> Tor 2 -> direct listener (http_proxy_service.start_from_settings), or '' when this
+    node runs no proxy. Same defaults as the proxy itself, so the two cannot disagree about the port."""
+    _on_default = os.environ.get("POSTERCHANAI_PROXY_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    if not gb("proxy_enabled", _on_default):
+        return ""
+    port = gi("proxy_fallback_port", gi("proxy_listen_port", 8118) + 1)
+    return f"http://127.0.0.1:{int(port)}" if port else ""
 
 
 def _vmhost_peer_hosts(enabled, raw, node_pubkey: str = "") -> list:
@@ -1132,6 +1149,11 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.private_outbox = private
     _relay.stop_event = asyncio.Event()
+    # Concord mirror: members' external communities held here (concord_mirror.py). Constructed always -- with the
+    # switch off or no proxy it refuses registrations and the Concord directory, it never answers "empty".
+    from .concord_mirror import ConcordMirror
+    server.mirror = ConcordMirror(store, server, cfg)
+    asyncio.create_task(_safe(server.mirror.start()))
 
     # WoT build on startup ONLY when there is NO cached snapshot (first run / cleared cache). If the
     # gate is warm from the persisted snapshot (load_from_store above), we use it as-is and let the
@@ -1577,6 +1599,10 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         except Exception:
             out["firehose"] = []
         try:
+            out["concord_mirror"] = server.mirror.status() if server.mirror else None
+        except Exception:
+            out["concord_mirror"] = None
+        try:
             out["subs"] = int(server.subs.total())
             out["accepted"] = int(getattr(server, "_accepted", 0) or 0)
             out["rejected"] = int(getattr(server, "_rejected", 0) or 0)
@@ -1853,6 +1879,10 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
             _firehose["stop"].set()
         for t in (_firehose.get("tasks") or []):
             t.cancel()
+        try:
+            await asyncio.wait_for(server.mirror.stop(), 5)
+        except Exception:
+            pass
         outbox.stop()
         if private is not None:
             private.stop()      # or its worker and retry tasks outlive store.close()

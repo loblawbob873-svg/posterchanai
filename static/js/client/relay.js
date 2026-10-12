@@ -1140,9 +1140,9 @@
      * reconnect storm. The REQ is re-sent verbatim: the filter's `since` is then older than it needs
      * to be, which costs a few duplicate events the store already dedupes and is the safe direction
      * — a recomputed `since` would open a hole exactly the width of the outage. */
-    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null } = {}){
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null, exact=false, onClosed=null } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))throw new Error("invalid plane subscription scope");
-      const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>authScope||!this._conns.has(u)).slice(0,max);
+      const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>authScope||exact||!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
       const ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
       const active=()=>!closed&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner)&&(!authScope||authScope.current());
@@ -1191,6 +1191,9 @@
           ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
             if(!current()||!ownAuth.current())return;
             if((m[0]!=='CLOSED'||m[1]===id)&&ownAuth.receive(m))return;
+            /* A CLOSED is the relay saying this subscription is over and why; a caller that can act on
+             * it (Concord falls back to a community's own relays on `unavailable:`) asks to be told. */
+            if(m[0]==='CLOSED'&&m[1]===id){if(onClosed)try{onClosed(u,String(m[2]||''));}catch(_){}return;}
             if(m[0]!=='EVENT'||m[1]!==id||!m[2])return;
             try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
               if(current()&&ownAuth.current()&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
@@ -1319,6 +1322,12 @@
             note('failed',u);
             Relay._queryFromCooldown.set(slot(u),Date.now()+Math.max(30000,Number(failureCooldown)||0));
             try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down');}catch(_){}
+          }else if(outcome==='unavailable'){
+            /* The relay ANSWERED, and the answer was "I cannot speak for this" (this node's Concord
+             * mirror not in step with a community's relays). Neither an EOSE nor a failure: not `ok`
+             * (an empty answer here would read as "no messages"), and no cooldown either (the relay is
+             * healthy and every other read of it must go on). The caller asks somebody else. */
+            note('unavailable',u);
           }else if(outcome==='success'){
             note('ok',u);
             Relay._queryFromCooldown.delete(slot(u));
@@ -1340,6 +1349,7 @@
           if(done||!auth.current())return;
           if((m[0]!=='CLOSED'||m[1]===subId)&&auth.receive(m))return;
           if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(Relay._normTags(m[2]));
+          else if (m[0] === 'CLOSED' && m[1] === subId && /^unavailable:/i.test(String(m[2]||''))) fin('unavailable');
           else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin('success'); };
         ws.onerror = () => fin('failure');
         ws.onclose = () => fin('failure');

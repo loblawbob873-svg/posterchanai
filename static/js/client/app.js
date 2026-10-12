@@ -14142,7 +14142,12 @@
     relayClose: subId => Relay.close(subId),
     relayPublish: ev => Relay.publish(ev),
     relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
-    relayPublishRoom: (relays, ev, authScope=null) => Relay.publishTo(relays, ev, {includeManaged:true, detailed:true, authScope}),
+    // A wrap for a Concord community this node's relay holds goes there first (concord.js roomPublish).
+    relayPublishRoom: (relays, ev, authScope=null) => {
+      const direct=(r,e,a)=>Relay.publishTo(r, e, {includeManaged:true, detailed:true, authScope:a});
+      const m=window.PCConcordMirror;
+      return m&&m.publish ? m.publish(relays, ev, authScope, direct) : direct(relays, ev, authScope);
+    },
     relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev),
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),

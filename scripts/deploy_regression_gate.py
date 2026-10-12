@@ -236,6 +236,11 @@ TESTS = (
     'tests/client/test_concord_settings_has_a_way_out_full_app.py',
     # 2026-10-12: "concord shakes when changing room/community" (APK) -- the switch holds still
     'tests/client/test_concord_switch_is_steady_full_app.py',
+    # 2026-10-12: "make our concord implementation [store everything on the relay] so each client don't have
+    # to communicate with other concord relays" -- the node mirrors joined communities, clients read only it;
+    # and Discover's "No public communities found" over a directory that held 70 invites
+    'tests/test_concord_mirror.py',
+    'tests/client/test_concord_reads_this_node_full_app.py',
     'tests/test_relay_tunables.py',
     'tests/test_admin_relay_sections.py',
     'tests/test_admin_relay_sections_browser.py',

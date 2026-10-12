@@ -25,6 +25,7 @@ from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, is_encoded_payload, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post, is_social_mirror
 from .store import retired_kind_reason as _retired_kind_reason
+from .concord_mirror import KIND_REGISTER as _CONCORD_REGISTER
 from app.services.nostr.quotes import quote_pubkeys
 
 
@@ -601,6 +602,9 @@ class RelayServer:
         # New-post limits (spamguard.py): posts per minute and the same text over and over.
         from .spamguard import SpamGuard
         self.spam = SpamGuard(config)
+        # Concord mirror (concord_mirror.py): set by the relay thread. None = no mirror, every Concord
+        # stream is served from the store as it always was.
+        self.mirror = None
 
     def _refuse(self, conn, eid, ev, why) -> None:
         """Answer OK-false AND say so in the log. Every refusal used to be silent server-side —
@@ -1506,6 +1510,24 @@ class RelayServer:
         if kind == 22242:
             self._refuse(conn, eid, ev, "invalid: kind 22242 is only valid in an AUTH message")
             return
+        # A CONCORD MIRROR REGISTRATION (concord_mirror.KIND_REGISTER) is a request to THIS relay, not
+        # an event for anybody else: it names relays and stream keys, so it must never reach a
+        # subscription, the store or the outbox. Answered here, before the ephemeral fan-out below.
+        if kind == _CONCORD_REGISTER:
+            _m = getattr(self, "mirror", None)
+            if _m is None:
+                self._refuse(conn, eid, ev, "unavailable: this relay does not mirror Concord communities")
+                return
+            try:
+                _ok, _why = await _m.register(ev, is_local=bool(self.gate.is_operator(ev.get("pubkey", ""))))
+            except Exception as e:
+                logger.warning("[nostr-relay] concord mirror registration failed: %s", e)
+                _ok, _why = False, "error: registration failed, retry"
+            if _ok:
+                self._send(conn, ["OK", eid, True, _why])
+            else:
+                self._refuse(conn, eid, ev, _why)
+            return
         # NIP-78 (2026-09-03 revision): app data is private to its author. A valid event signature
         # proves authorship of the EVENT, but not that the websocket client is its owner (an outbox
         # can replay anybody's signed event), so same-key NIP-42 authentication is required too.
@@ -1806,6 +1828,9 @@ class RelayServer:
         if _is_ephemeral(kind):
             self._send(conn, ["OK", eid, True, ""])
             self.subs.fanout(ev, self._send, self._can_serve_event)
+            _m = getattr(self, "mirror", None)
+            if kind == 21059 and _m is not None and _m.mirrors(ev.get("pubkey", "")):
+                asyncio.create_task(_m.forward_ephemeral(ev))   # presence reaches the community's relays
             return
         # origin="direct": a client chose THIS relay as a destination (entrusted data), as
         # opposed to "wot" (a mirror of the public feed we pulled via sync/firehose). Prune
@@ -1843,7 +1868,14 @@ class RelayServer:
             # row → the personal plane then skipped re-delivery → the user silently missed the reply.
             self._refuse(conn, eid, ev, "error: not stored, retry")
             return
-        self._send(conn, ["OK", eid, True, ""])
+        _m = getattr(self, "mirror", None)
+        if kind == 1059 and _m is not None and _m.mirrors(ev.get("pubkey", "")):
+            # A wrap on a MIRRORED Concord stream: its community lives on other relays, and the member
+            # wrote it here only. The OK waits for the forward, so "accepted" means "people elsewhere
+            # will see it"; false (stored here regardless) tells the client to deliver it itself.
+            asyncio.create_task(self._mirror_ok(conn, eid, ev))
+        else:
+            self._send(conn, ["OK", eid, True, ""])
         if True:
             if _is_puppet and kind == 0:
                 self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
@@ -1874,6 +1906,17 @@ class RelayServer:
                 except Exception as e:
                     logger.debug("[nostr-relay] outbox enqueue failed: %s", e)
 
+    async def _mirror_ok(self, conn, eid, ev) -> None:
+        try:
+            ok = await self.mirror.forward(ev)
+        except Exception:
+            ok = False
+        if ok:
+            self._send(conn, ["OK", eid, True, ""])
+        else:
+            self._send(conn, ["OK", eid, False, "unavailable: stored here, but none of this community's "
+                                                  "relays accepted it yet — deliver it directly"])
+
     async def _on_req(self, conn, sub_id, filters) -> None:
         if not isinstance(sub_id, str):
             return
@@ -1896,6 +1939,25 @@ class RelayServer:
                 self._challenge(conn)
                 self._send(conn, ["CLOSED", sub_id,
                                   "auth-required: NIP-78 reads require AUTH as the author or the recipient"])
+                return
+        _m = getattr(self, "mirror", None)
+        if _m is not None:
+            # The Concord community DIRECTORY (two NIP-50 searches for invite notes) is answered from
+            # the copy the mirror fetched, never from the store — and refused while it has none.
+            if _m.directory.is_directory_req(filters):
+                found, why = await _m.directory.answer(filters)
+                if found is None:
+                    self._send(conn, ["CLOSED", sub_id, why])
+                    return
+                for dev in reversed(found):
+                    self._send(conn, ["EVENT", sub_id, dev])
+                self._send(conn, ["EOSE", sub_id])
+                self.subs.add(conn, sub_id, filters)
+                return
+            # A REGISTERED Concord stream this node is not in step with: "could not ask", never EOSE.
+            _why = _m.req_refusal(filters)
+            if _why:
+                self._send(conn, ["CLOSED", sub_id, _why])
                 return
         try:
             events = await self.store.query(filters)

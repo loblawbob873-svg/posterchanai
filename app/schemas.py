@@ -788,6 +788,8 @@ class SettingsResponse(BaseModel):
     nostr_relay_blocked_relays: Optional[str] = None
     nostr_relay_block_bridged: Optional[bool] = False
     nostr_relay_block_json_posts: Optional[bool] = True
+    # Concord mirror: members' joined communities are held on this relay so clients read only here (concord_mirror.py).
+    nostr_relay_concord_mirror: Optional[bool] = True
     nostr_relay_nip05_enabled: Optional[bool] = True
     nostr_relay_nip05_names: Optional[str] = (
         "verita84 4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6\n"

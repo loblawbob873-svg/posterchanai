@@ -122,6 +122,101 @@
     const own=[...new Set(listed.map(normalizeRelay).filter(Boolean))];
     return (authoritative||own.length?own:CORD_RELAYS).slice(0,8);
   }
+  /* CONCORD ON THIS NODE'S RELAY (app/services/nostr_relay/concord_mirror.py).
+   *
+   * On an instance, a community's messages are read from and written to THIS NODE'S relay, never the
+   * community's own relays, in two cases: the community was created here (its only relay IS this node's),
+   * or the node has ACCEPTED a mirror registration naming every stream the read asks for. A registration
+   * (kind 27059, sent to this relay only) names the community's relay URLs and its derived stream pubkeys
+   * -- what every one of those relays already sees in any member's REQ -- under an opaque group label; the
+   * node then holds the wraps, opaque, and forwards members' posts upstream.
+   *
+   * THE FALLBACK IS "COULD NOT ASK", NEVER "EMPTY". When this node's relay cannot answer (no socket, a
+   * timeout, or its own `unavailable:` -- the mirror is not in step with that community yet), the read goes
+   * to the community's own relays exactly as it did before this existed. A stream the node was never told
+   * about is never asked of it: an empty answer about it would be a claim it has not earned. Browsers
+   * cannot use the node's outbound proxy, so that fallback is a direct connection from this device, as
+   * every Concord read was before. */
+  const MIRROR_KIND=27059,MIRROR_FRESH_MS=86400000,MIRROR_TRUST_MS=3*86400000,MIRROR_REFUSED_MS=3600000,MIRROR_MAX_AUTHORS=128;
+  const mirrorBusy=new Map(),mirrorRefused=new Map();
+  function homeRelayUrl(p){try{return normalizeRelay(p&&p.homeRelay&&p.homeRelay())||'';}catch(_){return '';}}
+  function relaysAreHome(p,relays){const h=homeRelayUrl(p);return !!h&&(relays||[]).some(u=>normalizeRelay(u)===h);}
+  function mirrorKey(pk){return 'pc.concord.mirror.v1.'+pk;}
+  function mirrorState(pk){try{const v=JSON.parse(localStorage.getItem(mirrorKey(pk))||'null');return v&&typeof v==='object'&&v.groups&&typeof v.groups==='object'?v:{groups:{}};}catch(_){return {groups:{}};}}
+  function saveMirrorState(pk,v){try{localStorage.setItem(mirrorKey(pk),JSON.stringify(v));}catch(_){}}
+  /* Streams this node has said it mirrors for the signed-in account, newer than MIRROR_TRUST_MS. */
+  function mirroredAuthors(pk){const out=new Set(),now=Date.now();if(!pk)return out;for(const g of Object.values(mirrorState(pk).groups))if(g&&now-Number(g.at||0)<MIRROR_TRUST_MS)for(const a of g.authors||[])out.add(a);return out;}
+  /* THIS NODE'S RELAY, when it may answer `filters` for a community on `relays` -- else ''. */
+  function homeServes(p,relays,filters){
+    const h=homeRelayUrl(p);if(!h||!Array.isArray(filters)||!filters.length)return '';
+    for(const f of filters)if(!f||!Array.isArray(f.kinds)||!f.kinds.length||!f.kinds.every(k=>k===1059||k===21059)||!Array.isArray(f.authors)||!f.authors.length)return '';
+    if(relaysAreHome(p,relays))return h;
+    const held=mirroredAuthors(accountPk());if(!held.size)return '';
+    for(const f of filters)for(const a of f.authors)if(!held.has(a))return '';
+    return h;
+  }
+  async function mirrorGroup(communityId){
+    const id=String(communityId||'');if(!id||!(globalThis.crypto&&crypto.subtle))return '';
+    const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('pc-concord-mirror:'+id));
+    return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function mirrorAuthorsOf(bundle,wraps){
+    const r=window.PosterCordReader,out=[],add=a=>{a=String(a||'').toLowerCase();if(/^[0-9a-f]{64}$/.test(a)&&!out.includes(a))out.push(a);};
+    try{const info=r.inspectControl(bundle,wraps||[]);(info.controlPubkeys||[]).forEach(add);(info.guestbookPubkeys||[]).forEach(add);for(const ch of info.channels||[])(ch.streamPubkeys||[]).forEach(add);}catch(_){}
+    try{if(r.inspectRekeyStreams)r.inspectRekeyStreams(bundle).forEach(add);}catch(_){}
+    return out.slice(0,MIRROR_MAX_AUTHORS);
+  }
+  async function sendMirrorRequest(p,body){
+    const h=homeRelayUrl(p),R=window.Relay;if(!h||!R||!R.publishTo||!p.signTemplate)return {ok:false,msg:'no home relay'};
+    const ev=await p.signTemplate({kind:MIRROR_KIND,created_at:Math.floor(Date.now()/1000),tags:[['t','concord-mirror']],content:JSON.stringify({v:1,...body})});
+    if(!ev||!ev.id)return {ok:false,msg:'not signed'};
+    return await R.publishTo([h],ev,{includeManaged:true,detailed:true,max:1})||{ok:false};
+  }
+  /* Ask this node to mirror a joined EXTERNAL community, once a day at most (and never for one created
+   * here). Resolves true when every stream it named is mirrored. Never throws: a refusal leaves the room
+   * reading its own relays, which is exactly what it did before. */
+  function ensureMirror(p,room,bundle,wraps){
+    const pk=accountPk(),relays=bundle?roomRelays(bundle):[];
+    if(!pk||!bundle||bundle.dissolved||!homeRelayUrl(p)||relaysAreHome(p,relays))return Promise.resolve(false);
+    const key=pk+'\n'+String(bundle.community_id||'');if(mirrorBusy.has(key))return mirrorBusy.get(key);
+    const job=(async()=>{
+      const group=await mirrorGroup(bundle.community_id);if(!group)return false;
+      const want=mirrorAuthorsOf(bundle,wraps);if(!want.length)return false;
+      const st=mirrorState(pk),prior=st.groups[group],now=Date.now();
+      const same=!!prior&&JSON.stringify(prior.relays||[])===JSON.stringify(relays);
+      if(same&&now-Number(prior.at||0)<MIRROR_FRESH_MS&&want.every(a=>(prior.authors||[]).includes(a)))return true;
+      const refused=mirrorRefused.get(key);if(refused&&now-refused<MIRROR_REFUSED_MS)return false;
+      const authors=[...new Set([...(same&&now-Number(prior.at||0)<MIRROR_TRUST_MS?prior.authors||[]:[]),...want])].slice(0,MIRROR_MAX_AUTHORS);
+      let res=null;try{res=await sendMirrorRequest(p,{op:'mirror',group,relays,authors});}catch(_){res=null;}
+      if(accountPk()!==pk)return false;
+      if(!res||!res.ok){mirrorRefused.set(key,Date.now());return false;}
+      const next=mirrorState(pk);next.groups[group]={relays,authors,at:Date.now()};saveMirrorState(pk,next);mirrorRefused.delete(key);
+      return want.every(a=>authors.includes(a));
+    })().catch(()=>false).finally(()=>{mirrorBusy.delete(key);});
+    mirrorBusy.set(key,job);return job;
+  }
+  /* LEAVING STOPS THE MIRROR. Forgotten here first: even if the node never hears it, this device no longer
+   * reads the room from it, and the node's own 14-day expiry ends the mirror on its own. */
+  async function leaveMirror(p,room){
+    const pk=accountPk(),bundle=room&&room.cord&&room.cord.bundle;if(!pk||!bundle)return false;
+    const group=await mirrorGroup(bundle.community_id);if(!group)return false;
+    const st=mirrorState(pk);if(!st.groups[group])return false;delete st.groups[group];saveMirrorState(pk,st);
+    try{const res=await sendMirrorRequest(p,{op:'leave',group});return !!(res&&res.ok);}catch(_){return false;}
+  }
+  /* A wrap for a community this node holds goes HERE, and only to the community's own relays when this
+   * node's relay did not accept it (its OK waits for the forward upstream, so "accepted" means people
+   * elsewhere will see it). */
+  async function roomPublish(relays,ev,auth,direct){
+    const p=PC()||{},h=ev&&(ev.kind===1059||ev.kind===21059)?homeServes(p,relays,[{kinds:[ev.kind],authors:[ev.pubkey]}]):'';
+    if(h){
+      let res=null;try{res=await direct([h],ev,null);}catch(_){res=null;}
+      if(res&&res.ok)return res;
+      if((relays||[]).every(u=>normalizeRelay(u)===h))return res||{ok:false,msg:'this server’s relay did not accept it'};
+    }
+    return direct(relays,ev,auth);
+  }
+  /* The ONE door every room write goes through (app.js `relayPublishRoom`) asks this. */
+  window.PCConcordMirror={publish:roomPublish,serves:(relays,filters)=>homeServes(PC()||{},relays,filters)};
   function cordControlStamp(wraps){return [...new Set((wraps||[]).map(ev=>ev&&ev.id).filter(Boolean))].sort();}
   function cordPlaneContext(p,bundle,controls=[],room=null){
     const owner=String(p&&p.viewer&&p.viewer().pubkey||''), identity=room&&roomIdentity(room),
@@ -144,6 +239,20 @@
     return auth ? {...auth,current:plane.current} : null;
   }
   function cordPlaneSubscribe(p,R,relays,filters,options,plane){
+    /* (typeof: harnesses run this function sliced out of the file, without the mirror helpers.) */
+    const h=typeof homeServes==='function'?homeServes(p,relays,filters):'';
+    if(!h||!R||!R.subscribeFrom)return cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);
+    /* This node's relay first; the community's own relays only if it cannot carry the stream. */
+    let fallback=null,stopped=false;
+    const fall=()=>{if(stopped||fallback)return;try{fallback=cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);}catch(e){console.warn('Concord subscription fallback failed',String(e&&e.message||e));}};
+    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
+    if(inner&&inner.ready&&inner.ready.then)inner.ready.then(ok=>{if(!ok)fall();});
+    const stop=()=>{stopped=true;try{inner&&inner();}catch(_){}if(fallback)try{fallback();}catch(_){}};
+    stop.publish=event=>(inner&&inner.publish?inner.publish(event):0)+(fallback&&fallback.publish?fallback.publish(event):0);
+    stop.hasTargets=true;stop.ready=inner&&inner.ready?inner.ready:Promise.resolve(true);
+    return stop;
+  }
+  function cordPlaneSubscribeDirect(p,R,relays,filters,options,plane){
     const subscriptions=[],relayCap=Math.max(1,Math.min(4,Number(options.max)||4)),planeLimit=Math.floor(8/relayCap);
     // At most eight live sockets. Reader streams are current-first; archived epochs beyond
     // this budget remain covered by the bounded sequential history refresh.
@@ -172,7 +281,19 @@
     stop.ready=Promise.all(subscriptions.map(sub=>sub.ready)).then(results=>results.every(Boolean));
     return stop;
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null,urgent=false}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null,urgent=false,home=true}={}){
+    /* THIS NODE'S RELAY FIRST (see homeServes). It answering -- EOSE, even an empty one -- is the answer;
+     * a rate-limited skip is the old rate limit; anything else is "could not ask" and the read goes on
+     * to the community's own relays below, unchanged. */
+    const h=home!==false&&p.relayQueryFrom&&typeof homeServes==='function'?homeServes(p,relays,filters):'';
+    if(h){
+      const reach={};let got=null;
+      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true});}catch(_){got=null;}
+      const note=(bucket,u)=>{if(report)(report[bucket]||(report[bucket]=[])).push(u);};
+      if((reach.ok||[]).includes(h)){note('asked',h);note('ok',h);cordQuery.lastUnreadablePlanes=[];return got||[];}
+      if((reach.held||[]).includes(h)&&!(reach.failed||[]).length&&!(reach.unavailable||[]).length){note('held',h);return [];}
+      if(signal&&signal.aborted)return [];
+    }
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
@@ -292,7 +413,7 @@
    * Cleared on every room/channel change — a thread belongs to one channel. */
   const state={ community:null, channel:null, thread:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
-  let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryAbortController=null, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
+  let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryAbortController=null, discoveryLoaded=false, discoveryUnreachable='', membershipBusy=false, membershipRetryTimer=null;
   let discoveryPaintPending=false;
   let membershipViewer='';const membershipDocs=new Map();
   let nip29Busy=false,nip29RetryTimer=null,webxdcHydrationEpoch=0;
@@ -1678,7 +1799,7 @@
     const {api,context,relays}=await ownedInviteContext(p,room),reader=window.PosterCordReader,bundle=room.cord.bundle;
     const loadKey=room.communityId||room.naddr,known=roomControls.get(loadKey)||[],seed=reader.inspectControl(bundle,known);
     const report={};
-    const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true});
+    const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true,home:false});
     if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw inviteSyncError('Current invitation registry',unanswered(relays,report));
     if(!context.isCurrent())throw new Error('Concord membership changed');
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
@@ -1700,7 +1821,7 @@
   async function ownedInviteRegistry(p,room,scope){
     const reader=window.PosterCordReader,bundle=room.cord.bundle,key=room.communityId||room.naddr;
     const known=roomControls.get(key)||[],seed=reader.inspectControl(bundle,known),report={};
-    const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true});
+    const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true,home:false});
     if(!scope.context.isCurrent())throw new Error('Concord membership changed');
     if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!scope.relays.every(url=>report.ok?.includes(url)))throw inviteSyncError('Current invitation registry',unanswered(scope.relays,report));
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
@@ -3081,6 +3202,23 @@
     rooms.push({url:item.url,naddr:item.naddr,name:item.name,description:item.description||'',channels:[{name:'general',private:false}],local:false});
     save(rooms);
   }
+  const DIRECTORY_FILTERS=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
+  /* {events, ok, why}: `ok` only when a relay ANSWERED (EOSE). This node's relay first (its mirror of the
+   * directory), then the directory relays themselves. */
+  async function readDirectory(p,signal){
+    if(!p.relayQueryFrom)return {events:[],ok:false,why:'relay reads unavailable'};
+    const h=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
+    if(h){
+      const reach={};let got=[];
+      try{got=await p.relayQueryFrom([h],DIRECTORY_FILTERS,{timeout:12000,max:1,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord directory (this server)',report:reach})||[];}catch(_){got=[];}
+      if((reach.ok||[]).includes(h))return {events:got,ok:true};
+      if(signal&&signal.aborted)return {events:[],ok:false,why:'aborted'};
+    }
+    const reach={};let got=[];
+    try{got=await p.relayQueryFrom(DISCOVER_RELAYS,DIRECTORY_FILTERS,{timeout:9000,max:2,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord discover listings',report:reach})||[];}catch(_){got=[];}
+    if((reach.ok||[]).length)return {events:got,ok:true};
+    return {events:got,ok:false,why:(reach.failed||[]).length?'the directory relay did not answer':'the directory relay could not be asked'};
+  }
   function startDiscovery(p){
     if(discoveryStarted||state.community!=null||!p.relaySubscribe)return; discoveryStarted=true;
     discoveryAbortController=typeof AbortController==='function'?new AbortController():null;
@@ -3095,14 +3233,28 @@
        because it scrolled into Discover: that multiplied 24 cards by every bootstrap/control relay
        (including legacy Ditto invites). Full bootstrap is reserved for the explicit Join action. */
     const onEvent=ev=>{if(signal&&signal.aborted)return;for(const item of discoverInvites(ev.content,ev)){const index=listings.findIndex(old=>sameRoom(old,item));if(index<0)listings.push(item);else if(Number(ev.created_at)>Number(listings[index].source.created_at))listings[index]=mergeRoom(listings[index],item);recoverOwnedInvite(p,item);}discovered=uniqueRooms(listings).sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at));paintDiscovery();};
-    const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
-    const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    /* `p.relaySubscribe` answers a subId STRING, and stopDiscovery below can only close
-     * something with a `.close()` method — so held raw, the discovery subscription was never
-     * closed and its REQ stayed open on every relay for the life of the page. Wrapped here the
-     * way startChatLive wraps its own handle. */
-    try{ const _dsub=p.relaySubscribe(filters,{onEvent,onEose,live:true});
-         discoverySubscription=_dsub?{close:()=>{if(p.relayClose)p.relayClose(_dsub);}}:null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    const filters=DIRECTORY_FILTERS;
+    /* THE LIST IS DECIDED BY A READ SOMEBODY ANSWERED, NEVER BY THE FIRST EOSE.
+     *
+     * "No public communities found" was painted on the shared pool's EOSE — i.e. by this node's relay,
+     * which held none of the invite notes — while the directory relay, asked through `queryFrom`
+     * WITHOUT `urgent`, was silently SKIPPED whenever it was cooling down or another Concord read held
+     * it (both ordinary when Concord opens: the membership sweep asks the same relay, with a 30-minute
+     * failure cooldown), and that skip came back as `[]` too. The directory relay held 70 invites.
+     *
+     * Now: this node's relay answers the directory from the copy it fetched itself; if it cannot
+     * (`unavailable:`, no socket), the directory relay is asked directly and urgently; and if NOBODY
+     * answered, the panel says it could not reach the directory and offers Retry. The pool
+     * subscription stays for invites that arrive live, and decides nothing. */
+    try{ const _dsub=p.relaySubscribe(filters,{onEvent,live:true});
+         discoverySubscription=_dsub?{close:()=>{if(p.relayClose)p.relayClose(_dsub);}}:null; }catch(_){ }
+    void readDirectory(p,signal).then(res=>{
+      if(signal&&signal.aborted)return;
+      (res.events||[]).forEach(onEvent);
+      if(res.ok){discoveryLoaded=true;discoveryUnreachable='';}
+      else{discoveryLoaded=false;discoveryUnreachable=res.why||'no relay answered';}
+      paintDiscovery();
+    });
   }
   function stopDiscovery(){
     const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
@@ -4086,6 +4238,7 @@
       return {list:{...list,entries:[...entries.values()],tombstones:[...tombs.values()]},changed:[wireId]};
     });
     rememberLeftCommunity(viewer.pubkey,room,removedAt);
+    if(typeof leaveMirror==='function')void leaveMirror(p,room).catch(()=>{});
     return true;
   }
   // Only encrypted, signed envelopes cross the durable boundary. ACK completion atomically moves the
@@ -4353,6 +4506,10 @@
         })();
       }
       try{
+      /* Ask this node to hold the community BEFORE reading it (bounded: a node that does not answer costs
+       * six seconds once, then the room reads its own relays as it always did). */
+      if(typeof ensureMirror==='function')await Promise.race([ensureMirror(p,room,bundle,controlWraps),new Promise(r=>setTimeout(r,6000))]);
+      if(!currentOwner())return;
       const controlRead=await queryControlUntilAsked(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
         completeControl=controlRead.wraps,fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       if(!currentOwner())return;
@@ -4368,8 +4525,17 @@
          *
          * The numbers are cheap and they are the whole diagnosis: relays tried, wraps held after
          * the fetch, and how many of those were new. */
+        /* NOBODY ANSWERED IS NOT "NOTHING HERE". With the control set unread, no channel is ever fetched,
+         * so no channel had a reach recorded — and an unrecorded channel drew "This is the start of this
+         * encrypted channel" over a room whose relays (and this node's mirror) could not be asked. */
+        const r=controlRead.reach||{};
+        if(!(r.ok||[]).length&&((r.failed||[]).length||(r.unasked||[]).length||(r.unheld||[]).length))
+          for(const ch of room.channels||[])noteChannelReach(channelStoreId(room,ch.name),{failed:r.failed||[],cooled:r.unasked||[],unheld:r.unheld||[]},relays);
         throw new Error(unreadableControlMessage(controlRead.reach,relays,(controlWraps||[]).length,(fetchedControl||[]).length));
       }
+      /* The channels are known now, so their streams can join the mirror (a no-op when they already have). */
+      if(typeof ensureMirror==='function')await Promise.race([ensureMirror(p,room,bundle,controlWraps),new Promise(r=>setTimeout(r,6000))]);
+      if(!currentOwner())return;
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       const fetchChannel=async channel=>{
         if(!currentOwner())return;
@@ -5334,7 +5500,11 @@
   }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
-    const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
+    /* MADE HERE, HELD HERE. On an instance the community's one relay is this node's own: every member
+     * here reads and writes it with no other socket, and members elsewhere reach it like any relay (it
+     * serves and accepts kind-1059 wraps from anyone). With no instance, the shared CORD relays as before. */
+    const home=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
+    const relays=home?[home]:[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const creator=p.cordDirectContext();
     const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:publicInviteBase(p),signEvent:creator.sign});
     if(!creator.isCurrent())throw new Error('creating account changed');
@@ -5491,7 +5661,7 @@
       ||(Array.isArray(current&&current.moderators)
          && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -5800,6 +5970,7 @@
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     ['#cc-add','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     { const b=$('#cc-check-memberships'); if(b)b.onclick=()=>showMembershipCheck(p); }
+    { const b=$('#cc-discover-retry'); if(b)b.onclick=()=>{ stopDiscovery(); discoveryLoaded=false; discoveryUnreachable=''; render(); }; }
     /* CREATING A COMMUNITY WAS REACHABLE ONLY WHILE YOU HAD NONE.
      *
      * "Create community" lives on the `state.community==null` discover pane, and the moment you
