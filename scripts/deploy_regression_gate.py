@@ -120,6 +120,7 @@ TESTS = (
     'tests/client/test_desktop_wallpaper_full_app.py',
     'tests/client/test_drive_file_found_on_another_server_full_app.py',
     'tests/client/test_nip71_video_posts_show_their_video_full_app.py',
+    'tests/client/test_telegram_chat_catches_up_full_app.py',
     'tests/test_client_relay_eose_gate.py',
     'tests/client/test_private_doc_write_gates_hear_the_home_relay.py',
     'tests/client/test_private_docs_save_with_a_silent_relay_full_app.py',

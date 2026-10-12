@@ -105,12 +105,35 @@
     let ws;
     try{ ws = new WebSocket(base.replace(/^http/, 'ws') + '/api/tgc/ws'); }catch(_){ return; }
     st.ws = ws;
+    const again = !!st.wsDropped;
     ws.onopen = async () => { try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){}
-      ws.send(JSON.stringify({ token: P.aiToken ? P.aiToken() : '' })); };
+      ws.send(JSON.stringify({ token: P.aiToken ? P.aiToken() : '' }));
+      if(again){ st.wsDropped = false; catchUpAll(); } };
     ws.onmessage = e => { let ev; try{ ev = JSON.parse(e.data); }catch(_){ return; } onEvent(ev); };
-    ws.onclose = () => { if(st.ws === ws) st.ws = null;
+    ws.onclose = () => { if(st.ws === ws) st.ws = null; st.wsDropped = true;
       // Back off and come back: a restart of the node must not end notifications for the session.
       clearTimeout(st.wsTimer); st.wsTimer = setTimeout(() => { if(wanted()) connect(); }, 8000); };
+  }
+  /* CATCH UP A HELD CHAT. The socket delivers what arrives WHILE it is connected; it drops on every node
+   * restart and reconnects 8 s later, and nothing re-asked for what came in between -- one desktop session
+   * that ran through several deploys was missing a whole conversation's latest messages while the laptop
+   * and phone showed them ("not in sync ... the chat with my wife"). Merged by id, so nothing duplicates
+   * and older pages the reader loaded stay. */
+  async function catchUp(id){
+    let r;
+    try{ r = await api('/api/tgc/messages/' + id + '?limit=50'); }catch(_){ return; }
+    const held = st.msgs.get(id) || [], seen = new Set(held.map(m => m.id));
+    const fresh = (r.messages || []).filter(m => !seen.has(m.id));
+    noteReadOut(id, r.read_out || 0);
+    if(!fresh.length) return;
+    st.msgs.set(id, [...held, ...fresh].sort((a, b) => a.id - b.id));
+    if(inView() && st.open === id) paintMessages(true);
+  }
+  async function catchUpAll(){
+    try{ const d = (await api('/api/tgc/dialogs?limit=200')).dialogs; if(Array.isArray(d)){ st.dialogs = d; if(inView()) paintDialogs(); } }catch(_){}
+    if(st.open != null && st.msgs.has(st.open)) await catchUp(st.open);
+    // Other held chats are stale too: drop them, so opening one fetches it fresh.
+    for(const k of [...st.msgs.keys()]) if(k !== st.open) st.msgs.delete(k);
   }
   function wanted(){ return !isPhone() && st.status && st.status.state === 'ready'; }
 
@@ -475,6 +498,10 @@
       if(st.open !== id) return;
       paintOffline();
       paintMessages(true);
+    } else {
+      // What is held is painted (above) and the newest page is fetched behind it: a held chat was fed ONLY
+      // by the live socket, so anything that arrived while it was down was missing for the session.
+      catchUp(id);
     }
     const d = st.dialogs.find(x => x.id === id); if(d){ d.unread = 0; paintDialogs(); }
     markRead();
