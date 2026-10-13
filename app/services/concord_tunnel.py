@@ -30,8 +30,11 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 TICKET_TTL = 3600
-PER_MEMBER = 24
-GLOBAL_MAX = 600
+# Concord holds a LIVE subscription per relay per room it shows, and each one is a tunnel. 24 per member was full
+# of them on one account (2026-10-13: 137 opened, 2,314 refused in an hour, every send among the refused), so the
+# share is sized for the client as it is; a refusal is logged with the count it hit (`refused`).
+PER_MEMBER = 128
+GLOBAL_MAX = 3000
 MAX_FRAME = 4 * 1024 * 1024
 OPEN_TIMEOUT = 20
 
@@ -106,9 +109,23 @@ def proxy_url() -> str:
     return _fallback_proxy_url(g, gi, gb)
 
 
+_refused_logged: dict[str, float] = {}
+
+
+def refused(pk: str, why: str) -> None:
+    """One log line per member per minute: which limit, and how many tunnels they held (no target, no content)."""
+    now = time.monotonic()
+    if now - _refused_logged.get(pk, -1e9) < 60:
+        return
+    _refused_logged[pk] = now
+    logger.info("[concord-tunnel] refused %s… (%s): member holds %d, %d open in all",
+                pk[:8], why, _open.get(pk, 0), _total)
+
+
 def acquire(pk: str) -> bool:
     global _total
     if _total >= GLOBAL_MAX or _open.get(pk, 0) >= PER_MEMBER:
+        refused(pk, "node full" if _total >= GLOBAL_MAX else "member share full")
         return False
     _open[pk] = _open.get(pk, 0) + 1
     _total += 1

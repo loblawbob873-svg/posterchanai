@@ -1748,7 +1748,11 @@ would have handled it fine).
   the two DOORS (`PC()` and `window.PCConcordRelay`), never per call site, so a new Concord call cannot forget it
   (`tests/test_concord_relay_calls_go_through_the_tunnel.py`); the browser proof records every dial
   (`tests/client/test_concord_talks_only_to_this_node_full_app.py`). No instance, or a node with no proxy
-  (`{ticket:''}`): direct, as before. A ticket not fetched yet is NOT a reason to go direct.
+  (`{ticket:''}`): direct, as before. A ticket not fetched yet is NOT a reason to go direct -- but a SEND the tunnel
+  could not carry is retried direct ONCE (`sendOr`: one signed event, same id, so a second copy is harmless and a lost
+  one is a message that never arrived). The per-member share is 128: Concord holds a live subscription per relay per
+  room, and at 24 one real account had 2,314 dials refused in an hour, every send among them; a refusal logs
+  `[concord-tunnel] refused` once a minute with the count it hit. `tests/client/test_concord_send_survives_a_refused_tunnel.py`.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

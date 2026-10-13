@@ -120,6 +120,20 @@ def test_a_member_cannot_hold_more_than_their_share(client, monkeypatch):
     assert client.seen == []
 
 
+def test_a_member_holds_as_many_tunnels_as_concord_opens():
+    """Concord keeps a live subscription per relay per room; 24 was full on one real account and every send after it
+    was refused. A member with dozens open still gets the next one."""
+    tun._open.clear()
+    tun._total = 0
+    try:
+        for _ in range(100):
+            assert tun.acquire(PK)
+        assert tun.acquire(PK), "the 101st tunnel of one member was refused"
+    finally:
+        tun._open.clear()
+        tun._total = 0
+
+
 def test_no_proxy_means_no_tunnel(client, monkeypatch):
     monkeypatch.setattr(tun, "proxy_url", lambda: "")
     with pytest.raises(WebSocketDisconnect):

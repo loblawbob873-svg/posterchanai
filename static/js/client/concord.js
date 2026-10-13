@@ -167,15 +167,33 @@
   /* The two doors Concord reaches relays through -- the app's dependency object (PC()) and (window.PCConcordRelay||window.Relay) -- are
    * WRAPPED, so every outside-relay call carries `via` without any call site knowing: a new call cannot forget
    * it, and a function a test slices out still runs against whatever it is handed. */
+  /* A SEND THE TUNNEL COULD NOT CARRY GOES DIRECT ONCE. A send is one signed event -- the same id however many times
+   * it goes out -- so a second copy is harmless, while a lost one is a message that never arrived: 2026-10-13 the
+   * per-member cap was full of Concord's live subscriptions and every send after it was a socket closed before it
+   * opened ("concord not even sending messages"). Reads keep the tunnel; the next send tries it again first.
+   * `via` is the function the call was given (a falsy one means it never went through the tunnel). An authed
+   * NIP-42 publish signs nothing new on retry, but its failure text is checked: a relay that REFUSED the event
+   * would refuse it direct too. */
+  const SOCKET_FAIL=/^(closed|socket error|connect failed|timeout)$/;
+  function sendOr(first,via,direct,authed){
+    const v=via&&typeof via==='object'?via.via:via;if(!v)return first;
+    return Promise.resolve(first).then(r=>{
+      const ok=typeof r==='number'?r>0:!!(r&&r.ok);if(ok)return r;
+      if(authed&&!SOCKET_FAIL.test(String(r&&r.msg||'')))return r;
+      return direct();
+    });
+  }
   const WRAPPED=new WeakMap();
   function viaOpts(o){const via=cordVia(window.__PC);return via?{...(o||{}),via}:o;}
   function cordDeps(raw){
     if(!raw||typeof raw!=='object')return raw;let w=WRAPPED.get(raw);if(w)return w;
     const over={
       relayQueryFrom:(relays,filters,o)=>raw.relayQueryFrom(relays,filters,viaOpts(o)),
-      relayPublishTo:(relays,ev,o)=>raw.relayPublishTo(relays,ev,viaOpts(o)),
-      relayPublishRoom:(relays,ev,auth=null)=>raw.relayPublishRoom(relays,ev,auth,cordVia(raw)),
-      publishNip29Authed:(relay,template)=>raw.publishNip29Authed(relay,template,cordVia(raw)),
+      relayPublishTo:(relays,ev,o)=>{const vo=viaOpts(o);return sendOr(raw.relayPublishTo(relays,ev,vo),vo,()=>raw.relayPublishTo(relays,ev,o));},
+      relayPublishRoom:(relays,ev,auth=null)=>{const via=cordVia(raw);
+        return sendOr(raw.relayPublishRoom(relays,ev,auth,via),via,()=>raw.relayPublishRoom(relays,ev,auth,null));},
+      publishNip29Authed:(relay,template)=>{const via=cordVia(raw);const go=raw.publishNip29Authed(relay,template,via);
+        return via?go.catch(e=>{if(!SOCKET_FAIL.test(String(e&&e.message||'')))throw e;return raw.publishNip29Authed(relay,template,null);}):go;},
     };
     w=new Proxy(raw,{get(t,k){if(Object.prototype.hasOwnProperty.call(over,k)&&typeof t[k]==='function')return over[k];return t[k];}});
     WRAPPED.set(raw,w);return w;
@@ -184,9 +202,9 @@
     if(!R||typeof R!=='object')return R;let w=WRAPPED.get(R);if(w)return w;
     const over={
       queryFrom:(u,f,o)=>R.queryFrom(u,f,viaOpts(o)),
-      publishTo:(u,ev,o)=>R.publishTo(u,ev,viaOpts(o)),
+      publishTo:(u,ev,o)=>{const vo=viaOpts(o);return sendOr(R.publishTo(u,ev,vo),vo,()=>R.publishTo(u,ev,o));},
       subscribeFrom:(u,f,o)=>R.subscribeFrom(u,f,viaOpts(o)),
-      publishAuthed:(u,ev,sign,o)=>R.publishAuthed(u,ev,sign,viaOpts(o)),
+      publishAuthed:(u,ev,sign,o)=>{const vo=viaOpts(o);return sendOr(R.publishAuthed(u,ev,sign,vo),vo,()=>R.publishAuthed(u,ev,sign,o),true);},
     };
     w=new Proxy(R,{get(t,k){if(Object.prototype.hasOwnProperty.call(over,k))return over[k];const v=t[k];return typeof v==='function'?v.bind(t):v;},
       set(t,k,v){t[k]=v;return true;}});
