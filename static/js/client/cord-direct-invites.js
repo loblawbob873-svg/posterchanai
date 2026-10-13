@@ -59,7 +59,11 @@
     if (rumor.pubkey !== seal.pubkey) throw bad("rumor author is not the seal's signer");
     if (!Number.isSafeInteger(rumor.created_at) || rumor.created_at < 0) throw bad('bad created_at');
     if (!Array.isArray(rumor.tags) || typeof rumor.content !== 'string') throw bad('bad tags or content');
-    if (typeof rumor.id !== 'string') throw bad('rumor has no id');
+    // An unsigned rumor's id is OPTIONAL in practice -- other NIP-59 clients leave it out, and requiring it turned
+    // their invitations into 'rumor has no id' toasts (2026-10-13). The seal's signature is what authenticates the
+    // rumor (author checked above), so a missing id is computed; a PRESENT one must still match its content.
+    if (rumor.id === undefined) rumor.id = await rumorId(rumor);
+    if (typeof rumor.id !== 'string') throw bad('rumor id is not a string');
     if (rumor.id !== await rumorId(rumor)) throw bad('rumor id does not match its content');
     current(context);
     const bundle = validate(globalThis.PosterCordReader.parseJoinMaterial(rumor.content), { forJoin: !!options.forJoin, now: options.now });

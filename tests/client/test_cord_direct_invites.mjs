@@ -15,9 +15,10 @@ const encrypt=(text,sk,pk)=>NT.nip44.encrypt(text,NT.nip44.getConversationKey(sk
 const decrypt=(text,sk,pk)=>NT.nip44.decrypt(text,NT.nip44.getConversationKey(sk,pk));
 const hash=e=>createHash('sha256').update(JSON.stringify([0,e.pubkey,e.created_at,e.kind,e.tags,e.content])).digest('hex');
 // Independent producer: ordinary NIP-59, never the CORD stream builder or module.create.
-function wire({hint=true,kind=3313,body=bundle,badId=false,badSeal=false,mismatch=false}={}){
+function wire({hint=true,kind=3313,body=bundle,badId=false,badSeal=false,mismatch=false,noId=false}={}){
  const rumor={kind,pubkey:mismatch?recipientPk:senderPk,created_at:Math.floor(Date.now()/1000),tags:[],content:JSON.stringify(body)};
  rumor.id=badId?'0'.repeat(64):hash(rumor);
+ if(noId)delete rumor.id;
  const seal=sign({kind:13,created_at:rumor.created_at,tags:[],content:encrypt(JSON.stringify(rumor),sender,recipientPk)},sender);
  if(badSeal)seal.sig='0'.repeat(128);
  return sign({kind:1059,created_at:rumor.created_at,tags:[['p',recipientPk],...(hint?[['k','3313']]:[])],content:encrypt(JSON.stringify(seal),ephemeral,recipientPk)},ephemeral);
@@ -34,6 +35,10 @@ for(const options of [{kind:14},{badId:true},{badSeal:true},{mismatch:true},{bod
 await assert.rejects(()=>api.open(wire({kind:14}),context),/not a Concord invitation \(kind 14\)/);
 await assert.rejects(()=>api.open(wire({badId:true}),context),/rumor id does not match its content/);
 await assert.rejects(()=>api.open(wire({mismatch:true}),context),/rumor author is not the seal's signer/);
+// 2026-10-13, the desktop: an invitation from another NIP-59 client whose rumor carries NO id (the id of an
+// unsigned rumor is optional in practice) failed with 'rumor has no id', toast after toast. The seal's signature
+// already authenticates the rumor, so its id is computed, and the identity a dismissal records is still exact.
+{const opened=await api.open(wire({noId:true}),context);assert.equal(opened.inviter,senderPk);assert.match(opened.rumorId,/^[0-9a-f]{64}$/);}
 const invalid=JSON.parse(JSON.stringify(wire()));invalid.sig='0'.repeat(128);await assert.rejects(()=>api.open(invalid,context));
 await assert.rejects(()=>api.open(wire(),{...context,pubkey:senderPk}));
 const expired=wire({body:{...bundle,expires_at:Date.now()-1}});assert((await api.open(expired,context)).bundle);await assert.rejects(()=>api.open(expired,context,{forJoin:true}));
