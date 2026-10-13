@@ -22,7 +22,7 @@ const S = { ME: { pubkey: 'f'.repeat(64) }, VIEW: 'global', _notifEpoch: 0, _dmU
             _newBuild: false, _apkUpdate: false, _desktopUpdate: false, _updBadge: false, _updApplying: false };
 const seenNotif = { last: 0 };
 const anyFn = new Proxy({}, { get: (_t, k) => (k === 'then' ? undefined : (() => {})) });
-const dep = new Proxy({ state: S, seenNotif, $$: () => [], $: () => null, isMutedAuthor: () => false },
+const dep = new Proxy({ state: S, seenNotif, $$: () => [], $: () => null, isMutedAuthor: () => false, _mutedThread: () => false },
                       { get: (t, k) => (k in t ? t[k] : anyFn[k]) });
 const N = ctx.window.PCNotifsFactory(dep), V = ctx.window.PCNotifViewFactory(dep);
 const fail = m => { console.error('FAIL: ' + m); process.exit(1); };

@@ -11631,7 +11631,7 @@
     },
     $, $$, FOLLOWERS, _fetchTimeout, _instanceBase, _notifCtxId, _notifRouteViaDesktop,
     _rightbarShown, _standalone, _tipNote, applySobLive, emojiName, enc, ensureAiSession, fmtSats,
-    invalidateCounts, isMutedAuthor, isReply, loadNotifs, loadNotifsSoon, needProfile,
+    _mutedThread, invalidateCounts, isMutedAuthor, isReply, loadNotifs, loadNotifsSoon, needProfile,
     notificationAllowed, notificationSound, openThread, osNotify, profOf, reactDisp, reminderAlert,
     renderNotificationsSoon, seenNotif, switchView, zapAmount, zapSender,
   }; }

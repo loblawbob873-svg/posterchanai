@@ -13,7 +13,7 @@ window.PCNotifsFactory = function(dep){
   const {
     $, $$, FOLLOWERS, _fetchTimeout, _instanceBase, _notifCtxId, _notifRouteViaDesktop,
     _rightbarShown, _standalone, _tipNote, applySobLive, emojiName, enc, ensureAiSession, fmtSats,
-    invalidateCounts, isMutedAuthor, isReply, loadNotifs, loadNotifsSoon, needProfile,
+    _mutedThread, invalidateCounts, isMutedAuthor, isReply, loadNotifs, loadNotifsSoon, needProfile,
     notificationAllowed, notificationSound, openThread, osNotify, profOf, reactDisp, reminderAlert,
     renderNotificationsSoon, seenNotif, switchView, zapAmount, zapSender,
   } = dep;
@@ -204,6 +204,9 @@ window.PCNotifsFactory = function(dep){
     if(!notificationAllowed(notificationType))return;
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
     if(isMutedAuthor(fromPk)) return;   // no toast / OS notification for a muted author
+    // ...or for a conversation you muted. A fediverse thread is where this bites: Mastodon and Pleroma
+    // mention EVERY participant in every reply, so each reply in a muted thread was still a mention of you.
+    if(_mutedThread(ev)) return;
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
     const _tn=_tipNote(ev);
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
@@ -326,7 +329,7 @@ window.PCNotifsFactory = function(dep){
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
     // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
     // they were fetched, toasted live, and then dropped from the list that actually renders.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==S.ME.pubkey && !isMutedAuthor(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && _notifForMe(e)
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==S.ME.pubkey && !isMutedAuthor(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && !_mutedThread(e) && _notifForMe(e)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
