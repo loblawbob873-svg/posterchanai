@@ -163,3 +163,6 @@ scratchpad/
 
 # scripts/pregate.py holds this while it runs (one run per checkout).
 .pregate.lock
+# core dumps (a deliberate crash test once committed two 147 MB cores)
+core
+core.[0-9]*
