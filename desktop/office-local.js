@@ -121,7 +121,14 @@ class OfficeLocal {
       '--o:storage.wopi.host[0]=127.0.0.1',
       '--o:storage.wopi.host[0][@allow]=true',
     ];
-    const proc = spawn(path.join(root, 'usr/bin/coolwsd'), args, { env, stdio: ['ignore', 'ignore', 'pipe'], detached: false });
+    /* START IT WITH NOTHING BUT STDIO. Chromium's descriptors are not close-on-exec, so coolwsd inherited ~200 of the
+     * desktop's (GPU dmabufs, IndexedDB files, sockets, epolls) and passed them to coolforkit-ns, which exited 70 at
+     * birth -- coolwsd then held its port and answered nothing, and Office never opened (laptop, 2026-10-13). The same
+     * coolwsd started from a shell ran fine. A shell closes everything above 2 and execs it (pc-shell-restart's trick). */
+    const CLOSE_AND_EXEC = 'for f in /proc/$$/fd/*; do f=${f##*/}; case "$f" in ""|*[!0-9]*|0|1|2) continue;; esac; '
+      + 'eval "exec $f>&-" 2>/dev/null; done; exec "$0" "$@"';
+    const proc = spawn('/bin/bash', ['-c', CLOSE_AND_EXEC, path.join(root, 'usr/bin/coolwsd'), ...args],
+      { env, stdio: ['ignore', 'ignore', 'pipe'], detached: false });
     let tail = '';
     proc.stderr.on('data', d => { tail = (tail + d).slice(-4000); });
     const code = { proc, port, dir, exited: false };
