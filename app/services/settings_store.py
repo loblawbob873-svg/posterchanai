@@ -167,7 +167,7 @@ def _save_local_file() -> None:
                         merged[k] = v
             # 0600 BEFORE ANY CONTENT REACHES THE FILE.
             #
-            # This file holds `nostr_relay_pg_dsn`, which carries the relay database PASSWORD, and
+            # This file may hold `nostr_relay_pg_dsn` (a retired setting kept local-only), with a database PASSWORD, and
             # `json.dump` into a default-mode file leaves it world-readable (0644 under a normal
             # umask). Measured on this deployment: -rw-r--r--, on a host with five other user
             # accounts — any of them could read the credentials for the store that holds every

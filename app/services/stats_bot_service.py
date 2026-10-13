@@ -52,13 +52,6 @@ _FONT_PATHS = [
 
 # --- data ----------------------------------------------------------------
 
-def _relay_dsn() -> str:
-    from app.services import settings_store
-    return (settings_store.get("nostr_relay_pg_dsn", "") or
-            os.environ.get("NOSTR_RELAY_PG_DSN",
-                           "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"))
-
-
 def _puppet_pubkeys() -> set:
     """Fedi→Nostr bridge puppets (the app's registry). Their kind-1s are MIRRORED fediverse posts, not native Nostr
     activity -- counting them inflates the numbers ("only here for now"). The relay also drops the puppets IT

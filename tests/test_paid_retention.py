@@ -26,8 +26,7 @@ import pytest
 from app.services import paid_retention_service as prs
 from app.services.nostr import bip340
 from app.services.nostr.event import build_event
-from tests import scratch_postgres
-from tests.relay_backends import BACKENDS, pcdb_factory
+from tests.relay_backends import pcdb_factory
 
 DAY = 86400
 
@@ -213,57 +212,13 @@ def test_policy_reports_nothing_while_the_feature_is_off(monkeypatch):
                    "lud16": "", "pubkey": ""}
 
 
-# ---- the prune (needs Postgres) ----------------------------------------
+# ---- the prune ----------------------------------------------------------
 
-psycopg2 = pytest.importorskip("psycopg2")
-
-from app.services.nostr_relay.store import RelayStore            # noqa: E402
-
-DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
-
-
-def _admin():
-    try:
-        conn = psycopg2.connect(DSN, connect_timeout=5)
-    except Exception as e:
-        pytest.skip(f"Postgres not reachable for the relay store: {e}")
-    conn.autocommit = True
-    return conn
-
-
-@pytest.fixture(params=BACKENDS)
-def store_factory(request):
-    """Opened RelayStores in a scratch schema (the `posterchan` role can't CREATE DATABASE), so an
-    unqualified table can only resolve inside it and a mistake errors instead of touching the live
-    relay. Mirrors tests/test_relay_prune.py."""
-    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
-        with pcdb_factory() as make:
-            yield make
-        return
-    schema = "pcai_paid_test_" + uuid.uuid4().hex[:10]
-    conn = _admin()
-    conn.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    conn.close()
-    dsn = DSN + f" options=-csearch_path={schema}"
-    made = []
-
-    def _make(loop, **kw):
-        st = RelayStore(dsn, **kw)
-        st.open(loop)
-        made.append(st)
-        return st
-
-    try:
-        yield _make
-    finally:
-        for st in made:
-            st.close()
-        try:
-            c = _admin()
-            c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            c.close()
-        except Exception:
-            pass
+@pytest.fixture
+def store_factory():
+    """Builds opened relay stores (PosterChanDB, tests/relay_backends.py), each in its own directory."""
+    with pcdb_factory() as make:
+        yield make
 
 
 def _run(coro_fn):

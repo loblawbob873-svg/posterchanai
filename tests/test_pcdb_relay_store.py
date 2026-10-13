@@ -1,16 +1,13 @@
-"""PosterChanDB as the relay's ONLY store (POSTERCHANDB_MODE=primary, task #161): nostr_relay/pcdb_store.py.
+"""PosterChanDB, the relay's store (nostr_relay/pcdb_store.py, #161 -- the Postgres store it replaced is deleted).
 
-The existing relay suites (test_relay_prune, test_paid_retention, test_relay_git_state_tie_break,
-test_relay_payment_targets) already run against BOTH backends through tests/relay_backends.py. This file holds
-what is new with the primary store:
+The relay suites (test_relay_prune, test_paid_retention, test_relay_git_state_tie_break, test_relay_payment_targets)
+run against it through tests/relay_backends.py. This file holds what is particular to the store:
 
-  * an id-prefix collision can no longer make an event unfindable (a bug the both-backend run exposed);
+  * an id-prefix collision can no longer make an event unfindable;
   * the sidecar (relay_kv / wot / bridge tables) survives a SIGKILL at any instant, and refuses a corrupt file;
-  * prune, its preview, the content purges, COUNT, negentropy and queries match the Postgres store on
-    generated data;
-  * kind 30078 -- the app's datastore -- survives every cleaner, on both backends;
-  * primary mode never opens a Postgres connection, and an unpromoted directory is refused;
-  * scripts/posterchandb_promote.py refuses a token or count mismatch and promotes a matching directory;
+  * kind 30078 -- the app's datastore -- survives every cleaner;
+  * the relay opens it the way production does, every public method works, and a directory that is not a
+    relay store (events but no marker, or a marker in another state) is refused rather than adopted;
   * no operation holds the store lock for more than a few milliseconds (measured, printed).
 """
 from __future__ import annotations
@@ -24,13 +21,12 @@ import sys
 import textwrap
 import threading
 import time
-import uuid
 
 import pytest
 
 from app.services.nostr_relay import pcdb_store as P
 from app.services.posterchandb.store import Store
-from tests.relay_backends import BACKENDS, pcdb_factory
+from tests.relay_backends import pcdb_factory
 from tests.test_posterchandb import ev_id
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -138,155 +134,8 @@ def test_a_corrupt_sidecar_is_refused_never_read_as_empty(tmp_path):
         P.Sidecar(path)
 
 
-# ------------------------------------------------------------------ parity with the Postgres store
-psycopg2 = pytest.importorskip("psycopg2")
-from tests import scratch_postgres                          # noqa: E402
-from tests.test_posterchandb_vs_relay import OldGen, Gen    # noqa: E402
-from app.services.nostr_relay import store as relay        # noqa: E402
-
-DSN = scratch_postgres.dsn()
-
-
-def _admin():
-    try:
-        conn = psycopg2.connect(DSN, connect_timeout=5)
-    except Exception as e:      # noqa: BLE001
-        pytest.skip("Postgres not reachable: %s" % e)
-    conn.autocommit = True
-    return conn
-
-
-@pytest.fixture
-def both(tmp_path):
-    """(RelayStore on a scratch schema, PcdbRelayStore on a fresh primary directory, loop)."""
-    schema = "pcai_pcdb_primary_" + uuid.uuid4().hex[:10]
-    c = _admin()
-    c.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    c.close()
-    loop = asyncio.new_event_loop()
-    rs = relay.RelayStore(DSN + f" options=-csearch_path={schema}")
-    rs.open(loop)
-    d = str(tmp_path / "primary")
-    P.init_new(d)
-    ps = P.PcdbRelayStore(d, maintenance=False)
-    ps.open(loop)
-    try:
-        yield rs, ps, loop
-    finally:
-        ps.close()
-        rs.close()
-        loop.close()
-        c = _admin()
-        c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        c.close()
-
-
-def _feed_both(rs, ps, gen, n, extra_tags=None):
-    bad = []
-    for _ in range(n):
-        ev = gen.event()
-        if extra_tags and gen.r.random() < 0.15:
-            ev["tags"] = ev["tags"] + [extra_tags(gen)]
-            ev["id"] = ev_id(ev)
-            gen.made[-1] = ev
-        origin = gen.r.choice(["direct", "wot", "wot", "bridge", "ancestor"])
-        a = rs._add_event_sync(dict(ev), origin)
-        b = ps._add_event_sync(dict(ev), origin)
-        if a != b:
-            bad.append({"kind": ev["kind"], "pg": a, "pcdb": b, "origin": origin})
-    return bad
-
-
-def _ids_pg(rs):
-    return {r["id"] for r in rs._conn().execute("SELECT id FROM events").fetchall()}
-
-
-def _ids_pcdb(ps):
-    st = ps.store
-    return {st._id_hex(s) for s in range(len(st.off)) if not st.dead[s] and st.seg[s] != 0xFFFFFFFF}
-
-
-def _proxy_tag(gen):
-    return ["proxy", "https://mostr.pub/objects/%d" % gen.r.randint(0, 9), gen.r.choice(["activitypub", "atproto"])]
-
-
-def _configure(st, gen, now):
-    st.retention_days, st.max_events = 30, 300
-    st.set_preserve_pubkeys([gen.authors[0]])
-    st.set_paid_tier_enabled(True)
-    st.free_retention_days, st.paid_retention_days = 20, 60
-    st.set_subscribers([gen.authors[1]], ledger_ok=True)
-
-
-@pytest.mark.parametrize("seed", [31, 32, 33])
-def test_prune_and_purges_match_the_postgres_store_on_generated_data(both, seed):
-    """Same history into both stores (stored/refused decisions compared), then every rule at once -- age,
-    orphan zaps, bridge DM TTL, retired, expiry, pay-to-stay tiers both ways, the count cap -- previewed, pruned
-    in small chunks; then the content purges. After each step the survivors are identical, id for id."""
-    rs, ps, loop = both
-    gen = OldGen(seed)
-    bad = _feed_both(rs, ps, gen, 1100, extra_tags=_proxy_tag)
-    assert not bad, "%d stored/refused decisions differ; first %r" % (len(bad), bad[:3])
-    assert _ids_pg(rs) == _ids_pcdb(ps), "the stores differ before any cleaning"
-    now = int(time.time())
-    for st in (rs, ps):
-        _configure(st, gen, now)
-
-    pv_pg = loop.run_until_complete(rs.prune_preview())
-    pv_me = loop.run_until_complete(ps.prune_preview())
-    for k in ("expired", "aged", "orphan_zaps", "bridge_dm", "retired", "retired_by_kind", "aged_free", "aged_paid",
-              "capped"):
-        assert pv_pg.get(k) == pv_me.get(k), "preview %s: postgres %r, pcdb %r" % (k, pv_pg.get(k), pv_me.get(k))
-    assert pv_pg["aged"] + pv_pg["aged_free"] + pv_pg["capped"] > 30, "the history must give the rules real work"
-
-    a = loop.run_until_complete(rs.prune(chunk=37))
-    b = loop.run_until_complete(ps.prune(chunk=37))
-    assert a == b and _ids_pg(rs) == _ids_pcdb(ps), "prune: postgres removed %d, pcdb %d" % (a, b)
-
-    word = gen.r.choice(["nostr", "hello", "the"])
-    for name, args in (("delete_by_words", ([word],)), ("delete_by_langs", ({"en", "de"},)),
-                       ("delete_hidden_payload", ()), ("delete_by_proxy", ()),
-                       ("delete_pubkeys", ([gen.authors[2], gen.authors[0]],))):
-        x = loop.run_until_complete(getattr(rs, name)(*args))
-        y = loop.run_until_complete(getattr(ps, name)(*args))
-        assert x == y and _ids_pg(rs) == _ids_pcdb(ps), "%s: postgres %d, pcdb %d" % (name, x, y)
-    assert loop.run_until_complete(rs.count()) == loop.run_until_complete(ps.count())
-
-
-@pytest.mark.parametrize("seed", [41, 42])
-def test_reads_match_the_postgres_store(both, seed):
-    """query (with hard caps), COUNT (with and without the NIP-78 protection), negentropy, has_event,
-    filter_existing, the scans the bridge rules use, wot_missing_metadata."""
-    rs, ps, loop = both
-    gen = Gen(seed)
-    assert not _feed_both(rs, ps, gen, 900, extra_tags=_proxy_tag)
-    r = loop.run_until_complete
-    for _ in range(250):
-        f = gen.flt()
-        cap = gen.r.choice([0, 1, 7, 5000])
-        assert [e["id"] for e in rs._query_sync([dict(f)], cap)] == [e["id"] for e in ps._query_sync([dict(f)], cap)], \
-            sorted(f)
-        prot = gen.r.random() < 0.5
-        f2 = {k: v for k, v in f.items() if k != "limit"}
-        assert rs._count_filtered_sync([dict(f2)], prot) == ps._count_filtered_sync([dict(f2)], prot), sorted(f2)
-        assert rs._neg_items_sync([dict(f2)], 500000) == ps._neg_items_sync([dict(f2)], 500000), sorted(f2)
-    some = [e["id"] for e in gen.made[::7]] + ["f" * 64]
-    assert r(rs.filter_existing(some)) == r(ps.filter_existing(some))
-    assert [r(rs.has_event(i)) for i in some] == [r(ps.has_event(i)) for i in some]
-    assert r(rs.count()) == r(ps.count())
-    doms = {"mostr.pub"}
-    assert r(rs.bridged_pubkeys(doms)) == r(ps.bridged_pubkeys(doms))
-    assert r(rs.social_mirror_pubkeys()) == r(ps.social_mirror_pubkeys())
-    assert sorted(r(rs.nip05_domains())) == sorted(r(ps.nip05_domains()))
-    for st in (rs, ps):
-        r(st.wot_replace(gen.authors[:3], [gen.authors[5]]))
-    assert sorted(r(rs.wot_missing_metadata())) == sorted(r(ps.wot_missing_metadata()))
-    assert r(rs.wot_members()) == r(ps.wot_members())
-
-
 # ------------------------------------------------------------------ kind 30078 survives every cleaner
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_the_datastore_kind_survives_every_cleaner(backend):
+def test_the_datastore_kind_survives_every_cleaner():
     """Kind 30078 is settings, Notes, calendars, contacts, the vault, the desktop -- somebody's only copy. Every
     cleaner at once, at its harshest: a 1-day retention, a count cap of 1, pay-to-stay on with a 1-day free
     window and the author neither subscribed nor preserved, a stray NIP-40 expiration, a blocked word, a
@@ -318,57 +167,28 @@ def test_the_datastore_kind_survives_every_cleaner(backend):
             len(set(docs) - left), len(docs))
         assert not await st.query([{"kinds": [1], "authors": [stranger]}]), "the cleaners did nothing at all"
 
-    if backend == "pcdb":
-        with pcdb_factory() as make:
-            _run(lambda loop: go(loop, make))
-    else:
-        schema = "pcai_30078_" + uuid.uuid4().hex[:10]
-        c = _admin()
-        c.cursor().execute(f'CREATE SCHEMA "{schema}"')
-        c.close()
-        made = []
-
-        def make(loop, **kw):
-            s = relay.RelayStore(DSN + f" options=-csearch_path={schema}", **kw)
-            s.open(loop)
-            made.append(s)
-            return s
-        try:
-            _run(lambda loop: go(loop, make))
-        finally:
-            for s in made:
-                s.close()
-            c = _admin()
-            c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            c.close()
+    with pcdb_factory() as make:
+        _run(lambda loop: go(loop, make))
 
 
-# ------------------------------------------------------------------ primary mode never touches Postgres
+# ------------------------------------------------------------------ the relay opens it
 def _cfg(**kw):
-    cfg = {"pcdb_mode": "primary", "pg_dsn": "host=192.0.2.1 dbname=nope", "max_events": 0, "retention_days": 30,
-           "pcdb_flush_s": 300, "pcdb_cache_mb": 0}
+    cfg = {"max_events": 0, "retention_days": 30, "pcdb_flush_s": 300, "pcdb_cache_mb": 0}
     cfg.update(kw)
     return cfg
 
 
-def test_primary_mode_never_opens_a_postgres_connection(tmp_path, monkeypatch):
-    """Every public method of the store, through the same constructor the relay uses (thread._open_store), with
-    psycopg2.connect made to explode. One missed port of a SQL method would reconnect to a Postgres this node no
-    longer trusts -- and `_conn` raises too, so even a path this test does not drive fails loudly."""
+def test_the_relay_opens_the_store_and_every_public_method_works(tmp_path, monkeypatch):
+    """Every public method of the store, through the same constructor the relay uses (thread._open_store) --
+    on an EMPTY directory, which is a fresh install's first start: it becomes a new store."""
     from app.services.nostr_relay import thread
-    calls = []
-
-    def _boom(*a, **k):
-        calls.append(a)
-        raise AssertionError("primary mode opened a Postgres connection")
-    monkeypatch.setattr(psycopg2, "connect", _boom)
     monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
-    P.init_new(str(tmp_path / "relay"))
 
     async def go(loop):
         st = thread._open_store(_cfg(), loop)
         try:
             assert isinstance(st, P.PcdbRelayStore)
+            assert P.read_marker(str(tmp_path / "relay"))["state"] == "primary"
             pk = "a" * 64
             ev = _mk(pk, content="hello there", tags=[["t", "x"]])
             assert await st.add_event(ev, origin="direct")
@@ -401,194 +221,40 @@ def test_primary_mode_never_opens_a_postgres_connection(tmp_path, monkeypatch):
             await st.prune()
             assert await st.delete_pubkeys([pk], spare_preserved=False) == 6
             await st.checkpoint()
-            with pytest.raises(RuntimeError):
-                st._conn()
             assert thread.mirror_stats()["mode"] == "primary"
         finally:
             st.close()
-            thread._mirror_ref.pop("primary", None)
+            thread._store_ref.pop("primary", None)
     _run(go)
-    assert not calls, "psycopg2.connect was called %d time(s)" % len(calls)
-
-
-def test_an_unpromoted_directory_is_refused_and_postgres_serves(tmp_path, monkeypatch):
-    """`primary` on a directory nobody promoted would serve a stale copy and forget the WoT and the pinned
-    authors. The relay falls back to Postgres in serve mode instead -- which, here, is the connection attempt."""
-    from app.services.nostr_relay import thread
-    monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
-    # A node WITH a Postgres (here: a DSN in the environment) keeps the fallback (#161).
-    monkeypatch.setenv("NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=9 dbname=nothing")
-    st = Store(str(tmp_path / "relay"), flush_interval=3600)
-    st.put(_mk("a" * 64))
-    st.close()
-    with open(tmp_path / "relay" / "CLEAN", "w") as f:
-        f.write("clean:abc\n")
-    tried = []
-
-    def _connect(*a, **k):
-        tried.append(1)
-        raise ConnectionRefusedError("postgres (fallback) reached")
-    monkeypatch.setattr(psycopg2, "connect", _connect)
-    cfg = _cfg()
-    with pytest.raises(ConnectionRefusedError):
-        _run(lambda loop: _async(thread._open_store, cfg, loop))
-    assert tried and cfg["pcdb_mode"] == "serve"
-    assert os.path.exists(tmp_path / "relay" / "CLEAN"), "a refused promotion must change nothing"
 
 
 async def _async(fn, *a):
     return fn(*a)
 
 
-def test_an_unpromoted_directory_with_no_postgres_configured_refuses_to_start(tmp_path, monkeypatch):
-    """#161: a node with NO Postgres configured has nothing to fall back to. An unpromoted mirror directory
-    there must stop the relay loudly -- never dial a Postgres that was never set up, never serve the stale copy."""
-    from app.services import settings_store
+def test_a_directory_holding_events_with_no_marker_is_refused_never_adopted(tmp_path, monkeypatch):
+    """Events and no PRIMARY marker: nothing records whose data that is. Adopting it would make it the truth, so
+    the relay refuses to start -- loudly -- and changes nothing."""
     from app.services.nostr_relay import thread
     monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
-    for var in ("NOSTR_RELAY_PG_DSN", "DATABASE_URL"):
-        monkeypatch.delenv(var, raising=False)
-    real_get = settings_store.get
-    monkeypatch.setattr(settings_store, "get", lambda k, d=None: None if k == "nostr_relay_pg_dsn" else real_get(k, d))
     st = Store(str(tmp_path / "relay"), flush_interval=3600)
     st.put(_mk("a" * 64))
     st.close()
-    with open(tmp_path / "relay" / "CLEAN", "w") as f:
-        f.write("clean:abc\n")
-    tried = []
-    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: tried.append(1))
     with pytest.raises(P.PrimaryNotReady):
         _run(lambda loop: _async(thread._open_store, _cfg(), loop))
-    assert not tried, "a node with no Postgres configured dialled one"
-    assert os.path.exists(tmp_path / "relay" / "CLEAN"), "a refused start must change nothing"
+    assert P.read_marker(str(tmp_path / "relay")) is None, "a refused start must change nothing"
 
 
-def test_a_mirror_run_after_promotion_retires_it(tmp_path):
-    """Promoted, then started in serve mode (which rewrites CLEAN with a new token): the sidecar is stale, so
-    primary must refuse until a new promotion."""
+def test_a_marker_in_any_other_state_is_refused(tmp_path):
     path = str(tmp_path / "relay")
     os.makedirs(path)
-    with open(os.path.join(path, "CLEAN"), "w") as f:
-        f.write("clean:one\n")
     P.Sidecar(path).replace_all({}, {}, {}, ())
-    P.write_marker(path, {"state": "promoted", "clean_token": "clean:one"})
-    with open(os.path.join(path, "CLEAN"), "w") as f:
-        f.write("clean:two\n")
+    P.write_marker(path, {"state": "promoted"})
     with pytest.raises(P.PrimaryNotReady):
         P.claim_directory(path)
-    with open(os.path.join(path, "CLEAN"), "w") as f:
-        f.write("clean:one\n")
-    P.claim_directory(path)                          # the promoted state: accepted, CLEAN consumed
-    assert not os.path.exists(os.path.join(path, "CLEAN"))
-    assert P.read_marker(path)["state"] == "primary"
-    P.claim_directory(path)                          # a restart (or a crash) of the primary itself
-
-
-# ------------------------------------------------------------------ the promote script
-@pytest.fixture
-def promotable(tmp_path):
-    """A scratch Postgres relay with events + every sidecar table, and a mirror directory holding exactly its
-    events under a CLEAN token Postgres also holds -- what a clean stop in serve mode leaves."""
-    schema = "pcai_promote_" + uuid.uuid4().hex[:10]
-    c = _admin()
-    c.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    c.close()
-    dsn = DSN + f" options=-csearch_path={schema}"
-    loop = asyncio.new_event_loop()
-    rs = relay.RelayStore(dsn)
-    rs.open(loop)
-    gen = Gen(5)
-    for _ in range(300):
-        rs._add_event_sync(gen.event(), gen.r.choice(["direct", "wot"]))
-    rs._kv_set_sync("pinned_pubkeys", "a" * 64)
-    rs._kv_set_sync("sync_offset", "17")
-    rs._wot_replace_sync(gen.authors[:4], [gen.authors[4]])
-    rs._bridge_nip05_set_sync("alice_host", "b" * 64)
-    rs._bridge_puppet_add_sync("b" * 64)
-    path = str(tmp_path / "relay")
-    st = Store(path, flush_interval=3600)
-    for r in rs._conn().execute("SELECT " + relay.EVENT_COLUMNS + ", e.origin FROM events e "
-                                "ORDER BY e.created_at, e.id").fetchall():
-        st.copy_put(relay.event_from_row(r), origin=r["origin"])
-    st.close()
-    token = "clean:" + uuid.uuid4().hex
-    rs._kv_set_sync(relay.MIRROR_TOKEN_KEY, token)
-    with open(os.path.join(path, "CLEAN"), "w") as f:
-        f.write(token + "\n")
-    try:
-        yield rs, dsn, path, loop
-    finally:
-        rs.close()
-        loop.close()
-        c = _admin()
-        c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        c.close()
-
-
-def _promote(*args):
-    sys.path.insert(0, os.path.join(ROOT, "scripts"))
-    try:
-        import posterchandb_promote as m
-    finally:
-        sys.path.pop(0)
-    return m.main(list(args))
-
-
-def test_promote_refuses_a_token_mismatch(promotable):
-    rs, dsn, path, _loop = promotable
-    rs._kv_set_sync(relay.MIRROR_TOKEN_KEY, "open:" + uuid.uuid4().hex)     # a relay started since
-    assert _promote("--path", path, "--dsn", dsn) == 2
-    assert P.read_marker(path) is None and not os.path.exists(os.path.join(path, "sidecar-kv.json"))
-
-
-def test_promote_refuses_a_count_mismatch(promotable):
-    rs, dsn, path, _loop = promotable
-    rs._add_event_sync(_mk("e" * 64, content="written after the mirror stopped"), "direct")
-    assert _promote("--path", path, "--dsn", dsn) == 2
-    assert P.read_marker(path) is None and not os.path.exists(os.path.join(path, "sidecar-kv.json"))
-
-
-def test_promote_refuses_an_id_mismatch_with_equal_counts(promotable):
-    """One event swapped for another in Postgres: the counts still agree, the ids do not."""
-    rs, dsn, path, _loop = promotable
-    victim = rs._conn().execute("SELECT id FROM events WHERE expiration IS NULL LIMIT 1").fetchone()["id"]
-    ev = _mk("e" * 64, content="swapped in")
-    c = psycopg2.connect(dsn)
-    c.autocommit = True
-    cur = c.cursor()
-    cur.execute("DELETE FROM events WHERE id=%s", (victim,))
-    cur.execute("INSERT INTO events (id,pubkey,created_at,kind,content,tags,sig,origin) VALUES "
-                "(%s,%s,%s,1,%s,'[]',%s,'wot')", (ev["id"], ev["pubkey"], ev["created_at"], ev["content"], ev["sig"]))
-    c.close()
-    assert _promote("--path", path, "--dsn", dsn) == 2
-    assert P.read_marker(path) is None and not os.path.exists(os.path.join(path, "sidecar-kv.json"))
-
-
-def test_promote_refuses_without_a_clean_stop(promotable):
-    _rs, dsn, path, _loop = promotable
-    os.remove(os.path.join(path, "CLEAN"))
-    assert _promote("--path", path, "--dsn", dsn) == 2
-
-
-def test_promote_then_primary_serves_the_same_relay(promotable, monkeypatch):
-    rs, dsn, path, loop = promotable
-    assert _promote("--path", path, "--dsn", dsn) == 0
-    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("postgres")))
-    ps = P.PcdbRelayStore(path, maintenance=False)
-    ps.open(loop)
-    try:
-        r = loop.run_until_complete
-        assert r(ps.kv_get("pinned_pubkeys")) == "a" * 64 and r(ps.kv_get("sync_offset")) == "17"
-        assert r(ps.kv_get(relay.MIRROR_TOKEN_KEY)) is None
-        assert r(ps.wot_members()) == rs._wot_members_sync()
-        assert r(ps.bridge_nip05_all()) == {"alice_host": "b" * 64} and r(ps.bridge_puppets_all()) == {"b" * 64}
-        assert r(ps.count()) == rs._count_sync()
-        flt = [{"limit": 5000}]
-        assert [e["id"] for e in r(ps.query(flt))] == [e["id"] for e in rs._query_sync(flt, 5000)]
-    finally:
-        ps.close()
-        monkeypatch.undo()                      # the fixture's teardown needs the real psycopg2.connect
-    assert not os.path.exists(os.path.join(path, "CLEAN")), "opening as primary must consume CLEAN"
+    P.write_marker(path, {"state": "primary"})
+    P.claim_directory(path)
+    P.claim_directory(path)                          # a restart (or a crash) of the store itself
 
 
 # ------------------------------------------------------------------ lock holds
@@ -680,19 +346,12 @@ def test_no_cleaner_or_scan_holds_the_store_lock_for_long(tmp_path):
         loop.close()
 
 
-def test_the_relay_process_opens_primary_before_its_settings_and_reads_them_from_it(tmp_path, monkeypatch):
-    """The two halves of #161 meet here: the relay opens its store BEFORE it can read a setting (it answers its own
-    settings reads, open_store_for_settings), and primary is chosen by POSTERCHANDB_MODE. With primary set, that
-    early open must be PosterChanDB -- an early Postgres store would read settings from the stale side and start
-    the very connection primary exists to remove."""
+def test_the_relay_process_opens_its_store_before_its_settings_and_reads_them_from_it(tmp_path, monkeypatch):
+    """The relay opens its store BEFORE it can read a setting (it answers its own settings reads,
+    open_store_for_settings): that early open is the store, answering with no socket."""
     from app.services.nostr_relay import thread
     from app.services import settings_store
-    calls = []
-    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(
-        AssertionError("the early open used Postgres")))
     monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
-    monkeypatch.setenv("POSTERCHANDB_MODE", "primary")
-    monkeypatch.setattr(thread, "_pg_dsn", lambda: "host=192.0.2.1 dbname=nope")
     P.init_new(str(tmp_path / "relay"))
     seen = {}
     monkeypatch.setattr(settings_store, "set_event_source", lambda fn: seen.setdefault("src", fn))
@@ -704,6 +363,5 @@ def test_the_relay_process_opens_primary_before_its_settings_and_reads_them_from
             assert seen["src"]([{"kinds": [30078], "limit": 5}]) == []      # answered by the store, no socket
         finally:
             st.close()
-            thread._mirror_ref.pop("primary", None)
+            thread._store_ref.pop("primary", None)
     _run(go)
-    assert not calls

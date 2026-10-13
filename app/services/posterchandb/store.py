@@ -351,7 +351,7 @@ class Store:
         """Every index and column, empty — used before a full replay (and after a snapshot that failed part-way)."""
         # Events whose SEARCH words are not indexed yet (a copy and a log replay defer them: the Postgres-exact
         # tokenizer is ~93% of the cost of storing a real event). A search catches them up first, so answers
-        # stay exact; the mirror indexes them in the background and sends searches to Postgres meanwhile.
+        # stay exact; the relay store indexes the rest in the background (pcdb_store._index_words).
         self._unworded = collections.deque()
         self._pm = np.zeros(0, dtype=np.uint64)    # running max of `created` by seq (the newest-first scan's proof)
         self._pm_n = 0
@@ -892,8 +892,8 @@ class Store:
             return "stored"
 
     def copy_put(self, ev: dict, origin: str = "wot") -> str:
-        """Store an event EXACTLY as another store holds it -- no rule is re-decided. For copying the relay's
-        Postgres (mirror.py): its rows are the result of the rules applied in ARRIVAL order, and re-running
+        """Store an event EXACTLY as another store holds it -- no rule is re-decided (loading a copy, and the
+        tests' fixtures): its rows are the result of the rules applied in ARRIVAL order, and re-running
         them in another order (a load goes oldest-first) does not reach the same state -- which version of a
         multi-d document survives, whether a deletion arrived before or after its target. Derived tags are
         copied separately (add_derived_tag)."""

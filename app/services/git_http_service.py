@@ -159,10 +159,6 @@ def _read_config() -> dict:
             # THIS node's relay: every git decision's EVENTS are read from it (git_auth, #161 --
             # never the relay's Postgres tables), by this process and by the pre-receive hook.
             "relay_port": gi("nostr_relay_port", 3052),
-            # Postgres stays only for the acceptance policy's `users`/`wot` TABLE lookups, which
-            # are not events and have no NIP-01 query.
-            "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
-                "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
         }
     finally:
         db.close()

@@ -13,7 +13,6 @@ from app.services.nostr.quotes import quote_pubkeys
 from app.services.nostr_relay.server import _matches
 from app.services import nostr_push_service as push
 from tests.test_relay_prune import store_factory, _run
-from tests.relay_backends import is_pcdb
 
 QUOTE = json.loads((Path(__file__).parent / 'fixtures/nostr/ditto_quote_no_p.json').read_text())
 OWNER = QUOTE['tags'][0][3]
@@ -46,22 +45,13 @@ def test_non_note_q_tag_does_not_gain_notification_semantics():
     assert not _matches([{'#p': [OWNER], '_include_quotes': True}], ev)
 
 
-def test_postgres_index_backfill_and_new_events_agree_with_live_matching(store_factory):
+def test_the_stored_quote_index_agrees_with_live_matching(store_factory):
     async def run(loop):
         store = store_factory(loop)
         assert await store.add_event(QUOTE)
         assert await store.query([FILTER]) == [QUOTE]
         assert await store.query([{'#p': [OWNER]}]) == []
         assert await store.query([{'#q': [QUOTE['tags'][0][1]]}]) == [QUOTE]
-        # Simulate an existing database before the derived index existed. (Postgres only: the one-time
-        # migration has no PosterChanDB counterpart -- that store derives the index at ingest and on copy.)
-        if not is_pcdb(store):
-            conn = store._conn()
-            conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
-            conn.execute("DELETE FROM relay_kv WHERE key='quote_author_index_v1'")
-            assert await store.query([FILTER]) == []
-            store._index_existing_quotes(conn)
-            store._index_existing_quotes(conn)
         assert await store.query([FILTER]) == [QUOTE]
         assert (await store.query([FILTER]))[0]['tags'] == QUOTE['tags']
         # A user-supplied multi-letter tag cannot impersonate the derived index.
@@ -150,7 +140,7 @@ def test_store_indexes_a_bare_quote_for_the_quoted_author_and_live_fanout_matche
     _run(run)
 
 
-def test_backfill_v2_indexes_existing_bare_quotes(store_factory):
+def test_a_bare_quote_is_indexed_for_the_quoted_author_at_ingest(store_factory):
     post = build_event(ALICE_SK, 1, 'my post', [])
     q = _bare_quote(post)
     flt = {'kinds': [1], '#p': [post['pubkey']], '_include_quotes': True}
@@ -158,17 +148,6 @@ def test_backfill_v2_indexes_existing_bare_quotes(store_factory):
     async def run(loop):
         store = store_factory(loop)
         assert await store.add_event(post) and await store.add_event(q)
-        if is_pcdb(store):     # no migration to run: the index is derived at ingest
-            assert [e['id'] for e in await store.query([flt])] == [q['id']]
-            return
-        conn = store._conn()
-        conn.execute("DELETE FROM event_tags WHERE tag='_quote_author'")
-        # The state every LIVE database is in: v1 already ran, v2 never has.
-        conn.execute("DELETE FROM relay_kv WHERE key='quote_author_index_v2'")
-        conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') ON CONFLICT DO NOTHING")
-        assert await store.query([flt]) == []
-        store._index_existing_quotes(conn)
-        store._index_existing_quotes(conn)
         assert [e['id'] for e in await store.query([flt])] == [q['id']]
     _run(run)
 

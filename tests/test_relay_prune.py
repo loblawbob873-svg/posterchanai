@@ -13,81 +13,24 @@ SECOND, the prune is CHUNKED — it deletes in bounded passes so a big first run
 single writer thread for minutes while relay ingestion queues behind it. Chunked and unbounded must
 remove exactly the same events; a chunk boundary may not spare or eat one.
 
-Needs Postgres (the store is Postgres-only). The `posterchan` role can't CREATE DATABASE, so each
-test isolates itself in a scratch SCHEMA whose name is the ONLY entry in search_path — an unqualified
-table can then only resolve inside it, so a mistake errors out instead of touching the live relay.
-Skipped when the server isn't reachable.
+Runs against the relay's store (PosterChanDB), each test in its own temporary directory.
 """
 import asyncio
 import time
-import uuid
 
 import pytest
 
-psycopg2 = pytest.importorskip("psycopg2")
+from app.services.nostr_relay.store import _PRUNE_CHUNK  # noqa: E402
+from tests.relay_backends import pcdb_factory
 
-from app.services.nostr_relay.store import RelayStore, _PRUNE_CHUNK  # noqa: E402
-from tests import scratch_postgres
-from tests.relay_backends import BACKENDS, pcdb_factory, is_pcdb
-
-DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 DAY = 86400
 
 
-def _admin():
-    try:
-        conn = psycopg2.connect(DSN, connect_timeout=5)
-    except Exception as e:                                    # no server / no role — not a failure
-        pytest.skip(f"Postgres not reachable for the relay store: {e}")
-    conn.autocommit = True
-    return conn
-
-
-@pytest.fixture(params=BACKENDS)
-def store_factory(request):
-    """Builds opened RelayStores inside a scratch schema, each with a clean slate; drops it after.
-
-    The per-store truncate matters: a test that builds two stores (chunked vs unbounded) would
-    otherwise run the second against the first's survivors, and duplicate event ids would be
-    rejected as already-stored — which silently turns an assertion into a tautology.
-    """
-    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
-        with pcdb_factory() as make:
-            yield make
-        return
-    schema = "pcai_prune_test_" + uuid.uuid4().hex[:10]
-    conn = _admin()
-    conn.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    conn.close()
-    dsn = DSN + f" options=-csearch_path={schema}"
-    made = []
-
-    def _truncate():
-        c = _admin()
-        c.cursor().execute(f"""DO $$ DECLARE r record; BEGIN
-            FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='{schema}' LOOP
-                EXECUTE 'TRUNCATE TABLE "{schema}".'||quote_ident(r.tablename)||' CASCADE';
-            END LOOP; END $$;""")
-        c.close()
-
-    def _make(loop, **kw):
-        st = RelayStore(dsn, **kw)
-        st.open(loop)
-        _truncate()
-        made.append(st)
-        return st
-
-    try:
-        yield _make
-    finally:
-        for st in made:
-            st.close()
-        try:
-            c = _admin()
-            c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            c.close()
-        except Exception:
-            pass
+@pytest.fixture
+def store_factory():
+    """Builds opened relay stores (PosterChanDB, tests/relay_backends.py), each in its own directory."""
+    with pcdb_factory() as make:
+        yield make
 
 
 def _run(coro_fn):
@@ -806,21 +749,8 @@ def _plant(store, events, origin="direct"):
     used to set up the pruner's own test — the rows it has to clear are the ones written BEFORE the
     refusal existed, which is exactly what this reproduces. Same columns _insert_one writes.
     """
-    import json as _json
-    if is_pcdb(store):                 # the same bypass on PosterChanDB: rows exactly as given, no rule decided
-        for ev in events:
-            store.store.copy_put(dict(ev), origin=origin)
-        return
-    conn = psycopg2.connect(store.dsn, connect_timeout=5)
-    conn.autocommit = True
-    cur = conn.cursor()
-    for ev in events:
-        cur.execute("INSERT INTO events (id, pubkey, created_at, kind, content, tags, sig, "
-                    "origin, expiration) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NULL) "
-                    "ON CONFLICT (id) DO NOTHING",
-                    (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev.get("content", ""),
-                     _json.dumps(ev.get("tags") or []), ev.get("sig", ""), origin))
-    conn.close()
+    for ev in events:                  # rows exactly as given, no rule decided
+        store.store.copy_put(dict(ev), origin=origin)
 
 
 def _retired_ev(i, kind, *, age_days=0, pubkey=None, dtag=None):

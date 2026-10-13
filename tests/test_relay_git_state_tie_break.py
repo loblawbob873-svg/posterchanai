@@ -14,64 +14,24 @@ a push refused, or allowed, for a reason neither side can see. ngit v3 honours t
 tie-break (its CHANGELOG says so) and grinds nonces to avoid same-second collisions, so the window
 is small and the cost when it opens is invisible, which is the worst combination to leave to luck.
 
-Runs the REAL store against Postgres: the exception lives in one SQL-driving branch of
-`_add_event_sync`, and which row survives is the only observable that matters.
+Runs the REAL store (PosterChanDB): which row survives a same-second tie is the only observable that matters.
 """
 import asyncio
 import time
-import uuid
 
 import pytest
 
-psycopg2 = pytest.importorskip("psycopg2")
+from app.services.nostr_relay.store import _STRICT_TIE_KINDS  # noqa: E402
+from tests.relay_backends import pcdb_factory
 
-from app.services.nostr_relay.store import RelayStore, _STRICT_TIE_KINDS  # noqa: E402
-from tests import scratch_postgres
-from tests.relay_backends import BACKENDS, pcdb_factory
-
-DSN = scratch_postgres.dsn()   # a test Postgres -- see tests/scratch_postgres.py
 OWNER = "a" * 64
 
 
-def _admin():
-    try:
-        conn = psycopg2.connect(DSN, connect_timeout=5)
-    except Exception as e:
-        pytest.skip(f"Postgres not reachable for the relay store: {e}")
-    conn.autocommit = True
-    return conn
-
-
-@pytest.fixture(params=BACKENDS)
-def store_factory(request):
-    if request.param == "pcdb":       # PosterChanDB alone (tests/relay_backends.py)
-        with pcdb_factory() as make:
-            yield make
-        return
-    schema = "pcai_tie_test_" + uuid.uuid4().hex[:10]
-    conn = _admin()
-    conn.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    conn.close()
-    dsn = DSN + f" options=-csearch_path={schema}"
-    made = []
-
-    def _make(loop):
-        st = RelayStore(dsn)
-        st.open(loop)
-        made.append(st)
-        return st
-
-    try:
-        yield _make
-    finally:
-        for st in made:
-            st.close()
-        try:
-            c = _admin()
-            c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            c.close()
-        except Exception:
-            pass
+@pytest.fixture
+def store_factory():
+    """Builds opened relay stores (PosterChanDB, tests/relay_backends.py), each in its own directory."""
+    with pcdb_factory() as make:
+        yield make
 
 
 def _run(fn):

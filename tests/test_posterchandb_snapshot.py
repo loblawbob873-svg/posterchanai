@@ -22,8 +22,7 @@ import pytest
 from app.services.posterchandb import snapshot as snap
 from app.services.posterchandb.store import Store
 
-pytest.importorskip("psycopg2")
-from tests.test_posterchandb_vs_relay import Gen   # noqa: E402  (the same event and filter generator)
+from tests.pcdb_gen import Gen   # (the same event and filter generator)
 
 
 def _fill(path, seed, n=1500, **kw):

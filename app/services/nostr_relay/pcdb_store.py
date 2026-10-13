@@ -1,11 +1,10 @@
-"""The relay's store with NO Postgres: PosterChanDB is the only copy (`POSTERCHANDB_MODE=primary`, task #161).
+"""The relay's store: PosterChanDB is the only copy (#161 -- the Postgres store it replaced is deleted).
 
-`PcdbRelayStore` has RelayStore's whole public interface -- thread.py, server.py and ingest.py cannot tell the
-two apart -- and keeps everything RelayStore kept in Postgres:
+`PcdbRelayStore` is the store thread.py, server.py and ingest.py talk to, built on store.RelayStore (the rules
+and the async layer) and keeping everything a relay needs:
 
   * events + tags: a posterchandb `Store`. It already applies the relay's ingest rules exactly (replaceable /
-    addressable, NIP-09, NIP-40, duplicates, the derived quote index); tests/test_posterchandb_vs_relay.py holds
-    the two to the same decisions and the same answers. Nothing here re-decides an ingest rule.
+    addressable, NIP-09, NIP-40, duplicates, the derived quote index). Nothing here re-decides an ingest rule.
   * relay_kv, wot, bridge_nip05, bridge_puppet: a small SIDECAR in the same directory, one JSON file per table,
     replaced atomically on every change (temp file, fsync, rename, fsync of the directory) -- so a crash at any
     instant leaves the last complete state, never a torn one.
@@ -14,12 +13,9 @@ two apart -- and keeps everything RelayStore kept in Postgres:
     than one chunk (SCAN_ROWS rows copied out, KILL_BATCH deaths, DECODE_BATCH records decoded), because a
     465 ms hold of that lock starved the live relay once (docs/POSTERCHANDB.md).
 
-THE DIRECTORY MUST BE PROMOTED FIRST. `open()` refuses (PrimaryNotReady) a directory without a PRIMARY marker:
-scripts/posterchandb_promote.py writes it after proving the mirror directory equals Postgres, or `--new` writes
-it for a node that never had Postgres. A marker from a promotion is honoured only while the mirror's CLEAN token
-is the one it was promoted against -- a mirror that ran after the promotion means the sidecar is stale. Opening
-consumes CLEAN: from here on this directory is the truth and Postgres is not, so a later `serve` start must copy
-afresh rather than trust a token that still matches the Postgres it no longer equals.
+THE DIRECTORY CARRIES A PRIMARY MARKER. `open()` refuses (PrimaryNotReady) a directory without one: `init_new`
+writes it for an empty directory (thread._open_store does that on a fresh install), and a directory that already
+holds events with no marker is never adopted silently -- it is somebody's data whose provenance nothing records.
 """
 from __future__ import annotations
 
@@ -45,7 +41,6 @@ from .store import RelayStore
 logger = logging.getLogger(__name__)
 
 MARKER = "PRIMARY"
-CLEAN = "CLEAN"                       # posterchandb/mirror.py's clean-stop marker
 SIDECAR_TABLES = ("kv", "wot", "bridge_nip05", "bridge_puppet")
 SIDECAR_FORMAT = 1
 
@@ -68,7 +63,7 @@ _COLS = {"created": np.uint64, "kind": np.uint32, "expires": np.uint64, "origin"
 
 
 class PrimaryNotReady(RuntimeError):
-    """The directory is not (or no longer) a promoted primary store. Nothing was changed."""
+    """The directory is not a primary store. Nothing was changed."""
 
 
 class SearchNotReady(RuntimeError):
@@ -112,66 +107,6 @@ def read_marker(path: str):
 
 def write_marker(path: str, data: dict) -> None:
     atomic_write_json(os.path.join(path, MARKER), dict(data, format=SIDECAR_FORMAT))
-
-
-LOCK = "PRIMARY.lock"
-
-
-def hold_primary(path: str) -> int:
-    """A SHARED lock on the directory for as long as a primary store is open on it (released by close, and by the
-    kernel when the process dies). It is what retire_marker asks before removing the marker."""
-    import fcntl
-    fd = os.open(os.path.join(path, LOCK), os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_SH)
-    return fd
-
-
-def release_primary(fd) -> None:
-    import fcntl
-    if fd is None:
-        return
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
-def retire_marker(path: str) -> bool:
-    """The relay runs on Postgres (off/shadow/serve): this directory is a mirror again, not the primary's, and a
-    later `primary` start must be promoted afresh (the sidecar would be stale). thread._start_mirror.
-
-    NEVER FROM UNDER A LIVE PRIMARY. 2026-10-10 21:53: something started on Postgres while server1's relay was
-    primary on this directory, removed the marker, and the relay's next start refused -- a 2.5-minute outage of
-    poster.place. A primary holds a shared lock (hold_primary); this takes it exclusively without waiting and
-    refuses while anyone holds it. Returns whether the marker is gone."""
-    import fcntl
-    try:
-        fd = os.open(os.path.join(path, LOCK), os.O_RDWR | os.O_CREAT, 0o600)
-    except OSError:
-        fd = None                       # no directory: nothing to retire
-    if fd is not None:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)
-            logging.getLogger(__name__).warning(
-                "[nostr-relay] NOT retiring %s's PRIMARY marker: a primary relay has the directory open", path)
-            return False
-    try:
-        os.remove(os.path.join(path, MARKER))
-    except OSError:
-        pass
-    finally:
-        release_primary(fd)
-    return True
-
-
-def read_clean_token(path: str):
-    try:
-        with open(os.path.join(path, CLEAN)) as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
 
 
 class Sidecar:
@@ -235,15 +170,13 @@ class _Housekeeper(maint_mod.Maintainer):
 
 # ------------------------------------------------------------------------------------------------ the store
 class PcdbRelayStore(RelayStore):
-    """RelayStore's interface over PosterChanDB alone. Inherits only Postgres-free code (the pay-to-stay and
-    preserve bookkeeping, `admit`, `is_repo_announced`, the async wrappers and `prune()`'s pass loop); every
-    method that touched SQL is replaced, and `_conn` RAISES so a method that was missed fails loudly instead of
-    quietly reconnecting to a Postgres this node no longer trusts."""
+    """The relay's store over PosterChanDB. Inherits from store.RelayStore the pay-to-stay and preserve
+    bookkeeping, `admit`, `is_repo_announced`, the async wrappers and `prune()`'s pass loop; every method that
+    reads or writes events is here."""
 
     def __init__(self, path: str, *, read_workers: int = 4, max_events: int = 0, retention_days: int = 30,
                  flush_interval: float = 300.0, cache_mb: float = 0, log=None, maintenance: bool = True):
-        super().__init__("", read_workers=read_workers, max_events=max_events, retention_days=retention_days)
-        self.dsn = None
+        super().__init__(read_workers=read_workers, max_events=max_events, retention_days=retention_days)
         self.path = path
         self.flush_interval = float(flush_interval)
         self.cache_mb = float(cache_mb or 0)
@@ -278,7 +211,6 @@ class PcdbRelayStore(RelayStore):
     def open(self, loop) -> None:
         self._loop = loop
         claim_directory(self.path)
-        self._primary_lock = hold_primary(self.path)      # while open, nothing may retire the marker
         self.sidecar = Sidecar(self.path)
         self._gov = cache_mod.CacheGovernor(budget_mb=self.cache_mb, log=self.log)
         # direct_durable OFF in the Store: a direct write is made durable by sync() below instead -- the same
@@ -338,17 +270,6 @@ class PcdbRelayStore(RelayStore):
         if self.store is not None:
             # No snapshot: the stop has systemd's 10 s, the log is complete, the hourly snapshot bounds the replay.
             self.store.close(take_snapshot=False)
-        release_primary(getattr(self, "_primary_lock", None))
-        self._primary_lock = None
-
-    def _conn(self):
-        raise RuntimeError("PosterChanDB primary store: there is no Postgres (a RelayStore method was not ported)")
-
-    def attach_mirror(self, m) -> None:
-        raise RuntimeError("the primary store has no mirror: it IS the store")
-
-    def detach_mirror(self):
-        raise RuntimeError("the primary store has no mirror: it IS the store")
 
     async def checkpoint(self) -> None:
         """Clean-shutdown hook: everything written so far, fsynced."""
@@ -1220,31 +1141,17 @@ class PcdbRelayStore(RelayStore):
 
 # ------------------------------------------------------------------------------------------------ the directory
 def claim_directory(path: str) -> None:
-    """Refuse a directory that is not a promoted primary store, else make it ours: the marker says `primary` and
-    the mirror's CLEAN marker is consumed (see the module docstring)."""
+    """Refuse a directory that is not a primary store (no PRIMARY marker, or one in any other state)."""
     m = read_marker(path)
     if m is None:
-        raise PrimaryNotReady("%s has no %s marker — stop the relay and run scripts/posterchandb_promote.py "
-                              "(or `--new` on a node that never had Postgres)" % (path, MARKER))
-    clean = read_clean_token(path)
-    state = m.get("state")
-    if clean is not None:
-        if state != "promoted" or clean != m.get("clean_token"):
-            raise PrimaryNotReady("%s was written as a Postgres mirror after it was promoted (its CLEAN token is "
-                                  "not the one promoted) — promote it again" % path)
-    elif state != "primary":
-        raise PrimaryNotReady("%s was promoted but its mirror CLEAN marker is gone (a mirror ran and did not stop "
-                              "cleanly) — promote it again" % path)
-    if state != "primary":
-        write_marker(path, dict(m, state="primary", primary_since=int(time.time())))
-    if clean is not None:
-        os.remove(os.path.join(path, CLEAN))
-        _fsync_dir(path)
+        raise PrimaryNotReady("%s has no %s marker -- it is not a relay store this code created" % (path, MARKER))
+    if m.get("state") != "primary":
+        raise PrimaryNotReady("%s's %s marker says %r, not 'primary'" % (path, MARKER, m.get("state")))
 
 
 def init_new(path: str) -> None:
-    """A primary store for a node with NO Postgres (scripts/posterchandb_promote.py --new). Refuses a directory
-    that already holds events: those are a mirror's, and only a promotion may adopt them."""
+    """A new, empty primary store. Refuses a directory that already holds events with no marker: nothing records
+    whose they are, and adopting them would make them the truth."""
     os.makedirs(path, exist_ok=True)
     if read_marker(path) is not None:
         raise PrimaryNotReady("%s is already a primary store" % path)
@@ -1254,10 +1161,6 @@ def init_new(path: str) -> None:
     finally:
         st.close(take_snapshot=False)
     if held:
-        raise PrimaryNotReady("%s holds %d events (a mirror's) — promote it from Postgres instead" % (path, held))
-    try:
-        os.remove(os.path.join(path, CLEAN))
-    except OSError:
-        pass
+        raise PrimaryNotReady("%s holds %d events but no %s marker -- refusing to adopt them" % (path, held, MARKER))
     Sidecar(path).replace_all({}, {}, {}, ())
     write_marker(path, {"state": "primary", "created_new": int(time.time())})
