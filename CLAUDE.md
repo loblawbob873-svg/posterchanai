@@ -1796,6 +1796,28 @@ would have handled it fine).
   Files has a **"This Computer"** tab; `hostfiles.js` is handed the app's own `_fxBarHTML` /
   `_fxColsHTML` / `_fxDetailsRow` / `_fxIcon` rather than inventing markup — it used to draw eleven
   class names of which the stylesheet defined *none*.
+- **PosterChanOS's LOCAL RELAY is the desktop's event cache** (`app/services/nostr_relay/osmode.py`,
+  `relay_main.py --os-mode`; package `app-misc/posterchan-relay` = `os/bin/pc-local-relay` + the USER unit
+  `posterchan-relay.service`; client half in `store.js` `LR`). Measured 2026-10-12 before it existed: the
+  desktop app's IndexedDB LevelDB wrote 327 MB (desktop) / 1,202 MB (laptop) of tables in 19 minutes,
+  10-31x what it flushed. One loopback PosterChanDB store per ACCOUNT replaces it: no per-write fsync,
+  32 MB segments, LRU byte cap (`PC_RELAY_MAX_MB`, default 512) with the client's `_isPinned` documents
+  pinned — `os_pins.py` is a COPY of that rule and `test_os_relay_pins_match_the_client.py` reads both.
+  **Rules:** loopback only (refused otherwise); the ONLY upstream is the welcome screen's instance
+  (`~/.config/posterchan-desktop/config.json` `instance`, re-read every pass; none = pure cache; the
+  desktop's Tor on = no dialling at all); download only (scope: own events, own 30078 via the client
+  signing the instance's AUTH over `PC-SIGN-AUTH` — relay.js answers ONLY for the registered instance relay
+  URL —, mentions, DMs, follows' last week); negentropy, `since` REQ fallback; nothing else of the server
+  is imported (`test_os_relay_import_closure.py` — the package `__init__` is LAZY for this). Signed 30078
+  WRITES need no AUTH here (it is a cache of signed copies); 30078 READS still do (other accounts can
+  reach the port). **The client never depends on it:** Store sends to it only while its socket is OPEN,
+  holds every event until OK, and anything refused or unacknowledged at a close goes STRAIGHT to IndexedDB
+  (never back through the batch — a refusal would loop); pinned documents are ALSO written to IndexedDB;
+  a URL that is not ws:// on loopback is ignored. The URL comes from `$XDG_RUNTIME_DIR/posterchan-relay.url`
+  (written only after bind, removed at stop) via `pcShell.localRelay`; `pc-shell-start-wayfire` waits ≤8 s
+  for that file AND an active unit, then starts the desktop regardless. The pool gets it LAST (`Relay.url`
+  is where webxdc realtime goes). Tests: `test_os_relay_*`, `test_shell_waits_for_local_relay.py`,
+  `tests/client/test_store_local_relay_backend.py`, `tests/client/test_local_relay_cache_full_app.py`.
 - **Native apps run WITHOUT an instance** (`desktop/`, `mobile/`): both BUNDLE the web client, and the
   desktop build (`desktop/build-www.sh` → `desktop/main.js`) can run with **no PosterChan server at all** —
   relays + a key. See `desktop/README.md`. Three things this changed, each a trap:

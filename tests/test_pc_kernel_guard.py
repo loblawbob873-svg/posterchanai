@@ -186,7 +186,7 @@ def test_the_updater_runs_it_before_it_can_say_up_to_date():
         assert s.index("pc-kernel-guard --repair") < s.index('echo "${GRN}Already up to date.'), f
     assert (ROOT / "os/bin/pc-kernel-guard").read_bytes() == \
         (ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-kernel-guard").read_bytes()
-    eb = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r6.ebuild").read_text()
+    eb = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r7.ebuild").read_text()
     assert " pc-kernel-guard " in eb
 
 

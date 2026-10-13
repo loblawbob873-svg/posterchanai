@@ -1738,6 +1738,22 @@ function fromOurPage(e) {
 
 ipcMain.on('pc:instance:sync', (e) => { e.returnValue = instance(); });
 ipcMain.on('pc:instance:chosen', (e) => { e.returnValue = instanceChosen(); });
+/* POSTERCHANOS'S LOCAL RELAY. The `posterchan-relay` user service writes its URL into
+ * $XDG_RUNTIME_DIR/posterchan-relay.url only once it is listening, and removes it when it stops
+ * (app/services/nostr_relay/osmode.py), and pc-shell-start-wayfire waits for that file before starting
+ * this shell. The SHELL only -- a desktop app on Windows or a plain Linux has no such service -- and only a
+ * loopback ws:// URL is ever handed to the page (store.js checks again), so a file somebody else wrote can
+ * never point the cache at the network. Read on every ask, so a relay that started after the window is
+ * picked up by the next reload. */
+function localRelayUrl() {
+  if (!SHELL_MODE) return '';
+  const dir = process.env.XDG_RUNTIME_DIR || (typeof process.getuid === 'function' ? '/run/user/' + process.getuid() : '');
+  if (!dir) return '';
+  let url = '';
+  try { url = fs.readFileSync(path.join(dir, 'posterchan-relay.url'), 'utf8').trim(); } catch (_) { return ''; }
+  return /^ws:\/\/(127\.0\.0\.1|\[::1\]):\d{2,5}\/?$/.test(url) ? url : '';
+}
+ipcMain.on('pc:localrelay:url', (e) => { e.returnValue = fromOurPage(e) ? localRelayUrl() : ''; });
 ipcMain.handle('pc:instance:get', () => instance());
 ipcMain.handle('pc:instance:set', (e, url) => fromOurPage(e) ? setInstance(url) : false);
 ipcMain.on('pc:retry', (e) => {

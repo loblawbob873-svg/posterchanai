@@ -30,6 +30,7 @@ RDEPEND="
 	>=dev-lang/python-3.10
 	>=app-misc/posterchan-desktop-1.0.1903
 	app-misc/posterchan-server
+	app-misc/posterchan-relay
 	dev-vcs/ngit
 	>=gui-wm/wayfire-0.10.1-r3
 	>=gui-libs/posterchan-wayfire-shell-1.0.1-r7

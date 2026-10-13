@@ -174,6 +174,52 @@ except Exception:
     _cc_verify = None
 
 
+def _libsecp256k1_verify():
+    """The SAME fast path straight from the system's libsecp256k1 (ctypes), for a Python that has no
+    coincurve wheel -- PosterChanOS's local relay runs on the OS's own Python (osmode.py), where the
+    distribution ships the C library (dev-libs/libsecp256k1) and not the binding. Electrum verifies this
+    way. Only the post-0.2 ABI is used (msglen argument, present when `secp256k1_schnorrsig_sign32`
+    is exported): calling the older signature with an extra argument would read a length as a pointer.
+    Activated, like coincurve, only after it agrees with the reference on a known good and bad signature."""
+    import ctypes
+    import ctypes.util
+    import os
+    names = [os.environ.get("PC_SECP256K1_LIB"), ctypes.util.find_library("secp256k1"),
+             "libsecp256k1.so.6", "libsecp256k1.so.5", "libsecp256k1.so.2", "libsecp256k1.so"]
+    for name in [n for n in names if n]:
+        try:
+            lib = ctypes.CDLL(name)
+            lib.secp256k1_schnorrsig_sign32         # noqa: B018 -- the post-0.2 ABI marker
+            create, parse = lib.secp256k1_context_create, lib.secp256k1_xonly_pubkey_parse
+            check = lib.secp256k1_schnorrsig_verify
+        except (OSError, AttributeError):
+            continue
+        create.restype = ctypes.c_void_p
+        create.argtypes = [ctypes.c_uint]
+        parse.restype = ctypes.c_int
+        parse.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+        check.restype = ctypes.c_int
+        check.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p]
+        ctx = create(0x0101)            # SECP256K1_CONTEXT_VERIFY (accepted, ignored, by every version)
+        if not ctx:
+            continue
+
+        def _ct_verify(msg32: bytes, pubkey32: bytes, sig64: bytes, _ctx=ctx, _lib=lib) -> bool:
+            pk = ctypes.create_string_buffer(64)
+            if parse(_ctx, pk, bytes(pubkey32)) != 1:
+                return False
+            return check(_ctx, bytes(sig64), bytes(msg32), 32, pk) == 1
+        return _ct_verify
+    return None
+
+
+if _cc_verify is None:
+    try:
+        _cc_verify = _libsecp256k1_verify()
+    except Exception:
+        _cc_verify = None
+
+
 def verify(msg32: bytes, pubkey32: bytes, sig64: bytes) -> bool:
     """Verify a 64-byte BIP340 Schnorr signature."""
     if len(pubkey32) != 32 or len(sig64) != 64 or len(msg32) != 32:

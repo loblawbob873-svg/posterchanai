@@ -185,6 +185,20 @@
     _queryFromStops: new Set(),
     _queryFromBlockedHosts: new Set(['relay.ditto.pub','relay.damus.io']),
     _authSigner: null,
+    /* PosterChanOS's local relay (osmode.py) holds no key, so to sync this account's PRIVATE documents
+     * from the instance it asks the client to sign the instance's NIP-42 challenge
+     * (`["PC-SIGN-AUTH", id, relayUrl, challenge]` on the local socket only). Answered only when it comes
+     * from THAT socket and names exactly the instance relay connectRelays registered -- a challenge for
+     * any other relay is refused, so the cache can never collect an AUTH for somewhere else. */
+    _localUrl: '', _localSignFor: '',
+    setLocalRelay(url, instanceRelay){ this._localUrl = _relayUrl(url || ''); this._localSignFor = _relayUrl(instanceRelay || ''); },
+    _signForLocal(conn, m){
+      const rid = String(m[1] || ''), relay = String(m[2] || ''), challenge = String(m[3] || '');
+      const reply = (ev) => { try{ conn._send(['PC-SIGNED-AUTH', rid, ev || null]); }catch(_){} };
+      if(!rid || !challenge || !this._localSignFor || _relayUrl(relay) !== this._localSignFor || !this._authSigner) return reply(null);
+      Promise.resolve().then(() => this._authSigner({ kind: 22242, created_at: Math.floor(Date.now() / 1000), content: '',
+        tags: [['relay', relay], ['challenge', challenge]] })).then(ev => reply(ev && ev.id ? ev : null), () => reply(null));
+    },
 
     // The application owns the active signer (local key, NIP-07, NIP-46 or NIP-55). Keeping only
     // this callback here lets the transport answer NIP-42 without learning or retaining key data.
@@ -515,6 +529,8 @@
       const typ = m[0];
       if (typ === 'AUTH'){
         conn.challenge=String(m[1]||'');
+      } else if (typ === 'PC-SIGN-AUTH'){
+        if (this._localUrl && conn.url === this._localUrl) this._signForLocal(conn, m);
       } else if (typ === 'EVENT'){
         /* A trusted relay echoing the exact signed id is delivery evidence even if its separate OK
          * frame was lost during a phone radio handoff. Settle the active publish before looking up

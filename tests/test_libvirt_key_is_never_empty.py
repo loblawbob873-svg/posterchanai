@@ -101,6 +101,6 @@ def test_the_drop_in_replaces_the_stock_condition_and_is_installed():
     text = DROPIN.read_text()
     assert re.search(r"^\[Unit\]\s*\nConditionPathExists=\s*$", text, re.M), "the stock ConditionPathExists=! still applies"
     assert re.search(r"^ExecStart=\s*$", text, re.M), "the stock ExecStart is not reset"
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r6.ebuild").read_text()
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0-r7.ebuild").read_text()
     assert "insinto /usr/lib/systemd/system/virt-secret-init-encryption.service.d" in ebuild
     assert 'newins "${FILESDIR}/virt-secret-init-encryption-posterchanos.conf" 50-posterchanos.conf' in ebuild
