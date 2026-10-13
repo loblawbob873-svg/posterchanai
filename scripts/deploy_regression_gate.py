@@ -329,6 +329,89 @@ def _run_required_tests(command, root, env, log, timeout=None):
         signal.signal(signal.SIGTERM, previous)
 
 
+def required_shards(entries, jobs, durations=None, root=ROOT):
+    """The required list split for parallel runs, by FILE: a node id never leaves its file's group (a module's
+    fixtures and order stay one process's), and each group keeps the list's own order."""
+    files = list(dict.fromkeys(e.split('::')[0] for e in entries))
+    shards = plan_shards(files, jobs, durations, root)
+    where = {f: i for i, shard in enumerate(shards) for f in shard}
+    groups = [[] for _ in shards]
+    for e in entries:
+        groups[where[e.split('::')[0]]].append(e)
+    return [g for g in groups if g]
+
+
+def _run_required_sharded(groups, base, root, env, directory, report, timeout=None):
+    """THE REQUIRED STAGE RUNS IN PARALLEL GROUPS. Serially it outgrew every budget it was given (600s, 1200s,
+    2100s): deploy 210 finished in 2006-2034s of 2100 and deploy 211 was killed at 2100s with ~930 of 2,246
+    cases run and nothing named. Each group is its own pytest under the same flags, with a hang dump so a stuck
+    test names itself; the junit results are merged into `report` for the checks that follow. A failure in the
+    parallel run is re-run ONCE serially (the full stage's rule: failed under load, passed alone = flaky, shown);
+    a skip is never re-run away, and a group that did not complete is never re-run away."""
+    timeout = timeout or REQUIRED_TIMEOUT_S
+    captured = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_captured']
+    env = dict(env, PC_GATE_MANAGED_PROCESSES='1')
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
+    def run(index):
+        part = Path(directory) / f'required-{index}.xml'
+        command = [*base, '-o', f'faulthandler_timeout={HANG_DUMP_S}', '--junitxml=' + str(part), *groups[index]]
+        code, output = captured(command, root, env, timeout, Path(directory) / f'required-{index}.log')
+        return code, output, part
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(groups))) as pool:
+            results = list(pool.map(run, range(len(groups))))
+    except KeyboardInterrupt:
+        return 130, '[regressions] required tests interrupted\n'
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    out, cases, codes = [], [], []
+    for index, (code, output, part) in enumerate(results):
+        codes.append(code)
+        if code not in (0, 1):
+            lines = output.strip().splitlines()
+            dump = [i for i, l in enumerate(lines) if 'Timeout (' in l or 'most recent call first' in l]
+            out.append(f'[regressions] required group {index} did not complete (pytest exit {code}):\n'
+                       + '\n'.join((lines[dump[0]:dump[0] + 40] if dump else []) + lines[-15:]) + '\n')
+        else:
+            out.append(output)
+        try:
+            cases.extend(ET.parse(part).getroot().iter('testcase'))
+        except (OSError, ET.ParseError):
+            if code in (0, 1):
+                codes[-1] = 3      # a group that says it ran but left no readable results did not complete
+    failed = [c for c in cases if c.find('failure') is not None or c.find('error') is not None]
+    if failed and all(c in (0, 1) for c in codes):
+        ids = list(dict.fromkeys(_node_id(c, root) for c in failed))
+        part = Path(directory) / 'required-retry.xml'
+        code, output = captured([*base, '--junitxml=' + str(part), *ids], root, env, timeout,
+                                Path(directory) / 'required-retry.log')
+        try:
+            again = {_node_id(c, root): c for c in ET.parse(part).getroot().iter('testcase')}
+        except (OSError, ET.ParseError):
+            again = {}
+        if code in (0, 1) and again:
+            flaky = [i for i in ids if i in again and again[i].find('failure') is None
+                     and again[i].find('error') is None and again[i].find('skipped') is None]
+            if flaky:
+                out.append('[regressions] FLAKY UNDER LOAD (failed in parallel, passed alone): '
+                           + ', '.join(flaky) + '\n')
+                cases = [again[_node_id(c, root)] if c in failed and _node_id(c, root) in flaky else c
+                         for c in cases]
+                if not [c for c in cases if c.find('failure') is not None or c.find('error') is not None]:
+                    codes = [0 if c == 1 else c for c in codes]
+    suite = ET.Element('testsuites')
+    holder = ET.SubElement(suite, 'testsuite')
+    holder.extend(cases)
+    ET.ElementTree(suite).write(report)
+    code = next((c for c in codes if c not in (0, 1)), None)
+    if code is None:
+        code = 1 if any(c == 1 for c in codes) else 0
+    return code, ''.join(out)
+
+
 # Per-test durations from previous full runs, used only to balance shards. A cache, not a record:
 # losing it costs balance, never coverage.
 DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'posterchanai' / 'test-durations.json'
@@ -633,10 +716,16 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
         if skip_browser:
             browser = browser_test_files(root)
             required = tuple(t for t in TESTS if t.split('::')[0] not in browser)
-        command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
-                   '-q', '-ra', '--durations=20', '--junitxml=' + str(report), *required]
+        base = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=', '-q', '-ra', '--durations=20']
         try:
-            code, output = _run_required_tests(command, root, env, Path(directory) / 'pytest.log')
+            durations = json.loads(DURATIONS.read_text())
+        except (OSError, ValueError):
+            durations = {}
+        shards = jobs or _env_jobs() or runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
+        groups = required_shards(list(required), shards, durations, root)
+        print(f'[regressions] required: {len(required)} entries in {len(groups)} parallel group(s)')
+        try:
+            code, output = _run_required_sharded(groups, base, root, env, directory, report)
         except (OSError, subprocess.TimeoutExpired) as error:
             print('[regressions] ABORT: required tests could not finish: ' + str(error))
             return 1
