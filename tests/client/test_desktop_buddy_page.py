@@ -105,6 +105,10 @@ async def _run(page, hash=""):
                 res["after_switch_src"] = src
         finally:
             proc.kill()
+            try:
+                proc.wait(timeout=15)   # Chrome still writing its profile makes the TemporaryDirectory cleanup fail (CI: 'Directory not empty: Default')
+            except Exception:
+                pass
     return res
 
 

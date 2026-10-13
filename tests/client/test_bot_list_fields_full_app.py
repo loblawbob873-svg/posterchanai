@@ -108,7 +108,7 @@ async def _settle(b, ms=700):
 
 
 async def _run(base, width):
-    with tempfile.TemporaryDirectory(prefix="pc-botlf-") as profile:
+    with tempfile.TemporaryDirectory(prefix="pc-botlf-", ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0",
                                  "--user-data-dir=" + profile, "about:blank"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -173,8 +173,10 @@ async def _run(base, width):
                 return got
         finally:
             proc.kill()
-
-
+            try:
+                proc.wait(timeout=15)   # Chrome still writing its profile makes the TemporaryDirectory cleanup fail (CI: 'Directory not empty: Default')
+            except Exception:
+                pass
 @pytest.fixture(scope="module")
 def server():
     async def profiles(pks):
