@@ -1004,6 +1004,17 @@ class PcdbRelayStore(RelayStore):
         with self.sidecar._lock:
             return set(self.sidecar.wot)
 
+    def _wot_row_sync(self, pubkey: str):
+        """(depth, added_at) of one member, or None -- the relay trace (nostr_relay/aggregates.py)."""
+        with self.sidecar._lock:
+            r = self.sidecar.wot.get(pubkey)
+        return (int(r[0]), int(r[1])) if r else None
+
+    def _wot_among_sync(self, pubkeys: list) -> list:
+        """Which of `pubkeys` are members -- the relay's wot-tiers answer (nostr_relay/aggregates.py)."""
+        with self.sidecar._lock:
+            return [p for p in pubkeys if pg._is_hex64(p) and p in self.sidecar.wot]
+
     def _wot_missing_metadata_sync(self) -> list:
         """store.py _wot_missing_metadata_sync -- the same four groups in the same order -- from a chunked column
         scan instead of three DISTINCT queries."""

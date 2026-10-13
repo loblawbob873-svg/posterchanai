@@ -410,7 +410,12 @@ def _executor() -> ThreadPoolExecutor:
 
 
 def source(store, now: int):
-    """PosterChanDB when the mirror is serving, else Postgres on THIS thread's own connection."""
+    """The relay's own PosterChanDB store; else a mirror beside Postgres while it serves; else Postgres on THIS
+    thread's own connection. The first case is every node since 2026-10-10 -- it used to fall through to
+    `store._conn()`, which a PosterChanDB store does not have, and every stat answered Unavailable."""
+    from .pcdb_store import PcdbRelayStore
+    if isinstance(store, PcdbRelayStore) and store.store is not None:
+        return _Pcdb(store.store, now)
     m = getattr(store, "mirror", None)
     try:
         if m is not None and m.serving() and m.store is not None:
