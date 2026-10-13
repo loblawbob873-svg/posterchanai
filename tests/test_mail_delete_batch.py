@@ -18,6 +18,9 @@ import sys
 from types import ModuleType
 from unittest.mock import patch
 import app.services
+# mail_store imports doc_table, which reads constants off the REAL nostr_store at import -- load it before the
+# stubs below replace nostr_store, or this file only passes when an earlier test happened to import it first.
+import app.services.doc_table  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
