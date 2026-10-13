@@ -164,6 +164,10 @@ CHECKS = {
     # A real profile never skips a reply the relay has ("there is no way I have an 11 day reply gap"):
     # the profile's Replies list compared, pair by pair, with the instance's own relay.
     "check_profile_continuity_live":   dict(group="live", secs=420, live_args=["{live}"]),
+    # The deployed instance itself, over the internet: server stats, relay publish/read, the Concord
+    # tunnel refusing a forged ticket, the client shell + sw version, federation health. No Chrome.
+    # sync.sh runs it after every deploy (a few requests; see docs/TESTING.md).
+    "check_live_production":           dict(group="live", secs=300, live_args=["{live}"]),
     "check_dm_video_live":             dict(group="live", secs=420),
     "check_drive_blob_fetch":          dict(group="live", secs=420,
                                               live_args=[], live_env={"PC_ORIGIN": "{live}"}),

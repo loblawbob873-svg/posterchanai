@@ -501,3 +501,31 @@ if [ "$_DRIFT" != "0" ]; then
     exit 1
 fi
 echo "[sync] all nodes in sync"
+
+# ---------------------------------------------------------------------------------------------
+# AND IS PRODUCTION ACTUALLY WORKING? Every check above is about CHECKOUTS and the gate ran this tree
+# against stubs and loopback servers — all of it can be green while poster.place is broken, which is
+# exactly what kept being reported ("features broke in production while all tests passed").
+# scripts/check_live_production.py asks the deployed instance itself: server stats, a relay
+# publish/read, the Concord tunnel refusing a forged ticket, the client shell + sw version, federation.
+#
+# It runs LAST, once the deploy is complete — it cannot un-deploy anything — but a failure (1) or a
+# could-not-ask (2: a skip is not a pass) makes this deploy exit nonzero, loudly.
+# PC_LIVE_URL overrides the instance; the check itself waits for a just-restarted app to answer.
+# ---------------------------------------------------------------------------------------------
+_LIVE_URL="${PC_LIVE_URL:-https://poster.place}"
+echo "[sync] verifying production at $_LIVE_URL"
+venv-unified/bin/python scripts/check_live_production.py "$_LIVE_URL" 2>&1 | sed 's/^/[sync]   /'
+_LIVE_RC=${PIPESTATUS[0]}
+if [ "$_LIVE_RC" != "0" ]; then
+    echo "[sync] ================================================================"
+    if [ "$_LIVE_RC" = "2" ]; then
+        echo "[sync] PRODUCTION NOT VERIFIED — the live check could not ask $_LIVE_URL (see above)."
+    else
+        echo "[sync] PRODUCTION CHECK FAILED — the deploy LANDED but $_LIVE_URL is broken (see above)."
+    fi
+    echo "[sync] Re-run: venv-unified/bin/python scripts/check_live_production.py $_LIVE_URL"
+    echo "[sync] ================================================================"
+    exit "$_LIVE_RC"
+fi
+echo "[sync] production verified"
