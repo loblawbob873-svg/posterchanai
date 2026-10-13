@@ -63,6 +63,7 @@ class OfficeLocal {
     this.root = opts.root || ROOT;
     this.origin = opts.origin || 'app://posterchan';
     this.idleMs = opts.idleMs || IDLE_MS;
+    this.startMs = opts.startMs || START_MS;
     this.base = opts.workDir || path.join(os.tmpdir(), 'posterchan-office-' + process.getuid());
     this.sessions = new Map();
     this.code = null;          // {proc, port, ready:Promise, dir}
@@ -132,11 +133,15 @@ class OfficeLocal {
     });
     proc.on('error', e => { code.exited = true; tail += String(e && e.message || e); if (this.code === code) this.code = null; });
     code.ready = (async () => {
-      const until = Date.now() + START_MS;
+      const until = Date.now() + this.startMs;
       while (Date.now() < until) {
         if (code.exited) throw new Error('the office editor stopped while starting: ' + (tail.trim().split('\n').pop() || 'no output'));
         try {
-          const r = await fetch('http://127.0.0.1:' + port + '/hosting/discovery');
+          /* EVERY ASK HAS ITS OWN DEADLINE. A coolwsd whose forkit died keeps its port open and never answers
+           * (seen on a laptop, 2026-10-13: 3 connections waiting in its accept queue): an unbounded fetch here
+           * never returned, the start deadline above was never reached, and every later "open" awaited this same
+           * promise -- click a CSV in Files, nothing happens, for ever. */
+          const r = await fetch('http://127.0.0.1:' + port + '/hosting/discovery', { signal: AbortSignal.timeout(3000) });
           if (r.ok) { code.discovery = await r.text(); return code; }
         } catch (_) {}
         await new Promise(r => setTimeout(r, 300));
