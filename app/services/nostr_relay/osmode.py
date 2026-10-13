@@ -127,16 +127,25 @@ def read_config(env=None) -> dict:
     }
 
 
+# desktop/main.js DEFAULT_INSTANCE: what the desktop app talks to when no instance was ever saved.
+DESKTOP_DEFAULT_INSTANCE = "https://poster.place"
+
+
 def chosen_instance(path: str):
-    """(instance URL or '', tor on?) from the desktop's own config.json. An instance that was never CHOSEN
-    is no upstream at all -- the desktop falls back to a default for its own use, the cache does not."""
+    """(instance URL or '', tor on?) -- EXACTLY the instance the desktop app itself uses (desktop/main.js
+    `instance()`): no `instance` key at all = never chosen = DESKTOP_DEFAULT_INSTANCE, an explicit '' = relays
+    only (no upstream). It used to read a missing key as "none", and every machine set up before the welcome
+    screen saved a choice (all of them, measured on .102 2026-10-13) ran a cache that never synced while the
+    desktop beside it talked to poster.place all day. An unreadable config is NOT a choice either: no upstream."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f) or {}
+    except FileNotFoundError:
+        cfg = {}
     except (OSError, ValueError):
         return "", False
     inst = cfg.get("instance")
-    inst = str(inst).strip().rstrip("/") if inst is not None else ""
+    inst = str(inst).strip().rstrip("/") if inst is not None else DESKTOP_DEFAULT_INSTANCE
     if inst and not inst.lower().startswith(("http://", "https://")):
         inst = ""
     tor = bool((cfg.get("tor") or {}).get("enabled")) if isinstance(cfg.get("tor"), dict) else False

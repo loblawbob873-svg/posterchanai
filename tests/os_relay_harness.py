@@ -163,7 +163,7 @@ class LocalRelay:
         self.netlog = os.path.join(tmp, "net.log")
         self.log = os.path.join(tmp, "relay.log")
         self.python = python or sys.executable
-        cfg = {"instance": instance_url} if instance_url else {}
+        cfg = {"instance": instance_url}   # "" = relays only; a MISSING key means poster.place (chosen_instance)
         Path(self.desktop_cfg).write_text(json.dumps(cfg))
         env = dict(os.environ)
         env.update({"PC_RELAY_DIR": self.dir, "PC_RELAY_PORT": str(self.port),

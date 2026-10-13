@@ -15,6 +15,7 @@ connection at all, and with the desktop's Tor on it does not dial the instance e
 """
 import asyncio
 import json
+from pathlib import Path
 import os
 import shutil
 import time
@@ -147,3 +148,21 @@ def test_the_relay_refuses_to_listen_beyond_loopback():
         osmode.read_config({"PC_RELAY_BIND": "0.0.0.0", "HOME": "/nonexistent"})
     assert osmode.read_config({"HOME": "/nonexistent"})["bind"] == "127.0.0.1"
     assert not os.environ.get("PC_RELAY_BIND")
+
+
+def test_the_cache_uses_the_same_instance_the_desktop_does(tmp_path):
+    """No `instance` saved = the desktop talks to poster.place (desktop/main.js instance()), so the cache must
+    sync from it too -- it used to sit unsynced on every machine that never saved a choice. '' = relays only."""
+    from app.services.nostr_relay.osmode import chosen_instance, DESKTOP_DEFAULT_INSTANCE
+    main_js = (Path(__file__).resolve().parents[1] / "desktop/main.js").read_text()
+    assert f"const DEFAULT_INSTANCE = '{DESKTOP_DEFAULT_INSTANCE}';" in main_js, "the two defaults drifted apart"
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"syncRoots": [], "tor": {"enabled": False}}))
+    assert chosen_instance(str(cfg)) == (DESKTOP_DEFAULT_INSTANCE, False)
+    assert chosen_instance(str(tmp_path / "missing.json")) == (DESKTOP_DEFAULT_INSTANCE, False)
+    cfg.write_text(json.dumps({"instance": ""}))
+    assert chosen_instance(str(cfg)) == ("", False), "relays only must stay relays only"
+    cfg.write_text(json.dumps({"instance": "https://my.example/"}))
+    assert chosen_instance(str(cfg)) == ("https://my.example", False)
+    cfg.write_text("{not json")
+    assert chosen_instance(str(cfg)) == ("", False), "an unreadable config is not a choice"
