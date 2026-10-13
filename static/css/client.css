@@ -9553,6 +9553,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
   padding-bottom:8px;border-bottom:1px solid var(--line);
   position:sticky;top:0;z-index:10;background:var(--bg)}   /* above an OPEN row menu (4); below drawers/dialogs */
+/* NOTHING SCROLLS THROUGH THE STRIP ABOVE IT. The scroller's 6px top padding is part of its scrollport, so a
+   toolbar stuck at top:0 left a band where tiles were drawn as they passed ("the files are going above the
+   toolbar in that tiny gap", 2026-10-13). Stick 6px higher and fill those 6px with the toolbar's own background;
+   the resting layout is unchanged (the margin gives the padding back). */
+.fx-main>.fx-bar{top:-6px;margin-top:-6px;padding-top:6px}
 .fx-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:wrap}
 .fx-crumb{background:none;border:0;font:inherit;font-size:15px;font-weight:600;color:var(--muted);
   cursor:pointer;padding:4px 8px;border-radius:8px;max-width:240px;
