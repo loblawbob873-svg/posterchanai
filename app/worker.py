@@ -116,6 +116,11 @@ async def _run():
     # Wait for the local relay to be up before starting the relay-dependent schedulers (avoids the
     # ~60s of 'connection refused' noise while the relay subprocess is still booting).
     await _wait_for_relay()
+    # THE HYDRATE ABOVE USUALLY RUNS BEFORE THE RELAY CAN ANSWER (both start together on a restart), and it
+    # then keeps the defaults -- measured after deploy 211c: "hydrated 0 setting(s)", ActivityPub delivery saw
+    # no domain and reported "off" until the 120s re-hydrate below. Hydrate again now the relay is up, and keep
+    # asking (bounded) while it is still loading, BEFORE any scheduler reads a setting.
+    await _hydrate_until_answered()
     started = 0
     for name, module, fn in _SCHEDULERS:
         try:
@@ -141,6 +146,28 @@ async def _run():
         except Exception as e:
             logger.debug(f"[worker] periodic settings re-hydrate failed: {e}")
 
+
+
+async def _hydrate_until_answered(timeout: float = 90.0, pause: float = 3.0) -> int:
+    """Hydrate settings from the relay until it answers with some (bounded). Returns how many arrived."""
+    import time as _t
+    from app.database import SessionLocal
+    from app.services import settings_store
+    deadline = _t.monotonic() + timeout
+    while True:
+        n = 0
+        try:
+            db = SessionLocal()
+            try:
+                n = settings_store.hydrate_from_db(db) or 0
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[worker] settings hydrate after relay-up failed: {e}")
+        if n or _t.monotonic() >= deadline:
+            logger.info(f"[worker] hydrated {n} setting(s) from relay once it was listening")
+            return n
+        await asyncio.sleep(pause)
 
 # --- supervised by the app (parent) -----------------------------------------
 
