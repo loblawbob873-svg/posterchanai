@@ -1738,6 +1738,17 @@ would have handled it fine).
   "unknown", never zeros. `tests/test_server_stats_federation.py` + `..._full_app.py`. `scripts/ap_redeliver.py` (`outbox.redeliver`) re-sends
   what a stall stranded, skipping `done`, `pcai:ap:sent:` records and its own progress doc.
   `tests/test_activitypub_delivery_never_stalls.py` drives the shipped tick against the production shape.
+- **CONCORD TALKS ONLY TO THIS NODE** (`app/services/concord_tunnel.py`, `app/routers/concord_tunnel.py`, `/ws/concord-relay`;
+  client: `cordVia`/`cordDeps`/`cordRelay` in `concord.js`, the `via` option of relay.js `queryFrom`/`publishTo`/
+  `subscribeFrom`/`publishAuthed`). Asked days before it was finished: the relay mirror (`concord_mirror.py`) answers
+  what it holds, and EVERY other relay Concord touches -- the CORD membership vault, invites, the directory, listings,
+  NIP-29 rooms, rooms hosted elsewhere, voice/webxdc signals -- is dialled THROUGH this node: a member ticket
+  (`/client/concord/tunnel-ticket`, HMAC from the operator key, 1h), target ws/wss to a PUBLIC host only, out via the
+  proxy FALLBACK listener (Tor1->Tor2->direct, never the server's own address), 24 tunnels per member. Routing is at
+  the two DOORS (`PC()` and `window.PCConcordRelay`), never per call site, so a new Concord call cannot forget it
+  (`tests/test_concord_relay_calls_go_through_the_tunnel.py`); the browser proof records every dial
+  (`tests/client/test_concord_talks_only_to_this_node_full_app.py`). No instance, or a node with no proxy
+  (`{ticket:''}`): direct, as before. A ticket not fetched yet is NOT a reason to go direct.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:
