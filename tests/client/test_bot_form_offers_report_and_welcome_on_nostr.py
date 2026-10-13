@@ -65,8 +65,10 @@ async def _run():
                 return out
         finally:
             proc.kill()
-
-
+            try:
+                proc.wait(timeout=15)   # Chrome still writing its profile makes the TemporaryDirectory cleanup fail (CI: 'Directory not empty: Default')
+            except Exception:
+                pass
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_a_nostr_bot_is_offered_the_report_and_welcome_bots():
     got = asyncio.run(_run())
