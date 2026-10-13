@@ -22,6 +22,7 @@ Everything is COUNTS and timestamps: no post content is ever read into this docu
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from app.services import nostr_store, settings_store
@@ -248,3 +249,86 @@ async def after_tick(stats: dict, *, ok: bool, why: str = "", now: int | None = 
         except Exception:
             pass
     return h
+
+
+# ---- the PUBLIC reading: Discover → Server Stats → Fediverse ---------------------------------------
+# Anyone can open Server Stats, so this is built from an ALLOWLIST of counts and timestamps: nothing in
+# the stats document is passed through. `last_error` carries inbox hosts ("HTTP 500 from
+# mastodon.social") and exception text that can quote a URL, so only its CLASS ever leaves here.
+
+PUBLIC_TTL = 30               # one relay read per this long, for every viewer of the page
+_PUBLIC_FAIL_TTL = 5          # a failed read is remembered this long, so a hammer cannot become a flood
+_public_cache: dict = {"at": 0.0, "data": None, "ok": False}
+_EXC = re.compile(r"\b([A-Z][A-Za-z0-9]*(?:Error|Exception|Timeout|Unavailable|Exit|Interrupt|Refused))\b")
+_HTTP = re.compile(r"\bHTTP (\d{3})\b")
+
+
+def error_class(text: str) -> str:
+    """The CLASS of an error string and nothing else: an exception name, an HTTP status, or "other".
+    Never a host, a URL or an id -- those live in the free text this throws away."""
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    m = _EXC.search(text)
+    if m:
+        return m.group(1)[:60]
+    m = _HTTP.search(text)
+    if m:
+        return f"HTTP {m.group(1)}"
+    return "settings not loaded" if text == "settings not loaded" else "other"
+
+
+def _n(v) -> int:
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def public_view(doc: dict | None, *, enabled: bool, now: int | None = None) -> dict:
+    """The public payload for one stats document that WAS read (None = the worker never wrote one)."""
+    now = int(now or time.time())
+    base = {"available": True, "enabled": bool(enabled), "lag_alert": LAG_ALERT, "fails_alert": FAILS_ALERT,
+            "stale_after": STALE_REPORT, "ttl": PUBLIC_TTL, "now": now}
+    if not enabled:
+        return dict(base, state="off")
+    if not isinstance(doc, dict) or not isinstance(doc.get("health"), dict):
+        return dict(base, state="unknown", reason="no report from the delivery worker yet")
+    h, v = doc["health"], view(doc, now)
+    try:
+        per_min = round(max(0.0, float(h.get("per_min") or 0)), 1)
+    except (TypeError, ValueError):
+        per_min = 0.0
+    out = dict(base, state=v["state"], lag=_n(h.get("lag")), per_min=per_min, fails=_n(h.get("fails")),
+               queued=_n(doc.get("queued")), failed=_n(doc.get("failed")), delivered=_n(doc.get("delivered")),
+               deleting=_n(doc.get("deleting")), last_pass=_n(doc.get("at")),
+               error_class=error_class(h.get("error") or doc.get("last_error") or ""))
+    if v["state"] == "unknown":
+        out["reason"] = "the relay did not answer the delivery check"
+    return out
+
+
+async def public_status(force: bool = False) -> dict:
+    """`/client/federation`. Read STRICTLY: a document that could not be read raises `Unavailable`
+    (503), never a page of zeros or a green line. Cached PUBLIC_TTL seconds for every viewer."""
+    from app.services.relay_reader import Unavailable
+    c = _public_cache
+    if not force and c["at"] and time.monotonic() - c["at"] < (PUBLIC_TTL if c["ok"] else _PUBLIC_FAIL_TTL):
+        if c["ok"]:
+            return c["data"]
+        raise Unavailable("federation stats unavailable")
+    try:
+        enabled = config.enabled() and bool(config.base_url())
+        doc = None
+        if enabled:
+            sk = settings_store._operator_seckey(None)
+            if not sk:
+                raise Unavailable("no operator key")
+            doc = await nostr_store.get_doc(settings_store._port(), DOC, seckey=sk, strict=True)
+        data = public_view(doc, enabled=enabled)
+    except Exception as e:
+        logger.warning("[activitypub] public delivery stats unreadable: %s", type(e).__name__)
+        c.update(at=time.monotonic(), data=None, ok=False)
+        raise Unavailable("federation stats unavailable") from e
+    c.update(at=time.monotonic(), data=data, ok=True)
+    return data

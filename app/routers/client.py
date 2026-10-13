@@ -1630,6 +1630,19 @@ async def client_uptime():
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+@router.get("/federation")
+async def client_federation():
+    """Public fediverse delivery health for Server Stats → Fediverse: counts, timestamps and an error
+    CLASS only (activitypub/health.public_status builds it from an allowlist -- no inbox, host, actor
+    id or post content). A stats document that could not be read is a 503 "unknown", never zeros."""
+    from app.services.activitypub import health
+    try:
+        return JSONResponse(await health.public_status(), headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        logger.warning("[client] federation stats failed: %s", type(e).__name__)
+        return JSONResponse({"error": "unavailable", "state": "unknown"}, status_code=503)
+
+
 @router.get("/commands")
 async def client_commands():
     """The command catalogue for the client's help sheet — grouped, with descriptions.

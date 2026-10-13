@@ -1731,7 +1731,11 @@ would have handled it fine).
   row of the health board. The admin is alerted ONCE on stall (>15 min or 5 failed ticks) and once on
   recovery, over `uptime_service.send_admin_alert` (Telegram linked chat + NIP-17 to
   `uptime_alert_npubs`/admin npub), switch `activitypub_alerts` (blank = ON); "alerted" persists in the
-  doc so a restart mid-stall does not re-alert. `scripts/ap_redeliver.py` (`outbox.redeliver`) re-sends
+  doc so a restart mid-stall does not re-alert. **The same document is PUBLIC as Discover → Server Stats →
+  🌐 Fediverse** (`GET /client/federation` → `health.public_status`, cached 30s): built from an ALLOWLIST
+  (lag, sends/min, retry queue, failed, deletion backlog, failed ticks, last pass, the error CLASS via
+  `error_class`) because `last_error` names inbox hosts; an unreadable doc is a 503 the panel shows as
+  "unknown", never zeros. `tests/test_server_stats_federation.py` + `..._full_app.py`. `scripts/ap_redeliver.py` (`outbox.redeliver`) re-sends
   what a stall stranded, skipping `done`, `pcai:ap:sent:` records and its own progress doc.
   `tests/test_activitypub_delivery_never_stalls.py` drives the shipped tick against the production shape.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,

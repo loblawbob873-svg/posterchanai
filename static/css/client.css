@@ -5624,7 +5624,7 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
 
 /* tabs — Activity / Uptime. Same pill language as the range buttons, one notch louder so the two
    rows read as a hierarchy (tab picks the page, range filters what's on it). */
-.st-tabs{display:flex;gap:8px;margin:0 0 14px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.st-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px;border-bottom:1px solid var(--line);padding-bottom:10px}
 .st-tab{flex:0 0 auto;background:transparent;border:1px solid var(--line);color:var(--muted);
   border-radius:999px;padding:8px 18px;font-size:15px;font-weight:600;cursor:pointer;transition:.15s}
 .st-tab:hover{border-color:var(--cyan);color:var(--text)}
@@ -5771,6 +5771,7 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
   .st-herochart{height:120px}
   .st-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
   .st-tiles{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+  .st-tab{padding:7px 12px;font-size:14px}
   .st-glbl{flex-basis:34%}
 }
 .st-new{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc);

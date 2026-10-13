@@ -1,9 +1,10 @@
-/* #stats — public Server Stats, Relay activity + Uptime. Anyone (including a logged-out guest) can
- * read them.
+/* #stats — public Server Stats, Relay activity, Uptime + Fediverse delivery. Anyone (including a
+ * logged-out guest) can read them.
  *
- * Three tabs, two cached endpoints: /client/server-stats (activity AND the relay panel, recomputed
- * at most once a minute server-side) and /client/uptime (endpoint monitors, whose checks run in the
- * background worker — this page only reads the state the worker publishes). Opening any of them
+ * Four tabs, three cached endpoints: /client/server-stats (activity AND the relay panel, recomputed
+ * at most once a minute server-side), /client/uptime (endpoint monitors, whose checks run in the
+ * background worker — this page only reads the state the worker publishes) and /client/federation
+ * (outbound ActivityPub delivery health, also written by the worker). Opening any of them
  * costs the server a dictionary lookup, not a query.
  *
  * Rendering is deliberately dumb: every chart is a static SVG string built once per refresh — no
@@ -19,9 +20,12 @@
     const inView = () => window.__PC.VIEW === 'stats';
 
     const RANGES = [['minute','60 min'],['hour','24 hours'],['day','30 days']];
-    const TABS = [['stats','📊 Activity'],['relay','🛰️ Relay'],['uptime','📡 Uptime']];
+    const TABS = [['stats','📊 Activity'],['relay','🛰️ Relay'],['uptime','📡 Uptime'],['fedi','🌐 Fediverse']];
     let _range = 'hour', _data = null, _timer = null, _busy = false;
     let _tab = 'stats', _up = null, _upBusy = false;
+    // Fediverse tab: _fed is the last ANSWER, _fedUnknown says the last ask was not answered. They are
+    // separate on purpose: a 503 must never render as the zeros of an empty payload, nor as green.
+    let _fed = null, _fedUnknown = false, _fedBusy = false;
 
     // Per-metric accent + label. Colours are the client's own neon palette so the page matches the
     // rest of the app rather than inventing a second one.
@@ -503,11 +507,63 @@
           · machine-readable: <a href="/status.json" target="_blank" rel="noopener">/status.json</a></div>`;
     }
 
+    // ---- Fediverse tab -------------------------------------------------------------------------
+    // Outbound ActivityPub delivery, as measured by the delivery worker (/client/federation). Counts
+    // and an error CLASS only -- the server never sends an inbox, host or actor id here.
+
+    function fediBody(){
+      if(_fedUnknown || (_fed && _fed.available === false)){
+        return `<div class="up-banner warn fed-state" data-state="unknown">⚪ Delivery state unknown</div>
+          <p class="muted fed-unknown">The delivery report could not be read right now, so nothing
+            here is claimed — not caught up, not behind, not zero. It will be asked again shortly.</p>`;
+      }
+      if(!_fed) return `<div class="spinner"></div>`;
+      const F = _fed;
+      if(F.state === 'off' || F.enabled === false){
+        return `<div class="up-banner fed-state" data-state="off">Federation is off on this server.</div>`;
+      }
+      if(F.lag == null){
+        return `<div class="up-banner warn fed-state" data-state="unknown">⚪ Delivery state unknown</div>
+          <p class="muted fed-unknown">${enc(F.reason || 'No report from the delivery worker yet.')}</p>`;
+      }
+      const lag = F.lag|0, alertAt = (F.lag_alert|0) || 900, failsAt = (F.fails_alert|0) || 5;
+      const lagSpan = v => (v < 60 ? Math.max(0, v|0) + 's' : span(v));
+      const failing = F.state === 'failing' || (F.fails|0) >= failsAt;
+      const silent = F.state === 'silent';
+      const late = lag > alertAt || F.state === 'behind';
+      const red = late || failing || silent;
+      const head = silent ? `🔴 No report from the delivery worker for ${lagSpan(Math.max(0,(F.now|0)-(F.last_pass|0)))}`
+        : F.state === 'unknown' ? `⚪ Delivery state unknown — ${F.reason || 'the relay did not answer'}`
+        : lag > 0 ? `${late ? '🔴' : '🟡'} ${lagSpan(lag)} behind`
+        : failing ? '🔴 Caught up, but delivery is failing'
+        : '🟢 Caught up';
+      const cls = red ? 'down' : (F.state === 'unknown' || lag > 0 ? 'warn' : 'ok');
+      const st = silent ? 'silent' : F.state === 'unknown' ? 'unknown' : late ? 'behind' : failing ? 'failing'
+        : lag > 0 ? 'lagging' : 'ok';
+      const lagWord = F.state === 'unknown' ? 'unknown' : lag > 0 ? lagSpan(lag) + ' behind' : 'caught up';
+      return `
+        <div class="up-banner ${cls} fed-state" data-state="${st}">${enc(head)}</div>
+        <div class="st-tiles fed-tiles">
+          ${tile('delivery', lagWord, 'Age of the oldest member post not yet sent to the fediverse. Red past ' + lagSpan(alertAt) + '.')}
+          ${tile('sends per minute', String(Number(F.per_min||0)))}
+          ${tile('retry queue', nf(F.queued), 'Deliveries waiting to be tried again')}
+          ${tile('failed sends', nf(F.failed), 'Sends a remote server refused or did not answer, since the worker started')}
+          ${tile('deletion backlog', nf(F.deleting), 'Large deletions still being sent out')}
+          ${tile('failed passes in a row', nf(F.fails), 'Red at ' + failsAt)}
+          ${tile('last pass', F.last_pass ? ago(F.last_pass) : 'never')}
+          ${tile('last error', F.error_class || 'none')}
+        </div>
+        <div class="st-foot muted small">Outbound ActivityPub delivery, measured by the delivery worker ·
+          page refreshes every 30s · shared by every viewer</div>`;
+    }
+
     // ---- shell --------------------------------------------------------------------------------
 
     function render(){
       const feed = $('#feed'); if(!feed) return;
-      const sub = _tab === 'uptime'
+      const sub = _tab === 'fedi'
+        ? 'Whether this server’s posts are reaching the fediverse. Public, no account needed.'
+        : _tab === 'uptime'
         ? 'Endpoints this server watches. Public, no account needed.'
         : _tab === 'relay'
         ? 'What this server’s Nostr relay is doing right now — queues, streams and storage. Public, no account needed.'
@@ -519,7 +575,7 @@
         </div>
         <div class="st-tabs">${TABS.map(([k,l])=>
           `<button class="st-tab${_tab===k?' on':''}" data-tab="${k}">${enc(l)}</button>`).join('')}</div>
-        <div class="st-body">${_tab === 'uptime' ? uptimeBody()
+        <div class="st-body">${_tab === 'fedi' ? fediBody() : _tab === 'uptime' ? uptimeBody()
                               : _tab === 'relay' ? relayBody() : activityBody()}</div>
       </div>`;
 
@@ -537,7 +593,15 @@
        Activity costs nothing on the uptime side and vice versa. Activity and Relay share the one
        server-stats snapshot, so switching between those two fetches nothing new. */
     async function load(){
-      if(_tab === 'uptime'){
+      if(_tab === 'fedi'){
+        if(_fedBusy) return; _fedBusy = true;
+        try{
+          const r = await fetch('/client/federation', {credentials:'include'});
+          const d = r.ok ? await r.json() : null;
+          if(d && !d.error){ _fed = d; _fedUnknown = false; } else { _fedUnknown = true; }
+        }catch(_){ _fedUnknown = true; }
+        finally{ _fedBusy = false; }
+      }else if(_tab === 'uptime'){
         if(_upBusy) return; _upBusy = true;
         try{
           const r = await fetch('/client/uptime', {credentials:'include'});
@@ -560,7 +624,7 @@
        polls at 30s; the server caches both, so neither is a per-viewer cost. */
     function schedule(){
       if(_timer) clearInterval(_timer);
-      const every = _tab === 'uptime' ? 30000 : 60000;
+      const every = (_tab === 'uptime' || _tab === 'fedi') ? 30000 : 60000;
       _timer = setInterval(()=>{
         if(!inView()){ clearInterval(_timer); _timer=null; return; }
         if(document.visibilityState === 'visible') load();
