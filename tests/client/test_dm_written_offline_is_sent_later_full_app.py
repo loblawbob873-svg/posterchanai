@@ -49,12 +49,22 @@ def test_a_dm_sent_offline_is_queued_then_delivered():
         await b.js("localStorage.removeItem('__dead')")
         await b.call('Page.reload')
         await b.until('!!window.__PC && !!__PC.me() && !!window.Outbox')
+        # DELIVERED means the relay said OK, not that the EVENT frame left the socket. The fixture
+        # relay answers 15 ms after each EVENT, and the Outbox (rightly) dequeues an entry only on that
+        # OK -- so reading the queue the instant the second wrap appeared in `__published` caught it in
+        # flight about one run in four (#194: "the delivered DM is still waiting in the queue", left=1,
+        # with the ack landing 10 ms later). Wait for the queue to drain; the deadline is the bound.
         for _ in range(200):
             got['published'] = await b.js("(window.__published||[]).map(e=>e.id)")
-            if all(i in got['published'] for i in got['ids']):
+            got['left'] = await b.js("Outbox.count()")
+            if all(i in got['published'] for i in got['ids']) and got['left'] == 0:
                 break
             await asyncio.sleep(.1)
+        # ...and it STAYS delivered: nothing re-queues it, and no later drain sends it a second time.
+        await asyncio.sleep(1.5)
         got['left'] = await b.js("Outbox.count()")
+        got['published'] = await b.js("(window.__published||[]).map(e=>e.id)")
+        got['delivered'] = await b.js("Outbox.delivered().map(x=>x.ev.id)")
 
 
     asyncio.run(desktop.with_browser('online', '', check, DEAD))
@@ -62,3 +72,5 @@ def test_a_dm_sent_offline_is_queued_then_delivered():
     assert "sent when you" in got['toast'], ("the person was not told it is waiting", got['toast'])
     assert all(i in got['published'] for i in got['ids']), ("the queued DM never reached the relay", got)
     assert got['left'] == 0, ("the delivered DM is still waiting in the queue", got)
+    assert sorted(got['delivered']) == sorted(got['ids']), ("the delivered DM was not recorded as delivered", got)
+    assert all(got['published'].count(i) == 1 for i in got['ids']), ("the queued DM was sent more than once", got)
