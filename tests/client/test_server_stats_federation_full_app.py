@@ -18,6 +18,7 @@ import pytest
 
 from tests.client import test_desktop_offline_full_app as desktop
 
+# Times are stamped when the page ASKS (below), not at import: a long run aged a module-level stamp to "1m ago".
 NOW = int(time.time())
 GOOD = {"available": True, "enabled": True, "state": "ok", "lag": 300, "per_min": 6.5, "fails": 2,
         "queued": 12, "failed": 37, "delivered": 4210, "deleting": 3, "last_pass": NOW - 40,
@@ -27,7 +28,7 @@ GOOD = {"available": True, "enabled": True, "state": "ok", "lag": 300, "per_min"
 INIT = "window.__fed=" + json.dumps({"status": 200, "body": GOOD}) + r''';
 const fedFetch=window.fetch;window.__fedAsks=0;
 window.fetch=(url,opts)=>{ if(String(url).includes('/client/federation')){ __fedAsks++;
-  return Promise.resolve(new Response(JSON.stringify(__fed.status===200?__fed.body:{error:'unavailable',state:'unknown'}),
+  return Promise.resolve(new Response(JSON.stringify(__fed.status===200?Object.assign({},__fed.body,(n=>({now:n,last_pass:n-40}))(Math.floor(Date.now()/1000))):{error:'unavailable',state:'unknown'}),
     {status:__fed.status,headers:{'Content-Type':'application/json'}})); }
   return fedFetch(url,opts); };
 '''
