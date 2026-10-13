@@ -54,7 +54,7 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
     assert "liveSub&&liveSub.publish?liveSub.publish(made.wrap):0" in body
     assert "relayPublishTo(x.relays,made.wrap)" in body
     assert ".relayPublish(made.wrap)" not in body
-    sub = CONCORD.split("async function webxdcPeerSubscribe", 1)[1].split("window.PCConcord", 1)[0]
+    sub = CONCORD.split("async function webxdcPeerSubscribe", 1)[1].split("window.PCConcord=", 1)[0]
     assert "close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0)" in sub
     iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
     assert "webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off)" in iroh
