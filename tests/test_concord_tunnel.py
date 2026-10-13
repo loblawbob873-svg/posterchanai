@@ -166,3 +166,39 @@ def test_a_relay_that_refuses_tor_is_reached_on_the_direct_hop(client, monkeypat
         assert "echo:" in ws.receive_text()
     assert seen == ["http://127.0.0.1:8119", None], seen
     assert tun._open == {} and tun._total == 0
+
+
+def test_the_handshake_does_not_wait_for_the_far_relay(client, monkeypatch):
+    """A browser lets ONE websocket per host sit in CONNECTING (RFC 6455 4.1); the rest queue. The tunnel used to
+    hold its handshake open until the far relay answered -- up to ~25s over Tor, plus a direct retry -- so every
+    Concord dial queued the app's OWN relay socket behind it: 2026-10-13 the laptop's wss://poster.place/relay sat
+    in CONNECTING for minutes ("connected to local relay but not connecting to posterchan relay"). Accept first,
+    then dial; what the client sends meanwhile waits in the socket and is delivered once the far relay is up."""
+    import time
+
+    class _Slow(_Upstream):
+        async def __aenter__(self):
+            import asyncio
+            await asyncio.sleep(2.0)
+            return self
+    monkeypatch.setattr(tun, "connect", lambda url, proxy: _Slow())
+    t = tun.issue(PK)
+    t0 = time.monotonic()
+    with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={t}") as ws:
+        opened = time.monotonic() - t0
+        ws.send_text('["REQ","x",{"kinds":[1059]}]')
+        assert "echo:" in ws.receive_text(), "a frame sent before the far relay answered was lost"
+    assert opened < 1.0, "the handshake waited %.1fs for the far relay" % opened
+
+
+def test_a_far_relay_nobody_can_reach_closes_the_open_tunnel(client, monkeypatch):
+    class _Dead(_Upstream):
+        async def __aenter__(self):
+            raise OSError("unreachable")
+    monkeypatch.setattr(tun, "connect", lambda url, proxy: _Dead())
+    t = tun.issue(PK)
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={t}") as ws:
+            ws.receive_text()
+    assert e.value.code == 4502
+    assert tun._open == {} and tun._total == 0

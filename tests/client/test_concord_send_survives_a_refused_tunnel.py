@@ -22,7 +22,7 @@ SRC = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
 BLOCK = SRC[SRC.index("  const TUNNEL={"):SRC.index("  Object.defineProperty(window,'PCConcordRelay'")]
 
 HARNESS = r"""
-const window = {};
+const window = {__PC_API_BASE__: 'https://home.example'};
 globalThis.fetch = async () => ({ok: true, status: 200, json: async () => ({ticket: 'T', ttl: 3600})});
 function normalizeRelay(u){ return String(u||'').replace(/\/+$/,''); }
 function homeRelayUrl(p){ return 'wss://home.example'; }

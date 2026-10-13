@@ -147,7 +147,15 @@
    * dials directly, as before; a ticket that could not be fetched yet is NOT a reason to go direct: the dial
    * goes to the tunnel, fails like an unreachable relay and is retried once the ticket arrives. */
   const TUNNEL={ticket:'',until:0,off:false,busy:null,timer:null};
-  function tunnelBase(p){const h=homeRelayUrl(p);if(!h)return '';try{const u=new URL(h);return (u.protocol==='ws:'?'ws:':'wss:')+'//'+u.host+'/ws/concord-relay';}catch(_){return '';}}
+  /* /ws/concord-relay is an APP route, so it is reached at the INSTANCE's address -- never the relay's host:port, which on
+   * a node reached directly (http://host:3051, relay ws://host:3052) or over its .onion is the relay process, which
+   * accepted the dial as an ordinary relay connection. With no instance origin (relays-only) there is no tunnel. */
+  function tunnelBase(p){if(!homeRelayUrl(p))return '';let o='';
+    /* SYNCHRONOUSLY KNOWN, never p.serverOrigin(): that one lives in a lazily loaded module and answers nothing until it
+     * loads, which would quietly turn the tunnel off. A bundle names its instance in __PC_API_BASE__ ('' = relays only,
+     * no tunnel); a page served by the instance IS on it. */
+    try{o=typeof window.__PC_API_BASE__==='string'?window.__PC_API_BASE__:String((typeof location!=='undefined'&&location.origin)||'');}catch(_){o='';}
+    if(!o)return '';try{const u=new URL(o);return (u.protocol==='http:'?'ws:':'wss:')+'//'+u.host+'/ws/concord-relay';}catch(_){return '';}}
   function refreshTunnel(){
     if(TUNNEL.busy)return TUNNEL.busy;
     TUNNEL.busy=(async()=>{try{const r=await fetch('/client/concord/tunnel-ticket',{credentials:'include',cache:'no-store'});

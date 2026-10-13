@@ -71,10 +71,6 @@ def test_a_member_votes_with_posterchan_clients_only_on():
 
 
 @CHROME
-@pytest.mark.xfail(strict=True, reason="REPORT 3 (2026-10-12), REPRODUCED: a voter outside this node's web of trust "
-                                       "is refused by the relay ('blocked: not in web of trust') and the phone says "
-                                       "\"couldn't send the vote -- try again\", which can never succeed. Pending: the "
-                                       "toast must say the relay's reason (menus.js toggleBadPostVote drops r.msg).")
 def test_a_voter_the_relay_refuses_is_told_why():
     async def check(said, stored, post):
         assert not stored                                  # the relay really did refuse it

@@ -53,6 +53,11 @@ async def concord_relay(websocket: WebSocket):
         return
     try:
         upstream_cm = upstream = None
+        # ACCEPT FIRST, THEN DIAL. A browser keeps one websocket per host in CONNECTING and queues the rest (RFC 6455
+        # 4.1), so a handshake held open while the far relay is dialled (~25s over Tor, plus the direct retry) queued
+        # the app's own relay socket behind every Concord dial -- the laptop's wss://poster.place/relay sat in
+        # CONNECTING for minutes on 2026-10-13. Frames the client sends meanwhile wait in the socket.
+        await websocket.accept()
         # Through the proxy first; then DIRECT -- the last hop of the proxy's own Tor -> Tor -> direct chain, which
         # it takes only on a CONNECT error, never on a relay that refuses Tor after it (damus: 503) or times out
         # over it (asia.vectorapp.io, a CORD relay). Measured 2026-10-13: both answer direct.
@@ -68,7 +73,6 @@ async def concord_relay(websocket: WebSocket):
         if upstream is None:
             await websocket.close(code=4502, reason="relay unreachable")
             return
-        await websocket.accept()
         try:
             await concord_tunnel.pipe(websocket, upstream)
         except Exception:

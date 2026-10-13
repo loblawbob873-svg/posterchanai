@@ -429,7 +429,12 @@ window.PCMenusFactory = function(dep){
       const ev=await dep.sign(1985, '', [['L', BADPOST_NS], ['l', BADPOST_LABEL, BADPOST_NS], ['e', id], ['p', pk]]);
       const r=await Relay.publishTo([home], ev, {includeManaged:true, detailed:true});
       if(r && r.ok){ Store.saveEvent(ev); toast('🤦 Voted Bad Post of the Day — the most-voted post is announced when this 4-hour window closes'); }
-      else toast(r && r.uncertain ? 'not confirmed yet — the relay hasn’t answered; it may already be counted' : 'couldn’t send the vote — try again');
+      /* A refusal is an ANSWER, not a glitch: "try again" can never work for a voter this relay does not accept
+       * (Bad Post vote on a phone, 2026-10-12: 'blocked: not in web of trust'). Say what the relay said. */
+      else toast(r && r.uncertain ? 'not confirmed yet — the relay hasn’t answered; it may already be counted'
+        : (r && r.msg && /^(blocked|restricted|auth-required|rate-limited|invalid|error|pow):/i.test(String(r.msg)))
+          ? 'this server didn’t accept your vote — ' + String(r.msg).slice(0, 120)
+          : 'couldn’t send the vote — try again');
     }catch(_){ toast('vote not sent'); }
     finally{ _badPostBusy=false; }
   }

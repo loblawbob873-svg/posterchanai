@@ -58,11 +58,6 @@ def test_the_ticket_request_leaves_the_bundle_for_the_instance():
 
 
 @CHROME
-@pytest.mark.xfail(strict=True, reason="REPORT 6 FINDING (open): concord.js tunnelBase builds the tunnel URL from the "
-                                       "HOME RELAY's host:port, but /ws/concord-relay is an APP route. On a node whose "
-                                       "relay is on its own port (direct access http://host:3051 -> ws://host:3052/relay, "
-                                       "or the .onion) the dial hits the relay process, which accepts any path as a "
-                                       "plain relay connection.")
 def test_the_tunnel_is_dialled_on_the_instance_not_the_relay_port():
     async def main():
         with R.Node() as n, R.Bundle() as bu:

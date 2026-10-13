@@ -359,6 +359,37 @@ NODE = {'home': None, 'api': {}, 'seen': []}
 
 
 class Instance(H.Instance):
+    def _splice_to(self, port):
+        """Byte-for-byte TCP splice of this request to the tunnel front, the way a reverse proxy routes the upgrade."""
+        import socket
+        import threading
+        up = socket.create_connection(('127.0.0.1', port))
+        head = '%s %s %s\r\n' % (self.command, self.path, self.request_version)
+        head += ''.join('%s: %s\r\n' % (k, v) for k, v in self.headers.items()) + '\r\n'
+        up.sendall(head.encode('latin-1'))
+        cli = self.connection
+
+        def pump(a, b):
+            try:
+                while True:
+                    d = a.recv(65536)
+                    if not d:
+                        break
+                    b.sendall(d)
+            except OSError:
+                pass
+            finally:
+                try:
+                    b.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+        t = threading.Thread(target=pump, args=(up, cli), daemon=True)
+        t.start()
+        pump(cli, up)
+        t.join(timeout=5)
+        up.close()
+        self.close_connection = True
+
     # A bundled app (APK / desktop) calls the instance cross-origin; the real server answers CORS for it.
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', self.headers.get('Origin') or '*')
@@ -370,6 +401,8 @@ class Instance(H.Instance):
         p = self.path.split('?')[0]
         NODE['seen'].append(p)
         home = NODE['home']
+        if p == '/ws/concord-relay' and home is not None:
+            return self._splice_to(home.port)    # an APP route on a real node (nginx -> 3051), never the relay port
         if p == '/client/config' and home is not None:
             return self._json({'nostr_only': False, 'relay_url': home.url, 'relays': [home.url],
                                'default_relays': [home.url], 'blossom_enabled': True})
