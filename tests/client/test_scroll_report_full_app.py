@@ -85,6 +85,12 @@ async def run():
                 await b.call("Input.dispatchTouchEvent", dict(type="touchEnd", touchPoints=[]))
                 rep = await b.js("PCScrollReport()")
                 text = await b.js("JSON.stringify(PCScrollReport())")
+                # Leaving the timeline while the recorder is still live (a tap on a post, a profile) removes
+                # every card. A removed card is not a card that shrank: logged as one, the real report filled
+                # its ring with 58 "421 -> 0" rows (cv "" -- a detached element) and evicted the evidence.
+                await b.js("__PC.switchView('notifications')")
+                await asyncio.sleep(.4)
+                rep["after_leaving"] = (await b.js("PCScrollReport()"))["resizes"][len(rep["resizes"]):]
                 return rep, text
         finally:
             proc.terminate()
@@ -103,6 +109,7 @@ def test_the_scroll_report_names_what_moved_the_timeline():
     assert any(r["delta"] >= 200 for r in rep["resizes"]), ("a card above the reader grew and was not recorded", rep["resizes"])
     assert any(j["delta"] <= -200 for j in rep["jumps"]), ("the jump back up was not recorded", rep["jumps"])
     assert "fixture timeline post" not in text, "the report carries post text"
+    assert not [r for r in rep["after_leaving"] if r["to"] == 0], ("removed cards were recorded as resizes", rep["after_leaving"])
     # Resistance is TIME: the swipe, the move that waited for a busy page, the long task and the lost frames.
     g = rep["gestures"][-1]
     assert g["moves"] >= 4 and g["firstMove"] is not None and g["maxMove"] >= 150, ("the delayed move was not measured", rep["gestures"])
