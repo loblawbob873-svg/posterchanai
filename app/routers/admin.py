@@ -892,9 +892,8 @@ def update_settings(
             "nostr_relay_mirror_feeds", "nostr_relay_disable_proxy",
             "nostr_relay_bind", "nostr_relay_port",
             "nostr_relay_posterchan_clients_only", "nostr_relay_posterchan_origins",
-            # PosterChanDB is opened (or left off) once, at relay start. Its TUNABLES are not here: they apply
-            # to the running store (relay_tunables.LIVE_KEYS, below).
-            "posterchandb_mode",
+            # PosterChanDB's TUNABLES are not here: they apply to the running store (relay_tunables.LIVE_KEYS,
+            # below). Its mode is not a setting at all (#161: no Postgres to choose).
             # websockets fixes the largest message when the listener starts
             *sorted(relay_tunables.RESTART_KEYS),
         )
