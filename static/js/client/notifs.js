@@ -37,7 +37,41 @@ window.PCNotifsFactory = function(dep){
   }
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
-  function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
+  /* ONE VERDICT PER FOLLOW, FOR EVERY WINDOW. On PosterChanOS every window and the taskbar's flyout is
+   * its own renderer with its own copy of these pins, and each used to (a) judge a follow from its own
+   * seed timing and (b) write its WHOLE map back -- so the last writer's verdict replaced the others' in
+   * storage while each open renderer kept its own in memory. Reported as "a notification came up from
+   * <npub>, then I clicked Notifications and it was missing": the flyout read one verdict from storage,
+   * the Notifications window held the other. So the stored pin is the shared answer: the FIRST pin to
+   * land in localStorage decides for every renderer, a write merges instead of replacing, and a pin
+   * written by another window is adopted here (`storage` event, and before any judgement).
+   * tests/client/test_follow_verdict_is_one_across_windows_full_app.py */
+  function _storedPins(){
+    try{ const o=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}'); return (o && typeof o==='object' && !Array.isArray(o)) ? o : {}; }
+    catch(_){ return {}; }
+  }
+  function _adoptPins(){
+    const st=_storedPins(); let ch=false;
+    for(const k in st){ if(st[k]>0 && _followSeen[k]!==st[k]){ _followSeen[k]=st[k]; ch=true; } }
+    return ch;
+  }
+  function _savePins(){
+    try{
+      const st=_storedPins();
+      for(const k in _followSeen){ if(!(st[k]>0) && _followSeen[k]>0) st[k]=_followSeen[k]; }
+      for(const k in st){ if(st[k]>0) _followSeen[k]=st[k]; }
+      localStorage.setItem('pc_follow_seen', JSON.stringify(st));
+    }catch(_){}
+  }
+  try{ window.addEventListener('storage', e => {
+    if(e.key!=='pc_follow_seen' || !_adoptPins()) return;
+    try{ renderNotificationsSoon(); }catch(_){}
+    try{ bumpNotif(); }catch(_){}
+  }); }catch(_){}
+  function _followTs(pk, fallback){
+    if(!_followSeen[pk]) _adoptPins();          // another window may already have decided
+    if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); _savePins(); }
+    return _followSeen[pk]; }
   // Pin a follower we're meeting from HISTORY (the seed, the relay's pre-EOSE backlog, the Store cache) —
   // never at their kind-3's created_at, which is just their last contact-list SAVE. The epoch floor holds
   // them below the line permanently, however many times they re-save.
@@ -70,7 +104,10 @@ window.PCNotifsFactory = function(dep){
     const at=e&&e.id&&_notifArrived.get(e.id);
     return !!at && at>seenNotif.last && !_readIds().has(e.id);
   }
+  let _watchSince = Math.floor(Date.now()/1000);
+  const _LIVE_SLACK = 600;
   async function watchNotifications(){
+    _watchSince = Math.floor(Date.now()/1000);
     /* FORWARD ONLY. Another monitor's read can arrive (a `storage` event, app.js) before this runs, and
      * re-reading storage here then put the marker BACK -- that monitor's bell relit for what it had
      * already read. A read marker never moves backwards. */
@@ -110,12 +147,13 @@ window.PCNotifsFactory = function(dep){
         }catch(_){}
       }
       let changed=false;
+      _adoptPins();   // a pin another window wrote while this one was seeding wins over a seed default
       for(const e of followers){ FOLLOWERS.add(e.pubkey);
         // Pin an existing follower at/below the STABLE epoch so a later re-save can't float them to the
         // top. Anyone in this seed already followed us before we started tracking, so their kind-3's
         // created_at (their last contact-list save) must never be taken as "when they followed you".
         if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= Math.min(e.created_at, S._notifEpoch); changed=true; } }
-      if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
+      if(changed) _savePins();
       // Seeded ONLY on a complete read that returned followers. A partial or empty answer must not be
       // claimed as the baseline: everything absent from it would score as a never-seen follower and get
       // pinned at its re-save time. (Harmless when you genuinely have no followers — there's no kind-3
@@ -130,13 +168,20 @@ window.PCNotifsFactory = function(dep){
       Relay.subscribe([{ '#p':[S.ME.pubkey], kinds:[3], limit:150 }], {
         onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev); if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
+          if(!_followSeen[ev.pubkey]) _adoptPins();
           const firstTime = !_followSeen[ev.pubkey];
           // "Never recorded" only means "genuinely new" if the seed actually populated _followSeen. When
           // the seed failed, or was capped (limit:1000) on a big account, firstTime just means "we never
           // looked" — pinning those at their re-save time is precisely what produced the flood. Treat them
           // as history instead, and record a genuine new follow at the time WE observed it rather than at
           // the follower's contact-list save time.
-          const genuine = _followReady && _followSeeded && firstTime;
+          // …and it is LIVE only if it was made around now. A relay that connects after this sub's EOSE
+          // (on PosterChanOS the loopback cache answers first and the instance a moment later) re-arms the
+          // sub and replays its backlog, so a follow saved last night while the app was closed arrived
+          // "after EOSE" and was pinned at NOW: toasted, counted, listed in All -- in that renderer only.
+          // A follow that predates this session is history, exactly as the seed would have judged it.
+          // _LIVE_SLACK absorbs an author's slow clock.
+          const genuine = _followReady && _followSeeded && firstTime && ev.created_at >= _watchSince - _LIVE_SLACK;
           const ts = genuine ? _followTs(ev.pubkey, Math.floor(Date.now()/1000))
                              : _followTsOld(ev.pubkey, ev.created_at);
           if(genuine && ts>seenNotif.last) bumpNotif();   // only a post-EOSE, never-seen follower badges
