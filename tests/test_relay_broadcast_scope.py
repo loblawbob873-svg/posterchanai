@@ -301,15 +301,50 @@ class ReplaceableTieBreak(unittest.TestCase):
     """
 
     def test_the_rule_is_lowest_id_on_a_tie(self):
-        import inspect
+        """Run on the store that serves (PosterChanDB): this read the Postgres store's _insert_one source
+        until that store was deleted. Same-second versions arriving in EITHER order must converge on the
+        lower id, and a strictly newer version must still replace -- for a replaceable (kind 0) and an
+        addressable (kind 30023) coordinate alike, as a synced (non-direct) write."""
+        import asyncio
+        import time
 
-        from app.services.nostr_relay.store import RelayStore
-        src = inspect.getsource(RelayStore._insert_one)
-        self.assertIn('older = row["created_at"] < created', src,
-                      "a strictly-older incumbent is the only one a later event replaces")
-        self.assertIn('tie_lost = row["created_at"] == created and eid < row["id"]', src)
-        self.assertNotIn('row["created_at"] <= created', src,
-                         "<= hands every tie to whoever wrote last — the flip-flop")
+        from tests.relay_backends import pcdb_factory
+
+        pk, t = "e" * 64, int(time.time()) - 100
+
+        def ev(kind, eid, created, d=None):
+            return {"id": eid, "pubkey": pk, "kind": kind, "created_at": created, "content": eid[:4],
+                    "tags": [["d", d]] if d is not None else [], "sig": "0" * 128}
+
+        async def go(loop, make):
+            for kind, d in ((0, None), (30023, "article")):
+                lo, hi = ("1" * 64), ("9" * 64)
+                for first, second in ((hi, lo), (lo, hi)):
+                    st = make(loop)
+                    await st.add_event(ev(kind, first, t, d))
+                    await st.add_event(ev(kind, second, t, d))
+                    f = {"kinds": [kind], "authors": [pk]}
+                    if d is not None:
+                        f["#d"] = [d]
+                    got = [e["id"] for e in await st.query([f])]
+                    self.assertEqual(got, [lo], "kind %d, %s… then %s…: the lower id wins a tie, in either "
+                                                "order (else two mirroring relays flip-flop)"
+                                     % (kind, first[:2], second[:2]))
+                # a strictly older incumbent is the only one a later event replaces
+                st = make(loop)
+                await st.add_event(ev(kind, lo, t, d))
+                await st.add_event(ev(kind, hi, t + 1, d))
+                self.assertEqual([e["id"] for e in await st.query([{"kinds": [kind], "authors": [pk]}])], [hi])
+                await st.add_event(ev(kind, "0" * 64, t, d))
+                self.assertEqual([e["id"] for e in await st.query([{"kinds": [kind], "authors": [pk]}])], [hi],
+                                 "an older version never comes back, however low its id")
+
+        loop = asyncio.new_event_loop()
+        try:
+            with pcdb_factory() as make:
+                loop.run_until_complete(go(loop, make))
+        finally:
+            loop.close()
 
     def test_the_mirror_says_something_when_it_cannot_check(self):
         """Silence there turns the backup off while it still looks on."""

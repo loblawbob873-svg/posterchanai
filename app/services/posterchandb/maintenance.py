@@ -122,7 +122,7 @@ def _author_mask(store, n: int, pubkeys) -> np.ndarray:
 
 
 def _git_comment_exempt(store, n: int) -> np.ndarray:
-    """1111 comments whose root (`K`) is a git issue/patch/PR — the relay's _PRUNABLE_SQL exclusion."""
+    """1111 comments whose root (`K`) is a git issue/patch/PR: never prunable (store._GIT_COMMENT_ROOT_KINDS)."""
     m = np.zeros(n, dtype=bool)
     for k in relay._GIT_COMMENT_ROOT_KINDS:
         hit = store.idx.get(_h("t:K:%s" % k))

@@ -140,7 +140,7 @@ def test_git_events_survive_a_stray_expiration_tag(store_factory):
     """
     async def go(loop):
         store = store_factory(loop, retention_days=0)
-        # An ALREADY-expired event is never STORED (see _insert_one), so seed just-future and let it
+        # An ALREADY-expired event is never STORED (the store's put refuses it), so seed just-future and let it
         # lapse — seeding it in the past would assert against an empty table.
         soon = int(time.time()) + 4   # headroom: see the note on the stray-expiration test
         await store.add_events_bulk(
@@ -408,7 +408,7 @@ def test_git_issue_comments_survive_every_cleaner(store_factory):
         want = {e["id"] for e in git} | {gd["id"]}
         assert want <= left, (
             "a git issue/patch comment was pruned — these are the collaboration record "
-            "(_GIT_KINDS in spirit); the `K` guard in store._PRUNABLE_SQL is what keeps them")
+            "(_GIT_KINDS in spirit); the `K` exemption (store._GIT_COMMENT_ROOT_KINDS) is what keeps them")
         survivors = [e for e in ordinary if e["id"] in left]
         assert not survivors, (
             f"{len(survivors)} ordinary kind-1111 comments survived every cleaner — the git-comment "
@@ -747,7 +747,7 @@ def _plant(store, events, origin="direct"):
 
     Ingest now REFUSES the retired kinds (that is half the retirement), so `add_event` cannot be
     used to set up the pruner's own test — the rows it has to clear are the ones written BEFORE the
-    refusal existed, which is exactly what this reproduces. Same columns _insert_one writes.
+    refusal existed, which is exactly what this reproduces. Same columns the store's put writes.
     """
     for ev in events:                  # rows exactly as given, no rule decided
         store.store.copy_put(dict(ev), origin=origin)
@@ -795,7 +795,7 @@ def test_the_retired_features_are_deleted_at_any_age_and_previewed_per_kind(stor
         # plant them the way rows written before the retirement exist: straight into the table.
         stored = await store.count()
         assert stored == 0, ("a retired kind was accepted by the store — the ingest backstop in "
-                             "_insert_one is what stops the firehose re-importing what this prunes")
+                             "the store's put is what stops the firehose re-importing what this prunes")
         _plant(store, retired)
         assert await store.count() == len(retired)
 
@@ -874,7 +874,7 @@ def test_concord_the_datastore_and_ordinary_posts_survive_the_retired_rule(store
 def test_the_store_refuses_a_retired_kind_on_every_origin(store_factory):
     """The ingest backstop, at the funnel every path writes through.
 
-    `_insert_one` is where the WS write path, the live firehose, the windowed WoT sync, ancestor
+    the store's put is where the WS write path, the live firehose, the windowed WoT sync, ancestor
     backfill and a member restore all end up, so refusing here is what makes the retirement
     structural rather than a list of remembered call sites — and it is what stops the next sync tick
     re-importing exactly the rows the pruner just deleted. The origins are the callers: 'direct' is a

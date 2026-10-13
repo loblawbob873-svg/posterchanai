@@ -81,35 +81,81 @@ def test_a_punctuation_term_can_never_match_everything():
     assert blocked_word('{"type":"zone_presence"}', words) == "zone_presence"
 
 
+# ---- the retroactive purge, run against the store that actually serves (PosterChanDB) ----------------------
+# These used to read the SOURCE of the Postgres store's purge ("blocked_word(" present, " LIKE " absent). That
+# store is gone; the rule is now held by running the purge on a real PcdbRelayStore and looking at what is left.
+
+def _purge(events, words, *, preserve=(), direct=()):
+    """Store `events` (origin 'wot', or 'direct' for ids in `direct`), run delete_by_words, return the ids left."""
+    import asyncio
+
+    from tests.relay_backends import pcdb_factory
+
+    async def go(loop, make):
+        store = make(loop, retention_days=0)
+        store.set_preserve_pubkeys(preserve)
+        for ev in events:
+            assert await store.add_event(ev, origin="direct" if ev["id"] in direct else "wot"), ev["kind"]
+        await store.delete_by_words(sorted(words))
+        return {ev["id"] for ev in events if await store.has_event(ev["id"])}
+
+    loop = asyncio.new_event_loop()
+    try:
+        with pcdb_factory() as make:
+            return loop.run_until_complete(go(loop, make))
+    finally:
+        loop.close()
+
+
+def _ev(kind, content, *, pubkey="a" * 64, tags=None, created_at=None):
+    import time
+
+    from tests.test_posterchandb import ev_id
+    ev = {"pubkey": pubkey, "created_at": created_at or int(time.time()) - 600, "kind": kind,
+          "tags": tags or [], "content": content, "sig": "0" * 128}
+    ev["id"] = ev_id(ev)
+    return ev
+
+
 def test_the_retroactive_purge_uses_the_same_predicate_and_the_same_kinds():
     """A relay that refuses a word at the door and declines to remove the same word already inside
     is a relay with two different answers to one question.
 
-    The purge built its own SQL LIKE with `_` escaped as a literal — a faithful copy of
-    `blocked_word` while that was a plain substring test, and no longer one the moment separators
-    began folding. There is no SQL form of the real predicate, so it reads content and asks the
-    predicate, exactly as the language purge already does.
+    The purge once built its own SQL LIKE with `_` escaped as a literal -- a faithful copy of
+    `blocked_word` only while that stayed a plain substring test. Now it reads content and asks the
+    predicate, exactly as the language purge does; this runs it and compares with the door.
     """
-    import inspect
-    from app.services.nostr_relay.store import RelayStore
-    src = inspect.getsource(RelayStore._delete_by_words_sync)
-    # The CODE, not the docstring explaining what it used to do — prose about a bug is not the
-    # bug. (Five tests went red today for asserting a spelling; this one nearly made six.)
-    parts = src.split(chr(34) * 3)
-    code = parts[2] if len(parts) >= 3 else src
-    assert "blocked_word(" in code, "the purge must ask the same predicate the door asks"
-    assert " LIKE " not in code, "a second, SQL-shaped definition of the same rule: " + code
-    assert "_NEVER_WORD_FILTERED" in src and "kind NOT IN" in src, (
-        "it was kind=1 only, exactly like the two ingest filters were")
+    caught = [_ev(k, PAYLOAD, created_at=None) for k in (1, 6, 16, 1111, 30023)]
+    # Case-insensitive like the door, and `_` is a literal: a LIKE-shaped copy would match "zonexpresence".
+    shouty = _ev(1, "ZONE_PRESENCE again")
+    lookalike = _ev(1, "zonexpresence is not the blocked word")
+    ordinary = _ev(1, "an ordinary post")
+    own_data = [_ev(k, PAYLOAD, tags=[["d", "pcai:note:1"]] if k == 30078 else []) for k in (30078, 1059, 4)]
+    left = _purge(caught + [shouty, lookalike, ordinary] + own_data, WORDS)
+    for ev in caught + [shouty]:
+        assert ingest._content_blocked(ev, None, WORDS), "the door refuses it"
+        assert ev["id"] not in left, "...so the purge must remove it (kind %d)" % ev["kind"]
+    for ev in (lookalike, ordinary):
+        assert not ingest._content_blocked(ev, None, WORDS)
+        assert ev["id"] in left, "the door admits it, the purge must keep it: %r" % ev["content"]
+    for ev in own_data:
+        assert ev["id"] in left, "kind %d is never word-filtered -- the purge must not delete it" % ev["kind"]
 
 
 def test_the_purge_still_spares_what_it_always_spared():
-    """Broadening a purge is the thing this relay has lost data to before."""
-    import inspect
-    from app.services.nostr_relay.store import RelayStore
-    src = inspect.getsource(RelayStore._delete_by_words_sync)
-    assert "_preserve_clause()" in src, "local users' own writes are spared"
-    # The anchor rule is shared by every content purge (words, languages, hidden payloads).
-    helper = inspect.getsource(RelayStore._delete_sparing_anchors)
-    assert "_delete_sparing_anchors(" in src and "anchored" in helper and "tag='e'" in helper, (
-        "a note a SURVIVING event still points at must not be deleted — that orphans the thread")
+    """Broadening a purge is the thing this relay has lost data to before: local users' own writes,
+    preserved authors, and a note a SURVIVING event still points at (deleting it orphans the thread)."""
+    local = "b" * 64
+    mine = _ev(1, "zone_presence from a local user", pubkey=local)
+    direct = _ev(1, "zone_presence published here directly", pubkey="c" * 64)
+    anchor = _ev(1, "zone_presence at the root of a thread")
+    reply = _ev(1, "a clean reply", pubkey="d" * 64, tags=[["e", anchor["id"]]])
+    doomed_root = _ev(1, "zone_presence root")
+    doomed_reply = _ev(1, "zone_presence reply", pubkey="d" * 64, tags=[["e", doomed_root["id"]]])
+    left = _purge([mine, direct, anchor, reply, doomed_root, doomed_reply], WORDS,
+                  preserve=[local], direct={direct["id"]})
+    assert mine["id"] in left, "a preserved (local) author's notes are spared"
+    assert direct["id"] in left, "a direct write is spared"
+    assert anchor["id"] in left and reply["id"] in left, "a note a surviving reply e-tags is spared"
+    assert doomed_root["id"] not in left and doomed_reply["id"] not in left, (
+        "a thread condemned top to bottom still goes")

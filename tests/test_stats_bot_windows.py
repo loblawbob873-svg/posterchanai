@@ -29,14 +29,15 @@ from app.services import stats_bot_service as S
 
 def _collect(rows_k1, nip05_pubkeys=("alice", "bob", "carol")):
     """Run the SHIPPED _collect_stats, with the relay's SHIPPED aggregate (nostr_relay/aggregates.py) counting
-    `rows_k1` [(created_at, author)] in a sqlite stand-in for its store -- what the relay process answers."""
+    `rows_k1` [(created_at, author)] in a real PosterChanDB store -- what the relay process answers."""
     import json
     from unittest import mock
     from app.services.nostr_relay import aggregates
-    from tests.relay_agg_fixture import ev, sql_source
+    import tempfile
+    from tests.relay_agg_fixture import ev, pcdb_source
     evs = [ev(p, 0, 1_600_000_000, content=json.dumps({"nip05": "%s@example.com" % p})) for p in nip05_pubkeys]
     evs += [ev(p, 1, ts) for ts, p in rows_k1]
-    src = sql_source(evs)
+    src = pcdb_source(evs, tempfile.mkdtemp(prefix="pcagg-"), int(datetime.now(timezone.utc).timestamp()) + 1)
     with mock.patch.object(S, "_ask_activity", lambda since: aggregates.nip05_activity(src, since)), \
          mock.patch.object(S, "_puppet_pubkeys", lambda: set()):
         return S._collect_stats()

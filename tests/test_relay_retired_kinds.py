@@ -8,7 +8,7 @@ paths are here by name because they are three different pieces of code:
     with an explicit NIP-01 `OK: false` naming the feature. A client whose publishes vanish silently
     cannot learn that the screen is gone;
   * the live firehose (`thread._firehose_event`) — a read of somebody else's relay, so it drops;
-  * `store._insert_one` — the single funnel every path writes through (WS, firehose, the windowed
+  * the store's put (`posterchandb.Store.put`) — the single funnel every path writes through (WS, firehose, the windowed
     WoT sync, ancestor backfill, a member restore). This is the backstop that makes the refusal
     structural instead of a list of remembered call sites.
 
@@ -133,9 +133,10 @@ def test_the_backfill_and_ingest_defaults_stopped_asking_for_them():
 def test_the_admin_preview_shows_the_count_before_anything_is_deleted():
     """The operator sees "this will delete N of kind K" first. The prune is destructive and this
     rule ignores age and origin, so a bare total would not be informed consent."""
-    store_src = open("app/services/nostr_relay/store.py", encoding="utf-8").read()
-    preview = store_src[store_src.index("def _prune_preview_sync"):store_src.index("async def prune_preview")]
-    assert "_RETIRED_SQL" in preview and "retired_by_kind" in preview
+    store_src = open("app/services/nostr_relay/pcdb_store.py", encoding="utf-8").read()
+    i = store_src.index("def _prune_preview_sync")
+    preview = store_src[i:store_src.index("\n    def ", i + 10)]
+    assert "retired" in preview and "retired_by_kind" in preview
     admin = open("templates/admin/tabs/nostr_relay.html", encoding="utf-8").read()
     assert "retired_by_kind" in admin, "the Preview button must render the per-kind breakdown"
     thread = open("app/services/nostr_relay/thread.py", encoding="utf-8").read()

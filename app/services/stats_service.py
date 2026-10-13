@@ -6,7 +6,7 @@ Postgres otherwise -- and asked for over its control dir (nostr_relay/aggregates
 what each figure MEANS (the constants below, which aggregates.py counts by) and shapes the answer for the page;
 it opens no database. A relay that cannot be asked makes those figures UNKNOWN on the page, never zero.
 
-Scope: the Network-section figures are THIS SERVER's own activity (origin='direct' — see _LOCAL), not
+Scope: the Network-section figures are THIS SERVER's own activity (origin='direct'), not
 the federated network the relay syncs. ~96% of stored events are synced content (origin='wot'/'ancestor')
 or our fedi mirror ('bridge'); counting all of it read as "misleading" since the page frames itself
 as "what this node is doing".
@@ -157,7 +157,6 @@ async def flush_calls() -> None:
 # subsumes the bridge-puppet exclusion (puppet events are origin='bridge', never 'direct').
 # Applied to the Network-section metrics only; Games / AI / media are already local (pcai: d-tags +
 # local counters), and `db_bytes` is genuine on-disk footprint, so those stay as-is.
-_LOCAL = "origin = 'direct'"
 
 # A PUBKEY IS NOT ALWAYS A PERSON, and on this relay the exceptions outnumber the people.
 #
@@ -173,7 +172,6 @@ _LOCAL = "origin = 'direct'"
 # Only the DISTINCT-PUBKEY counts use this. Event totals are untouched: those events really did
 # happen here, and a DM is real activity — it just isn't a new neighbour.
 _ONE_TIME_KINDS = (1059, 9735)
-_PERSON_PUBKEY = "CASE WHEN kind NOT IN (%s) THEN pubkey END" % ", ".join(str(k) for k in _ONE_TIME_KINDS)
 
 
 def _relay_counts():
@@ -190,7 +188,7 @@ def _relay_counts():
 
 def _series(raw, now: int):
     """Per-window series {window: {metric: [counts...]}} aligned to fixed buckets, from the relay's raw
-    (bucket, kind, n) rows. Counts only locally-published events (origin='direct', see _LOCAL).
+    (bucket, kind, n) rows. Counts only locally-published events (origin='direct').
 
     A part the relay could not count is None here (its cards show "—"), and so is every window when `raw` is
     None -- a missing answer must not be drawn as a flat line at zero."""
@@ -299,7 +297,7 @@ def _relay(now: int, origins: dict) -> dict:
 
 
 def _totals(raw, origins):
-    """All-time / 24h figures. Network-section counts are scoped to origin='direct' (see _LOCAL): posted HERE,
+    """All-time / 24h figures. Network-section counts are scoped to origin='direct': posted HERE,
     not synced from the federated network. AI chat is counted from the ENCRYPTED transcript events by their
     d-tag (never read) -- ~half are assistant replies, so it counts TURNS. `db_bytes` is the relay store's
     genuine on-disk footprint. Unknown (None) whenever the relay could not count it."""

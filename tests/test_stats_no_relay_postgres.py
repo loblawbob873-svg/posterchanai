@@ -17,8 +17,13 @@ import pytest
 from app.services import relay_reader, relay_trace, stats_bot_service, stats_service
 from app.services.nostr_relay import aggregates
 from app.services.relay_reader import Unavailable
-from tests.relay_agg_fixture import pk, sql_source
+from tests.relay_agg_fixture import pcdb_source, pk
 from tests.test_relay_aggregates import EVENTS, NOW
+
+
+def _src():
+    import tempfile
+    return pcdb_source(EVENTS, tempfile.mkdtemp(prefix="pcagg-"), NOW)
 
 
 @pytest.fixture()
@@ -57,7 +62,7 @@ def _relay_down(monkeypatch):
 
 # ------------------------------------------------------------------ Server Stats
 def test_server_stats_open_no_database(no_postgres, monkeypatch):
-    _relay_answers(monkeypatch, sql_source(EVENTS))
+    _relay_answers(monkeypatch, _src())
     data = stats_service._compute()
     assert data["relay_unavailable"] is False
     t = data["totals"]
@@ -89,7 +94,7 @@ def test_an_unanswered_snapshot_is_not_served_for_a_whole_minute(no_postgres, mo
     _relay_down(monkeypatch)
     first = asyncio.run(stats_service.get_stats())
     assert first["relay_unavailable"]
-    _relay_answers(monkeypatch, sql_source(EVENTS))
+    _relay_answers(monkeypatch, _src())
     stats_service._cache["at"] -= 11                     # ten seconds later the page asks again
     again = asyncio.run(stats_service.get_stats())
     assert again["relay_unavailable"] is False and again["totals"]["notes"] == 13
@@ -97,7 +102,7 @@ def test_an_unanswered_snapshot_is_not_served_for_a_whole_minute(no_postgres, mo
 
 # ------------------------------------------------------------------ the NostrStats bot
 def test_the_stats_bot_opens_no_database(no_postgres, monkeypatch):
-    _relay_answers(monkeypatch, sql_source(EVENTS))
+    _relay_answers(monkeypatch, _src())
     st = stats_bot_service._collect_stats()
     assert st["nip05_total"] == 2                         # alice and dave; the puppet is dropped
     assert st["posts_month"] >= 2
@@ -119,7 +124,7 @@ def _upstream(monkeypatch, followers):
 
 
 def test_the_relay_trace_opens_no_database(no_postgres, monkeypatch):
-    src = sql_source(EVENTS)
+    src = _src()
     _relay_answers(monkeypatch, src)
     bob = pk("bob")
 
@@ -144,7 +149,7 @@ def test_a_relay_trace_against_an_unreachable_relay_fails_rather_than_reporting_
 
 
 def test_followers_whose_membership_could_not_be_asked_are_unknown_not_outsiders(no_postgres, monkeypatch):
-    src = sql_source(EVENTS)
+    src = _src()
     _relay_answers(monkeypatch, src)
     real_ask = aggregates.ask
 

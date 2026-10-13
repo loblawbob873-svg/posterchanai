@@ -1,25 +1,33 @@
 """Deleted social activity must not return through relay synchronization."""
-import sqlite3
+import asyncio
 
 import pytest
 
 from app.services.nostr.event import build_event
-from app.services.nostr_relay.store import RelayStore
+from tests.relay_backends import pcdb_factory
+
+
+class _Held:
+    """What the store holds, asked through its own query path."""
+    def __init__(self, st):
+        self.st = st
+
+    def has(self, eid):
+        return self.st._has_sync(eid)
+
+    def count(self):
+        return len(self.st._query_sync([{"limit": 5000}], 5000))
 
 
 @pytest.fixture
 def store():
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
-    conn.executescript('''
-        CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT, created_at INTEGER,
-            kind INTEGER, content TEXT, tags TEXT, sig TEXT, raw TEXT, origin TEXT, expiration INTEGER);
-        CREATE TABLE event_tags(event_id TEXT, tag TEXT, value TEXT,
-            PRIMARY KEY(event_id, tag, value));
-    ''')
-    relay = RelayStore.__new__(RelayStore)
-    yield lambda ev: relay._insert_one(conn, ev, 'wot'), conn
-    conn.close()
+    loop = asyncio.new_event_loop()
+    try:
+        with pcdb_factory() as make:
+            st = make(loop)
+            yield (lambda ev: st._add_event_sync(ev, 'wot')), _Held(st)
+    finally:
+        loop.close()
 
 
 def signed(kind, tags=None, key=b'\x11' * 32):
@@ -36,7 +44,7 @@ def test_deleted_event_cannot_be_imported_again(store, kind, deletion_first):
         assert put(original)
     assert put(deletion)
     assert not put(original)
-    assert conn.execute('SELECT id FROM events WHERE id=?', (original['id'],)).fetchone() is None
+    assert not conn.has(original['id'])
 
 
 def test_another_authors_deletion_cannot_block_import(store):
@@ -52,7 +60,7 @@ def test_deletion_request_cannot_be_deleted_to_reenable_import(store):
     deletion = signed(5, [['e', original['id']]])
     assert put(deletion)
     assert put(signed(5, [['e', deletion['id']]]))
-    assert conn.execute('SELECT id FROM events WHERE id=?', (deletion['id'],)).fetchone()
+    assert conn.has(deletion['id'])
     assert not put(original)
 
 
@@ -68,4 +76,4 @@ def test_private_fediverse_action_is_never_stored_on_public_relay(store, kind):
     put, conn = store
     ev = signed(kind, [['client-mode', 'fedi-only']])
     assert not put(ev)
-    assert conn.execute('SELECT count(*) FROM events').fetchone()[0] == 0
+    assert conn.count() == 0

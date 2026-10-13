@@ -333,7 +333,7 @@ class PcdbRelayStore(RelayStore):
         return np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.uint32)
 
     def _git_comment_seqs(self) -> np.ndarray:
-        """1111 comments rooted at a git issue/patch/PR (`K` tag): the relay's _PRUNABLE_SQL exclusion."""
+        """1111 comments rooted at a git issue/patch/PR (`K` tag): never prunable (store._GIT_COMMENT_ROOT_KINDS)."""
         return self._posting_seqs(["t:K:%s" % k for k in pg._GIT_COMMENT_ROOT_KINDS])
 
     def _select(self, pred, cols, hi: int | None = None, lo: int = 0) -> np.ndarray:
@@ -514,7 +514,7 @@ class PcdbRelayStore(RelayStore):
         return len(ids)
 
     def _delete_by_words_sync(self, words: list) -> int:
-        """store.py _delete_by_words_sync: the live filter's predicate, every kind but the never-word-filtered
+        """The retroactive word purge: the live filter's predicate, every kind but the never-word-filtered
         ones, sparing local users' own notes and thread anchors."""
         if self._writes_closed:
             return 0
@@ -937,8 +937,9 @@ class PcdbRelayStore(RelayStore):
             return [p for p in pubkeys if pg._is_hex64(p) and p in self.sidecar.wot]
 
     def _wot_missing_metadata_sync(self) -> list:
-        """store.py _wot_missing_metadata_sync -- the same four groups in the same order -- from a chunked column
-        scan instead of three DISTINCT queries."""
+        """Pubkeys whose profile (kind 0) or relay list (10002) is worth fetching, in four groups, most useful first:
+        WoT members seen here with no profile, visible non-members with none, the other members with none, then
+        members with a profile but no relay list. One chunked column scan."""
         k0, k10002, vis = set(), set(), set()
         for lo, b, c in self._chunks(("kind", "author", "dead")):
             live = c["dead"] == 0
@@ -958,10 +959,10 @@ class PcdbRelayStore(RelayStore):
         relay_only = [pk for pk in (wot & have_k0) if pk not in have_relay]
         return prio + ghost + rest + relay_only
 
-    # ------------------------------------------------------------ the prune (store.py _prune_sync, over columns)
+    # ------------------------------------------------------------ the prune (the rules of store.py, over columns)
     def _exempt_subscribers(self) -> set:
-        """store.py _subscriber_exempt as a SET (same rule: only with the feature on; the fresh set when the
-        ledger read, else the last good one)."""
+        """Authors exempt from the ordinary age prune and count cap: pay-to-stay subscribers, only while the feature
+        is on -- the fresh set when the ledger read, else the last good one."""
         if not self.paid_tier_enabled:
             return set()
         subs = self.subscriber_pubkeys if self.tiered_ok else self._last_good_subscribers
@@ -1041,8 +1042,8 @@ class PcdbRelayStore(RelayStore):
         return self._select(pred, cols)
 
     def _orphan_zap_seqs(self, ctx: dict) -> np.ndarray:
-        """store.py _ORPHAN_ZAP_SQL: a 9735 (not direct, older than retention) naming a post (`e`) of which none
-        is stored any more."""
+        """The orphaned-zap rule (store.py, ORPHANED ZAP RECEIPTS): a 9735 (not direct, older than retention) naming
+        a post (`e`) of which none is stored any more."""
         cutoff = ctx["now"] - self.retention_days * 86400
         cand = self._select(lambda c, s: (c["kind"] == 9735) & (c["origin"] != _DIRECT)
                             & (c["created"].astype(np.int64) < cutoff), ("kind", "origin", "created"))
@@ -1104,9 +1105,9 @@ class PcdbRelayStore(RelayStore):
                 "subscribers": len(self.subscriber_pubkeys), "tiered_ok": self.tiered_ok}
 
     def _prune_sync(self, limit: int = 0) -> tuple:
-        """One prune PASS -- store.py _prune_sync's rules, in its order, with its budget semantics: `limit` caps
+        """One prune PASS -- store.py's rules, in their order, with its budget semantics: `limit` caps
         the deletions of the whole pass, and `more` says a rule hit the cap. Each rule sees the previous rules'
-        deletions (they are applied before the next rule is scanned), as in the one Postgres transaction."""
+        deletions (they are applied before the next rule is scanned)."""
         if self._writes_closed:
             return (0, False)
         now = int(time.time())

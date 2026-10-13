@@ -165,9 +165,9 @@ MUTATIONS = [
     #    loss this repo has actually taken. They earn their seconds.
     (
         "the paid tier's prune stops limiting itself to feed kinds, so it deletes calendars",
-        "app/services/nostr_relay/store.py",
-        'base = f"origin = \'direct\' AND {_PRUNABLE_SQL} AND {self._not_preserved()}"',
-        'base = f"origin = \'direct\' AND {self._not_preserved()}"',
+        "app/services/nostr_relay/pcdb_store.py",
+        'base = {"origin": "direct", "kinds": tuple(pg._PRUNABLE_KINDS), "git_comment_exempt": True,',
+        'base = {"origin": "direct", "git_comment_exempt": True,',
         "tests/test_relay_prune.py",
     ),
     (

@@ -77,7 +77,7 @@ def _dtag(ev: dict) -> str:
 
 
 def _expiration(ev: dict):
-    """The relay's parse (_insert_one): the FIRST expiration tag only, int(); unreadable = no expiration."""
+    """The relay's parse: the FIRST expiration tag only, int(); unreadable = no expiration."""
     for t in ev.get("tags") or []:
         if len(t) >= 2 and t[0] == "expiration":
             try:
@@ -835,8 +835,8 @@ class Store:
         return self._live(rows[m])
 
     def put(self, ev: dict, *, direct: bool = False, origin: str | None = None) -> str:
-        """Store a (signature-verified) event, by EXACTLY the rules of the relay's _insert_one, which
-        tests/test_posterchandb_vs_relay.py holds it to. Returns 'stored', 'duplicate', or why it was not:
+        """Store a (signature-verified) event by the relay's ingest rules (store.py's constants: replaceable /
+        addressable newest-wins with the lowest-id tie-break, NIP-09, NIP-40, retired kinds). Returns 'stored', 'duplicate', or why it was not:
         'retired', 'future', 'fedi-only', 'expired', 'deleted', 'superseded'."""
         origin_name = origin or ("direct" if direct else "wot")
         kind, created = int(ev["kind"]), int(ev["created_at"])

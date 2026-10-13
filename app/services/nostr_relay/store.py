@@ -121,7 +121,7 @@ def retired_kind_reason(kind: int):
 
 
 # Events deleted per prune PASS. The writer thread is single, so this is the unit of ingestion stall:
-# one pass' delete + its event_tags cleanup runs to completion before any queued write gets in.
+# one pass' deletions run to completion before any queued write gets in.
 # 20k keeps a pass to roughly a second while still clearing a large backlog in a handful of passes.
 _PRUNE_CHUNK = 20000
 
@@ -145,23 +145,17 @@ assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be pr
 # issue discussion as 1111 comments. In spirit these belong to _GIT_KINDS ("kept forever"), but the
 # kind is shared with ordinary community/article comments that MUST keep aging out (the relay's bound
 # on firehose growth), so the shield is TAG-scoped, not kind-scoped: NIP-22 repeats the root kind in
-# an uppercase `K` tag at every depth, which idx_event_tags_tv (tag, value) answers cheaply. Every
-# rule that says "prunable feed content" uses this predicate, so the exemption cannot drift per rule.
+# an uppercase `K` tag at every depth, which PosterChanDB's `t:K:<kind>` posting list answers cheaply.
+# Every rule that says "prunable feed content" uses this exemption (pcdb_store._prunable), so it cannot
+# drift per rule.
 _GIT_COMMENT_ROOT_KINDS = ("1617", "1621", "1618")
-_PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
-                 "(SELECT event_id FROM event_tags WHERE tag = 'K' AND value IN (%s))))" % (
-                     ",".join(str(k) for k in _PRUNABLE_KINDS),
-                     ",".join("'%s'" % k for k in _GIT_COMMENT_ROOT_KINDS)))
 
 # ORPHANED ZAP RECEIPTS. A zap receipt (9735) is never an age-prunable kind -- a post's zap total is read
 # from them -- but once the age prune has deleted the POST, its receipts count toward nothing anybody can
 # see here. Measured on poster.place 2026-10-04: 154,594 such receipts older than retention, 505 MB plus
 # 486k tag rows -- "the db is growing fast for only a few months". Only receipts that NAME a post (`e`) whose
 # post is gone: a profile zap (no `e`) is kept, and a receipt for a post still stored is kept at any age.
-_ORPHAN_ZAP_SQL = ("kind = 9735 AND origin != 'direct' AND created_at < ? "
-                   "AND EXISTS (SELECT 1 FROM event_tags t WHERE t.event_id = events.id AND t.tag = 'e') "
-                   "AND NOT EXISTS (SELECT 1 FROM event_tags t JOIN events p ON p.id = t.value "
-                   "WHERE t.event_id = events.id AND t.tag = 'e')")
+# Applied by pcdb_store._orphan_zap_seqs (only to non-direct receipts older than the retention window).
 
 # Kinds a NIP-40 `expiration` tag must NEVER be able to delete. The expiration sweep is otherwise
 # unconditional (it ignores the kind allowlist AND the preserve clause, by design — an author's
@@ -179,7 +173,7 @@ _ORPHAN_ZAP_SQL = ("kind = 9735 AND origin != 'direct' AND created_at < ? "
 # accidental trigger — NIP-37 recommends stamping `expiration: now + 90 days`, so any client
 # following that convention on a list would take somebody's private repos off the map three months
 # later, from the relay holding the only copy. It is already outside _PRUNABLE_KINDS (every prune
-# rule in this file is gated on _PRUNABLE_SQL or _RETIRED_SQL, so no cleaner can reach it); this
+# rule is gated on _PRUNABLE_KINDS or _RETIRED_KINDS, so no cleaner can reach it); this
 # closes the one path that could.
 # Kinds that must NEVER take the `tie_direct` shortcut below (see the addressable-replaceable
 # branch in _add_event_sync). That shortcut hands a same-second tie to the LAST direct write instead
@@ -212,9 +206,6 @@ assert not (set(_RETIRED_KINDS) & set(_CONCORD_KINDS)), \
 assert not (set(_RETIRED_KINDS) & set(_PRUNABLE_KINDS)), \
     "a retired kind is deleted outright, so it must not ALSO be aged out as feed content"
 
-# `kind IN (…)` for the retired rule + its preview. Literal ints from the tuple above, never input.
-_RETIRED_SQL = "kind IN (%s)" % ",".join(str(k) for k in _RETIRED_KINDS)
-
 
 class RelayStore:
     def __init__(self, *, read_workers: int = 4, max_events: int = 0, retention_days: int = 30):
@@ -237,7 +228,7 @@ class RelayStore:
         self.subscriber_pubkeys: frozenset = frozenset()
         self.tiered_ok = False        # ledger READ succeeded → the tiered rules may run (fail-closed)
         self.paid_tier_enabled = False        # the admin master switch, mirrored here
-        self._last_good_subscribers: frozenset = frozenset()   # see _subscriber_exempt
+        self._last_good_subscribers: frozenset = frozenset()   # see PcdbRelayStore._exempt_subscribers
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -293,9 +284,9 @@ class RelayStore:
     # (thread.py `_admit`), so a door added next year inherits it instead of re-learning it. A hook
     # that RAISES admits — this is a filter, and a bug in it must not stop the relay storing anything.
     admit = None
-    # Set by detach_mirror ON THE WRITER THREAD: from then on no event is stored or deleted. Every event write is
-    # queued on that thread, and one queued BEHIND the detach used to reach Postgres with no mirror attached, under
-    # a clean token claiming the two were identical -- server1 reopened one event short (2026-10-10).
+    # Set ON THE WRITER THREAD when the store closes (its final flush): from then on no event is stored or
+    # deleted. Every event write is queued on that thread, so one queued BEHIND the close is refused rather than
+    # written into a store whose last flush already happened.
     _writes_closed = False
 
     def _admitted(self, ev: dict) -> bool:

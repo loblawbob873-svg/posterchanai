@@ -421,7 +421,7 @@ def _read_config() -> dict:
             # NIP-72 communities (34550) and Divine shorts (34236) were HERE and are gone: those
             # screens were removed and the relay now refuses those kinds outright
             # (store._RETIRED_KINDS), so asking upstream for them would fetch rows only to have
-            # _insert_one drop them. NIP-71 video (21/22/34235) stays — it is not a retired feature.
+            # the store's put drop them. NIP-71 video (21/22/34235) stays — it is not a retired feature.
             # 2003/2004 = NIP-35 torrents (+comments), 30617 = NIP-34 git repo announcement — the
             # Discover → Torrents / Git Repos views. GRASP git-over-nostr (NIP-34): 30618 repo state,
             # 1617 patch, 1621 issue, 1622 reply, 1623 repo-reply, 1630-1633 issue/patch status —
@@ -836,7 +836,7 @@ async def _refresh_subscribers(store) -> None:
 
     Driven by the master switch, NOT by `free_retention_days`: with the feature on and no free
     window the tiered rules do nothing, but a subscriber is still exempt from the ORDINARY age
-    prune on synced content (store._subscriber_exempt), and that exemption needs a current set."""
+    prune on synced content (PcdbRelayStore._exempt_subscribers), and that exemption needs a current set."""
     if not store.paid_tier_enabled:
         store.set_subscribers((), ledger_ok=False)
         return

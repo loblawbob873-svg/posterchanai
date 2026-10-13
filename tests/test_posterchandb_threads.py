@@ -5,13 +5,12 @@ object cannot be re-sized". A column (bytearray / array.array) cannot grow while
 stats() made one WITHOUT the lock (the relay's status thread calls it every few seconds), and query() made views
 that outlived its lock by the few microseconds its frame takes to end. Every test so far ran single-threaded,
 which is why none could see it. Here a writer stores while readers hammer stats, query, the maintenance scan and
-the mirror's count; nothing may raise, and every stored event must be there at the end.
+the relay's column copies for its counts; nothing may raise, and every stored event must be there at the end.
 """
 import threading
 import time
 
 from app.services.posterchandb import maintenance as M
-from app.services.posterchandb import mirror as Mi
 from app.services.posterchandb.store import Store
 from tests.test_posterchandb_durability import _events
 
@@ -33,13 +32,11 @@ def test_a_writer_and_four_kinds_of_reader_never_collide(tmp_path):
                     return
         return run
     maint = M.Maintainer(st, lambda: M.Policy(retention_days=30, min_free_pct=0))
-    mi = Mi.Mirror(str(tmp_path / "m"), "serve", lambda: None)
-    mi.store = st
     readers = [threading.Thread(target=guard(f), daemon=True) for f in (
         st.stats,
         lambda: st.query({"kinds": [1, 7], "limit": 50}),
         lambda: maint.prune_masks(M.Policy(retention_days=30), int(time.time())),
-        lambda: mi._live_count(int(time.time())),
+        st.stats_columns,                  # the relay's counts (nostr_relay/aggregates.py)
     )]
     for t in readers:
         t.start()

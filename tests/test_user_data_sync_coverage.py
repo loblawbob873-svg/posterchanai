@@ -71,7 +71,7 @@ class SyncCoverage(unittest.TestCase):
 
     def test_no_feature_maps_to_a_kind_the_relay_now_refuses(self):
         """A row in FEATURES is a promise that the sync carries it. The retired kinds cannot be
-        carried — store._insert_one drops them — so a row naming one would be a promise the relay
+        carried — the store's put drops them — so a row naming one would be a promise the relay
         breaks on every tick."""
         from app.services.nostr_relay.store import _RETIRED_KINDS
         self.assertEqual(sorted(_RETIRED_KINDS), sorted(RETIRED))

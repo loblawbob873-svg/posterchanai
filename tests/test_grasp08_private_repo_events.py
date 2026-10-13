@@ -124,7 +124,7 @@ def test_kind_10318_can_never_be_deleted_by_an_expiration_tag():
 
 
 def test_kind_10318_is_reachable_by_no_cleaner():
-    """Every prune rule in store.py is gated on _PRUNABLE_SQL or _RETIRED_SQL — including the paid
+    """Every prune rule is gated on _PRUNABLE_KINDS or _RETIRED_KINDS — including the paid
     tier, the only thing here that can delete an origin='direct' event. Being outside both tuples is
     what keeps the list safe from all of them at once."""
     from app.services.nostr_relay import store

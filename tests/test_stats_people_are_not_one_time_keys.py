@@ -14,13 +14,12 @@ gift wraps** (real: 81), and **19,347 over 30 days, of which 16,590 were gift wr
 — on a node with 128 registered names. A number like that is not merely wrong, it is the reason an
 operator stops believing the whole panel.
 
-The rule is pinned by RUNNING the shipped SQL expression over rows shaped like the real table, and
-the second test refuses a NEW people-metric that forgets it.
+The rule is pinned by RUNNING the relay's own counting (nostr_relay/aggregates.py) over a real PosterChanDB store
+holding rows shaped like production, and a test refuses a NEW people-metric written as a bare distinct count.
 """
 import re
 
 import pytest
-from sqlalchemy import create_engine, text
 
 from app.services import stats_service as st
 
@@ -49,22 +48,19 @@ for i in range(50):
     _add("stranger%02d" % i, 1, origin="wot")
 
 
+NOW = 2_000_000
+
+
 @pytest.fixture()
-def db():
-    engine = create_engine("sqlite://")
-    with engine.connect() as conn:
-        conn.execute(text("CREATE TABLE events (id text, pubkey text, created_at integer, "
-                          "kind integer, origin text)"))
-        for row in ROWS:
-            conn.execute(text("INSERT INTO events VALUES (:id, :pubkey, :created_at, :kind, :origin)"),
-                         row)
-        yield conn
+def db(tmp_path):
+    from tests.relay_agg_fixture import ev, pcdb_source
+    return pcdb_source([ev(r["pubkey"], r["kind"], r["created_at"], origin=r["origin"]) for r in ROWS],
+                       tmp_path / "p", NOW)
 
 
-def _people(db):
-    """The people count exactly as the page computes it — the shipped expression, not a copy."""
-    return db.execute(text("SELECT count(DISTINCT " + st._PERSON_PUBKEY + ") FROM events "
-                           "WHERE " + st._LOCAL)).scalar()
+def _people(src):
+    """The people count exactly as the relay computes it for the page."""
+    return src.people_since(0)
 
 
 def test_a_dm_is_activity_but_not_a_new_neighbour(db):
@@ -73,9 +69,9 @@ def test_a_dm_is_activity_but_not_a_new_neighbour(db):
 
 
 def test_the_naive_count_is_what_this_replaces(db):
-    """Proof the test can fail: the expression this replaced, over the same rows, reports 204 —
-    one 'person' per DM plus the payment processor."""
-    naive = db.execute(text("SELECT count(DISTINCT pubkey) FROM events WHERE " + st._LOCAL)).scalar()
+    """Proof the test can fail: counting distinct pubkeys over the same rows reports 204 -- one 'person' per DM
+    plus the payment processor."""
+    naive = len({r["pubkey"] for r in ROWS if r["origin"] == "direct"})
     assert naive == 204
     assert _people(db) < naive
 
@@ -88,11 +84,11 @@ def test_the_payment_processor_is_not_a_visitor(db):
 
 
 def test_events_are_not_filtered_only_the_headcount_is(db):
-    """DMs and zaps ARE this server's activity — the event totals must keep every one of them.
+    """DMs and zaps ARE this server's activity -- the event totals must keep every one of them.
     Filtering the events too would trade one wrong number for another."""
-    total = db.execute(text("SELECT count(*) FROM events WHERE " + st._LOCAL)).scalar()
+    total, people = db.window_totals(0, NOW)[:2]
     assert total == len([r for r in ROWS if r["origin"] == "direct"])
-    assert total > 200
+    assert total > 200 and people == 3
 
 
 def test_no_headcount_in_this_module_may_skip_the_rule():
@@ -106,13 +102,12 @@ def test_no_headcount_in_this_module_may_skip_the_rule():
     bare = [ln.strip() for ln in src.splitlines()
             if re.search(r"count\(DISTINCT\s+pubkey\s*\)", ln, re.I) and "SELECT" in ln.upper()]
     assert not bare, "a distinct-pubkey headcount that does not exclude one-time keys: %r" % bare
-    assert src.count("_PERSON_PUBKEY") >= 4      # the definition + every place it is used
 
 
 def test_posterchandb_counts_people_by_the_same_rule(tmp_path):
     """The relay counts from PosterChanDB when it serves; the same rows must give the same 3 people there."""
-    from tests.relay_agg_fixture import ev, pcdb_source, sql_source
+    from tests.relay_agg_fixture import ev, pcdb_source
     evs = [ev(r["pubkey"], r["kind"], r["created_at"], origin=r["origin"]) for r in ROWS]
-    for src in (sql_source(evs), pcdb_source(evs, tmp_path / "p", 2_000_000)):
+    for src in (pcdb_source(evs, tmp_path / "p", 2_000_000),):
         assert src.people_since(0) == 3
         assert src.window_totals(0, 2_000_000)[1] == 3

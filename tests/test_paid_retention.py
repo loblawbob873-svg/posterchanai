@@ -513,7 +513,7 @@ def test_with_the_feature_off_nobody_is_exempt(store_factory):
         store.set_subscribers([SUBSCRIBER], ledger_ok=True)
         store.set_paid_tier_enabled(False)          # admin turns the whole feature off
         await _seed_synced(store)
-        assert store._subscriber_exempt() == ""
+        assert store._exempt_subscribers() == set(), "no author is exempt with the switch off"
         assert await store.prune() == 90, "every author's old synced notes, subscriber included"
     _run(go)
 

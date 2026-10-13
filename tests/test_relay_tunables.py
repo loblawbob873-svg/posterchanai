@@ -247,16 +247,6 @@ def test_the_live_reload_applies_limits_and_tuning_to_the_running_relay(tmp_path
         ps.close()
 
 
-def test_the_mirror_takes_the_tuning_too(tmp_path):
-    from app.services.posterchandb import maintenance, mirror
-    m = mirror.Mirror(str(tmp_path / "m"), "serve", lambda: None, maintenance=False)
-    m.apply_tuning(dict(TUNED))
-    assert m.flush_interval == 45 and m.cache_mb == 256 and m.words_batch == 100
-    m._maint = maintenance.Maintainer(object(), snapshot_hours=1.0)
-    m.apply_tuning({})
-    assert m._maint.snapshot_hours == 6.0 and m._maint.throttle.cpu_pct == 25
-
-
 def test_relay_status_passes_the_database_status_through(tmp_path, monkeypatch):
     """The Database status line read s.posterchandb, which relay_status() never copied out of the status file --
     so every node's panel said "Off."."""

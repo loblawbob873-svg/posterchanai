@@ -5,22 +5,12 @@ stats_service._series aligns its rows to the page's buckets. Every snapshot is c
 """
 import tempfile
 
-import pytest
 
 from app.services import stats_service as stats
 from app.services.nostr_relay import aggregates
-from tests.relay_agg_fixture import ev, pcdb_source, sql_source
+from tests.relay_agg_fixture import ev, pcdb_source
 
 NOW = 1_800_001_237
-BACKEND = ["sql"]
-
-
-@pytest.fixture(autouse=True, params=["sql", "pcdb"])
-def _backend(request):
-    BACKEND[0] = request.param
-    yield
-
-
 def snapshot(extra=()):
     rows = []
 
@@ -42,7 +32,7 @@ def snapshot(extra=()):
         add(origin, origin=origin)
     for event in extra:
         add(**event)
-    src = sql_source(rows) if BACKEND[0] == "sql" else pcdb_source(rows, tempfile.mkdtemp(prefix="pcagg-"), NOW)
+    src = pcdb_source(rows, tempfile.mkdtemp(prefix="pcagg-"), NOW)
     return stats._series(aggregates.server_stats(src, NOW), NOW)
 
 
