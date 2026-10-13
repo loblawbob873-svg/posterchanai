@@ -1831,7 +1831,13 @@ would have handled it fine).
   a URL that is not ws:// on loopback is ignored. The URL comes from `$XDG_RUNTIME_DIR/posterchan-relay.url`
   (written only after bind, removed at stop) via `pcShell.localRelay`; `pc-shell-start-wayfire` waits ≤8 s
   for that file AND an active unit, then starts the desktop regardless. The pool gets it LAST (`Relay.url`
-  is where webxdc realtime goes). Tests: `test_os_relay_*`, `test_shell_waits_for_local_relay.py`,
+  is where webxdc realtime goes). **Concord's envelope cache rides it too** (`concord-cache.js`, via `Store.lrPut`/`lrGet`,
+  which answer only what the relay ACKNOWLEDGED and never fall back into the timeline's IndexedDB -- a 1059 there is
+  one the DM code would try to open): an acknowledged envelope is a body-less reference row in IndexedDB, anything
+  else keeps its body as before, a body the relay evicted is a cache miss; and an envelope already held is never
+  put() again -- refresh paths hand the cache a room's whole history, and measured on the laptop every event-shaped
+  IndexedDB write after boot was one of those rewrites (`tests/client/test_concord_cache_on_the_local_relay.py`).
+  The DM plaintext cache stays in IndexedDB: AES-sealed records, not events, written once each. Tests: `test_os_relay_*`, `test_shell_waits_for_local_relay.py`,
   `tests/client/test_store_local_relay_backend.py`, `tests/client/test_local_relay_cache_full_app.py`.
 - **Native apps run WITHOUT an instance** (`desktop/`, `mobile/`): both BUNDLE the web client, and the
   desktop build (`desktop/build-www.sh` → `desktop/main.js`) can run with **no PosterChan server at all** —

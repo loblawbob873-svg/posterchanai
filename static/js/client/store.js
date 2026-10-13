@@ -378,7 +378,7 @@
    * Profiles follow the same path (a kind-0 IS an event): while the relay holds them the profile store
    * in IndexedDB is not rewritten per sighting, except for the viewer's own. */
   const LR = { url: '', ws: null, up: false, sent: new Set(), pending: new Map(), retry: 600, timer: null,
-               reqs: new Map(), stats: { relay: 0, idb: 0, refused: 0, fellBack: 0, opened: 0 } };
+               reqs: new Map(), oks: new Map(), stats: { relay: 0, idb: 0, refused: 0, fellBack: 0, opened: 0 } };
   function _lrUrl(){
     try {
       const sh = window.pcShell;
@@ -412,6 +412,8 @@
       let msg; try { msg = JSON.parse(m.data); } catch(_){ return; }
       if (!Array.isArray(msg)) return;
       if (msg[0] === 'OK'){
+        const w = LR.oks.get(msg[1]);
+        if (w){ LR.oks.delete(msg[1]); const ok = !!msg[2] || /^duplicate/i.test(String(msg[3] || '')); for (const f of w) f(ok); }
         const ev = LR.pending.get(msg[1]); if (!ev) return;
         LR.pending.delete(msg[1]);
         // A duplicate is a success (it is already there); any other refusal keeps the device copy.
@@ -428,6 +430,8 @@
       LR.ws = null; LR.up = false;
       for (const r of LR.reqs.values()) r.done(r.events);
       LR.reqs.clear();
+      for (const w of LR.oks.values()) for (const f of w) f(false);
+      LR.oks.clear();
       _lrFallBack();
       _lrRetry();
     };
@@ -659,6 +663,35 @@
     backend(){ return _lrLive() ? 'relay' : 'idb'; },
     backendStats(){ return Object.assign({ backend: _lrLive() ? 'relay' : 'idb', url: LR.url, pending: LR.pending.size }, LR.stats); },
     localRelayUrl(){ return LR.url; },
+    /* THE LOCAL RELAY FOR OTHER CACHES OF SIGNED EVENTS (Concord's envelopes, concord-cache.js). `lrPut`
+       answers WHICH ids the relay acknowledged, and nothing else: it never falls back to IndexedDB on the
+       caller's behalf -- this store's IndexedDB is the timeline's, and a Concord envelope hydrated into it
+       is a kind-1059 the DM code would try to open. The caller keeps its own copy of anything not in the
+       answer. `lrGet` reads by id; a missing id is one the relay no longer holds (its byte cap evicts),
+       which to a cache is a miss, never an error. Both answer empty while the relay is not up. */
+    lrLive(){ return _lrLive(); },
+    lrPut(events, ms){
+      if (!_lrLive() || !Array.isArray(events) || !events.length) return Promise.resolve(new Set());
+      const ok = new Set();
+      return Promise.all(events.map(ev => new Promise(res => {
+        if (!ev || typeof ev.id !== 'string' || !ev.sig) return res();
+        let t = null;
+        const fin = (good) => { clearTimeout(t); if (good) ok.add(ev.id); res(); };
+        const w = LR.oks.get(ev.id) || []; w.push(fin); LR.oks.set(ev.id, w);
+        t = setTimeout(() => { const l = LR.oks.get(ev.id); if (l){ const i = l.indexOf(fin); if (i >= 0) l.splice(i, 1); if (!l.length) LR.oks.delete(ev.id); } fin(false); }, ms || 4000);
+        try { LR.ws.send(JSON.stringify(['EVENT', ev])); } catch(_){ fin(false); }
+      }))).then(() => ok);
+    },
+    async lrGet(ids, ms){
+      const out = new Map();
+      const want = [...new Set((ids || []).filter(x => typeof x === 'string' && x))];
+      for (let i = 0; i < want.length && _lrLive(); i += 500){
+        const chunk = want.slice(i, i + 500), set = new Set(chunk);
+        for (const ev of await _lrQuery([{ ids: chunk, limit: chunk.length }], ms || 3000))
+          if (ev && typeof ev.id === 'string' && set.has(ev.id)) out.set(ev.id, ev);
+      }
+      return out;
+    },
     has(id){ return mem.events.has(id); },
     get(id){ return mem.events.get(id); },
     saveEvent(ev){

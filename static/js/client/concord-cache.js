@@ -62,12 +62,49 @@
     const db=await open(),tx=db.transaction(STORE,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(STORE).index('stream').getAll(String(stream))),completion]);
     return rows.sort((a,b)=>a.created-b.created||a.id.localeCompare(b.id));
   }
+  /* POSTERCHANOS: THE ENVELOPES LIVE ON THE LOCAL RELAY, THIS DATABASE KEEPS THE INDEX. On the desktop the
+   * loopback PosterChanDB relay (store.js `lrPut`/`lrGet`) is this machine's event store; IndexedDB's LevelDB
+   * rewrote what Concord gave it many times over (measured on .102: the desktop's IndexedDB rewrote ~46 MB an
+   * hour, Concord's rows among it). An envelope the relay ACKNOWLEDGED is kept here as a reference row
+   * ({key,stream,id,created,lr:1}, no body); one it did not -- relay down, refused, timed out -- keeps its
+   * whole body here exactly as before, and a browser or the APK (no local relay) never sees a reference row.
+   * A body the relay no longer holds (its byte cap evicts) is a cache MISS on read, never an error; the next
+   * put of that envelope stores it again. */
+  function localRelay(){try{const S=root.Store;return S&&typeof S.lrLive==='function'&&S.lrLive()&&typeof S.lrPut==='function'?S:null;}catch(_){return null;}}
+  async function bodies(rows){
+    const refs=rows.filter(r=>r&&!r.event&&r.lr);if(!refs.length)return rows;
+    const S=root.Store;let got=new Map();
+    try{if(S&&typeof S.lrGet==='function'&&localRelay())got=await S.lrGet(refs.map(r=>r.id));}catch(_){got=new Map();}
+    const out=[];for(const r of rows){if(r.event){out.push(r);continue;}const ev=got.get(r.id);if(ev&&ev.id===r.id)out.push({...r,event:ev});}
+    return out;
+  }
   async function put(stream,events,{limit=MAX_PER_STREAM}={}){
     stream=String(stream||''); if(!stream||stream.length>2048)return 0;
     const clean=[],seen=new Set();
     const incoming=Array.isArray(events)?events.slice(-MAX_PER_STREAM):[];
     for(const ev of incoming){const safe=envelope(ev),id=safe&&eventId(safe.event);if(!id||seen.has(id))continue;seen.add(id);clean.push({key:stream+'\u0000'+id,stream,id,created:eventTime(safe.event),event:safe.event,size:safe.size});}
-    if(clean.length){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of clean){const q=s.get(row.key);q.onsuccess=()=>{const expires=q.result?.expires;if(Number.isSafeInteger(expires)&&expires<=Math.floor(Date.now()/1000)){s.delete(row.key);return;}s.put(Number.isSafeInteger(expires)?{...row,expires}:row);};}await completion;}
+    /* AN ENVELOPE ALREADY HELD IS NOT WRITTEN AGAIN. A signed event never changes, and several refresh paths
+     * hand this the room's WHOLE history every time -- each of those rows used to be put() again, every
+     * refresh, which is a LevelDB rewrite of up to 5,000 64 KB rows for no change at all. */
+    if(clean.length){
+      const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),s=read.objectStore(STORE),have=new Map();
+      for(const row of clean){const q=s.get(row.key);q.onsuccess=()=>{if(q.result)have.set(row.key,q.result);};}
+      await readDone;
+      const now=Math.floor(Date.now()/1000),dead=[],fresh=[];
+      for(const row of clean){const old=have.get(row.key);
+        if(old&&Number.isSafeInteger(old.expires)&&old.expires<=now){dead.push(row.key);continue;}
+        if(old&&old.event)continue;                                   // held, body and all
+        fresh.push(old&&Number.isSafeInteger(old.expires)?{...row,expires:old.expires}:row);}
+      const S=fresh.length?localRelay():null;let acked=new Set();
+      if(S){try{acked=await S.lrPut(fresh.map(r=>r.event));}catch(_){acked=new Set();}}
+      const writes=[];
+      for(const row of fresh){
+        const old=have.get(row.key);
+        if(acked.has(row.id)){if(old&&old.lr)continue;const ref={key:row.key,stream,id:row.id,created:row.created,size:0,lr:1};if(Number.isSafeInteger(row.expires))ref.expires=row.expires;writes.push(ref);}
+        else writes.push(row);
+      }
+      if(writes.length||dead.length){const tx=db.transaction(STORE,'readwrite'),completion=done(tx),w=tx.objectStore(STORE);for(const key of dead)w.delete(key);for(const row of writes)w.put(row);await completion;}
+    }
     const rows=await all(stream),extra=Math.max(0,rows.length-Math.max(1,Number(limit)||MAX_PER_STREAM));
     if(extra){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of rows.slice(0,extra))s.delete(row.key);await completion;}
     /* A malicious room can advertise many stream ids, so a per-stream limit is not a quota limit.
@@ -87,7 +124,7 @@
     const db=await open(),tx=db.transaction([STORE,DELIVERIES],'readwrite'),completion=done(tx),now=Math.floor(Date.now()/1000);
     for(const name of [STORE,DELIVERIES]){const q=tx.objectStore(name).index('expires').openCursor(IDBKeyRange.upperBound(now));q.onsuccess=()=>{const c=q.result;if(!c)return;if(Number.isSafeInteger(c.value.expires)&&c.value.expires<=now)c.delete();c.continue();};}await completion;
   }
-  async function get(stream){await sweepExpired();return (await all(stream)).map(row=>row.event);}
+  async function get(stream){await sweepExpired();return (await bodies(await all(stream))).map(row=>row.event);}
   async function page(stream,{before='',limit=200}={}){
     await sweepExpired();
     stream=String(stream||'');const cap=Math.min(500,Math.max(1,Number(limit)||200)),db=await open(),tx=db.transaction(STORE,'readonly'),completion=done(tx),rows=[];
@@ -96,7 +133,7 @@
      * busy community. Never await inside this callback: that would let the IDB transaction close
      * before cursor.continue(), silently truncating history. */
     await new Promise((resolve,reject)=>{let found=!before;const range=IDBKeyRange.bound([stream,0],[stream,Number.MAX_SAFE_INTEGER]);const q=tx.objectStore(STORE).index('streamCreated').openCursor(range,'prev');q.onerror=()=>reject(q.error||new Error('Concord cache cursor failed'));q.onsuccess=()=>{const cursor=q.result;if(!cursor||rows.length>=cap){resolve();return;}const row=cursor.value;if(!found){if(row.key===before)found=true;cursor.continue();return;}rows.push(row);cursor.continue();};});
-    await completion;rows.reverse();return{events:rows.map(row=>row.event),before:rows.length===cap?rows[0].key:'',done:rows.length<cap};
+    await completion;rows.reverse();const held=await bodies(rows);return{events:held.map(row=>row.event),before:rows.length===cap?rows[0].key:'',done:rows.length<cap};
   }
   async function drop(stream){const rows=await all(stream);if(!rows.length)return 0;const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of rows)s.delete(row.key);await completion;return rows.length;}
   async function putIcon(key,ref,bytes,mime){const data=new Uint8Array(bytes),type=String(mime||'');if(!key||data.byteLength>MAX_ICON_BYTES||!/^image\/(png|jpeg|gif|webp)$/.test(type))return false;const db=await open(),write=db.transaction(ICONS,'readwrite'),writeDone=done(write);write.objectStore(ICONS).put({key:String(key),ref:String(ref),bytes:data,mime:type,at:Date.now(),size:data.byteLength});await writeDone;const read=db.transaction(ICONS,'readonly'),readDone=done(read),[rows]=await Promise.all([request(read.objectStore(ICONS).getAll()),readDone]);rows.sort((a,b)=>(Number(a.at)||0)-(Number(b.at)||0));let total=rows.reduce((n,r)=>n+(Number(r.size)||r.bytes&&r.bytes.byteLength||0),0),count=rows.length;const victims=[];for(const row of rows){if(count<=MAX_ICONS&&total<=MAX_ICON_TOTAL_BYTES)break;victims.push(row.key);count--;total-=Number(row.size)||row.bytes&&row.bytes.byteLength||0;}if(victims.length){const prune=db.transaction(ICONS,'readwrite'),pruneDone=done(prune),s=prune.objectStore(ICONS);for(const victim of victims)s.delete(victim);await pruneDone;}return true;}
