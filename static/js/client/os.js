@@ -9531,7 +9531,20 @@
    * runs: there is only ever the one page. */
   const MUSIC_CH = 'pc-music-window';
   const _musicId = Math.random().toString(36).slice(2);
-  let _musicCh = null, _remoteMusic = null, _musicSounding = false;
+  let _musicCh = null, _remoteMusic = null, _musicSounding = false, _remoteAt = 0;
+  /* A MUSIC WINDOW THAT HAS GONE QUIET IS GONE. Its "gone" is posted from `pagehide`, while the page is being torn
+   * down -- and a message sent then can be dropped. When it was, the widget kept the last state it heard for ever:
+   * "playing" over silence after the Music window was closed, and every Play/Shuffle press sent to a window that no
+   * longer existed, so the widget did nothing at all (the TV, 2026-10-13). The Music window now repeats what it is
+   * playing every MUSIC_BEAT, and a state older than MUSIC_STALE is no state. */
+  const MUSIC_BEAT = 3000, MUSIC_STALE = 8000;
+  function _remoteLive(){
+    if(_remoteMusic && Date.now() - _remoteAt > MUSIC_STALE){
+      _remoteMusic = null;
+      for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
+    }
+    return _remoteMusic;
+  }
   function _isMusicPage(){
     try{ return !!(window.PCOSWin && PCOSWin.isWindow() && PCOSWin.viewOf() === '__music'); }catch(_){ return false; }
   }
@@ -9575,7 +9588,7 @@
         return;
       }
       if(d.state){
-        _remoteMusic = d.state.gone ? null : d.state;
+        _remoteMusic = d.state.gone ? null : d.state; _remoteAt = Date.now();
         for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
       }
     };
@@ -9597,7 +9610,8 @@
     const local = _localMusic();
     let ln = null;
     try{ ln = local && local.now ? local.now() : null; }catch(_){ ln = null; }
-    const rn = (_remoteMusic && _remoteMusic.now) || null;
+    const _rm = _remoteLive();
+    const rn = (_rm && _rm.now) || null;
     if(!rn || (ln && (ln.playing || !rn.playing))) return local;
     const send = (cmd, arg) => { const ch = _musicChannel(); if(ch) ch.postMessage({ cmd, arg }); };
     return {
@@ -9611,8 +9625,10 @@
     if(_isMusicPage()){
       _musicSay();
       window.addEventListener('pagehide', () => _musicSay(true));
+      { const t = setInterval(() => _musicSay(), MUSIC_BEAT); if(t && t.unref) t.unref(); }  // the heartbeat the desk reads
     } else if(_musicChannel()){
       _musicCh.postMessage({ cmd: 'ask' });     // a desktop that loaded after the Music window did
+      { const t = setInterval(_remoteLive, MUSIC_BEAT); if(t && t.unref) t.unref(); }  // clears a "playing" nothing backs
     }
   }catch(_){ }
 
