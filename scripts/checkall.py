@@ -236,6 +236,9 @@ CHECKS = {
     "check_desktop_shell_live":        dict(group="ui", secs=420),
 
     # --- self-contained, but slower than the default ---------------------------------------------
+    # A member's whole day on a phone then a desktop, against a full LOCAL node (the shipped relay over
+    # PosterChanDB, the Concord tunnel, four relays elsewhere, a foreign Blossom). ~75 s; no network.
+    "check_user_journeys":             dict(group="ui", secs=420),
     "check_os_desktop":                dict(group="ui", secs=900),
     "check_os_bridges":                dict(group="ui", secs=180),
     # Needs a running instance: it drives the REAL client (app.js + os.js together), because the

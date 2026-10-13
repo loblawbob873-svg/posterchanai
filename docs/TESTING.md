@@ -289,6 +289,24 @@ Two conventions to honour, both because the suite runs checks concurrently:
   deploy killed for low memory. `tests/test_the_suite_cleans_up_after_itself.py` runs a real
   Chrome test and fails if anything is left.
 
+### User journeys against a real local node
+
+`scripts/check_user_journeys.py` walks a member's day in one real Chrome per device — a 390x844 phone,
+then a 1440x900 desktop as a second device of the same account: sign in with an nsec, read Home, see a
+picture from a foreign Blossom server in a post, post, reply, react, send a DM, vote Bad Post of the Day,
+send in a Concord room while 16 communities over 4 relays hold more live tunnels than the old per-member
+share, open Files on a foreign media server, receive a mention (bell count goes up, Notifications → All
+lists it) and open it onto its thread. It runs against `tests/client/realnode_harness.py`: the SHIPPED
+`RelayServer` over PosterChanDB as this node's relay, `/ws/concord-relay` enforcing the shipped
+`concord_tunnel` share, independent far relays, a BUD-01 Blossom server, nothing off the machine. Every step
+asserts what the person sees and, for a write, what the relay now holds; a failure names the step.
+`KNOWN_BROKEN` in the script lists steps failing today for an open bug — reported, not failing the check,
+and a listed step that starts passing fails it (strict). ~75 s. `tests/client/test_user_journeys_full_app.py`
+runs it in the deploy gate (a browser test, so a server-only deploy leaves it out).
+
+`PC_CONCORD_TUNNEL_SRC=<old concord_tunnel.py>` and `PC_JOURNEY_OVERRIDE=/static/js/client/<f>.js=<old copy>`
+run the harness against an older version of either, which is how its tests prove they fail before a fix.
+
 ### And make sure the check can FAIL
 
 Every check here is written by breaking the thing first. Before you trust a new assertion, put the
