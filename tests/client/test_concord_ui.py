@@ -435,7 +435,10 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
 
 
 def test_public_community_cards_do_not_fan_out_across_invite_relays():
-    on_event = CONCORD.split("const onEvent=ev=>", 1)[1].split("const onEose", 1)[0]
+    # The handler is one line; bound it by itself, not by a neighbour's text (the `onEose` it used to end at
+    # was removed when the directory moved to this node, and the slice then ran to the end of the file).
+    on_event = CONCORD.split("const onEvent=ev=>", 1)[1].split("\n", 1)[0]
+    assert "discoverInvites(" in on_event, "the slice is not the discovery handler"
     assert 'hydrateDiscoveredIcon' not in on_event
     assert 'publicRoomIcon(p,r)' in CONCORD
     assert '.cc-public-icon img' in CONCORD_CSS
