@@ -42,12 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # Steps that fail today for an OPEN bug (name -> why). Keep this short and true; see the docstring.
-KNOWN_BROKEN = {
-    'files: pictures on the foreign media server show thumbnails':
-        "upload.js thumbUrl() asks <server>/thumb/<sha> -- a route only PosterChan's own Blossom has; a standard "
-        "Blossom server (BUD-01) answers 404 and the tile falls back to a file icon. Open since the /thumb/ path "
-        "replaced ?thumb=1 (pre-2026-09-22).",
-}
+KNOWN_BROKEN = {}
 
 FOLLOWS, ACTIVE, FOLLOWERS = 300, 30, 20
 ROOMS = 16
