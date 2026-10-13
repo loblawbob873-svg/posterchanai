@@ -128,11 +128,19 @@ def _run(body, src_override=None):
 _BUGGY_RELAY_BLOB = "90802a1aea80c643b368b554b8152094d092234a"   # static/js/client/relay.js at 5d2a19ac
 
 
+# A COPY of that blob, in the tree: CI checks out one commit (no history), so `git cat-file` found nothing there
+# and these two REQUIRED tests skipped -- which the gate rightly refuses, and the desktop build failed on it.
+# The hash is checked, so the copy is still exactly the file that had the bug.
+_BUGGY_RELAY_COPY = os.path.join(ROOT, "tests", "fixtures", "relay_js_before_eose_fix.js")
+
+
 def _old_relay_src():
-    p = subprocess.run(["git", "cat-file", "-p", _BUGGY_RELAY_BLOB], cwd=ROOT, capture_output=True)
-    if p.returncode != 0:
-        pytest.skip("the pre-fix relay.js blob is not in this clone")
-    return p.stdout.decode()
+    with open(_BUGGY_RELAY_COPY, "rb") as f:
+        data = f.read()
+    import hashlib
+    assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == _BUGGY_RELAY_BLOB, \
+        "the stored pre-fix relay.js is not the blob it claims to be"
+    return data.decode()
 
 
 BODY_DEAD_RELAY = """
