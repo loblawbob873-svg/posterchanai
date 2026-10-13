@@ -123,7 +123,7 @@ def lift_re(src, pattern, what):
 LIFT_FUNCS = ["_fmtBytes", "_fxView", "_fxSort", "_fxCompare", "_fxBlobKey", "_fxBytes", "_fxWhen",
               "_fxType", "_fxFileGlyph", "_fxIcon", "_fxEncIcon", "_fxFolderIcon", "_fxBlobName", "_fxColsHTML", "_fxDetailsRow", "_fxBindCols",
               "_fxFolderCounts", "_fxSideHTML", "_renderFilesGrid", "musicEntries"]
-LIFT_CONSTS = ["_FX_COLS", "_FX_KINDS", "_FILES_PAGE"]
+LIFT_CONSTS = ["_FX_COLS", "_FX_KINDS", "_FILES_PAGE", "_THUMB_MAX", "_THUMB_EXT"]
 
 
 def lifted_app_js(sim):
@@ -277,6 +277,7 @@ const blobThumb = () => '<span class="file-icon">F</span>';   // never a real <i
 const _trapFocus = () => {};
 const _popKeys = () => {};
 const _bindThumbFallback = () => {};
+const _bindEncThumbs = () => {};          // decrypting a preview is a network read, as above
 const _fxBindChipDrop = () => {};
 const _filesSelBar = () => {};
 const _selEl = () => {};

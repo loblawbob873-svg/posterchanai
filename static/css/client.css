@@ -9779,7 +9779,11 @@ body.popout .stream-main{ min-height:0; }
  * bitmap becomes the background and the glyph/extension label is hidden. Doing it this way means
  * a card is the same size before and after the picture arrives, so a folder does not reflow line
  * by line as thumbnails land. */
-.file-icon[data-thumb]{ background-size:cover; background-position:center; }
+.file-icon[data-thumb], .file-icon[data-encthumb]{ background-size:cover; background-position:center; }
+/* An encrypted DRIVE tile's picture. `.files-grid:not(.details) .file-card.enc .file-icon{background:none}`
+ * above is a shorthand, so it resets background-size to auto: without this the decrypted photo drew at its
+ * natural size, tiled, its top-left corner standing in for the picture. */
+.files-grid .file-card.enc .file-icon[data-encthumb].has-thumb{ background-size:cover; background-position:center; background-repeat:no-repeat; }
 .file-icon.has-thumb > *{ visibility:hidden; }
 .file-icon.has-thumb{ color:transparent; }
 .fx-ic.has-thumb{width:34px;height:34px;border-radius:6px;background-size:cover;

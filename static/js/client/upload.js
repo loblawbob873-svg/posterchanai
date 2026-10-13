@@ -631,7 +631,15 @@ window.PCUploadFactory = function(dep){
     const swap=(im, kind, dflt)=>{ const d=document.createElement('div'); d.className='file-icon';
       d.innerHTML=_fxFileGlyph(kind)+'<span>'+enc(im.dataset.ext||dflt)+'</span>'; im.replaceWith(d); };
     $$('.vthumb',root).forEach(im=> im.onerror=()=>swap(im,'video','video'));
-    $$('.ithumb',root).forEach(im=> im.onerror=()=>swap(im,'file','file'));
+    /* A SERVER WITH NO PREVIEW ROUTE STILL HAS THE PICTURE. `/thumb/<sha>` is this app's Blossom extension;
+     * another server (blossom.ditto.pub -- Josephus, 2026-10-13: every tile a file icon) answers it 404 while
+     * serving the blob itself. So a failed preview loads the ORIGINAL once, scaled by the tile, and only a
+     * picture that cannot be loaded at all becomes the icon. */
+    $$('.ithumb',root).forEach(im=> im.onerror=()=>{
+      const full=im.dataset && im.dataset.full;
+      if(full && im.src!==full && !im.dataset.triedFull){ im.dataset.triedFull='1'; im.src=full; return; }
+      swap(im,'file','file');
+    });
   }
   function blobThumb(b, ext){
     let t=b.type||'';
@@ -651,7 +659,7 @@ window.PCUploadFactory = function(dep){
     // onerror → the icon. A guessed type can be wrong, and a server that cannot make a preview
     // answers 404 with a day's cache; without this the card shows the browser's broken-image glyph
     // for as long as that lasts, which is strictly worse than the paperclip it replaced.
-    if(/image/.test(t)) return `<img alt="" class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
+    if(/image/.test(t)) return `<img alt="" class="ithumb" data-ext="${enc(ext)}" data-full="${enc(b.url)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
     if(/video/.test(t)) return `<img alt="" class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     const kind = /audio/.test(t) ? 'audio' : /zip|compress|tar|gzip|7z|rar/.test(t) ? 'archive'
