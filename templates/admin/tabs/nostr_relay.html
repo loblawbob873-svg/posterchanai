@@ -502,28 +502,18 @@
     <section class="admin-sec" id="relay-sec-database" data-sec="database" aria-label="Database">
     <fieldset>
             <legend>PosterChanDB (the relay's event store)</legend>
-            <p class="muted" style="margin:0 0 12px">PosterChanDB is where the relay keeps its events. A node with no
-            PostgreSQL configured (every fresh install) runs on it alone — <em>Automatic</em> chooses that. The other modes
-            exist only for a node that still has a PostgreSQL relay database (a <code>NOSTR_RELAY_PG_DSN</code>): there
-            PostgreSQL is written first and PosterChanDB mirrors it, answering queries from RAM in <em>Serve</em>.
-            <strong>Without a PostgreSQL DSN, Off/Shadow/Serve leave the relay with no store.</strong> Changing the <em>mode</em> restarts the relay; the tunables below apply to the running store.</p>
+            <p class="muted" style="margin:0 0 12px">PosterChanDB is where the relay keeps its events — its only
+            store; there is no database server to run. The settings below apply to the running store within seconds of Save.</p>
             <div class="form-group">
-                <label for="posterchandb_mode">Mode</label>
-                <select id="posterchandb_mode" name="posterchandb_mode">
-                    <option value="">Automatic — PosterChanDB alone unless a PostgreSQL DSN is configured</option>
-                    <option value="primary">Primary — PosterChanDB alone</option>
-                    <option value="off">Off — PostgreSQL only (needs a DSN)</option>
-                    <option value="shadow">Shadow — PostgreSQL + mirror, compare a sample of answers (needs a DSN)</option>
-                    <option value="serve">Serve — PostgreSQL + mirror answering from RAM (needs a DSN)</option>
-                </select>
+                <label>Store</label>
                 <small id="pcdb-status" class="muted" aria-live="polite"></small>
             </div>
             <div class="form-group">
                 <label for="posterchandb_flush_seconds">Write delay (seconds)</label>
                 <input type="number" id="posterchandb_flush_seconds" name="posterchandb_flush_seconds" placeholder="300" min="1" max="3600">
                 <small>How long new events wait in RAM before being written to disk together. A clean stop (systemd) writes them
-                first; a crash or power loss can lose this window. (On a node mirroring a PostgreSQL, PostgreSQL has every
-                event and the next start reloads from it.) Default 300. Range 1–3600. <em>Applies within seconds of Save — no restart.</em></small>
+                first; a crash or power loss can lose this window of copies synced from other relays (your own posts are
+                written before the relay answers OK). Default 300. Range 1–3600. <em>Applies within seconds of Save — no restart.</em></small>
                 <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
                 <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0" max="1048576">
                 <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
@@ -586,13 +576,12 @@
                     if(s<172800) return (s/3600).toFixed(1)+' h'; return Math.round(s/86400)+' days'; }
                 function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
                 /* The panel says what the relay REPORTED (its status file, written every 15 s -- no store scan per
-                   request). A field it did not report is left out, never shown as 0: an older relay build, or a
-                   mirror still copying, simply has none of them. */
+                   request). A field it did not report is left out, never shown as 0: an older relay build simply has
+                   none of them. */
                 function rows(p, ts){
                     var r=[], has=function(k){ return p[k]!=null; };
                     r.push(['Mode', p.mode+(p.state?' · '+p.state:'')+(p.why?' — '+p.why:'')]);
                     if(has('live')) r.push(['Events', nf(p.live)+' live'+(has('dead')?' · '+nf(p.dead)+' deleted, not yet compacted':'')]);
-                    else if(has('mirror_count')) r.push(['Events', nf(p.mirror_count)+' (PostgreSQL '+nf(p.pg_count)+')']);
                     if(has('unflushed')) r.push(['Waiting to be written', nf(p.unflushed)+' events'+(has('since_flush_s')?' · last write '+ago(p.since_flush_s)+' ago':'')]);
                     if(has('search_words_pending')) r.push(['Search-word backlog', nf(p.search_words_pending)+' events']);
                     if(has('disk_bytes')) r.push(['On disk', bytes(p.disk_bytes)+(has('segments')?' in '+nf(p.segments)+' segments':'')]);
@@ -601,8 +590,6 @@
                     if(has('cache_budget_mb')) r.push(['Read cache', nf(p.cache_resident_mb)+' MB used of '+nf(p.cache_budget_mb)+' MB · '
                         +nf(p.cache_available_mb)+' MB free on the machine'+(p.cache_psi!=null?' · memory pressure '+p.cache_psi+'%':'')]);
                     if(has('last_snapshot')) r.push(['Last index snapshot', p.last_snapshot>0 && ts ? ago(ts-p.last_snapshot)+' ago' : 'none yet']);
-                    if(has('served')||has('fallback')) r.push(['Queries from RAM', nf(p.served||0)+' served, '+nf(p.fallback||0)+' fell back']);
-                    if(has('shadow_ok')||has('shadow_diff')) r.push(['Shadow compare', nf(p.shadow_ok||0)+' identical, '+nf(p.shadow_diff||0)+' different']);
                     if(has('max_lock_hold_ms')) r.push(['Longest store-lock hold', p.max_lock_hold_ms+' ms']);
                     return r;
                 }
@@ -611,7 +598,6 @@
                         var p=(s&&s.posterchandb)||null;
                         if(!p){ el.textContent='Not reported (the relay is not running, or is an older build).';
                             if(dl) dl.innerHTML='<dt>Status</dt><dd>not reported</dd>'; return; }
-                        if(p.mode==='off'){ el.textContent='Off.'; if(dl) dl.innerHTML='<dt>Mode</dt><dd>off — PostgreSQL only</dd>'; return; }
                         var bits=[p.mode, p.state]; if(p.why) bits.push(p.why);
                         el.textContent=bits.filter(Boolean).join(' · ');
                         if(dl) dl.innerHTML=rows(p, s.ts||Math.floor(Date.now()/1000)).map(function(x){

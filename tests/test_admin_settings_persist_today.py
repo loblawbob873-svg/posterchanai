@@ -1,6 +1,6 @@
 """Every admin setting added on 2026-10-10/11 PERSISTS and HYDRATES -- end to end, not through a patched getter.
 
-The keys: `tor_extra_daemons` (Admin → Network), `posterchandb_mode` and the 17 relay tunables of
+The keys: `tor_extra_daemons` (Admin → Network) and the 17 relay tunables of
 app/services/relay_tunables.py (Admin → Relay → Limits / Database). For each one, through the SHIPPED code:
 
   1. SAVE: PUT /api/admin/settings on the real admin router (admin auth: get_admin_user runs, only the session
@@ -44,7 +44,6 @@ OP = bip340.pubkey_from_seckey(OP_SK).hex()
 # a ZERO (falsy) for a limit and a load, a fraction for a float, a ceiling, and a select's non-first option.
 VALUES = {
     "tor_extra_daemons": "3",
-    "posterchandb_mode": "shadow",
     "posterchandb_flush_seconds": "45",
     "posterchandb_read_cache_mb": "256",
     "posterchandb_cache_low_water_mb": "900",
@@ -68,7 +67,7 @@ VALUES = {
 def test_the_audit_covers_every_key_added_in_the_last_two_days():
     """If a key joins relay_tunables (or another of today's settings) it must join this audit too."""
     assert set(relay_tunables.ALL) <= set(VALUES)
-    assert len(VALUES) == 19
+    assert len(VALUES) == 18
     from app.schemas import SettingsResponse
     for k, v in VALUES.items():
         assert k in SettingsResponse.model_fields, k
@@ -176,7 +175,6 @@ def test_save_then_a_fresh_process_hydrates_every_key_and_its_consumer_uses_it(n
     # 3. The consumers, in that fresh process.
     assert fresh["pool"] == 3, "tor_extra_daemons=3 did not reach tor_service.pool_plan after a restart"
     rc = fresh["relay"]
-    assert rc["pcdb_mode"] == "shadow"
     assert (rc["posts_per_min"], rc["same_per_hour"], rc["gift_per_recipient"]) == (0, 7, 1000)
     assert (rc["max_connections"], rc["max_subs_per_conn"], rc["max_filters_per_req"]) == (250, 40, 12)
     assert rc["max_message_size"] == 16384 * 1024
@@ -269,7 +267,7 @@ def test_nothing_stored_shows_and_runs_the_defaults(node):
     g = client.get("/api/admin/settings").json()
     for k, knob in relay_tunables.ALL.items():
         assert g[k] == knob.default, k
-    assert g["tor_extra_daemons"] == "auto" and g["posterchandb_mode"] in (None, "")
+    assert g["tor_extra_daemons"] == "auto" and "posterchandb_mode" not in g
 
 
 def test_a_stored_value_from_before_the_ranges_is_clamped_by_the_relay_and_never_breaks_the_page(node):

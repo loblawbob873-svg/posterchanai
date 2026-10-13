@@ -30,7 +30,7 @@ OLD_NAMES = [
     'nostr_relay_pubkey', 'nostr_relay_retention_days', 'nostr_relay_same_per_hour', 'nostr_relay_send_only',
     'nostr_relay_supported_grasps', 'nostr_relay_upstream_relays', 'nostr_relay_wot_depth',
     'nostr_relay_wot_depth3_crawl_max', 'nostr_relay_wot_enabled', 'nostr_relay_wot_refresh_sec',
-    'nostr_relay_wot_seeds', 'posterchandb_flush_seconds', 'posterchandb_mode', 'posterchandb_read_cache_mb',
+    'nostr_relay_wot_seeds', 'posterchandb_flush_seconds', 'posterchandb_read_cache_mb',
 ]
 # Ids the tab's own scripts and admin-*.js bind to (lists, buttons, status lines) -- not settings, but a missing
 # one is a dead control.
@@ -118,7 +118,7 @@ def test_every_limit_is_in_limits_and_none_left_in_auto_clean():
 def test_the_database_section_has_the_posterchandb_knobs_and_a_status_panel():
     from app.services import relay_tunables
     p = _parse()
-    for k in list(relay_tunables.PCDB) + ["posterchandb_mode"]:
+    for k in list(relay_tunables.PCDB):
         assert p.where.get(k) == ["database"], (k, p.where.get(k))
     assert 'id="pcdb-stats"' in TAB.read_text(encoding="utf-8")
 

@@ -45,7 +45,6 @@ OP_SK = bytes.fromhex("6b" * 32)
 # Round 1: a non-default value in every field added in the last two days (what the operator types).
 ROUND1 = {
     "tor_extra_daemons": "3",
-    "posterchandb_mode": "shadow",
     "posterchandb_flush_seconds": "45",
     "posterchandb_read_cache_mb": "256",
     "posterchandb_cache_low_water_mb": "900",
@@ -65,7 +64,7 @@ ROUND1 = {
     "nostr_relay_max_message_kb": "16384",
 }
 # Round 2: values put BACK -- "auto", the select's blank first option (Automatic), a limit at its default.
-ROUND2 = {"tor_extra_daemons": "auto", "posterchandb_mode": "", "nostr_relay_posts_per_min": "10",
+ROUND2 = {"tor_extra_daemons": "auto", "nostr_relay_posts_per_min": "10",
           "posterchandb_maint_busy_load": "0.75"}
 
 

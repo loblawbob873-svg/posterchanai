@@ -106,6 +106,6 @@ more than today's 3+ million events.
 
 ## Settings
 
-Admin → Nostr Relay → PosterChanDB: the mode, the flush interval, the snapshot interval and the compaction
-threshold. `POSTERCHANDB_MODE` in the environment overrides the mode. Details and the promotion/rollback
-procedure: [POSTERCHANDB.md](POSTERCHANDB.md).
+Admin → Nostr Relay → PosterChanDB: the flush interval, the read cache, the snapshot interval and the compaction
+threshold. There is no store to choose — Admin offers no PostgreSQL mode, and a mode stored by the old dropdown is
+ignored. Details: [POSTERCHANDB.md](POSTERCHANDB.md).

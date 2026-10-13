@@ -717,7 +717,6 @@ class SettingsResponse(BaseModel):
     # is a permanent per-user metadata trail (pubkey + stable d-tag + timestamp) wherever it lands.
     nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
-    posterchandb_mode: Optional[str] = None  # off | shadow | serve (posterchandb/mirror.py) | primary (nostr_relay/pcdb_store.py)
     # PosterChanDB tunables (Admin → Relay → Database). Defaults, ranges and live-vs-restart live in ONE table,
     # app/services/relay_tunables.py -- tests/test_relay_tunables.py holds every default here equal to it.
     posterchandb_flush_seconds: Optional[int] = 300   # write delay before new events reach disk
@@ -803,7 +802,6 @@ class SettingsResponse(BaseModel):
     # the checkbox would post `false` over the stored value on the next Save.
     nip05_grants_access: Optional[bool] = True
     apps_require_nip05: Optional[bool] = True
-    nostr_relay_pg_dsn: Optional[str] = None
     nostr_relay_prune_interval_sec: Optional[str] = None
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
     blossom_enabled: Optional[bool] = None

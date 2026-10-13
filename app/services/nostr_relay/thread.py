@@ -254,10 +254,11 @@ def _postgres_configured() -> bool:
                 or os.environ.get("DATABASE_URL"))
 
 
-def _pcdb_mode(setting: str = "") -> str:
-    """POSTERCHANDB_MODE (env) wins, then the setting; with neither, a node with no Postgres configured is
-    `primary` -- PosterChanDB is its only store -- and one with Postgres keeps the old default (off)."""
-    mode = (os.environ.get("POSTERCHANDB_MODE") or setting or "").strip().lower()
+def _pcdb_mode() -> str:
+    """POSTERCHANDB_MODE (env) wins; without it a node with no Postgres configured is `primary` -- PosterChanDB is
+    its only store -- and a not-yet-migrated one with Postgres keeps the old default (off). There is NO setting:
+    the Admin dropdown that offered Postgres is gone (#161), and a value it once stored is never read."""
+    mode = (os.environ.get("POSTERCHANDB_MODE") or "").strip().lower()
     if mode:
         return mode
     if _postgres_configured():
@@ -420,10 +421,10 @@ def _read_config() -> dict:
             # pruned after N days. Registered users' notes + direct-published events are ALWAYS
             # preserved (never pruned), so a user's own history is safe. 0 = keep everything.
             "retention_days": gi("nostr_relay_retention_days", 30),
-            # PosterChanDB beside Postgres (posterchandb/mirror.py): off | shadow (mirror every write, compare a
-            # sample of answers) | serve (answer queries from RAM; Postgres still written first) | primary (PosterChanDB
-            # ALONE, no Postgres: nostr_relay/pcdb_store.py, after scripts/posterchandb_promote.py). Env wins.
-            "pcdb_mode": _pcdb_mode(g("posterchandb_mode", "") or ""),
+            # PosterChanDB is the store. NOT an admin setting (#161: there is no Postgres to choose) -- a stored
+            # `posterchandb_mode` from the old Admin dropdown is ignored, so it cannot put a node back on Postgres.
+            # Only POSTERCHANDB_MODE in a not-yet-migrated node's environment still selects the legacy path.
+            "pcdb_mode": _pcdb_mode(),
             "pcdb_cache_mb": tun["posterchandb_read_cache_mb"],
             "pcdb_flush_s": tun["posterchandb_flush_seconds"],
             # Every Database tunable, applied to whichever store is running (_configure_pcdb) -- at start AND by the

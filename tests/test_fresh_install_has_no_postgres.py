@@ -304,29 +304,9 @@ def test_the_livecd_server_gate_counts_posts_on_the_relay_not_in_postgres(tmp_pa
     assert p.stdout.strip().splitlines()[-1:] == ["POSTS=2"], p.stdout + p.stderr
 
 
-def test_the_admin_store_mode_defaults_to_automatic_not_postgres_only():
-    """admin.js hydrates a <select> as `value || options[0].value`, so on a fresh node (no stored mode) the FIRST
-    option is what the page shows and what a later change is compared against. It was "Off — PostgreSQL only":
-    the page told every fresh install its relay ran on a database it does not have, and picking anything nearby
-    and back saved `off`, which with no DSN leaves the relay without a store."""
-    from html.parser import HTMLParser
-
-    class Opts(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.inside, self.values = False, []
-
-        def handle_starttag(self, tag, attrs):
-            a = dict(attrs)
-            if tag == "select":
-                self.inside = a.get("id") == "posterchandb_mode"
-            elif tag == "option" and self.inside:
-                self.values.append(a.get("value"))
-
-        def handle_endtag(self, tag):
-            if tag == "select":
-                self.inside = False
-    p = Opts()
-    p.feed((ROOT / "templates/admin/tabs/nostr_relay.html").read_text())
-    assert p.values and p.values[0] == "", p.values
-    assert "primary" in p.values, p.values
+def test_the_admin_offers_no_store_mode_at_all():
+    """It used to default to "Off — PostgreSQL only" (the page told every fresh install its relay ran on a database it
+    does not have); then to Automatic. Now there is nothing to choose: no install has a Postgres to choose
+    (tests/test_admin_offers_no_postgres.py)."""
+    html = (ROOT / "templates/admin/tabs/nostr_relay.html").read_text()
+    assert 'id="posterchandb_mode"' not in html and "PostgreSQL" not in html
