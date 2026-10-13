@@ -447,3 +447,64 @@ push_production
     assert (r.returncode == 0) is ok, r.stdout + r.stderr
     calls = (tmp_path / "calls").read_text().splitlines()
     assert calls == ["git push origin master"] * min(fails + 1, 4), calls
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# THE DEPLOY ENDS BY ASKING PRODUCTION. Everything before it is about checkouts; the gate ran the tree against stubs.
+# These RUN the tail of the shipped sync.sh (node verification + the live check) with git/ssh stubbed to report every
+# node on the commit and a fake venv python standing in for scripts/check_live_production.py. No network.
+_SHA = "a" * 40
+
+
+def _deploy_tail() -> str:
+    src = open(SYNC, encoding="utf-8").read()
+    start = src.index("_pull_router() {")
+    pull = src[start:src.index("\n}\n", start) + 3]
+    return pull + src[src.index('_EXPECT="$(git rev-parse HEAD'):]
+
+
+def _run_tail(tmp_path, check_rc, node_sha=_SHA):
+    import subprocess
+    py = tmp_path / "venv-unified" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("#!/bin/bash\necho \"$@\" >> \"$CALLS\"\necho 'PASS  server_stats    stub'\nexit %d\n" % check_rc)
+    py.chmod(0o755)
+    script = f"""
+git() {{ echo {_SHA}; }}
+ssh() {{ echo {node_sha}; }}
+sleep() {{ :; }}
+{_deploy_tail()}
+"""
+    env = {**os.environ, "CALLS": str(tmp_path / "calls")}
+    env.pop("PC_LIVE_URL", None)
+    return subprocess.run(["bash", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True,
+                          timeout=60)
+
+
+def test_sync_runs_the_live_production_check_last(tmp_path):
+    r = _run_tail(tmp_path, 0)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = (tmp_path / "calls").read_text().split()
+    assert calls == ["scripts/check_live_production.py", "https://poster.place"], calls
+    out = r.stdout
+    assert out.index("all nodes in sync") < out.index("verifying production"), \
+        "the live check must run only after every node is verified on the commit"
+    assert "production verified" in out
+    src = open(SYNC, encoding="utf-8").read()
+    assert src.rstrip().endswith('echo "[sync] production verified"'), "the live check is not the last step"
+
+
+@pytest.mark.parametrize("rc,word", [(1, "PRODUCTION CHECK FAILED"), (2, "PRODUCTION NOT VERIFIED")])
+def test_a_failing_live_check_fails_the_deploy_loudly(tmp_path, rc, word):
+    r = _run_tail(tmp_path, rc)
+    assert r.returncode == rc, r.stdout + r.stderr
+    assert word in r.stdout
+    assert "production verified" not in r.stdout
+    assert "scripts/check_live_production.py https://poster.place" in r.stdout, "no re-run command printed"
+
+
+def test_an_incomplete_deploy_never_reports_production_verified(tmp_path):
+    r = _run_tail(tmp_path, 0, node_sha="b" * 40)
+    assert r.returncode == 1
+    assert "DEPLOY INCOMPLETE" in r.stdout and "production verified" not in r.stdout
+    assert not (tmp_path / "calls").exists(), "the live check ran against a deploy that did not land"

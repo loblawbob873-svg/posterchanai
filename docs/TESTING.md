@@ -101,6 +101,15 @@ loading on mobile". It fails if fewer than 4 scripts are ever in flight, or if b
 one-at-a-time cost. `check_client_load_speed_live` (live) loads a real instance cold and repeat over a
 throttled 4G profile (budgets: 10 s / 6 s to DOMContentLoaded).
 
+**Production is asked after every deploy.** `check_live_production` (live, no Chrome, a handful of
+requests) checks the deployed instance itself: `/client/server-stats` has real relay figures, a
+throwaway key's ephemeral event is ACKed by the relay (or, if the WoT gate refuses it, a REQ gets
+EOSE — the result says which), `/ws/concord-relay` refuses a forged ticket with 403, `/` is the client
+shell and `/client/sw.js` carries `pc-nostr-v<N>`, and `/client/federation` is ok. `sync.sh` runs it as
+its LAST step, after every node is verified on the commit; a failure (1) or a could-not-ask (2) makes
+the deploy exit nonzero. By hand: `venv-unified/bin/python scripts/check_live_production.py
+https://poster.place` (or `./test.sh --only live_production --live https://poster.place`).
+
 `live` needs a URL because those checks log in with throwaway keys and talk to real relays. They are
 the slowest and the only ones that can go red for reasons outside this checkout.
 
