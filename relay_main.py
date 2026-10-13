@@ -21,6 +21,12 @@ import sys
 import signal
 import asyncio
 import logging
+import faulthandler
+
+# A SEGFAULT SAYS WHERE. The PosterChanOS relay died with SIGSEGV on a desktop after 6h39m (2026-10-13) and left a
+# core dump with no Python frame in it and no debugger on the box: the journal said "dumped core" and nothing
+# else. With this the fatal signal prints every thread's Python stack to stderr, i.e. into the journal.
+faulthandler.enable(all_threads=True)
 
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _REPO_ROOT not in sys.path:
