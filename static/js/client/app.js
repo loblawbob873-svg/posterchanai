@@ -6930,6 +6930,7 @@
       if(_TL_TABS.indexOf(VIEW) < 0) return;
       const f = $('#feed');
       if(f && f.scrollTop > 0) _tlScrollMemo[VIEW] = f.scrollTop;
+      if(f && f.scrollTop > 0) _noteTlPlace(VIEW, f.scrollTop, _tlAnchor(f));   // the post, not just the pixel
     }catch(_){ }
   }
 
@@ -7189,7 +7190,8 @@
      * Nothing engine-specific about it. Firefox is simply where it was noticed. */
     if(reset && _TL_TABS.indexOf(VIEW) >= 0){
       try{ const at = feed ? feed.scrollTop : 0;
-           if(at > 0) _tlScrollMemo[VIEW] = at; }catch(_){ }
+           if(at > 0) _tlScrollMemo[VIEW] = at;
+           if(at > 0) _noteTlPlace(VIEW, at, _tlAnchor(feed)); }catch(_){ }   // the post, not just the pixel
     }
     /* WHAT WAS ON SCREEN BEFORE THE SPINNER REPLACED IT — see the fallthrough at the end of this
      * function. renderView(true) is also called INCIDENTALLY (an outbox flush, a relay reconnect)
@@ -7502,6 +7504,7 @@
   function _hidePill(){ return _lzRun(_timelineMod, _timelineLoad, '_hidePill', arguments); }
   function _noteKey(){ return _lzRun(_timelineMod, _timelineLoad, '_noteKey', arguments); }
   function _noteNode(){ return _lzRun(_timelineMod, _timelineLoad, '_noteNode', arguments); }
+  function _noteTlPlace(){ return _lzRun(_timelineMod, _timelineLoad, '_noteTlPlace', arguments); }
   function _parkOffscreenTimelines(){ return _lzRun(_timelineMod, _timelineLoad, '_parkOffscreenTimelines', arguments); }
   function _putAnchor(){ return _lzRun(_timelineMod, _timelineLoad, '_putAnchor', arguments); }
   function _restoreTlAnchor(){ return _lzRun(_timelineMod, _timelineLoad, '_restoreTlAnchor', arguments); }

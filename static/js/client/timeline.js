@@ -103,10 +103,10 @@ window.PCTimelineFactory = function(dep){
      * capture (above the spinner) covers the reset path, because by the time this runs on that path
      * the feed has already been blanked and scrollTop is 0. Both are needed; neither is enough. */
     const forceTop = S._tlForceTop === view;
-    if(forceTop) delete _tlScrollMemo[view];
+    if(forceTop){ delete _tlScrollMemo[view]; delete _tlPlace[view]; }
     if(S.VIEW === view && !forceTop){
       try{ const f0 = $('#feed'); const at = (f0 && f0.scrollTop) || 0;
-           if(at > 0 && !(_tlScrollMemo[view] > 0)) _tlScrollMemo[view] = at; }catch(_){ }
+           if(at > 0 && !(_tlScrollMemo[view] > 0)){ _tlScrollMemo[view] = at; _noteTlPlace(view, at, _tlAnchor(f0)); } }catch(_){ }
     }
     if(reset){ S._tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
@@ -130,7 +130,16 @@ window.PCTimelineFactory = function(dep){
       }else if(want > 0){
         delete _tlScrollMemo[view];
         _putScroll(want, () => S.VIEW === view);
+        /* …and then by POST. The redraw above built every card fresh, and on a phone a fresh card is a
+         * 420px content-visibility estimate, so `want` -- a pixel of the OLD, laid-out column -- lands
+         * among different posts (measured on a 384px phone: the post being read ended up 1,400px
+         * below the top of the screen after a repaint). The card that was first on screen when the
+         * offset was saved is the place; the pixel stays as the fallback for a card the redraw no
+         * longer holds. Only the place saved WITH this offset counts. */
+        const place = _tlPlace[view];
+        if(place && place.top === want && place.anchor) _putAnchor(place.anchor, () => S.VIEW === view);
       }
+      delete _tlPlace[view];
     }catch(_){ }
     if (subs[view]) Relay.close(subs[view]);
     /* The FIRST post that arrives for a timeline nobody can see is the one that closes it.
@@ -511,6 +520,19 @@ window.PCTimelineFactory = function(dep){
       }
       anchor = found;
     };
+    /* A RESTORED PLACE IS HELD BY MEASUREMENT UNTIL THE CARDS AROUND IT HAVE REAL SIZES.
+     * On a phone every card is content-visibility:auto, so a timeline that was just drawn is a column
+     * of 420px ESTIMATES until each card is laid out. A restore (Back from a post or a profile, a
+     * return to the tab, an EOSE redraw) computes its scrollTop from that column -- correct for the
+     * estimates, wrong the instant the cards it lands among are laid out for real, which happens on
+     * the very next frame. And those are FIRST observations, which the incremental rule below skips
+     * by design (an insertion is not a resize), so nothing compensated: measured on a 384px phone,
+     * Back from a post put the post you had opened 751px ABOVE the screen, every time. While a
+     * settle is armed this measures where the restored card actually is after layout and puts it
+     * back at its offset -- the residual, so it cannot double-count with anything else that moved
+     * it -- until somebody else moves the feed (the reader's own scroll ends it at once) or it
+     * expires. */
+    let settle = null;
     const ro = new ResizeObserver(entries => {
       if(!box.isConnected || !feed.contains(box)) return;
       if(!anchor || anchor.parentNode !== box) pick();
@@ -522,8 +544,18 @@ window.PCTimelineFactory = function(dep){
         if(was == null || was === h || el.parentNode !== box || !anchor || el === anchor) continue;
         if(el.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING) shift += h - was;
       }
+      const s = settle;
+      if(s && (Date.now() > s.until || Math.abs(feed.scrollTop - s.at) > 2 || !s.el || s.el.parentNode !== box)) settle = null;
+      else if(s){
+        const off = s.el.getBoundingClientRect().top - feed.getBoundingClientRect().top - s.dy;
+        if(Math.abs(off) >= 1) feed.scrollTop += off;
+        s.at = feed.scrollTop;
+        anchor = null;
+        return;
+      }
       if(shift && feed.scrollTop > 0) feed.scrollTop += shift;
     });
+    const hold = (el, dy) => { settle = { el, dy, at: feed.scrollTop, until: Date.now() + 2500 }; };
     const watch = () => { for(const el of box.children) if(!sizes.has(el)){ sizes.set(el, null); ro.observe(el, { box:'border-box' }); } };
     const mo = new MutationObserver(recs => {
       for(const r of recs) for(const n of r.removedNodes) if(n.nodeType === 1 && n.parentNode !== box){ try{ ro.unobserve(n); }catch(_){} sizes.delete(n); if(n === anchor) anchor = null; }
@@ -531,7 +563,7 @@ window.PCTimelineFactory = function(dep){
     });
     mo.observe(box, { childList:true });
     watch();
-    feed._pcHold = { box, ro, mo, pick };
+    feed._pcHold = { box, ro, mo, pick, hold };
     if(!feed._pcHoldScroll){                 // ONE listener per #feed, whichever list it holds now
       feed._pcHoldScroll = true;
       let queued = false;
@@ -542,6 +574,10 @@ window.PCTimelineFactory = function(dep){
     }
     pick();
   }
+  /* The card that was first on screen when a timeline offset was remembered, next to the offset it
+   * belongs to (app.js keeps the pixel in _tlScrollMemo; renderTimeline restores both). */
+  const _tlPlace = Object.create(null);
+  function _noteTlPlace(view, top, anchor){ if(view && top > 0) _tlPlace[view] = { top, anchor: anchor || null }; }
   /* A PIXEL IS NOT A PLACE IN A CHANGING FEED. Remember the first visible keyed card and its
    * distance from the viewport while reconciling; new cards inserted above it then cannot turn the
    * same scrollTop into a completely different post after resume/reconnect. */
@@ -562,6 +598,7 @@ window.PCTimelineFactory = function(dep){
     const el=[..._tlNotes(feed).children].find(n=>n.dataset && n.dataset.key===place.key);
     if(!el) return false;
     feed.scrollTop += el.getBoundingClientRect().top-feed.getBoundingClientRect().top-place.dy;
+    const h=feed._pcHold; if(h && h.hold && h.box===el.parentNode) h.hold(el, place.dy);   // see _holdReadingPlace
     return true;
   }
   /* Restore a history entry by POST, not by pixel. The timeline may initially contain skeletons or
@@ -1314,7 +1351,7 @@ window.PCTimelineFactory = function(dep){
   return {
     _aiEmojiSuggest, _aiFramedCard, _aiNewspaper, _applyMediaCacheBudget, _autoCleanOnPost, _bindTimelineHeader,
     _capFeedDom, _cleanLinksCmd, _drawTimeline, _fillMediaCacheStat, _fillMusicOfflineStat, _flim,
-    _flushPending, _hidePill, _noteKey, _noteNode, _parkOffscreenTimelines, _putAnchor,
+    _flushPending, _hidePill, _noteKey, _noteNode, _noteTlPlace, _parkOffscreenTimelines, _putAnchor,
     _restoreTlAnchor, _timelineHeaderHtml, _tlAnchor, _tlNotes, _updateNewPostsPill, isSensitive,
     renderTimeline,
   };
@@ -1363,6 +1400,9 @@ window.PCTimelineFactory = function(dep){
       const top = feed.getBoundingClientRect().top;
       for(const e of entries){
         const el = e.target, bb = e.borderBoxSize && (e.borderBoxSize[0] || e.borderBoxSize);
+        // A card taken OUT of the page (leaving the timeline) reports 0x0. It did not shrink, and logged
+        // as a resize it filled the ring with "421 -> 0" rows and evicted the real ones.
+        if(!el.isConnected){ try{ ro.unobserve(el); }catch(_){} heights.delete(el); continue; }
         const h = Math.round(bb && bb.blockSize != null ? bb.blockSize : el.offsetHeight), was = heights.get(el);   // the WHOLE box: padding and borders move the page too
         heights.set(el, h);
         if(was == null || was === h) continue;
