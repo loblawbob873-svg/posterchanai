@@ -1,7 +1,7 @@
 """PosterChanDB: the codec is lossless, the store keeps NIP-01's rules, and nothing written is lost or misread.
 
 "test it very good first before switching over". These run the shipped store on generated events and on
-a temp directory; tests/test_posterchandb_parity.py compares it against Postgres on real data.
+a temp directory.
 """
 import hashlib
 import json

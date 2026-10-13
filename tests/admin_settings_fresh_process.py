@@ -63,7 +63,7 @@ def main():
             mock.patch.object(thread, "_collect_preserve_pubkeys", lambda db: []), \
             mock.patch.object(thread, "_node_pubkey", lambda: ""):
         cfg = thread._read_config()
-    keep = ("pcdb_mode", "pcdb_flush_s", "pcdb_cache_mb", "pcdb_tuning", "posts_per_min", "same_per_hour",
+    keep = ("pcdb_flush_s", "pcdb_cache_mb", "pcdb_tuning", "posts_per_min", "same_per_hour",
             "gift_per_recipient", "max_connections", "max_subs_per_conn", "max_filters_per_req", "max_message_size")
     out["relay"] = {k: cfg.get(k) for k in keep}
     print("RESULT " + json.dumps(out))

@@ -38,7 +38,6 @@ def _gate():
     ("CLAUDE.md", True),
     ("requirements.txt", True),
     ("tests/test_posterchandb.py", True),
-    ("scripts/posterchandb_parity.py", True),
     ("app/routers/admin.py", False),           # routers shape what the client receives
     ("app/main.py", False),
     ("static/js/client/app.js", False),

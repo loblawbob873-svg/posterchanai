@@ -273,9 +273,8 @@ too — every app table is a set of encrypted `kind-30078` documents on this rel
 is installed or started by any install path (#161); a fresh node with no Postgres DSN creates a new
 store on its first start. A fast **libsecp256k1** verify path (see below) keeps ingest CPU-cheap.
 
-- **Legacy Postgres:** a node that still sets `NOSTR_RELAY_PG_DSN` / `DATABASE_URL` keeps running its
-  relay on that PostgreSQL (`posterchandb_mode` off/shadow/serve) until it is promoted with
-  `scripts/posterchandb_promote.py`. Nothing creates such a database any more.
+- **No Postgres:** the relay's Postgres store and its migration path were deleted once every node had
+  moved (#195). A `NOSTR_RELAY_PG_DSN` left in an environment is ignored.
 
 Size is **hard-bounded** by an event-count cap, a byte budget, and an **auto-cleaner** that
 deletes notes/reactions older than *N* days (default 30) but **keeps profiles and contact lists

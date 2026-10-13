@@ -64,45 +64,29 @@ def test_incomplete_unlabelled_sweep_is_retried_on_next_open():
 
 
 def test_bundled_relay_cursor_contract_reaches_the_remainder_of_a_full_second():
-    """Exercise production SQL, independently of the JS relay fixture's ordering assumptions."""
-    import json
-    import sqlite3
-    # Compile the exact production read methods without importing its PostgreSQL runtime.
-    # The release gate intentionally has no database driver/server; this test owns SQLite only.
-    import ast
+    """The relay's real store, independently of the JS relay fixture's ordering assumptions: 6200 documents in ONE
+    second, read 5000 at a time, and the `_cursor` page reaches the remaining 1200."""
+    import asyncio
     import time
-    from pathlib import Path
-    source=Path(__file__).resolve().parents[2]/'app/services/nostr_relay/store.py'
-    tree=ast.parse(source.read_text())
-    klass=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='RelayStore')
-    klass.body=[n for n in klass.body if isinstance(n,ast.FunctionDef) and n.name in {'_query_sync','_query_one','_build_where'}]
-    # The row -> event mapping the read methods call (rows are served from the columns, not a raw copy).
-    helpers=[n for n in tree.body if (isinstance(n,ast.Assign) and any(getattr(t,'id','')=='EVENT_COLUMNS' for t in n.targets))
-             or (isinstance(n,ast.FunctionDef) and n.name=='event_from_row')]
-    namespace={'json':json,'time':time,'_PgConn':sqlite3.Connection}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[*helpers,klass],type_ignores=[])),str(source),'exec'),namespace)
-    RelayStore=namespace['RelayStore']
-    conn = sqlite3.connect(':memory:')
-    conn.row_factory = sqlite3.Row
-    conn.executescript('''CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT,
-        created_at INTEGER, kind INTEGER, expiration INTEGER, tags TEXT, content TEXT, sig TEXT);''')
-    rows = [{'id':format(i, '064x'), 'pubkey':'me', 'kind':30078, 'created_at':100000}
-            for i in range(6200)]
-    conn.executemany('INSERT INTO events VALUES (?, ?, ?, ?, NULL, ?, ?, ?)',
-                     [(e['id'], e['pubkey'], e['created_at'], e['kind'], '[]', '', 's')
-                      for e in rows])
-    store = RelayStore.__new__(RelayStore)
-    store._conn = lambda: conn
+    from tests.relay_backends import pcdb_factory
+    now = int(time.time()) - 60
+    rows = [{'id': format(i, '064x'), 'pubkey': 'a' * 64, 'kind': 30078, 'created_at': now,
+             'tags': [['d', 'pcai:sms:%d' % i]], 'content': '', 'sig': '0' * 128} for i in range(6200)]
+    loop = asyncio.new_event_loop()
     try:
-        f = {'authors':['me'], 'kinds':[30078], 'limit':20000}
-        first = store._query_sync([f], 5000)
-        assert len(first) == 5000
-        f['_cursor'] = [first[-1]['created_at'], first[-1]['id']]
-        rest = store._query_sync([f], 5000)
-        assert len(rest) == 1200
-        assert len({e['id'] for e in first + rest}) == 6200
+        with pcdb_factory() as make:
+            store = make(loop)
+            for e in rows:
+                store.store.copy_put(e, origin='direct')
+            f = {'authors': ['a' * 64], 'kinds': [30078], 'limit': 20000}
+            first = store._query_sync([f], 5000)
+            assert len(first) == 5000
+            f['_cursor'] = [first[-1]['created_at'], first[-1]['id']]
+            rest = store._query_sync([f], 5000)
+            assert len(rest) == 1200
+            assert len({e['id'] for e in first + rest}) == 6200
     finally:
-        conn.close()
+        loop.close()
 
 
 def test_successful_label_read_cannot_hide_a_failed_legacy_sweep():

@@ -7,7 +7,7 @@ patterns below.
 
 PosterChanAI — a self-hosted FastAPI app: streaming LLM chat (OpenAI-compatible `/v1/`),
 image gen, TTS/STT, email/news/torrents, a file manager, a **Nostr client + relay**, and
-**Telegram + fediverse bots**. Single-admin, multi-user, **Postgres**-backed.
+**Telegram + fediverse bots**. Single-admin, multi-user; its data lives on its own relay, whose store is **PosterChanDB** (the relay's Postgres store was deleted, #195).
 
 ## Run / dev
 

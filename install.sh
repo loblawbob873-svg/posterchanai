@@ -237,8 +237,8 @@ install_nostr_only() {
     venv/bin/python scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
 
     # Turnkey runtime flags (the run script sources data/secrets.env): enable the relay and the
-    # nostr-only UI. No DATABASE_URL / NOSTR_RELAY_PG_DSN is written: with neither set the relay runs on
-    # PosterChanDB alone (nostr_relay/thread.py _pcdb_mode).
+    # nostr-only UI. No database is configured: the relay's store is PosterChanDB (nostr_relay/thread.py
+    # _open_store), created on the first start.
     mkdir -p data
     touch data/secrets.env
     grep -q '^export POSTERCHANAI_NOSTR_RELAY=' data/secrets.env || echo 'export POSTERCHANAI_NOSTR_RELAY=1' >> data/secrets.env

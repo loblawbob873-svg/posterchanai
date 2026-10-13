@@ -1,10 +1,6 @@
-"""The relay counts its own store, and every backend counts the same thing (#161).
-
-Server Stats, the NostrStats bot and the relay trace no longer open the relay's Postgres: they ask the relay
-process (nostr_relay/aggregates.py), which counts from PosterChanDB when it serves and from Postgres otherwise.
-Two implementations of one number is exactly how a number starts to mean two things, so every aggregate here is
-computed over ONE set of events by every backend and compared -- sqlite (the SQL's shape, always runs), a real
-PosterChanDB store (always runs), and a real Postgres relay with a SERVING mirror (when Postgres binaries exist).
+"""The relay counts its own store (#161): Server Stats, the NostrStats bot and the relay trace ask the relay
+process (nostr_relay/aggregates.py), which counts from PosterChanDB -- here a real PosterChanDB store, over one
+set of events whose every number is stated below.
 
 Run: venv-unified/bin/python -m pytest tests/test_relay_aggregates.py -q
 """
@@ -13,13 +9,12 @@ import json
 import os
 import threading
 import time
-import uuid
 
 import pytest
 
 from app.services.nostr_relay import aggregates as A
 from app.services.relay_reader import Unavailable
-from tests.relay_agg_fixture import ev, norm, pcdb_source, pk, sql_source
+from tests.relay_agg_fixture import ev, pcdb_source, pk
 
 NOW = int(time.time()) - 5
 H, D = 3600, 86400
@@ -69,9 +64,9 @@ def dataset():
 EVENTS = dataset()
 
 
-@pytest.fixture(params=["sql", "pcdb"])
-def src(request, tmp_path):
-    return sql_source(EVENTS) if request.param == "sql" else pcdb_source(EVENTS, tmp_path / "pcdb", NOW)
+@pytest.fixture
+def src(tmp_path):
+    return pcdb_source(EVENTS, tmp_path / "pcdb", NOW)
 
 
 def _strip(d):
@@ -104,13 +99,6 @@ def test_server_stats_mean_what_the_page_says(src):
     assert s["profiles"] == 4 and s["streams"] == 1                    # alice, bob, carol, eve published here
 
 
-def test_the_two_backends_give_the_same_numbers(tmp_path):
-    a = A.server_stats(sql_source(EVENTS), NOW)
-    b = A.server_stats(pcdb_source(EVENTS, tmp_path / "p", NOW), NOW)
-    assert norm(_strip(a)) == norm(_strip(b))
-    assert a["backend"] == "postgres" and b["backend"] == "posterchandb"
-
-
 def test_nip05_activity_counts_holders_per_day_and_drops_puppets(src):
     out = A.nip05_activity(src, NOW - 30 * D, exclude={pk("puppet")})
     assert set(out["nip05"]) == {pk("alice"), pk("dave")}
@@ -130,21 +118,13 @@ def test_trace_groups_per_kind_and_origin(src):
     assert src.author_groups(pk("nobody")) == []
 
 
-def test_a_part_that_cannot_be_counted_is_unknown_not_zero():
-    class Broken(A._Sql):
+def test_a_part_that_cannot_be_counted_is_unknown_not_zero(tmp_path):
+    class Broken(A._Pcdb):
         def people_since(self, since):
             raise RuntimeError("disk on fire")
-    s = A.server_stats(Broken(sql_source(EVENTS).conn, size_sql=None), NOW)
+    s = A.server_stats(Broken(pcdb_source(EVENTS, tmp_path / "pcdb", NOW).st, NOW), NOW)
     assert s["pubkeys_24h"] is None and s["pubkeys_30d"] is None
     assert s["notes"] == 13                                           # the rest still answers
-
-
-def test_no_headcount_skips_the_one_time_key_rule():
-    import inspect
-    import re
-    src = inspect.getsource(A)
-    assert not re.search(r"count\(DISTINCT\s+pubkey\s*\)", src, re.I)
-    assert src.count("_PERSON_PUBKEY") >= 3
 
 
 # ------------------------------------------------------------------ PosterChanDB: never hold the store lock long
@@ -177,13 +157,10 @@ def test_column_copies_are_taken_in_pieces_with_the_lock_released_between(tmp_pa
 
 # ------------------------------------------------------------------ the IPC: ask / answer through the control dir
 class _FakeStore:
-    mirror = None
+    """The relay's store as aggregates sees it: a PosterChanDB `store` and the puppet registry."""
 
-    def __init__(self):
-        self.conn = sql_source(EVENTS).conn
-
-    def _conn(self):
-        return self.conn
+    def __init__(self, path):
+        self.store = pcdb_source(EVENTS, path, NOW).st
 
     def _bridge_puppets_all_sync(self):
         return {pk("puppet")}
@@ -200,7 +177,7 @@ def test_ask_round_trip_through_the_control_dir(tmp_path):
     A._CACHE.clear()
     ctrl = str(tmp_path / "ctrl")
     os.makedirs(ctrl)
-    store = _FakeStore()
+    store = _FakeStore(tmp_path / "pcdb")
     stop = threading.Event()
     t = threading.Thread(target=_relay_thread, args=(ctrl, store, stop), daemon=True)
     t.start()
@@ -239,73 +216,9 @@ def test_requests_the_asker_gave_up_on_are_not_computed(tmp_path):
 
 
 def test_a_bad_request_id_cannot_name_a_path(tmp_path):
-    A.answer_one(_FakeStore(), str(tmp_path), {"what": "server-stats", "rid": "../../etc/x"})
-    assert not os.path.exists(os.path.join(str(tmp_path), "answers"))
-
-
-# ------------------------------------------------------------------ real Postgres + a SERVING PosterChanDB mirror
-psycopg2 = pytest.importorskip("psycopg2")
-
-
-@pytest.fixture()
-def real_relay(tmp_path):
-    from tests import scratch_postgres
-    try:
-        admin = psycopg2.connect(scratch_postgres.dsn(), connect_timeout=5)
-    except Exception as e:      # noqa: BLE001
-        pytest.skip("Postgres not reachable: %s" % e)
-    admin.autocommit = True
-    schema = "pcai_agg_" + uuid.uuid4().hex[:10]
-    admin.cursor().execute(f'CREATE SCHEMA "{schema}"')
-    dsn = scratch_postgres.dsn() + f" options=-csearch_path={schema}"
-    from app.services.nostr_relay import store as relay
-    from app.services.posterchandb import mirror as M
-    rs = relay.RelayStore(dsn)
-    rs.open(asyncio.new_event_loop())
-    for e, origin in EVENTS:
-        assert rs._write_exec.submit(rs._add_event_sync, dict(e), origin).result(), e["kind"]
-    rs._bridge_puppet_add_sync(pk("puppet"))
-    m = M.Mirror(str(tmp_path / "mirror"), "serve", lambda: psycopg2.connect(dsn), flush_interval=3600,
-                 maintenance=False)
-    rs.attach_mirror(m)
-    end = time.time() + 60
-    while m.state not in ("ready", "stale", "failed") and time.time() < end:
-        time.sleep(0.05)
-    assert m.state == "ready", m.stats()
-    try:
-        yield rs, m
-    finally:
-        rs.mirror = None
-        m.close()
-        rs.close()
-        admin.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-        admin.close()
-
-
-def test_real_postgres_and_the_serving_mirror_agree(real_relay):
-    rs, m = real_relay
-    assert isinstance(A.source(rs, NOW), A._Pcdb), "a serving mirror must be what the relay counts from"
-    pg, pc = A._Sql(rs._conn()), A._Pcdb(m.store, NOW)
-    a, b = A.server_stats(pg, NOW), A.server_stats(pc, NOW)
-    assert norm(_strip(a)) == norm(_strip(b))
-    assert a["db_bytes"] and b["db_bytes"]
-    assert a["windows"]["minute"]["people"] == 3
-    excl = set(rs._bridge_puppets_all_sync())
-    pa, pb = A.nip05_activity(pg, NOW - 30 * D, excl), A.nip05_activity(pc, NOW - 30 * D, excl)
-    assert pa["nip05"] == pb["nip05"] == sorted([pk("alice"), pk("dave")])
-    assert sorted((d, pa["nip05"][i], n) for d, i, n in pa["activity"]) == \
-        sorted((d, pb["nip05"][i], n) for d, i, n in pb["activity"])
-    ta, tb = A.trace(rs, pg, pk("bob")), A.trace(rs, pc, pk("bob"))
-    assert norm(ta) == norm(tb) and ta["groups"]
-    A._CACHE.clear()
-    via = A.compute(rs, "server-stats", {}, now=NOW)
-    assert via["backend"] == "posterchandb"
-    rs.mirror = None                                               # not serving: the relay counts on Postgres
-    A._CACHE.clear()
-    assert A.compute(rs, "server-stats", {}, now=NOW)["backend"] == "postgres"
-    rs.mirror = m
-    tiers = A.compute(rs, "wot-tiers", {"pubkeys": [pk("alice")]})
-    assert tiers == {}                                             # nobody is a member in this schema
+    ctrl = str(tmp_path / "ctrl")
+    A.answer_one(_FakeStore(tmp_path / "pcdb"), ctrl, {"what": "server-stats", "rid": "../../etc/x"})
+    assert not os.path.exists(os.path.join(ctrl, "answers"))
 
 
 def test_the_relay_process_runs_the_ask_poller_and_it_answers(tmp_path):
@@ -317,12 +230,12 @@ def test_the_relay_process_runs_the_ask_poller_and_it_answers(tmp_path):
     ctrl = str(tmp_path / "ctrl")
     loop = asyncio.new_event_loop()
     stop = asyncio.Event()
-    t = threading.Thread(target=lambda: loop.run_until_complete(A.ask_poller(_FakeStore(), ctrl, stop, interval=0.05)),
+    t = threading.Thread(target=lambda: loop.run_until_complete(A.ask_poller(_FakeStore(tmp_path / "pcdb"), ctrl, stop, interval=0.05)),
                          daemon=True)
     t.start()
     try:
         got = A.ask("server-stats", {}, control_dir=ctrl, check_running=False, timeout=15)
-        assert got["backend"] == "postgres" and got["windows"]["minute"]["people"] == 3
+        assert got["backend"] == "posterchandb" and got["windows"]["minute"]["people"] == 3
     finally:
         loop.call_soon_threadsafe(stop.set)
         t.join(5)

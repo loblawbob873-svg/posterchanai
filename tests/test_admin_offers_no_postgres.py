@@ -41,5 +41,5 @@ def test_a_mode_stored_by_the_old_dropdown_is_ignored(monkeypatch, tmp_path):
     monkeypatch.setattr(settings_store, "get",
                         lambda k, d=None: "off" if k == "posterchandb_mode"
                         else None if k == "nostr_relay_pg_dsn" else real_get(k, d))
-    assert thread._pcdb_mode() == "primary"
-    assert thread._read_config()["pcdb_mode"] == "primary"
+    assert not hasattr(thread, "_pcdb_mode"), "the relay still has a store mode to choose"
+    assert "pcdb_mode" not in thread._read_config()

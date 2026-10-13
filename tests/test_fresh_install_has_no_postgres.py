@@ -225,13 +225,11 @@ _FRESH_RELAY = textwrap.dedent('''
     from app.database import init_db
     init_db()                               # every default applied, as the app does at startup
     from app.services.nostr_relay import thread, pcdb_store
-    assert not thread._postgres_configured(), "a fresh install believes it has a Postgres"
-    mode = thread._pcdb_mode()
     loop = asyncio.new_event_loop()
     store = thread.open_store_for_settings(loop)
     kind = type(store).__name__
     store.close()
-    print("RESULT", mode, kind)
+    print("RESULT", kind)
 ''')
 
 
@@ -250,7 +248,7 @@ def test_a_fresh_relay_with_no_dsn_and_an_empty_directory_is_primary_and_opens(t
                        capture_output=True, text=True, timeout=240)
     assert p.returncode == 0, (p.stdout + p.stderr)[-4000:]
     line = [l for l in p.stdout.splitlines() if l.startswith("RESULT ")]
-    assert line == ["RESULT primary PcdbRelayStore"], p.stdout[-2000:] + p.stderr[-2000:]
+    assert line == ["RESULT PcdbRelayStore"], p.stdout[-2000:] + p.stderr[-2000:]
     assert (tmp_path / "pcdb" / "relay").is_dir() and os.listdir(tmp_path / "pcdb" / "relay"), \
         "the primary store was not created"
 

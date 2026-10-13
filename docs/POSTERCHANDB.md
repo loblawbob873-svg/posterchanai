@@ -165,31 +165,23 @@ Everything that reads the relay's event tables directly needs the store's API in
 (`nostr_relay/store.py`), the auto-clean and paid-retention rules, admin and community stats, the git
 `pre-receive` hook, and the bots' community queries.
 
-## Rollout (no flag day) — `posterchandb/mirror.py`
+## How it moved in (done; the migration code is deleted)
 
-Postgres stays the source of truth until the last step; each step is one setting away from off.
+PosterChanDB replaced the relay's Postgres store without a flag day: a MIRROR beside Postgres copied a
+repeatable-read snapshot and every later write (`off` → `shadow`, answers compared → `serve`, answered from RAM
+with Postgres as the fallback), and a promotion script made a directory the relay's ONLY store once its live
+count and id set equalled Postgres's. Both nodes have run on PosterChanDB alone since 2026-10-10, and the
+desktops' local relays never had a Postgres. The Postgres store, the mirror, the promotion and parity scripts
+and the `off`/`shadow`/`serve` modes were deleted afterwards (#195); `git log` has them.
 
-1. **Copy.** `RelayStore.attach_mirror` runs on the relay's single WRITER thread: it fixes a repeatable-read
-   snapshot and, in the same step, starts handing every write to the mirror's queue. So each write is in the
-   snapshot or in the queue — exactly once, no clock involved. The snapshot is copied with `copy_put`
-   (Postgres's rows exactly as they are; the ingest rules depend on ARRIVAL order, which a copy cannot replay
-   — re-deciding them oldest-first reached a different state). Then the queue is applied with the rules.
-2. **Prove.** On the writer thread again: Postgres's queryable count and the queue position at one instant;
-   the queue is applied up to it and the counts must be EQUAL. Only then is the mirror `ready`.
-3. **Shadow** (`shadow`): every write mirrored; a sample of answers compared (keys and counts only — never
-   filter values).
-4. **Serve** (`serve`) on server1 — the node whose relay runs it, store at `/var/lib/posterchandb/relay`
-   (NOCOW). A query is answered from RAM only while the mirror is ready, nothing it depends on is queued
-   (waits ≤0.05 s), and it does not throw; otherwise Postgres answers it.
-5. Retire the Postgres event tables once a node has run clean for an agreed period.
-6. **Primary** (`POSTERCHANDB_MODE=primary`, task #161) -- see below.
+## The store (`nostr_relay/pcdb_store.py`)
 
-## Primary mode: no Postgres at all (`nostr_relay/pcdb_store.py`)
+`PcdbRelayStore` is the relay's store; `nostr_relay/store.py` holds the rules every store obeys and the async
+base it inherits. `thread._open_store` opens it under `<POSTERCHANDB_DIR>/relay`: an EMPTY directory becomes a
+new store on the first start (`init_new` writes the `PRIMARY` marker); a directory holding events with no marker
+is refused, never adopted -- nothing records whose data that is.
 
-`PcdbRelayStore` has RelayStore's whole interface; thread.py builds it instead of RelayStore + mirror when the mode
-is `primary` (`thread._open_store`). Every other mode is unchanged.
-
-- **Events and tags**: the posterchandb `Store`, whose ingest rules are RelayStore's (differential-tested).
+- **Events and tags**: the posterchandb `Store`, which applies the relay's ingest rules.
 - **relay_kv / wot / bridge_nip05 / bridge_puppet**: a SIDECAR beside the segments, one file per table
   (`sidecar-<table>.json`), each replaced atomically on every change (temp file, fsync, rename, fsync of the
   directory). A SIGKILL at any instant leaves the last complete state; a file this code did not write is refused,
@@ -201,22 +193,12 @@ is `primary` (`thread._open_store`). Every other mode is unchanged.
   deletions go through the writer thread. The tiered (pay-to-stay) rules are DATA (`_tiered_specs`); the masks are
   built from them and `_tiered_rules` describes them, so the description a test reads is the rule that runs.
 - **Durability**: a direct write is fsynced (`Store.sync`, fsync outside the lock) before the relay answers OK;
-  purges and prune passes are synced when they finish; synced copies wait for the flush timer as in serve mode.
+  purges and prune passes are synced when they finish; synced copies wait for the flush timer.
 - **Search** while words replayed at startup are still being indexed is REFUSED (`SearchNotReady` → CLOSED with the
   reason), never answered empty.
-
-**Promotion** (`scripts/posterchandb_promote.py`, relay STOPPED, read-only against Postgres): the mirror directory
-must carry CLEAN with the token Postgres holds, and its live count AND id set must equal Postgres's; only then are the
-four tables exported into the sidecar and a `PRIMARY` marker written. `--new` initialises an empty primary store for
-a node that never had Postgres. Opening as primary consumes CLEAN (the directory is the truth now, and a later serve
-start must copy rather than trust a token that still matches a Postgres it no longer equals); any non-primary start
-removes `PRIMARY` (the sidecar stops being kept, so primary again needs a new promotion). An unpromoted or
-since-overwritten directory is refused at start and the relay runs on Postgres in serve mode; any other failure to
-open a promoted store is raised -- Postgres is stale by then, and falling back would split the history.
-
-Rolling back (primary → serve) loses what was written while primary: serve copies Postgres afresh.
-
-A clean close writes `CLEAN`; without it (a crash, a run with the mirror off) the next start copies afresh.
+- **Counts** (Server Stats, the NostrStats bot, the relay trace) are computed inside the relay process from copies
+  of the columns (`nostr_relay/aggregates.py`). Until #195 they still looked for a mirror and fell through to a
+  Postgres connection the store does not have -- every stat answered "unavailable" on both nodes.
 
 **Two production lessons** (2026-10-09): the Postgres side deleted older versions WHILE comparing, so a
 refused stale version could destroy versions depending on heap order — it now decides first, then deletes

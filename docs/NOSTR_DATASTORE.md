@@ -81,9 +81,8 @@ admin / has `can_blossom`.
 
 ## Deployment
 - **No database server.** Neither `install.sh` nor `docker compose` installs, starts or configures
-  PostgreSQL. With no `NOSTR_RELAY_PG_DSN`/`DATABASE_URL` the relay opens a new PosterChanDB primary
-  store on first start (`nostr_relay/thread.py` `_pcdb_mode`). A node that still has a Postgres keeps
-  its DSN and its old behaviour until it is promoted (`scripts/posterchandb_promote.py`).
+  PostgreSQL. The relay opens a new PosterChanDB store on its first start (`nostr_relay/thread.py`
+  `_open_store`); there is no other relay store.
 - **Docker:** `docker compose --profile <cpu|cuda|rocm|intel|nostr> up -d --build`, or a bare
   `docker run` with the two volumes. (AMD/ROCm: the entrypoint auto-sets `HSA_OVERRIDE_GFX_VERSION`,
   required or HIP throws "invalid device function".)

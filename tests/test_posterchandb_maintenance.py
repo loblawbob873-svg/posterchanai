@@ -425,12 +425,8 @@ def test_compaction_moving_a_deletion_forward_does_not_kill_what_arrived_after_i
     s.close()
 
 
-def test_a_mirror_deletes_only_what_postgres_cannot_count(db, monkeypatch):
-    """While Postgres is the source of truth the mirror must not run Postgres's cleanup rules on its own clock.
-    2026-10-10: ten minutes after a copy matched Postgres exactly, the mirror's own pass deleted one bridged DM
-    past its 4-day TTL (`bridge_dm: 1`). Postgres keeps such a row until ITS nightly prune, so the next restart
-    found the two one event apart and served from Postgres for the rest of the day. Expired events are the one
-    exception: neither side counts them. Run alone (primary mode) the full rules still apply."""
+def test_the_store_applies_the_full_rules_on_its_own(db, monkeypatch):
+    """Retired kinds and a bridged DM past its TTL are cleaned up by the store's own pass; a fresh note stays."""
     monkeypatch.setattr(relay, "_RETIRED_KINDS", ())
     retired = mk(kind=40, created_at=NOW - 5)
     db.put(retired, direct=True)
@@ -438,13 +434,5 @@ def test_a_mirror_deletes_only_what_postgres_cannot_count(db, monkeypatch):
     bridged = mk(kind=1059, created_at=NOW - 5 * DAY)
     keep = mk(kind=1, created_at=NOW - 5)
     db.put(bridged, origin="bridge"); db.put(keep, direct=True)
-    maint(db, M.Policy(min_free_pct=0, mirror_of_postgres=True)).run_pass()
-    assert ids(db) == {retired["id"], bridged["id"], keep["id"]}, "the mirror deleted what Postgres still holds"
     maint(db).run_pass()
-    assert ids(db) == {keep["id"]}, "on its own (primary) the store must still clean up"
-
-
-def test_the_relay_mirror_runs_its_maintenance_as_a_mirror():
-    import inspect
-    from app.services.posterchandb import mirror
-    assert "mirror_of_postgres=True" in inspect.getsource(mirror)
+    assert ids(db) == {keep["id"]}, "the store must clean up"

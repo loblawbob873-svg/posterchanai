@@ -162,34 +162,8 @@ def test_relay_main_opens_its_store_before_it_reads_its_settings(monkeypatch):
     assert order == ["store", "settings"]
 
 
-def test_open_store_for_settings_makes_the_store_the_settings_source(monkeypatch):
-    from app.services.nostr_relay import thread as T
-    monkeypatch.setattr(S, "_EVENT_SOURCE", None)
-    monkeypatch.setattr(S, "load_local", lambda: None)
-    seen = {}
-
-    class Store:
-        def __init__(self, dsn, **kw):
-            seen["dsn"] = dsn
-
-        def open(self, loop):
-            seen["open"] = loop
-
-        def _query_sync(self, filters, cap):
-            return [{"filters": filters, "cap": cap}]
-    monkeypatch.setattr(T, "RelayStore", Store)
-    monkeypatch.setattr(T, "_pg_dsn", lambda: "dbname=x")
-    # A node that HAS a Postgres (#161: one without runs on PosterChanDB, below) and no POSTERCHANDB_MODE.
-    monkeypatch.delenv("POSTERCHANDB_MODE", raising=False)
-    monkeypatch.setattr(T, "_postgres_configured", lambda: True)
-    st = T.open_store_for_settings("LOOP")
-    assert isinstance(st, Store) and seen == {"dsn": "dbname=x", "open": "LOOP"}
-    assert S._EVENT_SOURCE([{"a": 1}]) == [{"filters": [{"a": 1}], "cap": 5000}]
-
-
 def test_a_node_with_no_postgres_opens_a_new_posterchandb_primary(monkeypatch, tmp_path):
-    """#161: no DSN, no DATABASE_URL, no POSTERCHANDB_MODE -> the relay's store is a PosterChanDB PRIMARY,
-    created on the first start, and Postgres is never dialled."""
+    """#161: the relay's store is PosterChanDB, created on the first start, and it becomes the settings source."""
     from app.services.nostr_relay import thread as T
     from app.services.nostr_relay import pcdb_store
     monkeypatch.setattr(S, "_EVENT_SOURCE", None)
@@ -199,10 +173,6 @@ def test_a_node_with_no_postgres_opens_a_new_posterchandb_primary(monkeypatch, t
     monkeypatch.setattr(S, "get", lambda k, d=None: d)
     monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path))
 
-    class NoPostgres:
-        def __init__(self, *a, **k):
-            raise AssertionError("dialled Postgres on a node that has none")
-    monkeypatch.setattr(T, "RelayStore", NoPostgres)
     loop = asyncio.new_event_loop()
     try:
         st = T.open_store_for_settings(loop)
@@ -211,7 +181,7 @@ def test_a_node_with_no_postgres_opens_a_new_posterchandb_primary(monkeypatch, t
             assert pcdb_store.read_marker(str(tmp_path / "relay")) is not None
         finally:
             st.close()
-            T._mirror_ref.pop("primary", None)
+            T._store_ref.pop("primary", None)
     finally:
         loop.close()
 

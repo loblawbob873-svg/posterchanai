@@ -1,27 +1,27 @@
-"""Signed Amethyst/Wisp NIP-A3 events through the relay's real storage rules."""
+"""Signed Amethyst/Wisp NIP-A3 events through the relay's real storage rules (its PosterChanDB store)."""
 import asyncio
 import json
-import sqlite3
 
 import pytest
 
 from app.services.nostr.event import build_event
-from app.services.nostr_relay.store import RelayStore, event_from_row
-from app.services.nostr_relay.server import RelayServer, _broadcastable, _matches
-from tests.test_relay_prune import store_factory, _run
+from app.services.nostr_relay.server import RelayServer, _broadcastable
+from tests.relay_backends import pcdb_factory
+from tests.test_relay_prune import store_factory, _run  # noqa: F401 -- the fixture, by name
 
 
 @pytest.fixture
 def relay():
-    conn=sqlite3.connect(':memory:')
-    conn.row_factory=sqlite3.Row
-    conn.executescript('''CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT,
-      created_at INTEGER, kind INTEGER, content TEXT, tags TEXT, sig TEXT, raw TEXT,
-      origin TEXT, expiration INTEGER);
-      CREATE TABLE event_tags(event_id TEXT,tag TEXT,value TEXT,PRIMARY KEY(event_id,tag,value));''')
-    store=RelayStore.__new__(RelayStore)
-    yield store,conn
-    conn.close()
+    loop = asyncio.new_event_loop()
+    try:
+        with pcdb_factory() as make:
+            yield make(loop)
+    finally:
+        loop.close()
+
+
+def stored(store, kind=10133):
+    return store._query_sync([{'kinds': [kind]}], 5000)
 
 
 def signed(tags,stamp=100,key=b'\x11'*32,kind=10133):
@@ -31,50 +31,50 @@ def signed(tags,stamp=100,key=b'\x11'*32,kind=10133):
 @pytest.mark.parametrize('origin',['wot','direct'])
 @pytest.mark.parametrize('reverse',[False,True])
 def test_same_second_targets_converge_by_event_id(relay,origin,reverse):
-    store,db=relay
+    store=relay
     events=[signed([['payto','lightning','alice@one.test']]),signed([['payto','monero','8'+'a'*94]])]
-    for event in events[::(-1 if reverse else 1)]:store._insert_one(db,event,origin)
-    assert [r[0] for r in db.execute('SELECT id FROM events')]==[min(e['id'] for e in events)]
+    for event in events[::(-1 if reverse else 1)]:store._add_event_sync(event,origin)
+    assert [e['id'] for e in stored(store)]==[min(e['id'] for e in events)]
 
 
 @pytest.mark.parametrize('origin',['wot','direct'])
 def test_new_targets_and_explicit_clear_replace_previous_lists(relay,origin):
-    store,db=relay
+    store=relay
     old=signed([['payto','lightning','alice@old.test'],['payto','monero','8'+'a'*94]])
     new=signed([['payto','bitcoin','bc1qtest'],['payto','newnetwork','someuser']],101)
     clear=signed([['alt','Payment targets']],102)
-    for event in (old,new,clear):assert store._insert_one(db,event,origin)
-    assert not store._insert_one(db,old,origin)
-    assert not store._insert_one(db,new,origin)
-    got=event_from_row(db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133').fetchone())
-    assert got==clear
+    for event in (old,new,clear):assert store._add_event_sync(event,origin)
+    assert not store._add_event_sync(old,origin)
+    assert not store._add_event_sync(new,origin)
+    assert stored(store)==[clear]
 
 
 def test_authors_are_independent_and_complete_payment_tags_are_retained(relay):
-    store,db=relay
+    store=relay
     for key in (b'\x11'*32,b'\x22'*32):
-        assert store._insert_one(db,signed([['payto','monero','8'+'a'*94]],key=key),'direct')
-    assert db.execute('SELECT count(*) FROM events WHERE kind=10133').fetchone()[0]==2
+        assert store._add_event_sync(signed([['payto','monero','8'+'a'*94]],key=key),'direct')
+    got=stored(store)
+    assert len(got)==2
     # NIP-01 indexes single-letter tags. NIP-A3 is discovered by author + kind;
     # the full multi-letter payto tags must survive the event's serialized body.
-    for result in db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133'):
-        assert event_from_row(result)['tags']==[['payto','monero','8'+'a'*94]]
+    for event in got:
+        assert event['tags']==[['payto','monero','8'+'a'*94]]
 
 
 def test_deleted_target_is_not_resurrected_by_backfill(relay):
-    store,db=relay;event=signed([['payto','lightning','alice@old.test']])
-    assert store._insert_one(db,event,'direct')
-    assert store._insert_one(db,signed([['e',event['id']]],101,kind=5),'direct')
-    assert not store._insert_one(db,event,'wot')
-    assert not db.execute('SELECT id FROM events WHERE kind=10133').fetchall()
-    assert store._insert_one(db,signed([['payto','lightning','alice@new.test']],102),'wot')
+    store=relay;event=signed([['payto','lightning','alice@old.test']])
+    assert store._add_event_sync(event,'direct')
+    assert store._add_event_sync(signed([['e',event['id']]],101,kind=5),'direct')
+    assert not store._add_event_sync(event,'wot')
+    assert not stored(store)
+    assert store._add_event_sync(signed([['payto','lightning','alice@new.test']],102),'wot')
 
 
 def test_another_author_cannot_delete_payment_targets(relay):
-    store,db=relay;event=signed([['payto','lightning','alice@test.test']])
-    assert store._insert_one(db,event,'direct')
-    store._insert_one(db,signed([['e',event['id']]],101,key=b'\x22'*32,kind=5),'wot')
-    assert db.execute('SELECT id FROM events WHERE kind=10133').fetchone()[0]==event['id']
+    store=relay;event=signed([['payto','lightning','alice@test.test']])
+    assert store._add_event_sync(event,'direct')
+    store._add_event_sync(signed([['e',event['id']]],101,key=b'\x22'*32,kind=5),'wot')
+    assert [e['id'] for e in stored(store)]==[event['id']]
 
 
 def test_targets_can_be_broadcast_to_other_clients():
@@ -82,15 +82,14 @@ def test_targets_can_be_broadcast_to_other_clients():
 
 
 def test_signed_publish_live_subscription_reload_and_forgery(relay):
-    store,db=relay
+    store=relay
     class Disk:
         async def has_event(self,eid):
-            return bool(db.execute('SELECT id FROM events WHERE id=?',(eid,)).fetchone())
+            return store._has_sync(eid)
         async def add_event(self,event,origin='direct'):
-            return store._insert_one(db,event,origin)
+            return store._add_event_sync(event,origin)
         async def query(self,filters):
-            return [event_from_row(r) for r in db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events ORDER BY created_at DESC')
-                    if _matches(filters,event_from_row(r))]
+            return store._query_sync(filters,5000)
     class Gate:
         def is_member(self,_):return True
         def is_operator(self,_):return False
@@ -111,11 +110,11 @@ def test_signed_publish_live_subscription_reload_and_forgery(relay):
         forged=json.loads(json.dumps(event));forged['tags'][0][2]='4'+'b'*94
         sent.clear();await server._on_event(publisher,forged)
         assert len(sent)==1 and sent[0][1][:3]==['OK',event['id'],False]
-        assert event_from_row(db.execute('SELECT id,pubkey,created_at,kind,tags,content,sig FROM events WHERE kind=10133').fetchone())==event
+        assert stored(store)==[event]
     asyncio.run(run())
 
 
-def test_real_postgres_query_and_retention_keep_targets(store_factory):
+def test_the_relay_query_and_retention_keep_targets(store_factory):
     async def run(loop):
         store=store_factory(loop,retention_days=1)
         event=signed([['payto','monero','8'+'a'*94]])

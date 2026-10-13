@@ -164,7 +164,6 @@ def _read_config_with(monkeypatch, vals):
     monkeypatch.setattr(thread, "_collect_operator_pubkeys", lambda db: [])
     monkeypatch.setattr(thread, "_collect_preserve_pubkeys", lambda db: [])
     monkeypatch.setattr(thread, "_node_pubkey", lambda: "")
-    monkeypatch.setattr(thread, "_pcdb_mode", lambda s="": "primary")
     return thread._read_config()
 
 
@@ -214,7 +213,7 @@ def test_the_primary_store_opened_before_settings_takes_them_at_start(tmp_path):
     ps.open(None)
     try:
         assert ps.store.flush_interval == 300 and ps._maint.snapshot_hours == 1.0
-        with mock.patch.dict(thread._mirror_ref, {"primary": ps}):
+        with mock.patch.dict(thread._store_ref, {"primary": ps}):
             thread._configure_pcdb({"pcdb_tuning": dict(TUNED)})
         _assert_tuned(ps)
         assert ps.stats()["tuning"]["posterchandb_flush_seconds"] == 45     # the panel shows what is in force
@@ -238,7 +237,7 @@ def test_the_live_reload_applies_limits_and_tuning_to_the_running_relay(tmp_path
         fresh = {"retention_days": 30, "max_events": 0, "paid_retention_enabled": False, "free_retention_days": 0,
                  "paid_retention_days": 0, "posts_per_min": 1, "same_per_hour": 3, "gift_per_recipient": 300,
                  "max_connections": 77, "max_subs_per_conn": 9, "max_filters_per_req": 4, "pcdb_tuning": dict(TUNED)}
-        with mock.patch.dict(thread._mirror_ref, {"primary": ps}):
+        with mock.patch.dict(thread._store_ref, {"primary": ps}):
             thread._apply_live_config(ps, cfg, fresh)
         assert cfg["max_connections"] == 77 and cfg["max_subs_per_conn"] == 9 and cfg["max_filters_per_req"] == 4
         ev = {"kind": 1, "pubkey": "a" * 64, "created_at": 1000, "content": "hello there friend"}

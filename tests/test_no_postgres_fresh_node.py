@@ -139,24 +139,3 @@ def test_a_fresh_node_with_no_postgres_serves_a_new_user(node):
     asyncio.run(again())
 
 
-def test_the_relay_store_defaults_to_posterchandb_only_on_a_node_with_no_postgres(tmp_path, monkeypatch):
-    """No DSN anywhere and no PosterChanDB directory: a fresh install -> primary. A directory already holding a
-    MIRROR's data means the node has a Postgres (its DSN default was never written down): keep the old default
-    rather than refuse to start. POSTERCHANDB_MODE always wins."""
-    from app.services import settings_store
-    from app.services.nostr_relay import thread
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("NOSTR_RELAY_PG_DSN", raising=False)
-    monkeypatch.delenv("POSTERCHANDB_MODE", raising=False)
-    monkeypatch.setenv("POSTERCHANDB_DIR", str(tmp_path / "pcdb"))
-    real_get = settings_store.get
-    monkeypatch.setattr(settings_store, "get", lambda k, d=None: None if k == "nostr_relay_pg_dsn" else real_get(k, d))
-    assert thread._pcdb_mode() == "primary"
-    (tmp_path / "pcdb" / "relay").mkdir(parents=True)
-    (tmp_path / "pcdb" / "relay" / "segment-0").write_bytes(b"x")     # a mirror's files, never promoted
-    assert thread._pcdb_mode() == "off"
-    monkeypatch.setenv("POSTERCHANDB_MODE", "serve")
-    assert thread._pcdb_mode() == "serve"
-    monkeypatch.delenv("POSTERCHANDB_MODE")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://x@127.0.0.1:9/y")
-    assert thread._pcdb_mode() == "off"

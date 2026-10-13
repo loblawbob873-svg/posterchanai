@@ -189,7 +189,7 @@ def test_save_then_a_fresh_process_hydrates_every_key_and_its_consumer_uses_it(n
     ps = P.PcdbRelayStore(d)
     ps.open(None)
     try:
-        with mock.patch.dict(thread._mirror_ref, {"primary": ps}):
+        with mock.patch.dict(thread._store_ref, {"primary": ps}):
             thread._configure_pcdb({"pcdb_tuning": rc["pcdb_tuning"]})
         assert ps.store.flush_interval == 45 and ps.store.compact_dead_pct == 55
         assert ps._gov.budget_mb == 256 and ps._gov.low_water_mb == 900

@@ -1,18 +1,13 @@
 """COUNTS over the relay's store, computed INSIDE the relay process and asked for over its control dir (#161).
 
 Server Stats, the NostrStats bot and the admin's relay trace used to open the relay's Postgres from the app and
-run their own SQL. Retiring Postgres as the relay's store takes that door away, and pulling millions of events
-over a websocket to count them is not a replacement. So the relay counts, from whatever it is serving from:
+run their own SQL. The relay's store is PosterChanDB now (#161), and pulling millions of events over a websocket
+to count them is not a replacement, so the relay counts: numpy over COPIES of its per-event columns, taken in
+short pieces under the store lock and counted after it is released (`Store.stats_columns`), on a dedicated
+single "relay-stats" thread -- a query thread never waits behind a statistic (one 465 ms read under that lock
+starved the relay, 2026-10-09), and the four read workers that answer clients are never borrowed.
 
-  * PosterChanDB when the mirror is SERVING -- numpy over COPIES of its per-event columns, taken in short pieces
-    under the store lock and counted after it is released (`Store.stats_columns`); a query thread never waits
-    behind a statistic (one 465 ms read under that lock starved the relay, 2026-10-09);
-  * Postgres otherwise -- the same SQL as before, on the relay's OWN connection, on a dedicated single
-    "relay-stats" thread: the four read workers that answer clients are never borrowed.
-
-Every aggregate is defined ONCE here as a composition of a few primitives (`_Sql` and `_Pcdb` implement the same
-primitives), so the two backends cannot drift in what a number means; tests/test_relay_aggregates.py runs both
-over the same events.
+Every aggregate is defined ONCE here as a composition of a few primitives (`_Pcdb`).
 
 The IPC is the control dir the app already uses for admin commands, plus an answer: the app writes
 `ask_<rid>.json`, the relay's ask poller (0.5 s) computes on the stats thread and writes `answers/<rid>.json`.
@@ -36,125 +31,10 @@ from concurrent.futures import ThreadPoolExecutor
 logger = logging.getLogger(__name__)
 
 # --- what the stats mean: defined in stats_service (import-light: stdlib only), counted here ------------------
-from app.services.stats_service import (_ALL_KINDS, GAME_PREFIXES, WINDOWS, _LOCAL,  # noqa: E402
-                                        _ONE_TIME_KINDS, _PERSON_PUBKEY, CHAT_PREFIX, MONERO_TIP)
+from app.services.stats_service import (_ALL_KINDS, GAME_PREFIXES, WINDOWS,  # noqa: E402
+                                        _ONE_TIME_KINDS, CHAT_PREFIX, MONERO_TIP)
 
 DAY = 86400
-
-
-# --- primitives: Postgres (and sqlite3 in tests -- `?` placeholders, portable SQL only) ------------------------
-
-class _Sql:
-    backend = "postgres"
-
-    def __init__(self, conn, size_sql: str | None = "SELECT pg_database_size(current_database())"):
-        self.conn = conn
-        self.size_sql = size_sql
-
-    def _rows(self, sql, params=()):
-        return [tuple(r) for r in self.conn.execute(sql, tuple(params)).fetchall()]
-
-    def kind_buckets(self, start, end, step, kinds):
-        """[(bucket, kind, n)] of locally-published events of `kinds` in [start, end)."""
-        return self._rows("SELECT (created_at / ?) * ? AS bucket, kind, count(*) FROM events "
-                          "WHERE created_at >= ? AND created_at < ? AND kind IN (%s) AND %s GROUP BY 1, 2"
-                          % (",".join("?" * len(kinds)), _LOCAL), (step, step, start, end, *kinds))
-
-    def tag_buckets(self, start, end, step, kind, tag, value):
-        """[(bucket, n)] of locally-published `kind` events carrying tag=value -- each event once, however many
-        times its publisher repeated the tag."""
-        return self._rows("SELECT (e.created_at / ?) * ? AS bucket, count(*) FROM events e "
-                          "WHERE e.created_at >= ? AND e.created_at < ? AND e.kind = ? AND e.origin = 'direct' "
-                          "AND EXISTS (SELECT 1 FROM event_tags t WHERE t.event_id = e.id AND t.tag = ? AND t.value = ?) "
-                          "GROUP BY 1", (step, step, start, end, kind, tag, value))
-
-    def window_totals(self, start, end):
-        """(events, people) published here in [start, end)."""
-        r = self._rows("SELECT count(*), count(DISTINCT " + _PERSON_PUBKEY + ") FROM events "
-                       "WHERE created_at >= ? AND created_at < ? AND " + _LOCAL, (start, end))[0]
-        return int(r[0] or 0), int(r[1] or 0)
-
-    def d_distinct(self, prefixes: dict, start=None, end=None) -> dict:
-        """{name: distinct d values starting with prefixes[name]} -- any origin; in [start, end) when given."""
-        out = {name: 0 for name in prefixes}
-        if start is None:
-            for name, pre in prefixes.items():
-                out[name] = int(self._rows("SELECT count(DISTINCT value) FROM event_tags WHERE tag = 'd' AND value LIKE ?",
-                                           (pre + "%",))[0][0] or 0)
-            return out
-        cases, wheres, cp, wp = [], [], [], []
-        for name, pre in prefixes.items():
-            cases.append("WHEN t.value LIKE ? THEN ?")
-            cp += [pre + "%", name]
-            wheres.append("t.value LIKE ?")
-            wp.append(pre + "%")
-        rows = self._rows("SELECT CASE %s END AS g, count(DISTINCT t.value) "
-                          "FROM event_tags t JOIN events e ON e.id = t.event_id "
-                          "WHERE t.tag = 'd' AND (%s) AND e.created_at >= ? AND e.created_at < ? GROUP BY 1"
-                          % (" ".join(cases), " OR ".join(wheres)), (*cp, *wp, start, end))
-        for name, n in rows:
-            if name in out:
-                out[name] = int(n or 0)
-        return out
-
-    def origins(self, day_since) -> dict:
-        """{origin: {"total": n, "day": n}} over EVERY stored event (the relay panel's store breakdown)."""
-        rows = self._rows("SELECT origin, count(*), sum(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) "
-                          "FROM events GROUP BY 1", (day_since,))
-        return {str(o or "?"): {"total": int(t or 0), "day": int(d or 0)} for o, t, d in rows}
-
-    def kind_count(self, kind) -> int:
-        return int(self._rows("SELECT count(*) FROM events WHERE kind = ? AND " + _LOCAL, (kind,))[0][0] or 0)
-
-    def people_since(self, since) -> int:
-        return int(self._rows("SELECT count(DISTINCT " + _PERSON_PUBKEY + ") FROM events WHERE created_at >= ? AND "
-                              + _LOCAL, (since,))[0][0] or 0)
-
-    def d_count(self, prefix, since=None) -> int:
-        """How many `d` tags start with `prefix` (any origin; on events created since `since` when given)."""
-        if since is None:
-            return int(self._rows("SELECT count(*) FROM event_tags WHERE tag = 'd' AND value LIKE ?",
-                                  (prefix + "%",))[0][0] or 0)
-        return int(self._rows("SELECT count(*) FROM event_tags t JOIN events e ON e.id = t.event_id "
-                              "WHERE t.tag = 'd' AND t.value LIKE ? AND e.created_at >= ?",
-                              (prefix + "%", since))[0][0] or 0)
-
-    def d_daily(self, prefix, since) -> list:
-        """[(UTC day start, n)] of `d` tags starting with `prefix` on events created since `since`."""
-        return self._rows("SELECT (e.created_at / %d) * %d AS d, count(*) FROM event_tags t "
-                          "JOIN events e ON e.id = t.event_id WHERE t.tag = 'd' AND t.value LIKE ? "
-                          "AND e.created_at >= ? GROUP BY 1" % (DAY, DAY), (prefix + "%", since))
-
-    def db_bytes(self):
-        if not self.size_sql:
-            return None
-        return int(self._rows(self.size_sql)[0][0] or 0)
-
-    def nip05_holders(self) -> set:
-        """Authors whose stored kind-0 carries a non-empty `nip05` (the relay keeps one kind-0 per author)."""
-        out = set()
-        for pk, content in self._rows("SELECT pubkey, content FROM events WHERE kind = 0 AND content LIKE ?",
-                                      ("%nip05%",)):
-            if _has_nip05(content):
-                out.add(pk)
-        return out
-
-    def daily_author_counts(self, kind, since, authors: set) -> list:
-        """[(UTC day start, pubkey, n)] for `kind` events by `authors` created since `since`."""
-        rows = self.conn.execute("SELECT (created_at / %d) * %d AS d, pubkey, count(*) FROM events "
-                                 "WHERE kind = ? AND created_at >= ? GROUP BY 1, 2" % (DAY, DAY), (kind, since))
-        out = []
-        while True:
-            chunk = rows.fetchmany(5000)
-            if not chunk:
-                break
-            out.extend((int(d), pk, int(n)) for d, pk, n in (tuple(r) for r in chunk) if pk in authors)
-        return out
-
-    def author_groups(self, pubkey) -> list:
-        """[(kind, origin, n, first, last)] of everything stored for `pubkey`."""
-        return self._rows("SELECT kind, origin, count(*), min(created_at), max(created_at) FROM events "
-                          "WHERE pubkey = ? GROUP BY kind, origin", (pubkey,))
 
 
 # --- primitives: PosterChanDB ----------------------------------------------------------------------------------
@@ -410,19 +290,8 @@ def _executor() -> ThreadPoolExecutor:
 
 
 def source(store, now: int):
-    """The relay's own PosterChanDB store; else a mirror beside Postgres while it serves; else Postgres on THIS
-    thread's own connection. The first case is every node since 2026-10-10 -- it used to fall through to
-    `store._conn()`, which a PosterChanDB store does not have, and every stat answered Unavailable."""
-    from .pcdb_store import PcdbRelayStore
-    if isinstance(store, PcdbRelayStore) and store.store is not None:
-        return _Pcdb(store.store, now)
-    m = getattr(store, "mirror", None)
-    try:
-        if m is not None and m.serving() and m.store is not None:
-            return _Pcdb(m.store, now)
-    except Exception:       # noqa: BLE001
-        pass
-    return _Sql(store._conn())
+    """The relay's own PosterChanDB store."""
+    return _Pcdb(store.store, now)
 
 
 def compute(store, what: str, args: dict, now: int | None = None) -> dict:
