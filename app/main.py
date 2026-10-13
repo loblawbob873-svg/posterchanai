@@ -316,6 +316,9 @@ app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
 app.include_router(vmhost_router.router)     # /api/admin/vmhost/status
 app.include_router(vmhost_router.ws_router)  # /ws/vmconsole — noVNC behind a ticket obtained over Nostr
+from app.routers import concord_tunnel as concord_tunnel_router
+app.include_router(concord_tunnel_router.router)     # /client/concord/tunnel-ticket
+app.include_router(concord_tunnel_router.ws_router)  # /ws/concord-relay — Concord's relay connections, carried by this node
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 from app.routers import bot_talk as _bot_talk   # talking replies: a bot's text -> its talking-face clip

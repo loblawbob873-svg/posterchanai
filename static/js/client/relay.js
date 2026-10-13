@@ -1091,7 +1091,7 @@
     // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
-    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null } = {}){
+    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null, via=null } = {}){
       // Room sends must reach their exact relay set even when those URLs are already pooled.
       // Keep the external-only default for callers that already used publish() for the pool.
       const finishResults = results => {
@@ -1113,7 +1113,7 @@
         const fin = (ok, msg='', rejected=false) => { if (done) return; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve({ok,uncertain:!ok&&attempted&&!rejected,msg}); };
-        try { ws = new WebSocket(u); } catch(_){ return fin(false,'could not connect to a room relay'); }
+        try { ws = new WebSocket(via?via(u):u); } catch(_){ return fin(false,'could not connect to a room relay'); }
         tm = setTimeout(()=>fin(false,'room relay timed out',authRejected), timeout);
         const wire=JSON.stringify(['EVENT',event]);
         const send=()=>{if(auth&&!auth.current()){fin(false,'account changed during room delivery',authRejected);return;}attempted=true;authRejected=false;ws.send(wire);};
@@ -1156,7 +1156,7 @@
      * reconnect storm. The REQ is re-sent verbatim: the filter's `since` is then older than it needs
      * to be, which costs a few duplicate events the store already dedupes and is the safe direction
      * — a recomputed `since` would open a hole exactly the width of the outage. */
-    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null, exact=false, onClosed=null } = {}){
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null, exact=false, onClosed=null, via=null } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))throw new Error("invalid plane subscription scope");
       const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>authScope||exact||!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
@@ -1197,7 +1197,7 @@
           if(!active()){stop();return;}
           if(live&&this._asleep)return;
           let ws;
-          try{ws=new WebSocket(u);}catch(_){ return schedule(); }
+          try{ws=new WebSocket(via?via(u):u);}catch(_){ return schedule(); }
           if(auth)auth.stop();cur=ws;sockets[n]=ws;
           const current=()=>active()&&cur===ws;
           const request=()=>{if(!current())return;ws.send(wire);markReady(true);};
@@ -1243,7 +1243,7 @@
     // (which must resolve to a signed kind-22242 event) and replays the EVENT once authed. Resolves
     // { ok, msg } like publish(). signAuth runs in the app (it owns the active signer — extension /
     // NIP-46 / local key), so relay.js stays signer-agnostic.
-    async publishAuthed(url, event, signAuth, { timeout = 9000 } = {}){
+    async publishAuthed(url, event, signAuth, { timeout = 9000, via = null } = {}){
       if(_fediPrivate(event)) return {ok:false,noQueue:true,msg:'Fediverse-only activity cannot be published to Nostr'};
       if(this.socialRoute){ const routed=await this.socialRoute(event,true); if(routed) return routed; }
       if(_isBlockedRelay(url))return Promise.resolve({ok:false,msg:'relay unavailable'});
@@ -1254,7 +1254,7 @@
           resolve(r); };
         const sendEvent = () => { try{ ws.send(JSON.stringify(['EVENT', event])); }catch(_){ fin({ ok:false, msg:'send failed' }); } };
         const resendAfterAuth = () => { if (authResent) return; authResent = true; clearTimeout(rtm); sendEvent(); };
-        try { ws = new WebSocket(url); } catch(_){ return fin({ ok:false, msg:'connect failed' }); }
+        try { ws = new WebSocket(via?via(url):url); } catch(_){ return fin({ ok:false, msg:'connect failed' }); }
         // On timeout, report the relay's last rejection reason if it gave one (e.g. "blocked: not a
         // member") rather than a generic "timeout" — far more actionable for the user.
         tm = setTimeout(()=>fin({ ok:false, msg: lastReject || 'timeout' }), timeout);
@@ -1293,7 +1293,10 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false } = {}){
+    /* `via` (queryFrom/publishTo/subscribeFrom/publishAuthed): a function from a relay url to the url actually
+     * DIALED -- Concord passes this node's tunnel (/ws/concord-relay) so a client talks only to its instance.
+     * Everything else (targets, cooldowns, reports, AUTH's relay tag) keeps the REAL relay url. */
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
@@ -1356,7 +1359,7 @@
         /* Arm at construction, not only EOSE: switching windows may abort this socket before it
            answers, and the four-second owner timer must not immediately recreate it. */
         if(minInterval>0)Relay._queryFromPurposeCooldown.set(slot(u)+'\0'+purpose,Date.now()+minInterval);
-        try { ws = new WebSocket(u); } catch(_){ return fin('failure'); }
+        try { ws = new WebSocket(via?via(u):u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
         const wire=JSON.stringify(['REQ',subId,...filters]),request=()=>{if(auth&&!auth.current()){fin('abort');return;}ws.send(wire);};
         auth=this._externalReadAuth(ws,u,()=>!done,request,()=>fin('failure'),()=>{clearTimeout(tm);tm=setTimeout(fin,12000);},authScope);

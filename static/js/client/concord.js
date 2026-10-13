@@ -7,7 +7,7 @@
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
     l.href='/static/css/concord.css?v=24'; (document.head||document.documentElement).appendChild(l);
   }
-  const PC=()=>window.__PC;
+  const PC=()=>cordDeps(window.__PC);
   /* CONCORD THEMES. How Concord looks to ME (per account, never per community): a preset name plus an
    * optional accent and background. The palette itself is CSS (concord.css, "CONCORD THEMES"); this only
    * puts `data-cc-theme` and any custom colours on <html>, so the menus and sheets Concord opens outside
@@ -139,6 +139,59 @@
    * every Concord read was before. */
   const MIRROR_KIND=27059,MIRROR_FRESH_MS=86400000,MIRROR_TRUST_MS=3*86400000,MIRROR_REFUSED_MS=3600000,MIRROR_MAX_AUTHORS=128;
   const mirrorBusy=new Map(),mirrorRefused=new Map();
+  /* CONCORD TALKS ONLY TO THIS NODE (app/services/concord_tunnel.py). Every connection Concord makes to a relay
+   * that is not this node's goes through `/ws/concord-relay` on the instance, with a short-lived member ticket:
+   * the CORD relays (membership vault, invites, listings), the directory, NIP-29 rooms and the rooms of
+   * communities hosted elsewhere. `via` only changes the socket that is DIALED -- targets, cooldowns, reports and
+   * AUTH keep the real relay url. No instance (relays-only app) or a node that cannot carry it ({ticket:''})
+   * dials directly, as before; a ticket that could not be fetched yet is NOT a reason to go direct: the dial
+   * goes to the tunnel, fails like an unreachable relay and is retried once the ticket arrives. */
+  const TUNNEL={ticket:'',until:0,off:false,busy:null,timer:null};
+  function tunnelBase(p){const h=homeRelayUrl(p);if(!h)return '';try{const u=new URL(h);return (u.protocol==='ws:'?'ws:':'wss:')+'//'+u.host+'/ws/concord-relay';}catch(_){return '';}}
+  function refreshTunnel(){
+    if(TUNNEL.busy)return TUNNEL.busy;
+    TUNNEL.busy=(async()=>{try{const r=await fetch('/client/concord/tunnel-ticket',{credentials:'include',cache:'no-store'});
+      if(r.ok){const j=await r.json();TUNNEL.ticket=String(j&&j.ticket||'');TUNNEL.off=!TUNNEL.ticket;TUNNEL.until=Date.now()+Math.max(60,Number(j&&j.ttl||0)*0.8)*1000;}
+      else if(r.status===401||r.status===403){TUNNEL.ticket='';TUNNEL.off=true;TUNNEL.until=Date.now()+300000;}
+    }catch(_){}finally{TUNNEL.busy=null;}
+      clearTimeout(TUNNEL.timer);TUNNEL.timer=setTimeout(refreshTunnel,TUNNEL.ticket?Math.max(60000,TUNNEL.until-Date.now()):30000);})();
+    return TUNNEL.busy;
+  }
+  function cordVia(p){
+    const base=tunnelBase(p||(typeof PC==='function'?PC():null));if(!base)return null;
+    if(Date.now()>TUNNEL.until)refreshTunnel();
+    if(TUNNEL.off&&!TUNNEL.ticket)return null;
+    const home=homeRelayUrl(p||(typeof PC==='function'?PC():null));
+    return u=>{const n=normalizeRelay(u);if(!n||n===home)return u;return base+'?u='+encodeURIComponent(u)+'&t='+encodeURIComponent(TUNNEL.ticket);};
+  }
+  /* The two doors Concord reaches relays through -- the app's dependency object (PC()) and (window.PCConcordRelay||window.Relay) -- are
+   * WRAPPED, so every outside-relay call carries `via` without any call site knowing: a new call cannot forget
+   * it, and a function a test slices out still runs against whatever it is handed. */
+  const WRAPPED=new WeakMap();
+  function viaOpts(o){const via=cordVia(window.__PC);return via?{...(o||{}),via}:o;}
+  function cordDeps(raw){
+    if(!raw||typeof raw!=='object')return raw;let w=WRAPPED.get(raw);if(w)return w;
+    const over={
+      relayQueryFrom:(relays,filters,o)=>raw.relayQueryFrom(relays,filters,viaOpts(o)),
+      relayPublishTo:(relays,ev,o)=>raw.relayPublishTo(relays,ev,viaOpts(o)),
+      relayPublishRoom:(relays,ev,auth=null)=>raw.relayPublishRoom(relays,ev,auth,cordVia(raw)),
+      publishNip29Authed:(relay,template)=>raw.publishNip29Authed(relay,template,cordVia(raw)),
+    };
+    w=new Proxy(raw,{get(t,k){if(Object.prototype.hasOwnProperty.call(over,k)&&typeof t[k]==='function')return over[k];return t[k];}});
+    WRAPPED.set(raw,w);return w;
+  }
+  function cordRelay(R){
+    if(!R||typeof R!=='object')return R;let w=WRAPPED.get(R);if(w)return w;
+    const over={
+      queryFrom:(u,f,o)=>R.queryFrom(u,f,viaOpts(o)),
+      publishTo:(u,ev,o)=>R.publishTo(u,ev,viaOpts(o)),
+      subscribeFrom:(u,f,o)=>R.subscribeFrom(u,f,viaOpts(o)),
+      publishAuthed:(u,ev,sign,o)=>R.publishAuthed(u,ev,sign,viaOpts(o)),
+    };
+    w=new Proxy(R,{get(t,k){if(Object.prototype.hasOwnProperty.call(over,k))return over[k];const v=t[k];return typeof v==='function'?v.bind(t):v;},
+      set(t,k,v){t[k]=v;return true;}});
+    WRAPPED.set(R,w);return w;
+  }
   function homeRelayUrl(p){try{return normalizeRelay(p&&p.homeRelay&&p.homeRelay())||'';}catch(_){return '';}}
   function relaysAreHome(p,relays){const h=homeRelayUrl(p);return !!h&&(relays||[]).some(u=>normalizeRelay(u)===h);}
   function mirrorKey(pk){return 'pc.concord.mirror.v1.'+pk;}
@@ -167,7 +220,7 @@
     return out.slice(0,MIRROR_MAX_AUTHORS);
   }
   async function sendMirrorRequest(p,body){
-    const h=homeRelayUrl(p),R=window.Relay;if(!h||!R||!R.publishTo||!p.signTemplate)return {ok:false,msg:'no home relay'};
+    const h=homeRelayUrl(p),R=(window.PCConcordRelay||window.Relay);if(!h||!R||!R.publishTo||!p.signTemplate)return {ok:false,msg:'no home relay'};
     const ev=await p.signTemplate({kind:MIRROR_KIND,created_at:Math.floor(Date.now()/1000),tags:[['t','concord-mirror']],content:JSON.stringify({v:1,...body})});
     if(!ev||!ev.id)return {ok:false,msg:'not signed'};
     return await R.publishTo([h],ev,{includeManaged:true,detailed:true,max:1})||{ok:false};
@@ -2256,7 +2309,7 @@
   function docAnswered(evs){
     if(!Array.isArray(evs))return false;
     if(evs.complete!==false)return true;
-    try{ const R=window.Relay; return !!(R&&R.homeAnswered&&R.homeAnswered(evs)); }catch(_){ return false; }
+    try{ const R=(window.PCConcordRelay||window.Relay); return !!(R&&R.homeAnswered&&R.homeAnswered(evs)); }catch(_){ return false; }
   }
   async function fetchRailDoc(p,owner,d){
     if(!p.relayQuery||!p.nip44dec)return null;
@@ -4800,7 +4853,7 @@
     if(chatSub&&chatSubKey===key)return;
     stopChatLive();
     const nip29=room&&room.protocol==='nip29',authors=(channel&&channel.streamPubkeys)||[];
-    const R=window.Relay;
+    const R=(window.PCConcordRelay||window.Relay);
     if(!p||!R||!R.subscribe||!R.subscribeFrom||(!nip29&&!authors.length))return;
     chatSubKey=key;
     /* A small look-back, not none: between the room's opening history read and this subscription
@@ -5025,7 +5078,7 @@
   const roomsLiveFailed=new Map(), ROOM_LIVE_RETRY_MS=600000;
   function startRoomsLive(p){
     try{
-      const R=window.Relay,reader=window.PosterCordReader;
+      const R=(window.PCConcordRelay||window.Relay),reader=window.PosterCordReader;
       if(!p||!R||!R.subscribeFrom||!reader)return;
       const owner=deliveryOwner(p),want=new Map();
       for(const room of saved()){
@@ -5364,7 +5417,7 @@
   function stopRekeyLive(){for(const entry of rekeySubscriptions.values())entry.close();rekeySubscriptions.clear();}
   function startRekeyLive(p,room,controls){
     void adoptStaffGrant(p,room,controls).catch(e=>{console.warn('Staff key delivery could not be adopted',e);});
-    const reader=window.PosterCordReader,R=window.Relay,bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
+    const reader=window.PosterCordReader,R=(window.PCConcordRelay||window.Relay),bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
     if(!reader||!reader.inspectRekeyStreams||!bundle||!owner||!R||!R.subscribeFrom||bundle.dissolved||bundle.removed)return;
     const identity=roomIdentity(room),snapshot=JSON.stringify(bundle),controlStamp=JSON.stringify(cordControlStamp(controls)),key=owner+'\n'+identity;
     for(const [oldKey,old] of rekeySubscriptions)if(old.owner!==owner){old.close();rekeySubscriptions.delete(oldKey);}
@@ -5682,6 +5735,7 @@
   let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
   let renderedAccount='';
   function render(){
+    if(!TUNNEL.ticket&&!TUNNEL.off&&tunnelBase(PC()))refreshTunnel();
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
     backgroundRenderPending=false;backgroundFocusHost=null;
@@ -6822,7 +6876,7 @@
       Object.assign(voiceWatch,{key,room:roomIdentity(room),since:Date.now()});
       await callModule('cord-voice.js','PCCordVoice');if(voiceWatch.key!==key)return;
       const byStream=new Map(streams.map(x=>[x.stream,x.id])),identity=roomIdentity(room);
-      voiceWatch.stops.push(cordPlaneSubscribe(p,window.Relay,roomRelays(bundle),
+      voiceWatch.stops.push(cordPlaneSubscribe(p,(window.PCConcordRelay||window.Relay),roomRelays(bundle),
         [{kinds:[21059],authors:streams.map(x=>x.stream),since:Math.floor(Date.now()/1000)-90}],
         {onEvent:wrap=>{const id=byStream.get(wrap&&wrap.pubkey);if(id)void voiceIngest(key,identity,id,[wrap]);},live:true,timeout:0,max:1},
         cordPlaneContext(p,bundle,controls,room)));
@@ -6857,7 +6911,7 @@
       label:pk=>{const profile=p.profOf&&p.profOf(pk)||{};return profile.display_name||profile.name||pk.slice(0,12);},
       material:()=>{const x=parts();return x.reader.voiceMaterial(x.bundle,x.controls,x.channel.id);},
       subscribe:onEvent=>{const x=parts(),material=x.reader.voiceMaterial(x.bundle,x.controls,x.channel.id);
-        subscription=cordPlaneSubscribe(p,window.Relay,x.relays,[{kinds:[21059],authors:[material.stream],since:Math.floor(Date.now()/1000)-90}],
+        subscription=cordPlaneSubscribe(p,(window.PCConcordRelay||window.Relay),x.relays,[{kinds:[21059],authors:[material.stream],since:Math.floor(Date.now()/1000)-90}],
           {onEvent,live:true,timeout:0},cordPlaneContext(p,x.bundle,x.controls,x.room));return subscription;},
       decode:wrap=>{const x=parts();return x.reader.inspectVoicePresence(x.bundle,x.controls,x.channel.id,[wrap]);},
       presence:async(verb,peer,broker)=>{
@@ -6887,7 +6941,7 @@
      * IS a room relay, which is the case publishTo alone skipped. */
     const result=await p.relayPublishRoom(x.relays,made.wrap,null);if(!result||!result.ok)throw new Error(result&&result.msg||'room relays rejected the update');return made;}
   async function webxdcSubscribe(ctx,uuid,realtime,onEvent){
-    const R=window.Relay;if(!R||!R.subscribe||!R.subscribeFrom)throw new Error('relay subscription unavailable');
+    const R=(window.PCConcordRelay||window.Relay);if(!R||!R.subscribe||!R.subscribeFrom)throw new Error('relay subscription unavailable');
     let urls,filters,receive,plane=null;
     if(ctx.protocol==='nip29'){
       urls=[ctx.relay];filters=[{kinds:[realtime?24450:9450],'#h':[ctx.groupId],'#i':[uuid],since:Math.floor(Date.now()/1000)-120}];receive=onEvent;
@@ -6930,7 +6984,7 @@
   }
   async function webxdcPeerSubscribe(ctx,onEvent){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
-    const R=window.Relay,x=await webxdcCordParts(ctx);
+    const R=(window.PCConcordRelay||window.Relay),x=await webxdcCordParts(ctx);
     if(!R||!R.subscribe||!R.subscribeFrom||!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
     const seen=new Set(),receive=async wrap=>{try{const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,[wrap]);if(!x.plane.current())return;for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}catch(_){}};
     const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive},plane):R.subscribeFrom(x.relays,filters,{onEvent:receive});
@@ -6944,7 +6998,8 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
+  Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return cordRelay(window.Relay);}});
+  window.PCConcord={cordVia,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

@@ -14154,10 +14154,10 @@
      * poller. "Joined rooms are not reliably live." */
     relayClose: subId => Relay.close(subId),
     relayPublish: ev => Relay.publish(ev),
-    relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
+    relayPublishTo: (relays, ev, opts) => Relay.publishTo(relays, ev, opts),
     // A wrap for a Concord community this node's relay holds goes there first (concord.js roomPublish).
-    relayPublishRoom: (relays, ev, authScope=null) => {
-      const direct=(r,e,a)=>Relay.publishTo(r, e, {includeManaged:true, detailed:true, authScope:a});
+    relayPublishRoom: (relays, ev, authScope=null, via=null) => {
+      const direct=(r,e,a)=>Relay.publishTo(r, e, {includeManaged:true, detailed:true, authScope:a, via});
       const m=window.PCConcordMirror;
       return m&&m.publish ? m.publish(relays, ev, authScope, direct) : direct(relays, ev, authScope);
     },
@@ -14166,13 +14166,13 @@
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
     relayRetryRelays: (relays) => Relay.clearQueryCooldown(relays),
     verifyRelayEvents: async events => { const list=Array.isArray(events)?events:[],result=await Relay.worker.call('verifyBatch',{events:list}),valid=new Set((result||[]).filter(r=>r.valid).map(r=>r.id));return list.filter(event=>valid.has(event.id)); },
-    publishNip29Authed: async (relay, template) => {
+    publishNip29Authed: async (relay, template, via=null) => {
       const url=new URL(String(relay||''));if(!/^wss?:$/.test(url.protocol))throw new Error('invalid NIP-29 relay');
       const tags=Array.isArray(template&&template.tags)?template.tags:[];
       if(!ME||!ME.pubkey||![5,7,9,10,11,12,1111].includes(Number(template&&template.kind)))throw new Error('invalid NIP-29 event');
       if(!tags.some(t=>t[0]==='h'&&t[1]))throw new Error('NIP-29 group tag is required');
       const event=await signer.signEvent({...template,pubkey:ME.pubkey,tags}),result=await Relay.publishAuthed(url.href.replace(/\/$/,''),event,
-        challenge=>signer.signEvent({kind:22242,pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:'',tags:[['relay',url.href.replace(/\/$/,'')],['challenge',String(challenge||'')]]}));
+        challenge=>signer.signEvent({kind:22242,pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:'',tags:[['relay',url.href.replace(/\/$/,'')],['challenge',String(challenge||'')]]}),{via});
       if(!result||!result.ok)throw new Error(result&&result.msg||'NIP-29 relay rejected the event');return event;
     },
     relayUrls: () => _writeRelays().slice(),
