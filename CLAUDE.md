@@ -1747,6 +1747,8 @@ would have handled it fine).
   proxy FALLBACK listener (Tor1->Tor2->direct, never the server's own address), 24 tunnels per member. Routing is at
   the two DOORS (`PC()` and `window.PCConcordRelay`), never per call site, so a new Concord call cannot forget it
   (`tests/test_concord_relay_calls_go_through_the_tunnel.py`); the browser proof records every dial
+  (and `mirrorAllJoined` hands EVERY joined community to the node's mirror at Concord start -- registering only on
+  room open left poster.place's mirror holding 1 of a member's 6 communities, 2026-10-13)
   (`tests/client/test_concord_talks_only_to_this_node_full_app.py`). No instance, or a node with no proxy
   (`{ticket:''}`): direct, as before. A ticket not fetched yet is NOT a reason to go direct -- but a SEND the tunnel
   could not carry is retried direct ONCE (`sendOr`: one signed event, same id, so a second copy is harmless and a lost

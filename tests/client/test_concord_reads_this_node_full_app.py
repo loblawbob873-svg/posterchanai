@@ -189,3 +189,43 @@ def test_the_directory_relay_holds_invites_and_the_list_shows_them_even_when_it_
 def test_an_unreachable_directory_says_so_and_offers_retry():
     asyncio.run(desktop.with_browser('online', '', directory_check('unreachable'),
                                      init(__dirMode='unavailable', __dirRelayUp=False, __dirHold=True)))
+
+
+MINT_THREE = r'''(async()=>{
+  const rooms=[];
+  for(const name of ['First','Second','Third']){
+    const relays=['wss://ext-'+name.toLowerCase()+'.invalid'];
+    const made=await PosterCord.createCommunity({owner:__PC.me().pubkey,name,relays,base:'https://cord.invalid',signEvent:__PC.signTemplate});
+    const bundle={...PosterCord.openInvite(made.url,made.events).bundle,control_root:made.secrets.controlRoot};
+    const controls=made.events.filter(e=>e.kind===1059);
+    const info=PosterCordReader.inspectControl(bundle,controls);
+    __home.push(...made.events);
+    // what an earlier visit left behind on this device: the community's control envelopes, cached
+    await PCConcordCache.put(JSON.stringify([made.communityId,'control']),controls);
+    rooms.push({name,communityId:made.communityId,naddr:'cord-'+name,url:made.url,channels:info.channels.map(c=>({name:c.name,id:c.id,private:!!c.private})),cord:{bundle}});
+  }
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify(rooms));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+  return rooms.length;
+})()'''
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_every_joined_community_is_handed_to_this_node_not_only_the_one_opened():
+    """poster.place's mirror held ONE community (2026-10-13) while a member had joined six: a community was
+    registered only when one of its rooms was opened on that device, so every other room was read from its
+    own relays by every client. Opening Concord with the first community active must register all three."""
+    async def check(b):
+        await open_concord(b)
+        assert await b.js(MINT_THREE) == 3
+        # the next app start, with these communities already joined on this device
+        await b.call('Page.reload')
+        await b.until('!!window.__PC && !!window.PCConcord')
+        await b.until("!!__PC.me()")
+        await b.js("__PC.switchMessagesTab('concord')")
+        await wait_for(b, 'new Set(__registrations.filter(r=>r.op==="mirror").map(r=>r.group)).size>=3', 45)
+        regs = await b.js('__registrations.filter(r=>r.op==="mirror")')
+        assert len({r['group'] for r in regs}) == 3, regs
+        assert {tuple(r['relays']) for r in regs} >= {('wss://ext-first.invalid',), ('wss://ext-second.invalid',),
+                                                      ('wss://ext-third.invalid',)}, regs
+    asyncio.run(desktop.with_browser('online', '', check, init()))

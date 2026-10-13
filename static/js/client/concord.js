@@ -267,6 +267,27 @@
     })().catch(()=>false).finally(()=>{mirrorBusy.delete(key);});
     mirrorBusy.set(key,job);return job;
   }
+  /* EVERY JOINED COMMUNITY IS HANDED TO THIS NODE, NOT ONLY THE ONE BEING LOOKED AT. `ensureMirror` ran only
+   * from a room's load, so a community was held by the node only once somebody had OPENED it on that device --
+   * measured 2026-10-13: poster.place's mirror held ONE community while its members had joined many, and every
+   * other room was read from its own relays by every device. This walks the saved list once per Concord start
+   * (each community answers from its once-a-day freshness check after the first time), using the control
+   * envelopes already cached for it, one at a time so a large list never becomes a burst of signatures. A
+   * community with no cached control set yet has no stream keys to name and is skipped until it is opened. */
+  let mirrorAllJob=null;
+  function mirrorAllJoined(p){
+    if(mirrorAllJob||!p||!homeRelayUrl(p))return mirrorAllJob;
+    mirrorAllJob=(async()=>{let asked=0,held=0;
+      for(const room of saved()){
+        const bundle=room&&room.cord&&room.cord.bundle;if(!bundle||bundle.dissolved)continue;
+        const loadKey=room.communityId||room.naddr;if(!loadKey)continue;
+        const controls=await cachedEnvelopes(envelopeCacheKey(loadKey,'control'));
+        asked++;try{if(await ensureMirror(p,room,bundle,controls))held++;}catch(_){}
+      }
+      return {asked,held};
+    })().finally(()=>{setTimeout(()=>{mirrorAllJob=null;},300000);});
+    return mirrorAllJob;
+  }
   /* LEAVING STOPS THE MIRROR. Forgotten here first: even if the node never hears it, this device no longer
    * reads the room from it, and the node's own 14-day expiry ends the mirror on its own. */
   async function leaveMirror(p,room){
@@ -5801,14 +5822,14 @@
      * transient state.community=null frame. */
     if(state.community==null){
       ownRoomReads('');
-      startDiscovery(p);syncArmadaMemberships(p,viewer);syncNip29Memberships(p,viewer);
+      startDiscovery(p);syncArmadaMemberships(p,viewer);syncNip29Memberships(p,viewer);void mirrorAllJoined(p);
     }else{
       /* Restore every membership already cached or present on PosterChan without opening any public
        * discovery relay. This is what makes all joined rooms appear on an ordinary launch. */
       /* One bounded cross-relay recovery is required even with a selected room: membership shards
          are distributed and the local relay may hold only the newest subset. This is not public
          listing discovery and schedules no active-room retry. */
-      syncArmadaMemberships(p,viewer,'recovery');syncNip29Memberships(p,viewer,true);
+      syncArmadaMemberships(p,viewer,'recovery');syncNip29Memberships(p,viewer,true);void mirrorAllJoined(p);
       stopDiscovery();
       clearTimeout(membershipRetryTimer);membershipRetryTimer=null;
       clearTimeout(nip29RetryTimer);nip29RetryTimer=null;
@@ -7017,7 +7038,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
