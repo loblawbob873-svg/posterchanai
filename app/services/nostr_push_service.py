@@ -103,6 +103,48 @@ async def _quoted_authors(evs: list) -> dict:
     return {e["id"]: e.get("pubkey", "") for e in found or [] if e.get("id") in ids}
 
 
+async def _mutes_for(pks) -> dict:
+    """{recipient: (muted people, muted conversations)} from each one's PUBLIC kind-10000 (NIP-51 `p` and
+    `e` tags). A push for a muted author or a muted conversation used to go out regardless -- the mute list
+    was only ever read by the open client, so a closed phone buzzed for every reply in a thread the person
+    had muted (a fediverse thread most of all: Mastodon mentions everyone in it on every reply). PRIVATE
+    mutes are sealed to the user and cannot be read here; the client still honours them. Fails OPEN like
+    every push filter here: a list that cannot be read mutes nothing (push_prefs explains why)."""
+    pks = sorted(set(pks))
+    if not pks:
+        return {}
+    try:
+        evs = await relay.query(_local_relay(), [{"kinds": [10000], "authors": pks}], timeout=6)
+    except Exception:
+        return {}
+    newest: dict = {}
+    for ev in evs or []:
+        pk = ev.get("pubkey", "")
+        if ev.get("kind") == 10000 and pk in pks \
+                and ev.get("created_at", 0) >= newest.get(pk, {}).get("created_at", -1):
+            newest[pk] = ev
+    out = {}
+    for pk, ev in newest.items():
+        tags = [t for t in ev.get("tags") or [] if isinstance(t, list) and len(t) > 1 and t[1]]
+        out[pk] = ({t[1] for t in tags if t[0] == "p"}, {t[1] for t in tags if t[0] == "e"})
+    return out
+
+
+def _muted(ev: dict, mutes) -> bool:
+    """`ev` is from a muted person, or belongs to a muted conversation -- the client's isMutedAuthor and
+    _mutedThread (app.js): the event itself or ANY `e` tag it carries, since a reply that tags only its
+    parent is still in the thread."""
+    if not mutes:
+        return False
+    people, threads = mutes
+    if ev.get("kind") != 9735 and ev.get("pubkey") in people:   # a zap receipt is signed by the LN service
+        return True
+    if not threads:
+        return False
+    return ev.get("id") in threads or any(
+        len(t) > 1 and t[0] == "e" and t[1] in threads for t in ev.get("tags") or [])
+
+
 def _root_channel(ev: dict) -> str:
     """The kind-40 a chat message belongs to. Prefer the "root"-marked `e` tag — a REPLY inside a channel
     carries a second `e` (the message replied to), so taking the first blindly misfiles it."""
@@ -304,6 +346,7 @@ async def _poll():
         # NIP-18's q tag need not name the quoted author; who wrote a quoted post is read off the
         # post itself (its id commits to its pubkey), so one lookup covers every such quote.
         authors = await _quoted_authors([ev for ev in evs if ev.get("id") not in _seen])
+        mutes = await _mutes_for(by_pk.keys()) if any(ev.get("id") not in _seen for ev in evs) else {}
         for ev in evs:
             eid = ev.get("id")
             if not eid or eid in _seen:
@@ -313,6 +356,7 @@ async def _poll():
             ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
             quoted = quote_pubkeys(ev, authors)
             recips = [pk for pk in set(ptags) | quoted if pk in by_pk and pk != author]   # not your own event
+            recips = [pk for pk in recips if not _muted(ev, mutes.get(pk))]
             if ev.get("kind") == 3:
                 # A FOLLOW: only for a follower this watcher has never seen follow them.
                 recips = [pk for pk in recips if await _is_new_follower(pk, author)]

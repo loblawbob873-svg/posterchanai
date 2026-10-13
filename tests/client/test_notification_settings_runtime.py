@@ -83,7 +83,7 @@ const type=source.slice(source.indexOf('  function _notificationType(opts){'),so
 const disabled=new Set(),toasts=[],native=[];
 const c={notificationAllowed:k=>!disabled.has(k),notificationSound(){},window:{pcHost:{notify:o=>native.push(o)}},
  pcHost:{notify:o=>native.push(o)},_SHORTCODE_STRIP:/:fixture:/g,LOGO:'icon',_capPlugin:()=>null,openOsNotificationRoute(){},
- _tipNote:()=>null,zapSender:e=>e.pubkey,isMutedAuthor:()=>false,profOf:()=>({name:'sender'}),
+ _tipNote:()=>null,zapSender:e=>e.pubkey,isMutedAuthor:()=>false,_mutedThread:()=>false,profOf:()=>({name:'sender'}),
  fmtSats:String,zapAmount:()=>1,reactDisp:()=>'+',_quotesMe:e=>!!e.quote,isReply:e=>!!e.reply,
  emojiName:(pk,n)=>n,enc:String,_notifCtxId:()=>'',notifToast:(...args)=>toasts.push(args),openThread(){},switchView(){}};
 c.S=c;vm.createContext(c);vm.runInContext(type+notify.slice(0,end)+ping,c);
