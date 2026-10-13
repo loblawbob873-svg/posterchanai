@@ -78,6 +78,31 @@
     const out=[];for(const r of rows){if(r.event){out.push(r);continue;}const ev=got.get(r.id);if(ev&&ev.id===r.id)out.push({...r,event:ev});}
     return out;
   }
+  /* THE ENVELOPES ALREADY HERE MOVE TOO, ONCE. A desktop that cached Concord before this shipped holds every
+   * room's bodies in IndexedDB; the first time this page sees the local relay up, they are handed to it 200 at a
+   * time and each one it ACKNOWLEDGES becomes a reference row. One that is not acknowledged keeps its body (the
+   * next page load tries again), so a relay that goes away mid-move loses nothing. */
+  let migrating=null;
+  function migrate(){
+    if(migrating||!localRelay())return migrating;
+    migrating=(async()=>{let moved=0;
+      for(;;){
+        const S=localRelay();if(!S)break;
+        const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),batch=[];
+        await new Promise((resolve,reject)=>{const q=read.objectStore(STORE).openCursor();q.onerror=()=>reject(q.error);
+          q.onsuccess=()=>{const c=q.result;if(!c||batch.length>=200){resolve();return;}if(c.value&&c.value.event&&!c.value.lr)batch.push(c.value);c.continue();};});
+        await readDone;if(!batch.length)break;
+        let acked=new Set();try{acked=await S.lrPut(batch.map(r=>r.event));}catch(_){break;}
+        if(!acked.size)break;
+        const tx=db.transaction(STORE,'readwrite'),completion=done(tx),w=tx.objectStore(STORE);
+        for(const r of batch)if(acked.has(r.id)){const ref={key:r.key,stream:r.stream,id:r.id,created:r.created,size:0,lr:1};if(Number.isSafeInteger(r.expires))ref.expires=r.expires;w.put(ref);moved++;}
+        await completion;
+        if(acked.size<batch.length)break;
+        await new Promise(r=>setTimeout(r,50));
+      }
+      return moved;})().catch(()=>0);
+    return migrating;
+  }
   async function put(stream,events,{limit=MAX_PER_STREAM}={}){
     stream=String(stream||''); if(!stream||stream.length>2048)return 0;
     const clean=[],seen=new Set();
@@ -124,9 +149,9 @@
     const db=await open(),tx=db.transaction([STORE,DELIVERIES],'readwrite'),completion=done(tx),now=Math.floor(Date.now()/1000);
     for(const name of [STORE,DELIVERIES]){const q=tx.objectStore(name).index('expires').openCursor(IDBKeyRange.upperBound(now));q.onsuccess=()=>{const c=q.result;if(!c)return;if(Number.isSafeInteger(c.value.expires)&&c.value.expires<=now)c.delete();c.continue();};}await completion;
   }
-  async function get(stream){await sweepExpired();return (await bodies(await all(stream))).map(row=>row.event);}
+  async function get(stream){migrate();await sweepExpired();return (await bodies(await all(stream))).map(row=>row.event);}
   async function page(stream,{before='',limit=200}={}){
-    await sweepExpired();
+    migrate();await sweepExpired();
     stream=String(stream||'');const cap=Math.min(500,Math.max(1,Number(limit)||200)),db=await open(),tx=db.transaction(STORE,'readonly'),completion=done(tx),rows=[];
     /* A cursor is the memory boundary. `getAll()` followed by slice still allocates and sorts every
      * one of a room's 5,000 envelopes, which was enough to kill Android's WebView while opening a
@@ -159,5 +184,5 @@
    * running it again after a failure that happened before any of it committed changes nothing. */
   function stale(e){return !!e&&(e.name==='InvalidStateError'||/connection is clos|database.*closed/i.test(String(e.message||'')));}
   function healing(fn){return async function(){try{return await fn.apply(this,arguments);}catch(e){if(!stale(e))throw e;dbPromise=null;return fn.apply(this,arguments);}};}
-  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;}};
+  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;migrating=null;},migrate};
 })(typeof window==='undefined'?globalThis:window);

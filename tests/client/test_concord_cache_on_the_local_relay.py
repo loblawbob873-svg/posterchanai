@@ -10,6 +10,8 @@ and all. Real Chrome, the SHIPPED store.js + concord-cache.js, the SHIPPED local
      writes NOTHING to IndexedDB.
   B. relay DOWN (stopped, page reloaded): new envelopes are cached whole in IndexedDB exactly as before and read
      back; the stream whose bodies are on the absent relay reads as a miss (empty), never an error.
+  C. relay BACK: the bodies already in IndexedDB MIGRATE onto it (what every desktop that cached Concord before
+     this shipped holds) and become reference rows; every envelope still reads back.
 
 Run: venv-unified/bin/python -m pytest tests/client/test_concord_cache_on_the_local_relay.py -q
 """
@@ -55,10 +57,15 @@ let puts=0;const P=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=fun
       got:got.length,identical:got.every(e=>JSON.stringify(e)===JSON.stringify(byId.get(e.id))),paged:new Set(pages).size}));
     out.textContent='A';return;
   }
+  if(phase==='C'){
+    for(let i=0;i<200&&!Store.lrLive();i++)await new Promise(r=>setTimeout(r,25));
+    const moved=await PCConcordCache.migrate();const rows=await idbRows(),late=await PCConcordCache.get(S2),s1=await PCConcordCache.get(S1);
+    out.textContent=JSON.stringify({...JSON.parse(sessionStorage.getItem('AB')),C:{live:Store.lrLive(),moved,bodies:rows.filter(r=>r.event).length,refs:rows.filter(r=>r.lr).length,late:late.length,s1:s1.length}});return;
+  }
   const live=Store.lrLive();
   await PCConcordCache.put(S2,LATE);
   const rows=await idbRows(),late=await PCConcordCache.get(S2);let s1=null,err='';try{s1=(await PCConcordCache.get(S1)).length;}catch(e){err=String(e);}
-  out.textContent=JSON.stringify({A:JSON.parse(sessionStorage.getItem('A')),B:{live,late:late.length,lateBodies:rows.filter(r=>r.stream===S2&&r.event).length,s1,err}});
+  sessionStorage.setItem('AB',JSON.stringify({A:JSON.parse(sessionStorage.getItem('A')),B:{live,late:late.length,lateBodies:rows.filter(r=>r.stream===S2&&r.event).length,s1,err}}));out.textContent='B';
 }catch(e){out.textContent=JSON.stringify({threw:String(e.stack||e)});}})();
 </script>"""
 
@@ -102,8 +109,16 @@ async def _drive(url, port, relay):
         await asyncio.sleep(1)
         for _ in range(240):
             await asyncio.sleep(.25)
+            if await out() == "B":
+                break
+        assert await out() == "B", await out()
+        relay.start()
+        await call("Runtime.evaluate", {"expression": "sessionStorage.setItem('phase','C');location.reload()"})
+        await asyncio.sleep(1)
+        for _ in range(240):
+            await asyncio.sleep(.25)
             v = await out()
-            if v and v != "A":
+            if v and v not in ("A", "B"):
                 return json.loads(v)
     raise AssertionError("page did not finish")
 
@@ -164,3 +179,7 @@ def test_concord_envelopes_live_on_the_local_relay_and_only_an_index_in_indexedd
     assert a["reputs"] == 0, ("caching the same history again rewrote IndexedDB rows", got)
     assert not b["live"] and b["late"] == 20 and b["lateBodies"] == 20, ("with the relay down the cache must keep bodies", got)
     assert b["err"] == "" and b["s1"] == 0, ("a stream on the absent relay must read as a miss, not an error", got)
+    c = got["C"]
+    assert c["live"] and c["moved"] == 20 and c["bodies"] == 0 and c["refs"] == 320, (
+        "the bodies cached while the relay was down did not move onto it when it came back", got)
+    assert c["late"] == 20 and c["s1"] == 300, ("after the move every envelope still reads back", got)
