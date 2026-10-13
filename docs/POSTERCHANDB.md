@@ -1,7 +1,8 @@
 # PosterChanDB — a RAM-first store for the relay's events
 
-Status: **design** (2026-10-09), Python (numpy + stdlib). Nothing here is deployed. Numbers are MEASURED on server1's live relay
-with `scripts/posterchandb_measure.py` (a 2% sample, scaled), not estimated from first principles.
+Status: **in production** (2026-10-12): `primary` on server1 and nas.lan, and the default for every fresh install.
+The short, benefits-first version is [POSTERCHANDB_OVERVIEW.md](POSTERCHANDB_OVERVIEW.md). Numbers here are MEASURED on server1's
+live relay with `scripts/posterchandb_measure.py` (a 2% sample, scaled), not estimated from first principles.
 
 ## Why
 
