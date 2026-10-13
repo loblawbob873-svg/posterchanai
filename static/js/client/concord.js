@@ -139,6 +139,34 @@
    * every Concord read was before. */
   const MIRROR_KIND=27059,MIRROR_FRESH_MS=86400000,MIRROR_TRUST_MS=3*86400000,MIRROR_REFUSED_MS=3600000,MIRROR_MAX_AUTHORS=128;
   const mirrorBusy=new Map(),mirrorRefused=new Map();
+  /* CONCORD TALKS ONLY TO THIS NODE (app/services/concord_tunnel.py). Every connection Concord makes to a relay
+   * that is not this node's goes through `/ws/concord-relay` on the instance, with a short-lived member ticket:
+   * the CORD relays (membership vault, invites, listings), the directory, NIP-29 rooms and the rooms of
+   * communities hosted elsewhere. `via` only changes the socket that is DIALED -- targets, cooldowns, reports and
+   * AUTH keep the real relay url. No instance (relays-only app) or a node that cannot carry it ({ticket:''})
+   * dials directly, as before; a ticket that could not be fetched yet is NOT a reason to go direct: the dial
+   * goes to the tunnel, fails like an unreachable relay and is retried once the ticket arrives. */
+  const TUNNEL={ticket:'',until:0,off:false,busy:null,timer:null};
+  function tunnelBase(p){const h=homeRelayUrl(p);if(!h)return '';try{const u=new URL(h);return (u.protocol==='ws:'?'ws:':'wss:')+'//'+u.host+'/ws/concord-relay';}catch(_){return '';}}
+  function refreshTunnel(){
+    if(TUNNEL.busy)return TUNNEL.busy;
+    TUNNEL.busy=(async()=>{try{const r=await fetch('/client/concord/tunnel-ticket',{credentials:'include',cache:'no-store'});
+      if(r.ok){const j=await r.json();TUNNEL.ticket=String(j&&j.ticket||'');TUNNEL.off=!TUNNEL.ticket;TUNNEL.until=Date.now()+Math.max(60,Number(j&&j.ttl||0)*0.8)*1000;}
+      else if(r.status===401||r.status===403){TUNNEL.ticket='';TUNNEL.off=true;TUNNEL.until=Date.now()+300000;}
+    }catch(_){}finally{TUNNEL.busy=null;}
+      clearTimeout(TUNNEL.timer);TUNNEL.timer=setTimeout(refreshTunnel,TUNNEL.ticket?Math.max(60000,TUNNEL.until-Date.now()):30000);})();
+    return TUNNEL.busy;
+  }
+  function cordVia(p){
+    const base=tunnelBase(p||(typeof PC==='function'?PC():null));if(!base)return null;
+    if(Date.now()>TUNNEL.until)refreshTunnel();
+    if(TUNNEL.off&&!TUNNEL.ticket)return null;
+    const home=homeRelayUrl(p||(typeof PC==='function'?PC():null));
+    return u=>{const n=normalizeRelay(u);if(!n||n===home)return u;return base+'?u='+encodeURIComponent(u)+'&t='+encodeURIComponent(TUNNEL.ticket);};
+  }
+  function cordQueryFrom(p,relays,filters,opts){const via=cordVia(p);return p.relayQueryFrom(relays,filters,via?{...(opts||{}),via}:opts);}
+  function cordPublishTo(p,relays,ev,opts){const via=cordVia(p);return p.relayPublishTo(relays,ev,via?{...(opts||{}),via}:opts);}
+  function cordSubscribeFrom(R,relays,filters,opts){const via=cordVia(typeof PC==='function'?PC():null);return R.subscribeFrom(relays,filters,via?{...(opts||{}),via}:opts);}
   function homeRelayUrl(p){try{return normalizeRelay(p&&p.homeRelay&&p.homeRelay())||'';}catch(_){return '';}}
   function relaysAreHome(p,relays){const h=homeRelayUrl(p);return !!h&&(relays||[]).some(u=>normalizeRelay(u)===h);}
   function mirrorKey(pk){return 'pc.concord.mirror.v1.'+pk;}
@@ -245,7 +273,7 @@
     /* This node's relay first; the community's own relays only if it cannot carry the stream. */
     let fallback=null,stopped=false;
     const fall=()=>{if(stopped||fallback)return;try{fallback=cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);}catch(e){console.warn('Concord subscription fallback failed',String(e&&e.message||e));}};
-    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
+    const inner=cordSubscribeFrom(R,[h],filters,{...options,max:1,exact:true,onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
     if(inner&&inner.ready&&inner.ready.then)inner.ready.then(ok=>{if(!ok)fall();});
     const stop=()=>{stopped=true;try{inner&&inner();}catch(_){}if(fallback)try{fallback();}catch(_){}};
     stop.publish=event=>(inner&&inner.publish?inner.publish(event):0)+(fallback&&fallback.publish?fallback.publish(event):0);
@@ -272,7 +300,7 @@
       let authScope;
       try{ authScope=cordPlaneAuth(p,plane,author,relays); }
       catch(err){ firstFailure=firstFailure||err; continue; }
-      subscriptions.push(R.subscribeFrom(relays,[{...filter,authors:[author]}],{...options,max:relayCap,authScope}));
+      subscriptions.push(cordSubscribeFrom(R,relays,[{...filter,authors:[author]}],{...options,max:relayCap,authScope}));
     }}catch(e){subscriptions.forEach(stop=>stop());throw e;}
     if(!subscriptions.length&&firstFailure){throw firstFailure;}
     const stop=()=>subscriptions.forEach(close=>close());
@@ -288,7 +316,7 @@
     const h=home!==false&&p.relayQueryFrom&&typeof homeServes==='function'?homeServes(p,relays,filters):'';
     if(h){
       const reach={};let got=null;
-      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true});}catch(_){got=null;}
+      try{got=await cordQueryFrom(p,[h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true});}catch(_){got=null;}
       const note=(bucket,u)=>{if(report)(report[bucket]||(report[bucket]=[])).push(u);};
       if((reach.ok||[]).includes(h)){note('asked',h);note('ok',h);cordQuery.lastUnreadablePlanes=[];return got||[];}
       if((reach.held||[]).includes(h)&&!(reach.failed||[]).length&&!(reach.unavailable||[]).length){note('held',h);return [];}
@@ -329,7 +357,7 @@
             continue; }
           let events;
           try{
-            events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
+            events=await cordQueryFrom(p,relays,[{...filter,authors:[author]}],
               {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report,urgent});
           }catch(err){ firstFailure=firstFailure||err; continue; }
           succeeded++;
@@ -348,7 +376,7 @@
       return [...byId.values()];
     }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report,urgent})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>cordQueryFrom(p,relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report,urgent})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -1766,7 +1794,7 @@
       query:async(kind,author,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
         const targets=[...new Set([...bootstrap,...relays])].slice(0,8),report={};
-        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
+        const events=await cordQueryFrom(p,targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
         if(!current())throw new Error('Concord membership changed');
         const missing=unanswered(targets,report);
         return {events,complete:targets.length>0&&!missing.length,missing};
@@ -3210,12 +3238,12 @@
     const h=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
     if(h){
       const reach={};let got=[];
-      try{got=await p.relayQueryFrom([h],DIRECTORY_FILTERS,{timeout:12000,max:1,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord directory (this server)',report:reach})||[];}catch(_){got=[];}
+      try{got=await cordQueryFrom(p,[h],DIRECTORY_FILTERS,{timeout:12000,max:1,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord directory (this server)',report:reach})||[];}catch(_){got=[];}
       if((reach.ok||[]).includes(h))return {events:got,ok:true};
       if(signal&&signal.aborted)return {events:[],ok:false,why:'aborted'};
     }
     const reach={};let got=[];
-    try{got=await p.relayQueryFrom(DISCOVER_RELAYS,DIRECTORY_FILTERS,{timeout:9000,max:2,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord discover listings',report:reach})||[];}catch(_){got=[];}
+    try{got=await cordQueryFrom(p,DISCOVER_RELAYS,DIRECTORY_FILTERS,{timeout:9000,max:2,exact:true,urgent:true,allowBlocked:true,signal,purpose:'concord discover listings',report:reach})||[];}catch(_){got=[];}
     if((reach.ok||[]).length)return {events:got,ok:true};
     return {events:got,ok:false,why:(reach.failed||[]).length?'the directory relay did not answer':'the directory relay could not be asked'};
   }
@@ -3270,7 +3298,7 @@
     const parsed=window.PosterCord.inviteDetails(url);
     const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:100}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
-    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],p.relayQueryFrom(relays,filter,{timeout:10000,max:200,signal,purpose:'concord explicit invite',allowBlocked:true,failureCooldown:1800000})]);
+    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],cordQueryFrom(p,relays,filter,{timeout:10000,max:200,signal,purpose:'concord explicit invite',allowBlocked:true,failureCooldown:1800000})]);
     // Resolve the signed addressable coordinate once. A revoked/newer bundle must never
     // fall back to an older live copy; unsigned relay garbage cannot replace a signed one.
     const candidates=[...(pool||[]),...(external||[])].filter((ev,i,a)=>ev&&a.findIndex(x=>x&&x.id===ev.id)===i);
@@ -3358,7 +3386,7 @@
     const relays=[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS];
     let listed=[];
     if(sweep&&p.relayQueryFrom){
-      listed=await Promise.resolve(p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
+      listed=await Promise.resolve(cordQueryFrom(p,relays,filters,{timeout:8000,max:12,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
       externalDone(tag);
     }
     const queried=[...new Map([...local,...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
@@ -3369,7 +3397,7 @@
     if(ciphertext){const methods=/\?iv=/.test(ciphertext)?['nip04dec','nip44dec']:['nip44dec','nip04dec'];for(const method of methods){if(!p[method])continue;try{const privateTags=JSON.parse(await p[method](viewer.pubkey,ciphertext));if(Array.isArray(privateTags))all.push(...privateTags);break;}catch(_){}}}
     return nip29MembershipTags(all);
   }
-  async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true,signal,purpose:'concord nip29 room',allowBlocked:true,failureCooldown:1800000})||[];return await p.verifyRelayEvents(events);}
+  async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await cordQueryFrom(p,[relay],filters,{timeout,max:1,exact:true,signal,purpose:'concord nip29 room',allowBlocked:true,failureCooldown:1800000})||[];return await p.verifyRelayEvents(events);}
   /* LEAVING A NIP-29 GROUP TAKES IT OFF THE ACCOUNT'S kind-10009, or every other device (and this one,
    * on a fresh browser) re-adds it from that list. Edits the NEWEST list it can read and removes only
    * this group's tag -- public and, when it decrypts, private; content it cannot decrypt is carried
@@ -3380,7 +3408,7 @@
     const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}];
     let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query(filters)||[]:[];}catch(_){}
     const pool=p.relayQuery?await Promise.resolve(p.relayQuery(filters,8000)).catch(()=>[]):[];
-    const far=p.relayQueryFrom?await Promise.resolve(p.relayQueryFrom(CORD_RELAYS,filters,{timeout:8000,max:12,exact:true,purpose:'concord nip29 leave'})).catch(()=>[]):[];
+    const far=p.relayQueryFrom?await Promise.resolve(cordQueryFrom(p,CORD_RELAYS,filters,{timeout:8000,max:12,exact:true,purpose:'concord nip29 leave'})).catch(()=>[]):[];
     const all=[...new Map([...(cached||[]),...(pool||[]),...(far||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     const events=p.verifyRelayEvents?await p.verifyRelayEvents(all):[];
     const event=(events||[]).filter(e=>e.kind===10009&&e.pubkey===viewer.pubkey).sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
@@ -3395,7 +3423,7 @@
     if(!changed)return true;
     const now=Math.max(Math.floor(Date.now()/1000),Number(event.created_at)+1);
     const ev=await p.signTemplate({kind:10009,created_at:now,tags,content});
-    return !!(await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev));
+    return !!(await cordPublishTo(p,membershipWriteRelays(p,CORD_RELAYS),ev));
   }
   async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
@@ -3471,7 +3499,7 @@
       const sweep=external&&externalAllowed(pubkey,tag);
       let remote=[];
       if(sweep&&p.relayQueryFrom){
-        remote=await Promise.resolve(p.relayQueryFrom([...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],[filter],{timeout:8000,max:6,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
+        remote=await Promise.resolve(cordQueryFrom(p,[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],[filter],{timeout:8000,max:6,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
         externalDone(tag);
       }
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
@@ -4141,7 +4169,7 @@
       const latest=await cordMembershipState(p,owner);live();
       for(const {index}of events){const seen=latest.fragments.get(index)?.event,was=state.fragments.get(index)?.event;if(seen&&(!was||seen.created_at>was.created_at||seen.created_at===was.created_at&&seen.id<was.id))throw new Error('membership changed while signing; retry this update');}
       events.sort((a,b)=>(a.index>=state.count?0:1)-(b.index>=state.count?0:1)||(a.index>=state.count?b.index-a.index:a.index-b.index));
-      for(const {ev}of events){live();const accepted=await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
+      for(const {ev}of events){live();const accepted=await cordPublishTo(p,membershipWriteRelays(p,CORD_RELAYS),ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
         const held=membershipPublished.get(owner)||[];membershipPublished.set(owner,[...held.filter(e=>(e.tags||[]).find(t=>t[0]==='d')?.[1]!==ev.tags[0][1]),ev]);}
       return true;
     });membershipWrites.set(owner,job);return job;
@@ -4822,7 +4850,7 @@
       const plane=!nip29&&window.PosterCordReader&&window.PosterCordReader.createPlaneAuth&&
         cordPlaneContext(p,room.cord.bundle,roomControls.get(room.communityId||room.naddr)||[],room);
       const pooled=plane?null:R.subscribe(filters,{onEvent,live:true}),
-        external=plane?cordPlaneSubscribe(p,R,urls,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(urls,filters,{onEvent,timeout:0,live:true});
+        external=plane?cordPlaneSubscribe(p,R,urls,filters,{onEvent,timeout:0,live:true},plane):cordSubscribeFrom(R,urls,filters,{onEvent,timeout:0,live:true});
       const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
       chatSub={close,pooled,external};
       const gates=[];
@@ -5066,7 +5094,7 @@
         const authors=[...byAuthor.keys()],since=Math.floor(Date.now()/1000)-60,filters=[{kinds:[1059],authors,since}];
         try{
           const plane=reader.createPlaneAuth&&cordPlaneContext(p,w.bundle,roomControls.get(w.room.communityId||w.room.naddr)||[],w.room);
-          const close=plane?cordPlaneSubscribe(p,R,w.relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(w.relays,filters,{onEvent,timeout:0,live:true});
+          const close=plane?cordPlaneSubscribe(p,R,w.relays,filters,{onEvent,timeout:0,live:true},plane):cordSubscribeFrom(R,w.relays,filters,{onEvent,timeout:0,live:true});
           roomsLive.set(id,{key:w.key,close:()=>{ try{ close(); }catch(_){ } }});
           roomsLiveFailed.delete(id);
         }catch(e){
@@ -5237,7 +5265,7 @@
       for(let page=0;page<100;page++){
         if(!current())throw new Error('refounding account or membership changed');
         const report={},auth=reader.createPlaneAuth(bundle,cached,author,[relay]),filter={kinds:[1059],authors:[author],limit:1000,...(until===undefined?{}:{until})};
-        const events=await p.relayQueryFrom([relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history'});
+        const events=await cordQueryFrom(p,[relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history'});
         if(!current())throw new Error('refounding account or membership changed');
         if(!(report.ok||[]).map(normalizeRelay).includes(normalizeRelay(relay))||(report.failed||[]).length||(report.unheld||[]).length)throw new Error('every control relay must complete before refounding');
         let added=0;for(const ev of events||[])if(ev&&ev.pubkey===author&&ev.kind===1059){all.set(ev.id,ev);if(!seen.has(ev.id)){seen.add(ev.id);added++;}}
@@ -5409,7 +5437,7 @@
     let refreshing=false,lastRefresh=0;
     entry.refresh=()=>{if(refreshing||!current()||lastRefresh&&Date.now()-lastRefresh<60000)return;refreshing=true;lastRefresh=Date.now();
       void queryEnvelopeHistory(p,relays,authors,[...wraps.values()],{plane,purpose:'concord rekeys '+key,minInterval:60000}).then(events=>{if(current())for(const ev of events||[])onEvent(ev);}).catch(e=>{if(current())console.warn('Concord rekey history unavailable',e);}).finally(()=>{refreshing=false;});};
-    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true,max:1},plane):R.subscribeFrom(relays,filters,{onEvent,timeout:0,live:true});}
+    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true,max:1},plane):cordSubscribeFrom(R,relays,filters,{onEvent,timeout:0,live:true});}
     catch(e){close();rekeySubscriptions.delete(key);console.warn('Concord rekey subscription failed',e);}
     if(!closed)entry.refresh();
   }
@@ -5476,7 +5504,7 @@
     if(!pk||!room||!room.url)throw new Error('sign in to list this community');
     const held=heldListing(pk,room.url);
     if(held){
-      const accepted=await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...DISCOVER_RELAYS])],held);
+      const accepted=await cordPublishTo(p,[...new Set([...(p.relayUrls?.()||[]),...DISCOVER_RELAYS])],held);
       if(!accepted)throw new Error('Armada discovery relays rejected the listing');
       return held;
     }
@@ -5484,7 +5512,7 @@
     const ev=made&&made.ev;if(!ev)throw new Error('the listing could not be signed');
     // Remembered BEFORE the discovery send, so a refused send is retried with this same event.
     rememberListing(pk,room.url,ev);
-    const accepted=await p.relayPublishTo(DISCOVER_RELAYS,ev);
+    const accepted=await cordPublishTo(p,DISCOVER_RELAYS,ev);
     if(!accepted)throw new Error('Armada discovery relays rejected the listing');
     return ev;
   }
@@ -5682,6 +5710,7 @@
   let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
   let renderedAccount='';
   function render(){
+    if(!TUNNEL.ticket&&!TUNNEL.off&&tunnelBase(PC()))refreshTunnel();
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
     backgroundRenderPending=false;backgroundFocusHost=null;
@@ -6261,7 +6290,7 @@
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const manageLinks=$('#cc-manage-links');if(manageLinks)manageLinks.onclick=async()=>{const room=saved()[state.community];if(!room?.cord?.bundle)return;try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}};
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(shareableInviteUrl(p,room.url));return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(shareableInviteUrl(p,room.url)); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(shareableInviteUrl(p,upgraded.url)); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
-    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
+    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await cordPublishTo(p,CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     for(const id of ['#cc-settings-cancel','#cc-settings-close','#cc-settings-back']){const b=$(id);if(b)b.onclick=()=>{closeCommunitySettings();};}
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)activeSet(String(state.community));else activeSet(null);render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until
@@ -6899,7 +6928,7 @@
     /* subscribeFrom intentionally skips URLs already owned by Relay's managed pool. Using it alone
      * therefore subscribed to NOTHING for the common case where a Concord relay was also a normal
      * account relay. Listen on the pool and only use temporary sockets for the remaining URLs. */
-    const pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):R.subscribeFrom(urls,filters,{onEvent:receive});
+    const pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):cordSubscribeFrom(R,urls,filters,{onEvent:receive});
     const gates=[];
     if(pooled&&R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
     if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
@@ -6919,7 +6948,7 @@
     /* Publish on the room subscription's actual sockets. A generic pool success may be an unrelated
      * account relay and cannot prove an Armada peer can see this advertisement. */
     const sent=(x.p.relayPublishFastTo?x.p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);
-    if(!sent){const accepted=await x.p.relayPublishTo(x.relays,made.wrap);if(!accepted)throw new Error('room relays rejected the peer signal');}
+    if(!sent){const accepted=await cordPublishTo(x.p,x.relays,made.wrap);if(!accepted)throw new Error('room relays rejected the peer signal');}
     return made;
   }
   async function webxdcPeerQuery(ctx){
@@ -6933,7 +6962,7 @@
     const R=window.Relay,x=await webxdcCordParts(ctx);
     if(!R||!R.subscribe||!R.subscribeFrom||!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
     const seen=new Set(),receive=async wrap=>{try{const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,[wrap]);if(!x.plane.current())return;for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}catch(_){}};
-    const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive},plane):R.subscribeFrom(x.relays,filters,{onEvent:receive});
+    const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive},plane):cordSubscribeFrom(R,x.relays,filters,{onEvent:receive});
     /* Backfill after opening the live subscription, so an advertisement published during the query
      * cannot fall into the gap. The id set makes the overlap harmless. */
     /* Do not hold joinRealtimeChannel (and Quake's host-election burst) behind a ten-second history
@@ -6944,7 +6973,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
+  window.PCConcord={cordVia,refreshTunnel,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

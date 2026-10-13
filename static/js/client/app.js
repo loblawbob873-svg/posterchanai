@@ -14154,7 +14154,7 @@
      * poller. "Joined rooms are not reliably live." */
     relayClose: subId => Relay.close(subId),
     relayPublish: ev => Relay.publish(ev),
-    relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
+    relayPublishTo: (relays, ev, opts) => Relay.publishTo(relays, ev, opts),
     // A wrap for a Concord community this node's relay holds goes there first (concord.js roomPublish).
     relayPublishRoom: (relays, ev, authScope=null) => {
       const direct=(r,e,a)=>Relay.publishTo(r, e, {includeManaged:true, detailed:true, authScope:a});
