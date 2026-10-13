@@ -52,11 +52,20 @@ async def concord_relay(websocket: WebSocket):
         await websocket.close(code=4429, reason="too many relay connections")
         return
     try:
-        try:
-            upstream_cm = concord_tunnel.connect(target, proxy)
-            upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.OPEN_TIMEOUT + 5)
-        except Exception as e:
-            logger.info("[concord-tunnel] could not reach a relay: %s", type(e).__name__)
+        upstream_cm = upstream = None
+        # Through the proxy first; then DIRECT -- the last hop of the proxy's own Tor -> Tor -> direct chain, which
+        # it takes only on a CONNECT error, never on a relay that refuses Tor after it (damus: 503) or times out
+        # over it (asia.vectorapp.io, a CORD relay). Measured 2026-10-13: both answer direct.
+        for hop in (proxy, None):
+            try:
+                upstream_cm = concord_tunnel.connect(target, hop)
+                upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.OPEN_TIMEOUT + 5)
+                break
+            except Exception as e:
+                logger.info("[concord-tunnel] could not reach a relay %s: %s",
+                            "through the proxy" if hop else "directly", type(e).__name__)
+                upstream_cm = upstream = None
+        if upstream is None:
             await websocket.close(code=4502, reason="relay unreachable")
             return
         await websocket.accept()

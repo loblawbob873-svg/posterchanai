@@ -126,3 +126,29 @@ def test_no_proxy_means_no_tunnel(client, monkeypatch):
         with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={tun.issue(PK)}") as ws:
             ws.receive_text()
     assert client.seen == [], "the server dialled a relay directly, without the proxy"
+
+
+def test_a_relay_that_refuses_tor_is_reached_on_the_direct_hop(client, monkeypatch):
+    """Measured 2026-10-13 after deploy 217: through the fallback proxy relay.damus.io answered HTTP 503 (it refuses
+    Tor exits) and asia.vectorapp.io -- one of the four CORD relays -- timed out, while both answered DIRECT. The
+    proxy's own Tor -> Tor -> direct chain falls back only on a CONNECT error, never on a refusal after it, so the
+    tunnel takes that last hop itself."""
+    seen = []
+
+    def connect(url, proxy):
+        seen.append(proxy)
+        if proxy:
+            class Refused:
+                async def __aenter__(self):
+                    raise TimeoutError("timed out during opening handshake")
+
+                async def __aexit__(self, *a):
+                    return False
+            return Refused()
+        return _Upstream()
+    monkeypatch.setattr(tun, "connect", connect)
+    with client.websocket_connect(f"/ws/concord-relay?u=wss://asia.vectorapp.io/nostr&t={tun.issue(PK)}") as ws:
+        ws.send_text('["REQ","x",{}]')
+        assert "echo:" in ws.receive_text()
+    assert seen == ["http://127.0.0.1:8119", None], seen
+    assert tun._open == {} and tun._total == 0

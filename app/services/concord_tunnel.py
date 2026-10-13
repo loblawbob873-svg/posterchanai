@@ -13,9 +13,9 @@ Rules, each one a reason the endpoint is not an open proxy:
     derived from the operator key, short-lived; it names the member, so limits are per person;
   * the target must be ws:// or wss:// to a PUBLIC host (search_service.is_safe_url on the http form) --
     never loopback, LAN or this node's own relay port;
-  * outbound goes through the proxy's FALLBACK listener (Tor 1 -> Tor 2 -> direct), never directly from the
-    server's address -- the same rule as the mirror; with no proxy the endpoint refuses and the client dials
-    the relay itself, exactly as before;
+  * outbound goes through the proxy's FALLBACK listener (Tor 1 -> Tor 2 -> direct); a relay that refuses Tor or
+    times out over it is then dialled direct (that chain's own last hop, which it only takes on a connect error);
+    with no proxy the endpoint refuses and the client dials the relay itself, exactly as before;
   * at most PER_MEMBER open tunnels per member and GLOBAL_MAX in all; frames are capped at MAX_FRAME.
 """
 from __future__ import annotations
@@ -125,10 +125,10 @@ def release(pk: str) -> None:
     _total = max(0, _total - 1)
 
 
-def connect(url: str, proxy: str):
-    """The outbound socket, through the fallback proxy (patched in tests)."""
+def connect(url: str, proxy: str | None):
+    """The outbound socket, through the fallback proxy, or direct with `proxy=None` (patched in tests)."""
     import websockets
-    return websockets.connect(url, proxy=proxy, open_timeout=OPEN_TIMEOUT, max_size=MAX_FRAME,
+    return websockets.connect(url, proxy=proxy or None, open_timeout=OPEN_TIMEOUT, max_size=MAX_FRAME,
                               user_agent_header="PosterChan/Server", ping_interval=None)
 
 
