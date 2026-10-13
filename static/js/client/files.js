@@ -1019,6 +1019,16 @@ window.PCFilesFactory = function(dep){
       try{ if(r.body && r.body.cancel) await r.body.cancel(); }catch(_){}
       await new Promise(done => setTimeout(done, 250 * (attempt + 1)));
     }
+    /* THE BLOB IS WHEREVER IT WAS UPLOADED. A synced file sent while the media server was another one (a
+     * person who later switched to blossom.ditto.pub, or back) answers 404 here and drew no thumbnail and
+     * could not be opened. Try the other places a drive blob can live; the hash and AES-GCM checks below
+     * still decide whether the bytes are the right ones. */
+    if(!r.ok && (r.status === 404 || r.status === 410)){
+      for(const base of _driveBlobSources()){
+        if(base === mediaServer().replace(/\/+$/,'')) continue;
+        try{ const alt = await fetch(base + '/' + sha, { cache:'no-store' }); if(alt.ok){ r = alt; break; } }catch(_){}
+      }
+    }
     if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
     /* KEEP THE STALL CLOCK TIED TO BYTES, NOT TO WHOLE BLOBS.
      *
@@ -1576,6 +1586,39 @@ window.PCFilesFactory = function(dep){
       }
     }, { rootMargin: '200px' });
     $$('[data-thumb]', grid).forEach(el=>_thumbObs.observe(el));
+  }
+
+  /* THUMBNAILS FOR ENCRYPTED DRIVE PICTURES. Josephus, 2026-10-13: "files with no thumbnails, no idea what
+   * picture is what" -- every encrypted picture on the drive drew a lock icon, because the server cannot make a
+   * preview of bytes it cannot read. The same answer as a synced folder: decrypt HERE, only what is scrolled
+   * into view, at most _THUMB_PAR at once, small files only, through `_encFileUrl` (which reads from whichever
+   * server holds the blob and caches/revokes its object URLs). A picture that cannot be decrypted keeps its icon. */
+  let _encThumbObs = null;
+  function _bindEncThumbs(grid){
+    try{ if(_encThumbObs) _encThumbObs.disconnect(); }catch(_){}
+    if(!window.IntersectionObserver || !grid) return;
+    _encThumbObs = new IntersectionObserver((entries)=>{
+      for(const en of entries){
+        if(!en.isIntersecting) continue;
+        const el = en.target, sha = el.dataset.encthumb;
+        _encThumbObs.unobserve(el);
+        if(!sha) continue;
+        (async()=>{
+          while(_thumbBusy >= _THUMB_PAR) await new Promise(r=>setTimeout(r, 120));
+          _thumbBusy++;
+          // encFileUrl, not _encFileUrl: the grid is redrawn on every navigation and refresh, and the bare
+          // decrypt neither reuses the cached URL nor shares one in flight -- each redraw downloaded and
+          // decrypted every picture again and overwrote (leaked) the object URL it had already made.
+          try{ return await encFileUrl(sha, el.dataset.encthumbMime || ''); }
+          finally{ _thumbBusy--; }
+        })().then(url=>{
+          if(!el.isConnected || !url) return;
+          el.style.backgroundImage = 'url("' + url + '")';
+          el.classList.add('has-thumb');
+        }).catch(()=>{});
+      }
+    }, { rootMargin: '200px' });
+    $$('[data-encthumb]', grid).forEach(el=>_encThumbObs.observe(el));
   }
 
   /* An edit to the shared manifest, made from here. Everything that can go wrong with one is the
@@ -3544,7 +3587,9 @@ window.PCFilesFactory = function(dep){
        * way to open any blossom file in posterchan code or office yet". Same buttons, same
        * dataset, same handlers as the details row; only the place they are drawn is new. */
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">${_fxEncIcon(ext, m.mime)}<span>${enc(ext||'enc')}</span></div></a>
+        const encThumb = ((/^image\//i.test(m.mime||'') || _THUMB_EXT.test(ext||'')) && (+b.size||0) <= _THUMB_MAX)
+          ? ` data-encthumb="${b.sha256}" data-encthumb-mime="${enc(m.mime||mimeForName('x.'+(ext||''))||'')}"` : '';
+        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon"${encThumb}>${_fxEncIcon(ext, m.mime)}<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
           <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
       }
@@ -3601,6 +3646,7 @@ window.PCFilesFactory = function(dep){
       _openWithSheet(d.name||'this file', hs);
     });
     _bindThumbFallback(grid);
+    _bindEncThumbs(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.
     $$('.dlenc',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); saveEncrypted(b.dataset.sha, b.dataset.name); });
@@ -3824,7 +3870,7 @@ window.PCFilesFactory = function(dep){
         throw err;
       }
     }
-    const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
+    const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||mimeHint||'application/octet-stream'}));
     _encUrls[sha]=u; _encOrder.push(sha);
     _encEvict();
     return u;
@@ -3839,6 +3885,12 @@ window.PCFilesFactory = function(dep){
     // than being dropped, that cost grew with every decrypt in the session.
     const live = new Set();
     for(const im of document.images) if(im.src) live.add(im.src);
+    // A drive tile's decrypted thumbnail is a CSS background, which document.images does not list --
+    // revoked under a tile still on screen, the picture would go blank behind a hidden icon.
+    for(const el of document.querySelectorAll('[data-encthumb].has-thumb')){
+      const mm = /url\("?([^")]+)"?\)/.exec(el.style.backgroundImage || '');
+      if(mm) live.add(mm[1]);
+    }
     let guard = _encOrder.length;
     while(_encOrder.length > ENC_LRU && guard-- > 0){
       const old = _encOrder.shift();
