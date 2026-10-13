@@ -588,6 +588,13 @@ class ConcordMirror:
     def author_ready(self, author: str) -> bool:
         if self._author_full(author):
             return False
+        # A relay that REFUSED our subscription (auth-required) holds what it holds and we will never see it: serving
+        # the room from this copy because ANOTHER relay synced answered members with whatever was posted only there
+        # missing ("isolated to this room", poster.place 2026-10-13). Refused = could not ask = unavailable.
+        for url in self._relays_for(author):
+            link = self.links.get(url)
+            if link is not None and author in link.authors and link.refused:
+                return False
         for url in self._relays_for(author):
             link = self.links.get(url)
             if link is not None and author in link.authors and link.ready:

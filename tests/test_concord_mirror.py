@@ -733,3 +733,29 @@ def test_the_relay_thread_points_the_mirror_at_the_fallback_listener():
         return d
     assert thread._fallback_proxy_url(g, gi, lambda k, d=False: True) == "http://127.0.0.1:8119"
     assert thread._fallback_proxy_url(g, gi, lambda k, d=False: False) == ""
+
+
+def test_a_room_one_of_whose_relays_refused_the_mirror_is_unavailable_not_partial():
+    """A community on two relays where one REFUSES the mirror (relay.damus.io: auth-required, measured on
+    poster.place 2026-10-13) and holds a message the other does not. Serving from this node's copy because the
+    OTHER relay synced handed the member a room with that message missing -- "largely isolated to this room",
+    while Vector, reading damus directly, showed it. A refused relay is "could not ask": the room is
+    `unavailable:` and the client reads the community's relays itself."""
+    stream, member = key(), key()
+    only_there = wrap(stream)
+
+    async def go():
+        good = await Upstream([wrap(stream)]).start()
+        refusing = await Upstream([only_there], refuse="auth-required: we want AUTH").start()
+        node = await Node({pub(member)}).start()
+        try:
+            assert (await node.publish(registration(member, [good.url, refusing.url], [pub(stream)])))[2] is True
+            await asyncio.sleep(2.0)
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(stream)]}])
+            assert not node.mirror.author_ready(pub(stream)), "a room missing a refused relay was called in step"
+            assert last[0] == "CLOSED" and last[2].startswith("unavailable:"), (last, len(got))
+        finally:
+            await node.close()
+            await good.close()
+            await refusing.close()
+    run(go())
