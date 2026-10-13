@@ -209,3 +209,28 @@ def test_a_tip_counts_toward_the_day_it_arrived():
            "tags": [["p", ME], ["t", "monerotip"], ["amount_xmr", "0.25"]]}
     out = compute([post], [tip], now, 30, ME)
     assert sum(d["engagement"] for d in out["daily"]) == 1, out["daily"]
+
+
+def test_real_zap_receipts_are_counted_in_sats():
+    """A NIP-57 receipt has no `amount` tag: the amount is in the zap request (`description`) and the `bolt11`
+    invoice. Reading only `amount` counted every zap as 0 -- "shows I got no zaps in the last 30 days, but my
+    notifs say otherwise" (Josephus, 2026-10-13). A zap of the PROFILE (no `e` tag) is support too."""
+    js = r"""
+global.window={__PC:{enc:String,isView:()=>false}};
+global.document={};
+require('./static/js/client/user-analytics.js');
+const now=2000000000, me='m'.repeat(64), a={id:'a',kind:1,created_at:now-100,content:'A'};
+const zr=amt=>JSON.stringify({kind:9734,tags:[['p',me],['amount',String(amt)]],content:''});
+const events=[
+  // amount in the zap request only (the usual shape)
+  {id:'z1',kind:9735,created_at:now-50,tags:[['e','a'],['p',me],['bolt11','lnbc1pjunk'],['description',zr(21000)]]},
+  // amount in the invoice only: 500 sats = lnbc5u
+  {id:'z2',kind:9735,created_at:now-40,tags:[['e','a'],['p',me],['bolt11','lnbc5u1pqxyz']]},
+  // a zap of the profile: 1000 sats, no e tag
+  {id:'z3',kind:9735,created_at:now-30,tags:[['p',me],['description',zr(1000000)]]},
+];
+process.stdout.write(JSON.stringify(window.PCUserAnalytics._compute([a],events,now,30,me).totals));
+"""
+    proc = subprocess.run(["node", "-e", js], cwd=ROOT, text=True, capture_output=True, check=True)
+    totals = json.loads(proc.stdout)
+    assert totals["zaps"] == 21 + 500 + 1000, totals

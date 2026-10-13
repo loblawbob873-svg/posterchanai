@@ -41,14 +41,32 @@
     for(const t of ((ev && ev.tags) || [])) if(t && t[0] === 'p' && t[1] === me) return true;
     return false;
   }
+  /* A ZAP'S AMOUNT IS IN THE INVOICE, NOT IN AN `amount` TAG. NIP-57 receipts carry `bolt11` and the zap request
+   * (`description`, whose own `amount` tag is the msat amount asked for); reading only a receipt-level `amount`
+   * tag -- which real receipts do not have -- counted every zap as 0 sats: "shows I got no zaps in the last 30
+   * days, but my notifs say otherwise" (Josephus, 2026-10-13). Same order as the notifications' zapAmount. */
+  function bolt11Sats(inv){
+    const m=/^ln(?:bc|tb|bcrt|tbs)(\d+)([munp])?1/i.exec(String(inv||'')); if(!m) return 0;
+    const n=Number(m[1]), mult={m:1e5,u:1e2,n:1e-1,p:1e-4}[(m[2]||'').toLowerCase()];
+    return Math.round(m[2] ? n*mult : n*1e8);
+  }
+  function zapSats(ev){
+    const tags=(ev&&ev.tags)||[];
+    try{ const d=(tags.find(t=>t[0]==='description')||[])[1]; if(d){ const zr=JSON.parse(d), a=((zr&&zr.tags)||[]).find(t=>t[0]==='amount');
+      const s=Math.round(parseInt(a&&a[1],10)/1000); if(s>0) return s; } }catch(_){}
+    const b=bolt11Sats((tags.find(t=>t[0]==='bolt11')||[])[1]); if(b>0) return b;
+    const a=(tags.find(t=>t[0]==='amount')||[])[1]; const s=Math.round((Number(a)||0)/1000); return s>0?s:0;
+  }
   function compute(posts, events, now, days, me){
     posts=dedupe(posts).sort((a,b)=>b.created_at-a.created_at); events=dedupe(events); now=now||Math.floor(Date.now()/1000);
     const byId=new Map(posts.map(p=>[p.id,{post:p,replies:0,reactions:0,reposts:0,zaps:0,xmr:0,bch:0,tips:0,score:0}]));
-    const loose={xmr:0,bch:0,tips:0},looseIds=new Set();
+    const loose={xmr:0,bch:0,tips:0,zaps:0},looseIds=new Set();
     events.forEach(e=>{ const row=byId.get(target(e));
       if(!row){
         /* Only a TIP, and only one addressed to this account. Anything else with no row is an
            event about somebody else's post that came back in the same batch. */
+        /* A zap of the PROFILE (no `e` tag) is support for the person, like a profile tip. */
+        if(e.kind===9735&&tipNames(e,me)){ loose.zaps+=zapSats(e); looseIds.add(e.id); return; }
         const tk=e.kind===1?tipOf(e):'';
         if(tk&&tipNames(e,me)){
           if(tk==='xmr')loose.xmr+=tagAmount(e,'amount_xmr'); else loose.bch+=tagAmount(e,'amount_bch');
@@ -64,7 +82,7 @@
         else row.replies++;
       }
       else if(e.kind===7)row.reactions++; else if(e.kind===6)row.reposts++;
-      else if(e.kind===9735){ const amount=(e.tags||[]).find(t=>t[0]==='amount'); row.zaps+=Math.round((Number(amount&&amount[1])||0)/1000); }
+      else if(e.kind===9735){ row.zaps+=zapSats(e); }
     });
     byId.forEach(r=>{ r.score=r.reactions+r.replies*2+r.reposts*3+r.tips*3+(r.zaps?1:0); });
     days=Math.max(1,Math.min(90,Number(days)||30));
@@ -73,7 +91,7 @@
     events.forEach(e=>{ const i=days-1-Math.floor((now-e.created_at)/DAY); if(i>=0&&i<days&&(byId.has(target(e))||looseIds.has(e.id)))daily[i].engagement++; });
     const rows=[...byId.values()], totals=rows.reduce((a,r)=>({posts:a.posts+1,replies:a.replies+r.replies,reactions:a.reactions+r.reactions,reposts:a.reposts+r.reposts,zaps:a.zaps+r.zaps,xmr:a.xmr+r.xmr,bch:a.bch+r.bch,tips:a.tips+r.tips}),{posts:0,replies:0,reactions:0,reposts:0,zaps:0,xmr:0,bch:0,tips:0});
     /* Tips are engagement. They were invisible here because they were being tallied as replies. */
-    totals.xmr+=loose.xmr; totals.bch+=loose.bch; totals.tips+=loose.tips;
+    totals.xmr+=loose.xmr; totals.bch+=loose.bch; totals.tips+=loose.tips; totals.zaps+=loose.zaps;
     totals.engagement=totals.replies+totals.reactions+totals.reposts+totals.tips; totals.rate=totals.posts?totals.engagement/totals.posts:0;
     return {totals,daily,top:rows.sort((a,b)=>b.score-a.score||b.post.created_at-a.post.created_at).slice(0,6)};
   }
@@ -116,12 +134,12 @@
            post from last year are both outside it — see the note on `compute`. Same window, so it
            answers the same question the rest of the screen does. Deduped by id in compute(), so a
            tip that both queries return is counted once. */
-        try{ const tips=await PC.relayQuery([{kinds:[1],'#p':[viewer.pubkey],'#t':['monerotip','bchtip'],since,limit:500}],9000); events.push(...tips); }catch(_){ }
+        try{ const tips=await PC.relayQuery([{kinds:[1],'#p':[viewer.pubkey],'#t':['monerotip','bchtip'],since,limit:500},{kinds:[9735],'#p':[viewer.pubkey],since,limit:500}],9000); events.push(...tips); }catch(_){ }
         if(mine!==serial||!PC.isView('analytics'))return;
         if(mine===serial)paint(compute(posts,events,0,range,viewer.pubkey));
       }catch(e){ if(mine===serial&&PC.isView('analytics'))f.innerHTML=`<div class="empty">Couldn’t load analytics from your relays.<br><button class="btn btn-cyan small" id="ua-retry">Try again</button></div>`,PC.$('#ua-retry').onclick=load; }
     }
-    window.PCUserAnalytics={render:load,_compute:compute,_target:target};
+    window.PCUserAnalytics={render:load,_compute:compute,_target:target,_zapSats:zapSats};
   }
   init();
 })();
