@@ -85,19 +85,22 @@
   let migrating=null;
   function migrate(){
     if(migrating||!localRelay())return migrating;
-    migrating=(async()=>{let moved=0;
+    /* A REFUSED ENVELOPE IS SKIPPED, NOT A REASON TO STOP. Breaking out on a partly acknowledged batch let one
+     * envelope the relay will not keep halt the whole move for that page load (the laptop, 2026-10-13: 219 moved,
+     * ~4,500 left). It keeps its body, and the move goes on past it. */
+    migrating=(async()=>{let moved=0;const skip=new Set();
       for(;;){
         const S=localRelay();if(!S)break;
         const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),batch=[];
         await new Promise((resolve,reject)=>{const q=read.objectStore(STORE).openCursor();q.onerror=()=>reject(q.error);
-          q.onsuccess=()=>{const c=q.result;if(!c||batch.length>=200){resolve();return;}if(c.value&&c.value.event&&!c.value.lr)batch.push(c.value);c.continue();};});
+          q.onsuccess=()=>{const c=q.result;if(!c||batch.length>=200){resolve();return;}if(c.value&&c.value.event&&!c.value.lr&&!skip.has(c.value.id))batch.push(c.value);c.continue();};});
         await readDone;if(!batch.length)break;
         let acked=new Set();try{acked=await S.lrPut(batch.map(r=>r.event));}catch(_){break;}
-        if(!acked.size)break;
+        if(!acked.size&&!localRelay())break;               // the relay went away: the next load carries on
+        for(const r of batch)if(!acked.has(r.id))skip.add(r.id);
         const tx=db.transaction(STORE,'readwrite'),completion=done(tx),w=tx.objectStore(STORE);
         for(const r of batch)if(acked.has(r.id)){const ref={key:r.key,stream:r.stream,id:r.id,created:r.created,size:0,lr:1};if(Number.isSafeInteger(r.expires))ref.expires=r.expires;w.put(ref);moved++;}
         await completion;
-        if(acked.size<batch.length)break;
         await new Promise(r=>setTimeout(r,50));
       }
       return moved;})().catch(()=>0);
@@ -185,4 +188,10 @@
   function stale(e){return !!e&&(e.name==='InvalidStateError'||/connection is clos|database.*closed/i.test(String(e.message||'')));}
   function healing(fn){return async function(){try{return await fn.apply(this,arguments);}catch(e){if(!stale(e))throw e;dbPromise=null;return fn.apply(this,arguments);}};}
   root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;migrating=null;},migrate};
+  /* THE MOVE STARTS AT BOOT, NOT WHEN CONCORD IS OPENED. It used to run only from Concord's own reads and writes,
+   * so a machine where nobody opened Communities kept its whole old cache in IndexedDB indefinitely (the TV and the
+   * laptop, 2026-10-13). On a desktop with a local relay it now starts once that relay answers, and only then. */
+  try{if(root.indexedDB&&root.pcShell&&typeof root.pcShell.localRelay==='function'&&typeof setInterval==='function'){
+    let tries=0;const t=setInterval(()=>{if(localRelay()){clearInterval(t);migrate();}else if(++tries>90)clearInterval(t);},2000);
+    if(t&&t.unref)t.unref();}}catch(_){}
 })(typeof window==='undefined'?globalThis:window);
