@@ -405,7 +405,8 @@
   function _lrOpen(){
     if (!LR.url || LR.ws) return;
     let ws;
-    try { ws = new WebSocket(LR.url); } catch(_){ return _lrRetry(); }
+    // `?pc-cache=1`: the relay stores these and does not fan them back to this app's own subscriptions (osmode.py).
+    try { ws = new WebSocket(LR.url.replace(/\/?$/, '/') + '?pc-cache=1'); } catch(_){ return _lrRetry(); }
     LR.ws = ws;
     ws.onopen = () => { LR.up = true; LR.retry = 600; LR.stats.opened++; };
     ws.onmessage = (m) => {

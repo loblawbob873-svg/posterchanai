@@ -412,6 +412,27 @@ class OsRelayServer(RelayServer):
         super().__init__(store, gate, config)
         self._on_owner = on_owner
         self._sign_waiters: dict = {}
+        # THE DESKTOP'S OWN CACHE WRITES ARE NOT FANNED BACK OUT. store.js writes every event it receives into this
+        # relay over a socket it opens with `?pc-cache=1`; those are copies the app ALREADY HOLDS, and the same app
+        # also subscribes here, so each one came straight back and was re-verified -- a full core on the laptop,
+        # 2026-10-13 (py-spy: ~56% sending frames, ~28% _on_event/fanout). Stored as before; only fan-out is skipped.
+        import weakref
+        self._cache_conns = weakref.WeakSet()
+        self._quiet_ids: dict = {}
+        _fanout = self.subs.fanout
+
+        def fanout(ev, send, allow, _orig=_fanout):
+            if self._quiet_ids.pop(ev.get("id", ""), None) is not None:
+                return
+            return _orig(ev, send, allow)
+        self.subs.fanout = fanout
+
+    async def _on_event(self, conn, ev) -> None:
+        if conn in self._cache_conns and isinstance(ev, dict) and ev.get("id"):
+            if len(self._quiet_ids) > 20000:
+                self._quiet_ids.clear()
+            self._quiet_ids[ev["id"]] = True
+        await super()._on_event(conn, ev)
 
     def _nip78_owner(self, conn, pubkey: str) -> bool:
         return True
@@ -435,6 +456,8 @@ class OsRelayServer(RelayServer):
         try:
             hdrs = request.headers
             if _one_header(hdrs, "Upgrade").lower() == "websocket":
+                if "pc-cache=1" in (getattr(request, "path", "") or ""):
+                    self._cache_conns.add(connection)
                 return super().process_request(connection, request)
             accept = _one_header(hdrs, "Accept")
         except Exception:      # noqa: BLE001
