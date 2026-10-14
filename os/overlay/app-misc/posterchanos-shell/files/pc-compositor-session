@@ -574,6 +574,12 @@ fi
 # precisely the case where it is not, and precisely the case this session exists to recover from.
 # Ask, wait a bounded moment, insist, wait again, and return either way; the caller decides what to
 # say about a child that is still there.
+pc_keep_wayfire_logs() {
+	[ -s "$1/wayfire.log" ] || return 0
+	[ -f "$1/wayfire.log.1" ] && mv -f "$1/wayfire.log.1" "$1/wayfire.log.2" 2>/dev/null
+	mv -f "$1/wayfire.log" "$1/wayfire.log.1" 2>/dev/null || :
+}
+
 pc_stop_wayfire() {
 	kill -0 "$wayfire_pid" 2>/dev/null || return 0
 	kill -TERM "$wayfire_pid" 2>/dev/null || true
@@ -1239,6 +1245,10 @@ PC_SESSION_CONFIG_PY
 		# Read by rescue(): an empty log means something different before this line and after it.
 		wayfire_started=1
 		pc_say "starting Wayfire on: $(pc_drm_cards | tr '\n' ',' | sed 's/,$//')"
+		# KEEP THE LAST TWO. Every restart truncated this file, so the one log that could say why the session
+		# went down (the TV, 2026-10-13: the shell's display connection cut while Steam started, three restarts
+		# in two minutes) was overwritten by the restart it caused.
+		pc_keep_wayfire_logs "$state_dir"
 		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
 		( pc_wait_for_wayland 100 "$wayfire_pid" && pc_fix_unpreferred_modes ) &
@@ -1413,6 +1423,10 @@ pc_retry_sw=''
 [ "${status:-1}" -eq 0 ] || pc_retry_sw="Wayfire $(describe_status "${status:-}") on this machine's graphics"
 case "${reason:-}" in
 	*"never signalled ready"*) pc_retry_sw="the desktop came up and painted nothing" ;;
+	# THIS SCRIPT STOPPED WAYFIRE because the shell went away -- whatever status that stop left behind says
+	# nothing about the graphics. Read as a renderer failure it dropped a working NVIDIA TV to software and
+	# then pixman rendering after one lost shell connection (2026-10-13, opening Steam).
+	*"no replacement shell"*) pc_retry_sw='' ;;
 esac
 #
 # THREE ATTEMPTS, EACH ONE GIVING UP SOMETHING THE LAST ONE NEEDED: the card's own driver, then
