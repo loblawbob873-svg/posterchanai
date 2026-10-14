@@ -83,6 +83,22 @@ class Base_(unittest.TestCase):
         self.p_status.start()
         self.addCleanup(self.p_status.stop)
 
+        # THE ACCOUNTS ARE THIS TEST'S OWN ROWS. user_table is a relay DocTable signed with the operator key, so left
+        # alone it read THIS HOST'S keyfile and its live relay when the file ran by itself, and raised "this node has
+        # no operator key" inside a gate shard whenever an earlier test had stubbed the keystore (failed 4 deploy
+        # gates). Every account lookup on these paths now answers from self.db, so the rule is measured, not the host.
+        from app.services import user_table
+        rows = lambda: list(self.db.query(User))
+        by_npub = lambda db, npub: next((u for u in rows() if u.nostr_npub == npub), None)
+
+        async def aby_npub(db, npub):
+            return by_npub(db, npub)
+        for name, fn in (("by_npub", by_npub), ("aby_npub", aby_npub),
+                         ("filter_users", lambda db, pred: [u for u in rows() if pred(u)])):
+            p = mock.patch.object(user_table, name, fn)
+            p.start()
+            self.addCleanup(p.stop)
+
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
