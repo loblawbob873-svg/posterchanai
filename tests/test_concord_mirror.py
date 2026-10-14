@@ -759,3 +759,43 @@ def test_a_room_one_of_whose_relays_refused_the_mirror_is_unavailable_not_partia
             await good.close()
             await refusing.close()
     run(go())
+
+
+def test_the_mirror_reaches_a_relay_tor_times_out_on(monkeypatch):
+    """Measured 2026-10-14: asia.vectorapp.io (a CORD relay) timed out over Tor 2 times in 3 and answered direct in
+    ~1 s; the mirror was Tor-only and held NO link to it, so every room hosted there was read past it. The mirror
+    now dials Tor first with a short timeout, then direct, and goes direct first for a host Tor failed for."""
+    import websockets
+    from app.services import concord_tunnel as tun
+    from app.services.nostr_relay import concord_mirror as cm
+    monkeypatch.setattr(tun, "_tor_bad", {})
+    seen = []
+
+    class _CM:
+        def __init__(self, proxy):
+            self.proxy = proxy
+
+        async def __aenter__(self):
+            if self.proxy:
+                raise TimeoutError("timed out during opening handshake")
+            return "socket"
+
+        async def __aexit__(self, *a):
+            return False
+
+    def connect(url, proxy=None, open_timeout=None, **kw):
+        seen.append((proxy, open_timeout))
+        return _CM(proxy)
+    monkeypatch.setattr(websockets, "connect", connect)
+    m = cm.ConcordMirror.__new__(cm.ConcordMirror)
+    m._open_override = None
+    m.cfg = {"concord_mirror_proxy": "http://127.0.0.1:8119"}
+
+    async def go():
+        async with m._open("wss://asia.vectorapp.io/nostr") as ws:
+            assert ws == "socket"
+        async with m._open("wss://asia.vectorapp.io/nostr") as ws:
+            assert ws == "socket"
+    asyncio.run(go())
+    assert seen == [("http://127.0.0.1:8119", tun.TOR_OPEN_TIMEOUT), (None, tun.OPEN_TIMEOUT),
+                    (None, tun.OPEN_TIMEOUT)], seen

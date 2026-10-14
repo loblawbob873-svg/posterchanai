@@ -153,6 +153,38 @@ def normalize_relay(url: str) -> str:
     return f"{p.scheme.lower()}://{p.netloc.lower()}{path}"
 
 
+class _TorThenDirect:
+    """`async with` a websocket: through `proxy` first, then direct -- concord_tunnel's hop order and memory."""
+
+    def __init__(self, url: str, proxy: str):
+        self.url, self.proxy, self._cm = url, proxy, None
+
+    async def __aenter__(self):
+        import websockets
+        from app.services import concord_tunnel as tun
+        last = None
+        for hop in tun.hops(self.url, self.proxy):
+            cm = websockets.connect(self.url, proxy=hop or None, open_timeout=tun.open_timeout(hop),
+                                    max_size=4 * 1024 * 1024, user_agent_header="PosterChan/Server", ping_interval=None)
+            try:
+                ws = await cm.__aenter__()
+            except Exception as e:
+                if hop:
+                    tun.tor_result(self.url, False)
+                last = e
+                continue
+            if hop:
+                tun.tor_result(self.url, True)
+            self._cm = cm
+            return ws
+        raise last or ConnectionError("unreachable")
+
+    async def __aexit__(self, *exc):
+        if self._cm is not None:
+            return await self._cm.__aexit__(*exc)
+        return False
+
+
 class _Link:
     """One upstream relay: ONE socket, the history of every registered stream it carries, then live."""
 
@@ -451,15 +483,20 @@ class ConcordMirror:
         return str(self.cfg.get("concord_mirror_proxy") or "")
 
     def _open(self, url: str):
-        """A websocket to `url` through the FALLBACK proxy (Tor 1 → Tor 2 → direct). Never direct."""
+        """A websocket to `url` through the FALLBACK proxy (Tor 1 → Tor 2 → direct), then DIRECT.
+
+        The proxy's own chain falls back only on a CONNECT error, never on a Tor dial that TIMES OUT. Measured
+        2026-10-14: asia.vectorapp.io -- a CORD relay -- timed out over Tor 2 times in 3 and answered direct in
+        ~1 s, and this mirror, "never direct", held no link to it at all; every room hosted there was read
+        through the tunnel instead, which made the same 20 s Tor attempt in front of the client's 10 s read.
+        The same rule as the tunnel (concord_tunnel.hops): Tor first with a short timeout, a host Tor failed
+        for goes direct first for a while. Still no mirror at all without a proxy (the operator's opt-in)."""
         if self._open_override is not None:
             return self._open_override(url)
-        import websockets
         proxy = self._proxy()
         if not proxy:
             raise Unavailable("no outbound proxy configured")
-        return websockets.connect(url, proxy=proxy, open_timeout=20, max_size=4 * 1024 * 1024,
-                                  user_agent_header="PosterChan/Server", ping_interval=None)
+        return _TorThenDirect(url, proxy)
 
     # -- lifecycle --------------------------------------------------------------------------------------
     async def start(self) -> None:
@@ -705,6 +742,8 @@ class ConcordMirror:
         self.regs.setdefault(member, {})[group] = {"relays": relays, "authors": authors, "at": int(now)}
         self._dirty()
         await self._reconcile()
+        logger.info("[concord-mirror] %s… mirrors %s…: %d stream(s) from %s%s", member[:8], group[:8], len(authors),
+                    ", ".join(relays), (" (not mirrored: " + "; ".join(reasons) + ")") if reasons else "")
         return True, f"mirroring: {len(authors)} stream(s) from {len(relays)} relay(s)"
 
     # -- upstream -> store ------------------------------------------------------------------------------

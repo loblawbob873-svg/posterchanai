@@ -61,12 +61,17 @@ async def concord_relay(websocket: WebSocket):
         # Through the proxy first; then DIRECT -- the last hop of the proxy's own Tor -> Tor -> direct chain, which
         # it takes only on a CONNECT error, never on a relay that refuses Tor after it (damus: 503) or times out
         # over it (asia.vectorapp.io, a CORD relay). Measured 2026-10-13: both answer direct.
-        for hop in (proxy, None):
+        # Tor gets concord_tunnel.TOR_OPEN_TIMEOUT, and a host it failed for goes direct first for a while.
+        for hop in concord_tunnel.hops(target, proxy):
             try:
                 upstream_cm = concord_tunnel.connect(target, hop)
-                upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.OPEN_TIMEOUT + 5)
+                upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.open_timeout(hop) + 1)
+                if hop:
+                    concord_tunnel.tor_result(target, True)
                 break
             except Exception as e:
+                if hop:
+                    concord_tunnel.tor_result(target, False)
                 logger.info("[concord-tunnel] could not reach a relay %s: %s",
                             "through the proxy" if hop else "directly", type(e).__name__)
                 upstream_cm = upstream = None

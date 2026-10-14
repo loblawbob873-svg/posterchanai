@@ -1526,6 +1526,8 @@ class RelayServer:
             if _ok:
                 self._send(conn, ["OK", eid, True, _why])
             else:
+                # Said in the log: a refused mirror is a community every device then reads off its own relays.
+                logger.info("[concord-mirror] refused %s…: %s", str(ev.get("pubkey", ""))[:8], _why)
                 self._refuse(conn, eid, ev, _why)
             return
         # NIP-78 (2026-09-03 revision): app data is private to its author. A valid event signature

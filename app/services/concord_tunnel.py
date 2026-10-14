@@ -37,6 +37,15 @@ PER_MEMBER = 128
 GLOBAL_MAX = 3000
 MAX_FRAME = 4 * 1024 * 1024
 OPEN_TIMEOUT = 20
+# A TOR DIAL GETS 6 SECONDS, NOT 20. Measured 2026-10-14 from server1: a relay Tor reaches opens in 3-5 s, and
+# asia.vectorapp.io (a CORD relay) timed out over Tor 2 times in 3 at the full 20 s while answering DIRECT in ~1 s.
+# The client gives a control-history read 10 s and a send 5 s, so a 20 s Tor attempt in front of the direct hop
+# meant NO answer ever arrived in time: the room had no control events, its channels did not exist, and every
+# send failed with "this channel is no longer available with your current community membership" -- to the
+# community's own owner. A host Tor failed for is remembered for TOR_BAD_FOR seconds and dialled direct first.
+TOR_OPEN_TIMEOUT = 6
+TOR_BAD_FOR = 1800
+_tor_bad: dict[str, float] = {}
 
 _open: dict[str, int] = {}
 _total = 0
@@ -142,10 +151,37 @@ def release(pk: str) -> None:
     _total = max(0, _total - 1)
 
 
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
+
+
+def hops(url: str, proxy: str) -> tuple:
+    """The order to try: Tor first, unless Tor failed for this host lately -- then direct first."""
+    if _tor_bad.get(_host(url), 0) > time.monotonic():
+        return (None, proxy)
+    return (proxy, None)
+
+
+def tor_result(url: str, ok: bool) -> None:
+    host = _host(url)
+    if ok:
+        _tor_bad.pop(host, None)
+    else:
+        _tor_bad[host] = time.monotonic() + TOR_BAD_FOR
+        if len(_tor_bad) > 4096:                     # bounded: drop what has expired
+            now = time.monotonic()
+            for h in [h for h, t in _tor_bad.items() if t <= now]:
+                _tor_bad.pop(h, None)
+
+
+def open_timeout(proxy: str | None) -> float:
+    return TOR_OPEN_TIMEOUT if proxy else OPEN_TIMEOUT
+
+
 def connect(url: str, proxy: str | None):
     """The outbound socket, through the fallback proxy, or direct with `proxy=None` (patched in tests)."""
     import websockets
-    return websockets.connect(url, proxy=proxy or None, open_timeout=OPEN_TIMEOUT, max_size=MAX_FRAME,
+    return websockets.connect(url, proxy=proxy or None, open_timeout=open_timeout(proxy), max_size=MAX_FRAME,
                               user_agent_header="PosterChan/Server", ping_interval=None)
 
 

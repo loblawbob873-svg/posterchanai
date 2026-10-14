@@ -19,6 +19,7 @@ def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_key", lambda: b"k" * 32)
     monkeypatch.setattr(tun, "_open", {})
     monkeypatch.setattr(tun, "_total", 0)
+    monkeypatch.setattr(tun, "_tor_bad", {})
 
 
 def test_a_ticket_names_its_member_and_expires():
@@ -202,3 +203,39 @@ def test_a_far_relay_nobody_can_reach_closes_the_open_tunnel(client, monkeypatch
             ws.receive_text()
     assert e.value.code == 4502
     assert tun._open == {} and tun._total == 0
+
+
+def test_tor_gets_seconds_not_the_clients_whole_budget():
+    """Measured 2026-10-14: asia.vectorapp.io timed out over Tor at the full 20 s, 2 times in 3, while it answered
+    direct in ~1 s. The client gives a control read 10 s and a send 5 s, so Tor-then-direct at 20 s meant the
+    room's channels never arrived and the OWNER got "this channel is no longer available with your current
+    community membership". A healthy Tor dial opens in 3-5 s."""
+    assert tun.open_timeout("http://127.0.0.1:8119") + 1 + 2 < 10, "Tor (+1 s grace) + a ~1-2 s direct hop must fit in a 10 s read"
+    assert tun.open_timeout(None) == tun.OPEN_TIMEOUT
+
+
+def test_a_host_tor_failed_for_is_dialled_direct_first_next_time(client, monkeypatch):
+    seen = []
+
+    def connect(url, proxy):
+        seen.append(proxy)
+        if proxy:
+            class Refused:
+                async def __aenter__(self):
+                    raise TimeoutError("timed out during opening handshake")
+
+                async def __aexit__(self, *a):
+                    return False
+            return Refused()
+        return _Upstream()
+    monkeypatch.setattr(tun, "connect", connect)
+    for _ in range(2):
+        with client.websocket_connect(f"/ws/concord-relay?u=wss://asia.vectorapp.io/nostr&t={tun.issue(PK)}") as ws:
+            ws.send_text('["REQ","x",{}]')
+            assert "echo:" in ws.receive_text()
+    assert seen == ["http://127.0.0.1:8119", None, None], seen
+    # ...and only that host: another relay still goes through Tor first.
+    with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={tun.issue(PK)}") as ws:
+        ws.send_text('["REQ","x",{}]')
+        assert "echo:" in ws.receive_text()
+    assert seen[-2] == "http://127.0.0.1:8119", seen
