@@ -33,7 +33,8 @@ def blocked(monkeypatch):
 
 
 def _proof(sk=SK, content="x"):
-    ev = nostr_event.build_event(sk, 27235, content, tags=[])
+    me = nostr_event.build_event(sk, 27235, "x")["pubkey"]
+    ev = nostr_event.build_event(sk, 27235, content, tags=[["p", me]])   # a client proof names its signer
     return base64.b64encode(json.dumps(ev).encode()).decode()
 
 

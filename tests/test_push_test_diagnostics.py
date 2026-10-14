@@ -120,7 +120,9 @@ def test_signed_owner_cannot_test_other_accounts_device(direct_db):
 
 def test_real_signed_test_proof_and_invalid_signature(direct_db, monkeypatch):
     monkeypatch.setattr(router.nostr_event, 'verify_self_auth', REAL_AUTH)
-    event = router.nostr_event.build_event(bytes.fromhex('01' * 32), 27235, 'push-test')
+    sk = bytes.fromhex('01' * 32)
+    me = router.nostr_event.build_event(sk, 27235, 'x')['pubkey']
+    event = router.nostr_event.build_event(sk, 27235, 'push-test', tags=[['p', me]])   # push.js's shape
     db = direct_db()
     row = _direct_row(db, pubkey=event['pubkey'])
     body = {'pubkey': row.pubkey, 'device_id': row.device_id,

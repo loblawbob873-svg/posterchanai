@@ -44,7 +44,8 @@ def body(r):
 
 
 def proof(sk, created_at=None):
-    ev = nostr_event.build_event(sk, 27235, "", tags=[], created_at=created_at)
+    pk = nostr_event.build_event(sk, 27235, "x")["pubkey"]
+    ev = nostr_event.build_event(sk, 27235, "auth", tags=[["p", pk]], created_at=created_at)
     return base64.b64encode(json.dumps(ev).encode()).decode()
 
 

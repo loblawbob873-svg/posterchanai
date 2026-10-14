@@ -250,7 +250,9 @@ from app.services.nostr.event import build_event                     # noqa: E40
 
 
 def _auth():
-    ev = build_event(os.urandom(32), 27235, "")
+    sk = os.urandom(32)
+    # The shape every client proof has (app.js selfProof): a content naming it, a `p` tag for the signer.
+    ev = build_event(sk, 27235, "auth", tags=[["p", build_event(sk, 27235, "x")["pubkey"]]])
     return ev["pubkey"], base64.b64encode(json.dumps(ev).encode()).decode()
 
 

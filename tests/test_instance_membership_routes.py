@@ -125,7 +125,7 @@ async def test_signed_sync_and_meme_requests_require_membership_and_valid_owners
         reached.append(True)
         return False
     monkeypatch.setattr(blossom_service, 'is_enabled', disabled)
-    proof=base64.b64encode(json.dumps(build_event(SECRET,27235,'',created_at=int(time.time()))).encode()).decode()
+    proof=base64.b64encode(json.dumps(build_event(SECRET,27235,'auth',tags=[['p',PK]],created_at=int(time.time()))).encode()).decode()
     body={'pubkey':PK,'auth':proof}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
         r=await client.post('/client/sync-folders',json=body)

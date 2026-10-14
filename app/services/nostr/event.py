@@ -74,6 +74,34 @@ def invalid_reason(event: dict) -> str | None:
         return "invalid: malformed event"
 
 
+def _ours(ev: dict, pubkey_hex: str) -> bool:
+    """Is this kind-27235 shaped like a proof made FOR THIS APP, rather than a NIP-98 token made for
+    somebody else's server?
+
+    Kind 27235 is NIP-98's HTTP-auth kind, so the same key signs them all day for other services: a
+    NIP-96 upload to a media host, a git push through ngit, any site asking a NIP-46 signer. Those carry
+    the target URL and method (`u`/`method` tags) and, per NIP-98, an EMPTY content. With freshness,
+    signature and pubkey the only checks, any one of them -- handed to that other server, which may be
+    hostile -- was a working proof here for five minutes: delete the account, mint the AI-files cookie,
+    take the push subscription, link a Google account. Every proof this app's clients make (web,
+    desktop, the APK's Java) has the opposite shape, and has since July: a non-empty content naming the
+    action and a `p` tag naming the signer, never a `u`. So, where the caller names no purpose, a
+    `u`/`method` tag, an empty content or a missing self-`p` is refused. A caller that names a purpose
+    already demands that exact content, which no foreign token carries."""
+    tags = ev.get("tags")
+    if not isinstance(tags, list) or not ev.get("content"):
+        return False
+    own = False
+    for t in tags:
+        if not isinstance(t, list) or not t:
+            continue
+        if t[0] in ("u", "method"):
+            return False
+        if t[0] == "p" and len(t) >= 2 and t[1] == pubkey_hex:
+            own = True
+    return own
+
+
 def verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None) -> bool:
     """Does `auth_b64` prove the caller holds the key for `pubkey_hex`, right now?
 
@@ -89,8 +117,9 @@ def verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None)
         ev = json.loads(base64.b64decode(auth_b64))
     except Exception:
         return False
-    ok = (isinstance(ev, dict) and ev.get("kind") == 27235
+    ok = (isinstance(ev, dict) and ev.get("kind") == 27235 and ev.get("content")
           and (purpose is None or ev.get("content") == purpose)
+          and (purpose is not None or _ours(ev, pubkey_hex))
           and verify_event(ev) and ev.get("pubkey") == pubkey_hex
           and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
     if not ok:

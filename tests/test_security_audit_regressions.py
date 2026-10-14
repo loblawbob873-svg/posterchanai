@@ -18,7 +18,10 @@ from app.utils import lb_auth
 
 
 def proof(kind=27235, content='ai-login', **kw):
-    event = build_event(bytes.fromhex('01' * 32), kind, content, **kw)
+    sk = bytes.fromhex('01' * 32)
+    # A client proof names its signer in a `p` tag (app.js selfProof, the APK's SyncNet).
+    kw.setdefault('tags', [['p', build_event(sk, 27235, 'x')['pubkey']]])
+    event = build_event(sk, kind, content, **kw)
     return base64.b64encode(json.dumps(event).encode()).decode(), event['pubkey']
 
 
