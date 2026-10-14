@@ -3050,7 +3050,7 @@ window.PCFilesFactory = function(dep){
    * closes that window. Anywhere without real windows this answers false and nothing changes. */
   const _FILE_WIN = /^doc:file:([a-z0-9]{8,40})$/;
   function _inFileWindow(){
-    try{ return !!(window.PCOSWin && _FILE_WIN.test(String(PCOSWin.viewOf() || ''))); }catch(_){ return false; }
+    try{ return !!(window.PCOSWin && _FILE_WIN.test(String(window.PCOSWin.viewOf() || ''))); }catch(_){ return false; }
   }
   function _fileWindowDone(){ if(_inFileWindow()){ try{ window.close(); }catch(_){ } } }
   /* A window does not open windows -- the DESKTOP does (oswin.js `enabled()` is false inside one, and
