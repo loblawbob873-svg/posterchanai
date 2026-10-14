@@ -3124,6 +3124,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .notif-more{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;margin:-4px -6px 0 0;padding:0;
   border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer}
 .notif-more:hover,.notif-more:focus-visible{color:var(--text);background:var(--hover)}
+/* The ⋯ is a BUTTON, not the row's kind icon. `.notif .ic` (26px wide, 20px) and `.notif.like .ic` & co. (the kind's
+   colour) matched its svg too, so every notification carried a stretched hamburger tinted pink/green/amber by kind. */
+.notif .notif-more svg.ic{width:18px;height:18px;font-size:inherit;color:inherit;text-align:initial;opacity:1}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
 .upd-notif{cursor:pointer;background:rgba(var(--accent-rgb),.08);border-inline-start:3px solid var(--cyan)}
 .upd-notif:hover{background:rgba(var(--accent-rgb),.14)}

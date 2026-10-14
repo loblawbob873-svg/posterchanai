@@ -395,7 +395,7 @@ window.PCNotifViewFactory = function(dep){
   function _notifMoreBtn(postId, pks){
     const ok=(pks||[]).filter(pk=>/^[0-9a-f]{64}$/i.test(pk||'') && pk!==(S.ME&&S.ME.pubkey));
     if(!ok.length) return '';
-    return `<button type="button" class="notif-more" aria-label="More" title="More"${postId?` data-nev="${enc(postId)}"`:''} data-npks="${enc(ok.slice(0,10).join(','))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`;
+    return `<button type="button" class="notif-more" aria-label="More" title="More"${postId?` data-nev="${enc(postId)}"`:''} data-npks="${enc(ok.slice(0,10).join(','))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>`;
   }
   function notifMenu(btn){
     const ev=btn.dataset.nev||'', pks=String(btn.dataset.npks||'').split(',').filter(Boolean);
