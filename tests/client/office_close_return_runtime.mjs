@@ -26,6 +26,8 @@ const ctx = {
   fetch:async(_url, options)=>{assert.equal(options.method,'DELETE');calls.drops++;return {ok:true};},
   toast:message=>{throw Error(message);},
   renderOfficeHome:()=>{calls.home++;},
+  // Not a PosterChanOS file window (files.js `doc:file:`); that path has its own browser test.
+  _inFileWindow:()=>false, _fileWindowDone:()=>{},
   switchView:view=>{ctx.VIEW=view;calls.views.push(view);},
   document:{getElementById:()=>mode === 'modal' ? null : feed, createElement:()=>host},
   $:selector=>{

@@ -297,7 +297,7 @@ class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
         cls.src = client_source()
 
     def test_the_capture_happens_before_the_spinner(self):
-        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""", self.src.index("function renderView("))
         cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
         self.assertLess(cap, blank,
                         "the offset is read after the feed has been blanked, so it reads 0")
@@ -308,7 +308,7 @@ class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
         # ANCHORED ON THE CAPTURE, not on a distance from the spinner. It was `src[blank-500:blank]`,
         # and a comment written above that line pushed the guard out of the window — the test then
         # reported a rule that is right there as missing.
-        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""", self.src.index("function renderView("))
         cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
         blk = self.src[cap - 400:blank]
         self.assertIn("_TL_TABS.indexOf(VIEW) >= 0", blk)
@@ -319,7 +319,7 @@ class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
         # ANCHORED ON THE CAPTURE, not on a distance from the spinner. It was `src[blank-500:blank]`,
         # and a comment written above that line pushed the guard out of the window — the test then
         # reported a rule that is right there as missing.
-        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""", self.src.index("function renderView("))
         cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
         blk = self.src[cap - 400:blank]
         self.assertIn("if(reset &&", blk)
