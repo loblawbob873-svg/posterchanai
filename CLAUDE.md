@@ -1755,6 +1755,13 @@ would have handled it fine).
   one is a message that never arrived). The per-member share is 128: Concord holds a live subscription per relay per
   room, and at 24 one real account had 2,314 dials refused in an hour, every send among them; a refusal logs
   `[concord-tunnel] refused` once a minute with the count it hit. `tests/client/test_concord_send_survives_a_refused_tunnel.py`.
+  **A relay that refuses the MIRROR (relay.damus.io: kind 1059 needs an AUTH as the stream key, which only members
+  hold) is read by the client ALONE, never with all its siblings.** The mirror's registration OK names the relays it
+  cannot read (`; read directly: <urls>`); the client stores them (`direct` in its mirror state), asks this node with a
+  `pcmp…` subscription id (`PARTIAL_SUB_PREFIX`, served despite the refusal) and reads ONLY those relays itself.
+  Any other reader keeps the strict `unavailable:`. Measured before: 767 tunnels in 10 min from one account (two
+  communities listing damus, every relay re-read each minute). `tests/test_concord_mirror.py` +
+  `tests/client/test_concord_reads_only_the_relays_this_node_cannot_full_app.py`.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

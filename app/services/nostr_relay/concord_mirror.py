@@ -91,6 +91,11 @@ DIRECTORY_STALE = 6 * 3600
 DIRECTORY_MAX = 400
 DIRECTORY_FIRST_WAIT = 8.0
 KV_KEY = "concord_mirror_v1"
+# A REQ whose subscription id starts with this comes from a client that reads, itself, the relays the registration
+# reply listed after READ_DIRECTLY -- so this node serves it what it holds even where one of them refused us.
+PARTIAL_SUB_PREFIX = "pcmp"
+READ_DIRECTLY = "read directly:"
+REGISTER_SETTLE_SECONDS = 2.5
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -457,6 +462,7 @@ class _Directory:
 
 
 class ConcordMirror:
+    PARTIAL_SUB_PREFIX = PARTIAL_SUB_PREFIX
     def __init__(self, store, server=None, cfg: dict | None = None, *, url_ok=None, open_ws=None):
         self.store = store
         self.server = server
@@ -622,13 +628,15 @@ class ConcordMirror:
     def _chunk_full(self, chunk) -> bool:
         return bool(chunk) and all(self._author_full(a) for a in chunk)
 
-    def author_ready(self, author: str) -> bool:
+    def author_ready(self, author: str, partial: bool = False) -> bool:
         if self._author_full(author):
             return False
         # A relay that REFUSED our subscription (auth-required) holds what it holds and we will never see it: serving
         # the room from this copy because ANOTHER relay synced answered members with whatever was posted only there
         # missing ("isolated to this room", poster.place 2026-10-13). Refused = could not ask = unavailable.
-        for url in self._relays_for(author):
+        # UNLESS the reader said it reads those relays itself (`partial`, see req_refusal): then this copy is half of
+        # the answer and the refused relay the other half -- not "read all eight of the community's relays".
+        for url in ([] if partial else self._relays_for(author)):
             link = self.links.get(url)
             if link is not None and author in link.authors and link.refused:
                 return False
@@ -639,9 +647,16 @@ class ConcordMirror:
         return False
 
     # -- what the relay server asks -------------------------------------------------------------------
-    def req_refusal(self, filters) -> str:
+    def req_refusal(self, filters, partial: bool = False) -> str:
         """'' to serve this REQ from the store, else the CLOSED reason. Only REQs that ask for a
-        REGISTERED stream are ever refused, and only while this node is not in step with it."""
+        REGISTERED stream are ever refused, and only while this node is not in step with it.
+
+        `partial`: the subscription id starts with PARTIAL_SUB_PREFIX, which only a client that READS THE RELAYS
+        THIS NODE CANNOT ITSELF sends (the registration reply names them: `unreadable()`). For it a relay that
+        refused the mirror does not make the stream unavailable. Measured 2026-10-14: two of the owner's
+        communities list relay.damus.io, which gates kind-1059 behind an AUTH as the stream key; the strict
+        answer sent each device to ALL of those communities' relays, through the tunnel, once a minute per
+        stream (~64 tunnels a minute per device) to cover the one relay the mirror could not read."""
         named = None
         for f in filters or ():
             if not isinstance(f, dict):
@@ -655,10 +670,29 @@ class ConcordMirror:
                 if not named:
                     return ""
             for a in authors:
-                if a in named and not self.author_ready(a):
+                if a in named and not self.author_ready(a, partial):
                     return ("unavailable: this node is still catching up with this community's relays "
                             "(or cannot reach them) — read them directly")
         return ""
+
+    def unreadable(self, relays) -> list:
+        """The relays among `relays` this node does not read: one that refused the mirror, or none is held for."""
+        out = []
+        for url in relays:
+            link = self.links.get(url)
+            if link is None or link.refused:
+                out.append(url)
+        return out
+
+    async def _settle(self, relays, seconds: float) -> None:
+        """Wait (bounded) until each link has either refused or finished its history -- a link a registration has
+        just (re)started has not had the chance to be refused yet, and the reply names the relays it cannot read."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            links = [self.links.get(u) for u in relays]
+            if all(link is None or link.refused or link.synced for link in links):
+                return
+            await asyncio.sleep(0.2)
 
     def mirrors(self, author: str) -> bool:
         return author in self.registered_authors()
@@ -720,11 +754,12 @@ class ConcordMirror:
             return False, "invalid: no relays"
         if len(relays_in) > MAX_RELAYS_PER_REGISTRATION:
             relays_in = relays_in[:MAX_RELAYS_PER_REGISTRATION]
-        reasons, relays = [], []
+        reasons, relays, skipped = [], [], []
         for r in relays_in:
             why = await asyncio.to_thread(self._url_ok, r, self.cfg)
             if why:
                 reasons.append(f"{r}: {why}")
+                skipped.append(r)
             else:
                 relays.append(r)
         if not relays:
@@ -744,7 +779,10 @@ class ConcordMirror:
         await self._reconcile()
         logger.info("[concord-mirror] %s… mirrors %s…: %d stream(s) from %s%s", member[:8], group[:8], len(authors),
                     ", ".join(relays), (" (not mirrored: " + "; ".join(reasons) + ")") if reasons else "")
-        return True, f"mirroring: {len(authors)} stream(s) from {len(relays)} relay(s)"
+        await self._settle(relays, REGISTER_SETTLE_SECONDS)
+        direct = skipped + self.unreadable(relays)
+        return True, (f"mirroring: {len(authors)} stream(s) from {len(relays)} relay(s)"
+                      + (f"; {READ_DIRECTLY} " + " ".join(direct) if direct else ""))
 
     # -- upstream -> store ------------------------------------------------------------------------------
     def _seen_add(self, eid: str) -> None:

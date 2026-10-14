@@ -1957,7 +1957,7 @@ class RelayServer:
                 self.subs.add(conn, sub_id, filters)
                 return
             # A REGISTERED Concord stream this node is not in step with: "could not ask", never EOSE.
-            _why = _m.req_refusal(filters)
+            _why = _m.req_refusal(filters, partial=str(sub_id).startswith(getattr(_m, "PARTIAL_SUB_PREFIX", "\0")))
             if _why:
                 self._send(conn, ["CLOSED", sub_id, _why])
                 return

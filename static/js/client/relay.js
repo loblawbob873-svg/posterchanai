@@ -1099,7 +1099,7 @@
         if(!detailed)return accepted;
         const uncertain=!accepted&&results.some(r=>r.uncertain);
         return {ok:accepted>0,accepted,uncertain,
-          msg:accepted?'':uncertain?'delivery has not been confirmed':
+          msg:accepted?(results.find(r=>r.ok&&r.msg)?.msg||''):uncertain?'delivery has not been confirmed':
             results.find(r=>r.msg)?.msg||'no eligible room relays'};
       };
       if(authScope&&(![1059,21059].includes(event.kind)||event.pubkey!==authScope.pubkey||!authScope.current()))return finishResults([]);
@@ -1129,7 +1129,7 @@
             }
           }
           if (m[0] === 'OK' && m[1] === event.id && typeof m[2]==='boolean')
-            fin(m[2],String(m[3]||'room relay rejected the message'),!m[2]); };
+            fin(m[2],m[2]?String(m[3]||''):String(m[3]||'room relay rejected the message'),!m[2]); };
         ws.onerror = () => fin(false,'room relay connection failed',authRejected);
         ws.onclose = () => fin(false,'room relay connection closed',authRejected);
       }))).then(finishResults);
@@ -1156,7 +1156,9 @@
      * reconnect storm. The REQ is re-sent verbatim: the filter's `since` is then older than it needs
      * to be, which costs a few duplicate events the store already dedupes and is the safe direction
      * — a recomputed `since` would open a hole exactly the width of the outage. */
-    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null, exact=false, onClosed=null, via=null } = {}){
+    /* `subPrefix` names the subscription (default 'xf'/'qf'); Concord's 'pcmp' tells this node's mirror the client
+     * reads the relays it cannot itself (concord_mirror.PARTIAL_SUB_PREFIX). */
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null, exact=false, onClosed=null, via=null, subPrefix='' } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))throw new Error("invalid plane subscription scope");
       const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>authScope||exact||!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
@@ -1181,7 +1183,7 @@
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
-        const id='xf'+Math.random().toString(36).slice(2,9)+n,wire=JSON.stringify(['REQ',id,...filters]);
+        const id=(subPrefix||'xf')+Math.random().toString(36).slice(2,9)+n,wire=JSON.stringify(['REQ',id,...filters]);
         let backoff=1000,retry=null,cur=null,auth=null,authBlocked=false;
         /* ONE entry per target, registered once. Pushing a canceller per RETRY would grow a list
            for as long as a relay stays down, and pushing every redialled socket onto `sockets`
@@ -1301,7 +1303,7 @@
     /* `via` (queryFrom/publishTo/subscribeFrom/publishAuthed): a function from a relay url to the url actually
      * DIALED -- Concord passes this node's tunnel (/ws/concord-relay) so a client talks only to its instance.
      * Everything else (targets, cooldowns, reports, AUTH's relay tag) keeps the REAL relay url. */
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null, subPrefix='' } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
@@ -1334,7 +1336,7 @@
        * it holds no control event). Such a read opens its own socket, leaves the other read's marker
        * alone, and still cools the relay down if it fails. */
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
-      const subId = 'qf' + Math.random().toString(36).slice(2,9);
+      const subId = (subPrefix||'qf') + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm,auth; const got = [];
         const abort = () => fin('abort');

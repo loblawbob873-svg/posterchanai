@@ -226,6 +226,23 @@
   function saveMirrorState(pk,v){try{localStorage.setItem(mirrorKey(pk),JSON.stringify(v));}catch(_){}}
   /* Streams this node has said it mirrors for the signed-in account, newer than MIRROR_TRUST_MS. */
   function mirroredAuthors(pk){const out=new Set(),now=Date.now();if(!pk)return out;for(const g of Object.values(mirrorState(pk).groups))if(g&&now-Number(g.at||0)<MIRROR_TRUST_MS)for(const a of g.authors||[])out.add(a);return out;}
+  /* THE RELAYS THIS NODE SAID IT CANNOT READ for every stream in `filters` (the mirror's registration reply, after
+   * "read directly:" -- relay.damus.io gates kind 1059 behind an AUTH as the stream key, which only members hold),
+   * or null when any stream was registered by a build that did not record them. With a list the client asks this
+   * node for its copy (subscription 'pcmp…', served even though that relay refused the node) and reads ONLY those
+   * relays itself. Without, the node's strict answer stands: unavailable, then every relay of the community --
+   * measured 2026-10-14, ~64 tunnels a minute per device for two communities that list damus. */
+  const HOME_PARTIAL='pcmp',READ_DIRECTLY='read directly:';
+  function parseReadDirectly(msg){const s=String(msg||''),i=s.indexOf(READ_DIRECTLY);if(i<0)return [];
+    return [...new Set(s.slice(i+READ_DIRECTLY.length).trim().split(/\s+/).map(normalizeRelay).filter(Boolean))];}
+  function homeDirect(filters){
+    const groups=Object.values(mirrorState(accountPk()).groups),now=Date.now(),direct=new Set();
+    for(const f of filters||[])for(const a of f&&f.authors||[]){
+      const g=groups.find(x=>x&&now-Number(x.at||0)<MIRROR_TRUST_MS&&(x.authors||[]).includes(a)&&Array.isArray(x.direct));
+      if(!g)return null;g.direct.forEach(u=>direct.add(u));
+    }
+    return [...direct];
+  }
   /* THIS NODE'S RELAY, when it may answer `filters` for a community on `relays` -- else ''. */
   function homeServes(p,relays,filters){
     const h=homeRelayUrl(p);if(!h||!Array.isArray(filters)||!filters.length)return '';
@@ -264,13 +281,13 @@
       const want=mirrorAuthorsOf(bundle,wraps);if(!want.length)return false;
       const st=mirrorState(pk),prior=st.groups[group],now=Date.now();
       const same=!!prior&&JSON.stringify(prior.relays||[])===JSON.stringify(relays);
-      if(same&&now-Number(prior.at||0)<MIRROR_FRESH_MS&&want.every(a=>(prior.authors||[]).includes(a)))return true;
+      if(same&&now-Number(prior.at||0)<MIRROR_FRESH_MS&&want.every(a=>(prior.authors||[]).includes(a))&&Array.isArray(prior.direct))return true;
       const refused=mirrorRefused.get(key);if(refused&&now-refused<MIRROR_REFUSED_MS)return false;
       const authors=[...new Set([...(same&&now-Number(prior.at||0)<MIRROR_TRUST_MS?prior.authors||[]:[]),...want])].slice(0,MIRROR_MAX_AUTHORS);
       let res=null;try{res=await sendMirrorRequest(p,{op:'mirror',group,relays,authors});}catch(_){res=null;}
       if(accountPk()!==pk)return false;
       if(!res||!res.ok){mirrorRefused.set(key,Date.now());return false;}
-      const next=mirrorState(pk);next.groups[group]={relays,authors,at:Date.now()};saveMirrorState(pk,next);mirrorRefused.delete(key);
+      const next=mirrorState(pk);next.groups[group]={relays,authors,at:Date.now(),direct:parseReadDirectly(res.msg)};saveMirrorState(pk,next);mirrorRefused.delete(key);
       return want.every(a=>authors.includes(a));
     })().catch(()=>false).finally(()=>{mirrorBusy.delete(key);});
     mirrorBusy.set(key,job);return job;
@@ -343,13 +360,16 @@
     /* (typeof: harnesses run this function sliced out of the file, without the mirror helpers.) */
     const h=typeof homeServes==='function'?homeServes(p,relays,filters):'';
     if(!h||!R||!R.subscribeFrom)return cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);
-    /* This node's relay first; the community's own relays only if it cannot carry the stream. */
-    let fallback=null,stopped=false;
-    const fall=()=>{if(stopped||fallback)return;try{fallback=cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);}catch(e){console.warn('Concord subscription fallback failed',String(e&&e.message||e));}};
-    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
+    /* This node's relay first; the community's own relays only if it cannot carry the stream -- and, where it said
+     * it cannot read some of them (homeDirect), those relays alongside it, never all of them. */
+    const direct=typeof homeDirect==='function'?homeDirect(filters):null;
+    let fallback=null,beside=null,stopped=false;
+    const fall=()=>{if(stopped||fallback)return;try{if(beside){beside();beside=null;}fallback=cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);}catch(e){console.warn('Concord subscription fallback failed',String(e&&e.message||e));}};
+    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,...(direct?{subPrefix:HOME_PARTIAL}:{}),onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
+    if(direct&&direct.length)try{beside=cordPlaneSubscribeDirect(p,R,direct,filters,options,plane);}catch(e){console.warn('Concord subscription to the relays this server cannot read failed',String(e&&e.message||e));}
     if(inner&&inner.ready&&inner.ready.then)inner.ready.then(ok=>{if(!ok)fall();});
-    const stop=()=>{stopped=true;try{inner&&inner();}catch(_){}if(fallback)try{fallback();}catch(_){}};
-    stop.publish=event=>(inner&&inner.publish?inner.publish(event):0)+(fallback&&fallback.publish?fallback.publish(event):0);
+    const stop=()=>{stopped=true;try{inner&&inner();}catch(_){}if(fallback)try{fallback();}catch(_){}if(beside)try{beside();}catch(_){}};
+    stop.publish=event=>(inner&&inner.publish?inner.publish(event):0)+(fallback&&fallback.publish?fallback.publish(event):0)+(beside&&beside.publish?beside.publish(event):0);
     stop.hasTargets=true;stop.ready=inner&&inner.ready?inner.ready:Promise.resolve(true);
     return stop;
   }
@@ -388,10 +408,17 @@
      * to the community's own relays below, unchanged. */
     const h=home!==false&&p.relayQueryFrom&&typeof homeServes==='function'?homeServes(p,relays,filters):'';
     if(h){
-      const reach={};let got=null;
-      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true});}catch(_){got=null;}
+      const reach={},direct=typeof homeDirect==='function'?homeDirect(filters):null;let got=null;
+      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true,...(direct?{subPrefix:HOME_PARTIAL}:{})});}catch(_){got=null;}
       const note=(bucket,u)=>{if(report)(report[bucket]||(report[bucket]=[])).push(u);};
-      if((reach.ok||[]).includes(h)){note('asked',h);note('ok',h);cordQuery.lastUnreadablePlanes=[];return got||[];}
+      if((reach.ok||[]).includes(h)){note('asked',h);note('ok',h);
+        /* The other half: the relays this node said it cannot read -- only those, through the tunnel. Not
+         * reaching them leaves the node's answer standing; it is never thrown away for a relay that refused. */
+        if(direct&&direct.length){
+          let extra=[];try{extra=await cordQuery(p,direct,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,plane,report:null,urgent,home:false});}catch(_){extra=[];}
+          if(extra.length){const byId=new Map();for(const ev of [...(got||[]),...extra])if(ev&&ev.id)byId.set(ev.id,ev);got=[...byId.values()];}
+        }
+        cordQuery.lastUnreadablePlanes=[];return got||[];}
       if((reach.held||[]).includes(h)&&!(reach.failed||[]).length&&!(reach.unavailable||[]).length){note('held',h);return [];}
       if(signal&&signal.aborted)return [];
     }

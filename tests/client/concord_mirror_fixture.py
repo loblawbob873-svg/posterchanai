@@ -11,7 +11,8 @@ replaces `WebSocket` instead, so the SHIPPED relay.js (queryFrom, subscribeFrom,
     ('serve' | 'unavailable' | 'empty'). `__homeMirror='unavailable'` makes it refuse stream REQs the
     way the server does while its mirror is not in step.
   * THE DIRECTORY RELAY (`wss://relay.dreamith.to`): up when `__dirRelayUp`, serving `__directory`.
-  * `__upRelays`: plain relays that are UP, accept everything and record it in `__upWrites`.
+  * `__upRelays`: plain relays that are UP, accept everything and record it in `__upWrites`, and answer REQs
+    from `__upHeld` ([{url, ev}]).
   * EVERY OTHER RELAY: down — the socket errors and closes, like a relay nobody can reach.
 """
 
@@ -31,7 +32,7 @@ const subs=new Set();
 class NetSocket extends EventTarget{
   static OPEN=1;static CONNECTING=0;static CLOSING=2;static CLOSED=3;
   constructor(url){super();this.url=String(url);this.readyState=0;const u=norm(url);__dials.push(u);
-    this.kind=u===HOME?'home':u===DIR?'dir':(window.__upRelays||[]).map(norm).includes(u)?'up':'ext';
+    this.target=u;this.kind=u===HOME?'home':u===DIR?'dir':(window.__upRelays||[]).map(norm).includes(u)?'up':'ext';
     setTimeout(()=>{
       if(this.kind==='ext'||(this.kind==='dir'&&!__dirRelayUp)){this.readyState=3;this.fire('error',{});this.fire('close',{});return;}
       this.readyState=1;this.fire('open',{});},10);}
@@ -40,7 +41,7 @@ class NetSocket extends EventTarget{
     if(this.readyState!==1)return;let m;try{m=JSON.parse(raw);}catch(_){return;}if(!Array.isArray(m))return;
     const reply=x=>setTimeout(()=>{if(this.readyState===1)this.fire('message',x);},15);
     const later=fn=>{const t=setInterval(()=>{if(!window.__dirHold){clearInterval(t);fn();}},20);};
-    if(this.kind==='up'){if(m[0]==='REQ')reply(['EOSE',m[1]]);if(m[0]==='EVENT'){__upWrites.push({url:this.url,ev:m[1]});reply(['OK',m[1].id,true,'']);}return;}
+    if(this.kind==='up'){if(m[0]==='REQ'){const fs=m.slice(2);for(const x of (window.__upHeld||[]))if(norm(x.url)===this.target&&fs.some(f=>match(f,x.ev)))reply(['EVENT',m[1],x.ev]);reply(['EOSE',m[1]]);}if(m[0]==='EVENT'){__upWrites.push({url:this.url,ev:m[1]});reply(['OK',m[1].id,true,'']);}return;}
     if(this.kind==='dir'){
       if(m[0]==='REQ'){const fs=m.slice(2);later(()=>{for(const ev of __directory)if(fs.some(f=>match(f,ev)))reply(['EVENT',m[1],ev]);reply(['EOSE',m[1]]);});}
       if(m[0]==='EVENT'){__dirWrites.push(m[1]);reply(['OK',m[1].id,true,'']);}
@@ -53,7 +54,7 @@ class NetSocket extends EventTarget{
         if(__dirMode==='serve')for(const ev of __directory)if(fs.some(f=>match(f,ev)))reply(['EVENT',m[1],ev]);
         reply(['EOSE',m[1]]);});return;
       }
-      if(__homeMirror==='unavailable'&&fs.some(f=>(f.kinds||[]).includes(1059)&&(f.authors||[]).length)){
+      if((__homeMirror==='unavailable'||(__homeMirror==='partial'&&!String(m[1]).startsWith('pcmp')))&&fs.some(f=>(f.kinds||[]).includes(1059)&&(f.authors||[]).length)){
         reply(['CLOSED',m[1],'unavailable: this node is still catching up with this community']);return;}
       for(const ev of __home)if(fs.some(f=>match(f,ev)))reply(['EVENT',m[1],ev]);
       reply(['EOSE',m[1]]);subs.add({ws:this,id:m[1],fs});return;
@@ -61,7 +62,7 @@ class NetSocket extends EventTarget{
     if(m[0]==='CLOSE'){for(const s of [...subs])if(s.ws===this&&s.id===m[1])subs.delete(s);return;}
     if(m[0]==='EVENT'){
       const ev=m[1];
-      if(ev.kind===27059){let body={};try{body=JSON.parse(ev.content);}catch(_){}__registrations.push({...body,pubkey:ev.pubkey});reply(['OK',ev.id,true,'mirroring']);return;}
+      if(ev.kind===27059){let body={};try{body=JSON.parse(ev.content);}catch(_){}__registrations.push({...body,pubkey:ev.pubkey});reply(['OK',ev.id,true,window.__regReply||'mirroring']);return;}
       if(!__home.some(x=>x.id===ev.id))__home.push(ev);__homeWrites.push(ev);reply(['OK',ev.id,true,'']);
       for(const s of [...subs])if(s.fs.some(f=>match({...f,since:undefined,until:undefined},ev)))setTimeout(()=>{if(s.ws.readyState===1)s.ws.fire('message',['EVENT',s.id,ev]);},20);
     }

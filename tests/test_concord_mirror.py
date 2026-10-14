@@ -218,8 +218,8 @@ class Node:
                     break
             return got
 
-    async def req(self, filters):
-        sid = "s" + secrets.token_hex(4)
+    async def req(self, filters, prefix="s"):
+        sid = prefix + secrets.token_hex(4)
         got = await self.send(["REQ", sid, *filters], lambda g: g[-1][0] in ("EOSE", "CLOSED"))
         return [m[2] for m in got if m[0] == "EVENT"], got[-1] if got else None
 
@@ -754,6 +754,38 @@ def test_a_room_one_of_whose_relays_refused_the_mirror_is_unavailable_not_partia
             got, last = await node.req([{"kinds": [1059], "authors": [pub(stream)]}])
             assert not node.mirror.author_ready(pub(stream)), "a room missing a refused relay was called in step"
             assert last[0] == "CLOSED" and last[2].startswith("unavailable:"), (last, len(got))
+        finally:
+            await node.close()
+            await good.close()
+            await refusing.close()
+    run(go())
+
+
+def test_a_reader_that_covers_the_refused_relay_gets_this_nodes_copy_and_is_told_which_relay_to_read():
+    """The other half of the rule above, measured 2026-10-14: two of the owner's communities list relay.damus.io
+    beside six relays this node reads in full, and the strict `unavailable:` sent every device to ALL of them,
+    through the tunnel, once a minute per stream (~64 tunnels a minute per device). The registration reply now
+    NAMES the relays this node cannot read; a client that reads those itself marks its REQ (PARTIAL_SUB_PREFIX)
+    and is served this node's copy. Everyone else still gets `unavailable:` -- the old, strict answer."""
+    stream, member = key(), key()
+    held_here, only_there = wrap(stream), wrap(stream)
+
+    async def go():
+        good = await Upstream([held_here]).start()
+        refusing = await Upstream([only_there], refuse="auth-required: we want AUTH").start()
+        node = await Node({pub(member)}).start()
+        try:
+            ok = await node.publish(registration(member, [good.url, refusing.url], [pub(stream)]))
+            assert ok[2] is True, ok
+            assert "read directly:" in ok[3], ("the reply does not name the relay this node cannot read", ok)
+            named = ok[3].split("read directly:", 1)[1].split()
+            assert named == [refusing.url], (named, ok)
+            assert await until(lambda: any(e["id"] == held_here["id"] for e in node.store.events.values()))
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(stream)]}], prefix="pcmp")
+            assert last[0] == "EOSE", ("a reader covering the refused relay was still refused", last)
+            assert [e["id"] for e in got] == [held_here["id"]], got
+            _got, last = await node.req([{"kinds": [1059], "authors": [pub(stream)]}])
+            assert last[0] == "CLOSED" and last[2].startswith("unavailable:"), ("strict readers lost the old answer", last)
         finally:
             await node.close()
             await good.close()
