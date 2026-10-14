@@ -66,7 +66,9 @@ Object.defineProperty(window,'__events',{configurable:true,get(){
   const f=__fxEvents();if(!f)return [];
   const out=[f.old];
   if(!window.__withholdLate)out.push(f.late,f.race);
-  if(window.__liveSent)out.push(f.live);
+  // Once published, the relay holds it for EVERY page that asks -- a window opened afterwards (the flyout)
+  // gets it from its own REQ, as from a real relay; page-local only, it depended on another window's cache write.
+  if(window.__liveSent||localStorage.getItem('__fx_liveSent'))out.push(f.live);
   return out;
 }});
 window.__deliver=(name)=>{const ev=__fxEvents()[name];let n=0;
@@ -156,7 +158,7 @@ async def scenario():
             # A follow made while the windows are OPEN is a notification -- in every one of them,
             # including a window that judged nothing itself because the event reached it first
             # through another renderer's pin.
-            await shell.js('window.__liveSent=true')
+            await shell.js("window.__liveSent=true;localStorage.setItem('__fx_liveSent','1')")
             await win.js('window.__liveSent=true')
             assert await shell.js("__deliver('live')") >= 1
             await asyncio.sleep(.5)
@@ -170,6 +172,10 @@ async def scenario():
             sockets.append(ws)
             await fly2.until("!!__PC.me() && !!document.querySelector('#os-noti')")
             await _settled(fly2)
+            # A NEW renderer lists a follow once its OWN subscription has delivered it -- the stored pin says
+            # when it happened, not that it is on screen yet. Wait for it to be listed (a flyout that never
+            # lists it still fails here), then compare every window's answer.
+            await fly2.until("__followRows().includes(__fx.live.pubkey)")
             live = await shell.js('__fx.live.pubkey')
             verdict = {
                 'shell': await shell.js('__followRows()'),
