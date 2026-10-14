@@ -37,7 +37,7 @@ _services = {
     'instance_membership': _module('instance_membership', require_user=_blocked),
     'mail_service': _module('mail_service', **dict.fromkeys((
         'get_attachment', 'get_user_mail_accounts', 'sanitize_filename', 'send_email',
-        'reply_to_message', 'forward_message', 'archive_message', 'delete_message',
+        'reply_to_message', 'forward_message', 'archive_messages', 'delete_message',
         'move_message', 'list_special_folders'), _blocked)),
     'storage_service': _module('storage_service', StorageService=_blocked,
         _sanitize_path_component=_blocked, _validate_path_within_base=_blocked),

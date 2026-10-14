@@ -1631,17 +1631,20 @@ window.PCMailFactory = function(dep){
             .map(f => ({ v:f, l:_plainLabel((fs.labels || {})[f]) || f })));
         const dest = await _pickOne('Move to…', rows);
         if(!dest) return;
+        if(dest === '__archive'){
+          /* Archive from this menu is the SAME act as the toolbar's: the row leaves the list at once
+             and comes back with a toast if the server refuses (removeMessages). It used to wait for
+             the server's answer and then reload the whole list before anything moved on screen. */
+          const k=this._key(Object.assign({}, msg, {account:msg.account||acct, folder:msg.folder||folder}));
+          if(String(this.openUid)===String(uid)) this._emptyPane();
+          await this.removeMessages('archive', [k]);
+          return;
+        }
         try{
-          if(dest === '__archive'){
-            await this.api('/archive', {method:'POST', headers:{'Content-Type':'application/json'},
-                                        body:JSON.stringify({account:acct, folder, uid})});
-          }else{
-            await this.api('/move', {method:'POST', headers:{'Content-Type':'application/json'},
-                                     body:JSON.stringify({account:acct, folder, uid, dest})});
-          }
+          await this.api('/move', {method:'POST', headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({account:acct, folder, uid, dest})});
         }catch(e){ toast('could not move that message'); return; }
-        toast(dest === '__archive' ? 'archived'
-                                   : 'moved to ' + ((fs.labels || {})[dest] || dest).replace(/^\S+\s/, ''));
+        toast('moved to ' + ((fs.labels || {})[dest] || dest).replace(/^\S+\s/, ''));
         const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
         this.openUid=null; this.loadList(); return;
       }

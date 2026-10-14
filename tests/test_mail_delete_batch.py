@@ -45,7 +45,7 @@ _services = {
     'instance_membership': _module('instance_membership', require_user=_blocked),
     'mail_service': _module('mail_service', **dict.fromkeys((
         'get_attachment', 'get_user_mail_accounts', 'sanitize_filename', 'send_email',
-        'reply_to_message', 'forward_message', 'archive_message', 'delete_message',
+        'reply_to_message', 'forward_message', 'archive_messages', 'delete_message',
         'move_message', 'list_special_folders'), _blocked)),
     'storage_service': _module('storage_service', StorageService=_blocked,
         _sanitize_path_component=_blocked, _validate_path_within_base=_blocked),
@@ -97,10 +97,11 @@ def _wire(monkeypatch, *, move_ok=True, delete_ok=True, archive_ok=lambda uid: T
         return delete_ok
     monkeypatch.setattr(route, 'delete_message', delete)
 
-    def archive(uid_, db, email, uid, folder):
-        calls['archive'].append(uid)
-        return archive_ok(uid)
-    monkeypatch.setattr(route, 'archive_message', archive)
+    def archive(uid_, db, email, uids, folder):
+        calls['archive'].append(list(uids))
+        ok = [u for u in uids if archive_ok(u)]
+        return ok, [u for u in uids if u not in ok]
+    monkeypatch.setattr(route, 'archive_messages', archive)
 
     async def mirror(sk, email, folder, uid):
         calls['mirror'].append(uid)
@@ -149,3 +150,13 @@ def test_a_partly_refused_archive_names_what_stayed(monkeypatch):
         asyncio.run(route.mail_archive(_Req({'account': 'me@x.test', 'folder': 'INBOX', 'uid': '3'}),
                                        None, SimpleNamespace(id=1)))
     assert caught.value.status_code == 502 and calls['mirror'] == []
+
+
+def test_an_archive_batch_is_one_call_into_the_mail_server(monkeypatch):
+    """It was one IMAP session PER MESSAGE (~1 s each, in series)."""
+    calls = _wire(monkeypatch)
+    out = asyncio.run(route.mail_archive(_Req({'account': 'me@x.test', 'folder': 'INBOX', 'uids': ['3', '4', '5']}),
+                                         None, SimpleNamespace(id=1)))
+    assert out == {'ok': True, 'archived': 3}
+    assert calls['archive'] == [['3', '4', '5']], calls['archive']
+    assert sorted(calls['mirror']) == ['3', '4', '5']

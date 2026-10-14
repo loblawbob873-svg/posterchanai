@@ -989,89 +989,117 @@ def delete_all_messages(user_id: int, db: Session, account_email: str) -> int:
     return -1
 
 
+def _imap_caps(imap) -> set:
+    """The capabilities the server offers AFTER login. imaplib keeps the PRE-login greeting's list
+    (Dovecot announces MOVE/UIDPLUS only once authenticated), so ask again; failure = none."""
+    try:
+        r = run_with_timeout(lambda: imap.capability(), timeout=MAIL_OPERATION_TIMEOUT)
+        if r and r[0] == "OK":
+            return {c.upper() for line in r[1] for c in (line.decode() if isinstance(line, bytes) else str(line)).split()}
+    except Exception:
+        pass
+    return set()
+
+
+def _uid_set(data) -> list:
+    """The UIDs a UID SEARCH answered (`[b'3 4 5']`) as strings."""
+    out = []
+    for line in data or []:
+        if line:
+            out += (line.decode() if isinstance(line, bytes) else str(line)).split()
+    return out
+
+
+def archive_messages(user_id: int, db: Session, account_email: str, uids: list,
+                     folder: str = "INBOX") -> tuple:
+    """Archive several messages from ONE folder in ONE IMAP session. Returns (archived, failed).
+
+    "Mail: moving to Archive is slow." It used to be a whole session PER MESSAGE -- TLS + login, SELECT,
+    SEARCH, a LIST of every folder, COPY, STORE, EXPUNGE, LOGOUT: measured ~1 s each against the real
+    mail server, in series, so archiving 30 messages took half a minute. Now: one login, one LIST, one
+    SEARCH of the whole set (a UID the folder no longer holds is FAILED, as before), then `UID MOVE` of the
+    set when the server offers MOVE; otherwise COPY + STORE + `UID EXPUNGE` of exactly that set (UIDPLUS)
+    -- a plain EXPUNGE also purges whatever ELSE was flagged \\Deleted in the folder, so it is the last
+    resort, as it always was. Non-numeric UIDs never reach an IMAP set; they fail."""
+    uids = [str(u) for u in uids]
+    want = [u for u in uids if u.isdigit()]
+    bad = [u for u in uids if not u.isdigit()]
+    if not want:
+        return [], bad
+    acc = _account_by_email(user_id, db, account_email)
+    if not acc:
+        return [], uids
+    imap = connect_imap(acc)
+    if not imap:
+        return [], uids
+    try:
+        if hasattr(imap, 'socket') and imap.socket():
+            imap.socket().settimeout(MAIL_OPERATION_TIMEOUT)
+        status, _ = imap.select('"' + folder + '"')
+        if status != "OK":
+            logger.error(f"Failed to select folder {folder}")
+            return [], uids
+        uidset = ",".join(want)
+        status, data = imap.uid("SEARCH", None, f"UID {uidset}")
+        held = set(_uid_set(data)) if status == "OK" else set()
+        here = [u for u in want if u in held]
+        missing = [u for u in want if u not in held]
+        if not here:
+            return [], bad + missing
+        caps = _imap_caps(imap)
+
+        archive_folder = "INBOX.Archive"
+        result = run_with_timeout(lambda: imap.list(), timeout=5)
+        folder_exists = False
+        if result and result[0] == "OK":
+            for folder_line in result[1] or []:
+                decoded = folder_line.decode() if isinstance(folder_line, bytes) else str(folder_line)
+                if "INBOX.Archive" in decoded:
+                    folder_exists = True
+                    break
+        if not folder_exists:
+            result = imap.create(archive_folder)
+            if result[0] != "OK":
+                archive_folder = "Archive"   # a server without the INBOX. prefix
+                imap.create(archive_folder)
+            logger.info(f"Created {archive_folder} folder for {account_email}")
+
+        moving = ",".join(here)
+        if "MOVE" in caps:
+            r = run_with_timeout(lambda: imap.uid("MOVE", moving, archive_folder), timeout=MAIL_TOTAL_TIMEOUT)
+            if r and r[0] == "OK":
+                logger.info(f"Archived {len(here)} message(s) from {account_email}:{folder} to {archive_folder} (MOVE)")
+                return here, bad + missing
+            logger.warning(f"UID MOVE to {archive_folder} refused ({r}); falling back to COPY")
+        r = run_with_timeout(lambda: imap.uid("COPY", moving, archive_folder), timeout=MAIL_TOTAL_TIMEOUT)
+        if not r or r[0] != "OK":
+            logger.error(f"Failed to copy {len(here)} message(s) to {archive_folder}: {r}")
+            return [], uids
+        r = run_with_timeout(lambda: imap.uid("STORE", moving, "+FLAGS", "\\Deleted"), timeout=MAIL_OPERATION_TIMEOUT)
+        if not r or r[0] != "OK":
+            logger.warning("Failed to mark archived messages deleted in the source folder")
+        if "UIDPLUS" in caps:
+            r = run_with_timeout(lambda: imap.uid("EXPUNGE", moving), timeout=MAIL_TOTAL_TIMEOUT)
+        else:
+            r = run_with_timeout(lambda: imap.expunge(), timeout=MAIL_TOTAL_TIMEOUT)
+        if r is None:
+            logger.warning("Expunge timed out after archiving, but the messages were marked for deletion")
+        logger.info(f"Archived {len(here)} message(s) from {account_email}:{folder} to {archive_folder}")
+        return here, bad + missing
+    except Exception as e:
+        logger.error(f"Error archiving messages: {e}")
+        return [], uids
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
 def archive_message(user_id: int, db: Session, account_email: str, uid: str, folder: str = "INBOX") -> bool:
-    """Archive a message by moving to INBOX.Archive folder."""
-    accounts = get_user_mail_accounts(user_id, db)
-
-    for account in accounts:
-        if account.email == account_email:
-            imap = connect_imap(account)
-            if not imap:
-                return False
-
-            try:
-                status, _ = imap.select('"' + folder + '"')
-                if status != "OK":
-                    logger.error(f"Failed to select folder {folder}")
-                    return False
-
-                # Verify message exists
-                status, data = imap.uid("SEARCH", None, f"UID {uid}")
-                if status != "OK" or not data[0]:
-                    logger.error(f"Message UID {uid} not found in {folder}")
-                    return False
-
-                # Use INBOX.Archive as the standard archive folder
-                archive_folder = "INBOX.Archive"
-
-                # Check if it exists, create if not (with timeout)
-                def list_folders_sync():
-                    return imap.list()
-
-                result = run_with_timeout(list_folders_sync, timeout=5)
-                folder_exists = False
-                if result and result[0] == "OK":
-                    status, folders = result
-                    for folder_line in folders:
-                        decoded = folder_line.decode() if isinstance(folder_line, bytes) else folder_line
-                        if "INBOX.Archive" in decoded or '"INBOX.Archive"' in decoded:
-                            folder_exists = True
-                            break
-
-                if not folder_exists:
-                    result = imap.create(archive_folder)
-                    if result[0] != "OK":
-                        # Try without INBOX prefix as fallback
-                        archive_folder = "Archive"
-                        imap.create(archive_folder)
-                    logger.info(f"Created {archive_folder} folder for {account_email}")
-
-                # Copy to archive folder using UID command (not sequence number)
-                result = imap.uid("COPY", uid, archive_folder)
-                if result[0] != "OK":
-                    logger.error(f"Failed to copy message UID {uid} to {archive_folder}: {result}")
-                    return False
-
-                # Delete from source folder using UID command with timeout protection
-                def store_deleted():
-                    return imap.uid("STORE", uid, "+FLAGS", "\\Deleted")
-                
-                result = run_with_timeout(store_deleted, timeout=MAIL_OPERATION_TIMEOUT)
-                if not result or result[0] != "OK":
-                    logger.warning(f"Failed to mark message {uid} for deletion after archiving")
-                    # Still return True since copy succeeded
-                
-                # Wrap expunge with timeout - this is the operation that often times out
-                def expunge_messages():
-                    return imap.expunge()
-                
-                result = run_with_timeout(expunge_messages, timeout=MAIL_OPERATION_TIMEOUT)
-                if result is None:
-                    logger.warning(f"Expunge timed out for archived message {uid}, but message was marked for deletion")
-
-                logger.info(f"Archived message {uid} from {account_email}:{folder} to {archive_folder}")
-                return True
-
-            except Exception as e:
-                logger.error(f"Error archiving message: {e}")
-                return False
-            finally:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-
-    return False
+    """Archive one message (the chat `mail archive` command). See `archive_messages`."""
+    done, _failed = archive_messages(user_id, db, account_email, [uid], folder)
+    return bool(done)
 
 
 def send_email(
@@ -1957,11 +1985,19 @@ def move_message(user_id: int, db: Session, account_email: str, uid: str, src_fo
         sel = run_with_timeout(lambda: imap.select('"' + src_folder + '"'), timeout=6)
         if not sel or sel[0] != "OK":
             return False
+        caps = _imap_caps(imap)
+        if "MOVE" in caps:   # one atomic command, and it touches nothing else flagged \\Deleted
+            r = run_with_timeout(lambda: imap.uid("MOVE", uid, '"' + dest_folder + '"'), timeout=MAIL_TOTAL_TIMEOUT)
+            if r and r[0] == "OK":
+                return True
         r = run_with_timeout(lambda: imap.uid("COPY", uid, '"' + dest_folder + '"'), timeout=10)
         if not r or r[0] != "OK":
             return False
         run_with_timeout(lambda: imap.uid("STORE", uid, "+FLAGS", r"(\Deleted)"), timeout=8)
-        run_with_timeout(lambda: imap.expunge(), timeout=10)
+        if "UIDPLUS" in caps:
+            run_with_timeout(lambda: imap.uid("EXPUNGE", uid), timeout=10)
+        else:
+            run_with_timeout(lambda: imap.expunge(), timeout=10)
         return True
     except Exception as e:
         logger.warning(f"move_message {account_email} {src_folder}->{dest_folder} failed: {e}")

@@ -14,7 +14,7 @@ from app.services import instance_membership
 from app.services.user_table import UserRow as User
 from app.services.mail_service import (get_attachment, get_user_mail_accounts, sanitize_filename,
                                        send_email, reply_to_message, forward_message,
-                                       archive_message, delete_message, move_message,
+                                       archive_messages, delete_message, move_message,
                                        list_special_folders as _list_special_folders)
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
 
@@ -631,9 +631,19 @@ async def mail_delete(request: Request, db: Session = Depends(get_db), current_u
                     logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
                 if not ok:
                     raise HTTPException(status_code=502, detail="the mail server would not delete that message")
-    for uid in uids:
-        await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    await _drop_mirror(_seckey(db, current_user), acc.email, folder, uids)
     return {"ok": True, "deleted": len(uids)}
+
+
+async def _drop_mirror(seckey: bytes, email: str, folder: str, uids) -> None:
+    """Drop these messages from the local encrypted mirror, a few at a time. Each is a relay read plus a
+    signed kind-5; one after another they added up on a big batch."""
+    sem = _asyncio.Semaphore(8)
+
+    async def one(uid):
+        async with sem:
+            await mail_store.delete_message(seckey, email, folder, uid)
+    await _asyncio.gather(*(one(u) for u in uids))
 
 
 @router.post("/archive")
@@ -645,16 +655,13 @@ async def mail_archive(request: Request, db: Session = Depends(get_db), current_
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
     folder, uids = d.get("folder", "INBOX"), _uids_of(d)
-    done, failed = [], []
-    for uid in uids:
-        ok = False
-        try:
-            ok = await _asyncio.to_thread(archive_message, current_user.id, db, acc.email, uid, folder)
-        except Exception as e:
-            logger.debug("[mail] IMAP archive failed (%s): %s", uid, e)
-        (done if ok else failed).append(uid)
-    for uid in done:
-        await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
+    # ONE IMAP session for the whole batch (it was a login per message, ~1 s each, in series).
+    try:
+        done, failed = await _asyncio.to_thread(archive_messages, current_user.id, db, acc.email, uids, folder)
+    except Exception as e:
+        logger.debug("[mail] IMAP archive failed: %s", e)
+        done, failed = [], list(uids)
+    await _drop_mirror(_seckey(db, current_user), acc.email, folder, done)
     if failed and not done:
         raise HTTPException(status_code=502, detail="the mail server would not archive that message")
     if failed:   # a PARTIAL batch names what stayed, so the client puts back only those

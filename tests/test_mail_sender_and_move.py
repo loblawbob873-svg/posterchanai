@@ -87,7 +87,9 @@ class MoveTests(unittest.TestCase):
         must not do."""
         fn = APP[APP.index("      if(act==='move'){"):]
         fn = fn[:fn.index("\n      }")]
-        self.assertIn("this.api('/archive'", fn)
+        # Archive goes through removeMessages, which posts to '/'+action -- the same immediate,
+        # put-back-on-refusal path as the toolbar's Archive.
+        self.assertIn("this.removeMessages('archive'", fn)
         self.assertIn("this.api('/move'", fn)
 
     def test_the_picker_dialog_exists(self):
