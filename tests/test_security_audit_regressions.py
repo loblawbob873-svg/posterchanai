@@ -189,6 +189,8 @@ def test_a_proxied_svg_cannot_run_script_on_this_origin(monkeypatch):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.cookie)</script></svg>'
     real = httpx.AsyncClient
     monkeypatch.setattr(chat, 'is_safe_url', lambda url: (True, ''))
+    from app.services import rss_service   # evil.example stands for a public host (every hop is checked, #5)
+    monkeypatch.setattr(rss_service, 'is_safe_host', lambda url: 'evil.example' in url)
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real(transport=httpx.MockTransport(
         lambda req: httpx.Response(200, content=svg, headers={'content-type': 'image/svg+xml'})), **kw))
     app = FastAPI()

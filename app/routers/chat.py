@@ -552,7 +552,9 @@ async def _proxy_fetch(url_raw: str):
     is_safe, err = is_safe_url(url_raw)
     if not is_safe:
         raise HTTPException(status_code=400, detail=err)
-    async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+    from app.utils import redirect_guard
+    # Every redirect hop re-checked, not only url_raw (#5).
+    async with httpx.AsyncClient(timeout=12, follow_redirects=True, event_hooks=redirect_guard.HOOKS) as client:
         resp = await client.get(
             url_raw,
             headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},

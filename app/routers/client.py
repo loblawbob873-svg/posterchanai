@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.utils import redirect_guard
 from app.database import get_db
 from app.services import emoji_service, settings_store, tor_service, user_table
 from app.services.nostr import nostr_service, event as nostr_event
@@ -2612,7 +2613,8 @@ async def client_proxy_xdc(url: str = Query(...)):
     # zero-byte body. The client reads that as a working download, hands nothing to the unzipper, and
     # (worse) never reaches its own mirror fallback, because as far as it can tell we answered. That
     # made a dead host look like a corrupt app.
-    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=True)
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=True,
+                               event_hooks=redirect_guard.HOOKS)   # every hop re-checked (#5)
     try:
         req = client.build_request("GET", url, headers={"Accept": "*/*"})
         r = await client.send(req, stream=True)
@@ -3594,6 +3596,7 @@ async def nip05_proxy(domain: str, name: str = "_"):
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=4.0), follow_redirects=True,
+                                     event_hooks=redirect_guard.HOOKS,
                                      headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
             async with client.stream("GET", url) as resp:
                 if resp.status_code == 200:
@@ -3648,6 +3651,7 @@ async def lnurl_proxy(url: str):
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0), follow_redirects=True,
+                                     event_hooks=redirect_guard.HOOKS,
                                      headers={"User-Agent": "Mozilla/5.0 (compatible; PosterChanBot/1.0)"}) as client:
             async with client.stream("GET", url) as resp:
                 body = b""
