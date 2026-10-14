@@ -262,23 +262,38 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     cfg = blossom_service._cfg(db)
+    max_bytes = cfg["max_upload_mb"] * 1024 * 1024
+    auth = request.headers.get("authorization", "")
 
-    data = await request.body()
+    # WHO IS UPLOADING IS DECIDED BEFORE A BYTE IS READ (security review #9). The body used to be read
+    # whole first, so anybody could make the node buffer an upload of any size. The signature, expiry
+    # and permission need no body; only the `x` (hash) binding does, and that is checked after.
+    try:
+        pubkey = await asyncio.to_thread(blossom_service.verify_auth, auth, "upload", None)
+    except ValueError as e:
+        return _err(401, str(e))
+    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
+        return _err(403, "not authorized to upload (needs the can_blossom privilege)")
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > max_bytes:
+        return _err(413, f"blob exceeds {cfg['max_upload_mb']} MB limit")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > max_bytes:                       # a body longer than it said: stop reading
+            return _err(413, f"blob exceeds {cfg['max_upload_mb']} MB limit")
+    data = bytes(buf)
     if not data:
         return _err(400, "empty body")
-    max_bytes = cfg["max_upload_mb"] * 1024 * 1024
-    if len(data) > max_bytes:
-        return _err(413, f"blob exceeds {cfg['max_upload_mb']} MB limit")
 
     sha256 = await asyncio.to_thread(blossom_service.compute_sha256, data)
     try:
-        pubkey = await asyncio.to_thread(
-            blossom_service.verify_auth, request.headers.get("authorization", ""), "upload", sha256)
+        await asyncio.to_thread(blossom_service.verify_auth, auth, "upload", sha256)
     except ValueError as e:
         return _err(401, str(e))
-
-    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
-        return _err(403, "not authorized to upload (needs the can_blossom privilege)")
 
     # Per-user quota — AFTER authorization, so someone who may not upload at all gets a plain 403
     # rather than a confusing quota message (and we don't run the aggregate for them). Skipped unless
