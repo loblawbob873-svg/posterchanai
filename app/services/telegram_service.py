@@ -237,13 +237,19 @@ class TelegramService:
             logger.error(f"Failed to send Telegram document bytes: {e}")
             return {"ok": False, "error": str(e)}
 
+    def webhook_secret(self) -> str:
+        return webhook_secret_for(self.bot_token)
+
     async def set_webhook(self, webhook_url: str) -> dict:
         """Set the webhook for the bot."""
         if not self.bot_token:
             return {"ok": False, "error": "Bot token not configured"}
         
         url = f"{self.api_base}{self.bot_token}/setWebhook"
-        payload = {"url": webhook_url}
+        # Telegram echoes this in X-Telegram-Bot-Api-Secret-Token on every update, and the webhook refuses
+        # any update without it (routers/telegram/webhook.py): the route is public, so without a secret
+        # anybody could post an update "from" an admin's chat id and run bot commands as them.
+        payload = {"url": webhook_url, "secret_token": self.webhook_secret()}
         
         logger.info(f"Setting Telegram webhook to: {webhook_url}")
         logger.info(f"Telegram API URL: {url}")
@@ -484,6 +490,16 @@ class TelegramService:
 
 
 telegram_service = TelegramService()
+
+
+def webhook_secret_for(token) -> str:
+    """The webhook's secret_token, derived from the bot token: no setting to keep, and it changes when the
+    token does. Telegram allows 1-256 chars of A-Z a-z 0-9 _ -; a hex HMAC is within that."""
+    import hashlib
+    import hmac
+    if not token:
+        return ""
+    return hmac.new(str(token).encode(), b"pc-telegram-webhook", hashlib.sha256).hexdigest()
 
 
 def configure_from_settings(db) -> None:

@@ -204,3 +204,23 @@ def test_a_proxied_svg_cannot_run_script_on_this_origin(monkeypatch):
 def test_every_route_serving_foreign_bytes_is_sandboxed(path):
     from app.middleware.untrusted_files import UNTRUSTED_PREFIXES
     assert path.startswith(UNTRUSTED_PREFIXES), path + ' serves bytes somebody else chose, unsandboxed'
+
+
+# SECURITY REVIEW 2026-10-14, finding 2: the public Telegram webhook trusted any POST -- an update names its
+# sender by chat id alone, so a forged one acted as any linked user, an admin's `node` command included.
+def test_the_telegram_webhook_refuses_an_update_without_telegrams_secret(monkeypatch):
+    from app.routers.telegram import webhook
+    from app.services import settings_store
+    from app.services.telegram_service import webhook_secret_for, telegram_service
+    monkeypatch.setattr(settings_store, 'get', lambda k, d=None: 'synthetic:bot-token' if k == 'telegram_bot_token' else d)
+    ran = []
+    monkeypatch.setattr(webhook, '_process_update_bg', lambda *a, **k: ran.append(1), raising=False)
+    app = FastAPI(); app.include_router(webhook.router)
+    forged = {'update_id': 7, 'message': {'message_id': 1, 'chat': {'id': 1}, 'text': 'node local id'}}
+    with TestClient(app) as tc:
+        assert tc.post('/api/telegram/webhook', json=forged).status_code == 403
+        assert tc.post('/api/telegram/webhook', json=forged, headers={'X-Telegram-Bot-Api-Secret-Token': 'guess'}).status_code == 403
+        ok = tc.post('/api/telegram/webhook', json={'update_id': 8}, headers={'X-Telegram-Bot-Api-Secret-Token': webhook_secret_for('synthetic:bot-token')})
+        assert ok.status_code == 200, ok.text
+    telegram_service.bot_token = 'synthetic:bot-token'
+    assert telegram_service.webhook_secret() == webhook_secret_for('synthetic:bot-token')

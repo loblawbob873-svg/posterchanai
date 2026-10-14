@@ -1,4 +1,5 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
+from fastapi import Header, HTTPException
 from .messages import _handle_message
 from .callbacks import _handle_callback
 from app.services import settings_store
@@ -71,7 +72,8 @@ def _make_tg_node_notify(telegram_service, chat_id):
 
 
 @router.post("/webhook")
-async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
+async def telegram_webhook(update: dict, background_tasks: BackgroundTasks,
+                           x_telegram_bot_api_secret_token: str = Header(default="")):
     """Handle incoming webhook updates from Telegram.
 
     Returns 200 OK immediately so Telegram doesn't time out (60s limit), then processes the message
@@ -80,6 +82,14 @@ async def telegram_webhook(update: dict, background_tasks: BackgroundTasks):
     drained connection pool would block the ACK → Telegram would replay its backlog.
     """
     global _seen_update_ids, _seen_msg_keys, _seen_cq_ids
+    # ONLY TELEGRAM MAY POST HERE. The route is public and an update names its sender by chat id alone, so a
+    # forged one acted as any linked user -- an admin's `node` command included (security review 2026-10-14).
+    # Telegram sends the secret it was registered with (telegram_service.set_webhook); nothing else knows it.
+    import hmac
+    from app.services.telegram_service import webhook_secret_for
+    expected = webhook_secret_for(settings_store.get("telegram_bot_token"))
+    if not expected or not hmac.compare_digest(x_telegram_bot_api_secret_token or "", expected):
+        raise HTTPException(status_code=403, detail="forbidden")
     update_id = update.get("update_id", 0)
     if update_id in _seen_update_ids:
         logger.info(f"Skipping duplicate update_id: {update_id}")
