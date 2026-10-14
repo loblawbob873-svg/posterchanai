@@ -93,7 +93,10 @@ def test_somebody_else_sees_the_state_but_no_buttons():
         await desktop.login(b)
         await b.js(setup(False))
         await b.until("!!document.querySelector('.issue-status .collab-state')")
-        assert not await b.js("!!document.querySelector('.issue-status [data-is]')"), \
+        assert not await b.js("!!document.querySelector('.issue-status [data-is]:not([data-is=\"comment\"])')"), \
             "a reader who is neither the author nor a maintainer was offered Close"
+        # ...but can still take part: anyone signed in can comment on an issue.
+        assert await b.js("!!document.querySelector('.issue-status .issue-comment')"), \
+            "a signed-in reader cannot comment on the issue"
 
     asyncio.run(desktop.with_browser("online", "?pcShell=1", check))

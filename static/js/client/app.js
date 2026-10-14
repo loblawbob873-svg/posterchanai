@@ -8121,6 +8121,7 @@
       attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
       openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
       timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp: _isNativeApp,
+      compose: (o) => compose(o),
     }));
   }
   const repoCard     = (...a) => _git().repoCard(...a);
@@ -12980,6 +12981,20 @@
       switchView(fallback || _startTimeline());
     }
   }
+  /* A NIP-34 issue/patch is drawn as an issue page (title, state, labels, a comment timeline), never as a
+   * social thread -- a thread of cards read as "a post with replies", and the issue itself was unrecognisable. */
+  function _paintIssuePage(feed, root, all, id, partial, hints){
+    let page='';
+    try{ page=_git().issuePageHtml(root, all, id); }catch(_){ page=''; }
+    if(!page) return false;
+    $('#view-title').textContent = root.kind===1617 ? 'Patch' : 'Issue';
+    feed.innerHTML = _THREAD_TOP + (partial ? `<div class="thread-partial empty">Some relays didn’t answer, so comments may be missing. <button class="btn btn-ghost small" id="thread-retry">Load again</button></div>` : '') + page;
+    hydrate(feed);
+    _bindThreadBack(feed, id);
+    { const rb=$('#thread-retry',feed); if(rb) rb.onclick=()=>renderThread(id, hints); }
+    try{ _git().bindIssuePage(feed, root); }catch(_){ }
+    return true;
+  }
   function _paintThreadHead(feed, ev){
     if(!feed || !ev) return;
     feed.innerHTML = _THREAD_TOP
@@ -13181,9 +13196,10 @@
     // A ROOT WITH NO PARENT HERE can still be a fediverse reply (its parent only an `r` URL): say what it
     // answers, or the opened post is a bare GIF out of nowhere ("i can't tell what this post is").
     const rootCtx = (!missingParent && !replyParentId(root) && isReply(root)) ? replyContextHtml(root) : '';
-    html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${rootCtx}${noteHtml(root)}</div>`;
-    // A git issue or patch: its status, and a way to close/resolve it from right here (git.js).
+    // A git issue or patch is drawn as an ISSUE PAGE (git.js issuePageHtml), not as a social thread.
     const isIssue = root.kind===1621 || root.kind===1617;
+    if(isIssue && _paintIssuePage(feed, root, all, id, partial, hints)) return;
+    html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${rootCtx}${noteHtml(root)}</div>`;
     if(isIssue) html+=`<div class="issue-status-host" id="issue-status-host"></div>`;
     html+=`<div class="search-section-title">${partial ? `${nReplies} repl${nReplies===1?'y':'ies'} so far` : `${nReplies} repl${nReplies===1?'y':'ies'}`}</div>`;
     html+= partial ? `<div class="thread-partial empty">Some relays didn’t answer, so replies may be missing. <button class="btn btn-ghost small" id="thread-retry">Load again</button></div>` : '';

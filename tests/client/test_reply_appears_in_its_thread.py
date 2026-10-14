@@ -116,7 +116,7 @@ def test_an_expansion_that_never_completed_is_not_reported_as_the_conversation()
     offers the retry — and, importantly, does NOT claim 'No replies yet' when it simply could not
     ask, which is the same sentence being false for two completely different reasons."""
     src = _src()
-    body = src[src.index("let expandedFully=true;"):src.index("_bindThreadBack(feed, id);")]
+    body = src[src.index("let expandedFully=true;"):src.index("_bindThreadBack(feed, id);", src.index("let expandedFully=true;"))]
     assert "expandedFully=false" in body, "an incomplete retry no longer marks the expansion partial"
     assert "const partial = !expandedFully" in body
     assert "so far" in body, "the count is still presented as a settled number"
@@ -131,14 +131,14 @@ def test_the_retry_button_is_bound():
     """A button that does nothing is worse than no button — and this one is rendered conditionally,
     so it is exactly the shape that gets drawn and never wired."""
     src = _src()
-    bind = src[src.index("_bindThreadBack(feed, id);"):][:300]
+    bind = src[src.index("_bindThreadBack(feed, id);", src.index("let expandedFully=true;")):][:300]
     assert "thread-retry" in bind and "renderThread(id, hints)" in bind
 
 
 def test_a_complete_expansion_says_nothing_extra():
     """The normal case must stay clean: no warning, no 'so far', on a thread that resolved."""
     src = _src()
-    body = src[src.index("let expandedFully=true;"):src.index("_bindThreadBack(feed, id);")]
+    body = src[src.index("let expandedFully=true;"):src.index("_bindThreadBack(feed, id);", src.index("let expandedFully=true;"))]
     # Both strings are inside a `partial ? … : …` choice rather than emitted unconditionally.
     for claim in ("so far", "didn’t answer"):
         idx = body.index(claim)

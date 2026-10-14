@@ -36,7 +36,7 @@ window.PCGitFactory = function(dep){
     _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
     attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
     openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
-    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp,
+    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp, compose,
   } = dep;
 
   // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
@@ -1757,6 +1757,8 @@ window.PCGitFactory = function(dep){
     host.innerHTML=`<div class="issue-status" data-state="${state}">
         <div class="issue-status-hd"><span class="collab-state st-${state}">${_ST_BADGE[state]||state}</span>
           ${may ? '' : `<span class="muted small">Only the ${noun}'s author and the repo's maintainers can change its status.</span>`}</div>
+        ${(!may && S.ME) ? `<textarea class="input issue-comment" rows="3" maxlength="20000" placeholder="Leave a comment" aria-label="Comment"></textarea>
+        <div class="issue-acts"><button type="button" class="btn small" data-is="comment" disabled>Comment</button></div>` : ''}
         ${may ? `<textarea class="input issue-comment" rows="2" maxlength="20000" placeholder="Leave a comment (optional)" aria-label="Comment"></textarea>
         <div class="issue-acts">
           <button type="button" class="btn btn-ghost small" data-is="comment" disabled>Comment</button>
@@ -1765,8 +1767,8 @@ window.PCGitFactory = function(dep){
                  : `<button type="button" class="btn small" data-is="1630"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg><span>Reopen ${noun}</span></button>`}
         </div>` : ''}
       </div>`;
-    if(!may) return;
     const ta=host.querySelector('.issue-comment');
+    if(!ta) return;
     const label={ 1631:['Resolve','Comment & resolve'], 1632:['Close '+noun,'Comment & close'], 1630:['Reopen '+noun,'Comment & reopen'] };
     const relabel=()=>{ const has=!!ta.value.trim();
       host.querySelector('[data-is="comment"]').disabled=!has;
@@ -1795,5 +1797,82 @@ window.PCGitFactory = function(dep){
       }catch(err){ toast('failed: '+((err&&err.message)||err)); again(); }
     });
   }
-  return { repoCard, openRepo, renderRepos, newRepoIssue, _repoTag, mountIssueStatus };
+
+  /* AN ISSUE IS A PAGE, NOT A SOCIAL THREAD. It opened through the timeline's thread view: the issue as a post
+   * card with like/repost/zap under it and the comments as a reply tree -- "I have no idea what the issue is,
+   * does not feel like I am in Git" (2026-10-13). This is the issue the way a forge shows one: the repo it
+   * belongs to, its title and state, who opened it, its labels, the description, then the comments in order,
+   * and the comment box with the status buttons at the end. Same events, same publishing (NIP-34 + NIP-22). */
+  function _issueRepoAddr(issue){
+    return ((issue.tags||[]).find(t=>t[0]==='a' && /^30617:/.test(t[1]||''))||[])[1]||'';
+  }
+  function _issueRepoName(addr){
+    const [, pk, d]=String(addr).split(':');
+    if(!pk || !d) return '';
+    let repo=null;
+    try{ repo=(Store.query([{ kinds:[30617], authors:[pk], '#d':[d], limit:1 }])||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){ }
+    return (repo && _repoTag(repo,'name')) || d;
+  }
+  function _giWho(pk){
+    const p=profOf(pk)||{}; return p.display_name||p.name||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
+  }
+  function _giComment(ev, issue, focusId, byId){
+    const pid=((ev.tags||[]).find(t=>t[0]==='e' && t[3]==='reply')||(ev.tags||[]).find(t=>t[0]==='e')||[])[1];
+    const parent=pid && pid!==issue.id ? byId.get(pid) : null;
+    const pic=(profOf(ev.pubkey)||{}).picture||'';
+    return `<div class="gi-c${ev.id===focusId?' gi-hl':''}" data-tid="${enc(ev.id)}" data-gipk="${enc(ev.pubkey)}">
+      <div class="gi-c-hd"><img alt="" class="gi-av" src="${enc(pic||S.LOGO)}" onerror="this.src='${S.LOGO}'">
+        <b class="gi-name" data-open-pk="${enc(ev.pubkey)}">${enc(_giWho(ev.pubkey))}</b>
+        <span class="muted small">${ev.id===issue.id?'opened this '+(issue.kind===1617?'patch':'issue'):'commented'} ${timeAgo(ev.created_at)}</span>
+        ${parent?`<span class="muted small gi-re">replying to ${enc(_giWho(parent.pubkey))}</span>`:''}
+        ${ev.id!==issue.id || S.ME ? `<button type="button" class="btn btn-ghost small gi-reply" data-rid="${enc(ev.id)}" data-rpk="${enc(ev.pubkey)}">Reply</button>`:''}</div>
+      <div class="gi-c-body md">${mdToHtml(ev.content||'')||'<span class="muted">No description.</span>'}</div></div>`;
+  }
+  function issuePageHtml(issue, replies, focusId){
+    const addr=_issueRepoAddr(issue), repoName=_issueRepoName(addr);
+    const title=_repoTag(issue,'subject') || String(issue.content||'').split('\n').find(l=>l.trim())||'(untitled)';
+    const labels=(issue.tags||[]).filter(t=>t[0]==='t' && t[1]).map(t=>t[1]).slice(0,12);
+    const list=(replies||[]).filter(r=>r && r.id!==issue.id).sort((a,b)=>a.created_at-b.created_at);
+    const byId=new Map([issue,...list].map(e=>[e.id,e]));
+    const noun=issue.kind===1617?'Patches':'Issues';
+    return `<div class="gi-page" data-issue="${enc(issue.id)}">
+      <div class="gi-crumb">${repoName?`<a href="#" class="gi-repo" data-addr="${enc(addr)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-git"></use></svg>${enc(repoName)}</a><span class="muted"> / ${noun}</span>`:`<span class="muted">${noun}</span>`}</div>
+      <h2 class="gi-title">${enc(title.slice(0,300))} <span class="muted gi-num">#${enc(issue.id.slice(0,7))}</span></h2>
+      <div class="gi-meta"><span class="collab-state st-open gi-state" id="gi-state">● Open</span>
+        <span class="muted small"><b data-open-pk="${enc(issue.pubkey)}">${enc(_giWho(issue.pubkey))}</b> opened this ${timeAgo(issue.created_at)} · ${list.length} comment${list.length===1?'':'s'}</span></div>
+      ${labels.length?`<div class="gi-labels">${labels.map(l=>`<span class="gi-label">${enc(l)}</span>`).join('')}</div>`:''}
+      <div class="gi-timeline">${[issue,...list].map(e=>_giComment(e, issue, focusId, byId)).join('')}</div>
+      <div class="issue-status-host gi-compose" id="issue-status-host"></div>
+    </div>`;
+  }
+  async function openRepoByAddr(addr){
+    const [, pk, d]=String(addr).split(':'); if(!pk || !d) return;
+    const q=[{ kinds:[30617], authors:[pk], '#d':[d], limit:1 }];
+    let repo=null;
+    try{ repo=(Store.query(q)||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){ }
+    if(!repo){ try{ repo=((await Relay.query(q))||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; if(repo) Store.saveEvent(repo); }catch(_){ } }
+    if(repo) openRepo(repo); else toast('That repository could not be found on your relays');
+  }
+  function bindIssuePage(host, issue){
+    const page=host && host.querySelector('.gi-page'); if(!page) return;
+    const pks=[...new Set([...page.querySelectorAll('[data-gipk]')].map(n=>n.dataset.gipk))];
+    pks.forEach(pk=>needProfile(pk));
+    const paintNames=()=>{ page.querySelectorAll('[data-open-pk]').forEach(n=>{ n.textContent=_giWho(n.dataset.openPk); });
+      page.querySelectorAll('.gi-c[data-gipk]').forEach(c=>{ const pic=(profOf(c.dataset.gipk)||{}).picture; const av=c.querySelector('.gi-av');
+        if(pic && av && av.getAttribute('src')!==pic) av.src=pic; }); };
+    setTimeout(paintNames, 1200); setTimeout(paintNames, 4000);
+    page.querySelectorAll('[data-open-pk]').forEach(n=>n.onclick=()=>renderProfileView(n.dataset.openPk));
+    page.querySelectorAll('.gi-reply').forEach(b=>b.onclick=()=>{
+      if(b.dataset.rid===issue.id){ const ta=page.querySelector('.issue-comment'); if(ta){ ta.focus(); ta.scrollIntoView({block:'center'}); return; } }
+      compose({ reply:b.dataset.rid, replyPk:b.dataset.rpk }); });
+    const rl=page.querySelector('.gi-repo');
+    if(rl) rl.onclick=(e)=>{ e.preventDefault(); try{ openRepoByAddr(rl.dataset.addr); }catch(_){ } };
+    const h=page.querySelector('#issue-status-host');
+    if(h) Promise.resolve().then(()=>mountIssueStatus(h, issue)).then(()=>{
+      const st=h.querySelector('.issue-status'); const badge=page.querySelector('#gi-state');
+      if(st && badge){ const state=st.dataset.state; badge.className='collab-state st-'+state+' gi-state'; badge.textContent=(_ST_BADGE[state]||state); }
+    }).catch(()=>{});
+    const hl=page.querySelector('.gi-hl'); if(hl) setTimeout(()=>hl.scrollIntoView({block:'center'}), 60);
+  }
+  return { repoCard, openRepo, renderRepos, newRepoIssue, _repoTag, mountIssueStatus, issuePageHtml, bindIssuePage };
 };
