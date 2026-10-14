@@ -3877,6 +3877,26 @@ async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
     return True, f"admitted (follow not stored: {msg})"   # WoT-add already done → still usable
 
 
+# A NEW NIP-05 NAME NEEDS THE SIGNUP CAPTCHA (security review #6). A name this node grants IS the
+# membership (AI, generation, Blossom, Mail, Git, the Concord tunnel), and /claim-nip05 granted one to any
+# fresh keypair with a self-signed proof -- a loop of keypairs was a loop of members. The captcha guarded
+# only /signup-follow, which the client calls first; the key that solved it now has a window to claim.
+_CAPTCHA_PASS_TTL = 1800
+_captcha_passed: dict[str, float] = {}
+
+
+def _captcha_passed_note(pk: str) -> None:
+    now = time.time()
+    for k in [k for k, t in _captcha_passed.items() if now - t > _CAPTCHA_PASS_TTL]:
+        _captcha_passed.pop(k, None)
+    _captcha_passed[pk] = now
+
+
+def _captcha_passed_recently(pk: str) -> bool:
+    t = _captcha_passed.get(pk)
+    return t is not None and time.time() - t <= _CAPTCHA_PASS_TTL
+
+
 @router.post("/signup-follow")
 async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
     """Operator auto-follows + admits a freshly-created account so the WoT relay accepts its posts."""
@@ -3889,6 +3909,7 @@ async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _captcha_verify(data.captcha_token, data.captcha_answer):
         return JSONResponse({"ok": False, "error": "captcha", "message": "captcha incorrect or expired"}, status_code=403)
+    _captcha_passed_note(new_pk)
     ok, msg = await follow_and_admit(db, new_pk)
     return JSONResponse({"ok": ok, "message": msg})
 
@@ -6514,6 +6535,9 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
     if not registration_service.enabled():
         return JSONResponse({"ok": False, "error": "registration_closed",
                              "message": registration_service.closed_message()}, status_code=403)
+    if not _captcha_passed_recently(pk):
+        return JSONResponse({"ok": False, "error": "captcha",
+                             "message": "solve the signup captcha first"}, status_code=403)
     base = _sanitize_nip05_name(data.name) or ("user" + pk[:8])
     name, taken = base, set(names.keys())
     from app.services.activitypub import actors as ap_actors
