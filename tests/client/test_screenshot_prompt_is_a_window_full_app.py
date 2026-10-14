@@ -320,7 +320,31 @@ def test_the_desktop_opens_a_marked_up_shot_in_the_meme_builder():
         await b.until("!!window.__up")
         assert await b.js("__read[0]") == "/home/u/Pictures/Screenshots/PosterChan-x.png"
         assert await b.js("__up") == ["PosterChan-x.png", "image/png", 12, {"noCompress": True}], await b.js("__up")
-        await b.until("[...document.querySelectorAll('img,video')].some(e=>(e.getAttribute('src')||'')==='https://media.example/shot.png')"
-                      "||JSON.stringify(localStorage).indexOf('https://media.example/shot.png')>=0")
+        # The hand-off is the builder's INBOX, which every renderer shares. "Somewhere in localStorage" used to be
+        # enough here -- and the broken build passed it, because it saved the shot into THIS page's own project
+        # while the builder that opened (another window) stayed empty.
+        await b.until("(JSON.parse(localStorage.getItem('pc_meme_inbox')||'[]')).some(i=>i.url==='https://media.example/shot.png')"
+                      "||[...document.querySelectorAll('img,video')].some(e=>(e.getAttribute('src')||'')==='https://media.example/shot.png')")
 
     asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES + HOST))
+
+
+# "screen shot -> Mark up option -> meme builder opens up but nothing is there" (2026-10-14): on PosterChanOS the
+# Meme Builder is a window of its own. A builder window that opens with a shot in the inbox must SHOW it.
+INBOX = r"""
+try{ if(!sessionStorage.getItem('__inboxSeeded')){ sessionStorage.setItem('__inboxSeeded','1');
+  localStorage.setItem('pc_meme_inbox', JSON.stringify([{url:'https://media.example/shot.png', type:'image/png', at:Date.now()}])); } }catch(_){}
+"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_meme_builder_window_shows_the_shot_it_was_handed():
+    async def check(b):
+        await desktop.login(b)
+        await b.js("__PC.switchView('meme'); true")
+        # Shown = an image/video in the builder carrying the shot's address, and the inbox emptied.
+        await b.until("!localStorage.getItem('pc_meme_inbox') && [...document.querySelectorAll('img,video')]"
+                      ".some(e => (e.currentSrc || e.getAttribute('src') || '').indexOf('media.example/shot.png') >= 0)")
+        assert not await b.js("localStorage.getItem('pc_meme_inbox')"), "the builder did not take the shot from its inbox"
+
+    asyncio.run(desktop.with_browser("online", "?pcwin=meme", check, INBOX))

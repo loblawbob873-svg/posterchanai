@@ -86,13 +86,35 @@
     return (await _renderLocal(edit, signal)) || _renderRemote(edit, signal, what);
   }
 
+  /* MEDIA HANDED IN FROM ANOTHER WINDOW (the screenshot prompt's Mark up). On PosterChanOS the Meme Builder
+   * is a window of its own -- another renderer -- so `PCMeme.addMedia` called by the desktop that took the
+   * screenshot added a layer to a builder nobody was looking at, and the one that opened was empty ("Mark
+   * up -> Meme Builder opens up but nothing is there", 2026-10-14). The hand-off is a small inbox in
+   * localStorage (shared by every renderer of the app): whichever page is SHOWING the builder takes it --
+   * when it renders, and at once if it is already open (`storage`). Items older than 10 minutes are dropped. */
+  const MEME_INBOX = 'pc_meme_inbox';
+  function _drainInbox(){
+    try{
+      if(!(PC && typeof PC.isView === 'function' && PC.isView('meme'))) return 0;
+      const raw = localStorage.getItem(MEME_INBOX); if(!raw) return 0;
+      localStorage.removeItem(MEME_INBOX);
+      let n = 0;
+      for(const it of (JSON.parse(raw) || [])){
+        if(!it || !it.url || !(Date.now() - (it.at || 0) < 600000)) continue;
+        if(window.PCMeme && window.PCMeme.addMedia(String(it.url), String(it.type || ''))) n++;
+      }
+      return n;
+    }catch(_){ return 0; }
+  }
+  try{ window.addEventListener('storage', e => { if(e.key === MEME_INBOX && e.newValue) _drainInbox(); }); }catch(_){}
   function boot(){
     PC = window.__PC;
     if(!PC) return setTimeout(boot, 50);
     ({ toast, uploadBlob: _uploadNet, selfProof, uiConfirm, uiPrompt } = PC);
     bindKeys();          // ONCE, on the document — see bindKeys for why not per render()
     window.PCMeme = {
-      render(){ ME = PC.ME; P = load(); _fitNext = true; render(); },
+      render(){ ME = PC.ME; P = load(); _fitNext = true; render(); _drainInbox(); },
+      drainInbox: () => _drainInbox(),
       // Persist on the way OUT too. Every edit already saves, but leaving the view is exactly when a
       // missed save becomes 'my project came back different', so make it unconditional.
       unmount(){ try{ stopPlay(false); }catch(_){ if(_playT){ clearInterval(_playT); _playT=null; } } try{ if(P) save(); }catch(_){ } },

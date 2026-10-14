@@ -6902,9 +6902,16 @@
       const file = new File([bytes], name, { type: /\.jpe?g$/i.test(name) ? 'image/jpeg' : 'image/png' });
       const url = await PC().uploadBlob(file, { noCompress: true });
       if(!url) throw new Error('the upload did not return an address');
+      /* Through the builder's inbox, never `addMedia` here: on PosterChanOS the builder is ANOTHER window
+       * (renderer), and adding to this page's copy left the one that opened empty. See meme.js _drainInbox. */
+      try{
+        const box = JSON.parse(localStorage.getItem('pc_meme_inbox') || '[]');
+        box.push({ url, type: file.type, at: Date.now() });
+        localStorage.setItem('pc_meme_inbox', JSON.stringify(box.slice(-8)));
+      }catch(_){ throw new Error('could not hand the screenshot to the Meme Builder'); }
       openLauncherApp('meme');
-      const m = await _waitFor(() => window.PCMeme && PCMeme.addMedia ? PCMeme : null);
-      if(!m || !m.addMedia(url, file.type)) throw new Error('the Meme Builder did not take it');
+      // A builder already open IN THIS PAGE does not re-render on focus and gets no `storage` event of its own.
+      try{ if(window.PCMeme && PCMeme.drainInbox) setTimeout(() => PCMeme.drainInbox(), 300); }catch(_){}
     }catch(e){ PC().toast && PC().toast('could not open it to mark up: ' + ((e && e.message) || e)); }
   }
   function _waitFor(get, ms){
