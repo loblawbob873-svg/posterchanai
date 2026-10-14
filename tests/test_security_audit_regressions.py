@@ -175,3 +175,32 @@ def test_remote_xml_entities_are_rejected(monkeypatch):
     assert asyncio.run(office._accepted_exts()) == frozenset(office._EXTS_FALLBACK)
     with pytest.raises(HTTPException):
         asyncio.run(office._action_url('docx', 'edit'))
+
+
+# SECURITY REVIEW 2026-10-14, finding 1: the PUBLIC image proxy served an attacker's SVG -- `<script>` and all --
+# from this origin with no sandbox, so one link ran script where the session and the user's key live. Drives the
+# real /client/proxy-image route through the real middleware stack position, with the upstream mocked.
+def test_a_proxied_svg_cannot_run_script_on_this_origin(monkeypatch):
+    from app.middleware.untrusted_files import UntrustedFilesMiddleware
+    from app.routers import chat, client
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.cookie)</script></svg>'
+    real = httpx.AsyncClient
+    monkeypatch.setattr(chat, 'is_safe_url', lambda url: (True, ''))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=svg, headers={'content-type': 'image/svg+xml'})), **kw))
+    app = FastAPI()
+    app.add_middleware(UntrustedFilesMiddleware)
+    app.include_router(client.router)
+    with TestClient(app) as tc:
+        r = tc.get('/client/proxy-image', params={'url': 'https://evil.example/x.svg'})
+    assert r.status_code == 200 and r.headers['content-type'].startswith('image/svg+xml')
+    policy = r.headers.get('content-security-policy', '')
+    assert 'sandbox' in policy and 'allow-scripts' not in policy, "a proxied SVG runs script on this origin"
+    assert r.headers.get('x-content-type-options') == 'nosniff'
+
+
+@pytest.mark.parametrize('path', ['/client/proxy-image', '/api/chat/proxy-image', '/api/websearch/asset',
+                                  '/api/mail/dl/1/2/x', '/api/mail/attachment/1/2/x', '/client/xdc'])
+def test_every_route_serving_foreign_bytes_is_sandboxed(path):
+    from app.middleware.untrusted_files import UNTRUSTED_PREFIXES
+    assert path.startswith(UNTRUSTED_PREFIXES), path + ' serves bytes somebody else chose, unsandboxed'
