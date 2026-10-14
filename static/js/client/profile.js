@@ -934,7 +934,8 @@ window.PCProfileFactory = function(dep){
     try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
     try{ const r=await fetch('/client/stream-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); streamOn=!!(r&&r.enabled); }catch(_){}
-    try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
+    try{ const P=window.__PC; try{ await P.ensureAiSession(); }catch(_){}   // admin-only now (#10): the session token goes with it
+      const r=await P.authFetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
     /* The domain is the NODE'S NIP-05 domain, as the server reports it. `location.host` is the shell's
      * own origin -- `localhost` in the APK, `posterchan` in the desktop app -- which is how this panel
      * came to offer "alice@localhost". The instance's host is only the fallback for an old server. */

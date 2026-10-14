@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.utils import redirect_guard
+from app.auth import get_admin_user as _auth_get_admin_user
 from app.database import get_db
 from app.services import emoji_service, settings_store, tor_service, user_table
 from app.services.nostr import nostr_service, event as nostr_event
@@ -4320,8 +4321,14 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True})
 
 
+def _admin_only(user=Depends(_auth_get_admin_user)):
+    """Admin data is for admins (security review #10): who asked for AI/streaming access, and any
+    account's admin flag and capabilities, were readable by anybody who asked."""
+    return user
+
+
 @router.get("/stream-requests")
-async def stream_requests(db: Session = Depends(get_db)):
+async def stream_requests(db: Session = Depends(get_db), _admin=Depends(_admin_only)):
     """Pending streaming-access requests, mirroring /ai-requests so the admin panel can list both."""
     from app.services import user_settings_table
     out = []
@@ -4334,7 +4341,7 @@ async def stream_requests(db: Session = Depends(get_db)):
 
 
 @router.get("/ai-requests")
-async def ai_requests(db: Session = Depends(get_db)):
+async def ai_requests(db: Session = Depends(get_db), _admin=Depends(_admin_only)):
     """Pending AI-access requests (users who asked, not yet granted), for admins to see + approve in
     the client. Sensitive only insofar as it lists requesters; returns just npub + name + when."""
     from app.services import user_settings_table
@@ -4357,7 +4364,7 @@ class UserCapsReq(BaseModel):
 
 
 @router.get("/user-caps")
-async def user_caps_status(pubkey: str, db: Session = Depends(get_db)):
+async def user_caps_status(pubkey: str, db: Session = Depends(get_db), _admin=Depends(_admin_only)):
     """A user's feature capabilities (image/music/video/torrent), so an admin can toggle them from
     the client profile menu instead of Admin → Users."""
     h = nostr_service.to_pubkey_hex(pubkey)
