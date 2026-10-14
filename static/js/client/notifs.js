@@ -208,7 +208,7 @@ window.PCNotifsFactory = function(dep){
                    && !_readIds().has(ev.id);
         if(late){ _notifArrived.set(ev.id, Math.floor(Date.now()/1000)+1);
                   if(_notifArrived.size>2000) _notifArrived.delete(_notifArrived.keys().next().value); }
-        if(ev.created_at>seenNotif.last || late){ bumpNotif(); if(_notifReady) notifPing(ev); }
+        if(ev.created_at>seenNotif.last || late){ bumpNotif(); if(_livePing(ev)) notifPing(ev); }
         renderNotificationsSoon(); },
       onEose: ()=>{ _notifReady=true; if(S.VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
@@ -234,6 +234,14 @@ window.PCNotifsFactory = function(dep){
       const named=/^[0-9a-f]{64}$/.test(t[3]||'') ? t[3] : (Store.get(t[1])||{}).pubkey;
       return named===S.ME.pubkey;
     });
+  }
+  /* A POP-UP IS FOR SOMETHING THAT JUST HAPPENED. The badge counts everything unseen; the toast and the OS
+   * notification only fire for an event made since this session started watching. Opening Git dials the repo's
+   * relays, the pool re-arms this subscription on them, and they replay their backlog -- every issue on your repo
+   * newer than the last time you opened Notifications then popped up as if it had just been filed ("I opened git
+   * and got stale git issue notifications", 2026-10-13). Follows already obeyed this rule (Sub B). */
+  function _livePing(ev){
+    return !!(_notifReady && ev && ev.created_at >= _watchSince - _LIVE_SLACK);
   }
   function _notifForMe(ev){
     return (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='p' && t[1]===S.ME.pubkey) || _quotesMe(ev);
