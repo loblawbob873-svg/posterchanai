@@ -28,6 +28,9 @@ class FakeWS {
          case the backoff exists for, and a fake that always connects cannot produce it. */
       if (FakeWS.dead) { this.onerror && this.onerror(); this.close(); return; }
       this.readyState = 1; this.onopen && this.onopen();
+      /* THIS NODE'S TUNNEL ACCEPTS FIRST AND DIALS AFTER (concord_tunnel.py), so a far relay that cannot be
+         reached OPENS and then closes (4502) without ever saying a word. */
+      if (FakeWS.tunnelDead) queueMicrotask(() => this.close());
     });
   }
   send(s) { this.sent.push(s); }
@@ -36,6 +39,7 @@ class FakeWS {
 }
 FakeWS.all = [];
 FakeWS.dead = false;
+FakeWS.tunnelDead = false;
 
 const ctx = {
   console, queueMicrotask, Promise, JSON, Math, Set, Map, Array, Object, String, Number, Date,
@@ -74,6 +78,7 @@ const stop = ctx.window.Relay.subscribeFrom(['wss://room.example'], [{ kinds: [1
 await new Promise(r => queueMicrotask(r));
 
 if (plan.deadRelay) FakeWS.dead = true;
+if (plan.tunnelDead) { FakeWS.tunnelDead = true; FakeWS.all.forEach(w => w.close()); }
 if (plan.stopFirst) stop();
 if (plan.drop) FakeWS.all.filter(w => w.readyState !== 3).forEach(w => w.drop());
 await advance(plan.advanceMs || 0);

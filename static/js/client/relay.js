@@ -1203,9 +1203,14 @@
           const request=()=>{if(!current())return;ws.send(wire);markReady(true);};
           auth=this._externalReadAuth(ws,u,current,()=>{backoff=1000;request();},reason=>{authBlocked=!authScope||reason!=='timeout';try{ws.close();}catch(_){}markReady(false);},()=>{},authScope);
           const ownAuth=auth;
-          ws.onopen=()=>{if(!current())return;if(!authScope)backoff=1000;try{request();}catch(_){}};
+          /* `onopen` IS NOT PROOF THE RELAY IS THERE: this node's tunnel accepts first and dials after, so a relay it
+           * cannot reach opens and then closes without a word. Resetting the backoff here made every live room
+           * subscription to such a relay redial once a second for ever (1,076 tunnels in ten minutes from one
+           * account, 2026-10-14). The backoff resets when the far relay SAYS something (onmessage below). */
+          ws.onopen=()=>{if(!current())return;try{request();}catch(_){}};
           ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
             if(!current()||!ownAuth.current())return;
+            if(!authScope)backoff=1000;   // the far relay answered: it is reachable
             if((m[0]!=='CLOSED'||m[1]===id)&&ownAuth.receive(m))return;
             /* A CLOSED is the relay saying this subscription is over and why; a caller that can act on
              * it (Concord falls back to a community's own relays on `unavailable:`) asks to be told. */

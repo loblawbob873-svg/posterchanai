@@ -74,6 +74,17 @@ def test_it_backs_off_rather_than_hammering_a_relay_that_is_gone():
     assert r["dials"] >= 4, f"it gave up on a relay that was only down ({r['dials']} dial(s))"
 
 
+def test_a_tunnel_that_opens_then_closes_backs_off_too():
+    """THIS NODE'S TUNNEL ACCEPTS FIRST AND DIALS AFTER, so a far relay that cannot be reached still fires
+    `onopen` -- then closes without a word. The backoff was reset on `onopen`, so every live room
+    subscription to such a relay redialled once a second for ever. Measured 2026-10-14: one account opened
+    1,076 tunnels in ten minutes (447 from one device), the per-member share sat at 128/128 and the owner's
+    Concord sends were refused. Only something the far relay SAYS proves it reachable."""
+    r = _run({"live": True, "tunnelDead": True, "advanceMs": 120000})
+    assert r["dials"] <= 10, f"{r['dials']} dials in two minutes through a tunnel to a dead relay is a storm"
+    assert r["dials"] >= 4, f"it gave up on a relay that was only down ({r['dials']} dial(s))"
+
+
 def test_it_never_gives_up_on_a_relay_that_stays_down():
     """The outage this was reported for is a laptop that slept. Whatever the length, the room has to
     come back on its own -- a subscription that exhausts its retries is the same bug again, later."""
