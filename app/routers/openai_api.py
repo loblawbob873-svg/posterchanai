@@ -189,10 +189,24 @@ def verify_api_key(
                 logger.debug(f"[OPENAI-API] Authenticated via X-API-Key header (User API Key: {user.username})")
                 return user
 
+    # A bot run by this node's bot manager (its credential, the one /api/community/* takes).
+    tok = (request.headers.get("x-pc-community-token", "") if request else "").strip()
+    if tok:
+        import hmac
+        from app.services import community_stats
+        if hmac.compare_digest(tok, community_stats.bot_token()):
+            return None
+
     # Check authorization header
     if not authorization:
-        # Allow unauthenticated access (for load-balanced requests or open access)
-        logger.debug("[OPENAI-API] No authorization header - allowing unauthenticated access")
+        # ANONYMOUS CALLS END WHEN THE NODE CAN TELL ITS PEERS APART (security review #4). Anybody could
+        # POST /v1/chat/completions with no credentials and use the GPU, the load-balanced nodes and the
+        # prompt-URL fetcher. The load balancer's node-to-node calls carry no user key either, so they
+        # are told apart by `lb_shared_secret`; until a node has one, refusing would break load
+        # balancing, so the old behaviour stays (and says so). Set the same secret on every node.
+        if lb_auth.shared_secret():
+            raise HTTPException(status_code=401, detail="An API key is required")
+        logger.debug("[OPENAI-API] No authorization header and no lb_shared_secret - allowing unauthenticated access")
         return None
 
     # Extract token from "Bearer <token>" format

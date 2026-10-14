@@ -69,6 +69,12 @@ def _request_headers(drop_auth=False):
     h = dict(_headers)
     if drop_auth or not (OPENAI_API_KEY or "").strip():
         h.pop("Authorization", None)
+    # The manager-issued bot credential (the same one /api/community/* takes). The app's chat API stops
+    # answering anonymous callers once the node has a peer secret (security review #4), and a bot whose
+    # API key went stale used to get through ONLY because anonymous calls were allowed.
+    tok = (os.getenv("POSTERCHANAI_COMMUNITY_TOKEN") or "").strip()
+    if tok:
+        h["X-PC-Community-Token"] = tok
     return h
 
 
