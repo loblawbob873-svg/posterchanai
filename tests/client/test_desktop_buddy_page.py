@@ -42,7 +42,10 @@ async def _settled(b, expr, limit=10.0):
 
 async def _run(page, hash=""):
     res = {}
-    with tempfile.TemporaryDirectory(prefix="pc-buddy-page-") as profile:
+    # Chrome's helper processes can outlive the one we kill and still be writing the profile when it is
+    # removed ("Directory not empty: 'Default'" -- deploy 224's gate); a throwaway profile left half-deleted
+    # is not what this test checks.
+    with tempfile.TemporaryDirectory(prefix="pc-buddy-page-", ignore_cleanup_errors=True) as profile:
         port = int(os.environ.get("PC_CHECK_PORT", "0"))
         proc = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=174,284",
                                  f"--remote-debugging-port={port}", "--user-data-dir=" + profile, "about:blank"],

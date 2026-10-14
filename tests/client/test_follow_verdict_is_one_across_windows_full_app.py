@@ -161,7 +161,11 @@ async def scenario():
             assert await shell.js("__deliver('live')") >= 1
             await asyncio.sleep(.5)
             assert await win.js("__deliver('live')") >= 1
-            await asyncio.sleep(1.5)
+            # Wait for the follow to be RECORDED, not a fixed 1.5 s: under the deploy gate's load the
+            # pin had not landed yet and every window read [] (deploy 224's gate, 2026-10-14). The
+            # assertion below is unchanged -- every window, including a fresh flyout, holds one answer.
+            await shell.until("__followRows().includes(__fx.live.pubkey)")
+            await win.until("__followRows().includes(__fx.live.pubkey)")
             fly2, ws = await _page(port, sp, '?pcpopup=noti')
             sockets.append(ws)
             await fly2.until("!!__PC.me() && !!document.querySelector('#os-noti')")
