@@ -449,7 +449,13 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
             return None
         u = str(tags.get("u", ""))
         path = urlparse(u).path if "://" in u else u
-        if repo_path_needle not in path:
+        # A WHOLE PATH SEGMENT, not a substring: `myrepo.git/delete` CONTAINS `repo.git/delete`, so a token
+        # an owner signed for one repo deleted another whose id is a suffix of it (security review #8).
+        needle = "/" + repo_path_needle.lstrip("/")
+        full = "/" + path.lstrip("/")
+        at = full.find(needle)
+        rest = full[at + len(needle):] if at >= 0 else None
+        if rest is None or (rest and not rest.startswith("/")):
             return None                                # header not bound to THIS repo -> reject
         if abs(int(time.time()) - int(ev.get("created_at", 0))) > max_skew:
             return None                                # stale/future -> replay guard
