@@ -22,12 +22,20 @@ The directory is created directly under the system temp root with a SHORT name, 
 tmp_path trees are NOT moved into it (PYTEST_DEBUG_TEMPROOT keeps them at the original root, and
 pytest's retention settings delete them): some tests bind Unix sockets inside tmp_path, and one
 directory deeper those paths pass the 108-byte AF_UNIX limit.
+
+A RUN THAT IS KILLED NEVER REACHES ITS CLEANUP -- a SIGKILL from the memory watchdog, a crash, a
+timeout. Its directory stayed in RAM for ever, and the next killed run added another: on 2026-10-14
+12.5 GB of tmpfs was already gone with the box idle, and the gate on top of it took server1 down.
+So every run directory names its OWNER (pid + that process's start time, `.owner`), and `make()`
+first removes every `pct*` directory whose owner is no longer running. A directory with no `.owner`
+is left alone unless it is a day old (an older build's run, or one being set up this instant).
 """
 import atexit
 import contextlib
 import os
 import shutil
 import tempfile
+import time
 
 ENV_MARK = 'PC_PRIVATE_TMP'
 
@@ -37,8 +45,58 @@ def _root():
     return tempfile.gettempdir()
 
 
+OWNER = '.owner'
+_UNOWNED_AGE = 24 * 3600
+
+
+def _start_time(pid):
+    """The kernel's start time of `pid` (field 22 of /proc/<pid>/stat), or None if it is not running.
+    Compared with the recorded one so a recycled pid does not keep a dead run's directory alive."""
+    try:
+        with open(f'/proc/{int(pid)}/stat') as f:
+            return f.read().rsplit(')', 1)[1].split()[19]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _owner_alive(path):
+    try:
+        with open(os.path.join(path, OWNER)) as f:
+            pid, start = f.read().split()
+    except FileNotFoundError:
+        try:
+            return time.time() - os.stat(path).st_mtime < _UNOWNED_AGE
+        except OSError:
+            return True
+    except (OSError, ValueError):
+        return True                      # unreadable: never delete what we cannot judge
+    return _start_time(pid) == start
+
+
+def sweep(root=None):
+    """Remove the run directories of runs that are no longer running. Returns what it removed."""
+    root = root or _root()
+    gone = []
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return gone
+    for name in names:
+        path = os.path.join(root, name)
+        if not name.startswith('pct') or os.path.islink(path) or not os.path.isdir(path):
+            continue
+        if not _owner_alive(path):
+            shutil.rmtree(path, ignore_errors=True)
+            gone.append(path)
+    return gone
+
+
 def make(prefix='pct-'):
-    return tempfile.mkdtemp(prefix=prefix, dir=_root())
+    sweep()
+    path = tempfile.mkdtemp(prefix=prefix, dir=_root())
+    with open(os.path.join(path, OWNER), 'w') as f:
+        f.write(f'{os.getpid()} {_start_time(os.getpid())}')
+    return path
 
 
 def remove(path):

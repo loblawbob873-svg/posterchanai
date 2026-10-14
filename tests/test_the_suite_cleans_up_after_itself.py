@@ -105,3 +105,39 @@ def test_a_real_chrome_test_run_leaves_only_pytests_own_small_bounded_tree(short
     runs = [d for n in left for d in os.listdir(root / n) if d.startswith("pytest-") and d != "pytest-current"]
     assert len(runs) <= 1, "pytest kept a tree per run instead of one: %r" % runs
     assert _size(root) < 1_000_000, "pytest's leftover tree is %d bytes" % _size(root)
+
+
+def test_a_killed_runs_directory_is_removed_by_the_next_run(tmp_path):
+    """A run SIGKILLed mid-test (the memory watchdog, a crash, a timeout) never reaches its own cleanup.
+    The next run must remove what it left -- and must not touch a run that is still going."""
+    root = tmp_path / "sys-tmp"
+    root.mkdir()
+    pt = str(ROOT / "scripts" / "private_tmp.py")
+    hold = ("import runpy,sys,time\npt=runpy.run_path(%r)\nd=pt['enter']('pct-k-')\n"
+            "open(d+'/chrome-junk','wb').write(b'x'*4096)\nprint(d,flush=True)\ntime.sleep(600)\n" % pt)
+    killed = subprocess.Popen([sys.executable, "-c", hold], env=_clean_env(root), stdout=subprocess.PIPE, text=True)
+    alive = subprocess.Popen([sys.executable, "-c", hold], env=_clean_env(root), stdout=subprocess.PIPE, text=True)
+    try:
+        dead_dir, live_dir = killed.stdout.readline().strip(), alive.stdout.readline().strip()
+        killed.kill(); killed.wait(10)
+        assert os.path.isdir(dead_dir), "a SIGKILLed run cannot clean up after itself -- that is the case"
+        (root / "pct-unowned-new").mkdir()             # being set up this instant / an older build's run
+        subprocess.run([sys.executable, "-c", "import runpy;runpy.run_path(%r)['scoped']('pct-n-').__enter__()" % pt],
+                       env=_clean_env(root), check=True, timeout=60)
+        assert not os.path.exists(dead_dir), "the killed run's directory was left in RAM"
+        assert os.path.isdir(live_dir), "a run that is still going lost its temp directory"
+        assert (root / "pct-unowned-new").is_dir()
+    finally:
+        alive.kill(); alive.wait(10)
+
+
+def test_a_recycled_pid_does_not_keep_a_dead_runs_directory(tmp_path):
+    pt = runpy.run_path(str(ROOT / "scripts" / "private_tmp.py"))
+    d = tmp_path / "pct-old"
+    d.mkdir()
+    (d / ".owner").write_text(f"{os.getpid()} 1")      # our pid, but a start time that is not ours
+    assert pt["sweep"](str(tmp_path)) == [str(d)]
+    old = tmp_path / "pct-unowned-old"
+    old.mkdir()
+    os.utime(old, (0, 0))
+    assert pt["sweep"](str(tmp_path)) == [str(old)]
