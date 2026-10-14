@@ -504,6 +504,25 @@ window.PCTimelineFactory = function(dep){
    * moves. Insertions are not resizes -- a card's first observation is ignored -- so the live prepend
    * keeps its own correction and nothing is corrected twice. At the very top it stands aside, as the
    * prepend does: there the feed is meant to flow. */
+  /* A REDRAWN CARD KEEPS THE HEIGHT IT HAD. On a phone each card is `content-visibility:auto` with
+   * `contain-intrinsic-size: auto 420px`; `auto` remembers a card's real height -- but on the ELEMENT, and a
+   * redraw (loading older posts, an EOSE redraw, a repaint) makes new elements. Every card above the reader
+   * was then a 420px estimate again, and scrolling back up laid each one out at its real height, which
+   * _holdReadingPlace had to compensate for by writing scrollTop under the finger: the "Feed not staying
+   * stationary" report's 4211 -> 4040 -> 3757 -> ... -> 1722, one jump per card, and measured here 193-323px
+   * on every step back up. Real heights are remembered by the card's KEY and handed to the new element before
+   * its first layout, so nothing above the reader changes size and nothing has to move them. */
+  const _cardH = new Map();
+  function _rememberCardHeight(el, h){
+    const k = el && el.dataset && el.dataset.key;
+    if(!k || !(h > 0)) return;
+    if(_cardH.size > 3000) _cardH.delete(_cardH.keys().next().value);
+    _cardH.set(k, Math.round(h));
+  }
+  function _giveCardItsHeight(el){
+    const k = el && el.dataset && el.dataset.key, h = k && _cardH.get(k);
+    if(h && el.style) el.style.containIntrinsicSize = 'auto ' + h + 'px';
+  }
   function _holdReadingPlace(feed, box){
     if(!feed || !box || typeof ResizeObserver !== 'function') return;
     const cur = feed._pcHold;
@@ -541,6 +560,9 @@ window.PCTimelineFactory = function(dep){
         const el = e.target, bb = e.borderBoxSize && (e.borderBoxSize[0] || e.borderBoxSize);
         const h = bb && bb.blockSize != null ? bb.blockSize : el.offsetHeight;
         const was = sizes.get(el); sizes.set(el, h);
+        // contain-intrinsic-size is the CONTENT box; the border-box would overshoot by the card's padding+border.
+        { const cb = e.contentBoxSize && (e.contentBoxSize[0] || e.contentBoxSize);
+          _rememberCardHeight(el, cb && cb.blockSize != null ? cb.blockSize : e.contentRect && e.contentRect.height); }
         if(was == null || was === h || el.parentNode !== box || !anchor || el === anchor) continue;
         if(el.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING) shift += h - was;
       }
@@ -556,7 +578,7 @@ window.PCTimelineFactory = function(dep){
       if(shift && feed.scrollTop > 0) feed.scrollTop += shift;
     });
     const hold = (el, dy) => { settle = { el, dy, at: feed.scrollTop, until: Date.now() + 2500 }; };
-    const watch = () => { for(const el of box.children) if(!sizes.has(el)){ sizes.set(el, null); ro.observe(el, { box:'border-box' }); } };
+    const watch = () => { for(const el of box.children) if(!sizes.has(el)){ _giveCardItsHeight(el); sizes.set(el, null); ro.observe(el, { box:'border-box' }); } };
     const mo = new MutationObserver(recs => {
       for(const r of recs) for(const n of r.removedNodes) if(n.nodeType === 1 && n.parentNode !== box){ try{ ro.unobserve(n); }catch(_){} sizes.delete(n); if(n === anchor) anchor = null; }
       watch();

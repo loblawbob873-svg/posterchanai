@@ -69,7 +69,7 @@ window.__topOf=k=>{const c=[...document.querySelectorAll('#tl-notes > *')].find(
 '''
 INIT = full.INIT.split("class FixtureSocket")[0] + SOCKET
 F = "document.getElementById('feed')"
-FLOWS = ("back_from_post", "back_from_profile", "repaint")
+FLOWS = ("back_from_post", "back_from_profile", "repaint", "scroll_up_after_redraw")
 
 
 async def _trial(b, port, flow):
@@ -101,6 +101,23 @@ async def _trial(b, port, flow):
         await b.js("history.back()")
     elif flow == "repaint":                                 # renderView(true): after posting, an outbox flush, a mute…
         await b.js("__PC.retryInstanceView('global')")
+    elif flow == "scroll_up_after_redraw":
+        # The report's OTHER sequence: a redraw (loadOlderTimeline at 00:25:37), then scrolling back UP --
+        # and the app rewriting scrollTop under the finger, 4211 -> 4040 -> 3757 -> ... -> 1722, once per card
+        # laid out. A redraw makes new card elements, which forget the real heights `auto 420px` remembered,
+        # so every card above is an estimate again and each one snaps to its real height as it comes into view.
+        await b.js("__PC.retryInstanceView('global')")
+        await b.until("document.querySelectorAll('#tl-notes > *').length >= 40")
+        await asyncio.sleep(3.2)                            # past the 2.5 s restore settle
+        await b.js("""(()=>{const f=document.getElementById('feed'),d=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
+          window.__appWrites=[];Object.defineProperty(f,'scrollTop',{configurable:true,get(){return d.get.call(this);},
+          set(v){window.__appWrites.push(Math.round(v-d.get.call(this)));d.set.call(this,v);}});})()""")
+        for _ in range(12):                                 # a finger scrolling back up, one step at a time
+            await b.js(f"{F}.scrollBy(0,-260); true")
+            await asyncio.sleep(.15)
+        await asyncio.sleep(.5)
+        writes = await b.js("window.__appWrites.filter(x=>x!==0)")
+        return {"flow": flow, "writes": writes}
     await b.until("document.querySelectorAll('#tl-notes > *').length >= 40")
     tops = []
     for _ in range(10):                                     # and it must STAY there, not just pass through
@@ -111,6 +128,8 @@ async def _trial(b, port, flow):
 
 
 def _ok(r):
+    if "writes" in r:                                       # nothing above you changes size, so nothing moves you
+        return not r["writes"]
     a, b = r["before"], r["after"]
     return bool(b) and b["key"] == a["key"] and all(t is not None and abs(t - a["top"]) <= 4 for t in r["tops"])
 
