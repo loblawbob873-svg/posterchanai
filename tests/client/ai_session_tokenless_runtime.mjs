@@ -10,6 +10,7 @@ if(start < 0 || end < 0) throw new Error('ensureAiSession moved');
 const shipped = app.slice(start, end);
 
 globalThis.window = globalThis;
+globalThis._standalone = () => false;   // an instance is configured (the no-server case has its own test)
 globalThis.posts = 0;
 globalThis.ME = { pubkey:'a'.repeat(64) };
 globalThis.sign = async () => ({ id:'proof' });

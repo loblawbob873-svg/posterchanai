@@ -12318,6 +12318,11 @@
     // Guest/boot smoke routes have no identity to prove. Fail deliberately before building tags or
     // touching ME.pubkey; callers can render a login-required state and no protected request leaves.
     if(!ME || !ME.pubkey) throw new Error('sign in with a Nostr account to start an app session');
+    /* NO SERVER IS AN ANSWER TOO. With "Use no server" (an empty pc_instance) there is nothing to log in
+     * to: the POST below goes to the bundle itself, which answers 200 with its own page, and that read as
+     * "login response did not contain a credential" -- a member's wallet, 2026-10-14, after the 10-12 fix
+     * made an empty pc_instance really mean relays-only (it used to fall back to poster.place). Say it. */
+    if(_standalone()) throw new Error('this app is set to run without a server (relays only) — open Settings → Server and connect to your PosterChan instance to use this');
     if(_aiAuth && !_aiToken) _aiAuth=null;
     /* Said HERE, before the shared attempt exists — never inside it. Thrown before the attempt's first
      * await, its `finally` would run before `_aiAuthP` is assigned and leave the rejection latched:
@@ -12352,7 +12357,14 @@
         if(!response.ok) throw new Error((r && (r.detail || r.error)) || ('login returned HTTP '+response.status));
         if(r && r.access_token) _setAiToken(r.access_token);
         if(r && r.user){ _aiAuth = r.user; try{ applyTermGate();applyMediaGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
-        throw new Error('login response did not contain a credential');
+        /* SAY WHAT ACTUALLY CAME BACK. Our server answers this POST with JSON carrying `user` on every
+         * success, so a 200 without it was answered by something else -- a proxy, a captive portal, the
+         * bundle's own page -- and "did not contain a credential" hid which (2026-10-14: a member's wallet,
+         * while every nostr-login in the server log was a complete 200). Status, type and host name it. */
+        let host=''; try{ host=new URL(response.url || '/api/auth/nostr-login', location.href).host; }catch(_){}
+        const type=((response.headers && response.headers.get && response.headers.get('content-type')) || '?').split(';')[0];
+        throw new Error(r ? 'login response from '+(host||'the instance')+' had no account in it'
+                          : 'login answered HTTP '+response.status+' '+type+' from '+(host||'the instance')+', not the app server');
       }catch(e){
         const why=(e&&e.message)||String(e||'unknown error');
         const out=new Error('could not establish your app session: '+why);

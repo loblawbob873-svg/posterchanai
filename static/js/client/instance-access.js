@@ -166,7 +166,13 @@
     }
     const update=async(force)=>{
       const button=card.querySelector('.ia-retry');if(button)button.disabled=true;
+      /* A RETRY SHOWS IT RAN. The same failure repainted the same panel with the same words, so a working
+         button read as a dead one ("nothing happens when I tap Check again"). It says it is checking, it
+         gets a FRESH app session (a cached failure is exactly what it is retrying), and a repeated
+         failure carries the time it was tried. */
+      if(force){status.textContent='Checking again…';try{await pc()?.ensureAiSession?.({force:true});}catch(_){}}
       await refresh(force);
+      if(force&&error)error=error.replace(/ \(tried again at [^)]*\)$/,'')+' (tried again at '+new Date().toLocaleTimeString()+')';
       if(scope()!==epoch||!card.isConnected)return;
       if(allowed(view)){p.retryInstanceView(view);return;}
       gate(view,feed);
