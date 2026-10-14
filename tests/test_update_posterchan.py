@@ -312,10 +312,12 @@ def test_the_server_code_is_updated_where_it_is_installed_and_never_installed_by
     fn = fn[:fn.index("\n}\n") + 3]
     pkgs = src[src.index('PKGS="'):].split("\n", 1)[0]
     out = {}
-    for case, installed in (("server", "app-misc/posterchan-server-1.0.1"), ("none", "")):
+    for case, installed in (("server", "app-misc/posterchan-server-1.0.1"), ("none", ""),
+                            ("relay", "app-misc/posterchan-relay-1.0.20261013071043")):
         stub = tmp_path / case
         stub.mkdir()
-        (stub / "qlist").write_text(f"#!/bin/sh\necho '{installed}'\n")
+        # Answers only for the atom actually installed, the way qlist -I does.
+        (stub / "qlist").write_text(f"#!/bin/sh\nfor a; do case '{installed}' in \"$a\"-*) echo '{installed}';; esac; done\n")
         (stub / "qlist").chmod(0o755)
         r = subprocess.run(["bash", "-c", f"{pkgs}\n{fn}\n_pc_update_set"], capture_output=True, text=True,
                            env=dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}"), timeout=20)
@@ -323,5 +325,7 @@ def test_the_server_code_is_updated_where_it_is_installed_and_never_installed_by
         out[case] = r.stdout.split()
     assert "app-misc/posterchan-server" in out["server"], "an installed server is never updated"
     assert "app-misc/posterchan-server" not in out["none"], "an update INSTALLED the server"
+    assert "app-misc/posterchan-relay" in out["relay"], "an installed local relay is never upgraded (emerge -u is not --deep)"
+    assert "app-misc/posterchan-relay" not in out["none"], "an update INSTALLED the local relay"
     assert {"app-misc/posterchan-desktop", "app-misc/posterchanos-shell"} <= set(out["none"])
     assert 'PKGS="$(_pc_update_set)"' in src
