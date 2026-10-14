@@ -25,6 +25,8 @@ LONG_MS = 3000
 
 ALLOWED = {
     ("app.js", "interval", 4000): "healNav: the nav repair sweep the client has always run",
+    ("concord-cache.js", "interval", 2000): "PosterChanOS only (window.pcShell.localRelay): waits for the local relay "
+                                           "to answer, moves the old Concord cache onto it once, then stops (gives up after 3 min)",
     ("concord.js", "interval", 20000): "SWEEP_MS: the background sweep for rooms not on screen (mentions, unread)",
     ("instance-welcome.js", "interval", 10000): "re-checks a pending NIP-05 application while the welcome screen waits",
     ("news.js", "timeout", 4000): "first background news tick, a few seconds after boot",

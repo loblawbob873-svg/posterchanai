@@ -10,13 +10,13 @@ const a=src.indexOf("const MUSIC_CH = 'pc-music-window';"), b=src.indexOf('funct
 assert.ok(a>0&&b>a,'music channel block not found');
 const block=src.slice(a,b);
 
-let now=1_000_000; const channels=[];
+let now=1_000_000; const channels=[], timers=[];
 class BC{constructor(n){this.name=n;this.sent=[];channels.push(this);} postMessage(m){this.sent.push(m);} close(){}}
 const local={presses:[],now:()=>null,shuffling:()=>false,toggle(){this.presses.push('toggle');},
   shuffle(){this.presses.push('shuffle');},next(){},prev(){},seek(){},pause(){}};
 const refreshed=[];
 const ctx={console,Math,Number,JSON,Promise,Set,Map,
-  Date:{now:()=>now}, BroadcastChannel:BC, setInterval:()=>({unref(){}}), clearInterval(){},
+  Date:{now:()=>now}, BroadcastChannel:BC, setInterval:(fn,ms)=>{timers.push(fn);return {unref(){}};}, clearInterval(){},
   window:{addEventListener(){}, PCOSWin:{isWindow:()=>false, viewOf:()=>''}},
   PC:()=>({music:()=>local}), _extraOpensAsWindow:()=>true,
   _mounted:new Map([['el',{w:{type:'music'}}]]), _wgtRefreshOne:(el)=>refreshed.push(el)};
@@ -30,8 +30,9 @@ ch.onmessage({data:{state:{now:{title:'Song',playing:true,pos:0,total:3,d:100,t:
 let P=ctx.__wp();
 assert.equal(P.now().playing,true,'a Music window that is playing is what the widget shows');
 
-// The window is closed and its "gone" is lost. Nine seconds of silence.
-now+=9000;
+// The window is closed and its "gone" is lost. Nine seconds of silence, the desk's timer ticking through them.
+assert.ok(timers.length>=1,'nothing watches for a Music window going quiet');
+for(let s=0;s<3;s++){ now+=3000; timers.forEach(f=>f()); }
 P=ctx.__wp();
 assert.equal(P.now(),null,'a Music window silent for 9s is still shown as playing (the stuck "playing")');
 P.toggle(); P.shuffle();
@@ -39,7 +40,7 @@ assert.deepEqual(local.presses,['toggle','shuffle'],'Play/Shuffle went to a wind
 
 // A Music window that keeps talking is never dropped.
 ch.onmessage({data:{state:{now:{title:'Song',playing:true,pos:0,total:3,d:100,t:5}}}});
-now+=3000; ch.onmessage({data:{state:{now:{title:'Song',playing:true,pos:0,total:3,d:100,t:8}}}});
-now+=3000;
+now+=3000; timers.forEach(f=>f()); ch.onmessage({data:{state:{now:{title:'Song',playing:true,pos:0,total:3,d:100,t:8}}}});
+now+=3000; timers.forEach(f=>f());
 assert.equal(ctx.__wp().now().playing,true,'a live Music window was dropped between heartbeats');
 console.log('music widget: a silent Music window lets go; a live one is kept');

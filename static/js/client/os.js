@@ -9531,7 +9531,7 @@
    * runs: there is only ever the one page. */
   const MUSIC_CH = 'pc-music-window';
   const _musicId = Math.random().toString(36).slice(2);
-  let _musicCh = null, _remoteMusic = null, _musicSounding = false, _remoteAt = 0;
+  let _musicCh = null, _remoteMusic = null, _musicSounding = false, _remoteAt = 0, _remoteTimer = 0;
   /* A MUSIC WINDOW THAT HAS GONE QUIET IS GONE. Its "gone" is posted from `pagehide`, while the page is being torn
    * down -- and a message sent then can be dropped. When it was, the widget kept the last state it heard for ever:
    * "playing" over silence after the Music window was closed, and every Play/Shuffle press sent to a window that no
@@ -9589,6 +9589,8 @@
       }
       if(d.state){
         _remoteMusic = d.state.gone ? null : d.state; _remoteAt = Date.now();
+        // Armed by the first word from a Music window, not at load: clears a "playing" nothing backs any more.
+        if(_remoteMusic && !_remoteTimer){ _remoteTimer = setInterval(_remoteLive, MUSIC_BEAT); if(_remoteTimer.unref) _remoteTimer.unref(); }
         for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
       }
     };
@@ -9610,8 +9612,7 @@
     const local = _localMusic();
     let ln = null;
     try{ ln = local && local.now ? local.now() : null; }catch(_){ ln = null; }
-    const _rm = _remoteLive();
-    const rn = (_rm && _rm.now) || null;
+    const rn = (_remoteMusic && _remoteMusic.now) || null;
     if(!rn || (ln && (ln.playing || !rn.playing))) return local;
     const send = (cmd, arg) => { const ch = _musicChannel(); if(ch) ch.postMessage({ cmd, arg }); };
     return {
@@ -9628,7 +9629,6 @@
       { const t = setInterval(() => _musicSay(), MUSIC_BEAT); if(t && t.unref) t.unref(); }  // the heartbeat the desk reads
     } else if(_musicChannel()){
       _musicCh.postMessage({ cmd: 'ask' });     // a desktop that loaded after the Music window did
-      { const t = setInterval(_remoteLive, MUSIC_BEAT); if(t && t.unref) t.unref(); }  // clears a "playing" nothing backs
     }
   }catch(_){ }
 
