@@ -187,13 +187,19 @@ def _run(harness, *, native, media_save=False):
         page = os.path.join(d, "t.html")
         with open(page, "w") as fh:
             fh.write(page_src)
-        out = subprocess.run(
-            # 15 s of VIRTUAL time (it advances only while the page idles): 4 s ran out on a loaded CI runner
-            # before the third save had written its result, and the page dumped with no <title> (2026-10-11).
-            [CHROME, "--headless", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=15000",
-             "--user-data-dir=" + os.path.join(d, "profile"), "--dump-dom", "file://" + page],
-            capture_output=True, text=True, timeout=180).stdout
-        m = re.search(r"<title>(.*?)</title>", out, re.S)
+        # VIRTUAL time advances only while the page idles, so on a loaded CI runner a budget can run out
+        # before the page has written its result: 4 s did on 2026-10-11, 15 s did again on 2026-10-13
+        # (deploy 222's desktop build). A page with NO <title> never answered -- that is "could not run",
+        # not a wrong answer -- so it is rendered again with a doubled budget; a <title> is final.
+        m = None
+        for budget in (15000, 30000, 60000):
+            out = subprocess.run(
+                [CHROME, "--headless", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=%d" % budget,
+                 "--user-data-dir=" + os.path.join(d, "profile-%d" % budget), "--dump-dom", "file://" + page],
+                capture_output=True, text=True, timeout=240).stdout
+            m = re.search(r"<title>(.*?)</title>", out, re.S)
+            if m:
+                break
         if not m:
             raise AssertionError("the page did not render:\n" + out[:2000])
         got = json.loads(re.sub(r"&quot;", '"', m.group(1)))
