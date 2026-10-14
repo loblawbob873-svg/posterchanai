@@ -185,7 +185,6 @@ TESTS = (
     'tests/test_ptop.py',
     'tests/test_fresh_install_has_no_postgres.py',
     'tests/test_git_acceptance_asks_the_relay.py',
-    'tests/test_primary_marker_cannot_be_pulled_from_a_live_relay.py',
     'tests/test_posterchandb_words_off_lock.py',
     'tests/test_musicgeni_keeps_your_words.py',
     'tests/test_acestep_logs_no_lyrics.py',

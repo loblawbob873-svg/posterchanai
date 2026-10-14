@@ -2,7 +2,7 @@
 
 Status: **in production** (2026-10-12): `primary` on server1 and nas.lan, and the default for every fresh install.
 The short, benefits-first version is [POSTERCHANDB_OVERVIEW.md](POSTERCHANDB_OVERVIEW.md). Numbers here are MEASURED on server1's
-live relay with `scripts/posterchandb_measure.py` (a 2% sample, scaled), not estimated from first principles.
+live relay (a 2% sample, scaled, by the since-retired `posterchandb_measure.py`), not estimated from first principles.
 
 ## Why
 
@@ -213,8 +213,8 @@ provably newer than anything earlier (a running max of `created_at`, since rows 
 (2) The background word indexer held the lock ~90 ms per 300-event batch; it takes 25. (3) A query waited up
 to 0.5 s for queued writes, and under a firehose the mirror is always a little behind, so most queries waited;
 the wait is 0.05 s and Postgres answers otherwise. `test_posterchandb_global_feed_at_scale.py` (300k events,
-exact against brute force, 4 concurrent clients) and `test_posterchandb_mirror_under_load.py` (lock hold of a
-word batch, served share, latency) each fail on the old code.
+exact against brute force, 4 concurrent clients) fails on the old code. (The Postgres mirror and its load test were
+retired with Postgres, #195.)
 
 Every data-safety rule the relay has learned keeps its test against the new store before it is trusted:
 a read that could not answer is never "empty", a replaceable document is never replaced on the strength
