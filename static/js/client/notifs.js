@@ -246,6 +246,34 @@ window.PCNotifsFactory = function(dep){
   function _notifForMe(ev){
     return (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='p' && t[1]===S.ME.pubkey) || _quotesMe(ev);
   }
+  /* ONE CARD FOR A BURST. Opening PosterChan, waking the laptop or a relay that connects late hands this
+   * subscription a run of notifications in the same second, and each one used to pop its own card, chime
+   * and OS notification -- a stack of toasts covering the screen ("the toaster flood when you open
+   * posterchan and it syncs notifications", 2026-10-13). The first _BURST_SHOW of a burst still announce
+   * themselves; the rest are counted and said ONCE, as "N more notifications", when the burst has been
+   * quiet for _BURST_MS. Nothing is dropped from the list or the badge -- this only decides what interrupts. */
+  const _BURST_MS=4000, _BURST_SHOW=2;
+  const _burst={ n:0, at:0, held:0, timer:null };
+  function _burstAllows(){
+    const now=Date.now();
+    if(now-_burst.at>_BURST_MS) _burst.n=0;
+    _burst.at=now; _burst.n++;
+    if(_burst.n<=_BURST_SHOW) return true;
+    _burst.held++;
+    if(!_burst.timer) _burst.timer=setTimeout(_burstFlush, _BURST_MS);
+    return false;
+  }
+  function _burstFlush(){
+    _burst.timer=null;
+    const wait=_BURST_MS-(Date.now()-_burst.at);
+    if(wait>50){ _burst.timer=setTimeout(_burstFlush, wait); return; }   // still arriving: say it once, at the end
+    const n=_burst.held; _burst.held=0; _burst.n=0;
+    if(!n) return;
+    const what=`${n} more notification${n===1?'':'s'}`;
+    notifToast(`🔔 <b>${what}</b>`, S.LOGO, null, null);
+    osNotify('PosterChan', what, { icon:S.LOGO, tag:'nostr-burst', route:'notifications',
+                                   onClick:()=>switchView('notifications') });
+  }
   function notifPing(ev){
     // NEVER toast/OS-notify for follows. kind-3 is a whole contact list, republished on every edit, so
     // an OLD follower constantly looks "new" — detecting genuine new follows reliably is impossible
@@ -260,6 +288,7 @@ window.PCNotifsFactory = function(dep){
     // ...or for a conversation you muted. A fediverse thread is where this bites: Mastodon and Pleroma
     // mention EVERY participant in every reply, so each reply in a muted thread was still a mention of you.
     if(_mutedThread(ev)) return;
+    if(!_burstAllows()) return;
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
     const _tn=_tipNote(ev);
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`

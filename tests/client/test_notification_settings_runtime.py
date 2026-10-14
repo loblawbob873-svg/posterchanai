@@ -85,7 +85,8 @@ const c={notificationAllowed:k=>!disabled.has(k),notificationSound(){},window:{p
  pcHost:{notify:o=>native.push(o)},_SHORTCODE_STRIP:/:fixture:/g,LOGO:'icon',_capPlugin:()=>null,openOsNotificationRoute(){},
  _tipNote:()=>null,zapSender:e=>e.pubkey,isMutedAuthor:()=>false,_mutedThread:()=>false,profOf:()=>({name:'sender'}),
  fmtSats:String,zapAmount:()=>1,reactDisp:()=>'+',_quotesMe:e=>!!e.quote,isReply:e=>!!e.reply,
- emojiName:(pk,n)=>n,enc:String,_notifCtxId:()=>'',notifToast:(...args)=>toasts.push(args),openThread(){},switchView(){}};
+ emojiName:(pk,n)=>n,enc:String,_notifCtxId:()=>'',notifToast:(...args)=>toasts.push(args),openThread(){},switchView(){},
+ _burstAllows:()=>true};   // the burst gate has its own test (test_notification_burst_is_one_toast.py)
 c.S=c;vm.createContext(c);vm.runInContext(type+notify.slice(0,end)+ping,c);
 for(const [kind,key,extra] of [[7,'likes',{}],[6,'reposts',{}],[9735,'zaps',{}],[1111,'replies',{}],[1,'quotes',{quote:true}],[1,'mentions',{}]]){
  disabled.add(key);const before=native.length,nt=toasts.length;c.notifPing({kind,pubkey:'peer',id:'id',...extra});assert.equal(native.length,before,key);assert.equal(toasts.length,nt,key);
