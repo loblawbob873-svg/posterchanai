@@ -532,9 +532,24 @@ class _NegUnsupported(Exception):
     pass
 
 
+# The `l` labels the client's own document sets carry (notes.js, vault.js, playlists.js, the Texts archive,
+# termhist.js) and the single documents it pins that have no label (os_pins.D_EXACT plus the drive's index).
+PRIVATE_LABELS = ("pcai-notes", "pcai-pw", "pcai-music", "pcai-sms", "pcai-smsarc", "pcai-shell")
+PRIVATE_SINGLE_DOCS = frozenset({"pcai:files-index", "pcai:playlist"})
+
+
 def scope(owner: str, follows: list, now: int) -> list:
     """[(name, filter)] -- everything this cache asks the instance for, and nothing else."""
+    # THE USER'S OWN DOCUMENTS EACH HAVE A FILTER OF THEIR OWN, AHEAD OF THE BROAD ONE. The instance answers a
+    # sync with the NEWEST neg_max_items of a filter, and an OPERATOR'S kind-30078 set is every table the server
+    # keeps (accounts, the fediverse ledger, settings: hundreds of thousands of documents, changing all day).
+    # Measured 2026-10-14: the owner's desktop cache held 2 of their notes after an outage, because "private"
+    # alone never reached them. Labels and exact names cannot be crowded out by documents that carry neither.
+    docs = [("private:" + lb, {"authors": [owner], "kinds": [30078], "#l": [lb]}) for lb in PRIVATE_LABELS]
+    docs.append(("private:pinned", {"authors": [owner], "kinds": [30078],
+                                    "#d": sorted(os_pins.D_EXACT | PRIVATE_SINGLE_DOCS)}))
     out = [("own", {"authors": [owner], "kinds": list(OWN_KINDS)}),
+           *docs,
            ("private", {"authors": [owner], "kinds": [30078]}),
            ("mentions", {"#p": [owner], "kinds": list(MENTION_KINDS), "since": now - MENTION_WINDOW}),
            ("dms", {"#p": [owner], "kinds": [1059], "since": now - DM_WINDOW})]

@@ -47,8 +47,9 @@ class Instance:
     """A real relay (the server role's RelayServer + PcdbRelayStore, so NEG/AUTH/NIP-78 behave exactly as on
     a node) on 127.0.0.1, plus the instance's HTTP `/client/config` naming it. Runs in its own thread/loop."""
 
-    def __init__(self, tmp: str):
+    def __init__(self, tmp: str, neg_max_items: int = 50000):
         self.tmp = tmp
+        self.neg_max_items = neg_max_items
         self.ws_port = free_port()
         self.relay_url = "ws://127.0.0.1:%d/" % self.ws_port
         self.loop = asyncio.new_event_loop()
@@ -71,7 +72,7 @@ class Instance:
         self.store = PcdbRelayStore(path, max_events=0, retention_days=0, maintenance=False)
         self.store.open(asyncio.get_running_loop())
         self.server = RelayServer(self.store, WotGate(), {"wot_enabled": False, "block_json": False,
-                                                         "max_subs_per_conn": 64, "neg_max_items": 50000})
+                                                         "max_subs_per_conn": 64, "neg_max_items": self.neg_max_items})
         self.stop_ev = asyncio.Event()
         async with serve(self.server.handle, "127.0.0.1", self.ws_port,
                          process_request=self.server.process_request):
