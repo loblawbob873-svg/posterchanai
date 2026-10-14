@@ -105,6 +105,15 @@ def gate(monkeypatch):
     return fresh
 
 
+@pytest.fixture(autouse=True)
+def _operator_is_nobody_here(monkeypatch):
+    """The admin gate asks whether a non-admin session carries the OPERATOR's key, and finding that key reads the
+    node's account store -- this host's, or whatever an earlier test in the shard left it as ("table users is still
+    loading" -> a 503 where this file expects 403; it failed 30 runs of the deploy gate). The operator here is a
+    fixed key none of these accounts carries, so the rule is tested and the host is never read."""
+    monkeypatch.setattr(auth, "_OPERATOR_PK", "d" * 64)
+
+
 def make_client(user: User | None = ADMIN) -> TestClient:
     api = FastAPI()
     # Mounted the way main.py mounts it: the router itself carries no prefix so the app can serve
