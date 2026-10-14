@@ -2474,6 +2474,8 @@
       }
       /* A SEARCH WINDOW is not a view either: it runs the query it was opened with, in this page. */
       if(v === 'doc:search'){ _searchWindowLanding(); return; }
+      // …nor is a FILE window: it opens the file Files handed it (files.js _fileWindow).
+      { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(v || ''); if(_fw){ runFileWindow(_fw[1]); return; } }
       if(v){
         switchView(v);
         _runPendingPostTool(v);
@@ -6957,6 +6959,7 @@
     }
     // …and a SEARCH window, which is rebuilt from its query (see _searchWindowLanding).
     if(String(v || '') === 'doc:search'){ _searchWindowLanding(); return; }
+    { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(String(v || '')); if(_fw){ runFileWindow(_fw[1]); return; } }
     // The desktop's old "Local VMs" screen merged into Virtual Machines ("This computer" is its first host).
     if(v === '__vms') v = 'vms';
     // The open popover, if this screen ever opened one: `closeActive` is a property the real
@@ -10893,6 +10896,23 @@
   function _officeSession(){ return _lzRun(_filesMod, _filesLoad, '_officeSession', arguments); }
   function _openFromCommandLine(){ return _lzRun(_filesMod, _filesLoad, '_openFromCommandLine', arguments); }
   function _openHostFile(){ return _lzRun(_filesMod, _filesLoad, '_openHostFile', arguments); }
+  function runFileWindow(){ return _lzRun(_filesMod, _filesLoad, 'runFileWindow', arguments); }
+  /* FILE WINDOWS (files.js _fileWindow): a Files window parks the open here, on the DESKTOP, and the
+   * `doc:file:<key>` window the desktop then opens takes it once. Kept as a JSON string until taken, so
+   * nothing here holds an object from a window that may since have closed. */
+  const _fileJobs = new Map();
+  function parkFileJob(key, json){
+    const k = String(key || '');
+    if(!/^[a-z0-9]{8,40}$/.test(k) || typeof json !== 'string' || json.length > 65536) return false;
+    _fileJobs.set(k, json);
+    while(_fileJobs.size > 32) _fileJobs.delete(_fileJobs.keys().next().value);
+    return true;
+  }
+  function takeFileJob(key){
+    const k = String(key || ''), json = _fileJobs.get(k);
+    _fileJobs.delete(k);
+    try{ return json ? JSON.parse(json) : null; }catch(_){ return null; }
+  }
   function _openWithSheet(){ return _lzRun(_filesMod, _filesLoad, '_openWithSheet', arguments); }
   function _syncBlobBytes(){ return _lzRun(_filesMod, _filesLoad, '_syncBlobBytes', arguments); }
   function _walkEntries(){ return _lzRun(_filesMod, _filesLoad, '_walkEntries', arguments); }
@@ -14108,6 +14128,7 @@
   }
   window.__PC = {
     deviceCache,
+    parkFileJob, takeFileJob,   // a doc:file: window takes the open a Files window parked here (files.js _fileWindow)
     // Concord draws its audio attachments with the same track card a post uses (cover, title, artist).
     trackCard: (url, label, preload) => _trackCard(enc(String(url||'')), label, preload),
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).

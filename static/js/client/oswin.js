@@ -211,6 +211,8 @@
     if(/^doc:prof:[0-9a-f]{64}$/i.test(v)) return true;   // a profile: the child opens that pubkey
     if(/^doc:trace:[0-9a-f]{64}$/i.test(v)) return true;  // a Trace: the child traces that pubkey
     if(v === 'doc:search') return true;       // rebuilt from its query (see open / SEARCH_ARG)
+    // A FILE window: the child takes the open from its opener by this one-use key (files.js _fileWindow).
+    if(/^doc:file:[a-z0-9]{8,40}$/.test(v)) return true;
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
     catch(_){ return false; }

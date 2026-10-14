@@ -647,6 +647,7 @@
     var url = streamed || URL.createObjectURL(blob);
     var key = 'pv:' + Math.random().toString(36).slice(2, 9);
     var shut = function () {}, transferring = false, mountCleanup = function () {};
+    var onClosed = typeof file.onClose === 'function' ? file.onClose : null;
     var done = function () {
       try { mountCleanup(); } catch (_) {}
       /* STOP THE SOUND. A <video> detached from the document keeps playing in Chromium until it is
@@ -660,6 +661,8 @@
        * a fresh URL. Revoking here would race that fetch and produce a perfectly moved blank frame. */
       if (!transferring) try { URL.revokeObjectURL(url); } catch (_) {}
       root.removeEventListener('keydown', onKey, true);
+      /* A file opened in a window of its own (files.js `doc:file:`) closes that window with it. */
+      if (onClosed && !transferring) { try { onClosed(); } catch (_) {} }
     };
     /* NOT WHILE A PDF IS BEING EDITED. This listens in the CAPTURE phase, so it ran before anything
      * inside the editor: Esc meant to cancel a text note or the signature dialog closed the whole

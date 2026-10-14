@@ -118,11 +118,18 @@ def test_renderExtra_refuses_a_name_it_cannot_draw():
         "an unknown extra would fall through and the window would show whatever was already there")
 
 
+def _route_from_path():
+    """The whole function, not a fixed number of characters: a landing added above switchView (posts,
+    profiles, file windows) must not push the line under test out of view."""
+    a = APP.index("async function routeFromPath()")
+    return APP[a:APP.index("\n  }\n", a)]
+
+
 def test_the_first_paint_of_a_new_window_also_routes_an_extra():
     """`routeFromPath` is what lands a freshly-opened window on its view, and it called switchView
     directly. Patching only the re-route channel would leave a NEW System Settings window showing
     the timeline — which is the whole bug, just moved to the path people actually take."""
-    block = APP[APP.index("async function routeFromPath()"):][:2400]
+    block = _route_from_path()
     assert "PCOS.renderExtra(v)" in block, "a new window still lands via switchView only"
     assert block.index("PCOS.renderExtra(v)") < block.index("switchView(v)"), \
         "switchView runs first, so the window paints the timeline"
@@ -131,7 +138,7 @@ def test_the_first_paint_of_a_new_window_also_routes_an_extra():
 def test_the_extra_landing_falls_through_when_it_cannot_draw():
     """renderExtra answers false for a name it does not know; the ordinary landing must still
     happen, or an unrecognised window would show nothing at all."""
-    block = APP[APP.index("async function routeFromPath()"):][:2400]
+    block = _route_from_path()
     # The landing may do more after it (a post handed to a tool window), but it must still happen.
     assert re.search(r"if\(v\)\{\s*switchView\(v\);", block), "no ordinary landing after the extra"
     assert block.index("PCOS.renderExtra(v)") < block.index("switchView(v)")

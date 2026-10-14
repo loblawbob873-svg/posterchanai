@@ -1148,6 +1148,7 @@ window.PCFilesFactory = function(dep){
    * whole point: a synced file edited here has to reach every device, and a copy quietly landing on
    * the drive instead would look like the edit worked and change nothing anywhere else. */
   async function openSyncCodeFile(d){
+    if(_fileWindow('openSyncCodeFile', [_copyArg(d)], d && d.name)) return;
     try{
       const chunks = d.chunks ? String(d.chunks).split(',').filter(Boolean) : null;
       if(!d.sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
@@ -2254,6 +2255,7 @@ window.PCFilesFactory = function(dep){
    * the app owns the file and THROWS with the reason otherwise; the caller decides how to say it. */
   async function _hostOpenPreview(path, name, mime){
     const nm = name || String(path).split('/').pop() || path, type = mime || mimeForName(nm) || '';
+    if(_fileWindow('hostPreview', [path, name, mime], nm)) return true;
     /* MEDIA IS STREAMED, EVERYTHING ELSE IS READ.
      *
      * `pcHost.read` pulls the WHOLE file through the bridge -- a synchronous read in the
@@ -2271,7 +2273,7 @@ window.PCFilesFactory = function(dep){
                     || /\.(mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(nm);
     const P = await _withModule('preview.js', 'PCPreview');
     if(streamable && window.pcHost && pcHost.fileUrl){
-      if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path) }))
+      if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path), onClose: _fileWindowDone }))
         throw new Error('nothing here can show that file');
       return true;
     }
@@ -2283,7 +2285,7 @@ window.PCFilesFactory = function(dep){
       const info=await pcHost.writeBytes(path, new Uint8Array(await b.arrayBuffer()), hostMtime||0);
       if(info && info.mtime) hostMtime=info.mtime;
     } : null;
-    if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob, saveBack: hostSave }))
+    if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob, saveBack: hostSave, onClose: _fileWindowDone }))
       throw new Error('nothing here can show that file');
     return true;
   }
@@ -2291,6 +2293,7 @@ window.PCFilesFactory = function(dep){
    * as BYTES through `writeBytes`, because round-tripping a zip container through a string quietly
    * destroys it. `mtime` is the compare-and-swap guard for the first save. */
   async function _hostOpenOffice(path, name, mime, mtime){
+    if(_fileWindow('hostOffice', [path, name, mime, mtime], name || String(path).split('/').pop())) return true;
     if(!(window.pcHost && pcHost.read)) throw new Error('this build cannot read a file on this computer');
     let openedMtime = Number(mtime) || 0;
     const bytes = await pcHost.read(path, 128 * 1024 * 1024);
@@ -2308,6 +2311,7 @@ window.PCFilesFactory = function(dep){
    * explanation. Do not switch views until Code confirms it owns a live buffer; a refused/binary
    * file remains safely where it was. */
   async function _hostOpenCode(path){
+    if(_fileWindow('hostCode', [path], String(path).split('/').pop())) return true;
     const code = await _withModule('code.js', 'PCCode');
     if(!code || typeof code.openHostFile!=='function') throw new Error('the editor did not load');
     if(!(await code.openHostFile({ path }))) throw new Error('PosterChan Code would not open it');
@@ -2893,6 +2897,7 @@ window.PCFilesFactory = function(dep){
    * the BYTES rather than trusting the name: a .txt that is actually a zip would otherwise open as
    * mojibake and be saved back as a broken file. */
   async function openCodeFile(d){
+    if(_fileWindow('openCodeFile', [_copyArg(d)], d && d.name)) return;
     try{
       toast(d.enc === '1' ? 'decrypting…' : 'opening…');
       let blob;
@@ -3032,7 +3037,67 @@ window.PCFilesFactory = function(dep){
       if(_S.VIEW==='blossom') renderBlossom();
     };
   }
+  /* A FILE OPENS IN A WINDOW OF ITS OWN, AND FILES STAYS WHERE IT WAS.
+   *
+   * On PosterChanOS every app is its own compositor window and PCOS is off inside it, so each way of
+   * opening a file took over the FILES window: Preview drew its sheet over the listing, Office and Code
+   * switched the window's view, and getting back meant closing the document and finding the folder again
+   * ("Opening files should not reuse Files window, leave files alone and open new window", 2026-10-13).
+   * The open is handed to a new `doc:file:<key>` window instead: Files keeps the JOB (which of its own
+   * open functions, with which arguments, in which synced folder) under a one-use key, and the new window
+   * -- a whole client of its own on the same account, reaching this one through `window.opener` -- takes
+   * it and runs the very same function there, where the document IS the window. Closing the document
+   * closes that window. Anywhere without real windows this answers false and nothing changes. */
+  const _FILE_WIN = /^doc:file:([a-z0-9]{8,40})$/;
+  function _inFileWindow(){
+    try{ return !!(window.PCOSWin && _FILE_WIN.test(String(PCOSWin.viewOf() || ''))); }catch(_){ return false; }
+  }
+  function _fileWindowDone(){ if(_inFileWindow()){ try{ window.close(); }catch(_){ } } }
+  /* A window does not open windows -- the DESKTOP does (oswin.js `enabled()` is false inside one, and
+   * posts, profiles and articles already go this way). The job is PARKED on the desktop, as plain data it
+   * copies into its own realm, so the new window can take it from its opener even if Files has closed. */
+  function _fileWindow(fn, args, label){
+    try{
+      const W = window.PCOSWin;
+      if(!(W && W.isWindow && W.isWindow()) || _inFileWindow()) return false;
+      const desk = W.desktop && W.desktop();
+      if(!(desk && desk.PCOSWin && desk.PCOSWin.enabled && desk.PCOSWin.enabled()
+           && desk.__PC && typeof desk.__PC.parkFileJob === 'function')) return false;
+      const key = (Date.now().toString(36) + Math.random().toString(36).slice(2, 12)).replace(/[^a-z0-9]/g, '');
+      if(!desk.__PC.parkFileJob(key, JSON.stringify({ fn, args, syncRoot: _S._syncRoot || '' }))) return false;
+      const win = desk.PCOSWin.open('doc:file:' + key, String(label || 'File'));
+      if(!win){ desk.__PC.takeFileJob(key); return false; }
+      return true;
+    }catch(_){ return false; }
+  }
+  /* The window's route runs more than once (at boot and again once the account is signed in), and the
+   * job is one-use: a second run would find nothing and paint "no file" under the open document. */
+  const _fileWinRan = new Set();
+  async function runFileWindow(key){
+    if(_fileWinRan.has(String(key))) return true;
+    _fileWinRan.add(String(key));
+    let job = null;
+    try{
+      const o = window.opener;
+      job = o && !o.closed && o.__PC && typeof o.__PC.takeFileJob === 'function' ? o.__PC.takeFileJob(key) : null;
+    }catch(_){ job = null; }
+    const fns = { openPreviewFile, openOfficeFile, openSyncOfficeFile, openCodeFile, openSyncCodeFile,
+                  hostPreview: _hostOpenPreview, hostOffice: _hostOpenOffice, hostCode: _hostOpenCode };
+    const feed = document.getElementById('feed');
+    if(!job || typeof fns[job.fn] !== 'function'){
+      if(feed) feed.innerHTML = '<div class="empty">This window has no file to show. Open it again from Files.</div>';
+      return false;
+    }
+    if(job.syncRoot) _S._syncRoot = String(job.syncRoot);
+    if(feed) feed.innerHTML = '<div class="spinner"></div>';
+    try{ await fns[job.fn](...Array.from(job.args || [])); }
+    catch(err){ toast('could not open that: ' + ((err && err.message) || err)); }
+    return true;
+  }
+  const _copyArg = (d) => Object.assign({}, d || {});
+
   async function openPreviewFile(d, opts){
+    if(_fileWindow('openPreviewFile', [_copyArg(d), _copyArg(opts)], d && d.name)) return;
     try{
       toast(d.enc === '1' ? 'decrypting…' : 'opening…');
       const blob = await _previewBytes(d, opts);
@@ -3041,7 +3106,8 @@ window.PCFilesFactory = function(dep){
        * and Files appears to open a black/nothing screen. Every source funnels through here. */
       const P = await _withModule('preview.js', 'PCPreview');
       if(!P || typeof P.open!=='function') throw new Error('the preview viewer did not load');
-      if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob, saveBack: _previewSaveBack(d, opts) }))
+      if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob, saveBack: _previewSaveBack(d, opts),
+                   onClose: _fileWindowDone }))
         toast('nothing here can show that file');
     }catch(err){ toast('could not open that: ' + ((err && err.message) || err)); }
   }
@@ -3279,7 +3345,8 @@ window.PCFilesFactory = function(dep){
           host.innerHTML = bodyHTML;
           feed.appendChild(host);
           wire(host, () => {
-            if(returnToFiles) switchView('blossom');
+            if(_inFileWindow()) _fileWindowDone();
+            else if(returnToFiles) switchView('blossom');
             else renderOfficeHome();
           });
           return;
@@ -3462,6 +3529,7 @@ window.PCFilesFactory = function(dep){
       });
   }
   async function openOfficeFile(d){
+    if(_fileWindow('openOfficeFile', [_copyArg(d)], d && d.name)) return;
     try{
       toast(d.enc==='1'?'decrypting document…':'opening office…');
       let blob;
@@ -3489,6 +3557,7 @@ window.PCFilesFactory = function(dep){
    * back through the FOLDER's own writer, so the edit reaches every device rather than landing on
    * the drive as a copy. There was no Office button in a synced folder at all. */
   async function openSyncOfficeFile(d){
+    if(_fileWindow('openSyncOfficeFile', [_copyArg(d)], d && d.name)) return;
     const key=_S._syncRoot, full=d.path||d.name||'';
     try{
       const chunks = d.chunks ? String(d.chunks).split(',').filter(Boolean) : null;
@@ -4159,6 +4228,6 @@ window.PCFilesFactory = function(dep){
     _blobAlreadyStored, _driveDecrypt, _filesSelBar, _officeSession, _openFromCommandLine,
     _openHostFile, _openWithSheet, _syncBlobBytes, _walkEntries, encFileUrl, openCodeFile,
     openOfficeFile, openPreviewFile, openSyncCodeFile, openSyncOfficeFile, pickSyncedFile, renderBlossom,
-    renderOfficeHome, saveBlobDoc, uploadEncFile,
+    renderOfficeHome, runFileWindow, saveBlobDoc, uploadEncFile,
   };
 };
