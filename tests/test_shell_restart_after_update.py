@@ -97,7 +97,11 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
             fh.write(text + ("\n" if text else ""))
 
     def _run(self, script=SCRIPT, args=()):
-        env = dict(os.environ)
+        # Not the caller's SSH session: over ssh the script detaches (setsid -f) and returns, which is a
+        # different path with its own test. Inherited, a gate started from an ssh login ran THAT path
+        # here and failed all seven cases (deploy 225, 2026-10-14).
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "PC_SHELL_DETACH")}
         env["PATH"] = self.bin + os.pathsep + env["PATH"]
         env["PC_TEST_DIR"] = self.tmp
         env["PC_SHELL_START"] = os.path.join(self.bin, "pc-shell-start")

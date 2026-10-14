@@ -13,6 +13,7 @@ const shipped = app.slice(authStart, authEnd) + app.slice(themeStart, themeEnd);
 globalThis.window=globalThis;
 globalThis.ME={pubkey:'a'.repeat(64)};
 globalThis.applyTermGate=()=>{};
+globalThis._standalone=()=>false;   // an instance is configured (the no-server case has its own test)
 globalThis.applyTheme=()=>{};
 globalThis._sendAdminToken=()=>{};
 globalThis.sign=async()=>{ throw new Error('Firefox signer permission was denied'); };

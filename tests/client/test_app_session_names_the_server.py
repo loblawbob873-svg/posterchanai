@@ -21,6 +21,7 @@ globalThis.navigator = {onLine: true};
 let ME = {pubkey: 'a'.repeat(64)}; let _aiAuth=null, _aiAuthP=null, _aiAuthPAt=0, _aiToken='';
 function _setAiToken(t){ _aiToken=t; }
 function applyTermGate(){} function applyMediaGate(){}
+function _standalone(){ return false; }   // an instance is configured (the no-server case: test_ai_session_no_server)
 async function sign(){ return {id:'x'}; }
 globalThis.btoa = s => Buffer.from(s).toString('base64');
 %s
