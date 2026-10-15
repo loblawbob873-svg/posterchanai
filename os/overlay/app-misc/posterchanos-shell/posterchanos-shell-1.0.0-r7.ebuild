@@ -28,6 +28,7 @@ IUSE="monero gamescope +office"
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
 	>=dev-lang/python-3.10
+	app-arch/libarchive
 	>=app-misc/posterchan-desktop-1.0.1923
 	app-misc/posterchan-server
 	app-misc/posterchan-relay
@@ -80,6 +81,8 @@ src_install() {
 	# document, so xdg-open had no answer at all; the defaults cover ONLY those types (see the file).
 	insinto /usr/share/applications
 	doins "${FILESDIR}/posterchan-open.desktop"
+	# Archives too: a zip from Firefox (or `xdg-open x.zip`) is extracted beside itself and opened in Files.
+	doins "${FILESDIR}/posterchan-extract.desktop"
 	insinto /etc/xdg
 	newins "${FILESDIR}/posterchanos-mimeapps.list" mimeapps.list
 	insinto /usr/lib/systemd/user

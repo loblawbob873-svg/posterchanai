@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Extract archive
+GenericName=Archive extractor
+Comment=Extract a zip or tar archive next to itself and show the folder in Files
+# "posterchanOS needs a way to support opening zipfiles like every other OS" (2026-10-15): nothing on the
+# machine claimed application/zip, so Firefox and xdg-open had nowhere to send one. pc-open hands an archive
+# to the running desktop, which extracts it beside itself (desktop/opener.js extractArchive) and opens the
+# new folder in Files.
+Exec=/usr/local/bin/pc-open %F
+TryExec=/usr/local/bin/pc-open
+Icon=posterchan-desktop
+Terminal=false
+NoDisplay=true
+Categories=Utility;Archiving;
+MimeType=application/zip;application/x-zip-compressed;application/x-tar;application/x-compressed-tar;application/x-bzip-compressed-tar;application/x-xz-compressed-tar;application/x-zstd-compressed-tar;application/x-7z-compressed;application/x-cpio;

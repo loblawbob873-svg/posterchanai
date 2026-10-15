@@ -274,7 +274,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # desktop and they were reported as annoying within the hour: PosterChan already has a notification
 # surface, the taskbar's own centre, and a second one drawn by a daemon is the duplicate the
 # migration notes forbid. The toolbar centre is the surface.
-POSTERCHANOS_PACKAGES="gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
+POSTERCHANOS_PACKAGES="app-arch/libarchive gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 media-video/ffmpeg dev-python/pillow app-misc/posterchan-office \

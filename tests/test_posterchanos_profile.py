@@ -193,6 +193,8 @@ class PosterChanOSProfile(unittest.TestCase):
         # desktop/vmusb.js asks `zpool status -P` only when a ZFS dataset is MOUNTED; with no ZFS there is nothing
         # to ask, and a ZFS root it cannot read is treated as "no disk may be given away" (fail closed).
         "zpool": "base:n/a",
+        # desktop/opener.js: a zip/tar opened from Firefox or Files is extracted beside itself.
+        "bsdtar": "app-arch/libarchive",
     }
 
     def _binaries_the_shell_runs(self):

@@ -4,7 +4,7 @@
 # answered NOTHING for a .docx or an .odt, so `xdg-open report.docx` failed; pictures, PDFs and text
 # already had an answer and are deliberately not taken over here. A per-user ~/.config/mimeapps.list
 # still wins over this file, so anybody can choose something else. Generated from the MimeType= line
-# of posterchan-open.desktop; tests/test_pc_open.py fails if the two disagree.
+# of posterchan-open.desktop and posterchan-extract.desktop (archives); tests/test_pc_open.py fails if they disagree.
 [Default Applications]
 application/msword=posterchan-open.desktop
 application/vnd.openxmlformats-officedocument.wordprocessingml.document=posterchan-open.desktop
@@ -30,3 +30,12 @@ application/vnd.oasis.opendocument.graphics-flat-xml=posterchan-open.desktop
 application/vnd.sun.xml.writer=posterchan-open.desktop
 application/vnd.sun.xml.calc=posterchan-open.desktop
 application/vnd.sun.xml.impress=posterchan-open.desktop
+application/zip=posterchan-extract.desktop
+application/x-zip-compressed=posterchan-extract.desktop
+application/x-tar=posterchan-extract.desktop
+application/x-compressed-tar=posterchan-extract.desktop
+application/x-bzip-compressed-tar=posterchan-extract.desktop
+application/x-xz-compressed-tar=posterchan-extract.desktop
+application/x-zstd-compressed-tar=posterchan-extract.desktop
+application/x-7z-compressed=posterchan-extract.desktop
+application/x-cpio=posterchan-extract.desktop

@@ -412,8 +412,9 @@ class ThePackage(unittest.TestCase):
         mime = (PKG / "files" / "posterchanos-mimeapps.list").read_text(encoding="utf-8")
         body = mime.split("[Default Applications]\n", 1)[1]
         defaults = dict(l.split("=", 1) for l in body.splitlines() if l and not l.startswith("#"))
-        self.assertEqual(sorted(defaults), sorted(types), "the defaults and the .desktop disagree")
-        self.assertEqual(set(defaults.values()), {"posterchan-open.desktop"})
+        office = {k for k, v in defaults.items() if v == "posterchan-open.desktop"}
+        self.assertEqual(sorted(office), sorted(types), "the defaults and the .desktop disagree")
+        self.assertEqual(set(defaults.values()), {"posterchan-open.desktop", "posterchan-extract.desktop"})
         eb = self.ebuild()
         self.assertIn('doins "${FILESDIR}/posterchan-open.desktop"', eb)
         self.assertIn('newins "${FILESDIR}/posterchanos-mimeapps.list" mimeapps.list', eb)
@@ -440,3 +441,100 @@ class ThePackage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class Archives(unittest.TestCase):
+    """"posterchanOS needs a way to support opening zipfiles like every other OS. I download a zip with
+    firefox and it don't know what to do" (2026-10-15). Nothing claimed application/zip; now xdg-open hands
+    an archive to pc-open, the desktop extracts it beside itself and Files opens the folder."""
+
+    def setUp(self):
+        if not NODE or not shutil.which("bsdtar"):
+            self.skipTest("node and bsdtar required")
+        self.tmp = Path(tempfile.mkdtemp(prefix="pc-zip-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _zip(self, name, members):
+        import zipfile
+        z = self.tmp / name
+        with zipfile.ZipFile(z, "w") as f:
+            for n, data in members.items():
+                f.writestr(n, data)
+        return z
+
+    def _open(self, *paths, app="auto"):
+        js = r"""
+const o = require(process.argv[1]);
+const seen = [];
+const deliver = async (app, items) => { seen.push({app, items}); return items.map(i => ({path:i.path, ok:true, app:i.kind === 'dir' ? 'Files' : 'Code'})); };
+o.handleWith(deliver, {app: process.argv[2], paths: JSON.parse(process.argv[3])}).then(r => console.log(JSON.stringify({r, seen})));
+"""
+        r = subprocess.run([NODE, "-e", js, str(OPENER), app, json.dumps([str(p) for p in paths])],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_a_zip_opens_as_its_extracted_folder_in_files(self):
+        z = self._zip("cat-tail-doom.zip", {"index.html": "<h1>hi</h1>", "data/level1.wad": "x" * 100})
+        got = self._open(z)
+        res = got["r"]["results"][0]
+        self.assertTrue(res["ok"], got)
+        self.assertEqual(res["path"], str(z), "the answer must name the file the caller gave")
+        self.assertEqual(res["app"], "Files")
+        folder = self.tmp / "cat-tail-doom"
+        self.assertEqual(res["extractedTo"], str(folder))
+        self.assertEqual((folder / "index.html").read_text(), "<h1>hi</h1>")
+        self.assertEqual(len((folder / "data" / "level1.wad").read_text()), 100)
+        self.assertEqual(got["seen"][0]["items"][0]["kind"], "dir")
+        self.assertFalse([p for p in self.tmp.iterdir() if ".extracting-" in p.name], "scratch left behind")
+
+    def test_opening_it_again_never_overwrites_the_first_folder(self):
+        z = self._zip("pack.zip", {"a.txt": "one"})
+        self._open(z)
+        (self.tmp / "pack" / "a.txt").write_text("edited")
+        self._open(z)
+        self.assertEqual((self.tmp / "pack" / "a.txt").read_text(), "edited")
+        self.assertEqual((self.tmp / "pack (2)" / "a.txt").read_text(), "one")
+
+    def test_a_member_cannot_escape_the_folder(self):
+        z = self._zip("evil.zip", {"../outside.txt": "pwned", "ok.txt": "fine"})
+        self._open(z)
+        self.assertFalse((self.tmp / "outside.txt").exists(), "zip-slip: a member was written outside its folder")
+
+    def test_a_broken_archive_says_so_and_leaves_nothing(self):
+        bad = self.tmp / "broken.zip"; bad.write_bytes(b"PK\x03\x04 not really a zip")
+        res = self._open(bad)["r"]["results"][0]
+        self.assertFalse(res["ok"])
+        self.assertIn("could not extract it", res["why"])
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["broken.zip"])
+
+    def test_an_explicit_app_is_not_overruled_and_a_webxdc_is_not_an_archive(self):
+        z = self._zip("notes.zip", {"a.txt": "x"})
+        self.assertEqual(self._open(z, app="code")["seen"][0]["items"][0]["kind"], "file")
+        x = self._zip("game.xdc", {"index.html": "x"})
+        self.assertEqual(self._open(x)["seen"][0]["items"][0]["kind"], "file")
+        self.assertFalse((self.tmp / "notes").exists() or (self.tmp / "game").exists())
+
+    def test_firefox_and_xdg_open_reach_it_for_zips_and_tars(self):
+        d = (PKG / "files" / "posterchan-extract.desktop").read_text(encoding="utf-8")
+        self.assertIn("Exec=/usr/local/bin/pc-open %F", d)
+        self.assertIn("NoDisplay=true", d)
+        types = [t for t in re.search(r"^MimeType=(.*)$", d, re.M).group(1).split(";") if t]
+        for t in ("application/zip", "application/x-tar", "application/x-compressed-tar", "application/x-7z-compressed"):
+            self.assertIn(t, types)
+        mime = (PKG / "files" / "posterchanos-mimeapps.list").read_text(encoding="utf-8")
+        body = mime.split("[Default Applications]\n", 1)[1]
+        defaults = dict(l.split("=", 1) for l in body.splitlines() if l and not l.startswith("#"))
+        self.assertEqual(sorted(k for k, v in defaults.items() if v == "posterchan-extract.desktop"), sorted(types))
+        eb = "".join(p.read_text(encoding="utf-8") for p in PKG.glob("posterchanos-shell-*.ebuild"))
+        self.assertIn('doins "${FILESDIR}/posterchan-extract.desktop"', eb)
+        self.assertIn("app-arch/libarchive", eb)
+
+    def test_files_offers_extract_here_for_exactly_the_archives_the_desktop_extracts(self):
+        files = (ROOT / "static" / "js" / "client" / "files.js").read_text(encoding="utf-8")
+        opener = OPENER.read_text(encoding="utf-8")
+        client = re.search(r"const _HOST_ARCHIVE = (/.+?/i);", files).group(1)
+        desk = re.search(r"const ARCHIVE_RE = (/.+?/i);", opener).group(1)
+        self.assertEqual(client, desk, "Files would offer Extract for files the desktop will not extract")
+        self.assertIn("id:'extract', icon:'🗜', label:'Extract here'", files)
