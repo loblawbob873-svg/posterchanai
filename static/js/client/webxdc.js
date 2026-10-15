@@ -185,6 +185,27 @@
      * we are about to run: without the check, whoever hosts it can swap the app after it was posted,
      * for one reader or for everybody, and nothing about the post would change. A mismatch is fatal
      * and says so — silently running it anyway would make the check decorative. */
+    /* AN ENCRYPTED ATTACHMENT IS DECRYPTED BEFORE IT IS OPENED. Armada/Vector seal a room's attachments,
+     * a .xdc included: the imeta carries `encryption-algorithm aes-gcm` + key + nonce, `x` is the hash of the
+     * CIPHERTEXT and `ox` of the original file. Opened as it was fetched it is random bytes -- "not a zip
+     * file (no end-of-central-directory record)" on a game that is perfectly fine (DC20 Dice, 2026-10-14).
+     * The cache keeps what was FETCHED, so its `x` check still holds; the plaintext must match `ox`. */
+    async function _plain(bytes, app){
+      const e = app && app.enc;
+      if(!e) return bytes;
+      const hex = s => Uint8Array.from(String(s).match(/../g).map(h => parseInt(h, 16)));
+      if(!/^[0-9a-f]{64}$/i.test(e.key || '') || !/^[0-9a-f]{24,32}$/i.test(e.nonce || ''))
+        throw new Error('this app is encrypted and its key is unreadable');
+      let out;
+      try{
+        const key = await crypto.subtle.importKey('raw', hex(e.key), 'AES-GCM', false, ['decrypt']);
+        out = new Uint8Array(await crypto.subtle.decrypt({ name:'AES-GCM', iv:hex(e.nonce) }, key, bytes));
+      }catch(_){ throw new Error('this app could not be decrypted with the key it was posted with'); }
+      if(_isDigest(e.ox) && (await sha256Hex(out)).toLowerCase() !== String(e.ox).toLowerCase())
+        throw new Error('this app does not match the one that was posted — refusing to run it');
+      return out;
+    }
+
     async function load(app){
       const key = _cacheKey(app);
       if(_cache.has(key)) return _cache.get(key);
@@ -221,7 +242,7 @@
                 throw new Error('the cached copy is not the app that was posted');
               }
             }
-            return await _openArchive(bytes, app);
+            return await _openArchive(await _plain(bytes, app), app);
           }catch(e){
             try{ console.warn('[webxdc] dropping a cached archive that will not open:',
                               (e && e.message) || e); }catch(_){}
@@ -313,7 +334,7 @@
          * again in memory — 178 MB of Half-Life becomes 178 MB of Map on top of the 178 MB of bytes,
          * on a phone, before a single frame is drawn. The central directory is a few KB, and one
          * entry is inflated per request (which is what the sandbox's worker asks for anyway). */
-        const opened = await _openArchive(bytes, app);
+        const opened = await _openArchive(await _plain(bytes, app), app);
         // Store only once it has PARSED. Caching bytes that turn out not to be an app would make a
         // bad download permanent, and the next launch would fail identically with no way to retry.
         try{
@@ -1749,6 +1770,7 @@
         if(w) w.handoffState = () => ({ app: {
           url:String(app.url||''), sha:String(app.sha||''), uuid:String(app.uuid||''),
           urlTopicMessageId:String(app.urlTopicMessageId||''), name:String(name||''),
+          enc:app.enc&&typeof app.enc==='object' ? Object.assign({},app.enc) : null,
           transport:app.transport&&typeof app.transport==='object'
             ? Object.assign({},app.transport) : null
         }});
@@ -2225,6 +2247,8 @@
                         // Games → Webxdc. `__gal` is the directory's own state, exposed so
                         // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
                         gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,
+                        // tests/test_webxdc_sealed_attachment.py drives the SHIPPED download/decrypt/open path.
+                        __load: load,
                         /* The controller diagnostic, and its off switch. `padStats()` answers the
                          * question a phone has to answer for us — see webxdc.padstat — and reads
                          * from the LIVE session, so it is asked while the game is open. `pad(false)`

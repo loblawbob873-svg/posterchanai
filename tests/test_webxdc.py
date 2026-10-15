@@ -1121,6 +1121,7 @@ class XdcProxyFallback(unittest.TestCase):
     def test_the_mirror_walk_cannot_substitute_a_different_app(self):
         """The ONE thing that makes fetching from a host the author never named safe."""
         src = _src("static/js/client/webxdc.js")
+        src = src[src.index("async function load(app)"):]     # the download path, not the decrypt helper above it
         walk = src.index("_isDigest(app.sha)")
         verify = src.index("refusing to run it")
         self.assertLess(walk, verify,
