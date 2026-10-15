@@ -1070,6 +1070,19 @@ window.PCProfileFactory = function(dep){
      * nowhere else, and this sheet is a big target. The ✕ keeps it escapable. */
     modal(`<h3 class="cmp-hd">Edit profile<button class="modal-x" id="pf-close" title="Close" aria-label="Close">&#215;</button></h3>
       <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
+      <!-- PICTURE AND BANNER ARE UPLOADED HERE, NOT TYPED. They were two URL boxes and one "Upload pic" button at
+           the bottom of the sheet, with no way at all to upload a banner -- a person had to host an image somewhere
+           first and paste its address. The links are still there, folded, for anyone who has one. -->
+      <div class="pf-media">
+        <div class="pf-banner-prev" id="pf-banner-prev"><button type="button" class="btn btn-ghost small" id="pf-banner-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload banner</button></div>
+        <div class="pf-avatar-row"><img class="pf-avatar-prev" id="pf-pic-prev" alt="" hidden><span class="pf-avatar-none" id="pf-pic-none">?</span>
+          <button type="button" class="btn btn-cyan small" id="pf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload picture</button>
+          <span class="muted small pf-media-status" id="pf-media-status" role="status"></span></div>
+        <input type="file" id="pf-file" accept="image/*" hidden><input type="file" id="pf-banner-file" accept="image/*" hidden>
+        <details class="pf-media-urls"><summary>Use a link instead</summary>
+          <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
+          <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label></details>
+      </div>
       <!-- Music is deliberately near the top. On a phone it used to sit below eight profile fields
            and a tall bio, outside the first several screens of this scrolling sheet; the feature
            existed but "Edit profile" appeared to contain nothing related to it. -->
@@ -1082,10 +1095,8 @@ window.PCProfileFactory = function(dep){
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
       <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchDirect(p))}"></label>
       <details id="pf-payment-details"><summary>Payment targets</summary><div id="pf-payment-editor"></div></details>
-      <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
-      <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
-      <div class="row"><button class="btn btn-cyan small" id="pf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
+      <div class="row"><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       root.classList.add('modal-sticky');
       _bindPaymentTargetEditor(root);
       { const x=$('#pf-close',root); if(x) x.onclick=()=>closeModal(); }
@@ -1114,12 +1125,36 @@ window.PCProfileFactory = function(dep){
               $$('[data-nip05]',box).forEach(b=>b.onclick=()=>{ n5.value=b.dataset.nip05; paint(); }); };
             box.hidden=false; paint(); n5.addEventListener('input',paint);
           }).catch(()=>{}); }
+      /* The previews follow the two fields whatever filled them -- an upload or a pasted link. While an upload
+       * is in flight Save is held: it publishes the whole kind 0, and publishing before the URL arrives would
+       * save the OLD picture over the one being uploaded (the Concord icon editor learned the same). */
+      const _media={pending:0, local:{}};       // local: the chosen file's blob: URL until its upload answers
+      const _paintMedia=()=>{
+        const pic=_media.local['#pf-pic']||$('#pf-pic',root).value.trim(), ban=_media.local['#pf-banner']||$('#pf-banner',root).value.trim(), img=$('#pf-pic-prev',root);
+        if(img){ img.hidden=!pic; if(pic) img.src=pic; else img.removeAttribute('src'); }
+        const none=$('#pf-pic-none',root); if(none) none.hidden=!!pic;
+        const bp=$('#pf-banner-prev',root); if(bp) bp.style.backgroundImage=ban?'url("'+ban.replace(/["\\\n]/g,'')+'")':'';
+        const sv=$('#pf-save',root); if(sv) sv.disabled=_media.pending>0;
+      };
+      const _uploadInto=(field,label)=>async e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(!f)return;
+        const st=$('#pf-media-status',root), local=URL.createObjectURL(f);
+        // Show the picture the person chose at once; the field takes the real URL when the upload answers.
+        _media.local[field]=local; _media.pending++; if(st) st.textContent='Uploading '+label+'…'; _paintMedia();
+        try{ const _u=await uploadBlob(f); if(!_u) throw new Error('no URL came back');
+          $(field,root).value=_u;
+          // Index it into the Files list too — otherwise a profile pic uploaded here lands on Blossom but
+          // never shows under Files ("updated my pic but it's not in blossom"). Best-effort.
+          try{ const _sha=_shaFromUrl(_u); if(_sha) FilesIdx.setFile(_sha,{name:f.name||('profile-'+label), folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
+          if(st) st.textContent=label.charAt(0).toUpperCase()+label.slice(1)+' uploaded — Save to publish it';
+        }catch(err){ if(st) st.textContent=label.charAt(0).toUpperCase()+label.slice(1)+' upload failed — try again'; toast('upload failed'); }
+        finally{ _media.pending--; if(_media.local[field]===local) delete _media.local[field];
+          _paintMedia(); setTimeout(()=>{ try{ URL.revokeObjectURL(local); }catch(_){} }, 60000); } };
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
-      $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ const _u=await uploadBlob(f); $('#pf-pic',root).value=_u;
-        // Index it into the Files list too — otherwise a profile pic uploaded here lands on Blossom but
-        // never shows under Files ("updated my pic but it's not in blossom"). Best-effort.
-        try{ const _sha=_shaFromUrl(_u); if(_sha) FilesIdx.setFile(_sha,{name:f.name||'profile-pic', folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
-        toast('uploaded'); }catch(err){toast('upload failed');} };
+      $('#pf-banner-up',root).onclick=()=>$('#pf-banner-file',root).click();
+      $('#pf-file',root).onchange=_uploadInto('#pf-pic','picture');
+      $('#pf-banner-file',root).onchange=_uploadInto('#pf-banner','banner');
+      $('#pf-pic',root).addEventListener('input',_paintMedia); $('#pf-banner',root).addEventListener('input',_paintMedia);
+      _paintMedia();
       const musicList=$('#pf-music-list',root);
       const addMusic=(title,url)=>{
         const row=document.createElement('div'); row.className='pf-music-row';

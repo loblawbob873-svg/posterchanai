@@ -11170,6 +11170,20 @@ html.pc-oswin .pv-sheet{top:38px}
 .modal:has(#pf-save)>#pf-payment-details{grid-column:1 / -1;border:1px solid var(--line);border-radius:12px;padding:0 14px;min-width:0}
 #pf-payment-details>summary{padding:14px 0;font-size:15px;font-weight:600;cursor:pointer;color:var(--text)}
 #pf-payment-editor{padding-bottom:14px;min-width:0}
+/* Picture + banner: drawn like the profile header they become, each with its own Upload. */
+.modal:has(#pf-save)>.pf-media{grid-column:1 / -1;display:flex;flex-direction:column;gap:0;min-width:0}
+.pf-banner-prev{position:relative;aspect-ratio:3/1;max-height:200px;width:100%;border-radius:12px;border:1px solid var(--line);background:linear-gradient(120deg,rgba(var(--accent-rgb),.18),rgba(var(--accent-rgb),.04)) center/cover no-repeat;overflow:hidden}
+.pf-banner-prev #pf-banner-up{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.55);color:#fff;border-color:rgba(255,255,255,.35)}
+.pf-avatar-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-34px 0 0 16px;position:relative;z-index:1;min-width:0}
+.pf-avatar-prev,.pf-avatar-none{width:84px;height:84px;border-radius:50%;object-fit:cover;border:3px solid var(--bg);background:var(--panel2);flex:none}
+.pf-avatar-none{display:grid;place-items:center;font-size:30px;color:var(--muted)}
+.pf-avatar-none[hidden],.pf-avatar-prev[hidden]{display:none}
+.pf-avatar-row #pf-up{margin-top:30px}
+.pf-media-status{margin-top:30px;min-width:0;overflow-wrap:anywhere}
+.pf-media-urls{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:0 12px}
+.pf-media-urls>summary{padding:10px 0;cursor:pointer;color:var(--muted);font-size:13px}
+.pf-media-urls .fld{display:flex;flex-direction:column;gap:6px;margin:0 0 12px;color:var(--muted);font-size:12px;font-weight:600}
+@media(max-width:600px){.pf-avatar-row{margin-left:10px}.pf-avatar-prev,.pf-avatar-none{width:72px;height:72px}.pf-avatar-row #pf-up,.pf-media-status{margin-top:34px}}
 .modal:has(#pf-save)>.fld:has(#pf-about){grid-column:1 / -1}
 .modal:has(#pf-save) #pf-about{min-height:130px;line-height:1.6;resize:vertical}
 .modal:has(#pf-save)>.row:last-child{grid-column:1 / -1;position:sticky;bottom:-24px;z-index:2;margin:0 -24px -24px;padding:16px 24px;gap:10px;background:var(--bg);border-top:1px solid var(--line)}
