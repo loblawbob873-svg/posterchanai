@@ -1138,9 +1138,10 @@ public class ThreadActivity extends PcActivity {
 
     private SmsReactionThread reactionHistory(long id, String peer) {
         List<SmsMsg> rows = Messages.thread(this, id, 501);
-        boolean complete = rows.size() < 501 && SmsStore.reactionReadComplete()
-                && MmsStore.reactionReadComplete() && ids().length == 1;
-        return new SmsReactionThread(rows, complete, id, peer);
+        boolean readOk = SmsStore.reactionReadComplete() && MmsStore.reactionReadComplete() && ids().length == 1;
+        boolean complete = rows.size() < 501 && readOk;
+        // Cut off only by the 501-row window: reacting is still safe (SmsReactionThread.reactable).
+        return new SmsReactionThread(rows, complete, readOk, id, peer);
     }
 
     private void reactionMenu(final SmsMsg m) {

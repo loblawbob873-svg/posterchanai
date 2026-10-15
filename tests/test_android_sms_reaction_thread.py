@@ -47,6 +47,16 @@ public class Probe {
   SmsMsg own=row(1,"sent",2), incoming=row(2,"Liked “sent”",1);
   check(history(own,incoming).visible.size()==1,"incoming reaction on own text");
   check(!history(own,incoming).canReact(own),"no reaction to self");
+  // "no way to react on text message, long press says copy and delete" (2026-10-15): a conversation longer than
+  // the 501-row read window switched React off for EVERY message. Cut off only by that window, sending is safe
+  // (a reaction is newer than its target, so for a loaded target every reaction to it is loaded too); showing
+  // reactions as chips still waits for a complete history.
+  SmsReactionThread windowed=new SmsReactionThread(Arrays.asList(target,added),false,true,9,target.address);
+  check(windowed.canReact(target),"a long conversation still offers React");
+  check(windowed.visible.size()==2,"a windowed history still projects nothing");
+  check(!new SmsReactionThread(Arrays.asList(target,row(5,target.body,1)),false,true,9,target.address).canReact(target),"windowed: duplicate text still ambiguous");
+  SmsMsg grp=row(6,"hi",1);grp.people=2;
+  check(!new SmsReactionThread(Arrays.asList(target,grp),false,true,9,target.address).canReact(target),"windowed: a group is still refused");
  }
 }
 '''
