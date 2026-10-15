@@ -3084,7 +3084,7 @@
              ||!(ev.tags||[]).some(t=>t&&t[0]==='d'&&t[1]===READ_D))return;
           if(readSync.owner===owner)adoptReadDoc(p,owner,ev);
         }});
-        readSync.close=typeof sub==='function'?sub:(()=>{ try{ window.Relay&&Relay.close(sub); }catch(_){ } });
+        readSync.close=typeof sub==='function'?sub:(()=>{ try{ if(p.relayClose)p.relayClose(sub); }catch(_){ } });   // through the app's wrapper, like discovery
       }catch(_){ }
     }
     try{ if(!startReadSync.wired&&typeof document!=='undefined'&&document.addEventListener){ startReadSync.wired=true;

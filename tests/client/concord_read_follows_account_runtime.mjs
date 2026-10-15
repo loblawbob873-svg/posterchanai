@@ -118,6 +118,7 @@ for (const mode of ['silent', 'down']) {
     const net = relays();
     let live = null;
     net.p.relaySubscribe = (filters, h) => { live = { filters, h }; return 'sub1'; };
+    net.p.relayClose = () => { live = null; };   // a fake subscribe needs its close (test_relay_subscription_contract)
     const laptop = boot(seed);
     await laptop.C.__testReadDoc(net.p);
     if (laptop.C.unreadRooms() !== 1) fail(`${how}: the room should start unread on the laptop, got ${laptop.C.unreadRooms()}`);
