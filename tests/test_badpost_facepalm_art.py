@@ -68,3 +68,17 @@ def test_the_shipped_png_is_what_the_script_builds(tmp_path, monkeypatch):
     b = np.asarray(Image.open(PNG).convert("RGB")).astype(int)
     assert a.shape == b.shape
     assert np.abs(a - b).max() <= 2, "static/mascot/badpost-facepalm.png was not rebuilt from the script"
+
+
+def test_no_hard_blue_gloom_lines_cross_her_head():
+    """"what are those long blue vertical lines? ugly" (2026-10-15): the gloom was a fan of saturated blue
+    strokes over her forehead. Now a soft shadow, so no run of that cold blue may stand anywhere in the
+    picture (the sweat drop is a paler, greener blue and is not counted)."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(PNG).convert("RGB")).astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    blue = (b > 200) & (r < 150) & (g < 170)
+    tallest = max(int(np.max(np.diff(np.flatnonzero(np.r_[False, col, False]))[::2], initial=0))
+                  if col.any() else 0 for col in blue.T)
+    assert tallest < 12, "a vertical blue stroke %d px tall is drawn on the facepalm card" % tallest

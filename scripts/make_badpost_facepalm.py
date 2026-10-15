@@ -11,6 +11,7 @@ Run once after changing the mascot art (needs Pillow with FreeType, i.e. the app
 """
 import os
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -84,15 +85,20 @@ def outlined(draw, xy, text, fnt, fill, anchor="mm"):
     draw.text(xy, text, font=fnt, fill=fill, anchor=anchor, stroke_width=5, stroke_fill=(0, 0, 0, 255))
 
 
-def _gloom(size, head, top):
-    """Anime gloom over her head: a cold shadow down from the crown and a fan of falling lines, drawn on
-    the head itself (they used to float a hand's width above it)."""
-    layer = Image.new("RGBA", size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    for i, dx in enumerate((-78, -52, -26, 0, 26, 52, 78)):
-        y0 = top - 10 + (i % 2) * 14
-        d.line([(head + dx, y0), (head + dx, top + 70 + (i % 3) * 14)], fill=(110, 130, 255, 200), width=6)
-    return layer.filter(ImageFilter.GaussianBlur(0.6))
+def _gloom(fig_alpha, head, top):
+    """Anime gloom: a cold shadow that falls over the top of her head and fades out by her eyes. It used to
+    be a fan of hard blue lines, which on a phone read as a rendering glitch ("what are those long blue
+    vertical lines? ugly", 2026-10-15). Only where she is drawn (masked by the figure), so the background
+    stays clean."""
+    size = fig_alpha.size
+    ramp = Image.new("L", size, 0)
+    rd = ImageDraw.Draw(ramp)
+    for yy in range(max(0, top - 20), min(size[1], top + 60)):
+        t = (yy - (top - 20)) / 80
+        rd.line([(head - 170, yy), (head + 170, yy)], fill=int(130 * (1 - t) ** 1.6))
+    ramp = ramp.filter(ImageFilter.GaussianBlur(12))
+    mask = Image.fromarray((np.asarray(ramp, dtype=np.float32) * np.asarray(fig_alpha, dtype=np.float32) / 255).astype("uint8"))
+    return Image.merge("RGBA", (Image.new("L", size, 40), Image.new("L", size, 50), Image.new("L", size, 120), mask))
 
 
 def _sweat(d, x, y):
@@ -123,7 +129,7 @@ def main() -> None:
     shadow = glow.split()[3].filter(ImageFilter.GaussianBlur(14))
     canvas.alpha_composite(Image.merge("RGBA", (shadow.point(lambda v: 0),) * 3 + (shadow.point(lambda v: v * 0.7),)))
     canvas.alpha_composite(fig, (x, y))
-    canvas.alpha_composite(_gloom(canvas.size, head, crown))
+    canvas.alpha_composite(_gloom(glow.split()[3], head, crown))
     d = ImageDraw.Draw(canvas)
     _sweat(d, head + 122, crown + 70)
     outlined(d, (SIZE // 2, 62), "BAD POST", font(78), YELLOW)
