@@ -13,7 +13,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.routers import client as client_router
+from app.routers import chat  # noqa: F401 -- imported BEFORE any patch: chat binds search_service.is_safe_url
+from app.routers import client as client_router   # at import, so a first import under the fixture's patch kept the
+                                                    # fake guard in chat for the rest of the session
 
 SECRET = b'{"authHTTPAddress":"","runOnReadyHook":"stream-hook-secret-123","lnurl":"x","callback":"x","names":{"_":"' + b"a" * 64 + b'"}}'
 INTERNAL = "http://127.0.0.1:9997/v3/config/global/get"
@@ -41,7 +43,6 @@ def api(monkeypatch):
     monkeypatch.setattr(rss_service, "is_safe_host", public)
     monkeypatch.setattr(client_router, "_is_public_host", lambda h: h == "evil.example")
     monkeypatch.setattr(search_service, "is_safe_url", lambda u: (True, "") if public(u) else (False, "private"))
-    from app.routers import chat
     monkeypatch.setattr(chat, "is_safe_url", lambda u: (True, "") if public(u) else (False, "private"))
 
     app = FastAPI()

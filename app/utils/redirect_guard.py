@@ -21,9 +21,28 @@ class RedirectRefused(httpx.RequestError):
     pass
 
 
+def _own_media(host: str) -> bool:
+    """THIS deployment's own media hosts pass, exactly as they pass `search_service.is_safe_url`.
+
+    Split-horizon DNS sends media.poster.place to 192.168.0.1 from inside the LAN, so `is_safe_host` refuses it
+    as private -- and because this hook sees the FIRST request too, not only redirects, every guarded fetch of our
+    own media failed after #5 shipped: sharing a timeline image from the APK ("couldn't share image", it goes
+    through /client/proxy-image), and every other guarded fetch of a media.poster.place URL. The exemption is the
+    same single list (`own_media_hosts`: the configured Blossom bases + Admin -> Blossom "Own media hosts"), by
+    EXACT hostname, so a redirect into the LAN by any other name is still refused. A settings read that fails
+    exempts nothing."""
+    try:
+        from app.services.search_service import own_media_hosts
+        return bool(host) and host.lower() in own_media_hosts()
+    except Exception:
+        return False
+
+
 async def _check(request: httpx.Request) -> None:
     from app.services.rss_service import is_safe_host
     url = str(request.url)
+    if request.url.scheme in ("http", "https") and _own_media(request.url.host):
+        return
     if request.url.scheme not in ("http", "https") or not await asyncio.to_thread(is_safe_host, url):
         raise RedirectRefused(f"refused: {request.url.host} is not a public address", request=request)
 
