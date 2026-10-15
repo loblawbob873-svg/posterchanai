@@ -10631,7 +10631,16 @@
   // The file-manager Music folder. _syncRoot is cleared because it is a different SOURCE, not a
   // sibling folder: leaving it set would send the music player's "open the folder" into a synced
   // folder's browser, which has no track list.
-  function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; _syncRoot=''; _syncPath=''; switchView('blossom'); }
+  /* "Add music" OPENS FILES ON THE MUSIC FOLDER -- WHEN THERE ARE FILES. With no instance and no media server of
+   * your own, Files is not available here and switchView quietly swaps it for the timeline, so the button took
+   * people to the social feed ("add music button bringing him back to social timeline", Vyram, 2026-10-15).
+   * Say what it needs and stay on Music instead. */
+  function openMusicFolder(){
+    if(_viewNeedsInstance('blossom')){
+      toast('To add music, choose a media server in Settings → Media — songs are uploaded there, encrypted, then appear here.');
+      return false;
+    }
+    _filesTab='public'; _filesFolder='Music'; _syncRoot=''; _syncPath=''; switchView('blossom'); return true; }
 
   /* THE DRIVE, SEARCHABLE FROM ANYWHERE THAT HAS A SEARCH BOX — the desktop's start menu first.
    *

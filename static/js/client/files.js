@@ -2689,6 +2689,15 @@ window.PCFilesFactory = function(dep){
         const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
       } }
     }finally{ if(listTimer)clearTimeout(listTimer); }
+    /* A media server that answers its listing with an OBJECT (an error body served with 200, a proxy's JSON) is
+     * not a list. It used to throw "list.filter is not a function" out of this view -- "action failed", the File
+     * Manager half-drawn. Say the server answered something that is not a list, with Retry, as for any failure. */
+    if(list!==null && !Array.isArray(list)){
+      list=null;
+      if(!cachedList){ const g=$('#bl-grid',pane); if(g){
+        g.innerHTML='<div class="empty">'+enc(server)+' did not answer with a list of files. <button class="btn btn-ghost small" id="bl-list-retry">Retry</button></div>';
+        const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom(); } }
+    }
     const fromKept=list!==null && !_listFetched;
     if(list!==null){
       /* Blossom list responses need not repeat an absolute URL. Build the canonical blob address
