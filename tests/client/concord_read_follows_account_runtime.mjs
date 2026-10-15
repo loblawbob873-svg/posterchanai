@@ -14,8 +14,8 @@ const ME = 'a'.repeat(64), OTHER = 'b'.repeat(64);
 const fail = m => { console.error('FAIL: ' + m); process.exit(1); };
 const tick = ms => new Promise(r => setTimeout(r, ms));
 
-function boot() {
-  const store = new Map();
+function boot(seed) {
+  const store = new Map(Object.entries(seed || {}));
   const localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
   const body = { classList: { add: noop, remove: noop, contains: () => false } };
   const document = { body, visibilityState: 'visible', querySelector: () => null, querySelectorAll: () => [], createElement: () => ({ dataset: {} }),
@@ -28,7 +28,7 @@ function boot() {
     TextEncoder, indexedDB: undefined, location: { href: 'https://poster.place/client' }, AbortController };
   context.globalThis = context;
   vm.runInNewContext(src, context);
-  return { C: window.PCConcord };
+  return { C: window.PCConcord, store };
 }
 
 /* One account's relays: whatever was published is what the next device reads. `mode` lets a test make
@@ -105,6 +105,48 @@ for (const mode of ['silent', 'down']) {
   await tick(1800);
   const last = JSON.parse(net.events[0].content.slice(4)).marks;
   if (Object.keys(last).length !== 2) fail('the second device erased the first device\'s read mark: ' + JSON.stringify(last));
+}
+
+
+/* 5. THE UNREAD BADGE FOLLOWS THE ACCOUNT TOO, AND WITHOUT A RELOAD. "we need to make sure DMs, Telegram,
+ *    Concord, read status syncs across devices like we do with notifications, it's confusing on multiple
+ *    devices": the room dots and the sidebar count read only this device's cursor, and the synced mark was
+ *    read once per session. The laptop is open with the room unread; the phone reads it. */
+{
+  const seed = { ['pc.concord.rooms.v1.' + ME]: JSON.stringify([room]), ['pc.concord.test.' + room.naddr]: JSON.stringify(history) };
+  for (const how of ['refresh', 'live']) {
+    const net = relays();
+    let live = null;
+    net.p.relaySubscribe = (filters, h) => { live = { filters, h }; return 'sub1'; };
+    const laptop = boot(seed);
+    await laptop.C.__testReadDoc(net.p);
+    if (laptop.C.unreadRooms() !== 1) fail(`${how}: the room should start unread on the laptop, got ${laptop.C.unreadRooms()}`);
+    if (how === 'live') { laptop.C.__testStartReadSync?.(net.p); await tick(50); if (!live) fail('live: no subscription to the read marks'); }
+    const phone = boot(seed);
+    await phone.C.__testReadDoc(net.p);
+    phone.C.__testNoteChannelRead(net.p, room, 'general', Math.max(...history.map(m => m.at)));
+    await tick(1800);
+    if (!net.published.length) fail(`${how}: the phone did not publish its read mark`);
+    if (how === 'refresh') await laptop.C.__testRefreshReadDoc?.(net.p, true);
+    else { live.h.onEvent(net.events[0]); await tick(50); }
+    if (laptop.C.unreadRooms() !== 0) fail(`${how}: the room the phone read is still unread on the laptop (${laptop.C.unreadRooms()})`);
+  }
+}
+
+/* 6. Never un-read: a newer message than the phone's mark is still unread on the laptop, and an OLDER copy of
+ *    the doc arriving later changes nothing. */
+{
+  const later = [...history, msg('m4', now + 5000, false)];
+  const seed = { ['pc.concord.rooms.v1.' + ME]: JSON.stringify([room]), ['pc.concord.test.' + room.naddr]: JSON.stringify(later) };
+  const net = relays();
+  const laptop = boot(seed);
+  await laptop.C.__testReadDoc(net.p);
+  const phone = boot(seed);
+  await phone.C.__testReadDoc(net.p);
+  phone.C.__testNoteChannelRead(net.p, room, 'general', now - 600e3);
+  await tick(1800);
+  await laptop.C.__testRefreshReadDoc(net.p, true);
+  if (laptop.C.unreadRooms() !== 1) fail('a message newer than the phone\'s mark was marked read');
 }
 
 console.log('concord read follows the account: ok');

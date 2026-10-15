@@ -1469,10 +1469,14 @@
   function channelReadKey(room,name){ return READ_KEY+accountPk()+'.'+(room&&room.naddr||'')+':'+(name||'general'); }
   function seenAt(room,name){
     if(!room||!room.naddr||!accountPk())return 0;
-    const exact=Number(localStorage.getItem(channelReadKey(room,name))||0);
-    if(exact)return exact;
+    /* ...AND WHAT THIS ACCOUNT READ ON ANY OTHER DEVICE. The unread dots and the sidebar count read only
+     * this device's cursor, while the synced `pcai:concord-read` mark fed the mention bell alone -- so a
+     * room read on the phone stayed bold on the desktop ("it's confusing on multiple devices"). Both are
+     * the newest message seen, in ms; the later one wins. */
+    const synced=readMark(room,name),exact=Number(localStorage.getItem(channelReadKey(room,name))||0);
+    if(exact)return Math.max(exact,synced);
     /* Migration fallback for the release that stored one timestamp for the whole community. */
-    return Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0);
+    return Math.max(synced,Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0));
   }
   function markRead(room,name){ if(room&&room.naddr&&accountPk())localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))); }
@@ -3011,6 +3015,53 @@
       const ev=await p.signTemplate({kind:30078,created_at:Math.floor(Date.now()/1000),content,tags:[['d',READ_D]],pubkey:owner});
       await p.relayPublish(ev);
     })().catch(()=>{ readDoc.dirty=true; }).finally(()=>{ readDoc.saving=null; if(readDoc.dirty&&readDoc.answered)setTimeout(()=>saveReadDoc(p),5000); });
+  }
+  /* WHAT ANOTHER DEVICE READ, WHILE THIS ONE IS OPEN. loadReadDoc answers once per session, so a desktop
+   * left open never learned that the phone had read a room. Three ways in, all merge-only (MAX per
+   * channel -- a copy can never un-read anything): a live subscription to the document, a re-read when the
+   * page comes back to the foreground, and a re-read at most once a minute from the background sweep.
+   * A re-read that could not ask changes nothing. */
+  let readSync={owner:'',close:null,at:0,busy:false};
+  function readMarksChanged(){
+    pruneReadMentions();
+    try{ paintUnreadBadge(); }catch(_){ }
+    try{ if(document.body&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender()); }catch(_){ }
+  }
+  async function adoptReadDoc(p,owner,ev){
+    try{
+      const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
+      if(readDoc.owner!==owner||!doc||typeof doc.marks!=='object'||Array.isArray(doc.marks))return;
+      if(mergeMarks(readDoc.marks,doc.marks))readMarksChanged();
+    }catch(_){ }
+  }
+  async function refreshReadDoc(p,force){
+    const owner=p&&p.viewer&&p.viewer().pubkey;
+    if(!owner||readSync.busy||(!force&&Date.now()-readSync.at<60000))return;
+    readSync.busy=true;readSync.at=Date.now();
+    try{
+      if(readDoc.owner!==owner||!readDoc.answered){ await loadReadDoc(p); if(readDoc.answered)readMarksChanged(); return; }
+      const got=await fetchReadDoc(p,owner);
+      if(got&&readDoc.owner===owner&&mergeMarks(readDoc.marks,got.marks))readMarksChanged();
+    }finally{ readSync.busy=false; }
+  }
+  function startReadSync(p){
+    const owner=p&&p.viewer&&p.viewer().pubkey;
+    if(!owner||readSync.owner===owner)return;
+    if(readSync.close){ try{ readSync.close(); }catch(_){ } }
+    readSync={owner,close:null,at:0,busy:false};
+    if(p.relaySubscribe&&p.nip44dec){
+      try{
+        const sub=p.relaySubscribe([{authors:[owner],kinds:[30078],'#d':[READ_D]}],{live:true,onEvent:ev=>{
+          if(!ev||ev.pubkey!==owner||Number(ev.kind)!==30078||typeof ev.content!=='string'
+             ||!(ev.tags||[]).some(t=>t&&t[0]==='d'&&t[1]===READ_D))return;
+          if(readSync.owner===owner)adoptReadDoc(p,owner,ev);
+        }});
+        readSync.close=typeof sub==='function'?sub:(()=>{ try{ window.Relay&&Relay.close(sub); }catch(_){ } });
+      }catch(_){ }
+    }
+    try{ if(!startReadSync.wired&&typeof document!=='undefined'&&document.addEventListener){ startReadSync.wired=true;
+      document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ const q=PC(); if(q)refreshReadDoc(q,true).catch(()=>{}); } }); } }catch(_){ }
+    refreshReadDoc(p,true).catch(()=>{});
   }
   /* This channel is on screen up to `at`: read here, and so read everywhere. */
   function noteChannelRead(p,room,channel,at){
@@ -5252,6 +5303,7 @@
   }
   let sweepBusy=false,sweepAt=0,sweepNext=0;
   async function sweepOtherRooms(p){
+    try{ startReadSync(p); refreshReadDoc(p,false).catch(()=>{}); }catch(_){ }
     if(sweepBusy||Date.now()-sweepAt<SWEEP_MS)return;
     sweepBusy=true;sweepAt=Date.now();let stored=false;
     try{
@@ -7118,6 +7170,8 @@
   window.PCConcord.__testNotifyMentions=(p,room,msgs,viewer,me,ch)=>notifyMentions(p,room,msgs,viewer,me,ch);
   window.PCConcord.__testClearMentions=(room,ch)=>clearMentions(room,ch);
   window.PCConcord.__testNoteChannelRead=(p,room,ch,at)=>noteChannelRead(p,room,ch,at);
+  window.PCConcord.__testRefreshReadDoc=(p,force)=>refreshReadDoc(p,force);
+  window.PCConcord.__testStartReadSync=p=>startReadSync(p);
   window.PCConcord.__testReadDoc=p=>loadReadDoc(p).then(()=>({answered:readDoc.answered,marks:{...readDoc.marks},saving:readDoc.saving}));
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
