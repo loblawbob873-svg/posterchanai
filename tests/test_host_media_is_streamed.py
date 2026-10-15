@@ -36,7 +36,7 @@ PREVIEW = (ROOT / "static/js/client/preview.js").read_text(encoding="utf-8")
 
 def run_handler(script):
     """Lift serveHostFile out of main.js and run it against a stubbed hostfs + real files."""
-    body = MAIN[MAIN.index("function serveHostFile(request, rel) {"):]
+    body = MAIN[MAIN.index("function fileStream(full, start, end) {"):]   # the stream helper rides with it
     body = body[: body.index("\nfunction serveBundle()")]
     tmp = Path(tempfile.mkdtemp())
     try:
