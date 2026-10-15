@@ -10565,12 +10565,15 @@
       else if(PC().logout) PC().logout();
     }
   }
-  function meChip(){
-    if(!me()) return '';
-    /* FROM THE PROFILE, NOT FROM THE SIDEBAR. This used to copy #me-card's picture and name out of the
-       page -- and on PosterChanOS the start menu is its OWN popup window, which never draws that sidebar,
-       so the OS menu showed an anonymous chip while the web desktop showed you ("I see it on WebUI
-       desktop but not OS"). The profile is in the Store in every window; #me-card is the fallback. */
+  /* WHO YOU WERE, FOR A WINDOW THAT DOES NOT KNOW YET. The PosterChanOS start menu is a fresh page every
+     time it opens and draws before its saved sign-in is restored, so `me()` is null in its first frame;
+     the chip used to be added ~a poll later and popped in under the cursor ("major lag when the avatar /
+     account switcher appears"). Every window that does know writes the chip's three facts here (same
+     origin, so the popup reads it synchronously), and the popup draws from it until its own sign-in
+     answers -- then it is checked against the real account and replaced if it was someone else. */
+  const _CHIP_KEY = 'pc_os_me_chip';
+  function _chipFacts(){
+    const m = me(); if(!m || !m.pubkey) return null;
     let src = '', name = '';
     try{
       const v = PC().viewer && PC().viewer(), pr = (v && v.profile) || {};
@@ -10581,9 +10584,29 @@
       if(!src){ const img = document.querySelector('#me-card img'); if(img) src = img.getAttribute('src') || ''; }
       if(!name){ const mn = document.querySelector('#me-card .mn'); if(mn) name = (mn.textContent || '').trim(); }
     }catch(_){}
+    return { pk: m.pubkey, src, name };
+  }
+  function _rememberChip(f){
+    f = f || _chipFacts(); if(!f) return;
+    try{ localStorage.setItem(_CHIP_KEY, JSON.stringify(f)); }catch(_){ }
+  }
+  function _rememberedChip(){
+    try{ const f = JSON.parse(localStorage.getItem(_CHIP_KEY) || 'null');
+         return f && typeof f.pk === 'string' && f.pk ? f : null; }catch(_){ return null; }
+  }
+  function meChip(){
+    /* FROM THE PROFILE, NOT FROM THE SIDEBAR. This used to copy #me-card's picture and name out of the
+       page -- and on PosterChanOS the start menu is its OWN popup window, which never draws that sidebar,
+       so the OS menu showed an anonymous chip while the web desktop showed you ("I see it on WebUI
+       desktop but not OS"). The profile is in the Store in every window; #me-card is the fallback. */
+    let f = _chipFacts();
+    if(f) _rememberChip(f);
+    else if(_menuInPopup) f = _rememberedChip();
+    if(!f) return '';
+    const src = f.src || '', name = f.name || '';
     const pic = src ? `<img src="${enc(src)}" alt="">`
                     : '<svg class="ic" aria-hidden="true"><use href="#i-user"></use></svg>';
-    return `<button class="os-acct" id="os-acct" title="Accounts">${pic}
+    return `<button class="os-acct" id="os-acct" title="Accounts" data-pk="${enc(f.pk)}">${pic}
               <span>${enc(name || 'My account')}</span>
               <i aria-hidden="true">⌃</i></button>`;
   }
@@ -11897,6 +11920,7 @@
   /* The compositor-level Start menu. Extracted so the flag cannot be consulted before the
      process that owns the window is asked — see toggleStart. */
   function _startPopup(){
+    _rememberChip();                 // the popup draws you from this before its own sign-in is back
     let rect = null;
     try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
     /* THE SAME BOX THE IN-PAGE MENU GETS. `.os-startmenu` is min(780px, 100vw-20px) wide and
@@ -12284,14 +12308,20 @@
        restored; meChip() then has nobody to show, and nothing drew it again: the OS menu had no
        avatar or name while the web desktop, signed in long before the menu opened, did ("I see it on
        WebUI desktop but not OS"). So a menu drawn anonymous watches for the sign-in and adds you. */
-    if(!$('#os-acct', menu)){
+    const drawn = $('#os-acct', menu);
+    if(!drawn || !me()){
+      /* Drawn from memory (or not at all): once the sign-in answers, put the REAL account there. Same
+         person -> only the picture/name are refreshed in place, so nothing visibly moves. */
       const m0 = menu; let n = 0;
       const t = setInterval(() => {
         if(!m0.isConnected || ++n > 100){ clearInterval(t); return; }
         if(!me()) return;
         clearInterval(t);
-        const foot = $('.os-foot', m0); if(!foot || $('#os-acct', foot)) return;
-        foot.insertAdjacentHTML('afterbegin', meChip());
+        const foot = $('.os-foot', m0); if(!foot) return;
+        const old = $('#os-acct', foot), html = meChip();
+        if(old && old.outerHTML === html.trim()) return;
+        if(old) old.remove();
+        foot.insertAdjacentHTML('afterbegin', html);
         bindAcct($('#os-acct', foot));
       }, 150);
     }
