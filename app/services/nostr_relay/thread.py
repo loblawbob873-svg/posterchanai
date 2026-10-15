@@ -1064,7 +1064,8 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         # ping_timeout raised 30→120: a mobile PWA's radio can suspend briefly, delaying the browser's
         # auto-pong; a 30s timeout dropped those still-alive connections (feed "stops after ~2-3 min").
         # App-level _keepalive NOTICEs keep the socket genuinely live; pings still reap a truly-dead conn.
-        ping_interval=30, ping_timeout=120, max_queue=64,
+        # The same clock as the keepalive NOTICE (RelayServer.KEEPALIVE_S): one radio wake per period, not two.
+        ping_interval=RelayServer.KEEPALIVE_S, ping_timeout=120, max_queue=64,
         extensions=[_relay_deflate()],
     )
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",

@@ -648,6 +648,14 @@ class RelayServer:
     _EARLY_CLOSE_EVERY = 20.0
     # How long a confined socket may hold a connection without doing any signer work.
     SIGNER_GRACE = 30.0
+    # ONE KEEPALIVE CLOCK FOR THE PING FRAME AND THE NOTICE. They were 30s (websockets ping, thread.py) and 40s (this
+    # NOTICE) on separate schedules, and both cross Cloudflare to the client -- measured 2026-10-15 through
+    # wss://relay.poster.place: PING at 30/60/90/120s, NOTICE at 40/80/120s, i.e. a radio wake-up every ~25s for
+    # a phone's background signer socket (~3,600 a day for one socket). Now both fire on the same instants, every
+    # 75s from the connection's start: inside Cloudflare's 100s idle window and the native signer's 90s stale
+    # threshold (SignerRelayService.STALE_MS), and the same period as the push socket (run.py ws_ping_interval).
+    # Browsers keep their own 25s heartbeat while visible (relay.js _startHeartbeat), so they do not lean on this.
+    KEEPALIVE_S = 75.0
     _REFUSED_MAX = 4096
     # How long a confined socket is given to answer the AUTH challenge before its content requests
     # count as proof that it is not a signer and not a member (see `_dispatch`).
@@ -708,6 +716,8 @@ class RelayServer:
         rots into a 'zombie'. This is what keeps a mobile PWA's feed live when its JS timers are throttled
         and the radio briefly suspends (the "no new posts after ~2-3 min" symptom). The client ignores an
         unrecognised NOTICE; one tiny frame per connection per 40s."""
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
         try:
             # A CONFINED SOCKET THAT NEVER SIGNS ANYTHING IS JUST HOLDING A CONNECTION, AND IT IS ON
             # ITS OWN CLOCK — a much shorter one than a client's keepalive.
@@ -742,9 +752,15 @@ class RelayServer:
                     except Exception:
                         pass
                     return
+            # On the connection's own clock (t0 = when this task started, i.e. the open -- the same instant
+            # websockets starts its ping timer), at whole multiples of KEEPALIVE_S: so the NOTICE goes out with
+            # the PING frame, whatever the signer grace above took.
+            k = 1
             while True:
-                await asyncio.sleep(40)
+                k = max(k, int((loop.time() - t0) // self.KEEPALIVE_S) + 1)
+                await asyncio.sleep(max(0.0, t0 + k * self.KEEPALIVE_S - loop.time()))
                 self._send(conn, ["NOTICE", "keepalive"])
+                k += 1
         except asyncio.CancelledError:
             pass
         except Exception:
