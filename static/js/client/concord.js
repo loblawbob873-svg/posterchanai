@@ -1733,10 +1733,29 @@
     const miniCard=canPlayMini?PCWebxdc.cardHtml(mini):'';
     return body+poll+miniCard+publicMedia+media;
   }
+  function attachmentFailText(e){
+    const stage=e&&e.stage,host=String(e&&e.host||'the file host').replace(/[<>&"]/g,'');
+    if(stage==='unreachable')return 'Couldn’t reach '+host+' to download this attachment';
+    if(stage==='refused')return 'Couldn’t download this attachment ('+String(e.detail||'').replace(/[<>&"]/g,'')+' from '+host+')';
+    if(stage==='too-large')return 'This attachment is too large to open here';
+    if(stage==='integrity')return 'This attachment does not match what was sent';
+    return 'Could not decrypt attachment';
+  }
   async function decryptAttachment(file){
     const ck=file.url+'\0'+file.hash; if(attachmentCache.has(ck))return attachmentCache.get(ck);
     if(attachmentLoads.has(ck))return attachmentLoads.get(ck);
-    const work=(async()=>{const res=await fetch(file.url,{credentials:'omit'});if(!res.ok)throw new Error('download failed');const cipher=await res.arrayBuffer();if(cipher.byteLength>50*1024*1024)throw new Error('attachment is too large');const key=await crypto.subtle.importKey('raw',hexBytes(file.key),'AES-GCM',false,['decrypt']);const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:hexBytes(file.nonce)},key,cipher));const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain));if(hash!==file.hash)throw new Error('integrity check failed');const value={url:URL.createObjectURL(new Blob([plain],{type:file.mime})),mime:file.mime,name:file.name};attachmentCache.set(ck,value);while(attachmentCache.size>64){const [old,v]=attachmentCache.entries().next().value;attachmentCache.delete(old);try{URL.revokeObjectURL(v.url);}catch(_){}}return value;})();
+    const work=(async()=>{
+      /* SAY WHICH STEP FAILED. Every failure here -- a host that refused the download, one this network cannot reach,
+       * a file over the cap, a wrong key -- was shown as "Could not decrypt attachment", which sends people chasing
+       * keys when the host was simply unreachable ("now getting 'Could not decrypt attachment' errors on laptop",
+       * 2026-10-15). Each step names itself; attachmentFailText turns it into the line under the attachment. */
+      const host=(()=>{try{return new URL(file.url).host;}catch(_){return 'the file host';}})(),fail=(stage,detail)=>Object.assign(new Error(stage),{stage,detail,host});
+      let res;try{res=await fetch(file.url,{credentials:'omit'});}catch(e){throw fail('unreachable','');}
+      if(!res.ok)throw fail('refused','HTTP '+res.status);
+      const cipher=await res.arrayBuffer();if(cipher.byteLength>50*1024*1024)throw fail('too-large','');
+      let plain;try{const key=await crypto.subtle.importKey('raw',hexBytes(file.key),'AES-GCM',false,['decrypt']);plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:hexBytes(file.nonce)},key,cipher));}
+      catch(_){throw fail('decrypt','');}
+      const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain));if(hash!==file.hash)throw fail('integrity','');const value={url:URL.createObjectURL(new Blob([plain],{type:file.mime})),mime:file.mime,name:file.name};attachmentCache.set(ck,value);while(attachmentCache.size>64){const [old,v]=attachmentCache.entries().next().value;attachmentCache.delete(old);try{URL.revokeObjectURL(v.url);}catch(_){}}return value;})();
     attachmentLoads.set(ck,work);try{return await work;}finally{attachmentLoads.delete(ck);}
   }
   function attachmentLightbox(p,host,url,kind){
@@ -1825,7 +1844,9 @@
       let best=null;for(const [ck,w] of attachmentWaiting)if(!best||w.distance<best[1].distance)best=[ck,w];
       const [ck,{file}]=best;attachmentWaiting.delete(ck);attachmentActive++;
       decryptAttachment(file).then(async got=>{await learnImageSize(file,got);for(const h of attachmentHostsFor(ck))paintAttachmentHost(h,file,got);},
-        ()=>{for(const h of attachmentHostsFor(ck))keepPlaceAround(h,()=>{h.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';});})
+        e=>{try{console.warn('[concord] attachment',e&&e.stage,e&&e.host,e&&e.detail);}catch(_){}
+          for(const h of attachmentHostsFor(ck))keepPlaceAround(h,()=>{h.innerHTML='<span class="cc-attachment-error">'+attachmentFailText(e)+'</span> <button type="button" class="btn btn-ghost small cc-attachment-retry">Retry</button>';
+            const b=h.querySelector('.cc-attachment-retry');if(b)b.onclick=()=>{h.innerHTML='';scheduleAttachment(file,0);};});})
         .finally(()=>{attachmentActive--;pumpAttachments();});
     }
   }
@@ -4511,7 +4532,12 @@
       paintDelivery(d,'sending');
       let result;
       try{const room=deliveryRoom(d),bundle=room&&room.cord&&room.cord.bundle;
-        result=await p.relayPublishRoom(d.relays,d.made.wrap,cordPlaneAuth(p,cordPlaneContext(p,bundle,roomControls.get(d.loadKey)||[],room),d.made.wrap.pubkey,d.relays));}
+        /* AUTHENTICATE WITH THE KEYS THE MESSAGE WAS WRITTEN WITH. The wrap was made from `d.controls`; the auth
+         * used to be built from whatever roomControls held by now -- after a refresh that came back partial or
+         * older, or with nothing loaded, the channel's stream key was not in it: "Concord plane key is not held by
+         * this membership" and the message stuck at "Delivery unknown" (2026-10-15). The union can only ADD keys. */
+        const seen=new Set(),controls=[...(d.controls||[]),...(roomControls.get(d.loadKey)||[])].filter(w=>w&&w.id&&!seen.has(w.id)&&seen.add(w.id));
+        result=await p.relayPublishRoom(d.relays,d.made.wrap,cordPlaneAuth(p,cordPlaneContext(p,bundle,controls,room),d.made.wrap.pubkey,d.relays));}
       catch(e){paintDelivery(d,'unknown');throw e;}
       if(!result||!result.ok){
         paintDelivery(d,result&&result.uncertain?'unknown':'failed');
@@ -4913,7 +4939,7 @@
       await cacheEnvelopes(envelopeCacheKey(loadKey,writeChannel.id),[made.wrap]);return made;
     }
     const d={owner:viewer.pubkey,loadKey,roomId:roomIdentity(room),roomRef:{communityId:room.communityId,naddr:room.naddr,url:room.url,inviteAliases:room.inviteAliases,cord:room.cord&&room.cord.bundle?{bundle:{community_id:room.cord.bundle.community_id}}:undefined},channelId:writeChannel.id,
-      storeId:channelStoreId(room,channelName),relays,made,status:'unknown'};
+      storeId:channelStoreId(room,channelName),relays,made,status:'unknown',controls:controlWraps||[]};   // the set the wrap was MADE with (memory only)
     deliveries.set(deliveryId(d.owner,made.rumorId),d);
     if(onPrepared)onPrepared(d);
     return deliverPrepared(p,d);

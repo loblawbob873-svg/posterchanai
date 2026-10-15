@@ -82,5 +82,20 @@ assert(sentPackets.length===beforeSwitchPackets,'old account send escaped after 
 PCConcord.render();assert(!feed.innerHTML.includes('owner changed while signing'),'other account sees pending owner text');
 window.__PC.viewer=originalViewer;PCConcord.render();
 assert(rowFor('owner changed while signing')?.delivery==='unknown','sending owner cannot recover interrupted send');
+
+// "Concord plane key is not held by this membership" + "Delivery unknown" (2026-10-15): the wrap was MADE with one
+// control set, and the relay auth was built from whatever roomControls held at delivery time. A refresh that came
+// back partial while the signer worked left the channel's stream key out of it, and the message stuck.
+{
+  const key=reloadedRoom.communityId||reloadedRoom.naddr,heldAuth=PosterCordReader.createPlaneAuth;
+  window.__deliveryTest.controls.set(key,[{id:'control'},{id:'channel-ctl'}]);
+  PosterCordReader.createPlaneAuth=(_b,wraps)=>{if(!(wraps||[]).some(w=>w&&w.id==='channel-ctl'))throw new Error('Concord plane key is not held by this membership');return null;};
+  signMode='defer';ackMode='ok';
+  const sending=submit('written with the channel key');await tick();await tick();
+  window.__deliveryTest.controls.set(key,[{id:'control'}]);   // a refresh that came back without the channel
+  releaseSign();try{await sending;}catch(_){ }await tick();await tick();
+  assert(rowFor('written with the channel key')?.delivery==='sent','a refresh during signing stranded the message: '+JSON.stringify({row:rowFor('written with the channel key'),toasts:calls.toasts.slice(-2)}));
+  PosterCordReader.createPlaneAuth=heldAuth;signMode='ok';
+}
 console.log('Concord actual composer/sign callback/Relay delivery scenarios passed');
 process.exit(0);
