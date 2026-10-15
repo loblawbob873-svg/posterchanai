@@ -722,7 +722,7 @@ class SettingsResponse(BaseModel):
     posterchandb_flush_seconds: Optional[int] = 300   # write delay before new events reach disk
     posterchandb_read_cache_mb: Optional[int] = 0     # RAM for older segments (0 = automatic, 30% of RAM)
     posterchandb_cache_low_water_mb: Optional[int] = 0  # free-RAM floor the cache drains at (0 = automatic)
-    posterchandb_snapshot_hours: Optional[float] = 1.0  # index snapshot at most this often
+    posterchandb_snapshot_hours: Optional[float] = 24.0  # index snapshot at most this often (a clean stop always takes one)
     posterchandb_compact_dead_pct: Optional[int] = 40   # rewrite a closed segment once this % is dead
     posterchandb_maint_interval_sec: Optional[int] = 600  # housekeeping pass cadence
     posterchandb_maint_io_mb_s: Optional[float] = 8.0   # housekeeping write ceiling

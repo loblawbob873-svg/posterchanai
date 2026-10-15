@@ -227,7 +227,7 @@ class PcdbRelayStore(RelayStore):
             self._words = threading.Thread(target=self._index_words, name="relay-pcdb-words", daemon=True)
             self._words.start()
         if self.maintenance:
-            self._maint = _Housekeeper(self.store, log=self.log, snapshot_hours=1.0)
+            self._maint = _Housekeeper(self.store, log=self.log, snapshot_hours=24.0)   # = relay_tunables default
             self._maint.start()
         if self.tuning:
             tuning_mod.apply(self.store, self._gov, self._maint, self.tuning)

@@ -49,8 +49,8 @@ packs tags, and compresses content with a dictionary trained on the relay's own 
 | PosterChanDB as designed (log + one daily snapshot) | ~0.4 GB |
 | **PosterChanDB on server1, measured 2026-10-15** (4.7M events, hourly 1.24 GB snapshots) | **~42 GB** |
 
-The design figure assumed one snapshot a day; the admin default became hourly on 2026-10-11, and the snapshot
-grew with the store. The interval is a live setting (`posterchandb_snapshot_hours`); see POSTERCHANDB.md.
+The design figure assumed one snapshot a day; the store ran hourly from 2026-10-10 and the snapshot grew with
+the store. Back to a day since 2026-10-15. The interval is a live setting (`posterchandb_snapshot_hours`); see POSTERCHANDB.md.
 
 Postgres wrote roughly 300 KB per stored event: every new event dirtied pages in ten indexes scattered across
 the disk, and after each checkpoint the first change to every page logged the whole 8 KB page. PosterChanDB
@@ -106,7 +106,7 @@ more than today's 3+ million events.
   (`posterchandb_flush_seconds`). A crash can lose up to that window of *copies*; they are fetched again.
   Direct writes are not in that window — they are fsynced first.
 - **Snapshot writes.** The index snapshot (1.24 GB on server1) is rewritten every `posterchandb_snapshot_hours`
-  (default 1) while anything new arrived — about 30 GB/day on server1, measured. A clean stop snapshots anyway;
+  while anything new arrived. At the old 1-hour default that measured ~30 GB/day on server1; the default is 24 h now. A clean stop snapshots anyway;
   the periodic one only shortens a crash restart. See POSTERCHANDB.md, "SSD writes".
 - **Search while starting.** Full-text search is refused (with a reason) until the words replayed at startup
   are indexed, rather than answering empty.

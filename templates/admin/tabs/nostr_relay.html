@@ -534,7 +534,7 @@
             </div>
             <div class="form-group">
                 <label for="posterchandb_snapshot_hours">Index snapshot at most every (hours)</label>
-                <input type="number" id="posterchandb_snapshot_hours" name="posterchandb_snapshot_hours" placeholder="1" min="0.25" max="48" step="0.25">
+                <input type="number" id="posterchandb_snapshot_hours" name="posterchandb_snapshot_hours" placeholder="24" min="0.25" max="48" step="0.25">
                 <small>A snapshot lets a restart load the indexes instead of replaying the log. Longer = less disk writing, slower restarts. Default 1. Range 0.25–48. <em>Applies within seconds of Save — no restart.</em></small>
             </div>
             <div class="form-group">

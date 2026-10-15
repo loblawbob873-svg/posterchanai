@@ -28,7 +28,7 @@ PREVIOUS = {
     "posterchandb_flush_seconds": 300,
     "posterchandb_read_cache_mb": 0,
     "posterchandb_cache_low_water_mb": 0,
-    "posterchandb_snapshot_hours": 1.0,
+    "posterchandb_snapshot_hours": 24.0,   # was 1.0; raised 2026-10-15 to cut SSD writes (test_pcdb_snapshot_default_saves_ssd)
     "posterchandb_compact_dead_pct": 40,
     "posterchandb_maint_interval_sec": 600,
     "posterchandb_maint_io_mb_s": 8.0,
@@ -212,7 +212,7 @@ def test_the_primary_store_opened_before_settings_takes_them_at_start(tmp_path):
     ps = P.PcdbRelayStore(d)                          # what open_store_for_settings builds: defaults only
     ps.open(None)
     try:
-        assert ps.store.flush_interval == 300 and ps._maint.snapshot_hours == 1.0
+        assert ps.store.flush_interval == 300 and ps._maint.snapshot_hours == 24.0
         with mock.patch.dict(thread._store_ref, {"primary": ps}):
             thread._configure_pcdb({"pcdb_tuning": dict(TUNED)})
         _assert_tuned(ps)

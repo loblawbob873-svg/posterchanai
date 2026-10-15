@@ -116,14 +116,15 @@ PosterChanDB writes each event ONCE, sequentially. The design budget (49k events
 | compaction — a log file is rewritten only when **> 40%** of it is dead (`posterchandb_compact_dead_pct`) | proportional to deletes |
 
 **Measured on server1, 2026-10-15 — the snapshot term dominates, and it is not small.** The index snapshot is
-now **1.24 GB** (4.7M events, 758 MB of index; ~260 B an event), and with the admin default of **1 hour**
-(`relay_tunables.PCDB`, since 2026-10-11 — `maintenance.py`'s own default, and this doc's old figure, is 24) a
-busy relay always has something new, so it writes one every hour. The relay process wrote **18.0 GB in 10.3 h**
+now **1.24 GB** (4.7M events, 758 MB of index; ~260 B an event), and with the default then of **1 hour**
+(the store's housekeeper since primary mode, 2026-10-10, and the admin tunable copied it) a busy relay always has
+something new, so it wrote one every hour. The relay process wrote **18.0 GB in 10.3 h**
 (`/proc/<pid>/io` write_bytes), about **42 GB/day**. Ten hourly snapshots account for ~12 GB of the 18; the rest
 (log appends, one compaction of 11 segments, sidecar files) has not been broken down. It is sequential, but it is MORE than Postgres's 14.65 GB/day of WAL (whose checkpoint
 data-file writes were never measured), and nowhere near the 0.4 GB/day this section used to promise. A clean stop always
-snapshots, so the periodic one only bounds how much log a CRASH replays at the next start; raising
-`posterchandb_snapshot_hours` (Admin → Nostr Relay → Database, live) trades crash-restart time for SSD writes.
+snapshots, so the periodic one only bounds how much log a CRASH replays at the next start; so the default is now
+**24 hours** (2026-10-15): about 28 GB/day less, for ~13 s more replay after a crash (measured: ~20k events/s,
+~260k events/day). `posterchandb_snapshot_hours` (Admin → Nostr Relay → Database, live) still sets it.
 
 Indexes are never written per event: they live in RAM and can always be rebuilt from the log (the snapshot
 only makes startup fast). Reads touch no disk at all while the content fits the read cache.
@@ -149,7 +150,7 @@ An out-of-range value is clamped to the range below.
 | `posterchandb_flush_seconds` | **300** s (1–3600) | The write delay for SYNCED copies: new events reach disk in one sequential batch this often. A crash loses at most this window of copies, which are fetched again. Direct writes are not in it -- they are fsynced before the relay answers OK. |
 | `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older log segments. The indexes are always in RAM; this is the content. |
 | `posterchandb_cache_low_water_mb` | **0 = auto** | The free-RAM floor at which the cache governor drains the read cache (MemAvailable + PSI, `cache.py`). |
-| `posterchandb_snapshot_hours` | **1** h (0.25–48) | An index snapshot at most this often (and on a clean stop), so a restart loads the snapshot and replays only the log after it. |
+| `posterchandb_snapshot_hours` | **24** h (0.25–48) | An index snapshot at most this often (and on a clean stop), so a restart loads the snapshot and replays only the log after it. |
 | `posterchandb_compact_dead_pct` | **40** % (10–90) | A closed segment is rewritten once this share of it is dead (deleted, expired, replaced). |
 | `posterchandb_maint_interval_sec` | **600** s (60–86400) | How often the housekeeping pass (snapshot, compaction, prune) runs. |
 | `posterchandb_maint_io_mb_s` | **8** MB/s | Housekeeping's write ceiling, so it never competes with the live relay or wears an SSD in bursts. |

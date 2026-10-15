@@ -30,8 +30,10 @@ PCDB = {
     "posterchandb_read_cache_mb": Knob(0, 0, 1048576, int, True, "MB"),
     # CacheGovernor.low_water_mb: below this much free RAM the cache drains. 0 = automatic (max(512 MB, 10%)).
     "posterchandb_cache_low_water_mb": Knob(0, 0, 1048576, int, True, "MB"),
-    # Maintainer.snapshot_hours: an index snapshot at most this often (bounds what a restart replays).
-    "posterchandb_snapshot_hours": Knob(1.0, 0.25, 48.0, float, True, "h"),
+    # Maintainer.snapshot_hours: an index snapshot at most this often (bounds what a CRASH replays -- a clean stop
+    # always takes one). 24, not 1: server1's snapshot is 1.24 GB, so hourly was ~30 GB/day of SSD writes; a day of
+    # log replays in ~13 s (measured 2026-10-15: ~20k events/s, ~260k events/day). docs/POSTERCHANDB.md.
+    "posterchandb_snapshot_hours": Knob(24.0, 0.25, 48.0, float, True, "h"),
     # Store.compact_dead_pct: a closed segment this % dead is rewritten to free its disk and RAM.
     "posterchandb_compact_dead_pct": Knob(40, 10, 90, int, True, "%"),
     # Maintainer.interval: seconds between housekeeping passes (compaction, snapshot).
