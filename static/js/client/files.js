@@ -2427,6 +2427,7 @@ window.PCFilesFactory = function(dep){
   /* One of this computer's files, opened: Preview for what it can show, else the chooser. A named
    * function (it was an inline option of the Files pane) so a desktop SEARCH result opens a local
    * file exactly as a click in Files → This Computer does — see hostOpen. */
+  const _HOST_ARCHIVE = /\.(zip|tar|tgz|tbz2?|txz|tzst|tar\.(gz|bz2|xz|zst|lz|lzma)|7z|cpio)$/i;   // = desktop/opener.js ARCHIVE_RE
   async function _openHostFile(path, name, openHere, mime){
     {
         if(_previewable(name || path, mime)){
@@ -2446,7 +2447,15 @@ window.PCFilesFactory = function(dep){
             try{ await _hostOpenOffice(path, name, mime, Number(openHere&&openHere.mtime)||0); }
             catch(err){ toast('could not open in Office: ' + ((err && err.message) || err)); }
           } }] : [];
-        _openWithSheet(name || path, officeChoice.concat([{
+        /* A ZIP OR TAR IS EXTRACTED, like on every other desktop. "This computer" hands the file to xdg-open,
+         * which PosterChanOS answers for archives with pc-open -> the desktop extracts it beside itself and
+         * opens the new folder here (desktop/opener.js extractArchive). Named first so it is the obvious
+         * choice, not hidden behind "hand it to the machine". */
+        const archiveChoice = (_HOST_ARCHIVE.test(name || path) && openHere) ? [{
+          id:'extract', icon:'🗜', label:'Extract here',
+          hint:'Unpack it into a folder next to it and open that folder',
+          run:() => openHere() }] : [];
+        _openWithSheet(name || path, archiveChoice.concat(officeChoice, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
         run:async() => {

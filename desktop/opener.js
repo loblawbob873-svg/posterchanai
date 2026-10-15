@@ -115,10 +115,79 @@ function listen(socketPath, handle, opts) {
   return server;
 }
 
+/* AN ARCHIVE OPENS AS ITS FOLDER, the way every other desktop does it.
+ *
+ * "posterchanOS needs a way to support opening zipfiles like every other OS. I download a zip with firefox
+ * and it don't know what to do" (2026-10-15). Nothing on the machine claimed application/zip, so Firefox had
+ * nowhere to send it. An archive given to `auto` is now extracted NEXT TO ITSELF into a folder named after it
+ * (`cat-tail-doom.zip` -> `cat-tail-doom/`, or `cat-tail-doom (2)/` when that name is taken) and that folder
+ * is what opens, in Files.
+ *
+ * `bsdtar` (libarchive) reads zip, tar and its compressions, 7z and cpio; it refuses absolute paths and `..`
+ * members and will not extract through a symlink unless told to (-P), which is the zip-slip guard. It
+ * extracts into a hidden scratch folder in the SAME directory first and is renamed into place only when
+ * it succeeded, so a failed or interrupted extraction never leaves a half folder that looks complete. */
+const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|txz|tzst|tar\.(gz|bz2|xz|zst|lz|lzma)|7z|cpio)$/i;
+function isArchive(p) { return ARCHIVE_RE.test(String(p || '')); }
+function archiveStem(p) {
+  const b = path.basename(String(p));
+  return b.replace(ARCHIVE_RE, '') || 'archive';
+}
+function freeName(dir, stem, fsx) {
+  const f = fsx || fs;
+  for (let i = 1; i < 1000; i++) {
+    const name = i === 1 ? stem : stem + ' (' + i + ')';
+    try { f.lstatSync(path.join(dir, name)); } catch (e) { if (e && e.code === 'ENOENT') return path.join(dir, name); }
+  }
+  throw new Error('no free folder name next to the archive');
+}
+function runBsdtar(file, into) {
+  const { execFile } = require('child_process');
+  return new Promise((resolve, reject) => {
+    execFile('bsdtar', ['-x', '-f', file, '-C', into], { timeout: 30 * 60 * 1000, maxBuffer: 1 << 20 }, (err, _o, stderr) => {
+      if (!err) return resolve();
+      if (err.code === 'ENOENT') return reject(new Error('bsdtar is not installed (app-arch/libarchive)'));
+      reject(new Error(String(stderr || err.message || err).trim().split('\n').pop() || 'could not extract it'));
+    });
+  });
+}
+/** Extract `file` into a new sibling folder; resolves that folder's path. */
+async function extractArchive(file, opts) {
+  const o = opts || {};
+  const f = o.fs || fs, run = o.run || runBsdtar;
+  const dir = path.dirname(file);
+  const scratch = f.mkdtempSync(path.join(dir, '.' + archiveStem(file).slice(0, 60) + '.extracting-'));
+  try {
+    await run(file, scratch);
+    const target = freeName(dir, archiveStem(file), f);
+    f.renameSync(scratch, target);
+    return target;
+  } catch (e) {
+    try { f.rmSync(scratch, { recursive: true, force: true }); } catch (_) {}
+    throw e;
+  }
+}
+
 /* THE WHOLE REQUEST, given something that can reach the desktop's renderer. `deliver(app, items)`
  * resolves the renderer's per-file answers; files that failed the check never reach it. */
-async function handleWith(deliver, req, fsx) {
+async function handleWith(deliver, req, fsx, extractOpts) {
   const checked = req.paths.map((p) => precheck(req.app, inspect(p, fsx)));
+  /* An archive asked to "just open" becomes its extracted folder before the page sees it. The answer is
+   * still keyed on the path the caller named (the archive), so the CLI reports on what it was given. */
+  if (req.app === 'auto') {
+    for (let i = 0; i < checked.length; i++) {
+      const x = checked[i];
+      if (!x.ok || x.kind !== 'file' || !isArchive(x.path)) continue;
+      try {
+        const folder = await extractArchive(x.path, extractOpts);
+        const seen = inspect(folder, fsx);
+        if (!seen.ok) { checked[i] = { path: x.path, ok: false, why: seen.why }; continue; }
+        checked[i] = { ...seen, path: folder, from: x.path };
+      } catch (e) {
+        checked[i] = { path: x.path, ok: false, why: 'could not extract it: ' + String((e && e.message) || e) };
+      }
+    }
+  }
   const good = checked.filter((x) => x.ok);
   let answered = [];
   if (good.length) {
@@ -128,11 +197,13 @@ async function handleWith(deliver, req, fsx) {
   const byPath = new Map(answered.map((r) => [r && r.path, r]));
   const results = checked.map((x) => {
     if (!x.ok) return { path: x.path, ok: false, why: x.why };
-    const r = byPath.get(x.path);
-    if (!r) return { path: x.path, ok: false, why: 'the desktop did not answer for this file' };
-    return { path: x.path, ok: !!r.ok, app: String(r.app || ''), why: r.ok ? '' : String(r.why || 'could not open it') };
+    const r = byPath.get(x.path), asked = x.from || x.path;
+    if (!r) return { path: asked, ok: false, why: 'the desktop did not answer for this file' };
+    const out = { path: asked, ok: !!r.ok, app: String(r.app || ''), why: r.ok ? '' : String(r.why || 'could not open it') };
+    if (x.from) out.extractedTo = x.path;
+    return out;
   });
   return { ok: results.every((r) => r.ok), results };
 }
 
-module.exports = { SOCKET_NAME, APPS, parseRequest, inspect, precheck, listen, handleWith };
+module.exports = { SOCKET_NAME, APPS, parseRequest, inspect, precheck, listen, handleWith, isArchive, extractArchive };
