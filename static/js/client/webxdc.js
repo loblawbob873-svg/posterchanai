@@ -352,6 +352,11 @@
      * paths so an app that parses from the network parses identically from the cache. */
     async function _openArchive(bytes, app){
       const index = new Map();
+      /* "not a zip file" was the whole report for a SEALED attachment opened without its key, which sent
+       * people re-uploading a game that was fine. A download that does not even start like a zip, from a
+       * post that carried no key, is almost always that -- say so. */
+      if(!(app && app.enc) && bytes && bytes.length > 3 && !(bytes[0] === 0x50 && bytes[1] === 0x4b))
+        throw new Error('this mini app looks encrypted and the post did not include its key, so it cannot be opened here');
       for(const e of window.PCZip.entries(bytes)) if(e.name) index.set(e.name, e);
       if(!index.has('index.html')) throw new Error('that .xdc has no index.html in it');
       return { bytes, index };

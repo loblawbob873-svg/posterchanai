@@ -86,21 +86,17 @@ def test_without_the_key_it_is_the_reported_error_and_with_a_wrong_ox_it_refuses
     s = _sealed()
     plain = dict(_app(s))
     plain.pop("enc")
-    assert "not a zip" in _load(s, plain).get("error", ""), "the fixture no longer reproduces the report"
+    keyless = _load(s, plain).get("error", "")
+    assert "looks encrypted" in keyless and "key" in keyless, ("a keyless sealed game must say why, not 'not a zip'", keyless)
     bad = _load(s, _app(s, ox="0" * 64))
     assert bad.get("ok") is False and "does not match" in bad.get("error", ""), bad
 
 
-def test_concord_hands_the_key_to_the_card():
-    """concord.js's webxdcOf reads the imeta the way Josephus's client wrote it (fields from his real post)."""
-    s = _sealed()
-    tag = ["imeta", "url https://blossom.example/" + s["x"] + ".xdc", "m application/x-webxdc", "x " + s["x"],
-           "size 99311", "name dc20-dice (15).xdc", "webxdc ccede1cf-73a4-4e26-a54c-147033e64d2c", "summary DC20 Dice",
-           "encryption-algorithm aes-gcm", "decryption-key " + s["key"], "decryption-nonce " + s["nonce"], "ox " + s["ox"]]
+def _cards(tag, text=""):
     got = _node(f"""
       const fs = require('fs'), vm = require('vm');
       const src = fs.readFileSync({json.dumps(str(CONCORD_JS))}, 'utf8'), seen = [], noop = () => {{}};
-      const msg = {{ id:'m1', text:'', tags:[{json.dumps(tag)}], at:1, remote:true }};
+      const msg = {{ id:'m1', text:{json.dumps(text)}, tags:[{json.dumps(tag)}], at:1, remote:true }};
       const rows = [{{ dataset:{{messageId:'m1'}}, querySelector:()=>({{ querySelector:()=>null, insertAdjacentHTML:noop }}) }}];
       const document = {{ querySelectorAll:s=>s==='.cc-message[data-message-id]'?rows:[], querySelector:()=>null,
                          createElement:()=>({{dataset:{{}}}}), head:{{appendChild:noop}}, documentElement:{{appendChild:noop}}, addEventListener:noop }};
@@ -113,5 +109,38 @@ def test_concord_hands_the_key_to_the_card():
       while(q.length) q.shift()();
       console.log(JSON.stringify(seen.map(a => ({{ sha:a.sha, enc:a.enc||null, uuid:a.uuid }}))));
     """)
-    assert got and got[0]["enc"] == {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}, got
+    return got
+
+
+def _seal_fields(s):
+    return ["encryption-algorithm aes-gcm", "decryption-key " + s["key"], "decryption-nonce " + s["nonce"], "ox " + s["ox"]]
+
+
+def test_concord_hands_the_key_to_the_card():
+    """concord.js's webxdcOf reads the imeta the way Josephus's client wrote it (fields from his real post)."""
+    s = _sealed()
+    url = "https://blossom.example/" + s["x"] + ".xdc"
+    tag = ["imeta", "url " + url, "m application/x-webxdc", "x " + s["x"], "size 99311", "name dc20-dice (15).xdc",
+           "webxdc ccede1cf-73a4-4e26-a54c-147033e64d2c", "summary DC20 Dice"] + _seal_fields(s)
+    got = _cards(tag, text=url)          # his client ALSO put the URL in the message text
+    assert len(got) == 1 and got[0]["enc"] == {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}, got
     assert got[0]["sha"] == s["x"], got
+
+
+def test_a_sealed_xdc_with_a_generic_type_is_still_a_game_with_its_key():
+    """Firefox, 2026-10-14, after the first fix: still "not a zip". A sealed attachment whose type is generic was
+    not recognised as a game at all, so the only card was the bare URL in the text -- with no key."""
+    s = _sealed()
+    url = "https://blossom.example/" + s["x"]
+    for meta in (["m application/octet-stream", "name dc20-dice.xdc"], ["m application/zip", "name DC20 Dice.xdc"]):
+        tag = ["imeta", "url " + url, "x " + s["x"]] + meta + _seal_fields(s)
+        got = _cards(tag, text=url + ".xdc")
+        assert got and got[0]["enc"] and got[0]["enc"]["key"] == s["key"], (meta, got)
+
+
+def test_a_bare_link_that_is_a_sealed_attachment_borrows_its_key():
+    s = _sealed()
+    url = "https://blossom.example/" + s["x"] + ".xdc"
+    tag = ["imeta", "url " + url, "m application/octet-stream", "x " + s["x"]] + _seal_fields(s)
+    got = _cards(tag, text="play this " + url)
+    assert got and got[0]["enc"] and got[0]["enc"]["key"] == s["key"], got
