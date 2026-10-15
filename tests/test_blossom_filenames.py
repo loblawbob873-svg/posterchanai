@@ -27,6 +27,14 @@ class TestExtForMime(unittest.TestCase):
                           ("application/pdf", "pdf"), ("audio/ogg", "ogg"), ("video/quicktime", "mov")):
             self.assertEqual(blossom_service.ext_for_mime(mime), ext, mime)
 
+    def test_an_mp3_is_named_mp3_whatever_the_os_mime_table_says(self):
+        """Debian's /etc/mime.types lists `audio/mpeg mpga mpega mp2 mp3`, so the stdlib guess on a Debian
+        node (the Docker image) is `.mpga` -- the same MP3 bytes, under a name people read as "it was
+        converted" and some players refuse. Reported 2026-10-15: "are we compressing mp3's into mpga?"."""
+        with mock.patch("mimetypes.guess_extension", return_value=".mpga"):
+            for mime in ("audio/mpeg", "audio/mp3", "audio/MPEG; charset=x"):
+                self.assertEqual(blossom_service.ext_for_mime(mime), "mp3", mime)
+
     def test_parameters_and_case_are_ignored(self):
         self.assertEqual(blossom_service.ext_for_mime("IMAGE/PNG; charset=binary"), "png")
 

@@ -1335,6 +1335,7 @@ async def delete_blob_bytes(db: Session, blob, fresh_client: bool = False) -> No
 # the stdlib is absent or picks a suffix nothing else uses (audio/ogg → .oga) need to be here.
 _EXT_BY_MIME = {
     "image/jpeg": "jpg", "image/jpg": "jpg", "image/svg+xml": "svg",
+    "audio/mpeg": "mp3", "audio/mp3": "mp3",   # Debian's mime.types guesses .mpga for the same bytes
     "audio/ogg": "ogg", "audio/opus": "opus", "audio/x-m4a": "m4a", "audio/mp4": "m4a",
     "video/quicktime": "mov", "video/x-matroska": "mkv",
     "text/markdown": "md", "application/x-tar": "tar", "application/x-7z-compressed": "7z",
