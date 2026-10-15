@@ -50,6 +50,12 @@ public class Drive {
     say("send-office", DocIntent.isOpen("android.intent.action.SEND", true, "application/pdf", ""));
     say("send-post", DocIntent.isOpen("android.intent.action.SEND", false, "application/pdf", ""));
     say("view-image", DocIntent.isOpen("android.intent.action.VIEW", false, "image/jpeg", ""));
+    say("send-image", DocIntent.isOpen("android.intent.action.SEND", false, "image/jpeg", ""));
+    say("send-image-office", DocIntent.isOpen("android.intent.action.SEND", true, "image/jpeg", ""));
+    say("edit-image", DocIntent.isOpen("android.intent.action.EDIT", false, "image/jpeg", ""));
+    say("octet-mp4", DocIntent.kindOf("application/octet-stream", "holiday.MP4"));
+    say("audio", DocIntent.kindOf("audio/ogg", ""));
+    say("name-media", DocIntent.nameFor("", "", "media"));
     say("name", DocIntent.nameFor("../../evil:name?.docx", null, "office"));
     say("name-empty", DocIntent.nameFor("", "", "pdf"));
     say("name-path", DocIntent.nameFor(null, "Plans.odt", "office"));
@@ -86,12 +92,17 @@ class DocIntentRuns(unittest.TestCase):
         o = self.out
         self.assertEqual((o["docx"], o["octet-xlsx"], o["pdf"], o["pdf-by-name"], o["odt"]),
                          ("office", "office", "pdf", "pdf", "office"))
-        self.assertEqual((o["image"], o["noext"]), ("", ""))
+        # 2026-10-15: pictures, video and audio are MEDIA (opened in Preview from a file manager).
+        self.assertEqual((o["image"], o["octet-mp4"], o["audio"], o["noext"]), ("media", "media", "media", ""))
 
     def test_a_pdf_shared_to_plain_posterchan_is_still_a_post(self):
         o = self.out
         self.assertEqual((o["view"], o["edit"], o["send-office"]), ("true", "true", "true"))
-        self.assertEqual((o["send-post"], o["view-image"]), ("false", "false"))
+        self.assertEqual(o["send-post"], "false")
+        # A picture is OPENED only on VIEW; shared (even to the Office entry) or EDIT it is still a post / not ours.
+        self.assertEqual((o["view-image"], o["send-image"], o["send-image-office"], o["edit-image"]),
+                         ("true", "false", "false", "false"))
+        self.assertEqual(self.out["name-media"], "file")
 
     def test_a_name_cannot_carry_a_path(self):
         self.assertNotIn("/", self.out["name"])

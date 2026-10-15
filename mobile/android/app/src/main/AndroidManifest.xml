@@ -94,6 +94,59 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- OPEN PICTURES, VIDEOS AND MUSIC FROM A FILE MANAGER ("opening an image from an external file
+             manager should have an option to open a file with posterchan", 2026-10-15). VIEW only: a photo
+             SHARED to PosterChan is still a post. office/DocIntent.java (MEDIA) decides; the file is copied
+             to the app's cache and opened in Preview (streamed for video/audio). -->
+        <activity-alias
+            android:name=".OpenMedia"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- nostr: AND mailto: LINKS FROM OTHER APPS. Without a VIEW filter for a scheme Android never
+             lists the app for it, which is why "open in another Nostr app" (T-Bone) did not offer
+             PosterChan, and why a mail link went to some other mail app. home/IntentView.java turns the
+             link into the launch view the client lands on. BROWSABLE so a link in a browser works too. -->
+        <activity-alias
+            android:name=".OpenNostrLink"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostr" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".OpenMailLink"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan Email"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mailto" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- "POSTERCHAN OFFICE" IN THE OPEN-WITH AND SHARE SHEETS. Documents open in the Office editor
              (Save writes back to the same file when Android grants write access) and PDFs in Preview.
              Its own entry, so Android offers it by name and a person can make it the default for these

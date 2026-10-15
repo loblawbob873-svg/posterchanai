@@ -75,6 +75,20 @@ public final class OpenDocPlugin extends Plugin {
                 if (!DocIntent.isOpen(i.getAction(), viaOffice(i), mime, display == null ? uri.getLastPathSegment() : display)) {
                     call.resolve(out); return;
                 }
+                if (DocIntent.MEDIA.equals(kind)) {
+                    /* MEDIA IS COPIED, NOT CARRIED. A phone video is routinely hundreds of MB; base64 over the
+                     * bridge would be 1.33x that in one JS string. The client plays the copy through
+                     * Capacitor's local file server, which serves ranges -- so it seeks and starts at once. */
+                    String name = DocIntent.nameFor(display, uri.getLastPathSegment(), kind);
+                    java.io.File f = copyToCache(uri, name);
+                    out.put("kind", kind);
+                    out.put("name", name);
+                    out.put("mime", mime == null ? "" : mime);
+                    out.put("size", f.length());
+                    out.put("path", f.getAbsolutePath());
+                    call.resolve(out);
+                    return;
+                }
                 byte[] bytes = read(uri);
                 out.put("kind", kind);
                 out.put("name", DocIntent.nameFor(display, uri.getLastPathSegment(), kind));
@@ -133,6 +147,33 @@ public final class OpenDocPlugin extends Plugin {
             if (c != null && c.moveToFirst()) return c.getString(0);
         } catch (Throwable ignored) { }
         return null;
+    }
+
+    /** One opened file at a time: the previous copy is deleted first, so the cache never grows with use. */
+    private java.io.File copyToCache(Uri uri, String name) throws java.io.IOException {
+        java.io.File dir = new java.io.File(getContext().getCacheDir(), "opened-media");
+        java.io.File[] old = dir.listFiles();
+        if (old != null) for (java.io.File o : old) { try { o.delete(); } catch (Throwable ignored) { } }
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new java.io.IOException("no cache directory");
+        java.io.File f = new java.io.File(dir, name.replaceAll("[^A-Za-z0-9._ -]", "_"));
+        long free = dir.getUsableSpace();
+        try (InputStream in = getContext().getContentResolver().openInputStream(uri);
+             OutputStream os = new java.io.FileOutputStream(f)) {
+            if (in == null) throw new java.io.IOException("the provider gave no stream");
+            byte[] chunk = new byte[256 * 1024];
+            long total = 0;
+            int r;
+            while ((r = in.read(chunk)) > 0) {
+                total += r;
+                if (total > free - 64L * 1024 * 1024) throw new java.io.IOException("not enough free space to open it");
+                os.write(chunk, 0, r);
+            }
+            if (total == 0) throw new java.io.IOException("the file is empty");
+        } catch (java.io.IOException e) {
+            try { f.delete(); } catch (Throwable ignored) { }
+            throw e;
+        }
+        return f;
     }
 
     private byte[] read(Uri uri) throws java.io.IOException {

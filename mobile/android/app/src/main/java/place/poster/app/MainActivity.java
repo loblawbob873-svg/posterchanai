@@ -64,7 +64,7 @@ public class MainActivity extends BridgeActivity {
         try {
             Intent launch = getIntent();
             place.poster.app.home.LaunchView.deliver(
-                    launch == null ? "" : launch.getStringExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW),
+                    launchViewOf(launch),
                     launch == null ? 0 : launch.getFlags(),
                     savedInstanceState != null,
                     System.currentTimeMillis());
@@ -542,6 +542,15 @@ public class MainActivity extends BridgeActivity {
     // activity's intent, and the send-intent plugin reads getIntent() — so without this the plugin keeps
     // seeing the stale launch intent and a warm share is silently dropped (app foregrounds, nothing happens).
     // setIntent() makes getIntent() return the new SEND intent so the JS foreground re-check can process it.
+    /** The screen an intent asks for: a tile/notification's EXTRA_VIEW, else a nostr: or mailto: link another
+     *  app opened us with (home/IntentView). */
+    static String launchViewOf(Intent intent) {
+        if (intent == null) return "";
+        String want = intent.getStringExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW);
+        if (want != null && !want.trim().isEmpty()) return want;
+        return place.poster.app.home.IntentView.of(intent.getAction(), intent.getDataString());
+    }
+
     @Override
     public void onNewIntent(Intent intent) {
         setIntent(intent);
@@ -555,8 +564,7 @@ public class MainActivity extends BridgeActivity {
         // the half Android never freezes. No payload — the client still consumes the parked request
         // itself, so there is one consumer and no second path to disagree with it.
         try {
-            String want = intent == null ? "" : intent.getStringExtra(
-                    place.poster.app.home.HomeActivity.EXTRA_VIEW);
+            String want = launchViewOf(intent);
             // Park it too, stamped NOW. The announcement is the fast path and carries the payload
             // itself, but a page still booting has no listener yet, and then the parked copy is what
             // `land` reads a moment later. A notification's own EXTRA_VIEW_AT is its POSTING time,

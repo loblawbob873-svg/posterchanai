@@ -2444,6 +2444,24 @@
       return seen.size;
     }catch(_){ return 0; }
   }
+  /* ONE WAY TO OPEN A NOSTR ENTITY, whoever asks: a poster.place/<bech32> path, and a `nostr:` link another
+   * Android app hands us ("open in another Nostr app", MainActivity -> LaunchView -> phoneshell). True when it
+   * opened something; a malformed or unknown entity is false and the caller decides what to show instead. */
+  async function openBech32(q){
+    let d; try{ d = NT().nip19.decode(String(q||'').replace(/^nostr:/i,'')); }catch(_){ return false; }
+    if(d.type==='npub'){ await renderProfileView(d.data); return true; }
+    if(d.type==='nprofile'){ await renderProfileView(d.data.pubkey); return true; }
+    if(d.type==='note'){ openThread(d.data); return true; }
+    if(d.type==='nevent'){ openThread(d.data.id, d.data.relays); return true; }   // keep the nevent's relay hints for fetching an off-relay parent
+    if(d.type==='naddr'){ await openNaddr(d.data.pubkey, d.data.identifier, d.data.kind); return true; }   // the article/addressable event, not the author's profile
+    return false;
+  }
+  /* A mailto: link from another app opens THIS app's Email composer, parsed by Mail's own mailto reader. */
+  async function openMailto(href){
+    switchView('mail');
+    try{ const m = await _mailLoad(); if(m && m.Mail && m.Mail.composeMailto) m.Mail.composeMailto(String(href||'')); }
+    catch(e){ toast('Email is not available: ' + ((e && e.message) || e)); }
+  }
   async function routeFromPath(){
     /* A WINDOW LANDS ON THE VIEW IT WAS OPENED FOR. Gated on `isWindow()`, which is false in a
      * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
@@ -2502,12 +2520,7 @@
         if(!pk){ const name = e.q.includes('@') ? e.q : (e.q + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
         if(pk){ await renderProfileView(pk); return; }
       } else {
-        const d = NT().nip19.decode(e.q);
-        if(d.type==='npub'){ await renderProfileView(d.data); return; }
-        if(d.type==='nprofile'){ await renderProfileView(d.data.pubkey); return; }
-        if(d.type==='note'){ openThread(d.data); return; }
-        if(d.type==='nevent'){ openThread(d.data.id, d.data.relays); return; }   // keep the nevent's relay hints for fetching an off-relay parent
-        if(d.type==='naddr'){ await openNaddr(d.data.pubkey, d.data.identifier, d.data.kind); return; }   // open the article/addressable event, not the author's profile
+        if(await openBech32(e.q)) return;
       }
     }catch(err){ console.warn('[route] could not open', e, err); }
     finally{ _routing = false; }
@@ -2701,6 +2714,22 @@
     try{ r = await P.pending(); }
     catch(e){ try{ toast('Couldn’t read that document: ' + ((e && e.message) || e)); }catch(_){} return false; }
     if(!r || !r.nonce || r.nonce === _lastDocNonce) return false;
+    /* A PICTURE, VIDEO OR SONG OPENED FROM A FILE MANAGER (DocIntent MEDIA). The native side COPIED it to the
+     * app's cache rather than carrying it as base64 (a phone video is hundreds of MB); Capacitor's local file
+     * server serves that copy with ranges, so video and audio stream and seek. No login needed to LOOK at a file. */
+    if(r.kind === 'media' && r.path){
+      _lastDocNonce = r.nonce;
+      const name = r.name || 'file', mime = r.mime || '';
+      let url = '';
+      try{ url = window.Capacitor && Capacitor.convertFileSrc ? Capacitor.convertFileSrc('file://' + r.path) : ''; }catch(_){}
+      if(!url || !(window.PCPreview && PCPreview.open)){ toast('Can’t show ' + name + ' in this build'); return false; }
+      try{
+        if(/^(video|audio)\//i.test(mime) || /\.(mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|oga|opus|flac|wav)$/i.test(name))
+          return PCPreview.open({ name, mime, url, size: r.size }) !== false;
+        const blob = await (await fetch(url)).blob();
+        return PCPreview.open({ name, mime, blob }) !== false;
+      }catch(e){ toast('Couldn’t open ' + name + ': ' + ((e && e.message) || e)); return false; }
+    }
     if(!r.data){ _lastDocNonce = r.nonce; return false; }          // an arrival that was not a document
     if(GUEST){ _guestPrompt(); try{ toast('Log in to open the document'); }catch(_){} return false; }   // retried after login
     _lastDocNonce = r.nonce;
@@ -14140,6 +14169,7 @@
   }
   window.__PC = {
     deviceCache,
+    openBech32, openMailto,   // links handed in by another Android app (phoneshell.js consumeLaunchView)
     parkFileJob, takeFileJob,   // a doc:file: window takes the open a Files window parked here (files.js _fileWindow)
     // Concord draws its audio attachments with the same track card a post uses (cover, title, artist).
     trackCard: (url, label, preload) => _trackCard(enc(String(url||'')), label, preload),

@@ -141,6 +141,13 @@
         let tries=0;
         const open=()=>{if(window.PCConcord&&PCConcord.openNotification){PCConcord.openNotification({community:bits[0],channel:bits[1],message:bits.slice(2).join(':')});return;}if(++tries<80)setTimeout(open,50);};
         open();
+      }else if(/^nostr:/i.test(v)){
+        /* A nostr: link another app opened us with (MainActivity -> IntentView). Not a view: app.js opens
+         * the entity the way a poster.place/<bech32> path does; one it cannot read is said, and nothing moves. */
+        const no = () => { try{ PC.toast('Couldn’t open that Nostr link'); }catch(_){} };
+        Promise.resolve(PC.openBech32 ? PC.openBech32(v) : false).then(ok => { if(!ok) no(); }, no);
+      }else if(/^mailto:/i.test(v)){
+        if(PC.openMailto) PC.openMailto(v); else landView('mail');
       }else if(v.indexOf('texts-blossom:')===0){
         const address=decodeURIComponent(v.slice('texts-blossom:'.length));
         landView('texts');

@@ -223,7 +223,13 @@ class TheLaunchIsNotDressedAsALauncherPress(unittest.TestCase):
         main = (JAVA / "MainActivity.java").read_text()
         plugin = (HOME / "HomePlugin.java").read_text()
         client = (ROOT / "static/js/client/phoneshell.js").read_text()
-        self.assertIn("getStringExtra(\n                    place.poster.app.home.HomeActivity.EXTRA_VIEW)", main)
+        # The warm path reads the view through launchViewOf, which takes EXTRA_VIEW first (a tile/notification)
+        # and only then a nostr:/mailto: link (home/IntentView, tests/test_android_link_intents.py).
+        on_new = main[main.index("public void onNewIntent("):]
+        self.assertIn("String want = launchViewOf(intent);", on_new)
+        helper = main[main.index("static String launchViewOf("):]
+        helper = helper[:helper.index("\n    }\n")]
+        self.assertLess(helper.index("HomeActivity.EXTRA_VIEW"), helper.index("IntentView.of("), helper)
         self.assertIn('o.put("view", requested', plugin)
         self.assertIn("PC.switchView(v)", client)
         self.assertIn("addListener('launchView', launched)", client)

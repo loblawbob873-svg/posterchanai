@@ -18,7 +18,16 @@ import java.util.Locale;
 public final class DocIntent {
     private DocIntent() { }
 
-    public static final String OFFICE = "office", PDF = "pdf", NONE = "";
+    public static final String OFFICE = "office", PDF = "pdf", MEDIA = "media", NONE = "";
+
+    /* "Opening an image from an external file manager should have an option to open a file with PosterChan --
+     * office, image and videos basically" (2026-10-15). A picture, a video or a song opened from a file manager
+     * goes to Preview. Only on VIEW: a photo SHARED to plain "PosterChan" is still a file to post, as always. */
+    public static final String[] MEDIA_EXTS = {
+        "jpg", "jpeg", "png", "gif", "webp", "avif", "heic", "heif", "bmp",
+        "mp4", "m4v", "webm", "mkv", "mov", "3gp",
+        "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wav",
+    };
 
     /** The types in the manifest's filters. Keep in step with AndroidManifest.xml (the test checks). */
     public static final String[] OFFICE_MIMES = {
@@ -48,6 +57,8 @@ public final class DocIntent {
         String ext = extension(name);
         if ("pdf".equals(ext)) return PDF;
         for (String e : OFFICE_EXTS) if (e.equals(ext)) return OFFICE;
+        if (m.startsWith("image/") || m.startsWith("video/") || m.startsWith("audio/")) return MEDIA;
+        for (String e : MEDIA_EXTS) if (e.equals(ext)) return MEDIA;
         return NONE;
     }
 
@@ -57,7 +68,9 @@ public final class DocIntent {
      * share sheet -- a PDF shared to plain "PosterChan" is still a file to POST, as it always was.
      */
     public static boolean isOpen(String action, boolean viaOfficeEntry, String mime, String name) {
-        if (NONE.equals(kindOf(mime, name))) return false;
+        String kind = kindOf(mime, name);
+        if (NONE.equals(kind)) return false;
+        if (MEDIA.equals(kind)) return "android.intent.action.VIEW".equals(action);   // never EDIT, never a share
         if ("android.intent.action.VIEW".equals(action) || "android.intent.action.EDIT".equals(action)) return true;
         return viaOfficeEntry && "android.intent.action.SEND".equals(action);
     }
@@ -78,7 +91,7 @@ public final class DocIntent {
         String n = displayName == null ? "" : displayName.trim();
         if (n.isEmpty()) n = lastPathSegment == null ? "" : lastPathSegment.trim();
         n = n.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
-        if (n.isEmpty() || ".".equals(n) || "..".equals(n)) n = PDF.equals(kind) ? "document.pdf" : "document";
+        if (n.isEmpty() || ".".equals(n) || "..".equals(n)) n = PDF.equals(kind) ? "document.pdf" : MEDIA.equals(kind) ? "file" : "document";
         return n.length() > 120 ? n.substring(n.length() - 120) : n;
     }
 }

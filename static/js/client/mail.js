@@ -1209,6 +1209,13 @@ window.PCMailFactory = function(dep){
       const href=/^mailto:/i.test(raw) ? raw : (a.getAttribute('data-mailto') ? 'mailto:'+a.getAttribute('data-mailto') : raw);
       if(!/^mailto:/i.test(href)) return false;
       e.preventDefault(); e.stopPropagation();
+      return this.composeMailto(href);
+    },
+    /* ONE mailto reader: a link inside a message (above) and a mailto: another Android app opened us with
+     * (app.js openMailto, via MainActivity/IntentView) both arrive here, so to/cc/subject/body agree. */
+    composeMailto(href){
+      href=String(href||'');
+      if(!/^mailto:/i.test(href)) return false;
       let to='', q='';
       { const raw=href.slice(7), i=raw.indexOf('?'); to=i<0?raw:raw.slice(0,i); q=i<0?'':raw.slice(i+1); }
       const dec=v=>{ try{ return decodeURIComponent(v.replace(/\+/g,'%20')); }catch(_){ return v; } };
