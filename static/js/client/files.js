@@ -2617,7 +2617,7 @@ window.PCFilesFactory = function(dep){
     const canUp=true;
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_S._filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
-          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
+          <div class="dz-inner"><span class="dz-ic">⬆</span> <span class="dz-text">Drop files/folders here, or</span> <span class="dz-btns"><button class="btn btn-cyan small" id="bl-pick"><svg class="ic b-ic dz-up" aria-hidden="true"><use href="#i-upload"></use></svg>choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button></span>
           <div class="muted small">→ ${_S._filesFolder?((FilesIdx.isEncFolder(_S._filesFolder)?'🔒 ':'📁 ')+enc(_S._filesFolder)):'All files'} · uploaded one at a time${_S._filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_S._filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
       : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
