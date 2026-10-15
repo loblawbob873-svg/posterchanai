@@ -392,6 +392,42 @@ const _MIME = {
  * capability is identical and only the transport changed. A path that gate refuses is a 403, not a
  * quiet empty response, because a player given an empty body reports a corrupt file and sends
  * somebody looking at their video instead of at their permissions. */
+/* A FILE AS A WEB STREAM THAT A CANCEL CANNOT TURN INTO A MAIN-PROCESS ERROR.
+ *
+ * `new Response(fs.createReadStream(...))` hands undici a Node stream, and when the renderer stops
+ * reading part-way -- a player seeking (every seek is a new range and the old one is dropped), an
+ * image that turns out not to be one, a Preview window closed while a file loads -- the bridge
+ * between the two still enqueues the next chunk into a stream that is already closed. That throws
+ * `ERR_INVALID_STATE: Invalid state: ReadableStream is already closed` with nothing to catch it, and
+ * an uncaught exception in Electron's main process is the "A JavaScript error occurred" dialog that
+ * freezes the whole desktop until somebody clicks OK (reported 2026-10-15, reproduced in real Electron
+ * 44). Here the stream is OURS: one positioned read per pull, nothing is enqueued after a cancel or a
+ * close, and the file handle is closed on every way out. */
+function fileStream(full, start, end) {
+  let fh = null, pos = start, done = false;
+  const finish = () => { done = true; const h = fh; fh = null; if (h) h.close().catch(() => {}); };
+  return new ReadableStream({
+    async pull(ctl) {
+      if (done) return;
+      try {
+        if (!fh) fh = await fs.promises.open(full, 'r');
+        const want = Math.min(256 * 1024, end - pos + 1);
+        const buf = want > 0 ? Buffer.allocUnsafe(want) : null;
+        const got = buf ? (await fh.read(buf, 0, want, pos)).bytesRead : 0;
+        if (done) return;                               // cancelled while the read was in flight
+        if (!got) { finish(); ctl.close(); return; }
+        pos += got;
+        ctl.enqueue(new Uint8Array(buf.buffer, buf.byteOffset, got));
+        if (pos > end) { finish(); ctl.close(); }
+      } catch (err) {
+        const was = done; finish();
+        if (!was) { try { ctl.error(err); } catch (_) { } }
+      }
+    },
+    cancel() { finish(); },
+  }, { highWaterMark: 0 });
+}
+
 function serveHostFile(request, rel) {
   /* `rel` was decoded ONCE by the caller, from the URL's pathname. Decoding again here would turn a
    * filename that legitimately contains a percent sign into a different path, and is the shape that
@@ -426,13 +462,12 @@ function serveHostFile(request, rel) {
     if (!(start >= 0) || start >= st.size || end < start) {
       return new Response('', { status: 416, headers: { 'Content-Range': 'bytes */' + st.size } });
     }
-    const stream = fs.createReadStream(full, { start, end });
-    return new Response(stream, { status: 206, headers: Object.assign({}, head, {
+    return new Response(fileStream(full, start, end), { status: 206, headers: Object.assign({}, head, {
       'Content-Range': 'bytes ' + start + '-' + end + '/' + st.size,
       'Content-Length': String(end - start + 1),
     }) });
   }
-  return new Response(fs.createReadStream(full), { status: 200, headers: Object.assign({}, head, {
+  return new Response(fileStream(full, 0, st.size - 1), { status: 200, headers: Object.assign({}, head, {
     'Content-Length': String(st.size),
   }) });
 }
