@@ -1312,6 +1312,7 @@
       /* Concord's interoperable carrier is Iroh Gossip. Never mirror one packet onto the old Nostr
        * realtime plane: that makes two independent lobbies and duplicate/self packets for clients
        * which happen to implement both. */
+      if(this.rtInert)return;          // a quiet channel (see rtJoin): nobody else can hear it either
       if(this.rtIroh){try{void this.rtIroh.send(rtBytes(b64));}catch(e){try{console.warn('[webxdc] iroh send failed:',e&&e.message||e);}catch(_){}}return;}
       this._rtNext = b64;
       if(this._rtBusy) return;
@@ -1570,7 +1571,7 @@
           return;
         }
         this._rtJoinReady=(async()=>{
-        if(!this.rtSub&&!this.rtIroh){
+        if(!this.rtSub&&!this.rtIroh&&!this.rtInert){
           // Mint the channel key BEFORE subscribing: it is what tells our own packets from everyone
           // else's, and a packet that arrives before it exists would be delivered back to the app.
           try{ this.rtKey(); }catch(_){}
@@ -1595,7 +1596,15 @@
                                  (this.rtPk && ev.pubkey === this.rtPk))) return;
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               };
-            if(this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh){
+            /* AN ARMADA SESSION ID THAT IS NOT AN IROH TOPIC GETS A QUIET CHANNEL, NOT AN ERROR. Older Armada
+             * posts carry `webxdc <uuid>`; Armada itself only joins gossip for a 52-char base32 topic and
+             * otherwise runs the game with a realtime channel that carries nothing (useConcordAppSync:
+             * `isTopicId(uuid)`; "no relay fallback: it would split the room"). Throwing put
+             * "attachment has no interoperable Webxdc topic" over a game that plays fine (DC20 Dice). */
+            const irohTopic=this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh&&PCWebxdcIroh.decodeTopic(String(this.app.uuid||''));
+            if(this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh&&!(irohTopic&&irohTopic.length===32)){
+              this.rtInert=true;rtDiagnostic('no-topic-quiet-channel',String(this.app.uuid||''));
+            }else if(this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh){
               this.rtSub={pending:true};
               try{
                 this.rtIroh=await PCWebxdcIroh.join(this.app.uuid,this.transport,bytes=>{
@@ -1641,6 +1650,7 @@
       if(d.method === 'webxdc.rtLeave'){
         try{if(this.rtIroh)void this.rtIroh.leave();}catch(_){}
         this.rtIroh=null;
+        this.rtInert=false;
         try{ if(this.rtSub) typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub); }catch(_){}
         this.rtSub = null;
         this._rtJoinReady = null;
@@ -1849,12 +1859,30 @@
         }
         if(!isWebxdcMime(f.m)) continue;
         if(!/^https?:\/\//i.test(f.url || '')) continue;
+        /* A SEALED attachment (Armada/Vector) carries its key in the same imeta. Leaving it behind drew a
+         * second card for the game -- beside Concord's own -- whose Play said "looks encrypted and the post
+         * did not include its key". A seal we cannot open is not offered at all. */
+        const alg=String(f['encryption-algorithm']||'').toLowerCase();
+        if(alg&&alg!=='aes-gcm') continue;
         const explicit=f['webxdc-topic']||f.webxdc||'';
-        return { url:f.url, sha:f.x || '', uuid:explicit, urlTopicMessageId:explicit?'':String(ev.id||''), name:(f.summary || '').slice(0, 80) };
+        return Object.assign({ url:f.url, sha:f.x || '', uuid:explicit, urlTopicMessageId:explicit?'':String(ev.id||''), name:(f.summary || '').slice(0, 80) },
+                             alg?{ enc:{ key:f['decryption-key']||'', nonce:f['decryption-nonce']||'', ox:f.ox||'' } }:{});
       }
       const bare=(String(ev.content||'').match(/https?:\/\/[^\s<>]+\.xdc(?:[?#][^\s<>]*)?/ig)||[]).pop();
-      if(bare)return {url:bare,sha:'',uuid:'',urlTopicMessageId:String(ev.id||''),name:'Mini app'};
-      return null;
+      if(!bare) return null;
+      // A bare link that IS one of this event's sealed attachments (a generic `m`) still gets that seal's key.
+      let enc=null;
+      for(const t of ev.tags){
+        if(t[0] !== 'imeta') continue;
+        const f = {};
+        for(let i = 1; i < t.length; i++){ const s = String(t[i] || ''), sp = s.indexOf(' '); if(sp > 0) f[s.slice(0, sp)] = s.slice(sp + 1); }
+        if(f.url !== bare) continue;
+        const alg=String(f['encryption-algorithm']||'').toLowerCase();
+        if(alg && alg !== 'aes-gcm') return null;
+        if(alg) enc={ key:f['decryption-key']||'', nonce:f['decryption-nonce']||'', ox:f.ox||'' };
+        break;
+      }
+      return Object.assign({url:bare,sha:'',uuid:'',urlTopicMessageId:String(ev.id||''),name:'Mini app'}, enc?{enc}:{});
     }
 
     /* The card that appears in the timeline in place of a link to a zip file. Deliberately a

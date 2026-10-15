@@ -144,3 +144,62 @@ def test_a_bare_link_that_is_a_sealed_attachment_borrows_its_key():
     tag = ["imeta", "url " + url, "m application/octet-stream", "x " + s["x"]] + _seal_fields(s)
     got = _cards(tag, text="play this " + url)
     assert got and got[0]["enc"] and got[0]["enc"]["key"] == s["key"], got
+
+
+def _josephus_tag(s, url):
+    """Josephus's real post shape: an Armada session UUID in `webxdc` (not an Iroh topic), sealed."""
+    return ["imeta", "url " + url, "m application/x-webxdc", "x " + s["x"], "name dc20-dice (15).xdc",
+            "webxdc ccede1cf-73a4-4e26-a54c-147033e64d2c", "summary DC20 Dice"] + _seal_fields(s)
+
+
+def test_the_generic_card_carries_the_key_too():
+    """"Webxdc opens and plays now. I keep getting these banners though" -- 'looks encrypted and the post did not
+    include its key'. The generic link pass (linkcards.js, DMs, the gallery) builds its card with appOf, which
+    dropped the seal: a second card for the same game whose Play could only fail."""
+    s = _sealed()
+    url = "https://blossom.example/" + s["x"] + ".xdc"
+    want = {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}
+    got = _node(f"""
+      global.window = {{ addEventListener(){{}}, __PC: {{ apiBase:()=>'' , toast(){{}} }} }};
+      global.document = {{ addEventListener(){{}}, querySelectorAll:()=>[], getElementById:()=>null }};
+      global.location = {{ hostname:'example.com', href:'https://example.com/' }};
+      require({json.dumps(str(ZIP_JS))}); require({json.dumps(str(WEBXDC_JS))});
+      const of = ev => window.PCWebxdc.appOf(ev);
+      console.log(JSON.stringify({{
+        imeta: of({{ id:'e1', kind:1, content:{json.dumps(url)}, tags:[{json.dumps(_josephus_tag(s, url))}] }}),
+        bare: of({{ id:'e2', kind:1, content:'play ' + {json.dumps(url)},
+                    tags:[["imeta","url "+{json.dumps(url)},"m application/octet-stream"].concat({json.dumps(_seal_fields(s))})] }}),
+        foreign: of({{ id:'e3', kind:1, content:'', tags:[["imeta","url "+{json.dumps(url)},"m application/x-webxdc","encryption-algorithm chacha"]] }}),
+      }}));
+    """)
+    assert got["imeta"].get("enc") == want, got
+    assert got["imeta"]["uuid"] == "ccede1cf-73a4-4e26-a54c-147033e64d2c", got
+    assert got["bare"].get("enc") == want, got
+    assert got["foreign"] is None, ("a seal we cannot open must not be offered as a game", got)
+
+
+def test_play_on_a_keyless_card_takes_the_key_from_the_message():
+    """resolveWebxdcCard trusted ANY card carrying a session id, so a card drawn without the key launched without it."""
+    s = _sealed()
+    url = "https://blossom.example/" + s["x"] + ".xdc"
+    got = _node(f"""
+      const fs = require('fs'), vm = require('vm');
+      const src = fs.readFileSync({json.dumps(str(CONCORD_JS))}, 'utf8'), noop = () => {{}}, PK = 'a'.repeat(64);
+      const msg = {{ id:'m1', text:{json.dumps(url)}, tags:[{json.dumps(_josephus_tag(s, url))}], at:1, remote:true }};
+      const room = {{ naddr:'room', channels:[{{name:'general'}}] }};
+      const store = {{ ['pc.concord.test.room']:JSON.stringify([msg]), ['pc.concord.rooms.v1.'+PK]:JSON.stringify([room]) }};
+      const localStorage = {{ getItem:k=>store[k]??null, setItem:(k,v)=>{{store[k]=v;}}, removeItem:noop }};
+      const document = {{ querySelectorAll:()=>[], querySelector:()=>null, createElement:()=>({{dataset:{{}}}}),
+                         head:{{appendChild:noop}}, documentElement:{{appendChild:noop}}, addEventListener:noop }};
+      const __PC = {{ viewer:()=>({{pubkey:PK}}), me:()=>({{pubkey:PK}}) }};
+      const window = {{ document, __PC, addEventListener:noop, requestAnimationFrame:noop }};
+      vm.runInNewContext(src, {{ window, document, console, setTimeout:noop, clearTimeout:noop, URL, atob,
+                                crypto:{{}}, localStorage, sessionStorage:{{getItem:()=>null,setItem:noop}} }});
+      const C = window.PCConcord;
+      C.acceptHandoff({{ room:'room', channel:'general' }});
+      const row = {{ dataset:{{messageId:'m1'}} }}, card = {{ closest:sel=>sel.includes('cc-message')?row:null }};
+      const keyless = {{ url:{json.dumps(url)}, sha:{json.dumps(s["x"])}, uuid:'ccede1cf-73a4-4e26-a54c-147033e64d2c', name:'DC20 Dice' }};
+      console.log(JSON.stringify(C.resolveWebxdcCard(card, keyless)));
+    """)
+    assert got.get("enc") == {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}, got
+    assert got["uuid"] == "ccede1cf-73a4-4e26-a54c-147033e64d2c", ("the card's lobby must be kept", got)

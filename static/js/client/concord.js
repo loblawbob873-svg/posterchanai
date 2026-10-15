@@ -2623,7 +2623,9 @@
     /* An explicit topic is the attachment author's lobby and is authoritative. A partially hydrated
      * room cache may temporarily expose the same URL as a bare link; re-deriving from that row's id
      * silently moves a running Armada game into a different lobby. */
-    if(fallback&&fallback.uuid)return fallback;
+    /* ...but its KEY is not the card's to forget: a card drawn by the generic link pass may lack the seal's key
+     * while the decrypted message holds it ("looks encrypted" over a game that plays from the other card). */
+    if(fallback&&fallback.uuid){if(fallback.enc)return fallback;try{const row=card&&card.closest&&card.closest('.cc-message[data-message-id]'),room=saved()[state.community],id=row&&row.dataset&&row.dataset.messageId,m=room&&activeMessages(room).find(x=>messageId(x)===id),got=m&&webxdcOf(m,room,state.channel);if(got&&got.enc&&got.url===fallback.url)return Object.assign({},fallback,{enc:got.enc});}catch(_){}return fallback;}
     try{const row=card&&card.closest&&card.closest('.cc-message[data-message-id]'),room=saved()[state.community],id=row&&row.dataset&&row.dataset.messageId,m=room&&activeMessages(room).find(x=>messageId(x)===id),resolved=m&&webxdcOf(m,room,state.channel);return (resolved&&resolved.uuid?resolved:fallback)||resolved;}catch(_){return fallback;}
   }
   async function deriveWebxdcUrlTopic(url,messageId){if(!window.PCWebxdc||!PCWebxdc.deriveUrlTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.deriveUrlTopic(url,messageId);}
