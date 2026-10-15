@@ -2493,7 +2493,7 @@
       /* A SEARCH WINDOW is not a view either: it runs the query it was opened with, in this page. */
       if(v === 'doc:search'){ _searchWindowLanding(); return; }
       // …nor is a FILE window: it opens the file Files handed it (files.js _fileWindow).
-      { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(v || ''); if(_fw){ runFileWindow(_fw[1]); return; } }
+      { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(v || ''); if(_fw){ _landFileWindow(_fw[1]); return; } }
       if(v){
         switchView(v);
         _runPendingPostTool(v);
@@ -6988,7 +6988,7 @@
     }
     // …and a SEARCH window, which is rebuilt from its query (see _searchWindowLanding).
     if(String(v || '') === 'doc:search'){ _searchWindowLanding(); return; }
-    { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(String(v || '')); if(_fw){ runFileWindow(_fw[1]); return; } }
+    { const _fw = /^doc:file:([a-z0-9]{8,40})$/.exec(String(v || '')); if(_fw){ _landFileWindow(_fw[1]); return; } }
     // The desktop's old "Local VMs" screen merged into Virtual Machines ("This computer" is its first host).
     if(v === '__vms') v = 'vms';
     // The open popover, if this screen ever opened one: `closeActive` is a property the real
@@ -7139,6 +7139,7 @@
   }
 
   function renderView(reset){
+    if(VIEW === 'filewin') return;      // see _landFileWindow: the file job owns this window's screen
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
     // Keep the socket alive when a render is STILL RUNNING: closing it is what made "leave and come
@@ -10935,6 +10936,16 @@
   function _openFromCommandLine(){ return _lzRun(_filesMod, _filesLoad, '_openFromCommandLine', arguments); }
   function _openHostFile(){ return _lzRun(_filesMod, _filesLoad, '_openHostFile', arguments); }
   function runFileWindow(){ return _lzRun(_filesMod, _filesLoad, 'runFileWindow', arguments); }
+  /* A FILE WINDOW OWNS ITS SCREEN. Landing used to run the file job and return WITHOUT setting VIEW, so it
+   * stayed at its initial 'home' -- and renderView is called incidentally all through boot (sign-in,
+   * hydrateUser, a relay coming up), each of which then painted the timeline into the window: "Preview is
+   * showing the social timeline first before trying to open the file preview" (2026-10-15). VIEW names the
+   * window now, and renderView leaves a 'filewin' screen alone. */
+  function _landFileWindow(key){
+    VIEW = 'filewin';
+    try{ const f = $('#feed'); if(f && !f.dataset.filewin){ f.dataset.filewin = '1'; f.innerHTML = ''; } }catch(_){ }
+    return runFileWindow(key);
+  }
   /* FILE WINDOWS (files.js _fileWindow): a Files window parks the open here, on the DESKTOP, and the
    * `doc:file:<key>` window the desktop then opens takes it once. Kept as a JSON string until taken, so
    * nothing here holds an object from a window that may since have closed. */
