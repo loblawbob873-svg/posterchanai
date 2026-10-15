@@ -33,8 +33,11 @@ RDEPEND="
 	app-misc/posterchan-relay
 	dev-vcs/ngit
 	>=gui-wm/wayfire-0.10.1-r3
+	<gui-wm/wayfire-0.11
+	<gui-libs/wf-config-0.11
 	>=gui-libs/posterchan-wayfire-shell-1.0.1-r7
 	gui-libs/wayfire-plugins-extra
+	<gui-libs/wayfire-plugins-extra-0.11
 	gamescope? ( gui-wm/gamescope )
 	gui-apps/swayidle
 	gui-apps/foot

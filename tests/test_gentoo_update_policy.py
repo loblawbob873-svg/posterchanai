@@ -263,7 +263,7 @@ def test_the_update_policy_keeps_libavif_off_the_svt_av1_cap(tmp_path):
 
 def _pins():
     import re
-    m = re.search(r'^PINNED_PACKAGES=\((.*)\)$', SOURCE, re.M)
+    m = re.search(r'^PINNED_PACKAGES=\(.*?\)$', SOURCE, re.M | re.S)
     return m.group(0)
 
 
@@ -297,3 +297,13 @@ def test_an_update_writes_the_wayfire_pin_on_a_machine_installed_before_it(tmp_p
     r2 = run(inst, _pins() + '\nLICENSED_PACKAGES=()\nMASKED_PACKAGES=()\nSPECIAL_PACKAGE_USE=()\nunmaskPackages')
     assert r2.returncode == 0, r2.stderr
     assert (inst / 'package.mask/posterchan-managed').read_text() == (path / 'posterchan-managed').read_text()
+
+
+def test_the_session_package_caps_wayfire_for_machines_that_never_rerun_the_installer():
+    """The overlay reaches every machine on its next sync (Portage reads the synced ebuild's deps), so the cap lives
+    in posterchanos-shell too -- a `-uDN @world` by hand must keep the patched 0.10.1, its wf-config and the
+    plugins built for it, exactly like the managed pins do."""
+    ebuild = sorted((Path(__file__).resolve().parents[1] / 'os/overlay/app-misc/posterchanos-shell').glob('*.ebuild'))[-1]
+    deps = ebuild.read_text()
+    for atom in ('<gui-wm/wayfire-0.11', '<gui-libs/wf-config-0.11', '<gui-libs/wayfire-plugins-extra-0.11'):
+        assert '\t' + atom + '\n' in deps, (atom, ebuild.name)

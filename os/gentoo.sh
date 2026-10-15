@@ -362,7 +362,7 @@ LICENSED_PACKAGES=("x11-drivers/nvidia-drivers NVIDIA-r2")
 # the 0.10.1 wayfire (its `wf-config:${SLOT}` dependency notwithstanding) and wayfire aborted at start ("double free
 # or corruption" in output_layout -- server1, measured), with Gentoo's 0.11 queued to replace ours and drop both
 # patches. Lift these only together with an overlay wayfire 0.11 and a shell built against it.
-PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581" ">=gui-wm/wayfire-0.11" ">=gui-libs/wf-config-0.11")
+PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581" ">=gui-wm/wayfire-0.11" ">=gui-libs/wf-config-0.11" ">=gui-libs/wayfire-plugins-extra-0.11")
 # ...AND THE PACKAGE'S OWN BLACKLIST WAS NOT ENOUGH ON THE LIVE IMAGE, MEASURED ON REAL HARDWARE.
 #
 # The paragraph above is still true and still the reason we add no second copy of `blacklist
