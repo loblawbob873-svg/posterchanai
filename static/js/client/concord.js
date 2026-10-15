@@ -2103,10 +2103,12 @@
     if(!room.local){
       const reader=window.PosterCordReader,bundle=room.cord?.bundle,relays=roomRelays(bundle);
       if(!reader?.createMetadataWrap||!bundle)throw new Error('community profile is not ready');
-      let wraps=roomControls.get(loadKey);
-      if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)});}
-      const scope=cordPlaneContext(p,bundle,wraps||[],room),before=reader.inspectControl(bundle,wraps||[]);
-      if(!scope.current())throw new Error('Concord membership changed while opening settings');
+      /* THE WRITE IS BUILT ON A FRESH READ, NEVER ON THE CACHE ALONE. The metadata write starts from the
+       * newest metadata it can SEE (createMetadataWrap's priorBody) and replaces it, so a cached control set
+       * that missed the latest edition rewrote the community from an older one -- "uploading banner blew
+       * away all the community settings". Fresh read UNION cache (never fewer events than we had); and a
+       * read that came back with nothing is "could not ask" -- a community always has its creation controls
+       * -- so nothing is written on the strength of it. */
       values={...values};
       if(Object.prototype.hasOwnProperty.call(values,'icon')){
         /* An unchanged icon is not re-uploaded: the settings box holds the room's current icon,
@@ -2118,15 +2120,37 @@
           catch(e){ if(/^blob:/i.test(values.icon))throw e; /* a URL we cannot fetch (CORS): the plain `picture` fallback */ }
         }
       }
-      const made=await reader.createMetadataWrap(bundle,wraps||[],values,owner,p.signTemplate);
-      if(!scope.current())throw new Error('Concord membership changed while signing');
+      /* CONTROLS THAT MOVED WHILE SIGNING ARE A REASON TO REBUILD, NOT TO GIVE UP. Signing can take seconds (a
+       * remote signer, a phone) and Concord's background refresh re-stores the control set meanwhile, so the
+       * old check -- abort on ANY change -- failed the save every time on an active community ("can't save
+       * community settings, concord membership changed while signing"). A changed MEMBERSHIP still stops it;
+       * moved controls mean the write may rest on stale metadata, so it is read, folded and signed again
+       * (nothing was published yet), at most three times. */
+      let wraps,scope,before,made;
+      for(let attempt=0;;attempt++){
+        const seed=reader.inspectControl(bundle,[]);
+        const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,urgent:true,plane:cordPlaneContext(p,bundle,[],room)});
+        if(!Array.isArray(fresh)||!fresh.length)throw new Error('could not read this community’s current settings from its relays — nothing was changed, try again');
+        const byId=new Map();for(const w of [...(roomControls.get(loadKey)||[]),...fresh])if(w&&w.id)byId.set(w.id,w);
+        wraps=[...byId.values()];
+        scope=cordPlaneContext(p,bundle,wraps,room);before=reader.inspectControl(bundle,wraps);
+        if(!scope.membershipCurrent())throw new Error('Concord membership changed while opening settings');
+        made=await reader.createMetadataWrap(bundle,wraps,values,owner,p.signTemplate);
+        if(!scope.membershipCurrent())throw new Error('Concord membership changed while signing');
+        if(scope.current())break;
+        if(attempt>=2)throw new Error('this community’s settings kept changing while saving — nothing was changed, try again');
+      }
       const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
       if(!accepted?.ok)throw new Error('community relays rejected the profile update');
       if(values.bannerRef||values.banner===null)bannerStage=null;
-      if(!scope.current())throw new Error('Concord membership changed during profile update');
+      if(!scope.membershipCurrent())throw new Error('Concord membership changed during profile update');   // published already: only a real membership change is an error here
       wraps=[...(wraps||[]),made.wrap];roomControls.set(loadKey,wraps);
       const after=reader.inspectControl(bundle,wraps);timer=after.message_expiration||0;timerChanged=timer!==(before.message_expiration||0);
       if(values.bannerRef||values.banner===null)await applyRoomBanner(room,after,loadKey);
+      /* THE ICON TOO, from what was just folded -- "setting concord community icon again says saved but does not
+       * show in community list". The room kept only the box's blob: URL, which room storage strips (it dies with
+       * the page), and never the encrypted pointer, so the list had nothing to draw until some later refresh. */
+      if(Object.prototype.hasOwnProperty.call(values,'icon')||values.iconRef)await applyRoomIconMetadata(room,after,loadKey);
       // The metadata is authoritative and must be accepted before any informational notice.
       if(timerChanged){
         const noticeScope=cordPlaneContext(p,bundle,wraps,room);
@@ -2146,6 +2170,10 @@
     if(!stillHere())throw new Error('community changed before saving settings');
     const rooms=saved(),index=rooms.findIndex(r=>roomIdentity(r)===identity);
     rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer};
+    if(Object.prototype.hasOwnProperty.call(values,'icon')||values.iconRef){
+      rooms[index].icon=room.icon??rooms[index].icon;
+      if(room.iconPointer)rooms[index].iconPointer=room.iconPointer;else delete rooms[index].iconPointer;
+    }
     if(values.bannerRef||values.banner===null){if(room.bannerPointer)rooms[index].bannerPointer=room.bannerPointer;else delete rooms[index].bannerPointer;}
     save(rooms);
     return {timerChanged,noticesFailed};
@@ -6478,7 +6506,13 @@
     const settingsSave=$('#cc-settings-save');if(settingsSave)settingsSave.onclick=async()=>{
       if(settingsSaving)return;
       const room=saved()[state.community];if(!room)return;
-      const values={name:room.name,description:String($('#cc-description-value').value||'').trim(),icon:normalizeIcon($('#cc-settings-icon').value)};
+      /* ONLY WHAT WAS CHANGED GOES OUT. Every field used to be sent on every Save -- name (this device's copy),
+       * the description box and the icon box -- so a banner-only Save also wrote a blank description, an
+       * empty icon (= "remove it") and a stale name over the community's real ones. A field is sent when its
+       * value differs from the value the sheet opened with (defaultValue); the writer keeps the rest. */
+      const values={},descBox=$('#cc-description-value'),iconBox=$('#cc-settings-icon');
+      if(descBox&&descBox.value!==descBox.defaultValue)values.description=String(descBox.value||'').trim();
+      if(iconBox&&iconBox.value!==iconBox.defaultValue)values.icon=normalizeIcon(iconBox.value);
       if(timerSelect?.dataset.edited==='1')values.message_expiration=Number(timerSelect.value);
       Object.assign(values,stagedBanner(room));
       /* Every write below goes to the LIVE sheet ($ at the time), never the button this handler was bound

@@ -157,3 +157,32 @@ def test_a_failed_icon_upload_says_so_and_never_saves_a_broken_icon():
     assert got['failed']['saveDisabled'], ('Save is offered over an icon that did not upload', got['failed'])
     assert got['after_save']['meta'] == [], ('a community profile was published with a failed icon', got['after_save'])
     assert got['retried'] and not got['final']['saveDisabled'], ('Retry did not recover the upload', got['final'])
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_saved_icon_shows_in_the_community_list_and_survives_a_reload():
+    """2026-10-15: "setting concord community icon again says saved but does not show in community list".
+    Save kept only the settings box's blob: URL on the room -- which room storage strips -- and never the
+    encrypted icon's pointer, so the list had nothing to draw. Now the icon is applied from the folded metadata
+    right after the publish, and the pointer is what the room keeps."""
+    got = {}
+
+    async def check(b):
+        await open_settings(b)
+        # Blossom answers at once and serves the stored bytes back (so the icon really decrypts).
+        await b.js(r'''(()=>{window.__store=new Map();const p=__PC;
+          p.uploadBlob=async blob=>{const bytes=new Uint8Array(await blob.arrayBuffer()),url='https://fixture.invalid/blossom/'+'d'.repeat(63)+__store.size;
+            __store.set(url,bytes);__uploads.push({size:bytes.length,state:'released'});return url;};
+          const f=window.fetch;window.fetch=async(u,o)=>{const k=String(u&&u.url||u);if(__store.has(k))return new Response(__store.get(k),{status:200});return f(u,o);};})()''')
+        await b.js(PICK)
+        await wait(b, "(document.querySelector('#cc-settings-icon-status')||{}).textContent.includes('uploaded')", 15)
+        await b.js("document.querySelector('#cc-settings-save').click()")
+        got['saved'] = await wait(b, "__published().length>0", 15)
+        got['shown'] = await wait(b, "!!document.querySelector('[data-cc-server] img')", 15)
+        got['stored'] = await b.js("(JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]')[0]||{}).iconPointer||null")
+    asyncio.run(desktop.with_browser('online', '', check, NO_OS))
+
+    assert got['saved'], 'Save did not publish'
+    assert got['shown'], 'the saved icon is not drawn in the community list'
+    assert got['stored'] and got['stored'].get('url', '').startswith('https://fixture.invalid/blossom/'), \
+        ('the room did not keep the encrypted icon pointer, so a reload shows nothing', got['stored'])

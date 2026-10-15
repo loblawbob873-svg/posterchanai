@@ -138,3 +138,38 @@ def test_the_owner_sets_a_banner_with_visible_upload_progress(width):
         assert (await b.js('PosterCordReader.inspectControl(__cordBundle,' + CONTROLS + ').banner'))['url'] == 'https://blobs.invalid/up-1'
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_banner_only_save_keeps_the_communitys_other_settings():
+    """2026-10-15: "uploading banner blew away all the community settings". Save sent EVERY field -- this
+    device's copy of the name, the description box, the icon box -- so a sheet that opened without the
+    community's current description/icon (set on another device) wrote a blank description and "no icon"
+    over the real ones. Only changed fields go out now, on a fresh read of the community's controls."""
+    async def check(b):
+        minted = await setup(b, 1280, 'Settings keeper')
+        await b.js(r'''(async()=>{const made=await PosterCordReader.createMetadataWrap(__cordBundle,''' + CONTROLS + r''',
+          {description:'Our place on the network',icon:'🌌'},__PC.me().pubkey,__PC.signTemplate);__relaySeed([made.wrap]);})()''')
+        await b.js(r'''(()=>{__PC.uploadBlob=async(blob)=>{const bytes=new Uint8Array(await blob.arrayBuffer());
+          const url='https://blobs.invalid/keep-'+(__uploads.push(1));__blobs.set(url,bytes);return url;};})()''')
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        await b.until("!!document.querySelector('#cc-edit-icon')")
+        await click(b, '#cc-edit-icon')
+        await b.until("!document.querySelector('#cc-settings-dialog').classList.contains('hidden')")
+        # This device opened the sheet WITHOUT the community's current description and icon.
+        await b.js(r'''(()=>{for(const id of ['#cc-description-value','#cc-settings-icon']){const el=document.querySelector(id);
+          el.defaultValue='';el.value='';}})()''')
+        await b.js(r'''(async()=>{const bytes=await __pngBytes(1200,300,'#c3c'),dt=new DataTransfer();
+          dt.items.add(new File([bytes],'banner.png',{type:'image/png'}));const f=document.querySelector('#cc-banner-file');
+          f.files=dt.files;f.dispatchEvent(new Event('change',{bubbles:true}));})()''')
+        await b.until("/ready|uploaded/i.test(document.querySelector('#cc-banner-status')?.textContent||'')")
+        await click(b, '#cc-settings-save')
+        await b.until(BANNER_SHOWN)
+        meta = await b.js('(()=>{const m=PosterCordReader.inspectControl(__cordBundle,' + CONTROLS + ');'
+                          'return {name:m.name,description:m.description,picture:m.picture||m.icon||"",banner:!!m.banner}})()')
+        assert meta['banner'], meta
+        assert meta['description'] == 'Our place on the network', ('the banner save wiped the description', meta)
+        assert meta['picture'] == '🌌', ('the banner save wiped the icon', meta)
+        assert meta['name'] == 'Settings keeper', ('the banner save changed the name', meta)
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))

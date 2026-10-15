@@ -12,6 +12,8 @@ ctx.envelopeCacheKey=(a,b)=>a+':'+b;ctx.cacheEnvelopes=async(key,wraps)=>cache.p
 const source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
 vm.runInContext(source.slice(source.indexOf('  function cordControlStamp('),source.indexOf('  function cordPlaneSubscribe('))+source.slice(source.indexOf('  function communityPermission('),source.indexOf('  function canAddChannel(')),ctx);
 ctx.roomRelays=b=>b.relays;
+// The community's relays answer with its control events (saveCommunitySettings writes on a FRESH read).
+let relayDown=false;ctx.cordQuery=async()=>relayDown?copy([]):copy([...ctx.roomControls.get(room.communityId)]);
 const api={viewer:()=>({pubkey:viewer}),signTemplate:async tpl=>{if(holdSign)await holdSign();return sign(tpl);},enc:s=>String(s),relayPublishRoom:async(_relays,event)=>{published.push(event);const isControl=event.pubkey===bundle.control_pk;return{ok:!(isControl?rejectMetadata:rejectNotice)};}};
 const options=ctx.timerSettingsHtml(api,room);assert(options.includes('86400'));assert(options.includes('30 days'));assert(!options.includes(' disabled'));
 let result=await ctx.saveCommunitySettings(api,room,copy({name:'Timers',description:'edited',message_expiration:86400}));
@@ -23,5 +25,13 @@ published=[];await ctx.saveCommunitySettings(api,rooms[0],copy({description:'ord
 published=[];rejectNotice=true;result=await ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:0}));assert.equal(result.noticesFailed,2);assert.equal(rooms[0].message_expiration,0,'failed informational notice cannot roll back accepted metadata');rejectNotice=false;
 published=[];rejectMetadata=true;await assert.rejects(ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:604800})),/rejected/);assert.equal(published.length,1,'rejected metadata emits no notices');rejectMetadata=false;
 published=[];holdSign=async()=>{viewer='aa'.repeat(32);holdSign=null;};await assert.rejects(ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:604800})),/membership changed/);assert.equal(published.length,0,'account switch during signing must publish nothing');
+// "can't save community settings, concord membership changed while signing": the control set moving while the
+// signer works is a reason to rebuild the write, not to fail it (nothing was published yet).
+viewer=owner;published=[];{let moved=false;holdSign=async()=>{if(!moved){moved=true;const c=ctx.roomControls.get(room.communityId),extra=await R.createChannelWrap(bundle,c,copy({name:'third'}),owner,sign);ctx.roomControls.set(room.communityId,copy([...c,extra.wrap]));}};}
+await ctx.saveCommunitySettings(api,rooms[0],copy({description:'saved although the controls moved'}));holdSign=null;
+assert.equal(published.length,1,'one metadata write after the rebuild');assert.equal(R.inspectControl(bundle,ctx.roomControls.get(room.communityId)).description,'saved although the controls moved');
+// A read that could not ask writes nothing ("uploading banner blew away all the community settings").
+published=[];relayDown=true;await assert.rejects(ctx.saveCommunitySettings(api,rooms[0],copy({description:'x'})),/could not read/);assert.equal(published.length,0,'no write on an unread community');relayDown=false;
+viewer='aa'.repeat(32);
 assert(ctx.timerSettingsHtml(api,rooms[0]).includes(' disabled'),'non-manager timer control is disabled');
 console.log('CORD timer settings: actual metadata and per-channel notices, exemptions, no-op edits, partial delivery and account safety passed');
