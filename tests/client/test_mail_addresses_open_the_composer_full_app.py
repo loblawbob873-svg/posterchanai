@@ -113,13 +113,16 @@ def test_every_address_in_a_message_opens_the_composer(width):
                         "const r=f.contentDocument.querySelector('#ml').getBoundingClientRect();"
                         # the windowed desktop zooms <body>; a frame's own coordinates are not zoomed
                         "const k=fr.width/(f.offsetWidth||fr.width);return {x:fr.x+(r.x+r.width/2)*k,y:fr.y+(r.y+r.height/2)*k}})()")
-        targets = len((await b.call('Target.getTargets'))['targetInfos'])
+        # Count PAGES only. A worker or an out-of-process frame starting in this half second is a target too,
+        # and on a loaded CI runner one did: 'popups': 2 with nothing opened at all (2026-10-15).
+        pages = lambda infos: {t['targetId'] for t in infos if t.get('type') == 'page'}
+        targets = pages((await b.call('Target.getTargets'))['targetInfos'])
         await b.call('Input.dispatchMouseEvent', dict(type='mousePressed', button='left', clickCount=1, **pt))
         await b.call('Input.dispatchMouseEvent', dict(type='mouseReleased', button='left', clickCount=1, **pt))
         await b.until("!!document.querySelector('#cm-to')")
         out['html'] = await b.js(COMPOSER)
         await asyncio.sleep(.3)
-        out['popups'] = len((await b.call('Target.getTargets'))['targetInfos']) - targets
+        out['popups'] = len(pages((await b.call('Target.getTargets'))['targetInfos']) - targets)
         out['opened'] = await b.js('__opened')
         out['errors'] = await b.js('__errors')
 
