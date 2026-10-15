@@ -298,6 +298,17 @@ class TheStartupCheckCannotBreakABoot(unittest.TestCase):
         # not exist.
         self.assertFalse(w._is_public_hostname(w._host_of("https://xdc.poster.place")))
 
+    def test_the_client_hostname_wins_over_a_separate_media_host(self):
+        """poster.place: blobs at media.poster.place, clients at poster.place -- the sandbox is xdc.poster.place."""
+        from unittest import mock
+        from app.services import webxdc_service as w
+        from app.services import settings_store
+        vals = {"blossom_public_url": "https://media.poster.place", "nostr_relay_nip05_domain": "poster.place",
+                "git_server_public_base": "https://poster.place/git"}
+        with mock.patch.dict("os.environ", {"POSTERCHANAI_DOMAIN": ""}), \
+             mock.patch.object(settings_store, "get", side_effect=lambda k, d="": vals.get(k, d)):
+            self.assertEqual(w.instance_host(), "poster.place")
+
     def test_an_unresolvable_host_warns_once_and_returns(self):
         import asyncio
         import logging

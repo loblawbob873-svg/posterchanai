@@ -213,13 +213,17 @@ async def run():
     try:
         import websockets
         tab = None
-        for _ in range(100):          # poll the port: Chrome 153 writes no DevToolsActivePort for a fixed port
+        # Poll the port: Chrome 153 writes no DevToolsActivePort for a fixed port. Up to 60 s while Chrome is
+        # still running -- 20 s was not enough on the CI runner with ~100 browser checks beside it, and a SKIP
+        # of required coverage aborts the desktop build (run 38661902280). A Chrome that EXITED is not coming.
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and proc.poll() is None:
             try:
                 tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json/list", timeout=2))
                 tab = next(t for t in tabs if t.get("type") == "page")
                 break
             except Exception:
-                await asyncio.sleep(.2)
+                await asyncio.sleep(.25)
         if not tab:
             print("SKIP Chrome did not start")
             return 2

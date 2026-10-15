@@ -81,8 +81,12 @@ def instance_host() -> str:
         candidates.append(env)
     try:
         from app.services import settings_store
-        for key in ("blossom_public_url", "git_server_public_base",
-                    "nostr_dvm_blossom_url", "nostr_relay_nip05_domain"):
+        # The NIP-05 domain and the git base FIRST: they are the name people load the client from. A Blossom
+        # URL is often a separate media host -- poster.place serves its blobs from media.poster.place, and
+        # asking first there warned on every boot that "xdc.media.poster.place" was broken, about a sandbox
+        # no client ever loads (they load xdc.poster.place, which was fine).
+        for key in ("nostr_relay_nip05_domain", "git_server_public_base",
+                    "blossom_public_url", "nostr_dvm_blossom_url"):
             v = (settings_store.get(key, "") or "").strip()
             if v:
                 candidates.append(v)
