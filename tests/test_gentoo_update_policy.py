@@ -259,3 +259,41 @@ def test_the_update_policy_keeps_libavif_off_the_svt_av1_cap(tmp_path):
     assert result.returncode == 0, result.stderr
     lines = (tmp_path / 'package.use/posterchan-update-deps').read_text().splitlines()
     assert 'media-libs/libavif -svt-av1' in lines, lines
+
+
+def _pins():
+    import re
+    m = re.search(r'^PINNED_PACKAGES=\((.*)\)$', SOURCE, re.M)
+    return m.group(0)
+
+
+@pytest.mark.parametrize('kind', ['absent', 'file', 'directory'])
+def test_an_update_writes_the_wayfire_pin_on_a_machine_installed_before_it(tmp_path, kind):
+    """2026-10-15: Gentoo's wayfire/wf-config 0.11 arrived; `-uDN @world` put wf-config-0.11 under the overlay's
+    patched wayfire-0.10.1 and wayfire aborted at start. updateOS never reruns unmaskPackages, so a pin only the
+    installer wrote never reached an installed machine. The refresh writes the managed pins, keeps an operator's."""
+    base = tmp_path / 'portage'
+    base.mkdir()
+    path = base / 'package.mask'
+    original = '# operator\napp-editors/emacs\n'
+    if kind == 'file':
+        path.write_text(original)
+    elif kind == 'directory':
+        path.mkdir()
+        (path / 'local').write_text(original)
+        (path / 'posterchan-managed').write_text('>=x11-drivers/nvidia-drivers-581\n')   # an older install's pins
+    result = run(base, _pins() + '\nrefreshUpdateDependencyPolicy')
+    assert result.returncode == 0, result.stderr
+    pins = (path / 'posterchan-managed').read_text().split('\n')
+    assert '>=gui-wm/wayfire-0.11' in pins and '>=gui-libs/wf-config-0.11' in pins, pins
+    assert '>=x11-drivers/nvidia-drivers-581' in pins, pins
+    if kind == 'file':
+        assert (path / '00-local').read_text() == original
+    if kind == 'directory':
+        assert (path / 'local').read_text() == original
+    # The installer writes the very same file.
+    inst = tmp_path / 'inst'
+    inst.mkdir()
+    r2 = run(inst, _pins() + '\nLICENSED_PACKAGES=()\nMASKED_PACKAGES=()\nSPECIAL_PACKAGE_USE=()\nunmaskPackages')
+    assert r2.returncode == 0, r2.stderr
+    assert (inst / 'package.mask/posterchan-managed').read_text() == (path / 'posterchan-managed').read_text()

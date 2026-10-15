@@ -356,7 +356,13 @@ LICENSED_PACKAGES=("x11-drivers/nvidia-drivers NVIDIA-r2")
 # `blacklist nouveau` (and nova_core). Nor does modesetting: the same file sets
 # `options nvidia-drm modeset=1`, which is what wlroots needs and what the ebuild says is now
 # the default. Adding either by hand would be a second copy of a rule upstream already owns.
-PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581")
+# WAYFIRE IS PINNED TO THE OVERLAY'S 0.10.1 (and wf-config to its 0.10 slot). The overlay's wayfire carries two
+# patches (preserve-keyboard, seat-wide-modifiers) and posterchan-wayfire-shell is built against it with wlroots
+# 0.19. On 2026-10-15 Gentoo shipped wayfire/wf-config 0.11: a plain `-uDN @world` installed wf-config-0.11.0 under
+# the 0.10.1 wayfire (its `wf-config:${SLOT}` dependency notwithstanding) and wayfire aborted at start ("double free
+# or corruption" in output_layout -- server1, measured), with Gentoo's 0.11 queued to replace ours and drop both
+# patches. Lift these only together with an overlay wayfire 0.11 and a shell built against it.
+PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581" ">=gui-wm/wayfire-0.11" ">=gui-libs/wf-config-0.11")
 # ...AND THE PACKAGE'S OWN BLACKLIST WAS NOT ENOUGH ON THE LIVE IMAGE, MEASURED ON REAL HARDWARE.
 #
 # The paragraph above is still true and still the reason we add no second copy of `blacklist
@@ -722,7 +728,7 @@ unmaskPackages() {
 	# file each, never touch what an operator put beside it. Both are directories in portage,
 	# so a plain file left by an older install is migrated to 00-local rather than deleted.
 	local policy_path policy_legacy policy_tmp policy_dir
-	for policy_dir in package.license package.mask; do
+	for policy_dir in package.license; do       # package.mask: writeManagedPins, below (shared with updates)
 		policy_path="/etc/portage/$policy_dir"
 		if [ -f "$policy_path" ]; then
 			[ -L "$policy_path" ] && { echo "Cannot migrate symlinked $policy_path" >&2; return 1; }
@@ -736,11 +742,7 @@ unmaskPackages() {
 		fi
 		mkdir -p -- "$policy_path" || return 1
 		policy_tmp=$(mktemp "$policy_path/.posterchan-managed.XXXXXX") || return 1
-		if [ "$policy_dir" = package.license ]; then
-			printf '%s\n' "${LICENSED_PACKAGES[@]}" >"$policy_tmp"
-		else
-			printf '%s\n' "${PINNED_PACKAGES[@]}" >"$policy_tmp"
-		fi
+		printf '%s\n' "${LICENSED_PACKAGES[@]}" >"$policy_tmp"
 		if ! { chmod 0644 "$policy_tmp" \
 			&& mv -f -- "$policy_tmp" "$policy_path/posterchan-managed"; }; then
 			rm -f -- "$policy_tmp"
@@ -748,6 +750,7 @@ unmaskPackages() {
 			return 1
 		fi
 	done
+	writeManagedPins || return $?
 	keyword_tmp=$(mktemp "$keyword_path/.posterchan-managed.XXXXXX") || return 1
 	if { for i in "${MASKED_PACKAGES[@]}"; do printf '%s ~amd64\n' "$i"; done; } >"$keyword_tmp" \
 		&& chmod 0644 "$keyword_tmp" && mv -f -- "$keyword_tmp" "$keyword_path/posterchan-managed"; then
@@ -787,7 +790,31 @@ proposedABI32Changes() {
 
 # Refresh only the dependency settings this installer owns. Old images need these before
 # world resolution too; rerunning unmaskPackages would overwrite unrelated operator policy.
+# THE PINS REACH INSTALLED MACHINES. updateOS never reruns unmaskPackages, so a pin added to PINNED_PACKAGES after a
+# machine was installed never reached it -- and a pin that only fresh installs get protects nothing that updates.
+# Same owned file unmaskPackages writes (package.mask/posterchan-managed); an operator's own files are untouched.
+writeManagedPins() {
+	local mask_path=/etc/portage/package.mask mask_legacy mask_tmp
+	if [ -L "$mask_path" ]; then echo "Cannot migrate symlinked $mask_path" >&2; return 1; fi
+	if [ -f "$mask_path" ]; then
+		mask_legacy=$(mktemp "${mask_path}.XXXXXX") || return 1
+		mv -- "$mask_path" "$mask_legacy" || return 1
+		if ! mkdir -- "$mask_path"; then mv -- "$mask_legacy" "$mask_path"; return 1; fi
+		mv -- "$mask_legacy" "$mask_path/00-local" || return 1
+	fi
+	mkdir -p -- "$mask_path" || return 1
+	mask_tmp=$(mktemp "$mask_path/.posterchan-managed.XXXXXX") || return 1
+	if printf '%s\n' "${PINNED_PACKAGES[@]}" >"$mask_tmp" && chmod 0644 "$mask_tmp" \
+		&& mv -f -- "$mask_tmp" "$mask_path/posterchan-managed"; then
+		return 0
+	fi
+	rm -f -- "$mask_tmp"
+	echo "Could not write $mask_path/posterchan-managed" >&2
+	return 1
+}
+
 refreshUpdateDependencyPolicy() {
+	writeManagedPins || return $?
 	local policy_path=/etc/portage/package.use policy_legacy policy_tmp
 	local managed_name=posterchan-update-deps
 	if [ -L "$policy_path" ]; then
