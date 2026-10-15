@@ -29,7 +29,24 @@ window.PCMenusFactory = function(dep){
   function attachEmojiAutocomplete(ta){
     if(!ta || ta.dataset.emAc) return; ta.dataset.emAc='1';
     let box=null, items=[], sel=0, from=-1;
-    const close=()=>{ if(box){ box.remove(); box=null; } items=[]; sel=0; from=-1; };
+    /* THE DOCUMENT-WIDE LISTENERS LIVE ONLY WHILE THE LIST IS OPEN. They used to be added once per attach and never
+     * removed -- and an inline composer is attached on EVERY timeline render, so each window open left a capture
+     * keydown on the document and a resize on the window holding this textarea and the whole card tree around it.
+     * Measured in desktop mode: +382 DOM nodes / +103 listeners per timeline open->close, never freed; on a tablet,
+     * where every desktop window lives in ONE WebView, that is the renderer Android eventually kills ("tablet keeps
+     * restarting in the middle of using it, desktop mode"). tests/client/test_desktop_windows_release_memory_full_app.py */
+    const onKey=e=>{
+      if(!box || e.target!==ta) return;
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        e.preventDefault(); e.stopPropagation();
+        sel=(sel+(e.key==='ArrowDown'?1:items.length-1))%items.length; draw();
+      } else if(e.key==='Enter'||e.key==='Tab'){
+        e.preventDefault(); e.stopPropagation(); take(sel);
+      } else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); }
+    };
+    const onResize=()=>{ if(box) place(); };
+    const close=()=>{ if(box){ box.remove(); box=null; document.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', onResize); }
+                      items=[]; sel=0; from=-1; };
     const place=()=>{
       if(!box) return;
       const r=ta.getBoundingClientRect(), M=8, w=Math.min(300, Math.max(200, r.width));
@@ -42,7 +59,10 @@ window.PCMenusFactory = function(dep){
     };
     const draw=()=>{
       if(!items.length){ close(); return; }
-      if(!box){ box=document.createElement('div'); box.className='em-ac'; document.documentElement.appendChild(box); }
+      if(!box){ box=document.createElement('div'); box.className='em-ac'; document.documentElement.appendChild(box);
+                // CAPTURE on the document: the composers bind Enter (post/send) on the textarea itself, and the
+                // suggestion list has to take that key first while it's open.
+                document.addEventListener('keydown', onKey, true); window.addEventListener('resize', onResize); }
       box.innerHTML=items.map((e,i)=>
         `<button type="button" class="em-ac-row${i===sel?' on':''}" data-i="${i}">`
         +`<img src="${enc(e.t||e.u)}" alt="" loading="lazy"><span>:${enc(e.s)}:</span></button>`).join('');
@@ -79,18 +99,6 @@ window.PCMenusFactory = function(dep){
     ta.addEventListener('input', scan);
     ta.addEventListener('click', scan);
     ta.addEventListener('blur', ()=>setTimeout(close, 160));   // let a click on a row land first
-    // CAPTURE on the document: the composers bind Enter (post/send) on the textarea itself, and the
-    // suggestion list has to take that key first while it's open.
-    document.addEventListener('keydown', e=>{
-      if(!box || e.target!==ta) return;
-      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
-        e.preventDefault(); e.stopPropagation();
-        sel=(sel+(e.key==='ArrowDown'?1:items.length-1))%items.length; draw();
-      } else if(e.key==='Enter'||e.key==='Tab'){
-        e.preventDefault(); e.stopPropagation(); take(sel);
-      } else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); }
-    }, true);
-    window.addEventListener('resize', ()=>{ if(box) place(); });
   }
   function openEmojiPopover(anchorBtn, onPick, opts){
     if(openEmojiPopover.closeActive)openEmojiPopover.closeActive();

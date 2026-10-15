@@ -105,9 +105,18 @@
         const gl = new (window.WebglAddon.WebglAddon || window.WebglAddon)();
         gl.onContextLoss(() => { try{ gl.dispose(); }catch(_){} });   // back to the DOM renderer
         t.loadAddon(gl);
-        try{ document.fonts.addEventListener('loadingdone', () => { try{ gl.clearTextureAtlas(); }catch(_){} }); }catch(_){}
+        /* Both are let go in unmount(). A `loadingdone` listener left on document.fonts held this addon, and
+         * through it the terminal and its canvas, for the rest of the session: measured in desktop mode as
+         * +64 nodes and a window resize listener per Terminal window opened and closed (flat without this
+         * renderer). In the APK every desktop window shares ONE WebView, so that is memory a tablet never gets
+         * back. tests/client/test_desktop_windows_release_memory_full_app.py */
+        const relayout = () => { try{ gl.clearTextureAtlas(); }catch(_){} };
+        try{ document.fonts.addEventListener('loadingdone', relayout); }catch(_){}
+        _glAddon = gl;
+        _glFontsOff = () => { try{ document.fonts.removeEventListener('loadingdone', relayout); }catch(_){} };
       }catch(_){}                                                       // no WebGL here: the DOM renderer stays
     }
+    let _glAddon = null, _glFontsOff = null;
     /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
      * every line that mentions it is unreachable rather than broken. */
     const LOCAL = () => window.pcTerm || null;
@@ -1841,6 +1850,8 @@
       _bye();
       document.removeEventListener('visibilitychange', _wake);
       if(ro){ try{ ro.disconnect(); }catch(_){} ro = null; }
+      if(_glFontsOff){ _glFontsOff(); _glFontsOff = null; }
+      if(_glAddon){ try{ _glAddon.dispose(); }catch(_){} _glAddon = null; }   // before the terminal it belongs to
       if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
       ++bottomPinEpoch;
       if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
