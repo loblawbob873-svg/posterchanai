@@ -798,6 +798,18 @@ window.PCGitFactory = function(dep){
       }catch(_){ }
     });
   }
+  /* IN A BUNDLED SHELL A RELATIVE LINK IS NOT THE SERVER. The desktop app loads the client from
+   * `app://posterchan`, so `<a href="/client/git/raw?…">` named a path inside the app's own bundle,
+   * which answers any unknown path with the client shell: Raw opened a window of the social timeline
+   * and Download saved that HTML page under the file's name -- "badpost-facepalm.png … not an image
+   * this browser can decode" (2026-10-15). fetch() is redirected to the instance; a link is not. So
+   * in a bundle every read goes through fetch, and a link to show is the instance's absolute URL. */
+  function _rvBundled(){ return typeof window.__PC_API_BASE__ !== 'undefined'; }
+  function _rvViaJs(){ return !!(_rv && _rv.private) || _rvBundled() || !!(isNativeApp && isNativeApp()); }
+  function _rvAbs(u){
+    if(!_rvBundled()) return u;
+    try{ const o=_serverOrigin(); return o ? o.replace(/\/+$/,'')+u : u; }catch(_){ return u; }
+  }
   async function _rvFetch(u){
     const a=await _rvReadAuth();
     return fetch(u, a ? {headers:{'X-Git-Auth':a}} : undefined);
@@ -949,7 +961,7 @@ window.PCGitFactory = function(dep){
           const was=db.innerHTML;
           const done=(txt)=>{ db.innerHTML=enc(txt); setTimeout(()=>{ if(db.isConnected) db.innerHTML=was; }, 4000); };
           // A private repo cannot be a plain navigation either: a navigation carries no signature.
-          if((!isNativeApp || !isNativeApp()) && !_rv.private){
+          if(!_rvViaJs()){
             /* target=_blank, NOT a same-tab navigation. On success the endpoint's
              * Content-Disposition: attachment keeps the page put — but on `no such ref`, a dead
              * host or a proxy 502 the answer is JSON with no disposition, and a same-tab click
@@ -1603,7 +1615,7 @@ window.PCGitFactory = function(dep){
     // A private repo's Raw and Download are fetched WITH the viewer's signature and handed over as a
     // blob: a plain link is a navigation, which carries none, and the host would refuse it.
     const acts=`<span class="fb-fvacts">
-        ${_rv.private
+        ${_rvViaJs()
           ? `<button class="btn btn-ghost small" id="fv-raw" title="This file's raw bytes"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</button>
         <button class="btn btn-ghost small" id="fv-dl" title="Download this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`
           : `<a class="btn btn-ghost small" href="${enc(_rvUrl('raw',{path}))}" target="_blank" rel="noopener" title="This file's raw bytes at a plain URL — quotable, curl-able, linkable"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</a>
@@ -1632,6 +1644,9 @@ window.PCGitFactory = function(dep){
         catch(err){ toast('couldn’t download '+name+': '+((err&&err.message)||err)); }
       }; }
     { const b=$('#fv-raw',fv); if(b) b.onclick=async()=>{
+        // A public repo's raw bytes have a real address; in a bundled shell that is the instance's,
+        // and the shell hands an http(s) URL to the system browser.
+        if(!_rv.private){ window.open(_rvAbs(_rvUrl('raw',{path})), '_blank', 'noopener'); return; }
         const w=window.open('', '_blank');           // opened in the click, or a popup blocker eats it
         try{ const r=await _rvFetch(_rvUrl('raw',{path})); if(!r.ok) throw new Error('HTTP '+r.status);
              const u=URL.createObjectURL(new Blob([await r.arrayBuffer()], {type:'text/plain;charset=utf-8'}));
