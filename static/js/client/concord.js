@@ -5276,6 +5276,27 @@
    * keys), so a membership that changes -- a rekey, a new grant -- is tried again at once; otherwise
    * it is retried at most every ROOM_LIVE_RETRY_MS. */
   const roomsLiveFailed=new Map(), ROOM_LIVE_RETRY_MS=600000;
+  /* A ROOM WHOSE KEYS ARE NOT LOADED YET IS NOT A FAILED ROOM. This loop runs from the first tick after
+   * start, usually before a room's control envelopes are back -- and with no controls every stream author
+   * throws "Concord plane key is not held by this membership". That was recorded as a FAILURE, and a failure
+   * is only retried after ROOM_LIVE_RETRY_MS (10 minutes), so the keys arriving a second later did nothing:
+   * the room took no live messages for ten minutes ("laptop concord behind, not updating room", "more
+   * concord plane key errors", 2026-10-15). Now a room without controls waits silently -- reading the cached
+   * controls meanwhile, in their own map so nothing else treats a cache read as a refresh -- and the
+   * subscription key carries the controls it was built with, so new keys are tried at once. */
+  const liveCachedControls=new Map(), liveControlReads=new Set();
+  function liveControls(loadKey){
+    const held=roomControls.get(loadKey);
+    if(held&&held.length)return held;
+    const cached=liveCachedControls.get(loadKey);
+    if(cached&&cached.length)return cached;
+    if(!liveControlReads.has(loadKey)&&typeof cachedEnvelopes==='function'){
+      liveControlReads.add(loadKey);
+      Promise.resolve().then(()=>cachedEnvelopes(envelopeCacheKey(loadKey,'control')))
+        .then(w=>{ if(w&&w.length)liveCachedControls.set(loadKey,w); },()=>{});
+    }
+    return null;
+  }
   function startRoomsLive(p){
     try{
       const R=(window.PCConcordRelay||window.Relay),reader=window.PosterCordReader;
@@ -5286,8 +5307,10 @@
         if(!bundle||bundle.dissolved||bundle.removed||room.protocol==='nip29')continue;
         const channels=channelsOf(room).filter(c=>c&&c.streamPubkeys&&c.streamPubkeys.length);
         if(!channels.length)continue;
-        const relays=roomRelays(bundle),key=[owner,roomIdentity(room),relays.join(','),channels.map(c=>c.id+':'+c.streamPubkeys.join('.')).join('|')].join('\n');
-        want.set(roomIdentity(room),{key,room,bundle,channels,relays});
+        const controls=liveControls(room.communityId||room.naddr);
+        if(!controls)continue;            // keys not loaded yet: not a failure, try again next tick
+        const relays=roomRelays(bundle),key=[owner,roomIdentity(room),relays.join(','),channels.map(c=>c.id+':'+c.streamPubkeys.join('.')).join('|'),cordControlStamp(controls).join(',')].join('\n');
+        want.set(roomIdentity(room),{key,room,bundle,channels,relays,controls});
       }
       for(const [id,sub] of roomsLive){ const w=want.get(id); if(!w||w.key!==sub.key){ try{ sub.close(); }catch(_){ } roomsLive.delete(id); } }
       for(const id of [...roomsLiveFailed.keys()])if(!want.has(id))roomsLiveFailed.delete(id);
@@ -5318,7 +5341,7 @@
         };
         const authors=[...byAuthor.keys()],since=Math.floor(Date.now()/1000)-60,filters=[{kinds:[1059],authors,since}];
         try{
-          const plane=reader.createPlaneAuth&&cordPlaneContext(p,w.bundle,roomControls.get(w.room.communityId||w.room.naddr)||[],w.room);
+          const plane=reader.createPlaneAuth&&cordPlaneContext(p,w.bundle,w.controls,w.room);
           const close=plane?cordPlaneSubscribe(p,R,w.relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(w.relays,filters,{onEvent,timeout:0,live:true});
           roomsLive.set(id,{key:w.key,close:()=>{ try{ close(); }catch(_){ } }});
           roomsLiveFailed.delete(id);
@@ -7226,6 +7249,7 @@
   window.PCConcord.__testLiveRepaint=()=>whenHandLeaves(()=>preserveChatScroll(()=>backgroundRender()));
   window.PCConcord.__testEnterChatBottom=()=>enterChatBottom(true);
   window.PCConcord.__testStartRoomsLive=p=>startRoomsLive(p);
+  window.PCConcord.__testSetControls=(loadKey,wraps)=>roomControls.set(loadKey,wraps);
   window.PCConcord.mentionsUnread=()=>mentionsUnread();
   window.PCConcord.__testNotifyMentions=(p,room,msgs,viewer,me,ch)=>notifyMentions(p,room,msgs,viewer,me,ch);
   window.PCConcord.__testClearMentions=(room,ch)=>clearMentions(room,ch);

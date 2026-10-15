@@ -46,6 +46,9 @@ const room = (streams) => ({ url: '', naddr: 'naddr1room', communityId: hex('a')
   const x = boot(reader);
   if (typeof x.C.__testStartRoomsLive !== 'function') fail('concord.js exposes no __testStartRoomsLive hook');
   x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room([hex('b')])]));
+  /* The membership's controls ARE loaded and the key is still not in them -- a room whose controls have not
+   * arrived yet is not a failure at all (test_concord_live_waits_for_the_keys.py). */
+  x.C.__testSetControls(hex('a'), [{ id: 'w1' }]);
   for (let i = 0; i < 10; i++) x.C.__testStartRoomsLive(p);
   if (attempts !== 1) fail(`an unheld room was rebuilt ${attempts} times in 10 ticks (want 1)`);
   if (x.warnings.length !== 1) fail(`${x.warnings.length} warnings in 10 ticks (want 1): ${x.warnings[0] || ''}`);
@@ -62,6 +65,7 @@ const room = (streams) => ({ url: '', naddr: 'naddr1room', communityId: hex('a')
   const reader = { inspectControl: () => ({}), createPlaneAuth: () => { attempts++; return null; } };
   const x = boot(reader);
   x.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room([hex('b')])]));
+  x.C.__testSetControls(hex('a'), [{ id: 'w1' }]);
   for (let i = 0; i < 5; i++) x.C.__testStartRoomsLive(p);
   if (x.subs.length !== 1) fail(`a held room should subscribe exactly once, got ${x.subs.length}`);
   if (x.warnings.length) fail('a held room warned: ' + x.warnings[0]);
