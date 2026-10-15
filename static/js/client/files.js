@@ -2617,7 +2617,7 @@ window.PCFilesFactory = function(dep){
     const canUp=true;
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_S._filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
-          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
+          <div class="dz-inner"><span class="dz-ic">⬆</span> <span class="dz-text">Drop files/folders here, or</span> <span class="dz-btns"><button class="btn btn-cyan small" id="bl-pick"><svg class="ic b-ic dz-up" aria-hidden="true"><use href="#i-upload"></use></svg>choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button></span>
           <div class="muted small">→ ${_S._filesFolder?((FilesIdx.isEncFolder(_S._filesFolder)?'🔒 ':'📁 ')+enc(_S._filesFolder)):'All files'} · uploaded one at a time${_S._filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_S._filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
       : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
@@ -2689,6 +2689,15 @@ window.PCFilesFactory = function(dep){
         const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
       } }
     }finally{ if(listTimer)clearTimeout(listTimer); }
+    /* A media server that answers its listing with an OBJECT (an error body served with 200, a proxy's JSON) is
+     * not a list. It used to throw "list.filter is not a function" out of this view -- "action failed", the File
+     * Manager half-drawn. Say the server answered something that is not a list, with Retry, as for any failure. */
+    if(list!==null && !Array.isArray(list)){
+      list=null;
+      if(!cachedList){ const g=$('#bl-grid',pane); if(g){
+        g.innerHTML='<div class="empty">'+enc(server)+' did not answer with a list of files. <button class="btn btn-ghost small" id="bl-list-retry">Retry</button></div>';
+        const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom(); } }
+    }
     const fromKept=list!==null && !_listFetched;
     if(list!==null){
       /* Blossom list responses need not repeat an absolute URL. Build the canonical blob address
