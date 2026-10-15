@@ -27,6 +27,8 @@
   /* Status colours: the same as Classic on the dark presets; Light overrides them for contrast. */
   --cct-ok:#35c875;--cct-public-fg:#69dca5;--cct-private-fg:#ffc266;--cct-gold:#ffd36a;--cct-star:#ffd76a;
   --cct-danger:#ff8095;--cct-danger-2:#ff7b7e;--cct-error:#ff8c91;--cct-dissolve:#ff5c7a;
+  /* The red filled close of a sheet (the desktop window close's red); a theme may restyle it. */
+  --cct-close:#e81123;--cct-close-hover:#c50f1f;--cct-on-close:#ffffff;
   --cct-mention:#79b8ff;--cct-mention-bg:rgba(88,166,255,.16);--cct-mention-me:#ffd479;--cct-warn:#fabe3c;--cct-warn-rgb:250,190,60;
   --cct-unread-bg:#4a3a15;--cct-unread-fg:#ffcf6b;
   --cct-font-display:inherit;--cct-glow:0 0 0 transparent;--cct-glow-strong:0 0 0 transparent;--cct-scan:linear-gradient(transparent,transparent);--cct-fx:0;
@@ -122,6 +124,7 @@
   --cct-react-fg:#e8eaf0;--cct-fg-2:#aeb4c2;--cct-fg-3:#9fa6b4;--cct-fg-4:#777f90;--cct-discover-fg:#b8bfcc;--cct-section:#9298a8;
   --cct-hash:#8e95a5;--cct-header-hash:#969dac;--cct-welcome:#aab0bd;--cct-placeholder:#969dab;--cct-room-sub:#b0b6c3;
   --cct-reply-fg:#b7bdca;--cct-hl-rgb:45,212,191;--cct-soft-rgb:122,162,247;--cct-react-rgb:88,101,242;--cct-react-mine:#7785ff;
+  --cct-close:#e81123;--cct-close-hover:#c50f1f;--cct-on-close:#ffffff;
 }
 
 /* Every theme but Classic also re-points the APP's variables inside Concord's own surfaces, so the
@@ -628,8 +631,8 @@ svg.ic.cc-starred{fill:currentColor}
   #cc-settings-dialog .cc-sheet-close{flex-basis:44px;width:44px;height:44px}
 }
 /* THE CLOSE IS A RED FILLED ✕ ("Community Settings should have red filled X to close like the rest of the posterchan UI",
-   2026-10-15) -- the desktop window close's red (#e81123), filled at rest, never only on hover. After the shared
+   2026-10-15) -- the desktop window close's red (--cct-close), filled at rest, never only on hover. After the shared
    sheet-close rules above so it wins on specificity order, and the back arrow stays neutral. */
-#cc-settings-dialog .cc-sheet-close{background:#e81123;color:#fff;border-radius:50%;flex:0 0 34px;width:34px;height:34px;min-width:34px;min-height:34px}
-#cc-settings-dialog .cc-sheet-close:hover,#cc-settings-dialog .cc-sheet-close:focus-visible{background:#c50f1f;color:#fff}
+#cc-settings-dialog .cc-sheet-close{background:var(--cct-close);color:var(--cct-on-close);border-radius:50%;flex:0 0 34px;width:34px;height:34px;min-width:34px;min-height:34px}
+#cc-settings-dialog .cc-sheet-close:hover,#cc-settings-dialog .cc-sheet-close:focus-visible{background:var(--cct-close-hover);color:var(--cct-on-close)}
 #cc-settings-dialog .cc-sheet-close .ic{width:18px;height:18px}

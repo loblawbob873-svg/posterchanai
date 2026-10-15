@@ -2150,7 +2150,7 @@
       /* THE ICON TOO, from what was just folded -- "setting concord community icon again says saved but does not
        * show in community list". The room kept only the box's blob: URL, which room storage strips (it dies with
        * the page), and never the encrypted pointer, so the list had nothing to draw until some later refresh. */
-      if(Object.prototype.hasOwnProperty.call(values,'icon')||values.iconRef)await applyRoomIconMetadata(room,after,loadKey);
+      if(values.iconRef)await applyRoomIconMetadata(room,after,loadKey);   // an ENCRYPTED icon: a plain emoji/URL is stored as typed, below
       // The metadata is authoritative and must be accepted before any informational notice.
       if(timerChanged){
         const noticeScope=cordPlaneContext(p,bundle,wraps,room);
@@ -2170,7 +2170,7 @@
     if(!stillHere())throw new Error('community changed before saving settings');
     const rooms=saved(),index=rooms.findIndex(r=>roomIdentity(r)===identity);
     rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer};
-    if(Object.prototype.hasOwnProperty.call(values,'icon')||values.iconRef){
+    if(values.iconRef){
       rooms[index].icon=room.icon??rooms[index].icon;
       if(room.iconPointer)rooms[index].iconPointer=room.iconPointer;else delete rooms[index].iconPointer;
     }
