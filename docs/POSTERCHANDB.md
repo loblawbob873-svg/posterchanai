@@ -1,12 +1,14 @@
 # PosterChanDB — a RAM-first store for the relay's events
 
-Status: **in production** (2026-10-12): `primary` on server1 and nas.lan, and the default for every fresh install.
+Status: **the relay's only store** (since 2026-10-10 on server1 and nas.lan; every fresh install; the PosterChanOS
+desktop's local relay). The Postgres store was deleted in #195 -- there is nothing to choose and no other mode.
+server1 on 2026-10-15: 4.08M live events (4.70M with not-yet-compacted dead ones), 4.6 GB on disk, 758 MB of index.
 The short, benefits-first version is [POSTERCHANDB_OVERVIEW.md](POSTERCHANDB_OVERVIEW.md). Numbers here are MEASURED on server1's
 live relay (a 2% sample, scaled, by the since-retired `posterchandb_measure.py`), not estimated from first principles.
 
-## Why
+## Why (as measured before the move, 2026-10)
 
-The relay's Postgres database is 15 GB, and 95% of it is the event store:
+The relay's Postgres database was 15 GB, and 95% of it is the event store:
 
 | | size | note |
 |---|---|---|
@@ -105,17 +107,26 @@ write amplification. Most of it is **full-page images** (382 million of them, ~3
 checkpoint the first change to each 8 KB page logs the whole page, and a new event dirties pages in seven
 `events` indexes and three `event_tags` indexes scattered across the disk.
 
-PosterChanDB writes each event ONCE, sequentially:
+PosterChanDB writes each event ONCE, sequentially. The design budget (49k events a day):
 
-| | per day (49k events) |
+| | per day |
 |---|---|
 | log append (872 B/event, batched per flush into large sequential writes) | **~43 MB** |
-| index snapshot (~340 MB) — only on a clean stop and once a day (`posterchandb_snapshot_hours`, default 24) | ≤ 340 MB |
+| index snapshot — at a clean stop, and at most every `posterchandb_snapshot_hours` when something was written | one snapshot each time |
 | compaction — a log file is rewritten only when **> 40%** of it is dead (`posterchandb_compact_dead_pct`) | proportional to deletes |
 
-…about **0.4 GB/day against 14.65 GB/day**, roughly 35× fewer bytes written, and sequential rather than
-random. Indexes are never written per event: they live in RAM and can always be rebuilt from the log (the
-snapshot only makes startup fast). Reads touch no disk at all while the content fits the read cache.
+**Measured on server1, 2026-10-15 — the snapshot term dominates, and it is not small.** The index snapshot is
+now **1.24 GB** (4.7M events, 758 MB of index; ~260 B an event), and with the admin default of **1 hour**
+(`relay_tunables.PCDB`, since 2026-10-11 — `maintenance.py`'s own default, and this doc's old figure, is 24) a
+busy relay always has something new, so it writes one every hour. The relay process wrote **18.0 GB in 10.3 h**
+(`/proc/<pid>/io` write_bytes), about **42 GB/day**. Ten hourly snapshots account for ~12 GB of the 18; the rest
+(log appends, one compaction of 11 segments, sidecar files) has not been broken down. It is sequential, but it is MORE than Postgres's 14.65 GB/day of WAL (whose checkpoint
+data-file writes were never measured), and nowhere near the 0.4 GB/day this section used to promise. A clean stop always
+snapshots, so the periodic one only bounds how much log a CRASH replays at the next start; raising
+`posterchandb_snapshot_hours` (Admin → Nostr Relay → Database, live) trades crash-restart time for SSD writes.
+
+Indexes are never written per event: they live in RAM and can always be rebuilt from the log (the snapshot
+only makes startup fast). Reads touch no disk at all while the content fits the read cache.
 
 Things that keep it that way:
 - **Batching is the point of the write delay.** A 5-minute flush turns thousands of small writes into a few
@@ -124,46 +135,61 @@ Things that keep it that way:
   records with 99 dead bits — reclaimed in bulk by compaction, not in place.
 - **No double-write.** The log IS the data; there is no separate WAL plus heap plus index pages.
 
-Postgres, until then (each a config change on the database host, needs your OK): `wal_compression = lz4`
-(shrinks full-page images 50–70%), a longer `checkpoint_timeout` with a larger `max_wal_size` (fewer
-checkpoints → far fewer full-page images), and dropping the 2.4 GB search index nobody uses (one less
-index dirtied per event).
 
-## Settings (Admin → Nostr Relay → PosterChanDB)
+## Settings (Admin → Nostr Relay → Database)
 
-Declared in `SettingsResponse` (or they never hydrate — see CLAUDE.md), inputs on the Nostr Relay tab. The
-store is opened once at relay start, so saving any of them restarts the relay (`_relay_topology_keys`).
-`POSTERCHANDB_MODE` in the environment overrides the mode.
+Declared in `SettingsResponse` (or they never hydrate -- see CLAUDE.md), defined with their ranges in
+`app/services/relay_tunables.py` (`PCDB`), inputs in `templates/admin/tabs/nostr_relay.html` (the Database section).
+**Every one applies to the RUNNING store** (`relay_tunables.LIVE_KEYS` → `posterchandb/tuning.apply`): each is an
+attribute its loop re-reads on every step, so Save changes it without a relay restart and without reopening a file.
+An out-of-range value is clamped to the range below.
 
-| setting | default | what it does |
+| setting | default (range) | what it does |
 |---|---|---|
-| `posterchandb_mode` | **automatic** (blank) | Blank = `primary` on a node with no Postgres DSN (every fresh install — no install path sets one up, #161), `off` on a node that has one. `off` = Postgres only. `primary` = PosterChanDB alone, no Postgres (after a promotion, below). `shadow` = every write mirrored, a sample of answers compared, Postgres answers. `serve` = queries answered from RAM, Postgres still written first and the fallback for any query the mirror cannot answer. |
-| `posterchandb_flush_seconds` | **300** | The write delay. A clean stop flushes first; a crash loses at most this window from PosterChanDB only — Postgres has every event, and the next start copies again. |
-| `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older segments; drains by itself when the machine runs low (MemAvailable + PSI, cache.py). |
+| `posterchandb_flush_seconds` | **300** s (1–3600) | The write delay for SYNCED copies: new events reach disk in one sequential batch this often. A crash loses at most this window of copies, which are fetched again. Direct writes are not in it -- they are fsynced before the relay answers OK. |
+| `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older log segments. The indexes are always in RAM; this is the content. |
+| `posterchandb_cache_low_water_mb` | **0 = auto** | The free-RAM floor at which the cache governor drains the read cache (MemAvailable + PSI, `cache.py`). |
+| `posterchandb_snapshot_hours` | **1** h (0.25–48) | An index snapshot at most this often (and on a clean stop), so a restart loads the snapshot and replays only the log after it. |
+| `posterchandb_compact_dead_pct` | **40** % (10–90) | A closed segment is rewritten once this share of it is dead (deleted, expired, replaced). |
+| `posterchandb_maint_interval_sec` | **600** s (60–86400) | How often the housekeeping pass (snapshot, compaction, prune) runs. |
+| `posterchandb_maint_io_mb_s` | **8** MB/s | Housekeeping's write ceiling, so it never competes with the live relay or wears an SSD in bursts. |
+| `posterchandb_maint_cpu_pct` | **10** % | Housekeeping's CPU share. |
+| `posterchandb_maint_busy_load` | **0.75** load/CPU (0 = never wait) | Housekeeping waits while the machine is busier than this. |
+| `posterchandb_words_batch` | **25** events | Search words indexed per background step (the store lock is held ~25 ms per step; 300 held it ~90 ms). |
 
-The field's status line reads `posterchandb` from the relay's status file: mode, state, the two counts it
-was proven against, queries served from RAM vs fallen back, and sampled answers identical vs different.
+The Database section's status line reads `posterchandb` from the relay's status file
+(`data/nostr_relay.status.json`): state, live/dead event counts, bytes on disk, index bytes, segments.
+The data directory is `$POSTERCHANDB_DIR` (set it in `data/secrets.env`; Docker sets it), else
+`/var/lib/posterchandb`; `scripts/install/posterchandb.sh` creates it. The relay's store is `<dir>/relay`.
 
 ## PosterChanOS
 
-A PosterChanOS machine that runs the PosterChan server needs no PostgreSQL server (`app-misc/posterchan-server`
-dropped its `dev-db/postgresql` dependency in -r6, and `pc-server enable` no longer initialises a cluster).
-PosterChanDB needs no database daemon: the relay keeps its events in its own files under
-`/var/lib/posterchandb`. What that buys a desktop
-or laptop:
-- **RAM sized to the machine** — the read cache is a setting, and `auto` takes 25–50% of RAM; indexes for
-  a personal relay (tens of thousands of events, not millions) are a few MB.
-- **Laptop SSDs** — writes are batched (default every 5 minutes) and sequential; idle means zero writes.
-- **Offline and on battery** — no Postgres to start, no checkpoint I/O while the lid is shut; a clean
-  shutdown flushes, and the next boot loads one snapshot.
-- **One less service** in the package and in the installer; the app's tables are relay documents in the
-  same store.
+Two different uses, both PosterChanDB:
 
-## What has to move
+- **A PosterChanOS machine running the PosterChan server** needs no PostgreSQL server (`app-misc/posterchan-server`
+  dropped its `dev-db/postgresql` dependency in -r6, and `pc-server enable` no longer initialises a cluster). Its
+  relay is the server relay above, with the same settings.
+- **Every PosterChanOS desktop runs a LOCAL relay as the desktop app's event cache** (`relay_main.py --os-mode`,
+  `app/services/nostr_relay/osmode.py`, package `app-misc/posterchan-relay`, user unit `posterchan-relay.service`).
+  It replaced the app's IndexedDB, which measured 10-31x write amplification (327 MB / 1.2 GB written in 19 minutes
+  on the desktop / laptop). One store per ACCOUNT under `~/.local/share/posterchan/relay` (`PC_RELAY_DIR`), loopback
+  only (it refuses any other bind), 32 MB segments, flushed every **30 s** (`PC_RELAY_FLUSH_SECONDS`), and an LRU
+  byte cap of **512 MB** (`PC_RELAY_MAX_MB`) that never evicts the client's pinned documents (`os_pins.py`, a copy
+  of `store.js` `_isPinned`, kept equal by `test_os_relay_pins_match_the_client.py`). Its only upstream is the
+  instance chosen on the welcome screen; none = a pure cache. The client never depends on it: anything it refuses
+  or does not acknowledge goes to IndexedDB. See CLAUDE.md "PosterChanOS's LOCAL RELAY".
 
-Everything that reads the relay's event tables directly needs the store's API instead: the relay itself
-(`nostr_relay/store.py`), the auto-clean and paid-retention rules, admin and community stats, the git
-`pre-receive` hook, and the bots' community queries.
+What PosterChanDB buys a desktop or laptop: RAM sized to the machine; batched sequential writes (idle = zero
+writes); no daemon to start and no checkpoint I/O on battery; a clean shutdown flushes and the next boot loads one
+snapshot.
+
+## What reads the store
+
+Everything that used to read the relay's Postgres tables now goes through the store's API: the relay itself
+(`nostr_relay/store.py` rules + `pcdb_store.py`), the auto-clean and paid-retention rules, admin and community
+stats (`nostr_relay/aggregates.py`, computed inside the relay process), the git `pre-receive` hook (over the
+relay's loopback socket), and the bots' community queries (`/api/community/*`). Nothing opens the store's files
+from another process: the relay owns them.
 
 ## How it moved in (done; the migration code is deleted)
 
@@ -219,8 +245,3 @@ retired with Postgres, #195.)
 Every data-safety rule the relay has learned keeps its test against the new store before it is trusted:
 a read that could not answer is never "empty", a replaceable document is never replaced on the strength
 of a failed read, nothing is purged on a partial read.
-
-## Independent of all this
-
-Make direct writes durable in Postgres now (the same rule as `posterchandb_direct_durable`) (`SET LOCAL synchronous_commit = on` for `origin='direct'`
-inserts); keep it off for copies.

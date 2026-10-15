@@ -13,16 +13,16 @@ indexes so a restart is fast. A Nostr filter (`authors`, `kinds`, `#e`, `#p`, `s
 answered by intersecting sorted arrays in memory, so a read never touches the disk. It is pure Python plus
 numpy, ships inside the app, and runs in the relay's own process — there is no database server.
 
-## Status (2026-10-12)
+## Status (2026-10-15)
 
-| node | mode | on disk |
+PosterChanDB is the relay's ONLY store -- the Postgres store was deleted (#195), so there is no mode to pick.
+
+| where | since | on disk |
 |---|---|---|
-| server1 (poster.place) | `primary` — PosterChanDB only | 4.3 GB |
-| nas.lan | `primary` | 270 MB |
-| fresh installs (`install.sh`, Docker, PosterChanOS server) | `primary` from the first event | grows with use |
-
-The PosterChanOS desktop is next: an OS-mode relay with PosterChanDB as the desktop's local event store,
-replacing the browser's IndexedDB (in progress).
+| server1 (poster.place) | 2026-10-10 | 4.6 GB (4.08M live events, 758 MB of index) |
+| nas.lan | 2026-10-10 | — |
+| fresh installs (`install.sh`, Docker, a PosterChanOS server) | the first event | grows with use |
+| every PosterChanOS desktop: the LOCAL relay that caches the desktop app's events, one store per account (512 MB LRU cap) | 2026-10-12 | ≤ 512 MB |
 
 ## The benefits
 
@@ -41,12 +41,16 @@ Postgres stored each event's 64-character hex id again in every one of its 16 mi
 2.4 GB full-text index that was used 1,779 times in its life. PosterChanDB stores ids and keys as raw bytes,
 packs tags, and compresses content with a dictionary trained on the relay's own posts.
 
-### 2. About 35× fewer SSD writes, and sequential ones
+### 2. Sequential SSD writes, written once
 
-| | written per day (~49,000 events) |
+| | written per day |
 |---|---|
-| Postgres (WAL alone, before checkpoints) | **14.65 GB** |
-| **PosterChanDB** (log + daily snapshot) | **~0.4 GB** |
+| Postgres (WAL alone, before checkpoints; ~49,000 events/day) | **14.65 GB** |
+| PosterChanDB as designed (log + one daily snapshot) | ~0.4 GB |
+| **PosterChanDB on server1, measured 2026-10-15** (4.7M events, hourly 1.24 GB snapshots) | **~42 GB** |
+
+The design figure assumed one snapshot a day; the admin default became hourly on 2026-10-11, and the snapshot
+grew with the store. The interval is a live setting (`posterchandb_snapshot_hours`); see POSTERCHANDB.md.
 
 Postgres wrote roughly 300 KB per stored event: every new event dirtied pages in ten indexes scattered across
 the disk, and after each checkpoint the first change to every page logged the whole 8 KB page. PosterChanDB
@@ -101,11 +105,14 @@ more than today's 3+ million events.
 - **A crash window for synced copies.** Events synced from other relays are flushed every 5 minutes
   (`posterchandb_flush_seconds`). A crash can lose up to that window of *copies*; they are fetched again.
   Direct writes are not in that window — they are fsynced first.
+- **Snapshot writes.** The index snapshot (1.24 GB on server1) is rewritten every `posterchandb_snapshot_hours`
+  (default 1) while anything new arrived — about 30 GB/day on server1, measured. A clean stop snapshots anyway;
+  the periodic one only shortens a crash restart. See POSTERCHANDB.md, "SSD writes".
 - **Search while starting.** Full-text search is refused (with a reason) until the words replayed at startup
   are indexed, rather than answering empty.
 
 ## Settings
 
-Admin → Nostr Relay → PosterChanDB: the flush interval, the read cache, the snapshot interval and the compaction
-threshold. There is no store to choose — Admin offers no PostgreSQL mode, and a mode stored by the old dropdown is
-ignored. Details: [POSTERCHANDB.md](POSTERCHANDB.md).
+Admin → Nostr Relay → Database: the write delay, the read cache and its low-water mark, the snapshot interval,
+the compaction threshold, and the housekeeping cadence and its I/O, CPU and load limits. Every one applies to
+the running relay — no restart. There is no store to choose. Details: [POSTERCHANDB.md](POSTERCHANDB.md).
