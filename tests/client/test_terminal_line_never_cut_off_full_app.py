@@ -23,9 +23,11 @@ def bundled_assets():
     yield from desktop.bundle.__wrapped__()
 
 
+# Renderer-independent: both xterm renderers size `.xterm-screen` to exactly rows x cell height, so its bottom IS
+# the last row's bottom. (The GPU renderer, which term.js now loads, draws no `.xterm-rows` children to measure.)
 GEOM = r"""(()=>{const s=document.getElementById('tty-screen'); const b=s.getBoundingClientRect();
-  const rows=[...s.querySelectorAll('.xterm-rows > div')]; const lr=rows[rows.length-1].getBoundingClientRect();
-  return {rows:rows.length, cut:Math.round(lr.bottom-b.bottom), focused:s.closest('.osw').classList.contains('focused')}})()"""
+  const lr=s.querySelector('.xterm-screen').getBoundingClientRect(), g=PCTerm._grid();
+  return {rows:g.rows, cut:Math.round(lr.bottom-b.bottom), focused:s.closest('.osw').classList.contains('focused')}})()"""
 FOCUS = "(sel=>{const w=[...document.querySelectorAll('.osw')].find(x=>sel?!!x.querySelector('#tty-screen'):!x.querySelector('#tty-screen'));w.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));})(%s)"
 TERM_WIN = "document.getElementById('tty-screen').closest('.osw')"
 
@@ -38,7 +40,7 @@ async def _desktop_with_terminal(b):
     for v in ("terminal", "calculator"):
         await b.js("(()=>{const el=document.querySelector('#os-desk [data-view=\"%s\"]');el.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));el.click();})()" % v)
         await asyncio.sleep(1.2)
-    await b.until("!!document.querySelector('#tty-screen .xterm-rows > div')")
+    await b.until("!!document.querySelector('#tty-screen .xterm-screen') && !!(window.PCTerm && PCTerm._grid && PCTerm._grid())")
     await b.js(FOCUS % "true")
     await asyncio.sleep(.6)
     g = await b.js(GEOM)
@@ -69,7 +71,7 @@ def test_a_transient_size_while_unfocused_is_not_fitted():
         before = await b.js(GEOM)
         await b.js(FOCUS % "false")
         await asyncio.sleep(.4)
-        await b.js("window.__rowsSeen=new Set();setInterval(()=>__rowsSeen.add(document.querySelectorAll('#tty-screen .xterm-rows > div').length),20);"
+        await b.js("window.__rowsSeen=new Set();setInterval(()=>__rowsSeen.add(PCTerm._grid().rows),20);"
                    "(w=>{const h=w.style.height;w.style.height=(w.offsetHeight-180)+'px';setTimeout(()=>{w.style.height=h;},150);})(%s)" % TERM_WIN)
         await asyncio.sleep(1.5)
         seen = await b.js("[...__rowsSeen]")

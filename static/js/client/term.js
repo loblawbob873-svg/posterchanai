@@ -71,6 +71,43 @@
         .then(ok => { if(!ok) _xtP = null; return ok; });
       return _xtP;
     }
+    /* THE GPU RENDERER, for the same reason a native terminal draws these itself. xterm's default DOM
+     * renderer sets block, box and braille characters as FONT TEXT, and no font fills its cell: every
+     * `\u2588` of a bar kept a seam, a half-block portrait broke into tiles, and the cells came out wider
+     * than the font so a framed tool's columns drifted ("ptop looks like ass when I ssh into server1",
+     * three reports, 10-11 to 10-15 -- the same frame was right in every native terminal). The WebGL
+     * addon draws those ranges as exact shapes (customGlyphs) and measures the cell from the font. It is
+     * @xterm/addon-webgl 0.18.0, the release built for the vendored @xterm/xterm 5.5.0. Loaded apart
+     * from _loadXterm, which returns early when xterm is already on the page. Optional by construction:
+     * no WebGL, a failed load or a lost GPU context leaves the DOM renderer drawing, as before. */
+    let _glP = null;
+    function _loadWebgl(){
+      if(window.WebglAddon) return Promise.resolve(true);
+      if(_glP) return _glP;
+      const me = document.querySelector('script[src*="/static/js/client/term.js"]');
+      const src = (me && me.getAttribute('src')) || '/static/js/client/term.js';
+      const q = src.indexOf('?') >= 0 ? src.slice(src.indexOf('?')) : '';
+      _glP = new Promise((ok) => {
+        const el = document.createElement('script');
+        el.src = src.split('?')[0].replace(/js\/client\/term\.js$/, 'vendor/xterm/webgl.js') + q;
+        el.onload = () => ok(!!window.WebglAddon); el.onerror = () => { _glP = null; ok(false); };
+        document.head.appendChild(el);
+      });
+      return _glP;
+    }
+    /* The symbol face must be LOADED before the GPU atlas draws a glyph: a canvas does not fetch a
+     * unicode-range face the way laid-out text does, so `\u25b8` came out as an empty box. Sample text
+     * from its ranges, because load()'s default sample is a space, which is outside them. */
+    async function _gpuRenderer(t){
+      try{ await document.fonts.load(fontSize() + 'px "PC Term Symbols"', '\u25b8\u2500\u2588\u2800'); }catch(_){}
+      if(!(await _loadWebgl()) || term !== t) return;
+      try{
+        const gl = new (window.WebglAddon.WebglAddon || window.WebglAddon)();
+        gl.onContextLoss(() => { try{ gl.dispose(); }catch(_){} });   // back to the DOM renderer
+        t.loadAddon(gl);
+        try{ document.fonts.addEventListener('loadingdone', () => { try{ gl.clearTextureAtlas(); }catch(_){} }); }catch(_){}
+      }catch(_){}                                                       // no WebGL here: the DOM renderer stays
+    }
     /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
      * every line that mentions it is unreachable rather than broken. */
     const LOCAL = () => window.pcTerm || null;
@@ -600,6 +637,7 @@
         if(F){ fit = new F(); term.loadAddon(fit); }
       }catch(_){ fit = null; }
       term.open(box);
+      void _gpuRenderer(term);
       _fit();
       /* Follow a live prompt until the person deliberately scrolls up. Reopening/attaching always
        * starts at the current prompt; after that, reading old output is never yanked back down. */
@@ -1897,9 +1935,14 @@
       _send({ t: 'in', d: '\r' });
       return true;
     }
+    const box0 = () => document.getElementById('tty-screen');
     window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected, typeIn, run, _typeable: typeable,
                       openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff,
-                      _barUp: () => { _barDrag = false; } };
+                      _barUp: () => { _barDrag = false; },
+                      // Read-only, for checks: the live grid and which renderer drew it (a GPU-drawn terminal
+                      // has no `.xterm-rows` children to count).
+                      _grid: () => term ? { rows: term.rows, cols: term.cols,
+                        gpu: !!(box0() && box0().querySelector('.xterm-screen canvas')) } : null };
   }
   init();
 })();

@@ -107,6 +107,7 @@ const SHELL = [
   '/static/vendor/xterm/xterm.css',
   '/static/vendor/xterm/xterm.js',
   '/static/vendor/xterm/fit.js',
+  '/static/vendor/xterm/webgl.js',
   '/static/js/client/ical.js',
   '/static/js/client/calendar.js',
   '/static/js/client/vcard.js',
