@@ -2164,7 +2164,10 @@
     function attach(ta){
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = '.xdc,application/x-webxdc,application/webxdc+zip,application/vnd.webxdc+zip,application/zip';
+      /* NO `accept` FILTER. The APK's WebView turns it into a MIME filter for Android's picker, and Android
+       * has no type registered for `.xdc` -- the file is application/octet-stream -- so every game on the
+       * phone was greyed out and could not be chosen. The archive is checked below (a zip, an index.html,
+       * the size), which is the real test; a filter added nothing but the refusal. */
       inp.style.display = 'none';
       document.body.appendChild(inp);
       inp.onchange = async () => {
