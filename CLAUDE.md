@@ -1762,6 +1762,14 @@ would have handled it fine).
   Any other reader keeps the strict `unavailable:`. Measured before: 767 tunnels in 10 min from one account (two
   communities listing damus, every relay re-read each minute). `tests/test_concord_mirror.py` +
   `tests/client/test_concord_reads_only_the_relays_this_node_cannot_full_app.py`.
+  **THE MIRROR'S RECONCILE NEVER WAITS ON A LINK.** It used to pop a relay's old link and AWAIT its stop() before
+  making the replacement; a link that lost its cancellation (asyncio.wait_for on Python 3.11 can swallow one that
+  lands as recv completes) held the reconcile lock for ever -- measured on poster.place 2026-10-14: no registration
+  completed for nine minutes, the three busiest relays had NO link, every room on them answered `unavailable`, every
+  device tunnelled everything until its 128-tunnel share was full ("0 of 5 relays answered"). Now: replace first,
+  stop old links in the background with a bounded wait, `asyncio.timeout` (never wait_for) in the link's receive
+  loop. Live check: `data/nostr_relay.status.json` -> `concord_mirror.links` must list every relay `_desired()` wants.
+  `tests/test_concord_mirror.py::test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror`.
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

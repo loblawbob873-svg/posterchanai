@@ -86,6 +86,7 @@ HISTORY_PAGE = 500
 HISTORY_PAGES_MAX = 200
 AUTHOR_CHUNK = 250
 MAX_CHUNKS = 20
+LINK_STOP_WAIT = 5.0      # how long anything waits for an old link to finish; after that it is left to die alone
 DIRECTORY_FRESH = 600
 DIRECTORY_STALE = 6 * 3600
 DIRECTORY_MAX = 400
@@ -203,19 +204,23 @@ class _Link:
         self.last_error = ""
         self.ws = None
         self.task = None
+        self.stopped = False
         self.pending: dict = {}      # event id -> Future[bool] (an OK we are waiting for)
 
     def start(self) -> None:
         self.task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
+        """Cancel, and wait a BOUNDED time. A task that lost its cancellation (asyncio.wait_for on 3.11 can swallow
+        one that lands as the awaited call completes) must not hold its caller -- the reconcile lock, i.e. every
+        registration on the node -- for ever: measured 2026-10-14, nine minutes of nothing, and the busiest
+        relays left with no link. `stopped` makes such a task leave at its next turn instead of reconnecting.
+        The caller's own cancellation is NOT swallowed here any more (it used to be, by `except BaseException`)."""
+        self.stopped = True
         t, self.task = self.task, None
         if t:
             t.cancel()
-            try:
-                await t
-            except BaseException:
-                pass
+            await asyncio.wait({t}, timeout=LINK_STOP_WAIT)
         self._settle_pending()
         self.connected = self.synced = False
 
@@ -231,7 +236,7 @@ class _Link:
 
     async def _run(self) -> None:
         backoff = 2.0
-        while True:
+        while not self.stopped:
             opened = time.monotonic()
             try:
                 async with self.mirror._open(self.url) as ws:
@@ -301,11 +306,16 @@ class _Link:
             await ws.send(json.dumps(["REQ", hist["sid"], flt]))
 
         await next_page()
-        while True:
+        while not self.stopped:
+            # asyncio.timeout, NOT asyncio.wait_for: on Python 3.11 wait_for can swallow a cancellation that arrives
+            # as recv() completes -- on a relay that streams constantly that is not rare, and the link then never
+            # stops (see stop()).
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=45)
-            except asyncio.TimeoutError:
-                await asyncio.wait_for(ws.ping(), timeout=10)
+                async with asyncio.timeout(45):
+                    raw = await ws.recv()
+            except TimeoutError:
+                async with asyncio.timeout(10):
+                    await ws.ping()
                 continue
             try:
                 msg = json.loads(raw)
@@ -472,6 +482,7 @@ class ConcordMirror:
         self.regs: dict = {}          # member pubkey -> {group: {"relays": [...], "authors": [...], "at": ts}}
         self.counts: dict = {}        # author -> wraps this mirror stored for it
         self.links: dict = {}         # relay url -> _Link
+        self._stopping: set = set()   # old links being stopped in the background (kept so they are not collected)
         self.directory = _Directory(self)
         self._seen = collections.OrderedDict()
         self._recent_regs: dict = {}  # member -> deque of registration times
@@ -575,14 +586,23 @@ class ConcordMirror:
     async def _reconcile(self) -> None:
         async with self._reconcile_lock:
             want = self._desired() if self.enabled() else {}
+            # REPLACE FIRST, STOP AFTER, AND NEVER WAIT ON IT HERE. The old link used to be popped and AWAITED
+            # before its replacement existed; one that would not stop left its relay with no link and this lock
+            # held -- every registration on the node stuck behind it (poster.place 2026-10-14 21:37-21:46).
+            stale = []
             for url in list(self.links):
                 if url not in want or self.links[url].authors != frozenset(want[url]):
-                    await self.links.pop(url).stop()
+                    stale.append(self.links.pop(url))
             for url, authors in want.items():
                 if url not in self.links:
                     link = _Link(self, url, authors)
                     self.links[url] = link
                     link.start()
+            for old in stale:
+                old.stopped = True
+                t = asyncio.create_task(old.stop())
+                self._stopping.add(t)
+                t.add_done_callback(self._stopping.discard)
             # Streams nobody registers any more: their copies go, and so does their count.
             named = self.registered_authors()
             dropped = [a for a in (set(self.counts) | self._last_named) if a not in named]

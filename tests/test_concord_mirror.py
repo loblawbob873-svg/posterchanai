@@ -831,3 +831,52 @@ def test_the_mirror_reaches_a_relay_tor_times_out_on(monkeypatch):
     asyncio.run(go())
     assert seen == [("http://127.0.0.1:8119", tun.TOR_OPEN_TIMEOUT), (None, tun.OPEN_TIMEOUT),
                     (None, tun.OPEN_TIMEOUT)], seen
+
+
+
+def test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror():
+    """Measured on poster.place 2026-10-14 21:37-21:46: no registration completed for nine minutes, and the three
+    busiest relays of the node (jskitty, asia.vectorapp, computingcache -- in nearly every registration, so their
+    links are replaced on nearly every one) had NO link, while the mirror's own _desired() wanted all three. A
+    reconcile had popped them and was awaiting an old link's stop() that never returned -- the link's receive loop
+    used asyncio.wait_for, which on Python 3.11 can swallow a cancellation that lands as recv completes -- holding
+    the reconcile lock for ever. Every room on those relays answered `unavailable`, every device read all of them
+    through the tunnel until its share was full: "room could not be read, 0 of 5 relays answered".
+
+    Here the old link's session swallows its cancellation outright. A second community on the same relay must
+    still register promptly, and the relay must have a link serving both."""
+    stream_a, stream_b, member = key(), key(), key()
+    real_session = cm._Link._session
+
+    async def stubborn(self, ws):
+        if pub(stream_b) in self.authors:            # the REPLACEMENT link works normally
+            return await real_session(self, ws)
+        while True:                                  # the old one: cancellation lost, runs on regardless
+            try:
+                await real_session(self, ws)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.05)
+
+    async def go():
+        up = await Upstream([wrap(stream_a), wrap(stream_b)]).start()
+        node = await Node({pub(member)}).start()
+        cm._Link._session = stubborn                     # the first link will ignore being stopped
+        try:
+            ok, why = await node.mirror.register(registration(member, [up.url], [pub(stream_a)], group="aa" * 32),
+                                                 is_local=True)
+            assert ok, why
+            assert await until(lambda: node.mirror.author_ready(pub(stream_a)))
+            try:
+                ok, why = await asyncio.wait_for(node.mirror.register(
+                    registration(member, [up.url], [pub(stream_b)], group="bb" * 32), is_local=True), 10)
+            except asyncio.TimeoutError:
+                raise AssertionError("a registration hung behind a link that would not stop -- the mirror froze")
+            assert ok, why
+            assert up.url in node.mirror.links, "the relay was left with no link"
+            assert await until(lambda: node.mirror.author_ready(pub(stream_a)) and node.mirror.author_ready(pub(stream_b)),
+                               15), "the replacement link never served both communities"
+        finally:
+            cm._Link._session = real_session
+            await asyncio.wait_for(node.close(), 20)
+            await up.close()
+    run(go())
