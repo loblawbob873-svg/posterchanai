@@ -122,6 +122,8 @@
     <string name="sms_sending">Sending</string>
     <string name="sms_to">To</string>
     <string name="sms_number_hint">Phone number or contact</string>
+    <string name="sms_share_to">Send to</string>
+    <string name="sms_new_number">New number…</string>
     <string name="sms_delete_thread">Delete this conversation</string>
     <string name="sms_delete_msg">Delete message</string>
     <string name="sms_retry_send">Retry sending</string>
