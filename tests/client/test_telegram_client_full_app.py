@@ -530,3 +530,57 @@ def test_paste_a_picture_drop_a_file_and_copy_a_message(width):
     assert got['sent'][-1]['caption'] == 'two attachments', got
     assert got['copied'] == ['hey there'], got
     assert not got['copy_on_media_only'], 'a Copy button on a message with no text'
+
+
+DELETE = r"""
+window.__tgDel = [];
+const __f9 = window.fetch;
+window.fetch = function(url, opts){
+  if(!String(url).includes('/api/tgc/delete')) return __f9(url, opts);
+  const b = JSON.parse(opts.body); __tgDel.push(b);
+  // Telegram refuses message 1 (somebody else's, in a group you do not run) and removes anything else.
+  const ok = !b.ids.includes(1);
+  return Promise.resolve(new Response(JSON.stringify(ok ? {ok:true, deleted:b.ids.length}
+                                                       : {ok:false, error:'Telegram would not delete that message.'}),
+                                      {status: ok ? 200 : 400, headers:{'Content-Type':'application/json'}}));
+};
+"""
+
+IDS = "[...document.querySelectorAll('.tg-msg')].map(m=>Number(m.dataset.id))"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_message_can_be_deleted_for_everyone_or_only_for_me_and_a_refusal_keeps_it():
+    """Asked for: "telegram missing way to delete messages for both people"."""
+    got = {}
+
+    async def check(b):
+        await _open(b)
+        await b.js("__tg.state='ready'; __PC.switchView('global'); __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("document.querySelectorAll('.tg-msg').length===3")
+
+        async def delete(msg, choice):
+            await b.js(f"document.querySelector('.tg-msg[data-id=\"{msg}\"] [data-del]').click()")
+            await b.until("!!document.querySelector('.uipick[data-v=\"all\"]')")
+            got.setdefault('choices', await b.js("[...document.querySelectorAll('.uipick')].map(x=>x.textContent)"))
+            await b.js(f"document.querySelector('.uipick[data-v=\"{choice}\"]').click()")
+            await asyncio.sleep(.4)
+
+        await delete(3, 'all')
+        got['after_all'] = await b.js(IDS)
+        await delete(2, 'me')
+        got['after_me'] = await b.js(IDS)
+        await delete(1, 'all')
+        got['after_refused'] = await b.js(IDS)
+        got['calls'] = await b.js("__tgDel")
+        got['toasts'] = await b.js("[...document.querySelectorAll('.toast')].map(t=>t.textContent).join(' | ')")
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE + DELETE))
+    assert got['choices'] == ['Delete for everyone', 'Delete only for me'], got
+    assert got['calls'][0] == {"chat_id": 42, "ids": [3], "revoke": True}, got['calls']
+    assert got['calls'][1] == {"chat_id": 42, "ids": [2], "revoke": False}, got['calls']
+    assert got['after_all'] == [1, 2] and got['after_me'] == [1], got
+    assert got['after_refused'] == [1], ('a message Telegram refused to delete left the list', got)
+    assert 'would not delete' in got['toasts'], got['toasts']

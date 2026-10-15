@@ -548,7 +548,8 @@
         <span class="tg-meta">${m.edited ? 'edited · ' : ''}${esc(new Date(m.date * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))}${m.out ? tick(m.chat_id, m.id) : ''}
           <button class="tg-mini" data-react-pick="${m.id}" aria-label="React" title="React">☺</button>
           ${m.text ? `<button class="tg-mini" data-copy="${m.id}" aria-label="Copy" title="Copy">⧉</button>` : ''}
-          <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button></span></div>`;
+          <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button>
+          <button class="tg-mini" data-del="${m.id}" aria-label="Delete" title="Delete">🗑</button></span></div>`;
     }).join('') || '<div class="tg-muted tg-pad">No messages yet.</div>';
     box.querySelectorAll('[data-react]').forEach(b => b.onclick = () => react(Number(b.dataset.react), b.dataset.emoji));
     box.querySelectorAll('[data-react-pick]').forEach(b => b.onclick = e => { e.stopPropagation(); pickReaction(b, Number(b.dataset.reactPick)); });
@@ -561,8 +562,28 @@
       if(m && m.text && window.PCChatAssist) window.PCChatAssist.summarizeLinks(m.text, 'telegram'); });
     box.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => { st.reply = byId.get(Number(b.dataset.reply)); paintReply();
       const ta = root.querySelector('.tg-text'); if(ta) ta.focus(); });
+    box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => removeMessage(byId.get(Number(b.dataset.del))));
     box.querySelectorAll('a.tg-media').forEach(a => a.onclick = e => { const P = PC(); if(P.openLightbox){ e.preventDefault(); P.openLightbox(a.dataset.full); } });
     if(toBottom || atBottom) pinBottom(box);
+  }
+  /* DELETE, FOR BOTH PEOPLE OR ONLY HERE -- Telegram's own two choices. The message leaves the list only once
+     Telegram says it removed it: in a group it refuses another member's message unless you administer the
+     group, and a deletion that "worked" here while the other person still sees it is the worst outcome. */
+  async function removeMessage(m){
+    if(!m) return;
+    const P = PC(), chat = st.open, ids = [m.id];
+    const rows = [{ v:'all', l:'Delete for everyone' }, { v:'me', l:'Delete only for me' }];
+    const how = P.pickOne ? await P.pickOne('Delete this message?', rows)
+                          : (P.uiConfirm && await P.uiConfirm('Delete this message for everyone?') ? 'all' : null);
+    if(!how) return;
+    try{
+      await post('/api/tgc/delete', { chat_id:chat, ids, revoke: how === 'all' });
+    }catch(e){ if(P.toast) P.toast((e && e.message) || 'Telegram would not delete that message.'); return; }
+    const list = st.msgs.get(chat);
+    if(list) st.msgs.set(chat, list.filter(x => !ids.includes(x.id)));
+    if(st.reply && ids.includes(st.reply.id)){ st.reply = null; paintReply(); }
+    if(st.open === chat) paintMessages(false);
+    if(P.toast) P.toast(how === 'all' ? 'Deleted for everyone' : 'Deleted for you');
   }
   /* STAY ON THE NEWEST MESSAGE WHILE THE CHAT SETTLES. Scrolling once, at paint, is not enough: every
    * photo and video is an element with no size until it loads, and each one that arrives later grows

@@ -75,6 +75,7 @@ class Tg:
     """A Telegram account on the other end."""
     def __init__(self, password=""):
         self.password, self.authorized_sessions, self.sent, self.files, self.read = password, set(), [], [], []
+        self.deleted, self.protected = [], set()
         self.chats = {42: [_Msg(1, "hello"), _Msg(2, "", media=object(), file=_File("cat.jpg", 1234, "image/jpeg"), photo=True),
                            _Msg(3, "", media=object(), file=_File("notes.pdf", 5000, "application/pdf"))]}
 
@@ -150,6 +151,18 @@ class FakeClient:
 
     async def get_messages(self, chat, ids):
         return next((m for m in self.tg.chats.get(chat, []) if m.id == ids), None)
+
+    async def delete_messages(self, chat, ids, revoke=True):
+        """Telegram answers AffectedMessages: pts_count = how many it removed. A message somebody else
+        wrote in a group you do not run is refused by counting nothing, not by raising."""
+        self.tg.deleted.append((chat, list(ids), revoke))
+        have = self.tg.chats.get(chat, [])
+        gone = [m for m in have if m.id in ids and m.id not in self.tg.protected]
+        self.tg.chats[chat] = [m for m in have if m not in gone]
+
+        class Affected:
+            pts_count = len(gone)
+        return [Affected()]
 
     async def download_media(self, m, file=bytes, thumb=None):
         return (b"THUMB" if thumb is not None else b"FULL:") + m.file.name.encode()
@@ -828,3 +841,38 @@ def test_another_reaction_on_their_message_replaces_yours(world):
     after = {r["emoji"]: r for r in run(mgr.react(None, U(1), 42, 1, "🔥"))}
     assert after["🔥"]["count"] == 1 and after["👍"]["count"] == 2, after
 
+
+
+# ---- deleting messages ------------------------------------------------------------------------------
+
+def test_delete_for_everyone_and_only_for_me_reach_telegram_as_revoke(world):
+    """Asked for: "telegram missing way to delete messages for both people"."""
+    mgr, tgs, store, _ = world
+    login(mgr, U(1), tgs[1])
+    assert run(mgr.delete(None, U(1), 42, [1], revoke=True)) == 1
+    assert tgs[1].deleted[-1] == (42, [1], True), "delete for everyone must ask Telegram to REVOKE"
+    assert run(mgr.delete(None, U(1), 42, [2], revoke=False)) == 1
+    assert tgs[1].deleted[-1] == (42, [2], False)
+    assert [m["id"] for m in run(mgr.messages(None, U(1), 42))] == [3]
+
+
+def test_a_deletion_telegram_refused_is_an_error_not_a_success(world):
+    mgr, tgs, store, _ = world
+    login(mgr, U(1), tgs[1])
+    tgs[1].protected.add(3)                    # somebody else's message in a group we do not run
+    with pytest.raises(M.TGError) as e:
+        run(mgr.delete(None, U(1), 42, [3], revoke=True))
+    assert "would not delete" in str(e.value)
+    with pytest.raises(M.TGError):
+        run(mgr.delete(None, U(1), 42, list(range(1, 102))))
+    with pytest.raises(M.TGError):
+        run(mgr.delete(None, U(1), 42, []))
+
+
+def test_the_router_deletes_and_reports_a_refusal_as_a_sentence(api):
+    c, R, who, tgs = api
+    r = c.post("/api/tgc/delete", json={"chat_id": 42, "ids": [1], "revoke": True})
+    assert r.status_code == 200 and r.json() == {"ok": True, "deleted": 1}, r.text
+    tgs[1].protected.add(3)
+    r = c.post("/api/tgc/delete", json={"chat_id": 42, "ids": [3]})
+    assert r.status_code == 400 and "would not delete" in r.json()["error"], r.text

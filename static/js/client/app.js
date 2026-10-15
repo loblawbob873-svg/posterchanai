@@ -14555,6 +14555,7 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    pickOne: _pickOne,   // a choice of several, non-native (telegram.js: delete for everyone / only for me)
     /* ENCRYPT-AND-UPLOAD FOR SOMEBODY WHO IS NOT US, for the sub-modules. There must be exactly one
      * implementation of this wire format: the bytes it writes are read back by a page (and by older
      * builds) that cannot be updated in step with a second copy of it. sms.js needs it for a file

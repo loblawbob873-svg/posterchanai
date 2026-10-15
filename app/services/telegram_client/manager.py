@@ -606,6 +606,34 @@ class Manager:
             raise TGError(_why(e))
         return reactions_of(m) if m is not None else []
 
+    async def delete(self, db, user, chat_id: int, ids, revoke: bool = True) -> int:
+        """Delete messages, for EVERYONE (`revoke`, Telegram's "also delete for <name>") or only here.
+
+        Telegram answers with how many messages it actually removed (`pts_count`). Zero is a refusal --
+        another person's message in a group you do not administer, a message already gone -- and is said
+        as one, because a deletion reported done that did not happen leaves the message on the other
+        person's screen while it vanishes from yours."""
+        try:
+            ids = sorted({int(i) for i in (ids or []) if int(i) > 0})
+        except (TypeError, ValueError):
+            raise TGError("Those are not message ids.")
+        if not ids:
+            raise TGError("Nothing to delete.")
+        if len(ids) > 100:
+            raise TGError("Telegram deletes at most 100 messages at a time.")
+        c = await self._ready(db, user)
+        try:
+            done = await c.delete_messages(int(chat_id), ids, revoke=bool(revoke))
+        except TGError:
+            raise
+        except Exception as e:
+            raise TGError(_why(e))
+        n = sum(int(getattr(r, "pts_count", 0) or 0) for r in (done if isinstance(done, list) else [done]))
+        if n <= 0:
+            raise TGError("Telegram would not delete that message." if len(ids) == 1
+                          else "Telegram would not delete those messages.")
+        return n
+
     async def search(self, db, user, q: str, limit: int = 20) -> list:
         """People, groups and channels on Telegram — the ones you know first, then public ones."""
         q = str(q or "").strip().lstrip("@")

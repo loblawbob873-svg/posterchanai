@@ -185,6 +185,21 @@ async def react(req: React, db: Session = Depends(get_db), user: User = Depends(
         return _err(e)
 
 
+class Delete(BaseModel):
+    chat_id: int
+    ids: list[int]
+    revoke: bool = True
+
+
+@router.post("/delete")
+async def delete(req: Delete, db: Session = Depends(get_db), user: User = Depends(member)):
+    """Delete messages for everyone (`revoke`, the default) or only for this account."""
+    try:
+        return {"ok": True, "deleted": await manager().delete(db, user, req.chat_id, req.ids, req.revoke)}
+    except TGError as e:
+        return _err(e)
+
+
 @router.get("/reactions")
 async def reactions(chat_id: int, db: Session = Depends(get_db), user: User = Depends(member)):
     """The reactions this chat takes — what the picker offers, so it never offers one Telegram refuses."""
