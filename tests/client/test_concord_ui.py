@@ -488,7 +488,9 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
     assert 'cc-members-dialog' in CONCORD and 'cc-member-list' in CONCORD_CSS
     assert 'cc-description-value' in CONCORD and 'await saveCommunitySettings(p,room,values)' in CONCORD
-    assert 'id="cc-channel-visibility" disabled' in CONCORD, "a local UI toggle must not claim to rotate channel keys"
+    # A channel's visibility is SHOWN, never offered as a control: a local toggle must not claim to rotate channel keys,
+    # and a permanently-disabled <select> read as "the dropdown has no choices" (2026-10-15).
+    assert 'id="cc-channel-visibility" role="note"' in CONCORD and 'cc-visibility-select' not in CONCORD
     assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD
     assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(shareableInviteUrl(p,room.url))' in CONCORD

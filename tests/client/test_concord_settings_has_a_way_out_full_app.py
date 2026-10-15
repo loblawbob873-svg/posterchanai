@@ -196,3 +196,23 @@ def test_a_save_that_succeeds_shows_progress_then_closes_onto_the_community(widt
         assert not await b.js('(window.__errors||[]).length'), await b.js('window.__errors')
 
     asyncio.run(desktop.with_browser('online', '', check, BACK + ('' if where == 'desk' else NOT_OS)))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width,where', [(1280, 'page'), (390, 'page')])
+def test_the_close_is_a_red_filled_x(width, where):
+    """"Community Settings should have red filled X to close like the rest of the posterchan UI" (2026-10-15):
+    filled red at REST (not only on hover), with a white ✕, measured from the computed style of the real sheet."""
+    got = {}
+
+    async def check(b):
+        await _boot(b, width, where)
+        await _open(b)
+        got['x'] = await b.js(r'''(()=>{const x=document.querySelector('#cc-settings-close'),cs=getComputedStyle(x),r=x.getBoundingClientRect();
+          return {bg:cs.backgroundColor,fg:cs.color,w:Math.round(r.width),h:Math.round(r.height),ow:x.offsetWidth,zoom:getComputedStyle(document.body).zoom,vw:innerWidth};})()''')
+    asyncio.run(desktop.with_browser('online', '', check, BACK + NOT_OS))
+    x = got['x']
+    assert x['bg'] == 'rgb(232, 17, 35)', ('the close is not filled red at rest', x)
+    assert x['fg'] == 'rgb(255, 255, 255)', ('the ✕ is not white on the red', x)
+    # CSS pixels: the client zooms the whole page (display scaling, 0.72 at 1280 here), every control alike.
+    assert x['ow'] >= 30, ('the close is too small to hit', x)
