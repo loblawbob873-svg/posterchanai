@@ -103,7 +103,16 @@ window.PCBlossomFactory = function(dep){
        * chunk on a phone uplink — would abort at 45s, and uploadBlob's catch reports an AbortError
        * as "check that the server allows cross-origin (CORS) uploads", i.e. a working server
        * blamed, for ever, for every file above about 45s of uplink. */
-      if (!/^(GET|HEAD)$/i.test(method)) return _fetch(input, init);
+      if (!/^(GET|HEAD)$/i.test(method)){
+        /* A WRITE TO A BLOB STORE (upload, mirror, media, delete) makes any remembered drive listing stale. Counted
+         * when it starts AND when it ends, so a listing fetched while an upload was in flight is stale too
+         * (files.js `_listGet` reuses a listing only while this count is unchanged). */
+        let w = false; try{ w = /\/(?:upload|mirror|media)(?:[/?#]|$)|\/[0-9a-f]{64}(?:\.[a-z0-9]{1,8})?(?:[?#]|$)/i.test(new URL(url, location.href).pathname); }catch(_){ }
+        if (!w) return _fetch(input, init);
+        const bump = () => { window.__pcBlobWrites = (window.__pcBlobWrites || 0) + 1; };
+        bump();
+        return _fetch(input, init).then(r => { bump(); return r; }, e => { bump(); throw e; });
+      }
       if (hasSignal || !_watched(url)) return _fetch(input, init);
       let ctl; try{ ctl = new AbortController(); }catch(_){ return _fetch(input, init); }
       const timer = setTimeout(() => { try{ ctl.abort(); }catch(_){ } }, _MEDIA_HEADERS_TIMEOUT_MS);
