@@ -110,6 +110,7 @@ ctx.state={community:0};ctx.render=()=>{};ctx.deliveryOwner=p=>p.viewer().pubkey
 const moderation=src.slice(src.indexOf('    const banMember=async'),src.indexOf('    const closeMemberMenu=',src.indexOf('    const banMember=async')));
 vm.runInContext(moderation+';globalThis.moderate=banMember;',ctx);
 owner=user;rooms=[{communityId:made.communityId,cord:{bundle},channels:[channel]}];let releaseReview,refoundCalls=0;
-ctx.p={viewer:()=>({pubkey:owner}),toast(){}};ctx.reviewRefoundingRecipients=()=>new Promise(r=>releaseReview=r);ctx.refoundRoom=async()=>{refoundCalls++;};
+ctx.p={viewer:()=>({pubkey:owner}),toast(){}};ctx.quickBanReview=()=>new Promise(r=>releaseReview=r);   // the ban's one question (quickBanReview, which replaced the access review)
+ctx.refoundRoom=async()=>{refoundCalls++;};
 const pendingModeration=ctx.moderate('b'.repeat(64));await tick();assert(releaseReview);owner='e'.repeat(64);releaseReview({recipients:[{pubkey:user}]});await pendingModeration;assert.equal(refoundCalls,0,'old review never starts rotation as a new account');
 console.log('real signed control/chat history/live/reconnect/publish plane AUTH and owner/rekey guards PASS');process.exit(0);
