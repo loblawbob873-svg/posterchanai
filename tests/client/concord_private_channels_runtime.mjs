@@ -8,6 +8,8 @@ const made=await ctx.PosterCord.createCommunity(opts),bundle=copy({...ctx.Poster
 const memberSk=NT.generateSecretKey(),member=NT.getPublicKey(memberSk),stranger=NT.getPublicKey(NT.generateSecretKey());
 const plan=await R.createPrivateChannelPlan(bundle,initial,copy({name:'Private lounge',recipients:[member]}),owner,sign),controls=copy([...initial,...plan.wraps]);
 assert.equal(plan.wraps.length,3);assert(R.inspectControl(plan.bundle,controls).channels.some(c=>c.id===plan.channelId&&c.private));
+// The ban keeps a private channel for exactly its role holders (concord.js quickBanReview): the role must say WHICH channel.
+{const info=R.inspectControl(plan.bundle,controls),role=info.roles.find(r=>r.scope==='channel'&&r.channelId===plan.channelId);assert(role,'a channel role must carry its channel id');assert((info.grants[member]||[]).includes(role.id),'the member holds the channel role');}
 assert(!R.inspectControl(bundle,controls).channels.some(c=>c.id===plan.channelId),'public member cannot derive the private key');
 const invite=R.privateChannelInvite(plan.bundle,controls,plan.channelId,member);assert.equal(invite.channels.length,1);assert(!invite.control_root);assert(!invite.held_roots);
 const msg=await R.createChatWrap(plan.bundle,controls,plan.channelId,'Only granted members',owner,sign);

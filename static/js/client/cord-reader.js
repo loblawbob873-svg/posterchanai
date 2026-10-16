@@ -26998,7 +26998,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       /* The role graph, for a role menu: server roles with their decimal permission string, and who
        * holds which (Vector's Admin / Moderator). */
-      roles: folded.roster.roles.map(r => ({ id: r.roleId, name: r.name, position: r.position, permissions: r.permissions.toString(), scope: r.scope && r.scope.kind || "server" })),
+      roles: folded.roster.roles.map(r => ({ id: r.roleId, name: r.name, position: r.position, permissions: r.permissions.toString(), scope: r.scope && r.scope.kind || "server", channelId: r.scope && r.scope.kind === "channel" ? r.scope.channelId : null })),
       grants: Object.fromEntries(folded.roster.grants.filter(g => !folded.banned.has(g.member)).map(g => [g.member, [...g.roleIds]])),
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, view: ch.view || "chat", streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };

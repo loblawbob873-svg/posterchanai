@@ -1358,6 +1358,16 @@
     }catch(e){if(current())console.warn('Concord member history unavailable',e);}
     finally{entry.pending=false;}
   }
+  /* An envelope this client just published to the guestbook, folded in without waiting for the next read. */
+  function noteOwnGuestbookEvent(room,wrap,owner){
+    try{
+      const entry=roomGuestbooks.get(owner+'\n'+roomIdentity(room));
+      if(!entry||!wrap)return;
+      entry.wraps=mergeEnvelopes(entry.wraps,[wrap]);entry.projection=null;
+      const loadKey=room.communityId||room.naddr;
+      void cacheEnvelopes(envelopeCacheKey(loadKey,'guestbook:'+owner),[wrap]).catch(()=>{});
+    }catch(_){ }
+  }
   function roomParticipants(room,viewerPubkey=''){
     ownGuestbookViewer(viewerPubkey);
     const observed=channelsOf(room).flatMap(channel=>testMessages(channelStoreId(room,channel.name))).filter(Boolean),fromMessages=observed.map(message=>message.pubkey);
@@ -5524,6 +5534,23 @@
       document.body.append(overlay);fields.values().next().value?.focus();
     });
   }
+  async function quickBanReview(p,room,target){
+    const owner=room.cord.bundle.owner,keep=[...new Set([owner,...roomParticipants(room,owner)])].filter(pk=>pk&&pk!==target);
+    const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
+    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${name} from this community?`,{ok:'Ban',danger:true}):true;
+    if(!ok)return null;
+    // Each private channel keeps the members holding its channel role (and the owner) -- the same people who hold its key.
+    const channelRecipients={},reader=window.PosterCordReader,loadKey=room.communityId||room.naddr;
+    if((room.cord.bundle.channels||[]).length){
+      const info=reader.inspectControl(room.cord.bundle,roomControls.get(loadKey)||[]),kept=new Set(keep);
+      for(const ch of room.cord.bundle.channels){
+        const roleIds=new Set((info.roles||[]).filter(r=>r.scope==='channel'&&r.channelId===ch.id).map(r=>r.id));
+        const members=Object.entries(info.grants||{}).filter(([pk,ids])=>kept.has(pk)&&(ids||[]).some(id=>roleIds.has(id))).map(([pk])=>pk);
+        channelRecipients[ch.id]=[...new Set([owner,...members])].map(pubkey=>({pubkey}));
+      }
+    }
+    return {recipients:keep.map(pubkey=>({pubkey})),channelRecipients,removed:[target]};
+  }
   function bindRefoundingControl(p,$){
     const saveButton=$('#cc-settings-save'),room=saved()[state.community],owner=deliveryOwner(p);
     if(!saveButton||!room?.cord?.bundle||room.cord.bundle.owner!==owner||room.cord.bundle.dissolved||$('#cc-refound'))return;
@@ -6143,7 +6170,11 @@
     /* The composer's text is left out of the comparison: the draft in the markup was READ from the
      * live box (captureComposer), so a difference there is only the person typing -- and rebuilding
      * for it replaced the text box under their fingers. */
-    const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2');
+    /* ...and the KNOWN MEMBERS list is part of what is drawn, though it is inserted after this markup: a change
+     * to it alone (a kick, a join, a profile name landing) left identical markup, this returned, and the panel kept
+     * the old list -- "i just kicked a member out of the community and it does not work, he still there". */
+    const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2')
+      +'\u0001'+String(memberRows);
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
     /* A FULL REBUILD, deliberately: everything outside the message list is bound with listeners that a
      * kept node would collect once per repaint (the composer's own input handlers among them). The
@@ -6438,7 +6469,11 @@
       const actor=deliveryOwner(p),room=saved()[state.community];if(!room?.cord?.bundle)return p.toast('Community moderation is not ready.');
       if(room.cord.refounding)return p.toast('Resume the pending key rotation in community settings first.');
       try{
-        const reviewed=await reviewRefoundingRecipients(p,room,[target]);if(!reviewed)return;
+        /* "why is banning UI so complex? I only care about the person I am banning" / "a simple button to ban like
+         * every other program" (2026-10-16). The only decision IS who is banned: everyone else keeps exactly the access
+         * they have -- the community to everyone on Known members, each private channel to the members its channel
+         * role is granted to (CORD's own rule: privateChannelInvite refuses anyone without it). quickBanReview. */
+        const reviewed=await quickBanReview(p,room,target);if(!reviewed)return;
         if(deliveryOwner(p)!==actor)throw new Error('The signing account changed during access review.');
         await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
       }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
@@ -6460,6 +6495,11 @@
         const r=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
         if(!r?.ok)throw new Error('the community relays did not accept it');
         if(verb==='ban')roomControls.set(loadKey,[...wraps,made.wrap]);
+        /* A KICK IS A GUESTBOOK EVENT, and the member list is folded from the guestbook THIS client holds -- which
+         * is re-read at most once a minute and never contained our own kick. So the kicked member stayed on the
+         * list ("i just kicked a member out of the community and it does not work, he still there", 2026-10-16).
+         * The accepted kick joins the held guestbook (and its cache) at once, exactly as if it had been read back. */
+        if(verb==='kick')noteOwnGuestbookEvent(room,made.wrap,deliveryOwner(p));
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
@@ -6485,7 +6525,14 @@
       }catch(e){ p.toast('The role was not changed: '+(e&&e.message||e)); }
     };
     const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
-    const openMemberMenu=(event,target)=>{closeMemberMenu();const _room=saved()[state.community],notSelf=target!==viewer.pubkey&&target!==boundOwnerPk,canBan=notSelf&&(isOwner||memberMay(_room,viewer.pubkey,'BAN')),canKick=notSelf&&!_room?.local&&(isOwner||memberMay(_room,viewer.pubkey,'KICK')),canRoles=notSelf&&!_room?.local&&(isOwner||memberMay(_room,viewer.pubkey,'MANAGE_ROLES')),heldRoles=canRoles?memberRoleNames(_room,target):[],canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canRoles?`${heldRoles.includes('Moderator')?'':`<button data-cc-member-role="moderator" role="menuitem">Make moderator</button>`}${heldRoles.includes('Admin')||!isOwner?'':`<button data-cc-member-role="admin" role="menuitem">Make admin</button>`}${heldRoles.length?`<button data-cc-member-role="" role="menuitem">Remove ${p.enc(heldRoles.join(' / '))} role</button>`:''}`:''}${canKick?`<button class="danger" data-cc-member-kick="${p.enc(target)}" role="menuitem">Kick from community</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null,rows=1+(canMessage?1:0)+(canBan?1:0)+(canKick?1:0)+(canRoles?2:0),x=Math.min(rect?rect.right+6:(event.clientX||12),window.innerWidth-190),y=Math.min(rect?rect.top:(event.clientY||12),window.innerHeight-(rows*42+8));menu.style.left=Math.max(8,x)+'px';menu.style.top=Math.max(8,y)+'px';menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void (isOwner?banMember(target):staffModerate(target,'ban'));};menu.querySelectorAll('[data-cc-member-role]').forEach(b=>b.onclick=()=>{closeMemberMenu();void setMemberRole(target,b.dataset.ccMemberRole);});const kick=menu.querySelector('[data-cc-member-kick]');if(kick)kick.onclick=()=>{closeMemberMenu();void staffModerate(target,'kick');};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
+    /* THE MENU IS PLACED IN SCREEN PIXELS AND WRITTEN IN THE PAGE'S. A PosterChanOS desk runs the client at a UI
+     * scale (body{zoom:1.25} on a 4K screen): getBoundingClientRect/innerWidth are screen pixels, but a fixed
+     * element's left/top are scaled by the zoom -- so the member list's right edge (x 1249) became left 1495 in a
+     * 1386-wide window and the menu opened off-screen: "the right click on person in Known Members in concord
+     * don't work ... it came back!" (2026-10-16; the old test ran at zoom 1). Measured with its real size, it
+     * opens beside the row, flips to the row's left when the right has no room, and is clamped into the window. */
+    const placeMemberMenu=(menu,rect,event)=>{const zv=parseFloat(getComputedStyle(document.body).zoom),z=zv>0&&isFinite(zv)?zv:1,m=menu.getBoundingClientRect(),W=window.innerWidth,H=window.innerHeight;let x=rect?rect.right+6:(event.clientX||12);if(x+m.width>W-8)x=rect?rect.left-m.width-6:W-m.width-8;x=Math.max(8,Math.min(x,W-m.width-8));const y=Math.max(8,Math.min(rect?rect.top:(event.clientY||12),H-m.height-8));menu.style.left=(x/z)+'px';menu.style.top=(y/z)+'px';};
+    const openMemberMenu=(event,target)=>{closeMemberMenu();const _room=saved()[state.community],notSelf=target!==viewer.pubkey&&target!==boundOwnerPk,canBan=notSelf&&(isOwner||memberMay(_room,viewer.pubkey,'BAN')),canKick=notSelf&&!_room?.local&&(isOwner||memberMay(_room,viewer.pubkey,'KICK')),canRoles=notSelf&&!_room?.local&&(isOwner||memberMay(_room,viewer.pubkey,'MANAGE_ROLES')),heldRoles=canRoles?memberRoleNames(_room,target):[],canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canRoles?`${heldRoles.includes('Moderator')?'':`<button data-cc-member-role="moderator" role="menuitem">Make moderator</button>`}${heldRoles.includes('Admin')||!isOwner?'':`<button data-cc-member-role="admin" role="menuitem">Make admin</button>`}${heldRoles.length?`<button data-cc-member-role="" role="menuitem">Remove ${p.enc(heldRoles.join(' / '))} role</button>`:''}`:''}${canKick?`<button class="danger" data-cc-member-kick="${p.enc(target)}" role="menuitem">Kick from community</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null;placeMemberMenu(menu,rect,event);menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void (isOwner?banMember(target):staffModerate(target,'ban'));};menu.querySelectorAll('[data-cc-member-role]').forEach(b=>b.onclick=()=>{closeMemberMenu();void setMemberRole(target,b.dataset.ccMemberRole);});const kick=menu.querySelector('[data-cc-member-kick]');if(kick)kick.onclick=()=>{closeMemberMenu();void staffModerate(target,'kick');};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
     openMemberMenuNow=openMemberMenu;wireAuthorMenu();
     $$('[data-cc-member]').forEach(row=>{const target=row.dataset.ccMember;let held=null,longPressed=false;row.onclick=e=>{e.preventDefault();/* Android/iOS synthesize click after a completed long press. Consume that click or the menu is immediately replaced by Profile. Resolve the viewport now, not when this row was rendered: rotation and desktop window resizing can cross the responsive boundary without causing a Concord repaint. */const action=memberTapAction(memberViewportIsNarrow(),longPressed);longPressed=false;if(action==='consume')return;if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}openMemberMenu(e,target);};row.oncontextmenu=e=>{e.preventDefault();longPressed=false;openMemberMenu(e,target);};row.onpointerdown=e=>{if(e.pointerType==='mouse')return;longPressed=false;held=setTimeout(()=>{held=null;longPressed=true;openMemberMenu(e,target);},550);};row.onpointerup=row.onpointercancel=row.onpointermove=()=>{if(held){clearTimeout(held);held=null;}};});
     /* CREATE A CHANNEL. Same publish path as the community-profile save below: read the control

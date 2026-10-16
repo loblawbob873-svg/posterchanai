@@ -18,6 +18,7 @@ WINDOW = "window.pcShell.windowContext={role:'app',view:'concord'};window.pcShel
 ON_TOP = r"""(()=>{const m=document.querySelector('.cc-member-menu');if(!m)return {menu:false};
   const r=m.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+Math.min(18,r.height/2));
   return {menu:true,visible:r.width>0&&r.height>0,onTop:!!hit&&m.contains(hit),
+          inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,rect:[r.left,r.top,r.right,r.bottom],vw:innerWidth,
           items:[...m.querySelectorAll('[role=menuitem]')].map(b=>b.textContent)}})()"""
 
 
@@ -37,13 +38,19 @@ async def _right_click_a_member(b):
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-@pytest.mark.parametrize("where", ["page", "pcos-window"])
-def test_right_clicking_a_known_member_opens_the_menu_on_top(where):
+@pytest.mark.parametrize("where,scale", [("page", None), ("pcos-window", None), ("pcos-window", "1.25")])
+def test_right_clicking_a_known_member_opens_the_menu_on_top(where, scale):
+    """At UI scale 1.25 (a 4K PosterChanOS desk) the menu opened OFF the window -- left 1495 in a 1386-wide window
+    ("the right click on person in Known Members in concord don't work ... it came back!", 2026-10-16): its position
+    was computed in screen pixels and written into a zoomed page, which scaled it again."""
     got = {}
 
     async def check(b):
         await b.call("Emulation.setDeviceMetricsOverride", dict(width=1500, height=900, deviceScaleFactor=1, mobile=False))
         await desktop.login(b)
+        if scale:
+            await b.js("document.body.style.setProperty('--ui-scale', %r)" % scale)
+            got["zoom"] = await b.js("getComputedStyle(document.body).zoom")
         if where == "page":
             await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
         await b.js(SETUP)
@@ -54,7 +61,10 @@ def test_right_clicking_a_known_member_opens_the_menu_on_top(where):
 
     asyncio.run(desktop.with_browser("online", "?pcwin=concord" if where == "pcos-window" else "", check,
                                      WINDOW if where == "pcos-window" else ""))
+    if scale:
+        assert abs(float(got["zoom"]) - float(scale)) < .01, ("the UI scale never applied: this measured nothing", got)
     assert got.get("menu"), ("right-click opened no menu", where, got)
+    assert got["inside"], ("the menu opened outside the window", where, scale, got)
     assert got["visible"] and got["onTop"], ("the menu opened but something covers it", where, got)
     assert "View profile" in got["items"], got
     assert not got["errors"], got["errors"]
