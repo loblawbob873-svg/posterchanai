@@ -134,3 +134,25 @@ def test_the_admin_textarea_saves_the_block_lists_durably():
     assert relay_blocklist.KEY in admin._BLOCK_DURABLE
     for k in ("nostr_relay_blocked_words", "nostr_relay_blocked_langs", "nostr_relay_blocked_relays"):
         assert k in admin._BLOCK_DURABLE
+
+
+def test_a_block_purges_what_is_already_stored_for_that_account(blocklist, monkeypatch):
+    """"i blocked todd at the relay, why is his posts showing" (2026-10-16). The reload only rejects NEW events; his
+    28 stored ones stayed until the nightly purge -- while the button's own confirmation promised "rejected and
+    purged". A block now deletes exactly that account's stored events, after the list landed and was reloaded."""
+    vals, order, state = blocklist
+    import app.services.nostr_relay.thread as thread
+    deleted = []
+    monkeypatch.setattr(thread, "trigger_delete_author", lambda pks: deleted.append(list(pks)) or {"ok": True})
+    r = asyncio.run(relay_blocklist.set_blocked(None, BLOCKED_PK, True))
+    assert r["ok"] is True
+    assert deleted == [[BLOCKED_PK]], ("the blocked account's stored events were not purged", deleted)
+    assert order[0] == "write" and order[1][0] == "reload", order
+
+    deleted.clear()
+    asyncio.run(relay_blocklist.set_blocked(None, BLOCKED_PK, False))
+    assert deleted == [], "an UNBLOCK must delete nothing"
+
+    deleted.clear(); state["fail"] = True
+    r = asyncio.run(relay_blocklist.set_blocked(None, BLOCKED_PK, True))
+    assert r["ok"] is False and deleted == [], "a block the relay did not save must not purge anything"
