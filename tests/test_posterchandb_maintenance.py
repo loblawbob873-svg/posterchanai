@@ -271,6 +271,7 @@ def test_a_crash_between_copy_and_delete_loses_and_duplicates_nothing(tmp_path, 
         assert os.path.exists(os.path.join(p, "seg-000001.log"))
     monkeypatch.undo()
     s._file.close()                          # the process died: no close(), no flush
+    s._release_dirlock()                 # ...and the kernel drops its lock
     s = Store(p)
     assert s.last_open["snapshot"], s.last_open
     if when == "before-delete":

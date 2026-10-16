@@ -14,6 +14,14 @@ from app.services.posterchandb import checkpoint, disk
 from app.services.posterchandb.store import Store
 from tests.pcdb_gen import Gen
 
+def _copy_store(p):
+    """A copy of a store directory, for a second Store to replay beside the first (a directory takes one Store)."""
+    import shutil
+    dst = str(p).rstrip("/") + "-full"
+    shutil.copytree(p, dst, ignore=shutil.ignore_patterns("STORE.lock"))
+    return dst
+
+
 
 def _answers(store, gen, n=200, seed=11):
     gen.r = random.Random(seed)
@@ -65,8 +73,10 @@ def test_a_checkpoint_cut_short_anywhere_opens_like_a_full_replay(tmp_path, monk
         pass
     monkeypatch.undo()
     s._file.close()                                     # the process dies
+    s._release_dirlock()                 # ...and the kernel drops its lock
+    full_dir = _copy_store(p)                    # one Store per directory: the full replay gets a copy
     fast = Store(p)
-    full = Store(p, snapshots=False)
+    full = Store(full_dir, snapshots=False)
     try:
         assert fast.last_open["snapshot"], (point, fast.last_open)
         assert _answers(fast, g) == _answers(full, g), point
