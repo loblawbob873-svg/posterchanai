@@ -2653,20 +2653,29 @@
      * a .xdc by NAME or URL -- a sealed Armada/Vector attachment can carry a generic type, and then the
      * only card left was the bare-URL one below, with no key: "not a zip file" on a game that is fine. */
     const metas=[];
-    for(const t of (m&&m.tags||[]).slice(0,100)){ if(t[0]!=='imeta')continue; const f={}; for(let i=1;i<Math.min(t.length,30);i++){ const s=String(t[i]||'').slice(0,4096),j=s.indexOf(' '); if(j>0)f[s.slice(0,j)]=s.slice(j+1); } if(/^https?:\/\//i.test(f.url||''))metas.push(f); }
+    for(const t of (m&&m.tags||[]).slice(0,100)){ if(t[0]!=='imeta')continue; const f={}; for(let i=1;i<Math.min(t.length,30);i++){ const s=String(t[i]||'').slice(0,4096),j=s.indexOf(' '); if(j>0)f[s.slice(0,j)]=s.slice(j+1); } if(/^https?:\/\//i.test(f.url||'')||/^[0-9a-f]{64}$/i.test(String(f.x||'')))metas.push(f); }
     const isXdc=f=>{const mime=(f.m||'').toLowerCase();return mime==='application/vnd.webxdc+zip'||mime==='application/webxdc+zip'||mime==='application/x-webxdc'||/\.xdc$/i.test(String(f.name||'').trim())||/\.xdc(?:[?#]|$)/i.test(f.url||'');};
     /* Armada/Vector SEAL the .xdc like any room attachment: the URL is ciphertext, `x` its hash, `ox` the game's.
      * Hand the player the key, or it unzips random bytes. A seal we cannot open is not offered as a game. */
     const encOf=f=>{const alg=String(f['encryption-algorithm']||'').toLowerCase();if(!alg)return null;if(alg!=='aes-gcm')return false;return {key:f['decryption-key']||'',nonce:f['decryption-nonce']||'',ox:f.ox||''};};
+    /* AN ATTACHMENT WITH NO `url` IS FOUND BY ITS HASH. Josephus's client wrote `["imeta","url ", ... "x <hash>"]`
+     * with the link only in the message text (2026-10-15): matched by URL, the attachment and the link never met,
+     * so the card that was drawn had no key, no hash and no session ("looks encrypted" / "not a zip" on a game
+     * that decrypts fine), and with no link in the text there was no card at all. A Blossom URL names its blob,
+     * so a text link carrying the attachment's `x` IS that attachment. */
+    const textLinks=(String(m&&m.text||'').slice(0,200000).match(/https?:\/\/[^\s<>]+/gi)||[]).slice(0,50);
+    const hashOf=f=>/^[0-9a-f]{64}$/i.test(String(f.x||''))?String(f.x).toLowerCase():'';
+    const linkFor=f=>{const h=hashOf(f);return h?(textLinks.find(u=>u.toLowerCase().includes(h))||''):'';};
     for(const f of metas){ if(!isXdc(f))continue; const enc=encOf(f); if(enc===false)continue;
+      const where=String(f.url||'').trim()||linkFor(f); if(!where)continue;
       /* `webxdc-topic` is the current Armada/Vector Iroh lobby contract and wins over the legacy alias if both are present. */
       const explicit=f['webxdc-topic']||f.webxdc||'';
-      return {url:f.url,sha:f.x||'',uuid:explicit,urlTopicMessageId:explicit?'':messageId(m),name:(f.summary||String(f.name||'').replace(/\.xdc$/i,'')||'Mini app').slice(0,80),transport,...(enc?{enc}:{})}; }
+      return {url:where,sha:f.x||'',uuid:explicit,urlTopicMessageId:explicit?'':messageId(m),name:(f.summary||String(f.name||'').replace(/\.xdc$/i,'')||'Mini app').slice(0,80),transport,...(enc?{enc}:{})}; }
     /* Bare links have no attachment tag to carry a minted topic. Armada/Vector derive it from the
      * canonical URL plus this message id; deriving from room scope silently creates a private lobby.
      * A bare link that IS one of this message's sealed attachments still gets that attachment's key. */
     const url=(String(m&&m.text||'').slice(0,200000).match(/https?:\/\/[^\s<>]+\.xdc(?:\?[^\s<>]*)?/i)||[])[0]; if(!url)return null;
-    const same=metas.find(f=>f.url===url), enc=same?encOf(same):null; if(enc===false)return null;
+    const same=metas.find(f=>f.url===url||(hashOf(f)&&url.toLowerCase().includes(hashOf(f)))), enc=same?encOf(same):null; if(enc===false)return null;
     return {url,sha:same&&same.x||'',uuid:'',urlTopicMessageId:messageId(m),name:'Mini app',transport,...(enc?{enc}:{})};
   }
   /* A delegated Webxdc click may observe a card produced by the generic link hydrator before the
