@@ -9,7 +9,6 @@ the client helper that chooses it:
   * the SHIPPED PCThumb (app.js) asks for a thumbnail on an instance, never without one, never for GIF/SVG, and a
     failed thumbnail falls back to the original before any other fallback.
 """
-import asyncio
 import io
 import json
 import os
