@@ -341,7 +341,7 @@ window.PCCardsFactory = function(dep){
   // media we sized from imeta is already right, and media with no hint at all is on the fallback path.
   function _dimLearn(el, w, h){
     if(!(w>0&&h>0)) return;
-    if(!el.dataset || el.dataset.dim!=='guess') return;
+    if(!el.dataset || el.dataset.dim!=='guess' || el.dataset.parkedSrc) return;   // a parked placeholder (PCImgPark) is not the picture
     delete el.dataset.dim;
     // data-dimkey: what to REMEMBER this measurement under, when that isn't the src. An encrypted DM
     // attachment is played from a blob: URL minted this session — remembering the size under that key

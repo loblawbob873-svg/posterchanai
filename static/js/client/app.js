@@ -6637,6 +6637,42 @@
      stays on the element as `data-osrc` for everything that needs the real file (the lightbox, retries).
      No instance (a bundled app run without one), a GIF/SVG, a data:/blob: URL: the original, as before.
      `err` is the fallback: a thumbnail that fails (an instance without the route) loads the original. */
+  /* PICTURES FAR OFF SCREEN ARE PUT DOWN, AND PICKED UP AGAIN BEFORE THEY COME BACK. Measured 2026-10-16 on an
+     emulated Pixel 5 (4x CPU) after one fling through the Nostrverse feed: with no instance (no thumbnails) the feed held
+     765 MB of decoded pictures, and every one stays decoded for as long as its card exists. On a phone that is past what
+     the WebView keeps rasterised, and a fast scroll draws bare background where cards should be ("choppy scroll, you see
+     black on the timeline"). Native clients recycle; this is that, and it needs no server: a card more than ~3 screens
+     away has its pictures swapped for a 1x1 placeholder with the card's height pinned (nothing moves), and gets them
+     back while it is still ~3 screens away. blob:/data: pictures are left alone (an object URL may be the only copy). */
+  window.PCImgPark = (function(){
+    const GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const SEL = '#tl-notes>.note:not([data-pw]),#tl-notes>.reply-pair:not([data-pw])';
+    let io = null, scanT = 0;
+    const parkable = src => /^https?:/i.test(src || '');
+    function park(card){
+      if(card.dataset.parked) return;
+      const imgs = [...card.querySelectorAll('img')].filter(i => parkable(i.getAttribute('src')) && i.complete && i.naturalWidth > 0 && i.dataset.dim !== 'guess');   // only DECODED pictures hold memory; one still sizing itself must keep learning its size
+      if(!imgs.length) return;
+      const h = card.offsetHeight; if(!h) return;
+      card.style.height = h + 'px'; card.dataset.parked = '1';
+      for(const i of imgs){ i.dataset.parkedSrc = i.getAttribute('src'); i.src = GIF; }
+    }
+    function unpark(card){
+      if(!card.dataset.parked) return;
+      for(const i of card.querySelectorAll('img[data-parked-src]')){ const s = i.dataset.parkedSrc; delete i.dataset.parkedSrc; if(i.getAttribute('src') === GIF) i.src = s; }
+      delete card.dataset.parked; card.style.height = '';
+    }
+    function scan(){
+      scanT = 0;
+      if(typeof IntersectionObserver === 'undefined') return;
+      const root = document.getElementById('feed');
+      if(!io || io.root !== root){ if(io) io.disconnect(); io = new IntersectionObserver(es => { for(const e of es){ if(e.isIntersecting) unpark(e.target); else park(e.target); } }, { root, rootMargin: '300% 0px' }); }
+      for(const c of document.querySelectorAll(SEL)){ c.dataset.pw = '1'; io.observe(c); }
+    }
+    function soon(){ if(!scanT) scanT = setTimeout(scan, 400); }
+    document.addEventListener('scroll', soon, { capture: true, passive: true });
+    return { scan, park, unpark, GIF };
+  })();
   window.PCThumb = (function(){
     function base(){
       try{ return (typeof window.__PC_API_BASE__ !== 'undefined') ? (window.__PC_API_BASE__ || '') : (location.origin || ''); }
