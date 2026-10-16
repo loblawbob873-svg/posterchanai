@@ -11401,7 +11401,7 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    application — the shell itself is tiled and can never be. Sized by main.js; this only paints. */
 .os-popup-body{margin:0;background:var(--panel,#0f1117);color:var(--text,#e8ecf5);
   font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
-.os-popup{display:flex;flex-direction:column;height:100vh;padding:10px;gap:8px;box-sizing:border-box}
+.os-popup{display:flex;flex-direction:column;height:calc(100vh / var(--zf, 1));padding:10px;gap:8px;box-sizing:border-box}
 .os-popup-q{flex:0 0 auto}
 .os-popup-list{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
 .os-popup-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:0;border-radius:8px;
@@ -11414,13 +11414,13 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    In its own window there is nothing behind it and no corner to sit in: the window IS the panel, so
    the positioning and the shadow come off and it takes the whole surface. Without this the centre
    renders 8px inside a window sized to it and clips its own last row. */
-.os-popup-body .os-noti{position:static;width:100%;max-height:none;height:100vh;
+.os-popup-body .os-noti{position:static;width:100%;max-height:none;height:calc(100vh / var(--zf, 1));
   border-radius:0;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
 .os-popup-body .os-noti-list{flex:1 1 auto;min-height:0}
 /* The tray flyout, hosted the same way. `.os-pop` is absolutely positioned beside its chip and
    `positionPop` writes left/top into it; under `position:static` those writes are inert and the
    panel simply fills the window, which is what a flyout that IS a window should do. */
-.os-popup-body .os-pop{position:static;width:100%;max-width:none;height:100vh;max-height:none;
+.os-popup-body .os-pop{position:static;width:100%;max-width:none;height:calc(100vh / var(--zf, 1));max-height:none;
   border-radius:0;border:0;box-shadow:none;margin:0}
 .os-tray-popup{overflow:hidden}
 /* THE TRAY FLYOUT HUGS ITS CONTENT; THE NOTIFICATION CENTRE STILL FILLS ITS WINDOW.
@@ -11439,7 +11439,7 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    taskbar, which is a different kind of wrong from the one being fixed. */
 .os-popup-body.os-tray-popup #os-popup-host{display:flex;flex-direction:column;
   justify-content:flex-end}
-.os-popup-body.os-tray-popup .os-pop{height:auto;max-height:100vh;
+.os-popup-body.os-tray-popup .os-pop{height:auto;max-height:calc(100vh / var(--zf, 1));
   /* Its own corners and edge come back: against a transparent window it is a panel again, not a
      surface that happens to end. */
   border-radius:12px;border:1px solid var(--line);box-shadow:0 18px 44px rgba(0,0,0,.55)}
@@ -11458,7 +11458,11 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 .os-popup-body.os-popup-start{background:transparent}
 .os-popup-body.os-popup-start .os-startmenu{position:static;inset-inline-start:auto;left:auto;
   right:auto;bottom:auto;transform:none;margin:0;box-sizing:border-box;
-  width:100%;max-width:none;height:100vh;max-height:100vh}
+  width:100%;max-width:none;height:calc(100vh / var(--zf, 1));max-height:calc(100vh / var(--zf, 1))}
+/* `100vh / --zf`, NEVER `100vh`: under the desktop UI zoom (body{zoom:1.25} on a 4K desk) a bare 100vh is
+   125% of the popup window, and the start menu's last row -- the account chip and the power/settings
+   buttons -- was cut off below the window ("no more buttons or user account shows at the bottom",
+   2026-10-16; the laptop at zoom 1 looked fine). tests/client/test_start_popup_footer_is_visible_full_app.py */
 /* The client's own DOM stays in the document (its bindings need it) and is simply not painted. */
 /* THE SAME RULE, ONE NETWORK FETCH EARLIER. `os-popup-body` is added by `popupHost()`, which runs
    from `restore()`, which app.js calls after `_cfgCache(CFG)` — so on a slow or unreachable node
