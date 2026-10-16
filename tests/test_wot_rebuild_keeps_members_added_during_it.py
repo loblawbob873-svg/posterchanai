@@ -72,6 +72,10 @@ def test_a_bot_whose_post_no_relay_took_says_so_instead_of_posted_note(monkeypat
     monkeypatch.chdir(os.path.join(root, "botframework"))
     sys.modules.pop("nostr", None)
     bot = importlib.import_module("nostr")
+    # the key is read from the bot's config at import, and another test may have imported that config without one
+    # (a parallel shard): set it on the module, which is what every send reads
+    monkeypatch.setattr(bot, "_SECKEY", bytes.fromhex("1" * 64))
+    monkeypatch.setattr(bot, "_RELAYS", ["ws://127.0.0.1:9"])
 
     async def refused(relays, ev, direct=False):
         return 0
