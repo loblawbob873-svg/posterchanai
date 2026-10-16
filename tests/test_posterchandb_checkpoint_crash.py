@@ -5,7 +5,6 @@ checkpoint does not look -> changed pages journaled -> manifest replaced -> jour
 step here is made to fail (the process "dies": no close, no flush), with a history that exercises every kind of
 change below the last checkpoint -- kills (NIP-09, superseded versions, auto-clean) and a compaction's relocations.
 """
-import os
 import random
 import time
 
