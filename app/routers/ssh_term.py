@@ -41,7 +41,9 @@ async def _user_from_token(token: str, db: Session):
         if not payload:
             return None
         uid = payload.get("sub")
-        return await user_table.aget(db, uid) if uid else None
+        user = await user_table.aget(db, uid) if uid else None
+        from app.auth import token_revoked
+        return None if token_revoked(payload, user) else user
     except Unavailable:
         raise           # the account store could not be asked: not "log in again"
     except Exception:

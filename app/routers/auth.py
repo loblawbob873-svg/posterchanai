@@ -339,6 +339,22 @@ def logout(response: Response, request: Request):
     return {"message": "Logged out"}
 
 
+@router.post("/sessions/revoke")
+async def revoke_other_sessions(response: Response, request: Request, current_user: User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
+    """SIGN OUT EVERYWHERE ELSE: every session token issued before now stops working (app/auth.token_revoked),
+    and THIS device gets a fresh one so the person pressing the button stays signed in. API keys are separate
+    credentials and are not touched -- they are revoked one by one where they are listed."""
+    from app.services import user_table
+    now = int(time.time())
+    current_user.tokens_valid_after = now
+    await user_table.asave(db, current_user)
+    token = create_access_token({"sub": str(current_user.id)})
+    _set_auth_cookie(response, token, request)
+    logger.info("[auth] user %s signed out every other session", current_user.id)
+    return {"ok": True, "access_token": token, "token_type": "bearer", "valid_after": now}
+
+
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user

@@ -12,6 +12,7 @@ from app.services.user_table import UserRow as User
 from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
 from app.services.relay_reader import Unavailable
 import os
+import time
 import urllib.parse
 import warnings
 
@@ -61,8 +62,26 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS))
-    to_encode.update({"exp": expire})
+    # `iat` is what lets a session be ended before it expires: see token_revoked.
+    to_encode.update({"exp": expire, "iat": int(time.time())})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def token_revoked(payload: Optional[dict], user) -> bool:
+    """A SESSION TOKEN IS VALID UNTIL IT EXPIRES -- UNLESS ITS ACCOUNT SAID "SIGN OUT EVERYWHERE".
+
+    Security review #11 (2026-10-14): a session token was valid for its full 30 days whatever happened -- a
+    lost phone, a leaked cookie, a password change all left every issued token working. An account now
+    carries `tokens_valid_after` (unix seconds); a token issued before it is refused. Tokens minted before
+    `iat` existed carry none, and are refused only once their account has set the switch. One rule, called
+    by every place that turns a token into a user (HTTP, websockets, the SSH terminal, Telegram calls)."""
+    after = getattr(user, "tokens_valid_after", None) if user is not None else None
+    if not after:
+        return False
+    try:
+        return int((payload or {}).get("iat") or 0) < int(after)
+    except (TypeError, ValueError):
+        return True
 
 
 def decode_token(token: str) -> Optional[dict]:
@@ -161,6 +180,8 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
+    if token_revoked(payload, user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This session was signed out")
 
     return _refuse_blocked(user)
 
@@ -293,4 +314,6 @@ async def get_user_from_websocket(websocket: WebSocket, db: Session) -> Optional
     # as an error the client retries, never answered as a signed-out user).
     from app.services import relay_blocklist, user_table
     user = await user_table.aget(db, user_id_int)
+    if token_revoked(payload, user):
+        return None
     return None if relay_blocklist.is_user_blocked(user) else user
