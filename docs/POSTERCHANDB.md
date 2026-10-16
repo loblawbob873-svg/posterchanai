@@ -98,6 +98,38 @@ code path, a smaller budget.
 plus the content cache — its size is the `posterchandb_read_cache_mb` setting. Postgres today: 20 GB of
 shared buffers.
 
+## Bigger than RAM: the index lives in files (2026-10-16)
+
+The design above held every index in RAM and a snapshot rewrote all of it. That stops scaling well before the
+disk does: measured at 4.72M events, the index was ~200 bytes an event of RAM on top of the read cache (the
+`#d~` prefix index alone was 1.36M Python tuples) and the snapshot was 1.24 GB. At 200 GB (~260M events) that
+is ~50 GB of RAM before a byte of cache, and ~50 GB written per snapshot -- impossible on a small VPS.
+
+Now (`disk.py`, `checkpoint.py`):
+
+- **Columns are files** (`col-<name>.bin`), mapped copy-on-write. Reading one is reading the page cache; the
+  kernel keeps the pages queries touch and drops the rest. Writes stay private until a checkpoint.
+- **Index runs are files** (`run-<kind>-<n>.<i>.bin`, mapped read-only): postings (`idx`, `w` = search words),
+  the id lookup (`id`), the `#d~` prefix index (`dp`, a byte blob + offsets) and the author lookup (`au`). New
+  entries collect in a small RAM run; past a size, and at every checkpoint, it is written out. Disk runs merge
+  in the background (maintenance pass, paced like compaction), STREAMED a key range at a time, so a merge never
+  holds more than a chunk in RAM whatever the size of the runs.
+- **A checkpoint writes what changed** (`MANIFEST.json`): log fsynced → RAM runs and new column rows written where
+  the previous checkpoint does not look → changed pages (kills, compaction moves) journaled (`journal.bin`) →
+  manifest replaced atomically → journal applied. A crash at any step opens on the old manifest or re-applies
+  the journal (`tests/test_posterchandb_checkpoint_crash.py`). It is cheap, so **every clean stop takes one**:
+  a restart replays nothing (measured on a copy of poster.place, 4.88M events: start **1.3 s**, was 20.6 s).
+- **A compaction checkpoints before it deletes the segment**, so the next start no longer replays the whole log
+  after every compaction.
+- **One RAM setting.** `posterchandb_read_cache_mb` covers the event cache AND the index pages in RAM; over it
+  (or under memory pressure) the governor hands index pages back (`Store.trim_index`). Set it low on a small VPS.
+- **Measured** (same copy): RAM after start (not counting the event cache) **195 MB, was 1,797 MB**; 284 sampled
+  queries answered identically. `tests/test_posterchandb_scales_past_ram.py` holds anonymous RAM flat as the store
+  grows (186 → <16 B/event), a checkpoint after 2,000 events to < 4 MB (was 27 MB at 200k events), and opens and
+  queries a store **inside an 88 MB memory cgroup** that is bigger than the cap (the old store is OOM-killed there).
+- **Migration** is automatic: the first start with this code imports the old `index.snap` into the new files
+  (~65 s on poster.place's copy, once), checkpoints, and deletes `index.snap`.
+
 ## Read- and write-efficient: SSD writes (measured)
 
 Postgres on server1 wrote **14.65 GB of WAL per day** (3.2 TB in the 220 days since its stats were reset),
@@ -112,7 +144,7 @@ PosterChanDB writes each event ONCE, sequentially. The design budget (49k events
 | | per day |
 |---|---|
 | log append (872 B/event, batched per flush into large sequential writes) | **~43 MB** |
-| index snapshot — at a clean stop, and at most every `posterchandb_snapshot_hours` when something was written | one snapshot each time |
+| checkpoint — at a clean stop, after a compaction, and at most every `posterchandb_snapshot_hours` | only what changed since the last one |
 | compaction — a log file is rewritten only when **> 40%** of it is dead (`posterchandb_compact_dead_pct`) | proportional to deletes |
 
 **Measured on server1, 2026-10-15 — the snapshot term dominates, and it is not small.** The index snapshot is
@@ -148,7 +180,7 @@ An out-of-range value is clamped to the range below.
 | setting | default (range) | what it does |
 |---|---|---|
 | `posterchandb_flush_seconds` | **300** s (1–3600) | The write delay for SYNCED copies: new events reach disk in one sequential batch this often. A crash loses at most this window of copies, which are fetched again. Direct writes are not in it -- they are fsynced before the relay answers OK. |
-| `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older log segments. The indexes are always in RAM; this is the content. |
+| `posterchandb_read_cache_mb` | **0 = auto** (30% of RAM) | RAM for older log segments AND the index pages cached from disk -- the one number to set on a small machine. |
 | `posterchandb_cache_low_water_mb` | **0 = auto** | The free-RAM floor at which the cache governor drains the read cache (MemAvailable + PSI, `cache.py`). |
 | `posterchandb_snapshot_hours` | **24** h (0.25–48) | An index snapshot at most this often (and on a clean stop), so a restart loads the snapshot and replays only the log after it. |
 | `posterchandb_compact_dead_pct` | **40** % (10–90) | A closed segment is rewritten once this share of it is dead (deleted, expired, replaced). |

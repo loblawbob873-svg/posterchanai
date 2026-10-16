@@ -516,8 +516,10 @@
                 written before the relay answers OK). Default 300. Range 1–3600. <em>Applies within seconds of Save — no restart.</em></small>
                 <label for="posterchandb_read_cache_mb">Read cache (MB)</label>
                 <input type="number" id="posterchandb_read_cache_mb" name="posterchandb_read_cache_mb" placeholder="0" min="0" max="1048576">
-                <small>How much older data may stay in RAM. <code>0</code> = automatic (30% of RAM); it drains by itself
-                when the machine runs low on memory. Range 0–1048576. <em>Applies within seconds of Save — no restart.</em></small>
+                <small>How much RAM the database may keep for older events AND its index (the index lives on disk and is
+                cached in RAM up to this). Set it low on a small VPS — the database then reads more from disk and stays
+                within it. <code>0</code> = automatic (30% of RAM); it also gives memory back by itself when the machine
+                runs low. Range 0–1048576. <em>Applies within seconds of Save — no restart.</em></small>
             </div>
             <h4 class="pcdb-sub">Memory</h4>
             <div class="form-group">
@@ -535,7 +537,7 @@
             <div class="form-group">
                 <label for="posterchandb_snapshot_hours">Index snapshot at most every (hours)</label>
                 <input type="number" id="posterchandb_snapshot_hours" name="posterchandb_snapshot_hours" placeholder="24" min="0.25" max="48" step="0.25">
-                <small>A snapshot lets a restart load the indexes instead of replaying the log. Longer = less disk writing, slower restarts. Default 1. Range 0.25–48. <em>Applies within seconds of Save — no restart.</em></small>
+                <small>A snapshot lets a restart load the indexes instead of replaying the log. It writes only what changed since the last one, and a clean stop always takes one. Longer = less disk writing, more log to replay after a crash. Default 24. Range 0.25–48. <em>Applies within seconds of Save — no restart.</em></small>
             </div>
             <div class="form-group">
                 <label for="posterchandb_compact_dead_pct">Compact a segment once it is this % deleted</label>
@@ -586,8 +588,11 @@
                     if(has('search_words_pending')) r.push(['Search-word backlog', nf(p.search_words_pending)+' events']);
                     if(has('disk_bytes')) r.push(['On disk', bytes(p.disk_bytes)+(has('segments')?' in '+nf(p.segments)+' segments':'')]);
                     if(has('arena_bytes')||has('index_bytes')) r.push(['RAM', (has('arena_bytes')?bytes(p.arena_bytes)+' of records':'')
-                        +(has('index_bytes')?' + '+bytes(p.index_bytes)+' of indexes':'')+(has('cold_segments')?' · '+nf(p.cold_segments)+' segments on disk only':'')]);
-                    if(has('cache_budget_mb')) r.push(['Read cache', nf(p.cache_resident_mb)+' MB used of '+nf(p.cache_budget_mb)+' MB · '
+                        +(has('index_ram_bytes')?' + '+bytes(p.index_ram_bytes)+' of recent index':(has('index_bytes')?' + '+bytes(p.index_bytes)+' of indexes':''))
+                        +(has('cold_segments')?' · '+nf(p.cold_segments)+' segments on disk only':'')]);
+                    if(has('index_disk_bytes')) r.push(['Index on disk', bytes(p.index_disk_bytes)+' (cached in RAM within the read cache)']);
+                    if(has('cache_budget_mb')) r.push(['Read cache', nf((p.cache_resident_mb||0)+(p.cache_index_mb||0))+' MB used of '+nf(p.cache_budget_mb)+' MB'
+                        +(has('cache_index_mb')?' ('+nf(p.cache_index_mb)+' MB of it index)':'')+' · '
                         +nf(p.cache_available_mb)+' MB free on the machine'+(p.cache_psi!=null?' · memory pressure '+p.cache_psi+'%':'')]);
                     if(has('last_snapshot')) r.push(['Last index snapshot', p.last_snapshot>0 && ts ? ago(ts-p.last_snapshot)+' ago' : 'none yet']);
                     if(has('max_lock_hold_ms')) r.push(['Longest store-lock hold', p.max_lock_hold_ms+' ms']);

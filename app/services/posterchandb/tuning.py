@@ -65,7 +65,7 @@ def status_extras(store, gov, maint, **extra) -> dict:
     if store is not None:
         out["last_snapshot"] = int(getattr(store, "last_snapshot", 0) or 0)
     last = dict(getattr(gov, "last", None) or {}) if gov is not None else {}
-    for k in ("available_mb", "resident_mb", "budget_mb", "psi"):
+    for k in ("available_mb", "resident_mb", "index_mb", "budget_mb", "psi"):
         if k in last:
             out["cache_" + k] = last[k]
     if maint is not None:

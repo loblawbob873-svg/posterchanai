@@ -16,6 +16,12 @@ page cache). This decides which, every `interval` seconds:
 
 `budget_mb` is the admin setting `posterchandb_read_cache_mb`: 0 = automatic (30% of RAM). The active
 segment is never drained — its unflushed tail exists only in RAM.
+
+THE BUDGET COVERS THE INDEX TOO (2026-10-16). The index lives in mapped files (disk.py); the pages a query touched
+stay resident in this process (RssFile) until the kernel wants them. So a low-powered machine -- "ram usage should
+be tuneable in admin settings" -- sets ONE number: resident segments + resident index pages above it, or memory
+pressure, and the index's pages are handed back (`Store.trim_index`) after the segments, at most every `trim_every`
+seconds so a hot working set is not thrown out and re-read every tick.
 """
 from __future__ import annotations
 
@@ -40,6 +46,20 @@ def meminfo(path: str = "/proc/meminfo") -> dict:
     return out
 
 
+def rss_file(path: str = "/proc/self/status") -> int:
+    """Bytes of mapped FILES resident in this process (the index's pages, plus shared libraries). A file on tmpfs is
+    counted by the kernel as shared memory (RssShmem), so both are summed."""
+    n = 0
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith(("RssFile:", "RssShmem:")):
+                    n += int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return n
+
+
 def psi_some_avg10(path: str = "/proc/pressure/memory"):
     """% of the last 10 s in which some task stalled waiting for memory, or None when PSI is unavailable."""
     try:
@@ -57,7 +77,8 @@ def psi_some_avg10(path: str = "/proc/pressure/memory"):
 class CacheGovernor:
     def __init__(self, store=None, *, budget_mb: float = 0, interval: float = 5.0, low_water_mb: float = 0,
                  psi_high: float = 10.0, fill_hits: int = 32, cooldown: float = 300.0,
-                 mem=meminfo, psi=psi_some_avg10, clock=time.monotonic, log=None):
+                 mem=meminfo, psi=psi_some_avg10, clock=time.monotonic, log=None, mapped=rss_file,
+                 trim_every: float = 30.0):
         self.store = store
         self.budget_mb = float(budget_mb or 0)
         self.interval = float(interval)
@@ -66,6 +87,10 @@ class CacheGovernor:
         self.fill_hits = int(fill_hits)
         self.cooldown = float(cooldown)
         self.mem, self.psi, self.clock = mem, psi, clock
+        self.mapped = mapped
+        self.mapped_base = mapped()          # libraries etc. mapped before the store: not the store's
+        self.trim_every = float(trim_every)
+        self._trimmed_at = -1e18
         self.log = log or (lambda *a: None)
         self.drained_at: dict[int, float] = {}
         self._stop = threading.Event()
@@ -142,9 +167,19 @@ class CacheGovernor:
                 if st.load(sid):
                     res["filled"].append(sid)
                 break
-        res.update(available_mb=avail // MB, resident_mb=resident // MB, budget_mb=budget // MB, psi=p)
+        # THE INDEX: resident mapped pages count against the same budget; they go back after the segments did
+        index = max(0, self.mapped() - self.mapped_base)
+        if ((pressure or resident + index > budget) and index > 0 and hasattr(st, "trim_index")
+                and now - self._trimmed_at >= self.trim_every):
+            st.trim_index()
+            self._trimmed_at = now
+            after = max(0, self.mapped() - self.mapped_base)
+            res["trimmed_mb"] = (index - after) // MB
+            index = after
+        res.update(available_mb=avail // MB, resident_mb=resident // MB, index_mb=index // MB, budget_mb=budget // MB,
+                   psi=p)
         self.last = res
-        if res["drained"] or res["filled"]:
+        if res["drained"] or res["filled"] or res.get("trimmed_mb"):
             self.log("[posterchandb] cache: %s" % res)
         return res
 

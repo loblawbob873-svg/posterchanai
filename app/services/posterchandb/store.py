@@ -24,8 +24,6 @@ Durability:
 """
 from __future__ import annotations
 
-import array
-import bisect
 import hashlib
 import os
 import re
@@ -42,7 +40,7 @@ import numpy as np
 from app.services.nostr.quotes import quote_pubkeys, quoted_ids_without_author, remember_quote_authors
 from app.services.nostr_relay import store as relay_rules   # the relay's own rule constants: one source
 
-from . import snapshot, tsparser
+from . import checkpoint, disk, snapshot, tsparser
 from .codec import Codec
 
 MAGIC = b"PCDB1\n"
@@ -131,36 +129,24 @@ def _grow(op, *args):
 
 
 def _merge_runs(ka, sa, pa, kb, sb, pb, dead=None):
-    """Merge two CSR runs (keys sorted unique, starts, postings). Every posting in run B is NEWER than
-    every posting in run A (sequence numbers only grow), so per key the result is simply A's list then
-    B's: a STABLE sort on keys alone, never a re-sort of postings."""
-    ka_rep = np.repeat(ka, np.diff(sa))
-    kb_rep = np.repeat(kb, np.diff(sb))
-    allk = np.concatenate([ka_rep, kb_rep])
-    allp = np.concatenate([pa, pb])
-    if dead is not None and len(allp):
-        # SELF-CLEANING: postings of dead events are dropped by the merge that happens anyway
-        live = dead[allp] == 0
-        allk, allp = allk[live], allp[live]
-    order = np.argsort(allk, kind="stable")
-    allk, allp = allk[order], allp[order]
-    uk, first = np.unique(allk, return_index=True)
-    return uk, np.append(first, len(allk)).astype(np.int64), allp
+    """Merge two CSR posting runs in RAM (disk.merge_postings_mem); `dead` is a per-seq array (nonzero = dead)."""
+    return disk.merge_postings_mem(ka, sa, pa, kb, sb, pb, None if dead is None else (lambda p: dead[p] == 0))
 
 
-class _Postings:
+class _Postings(disk.Leveled):
     """hash key -> ascending sequence numbers, as LEVELED sorted runs (an LSM tree in miniature).
 
-    New postings collect in a small dict (`delta`). A flush turns the delta into one small CSR run —
-    sorting only what arrived — and merges runs only while the newest is at least a quarter the size of
-    the one before it. So the number of runs stays ~log(N) and each posting is merged ~log(N) times in its
-    life: CPU per flush follows what ARRIVED, not the size of the store (a full rebuild every minute
-    would re-sort ~20M postings on this relay to add a few hundred)."""
+    New postings collect in a small dict (`delta`). A flush turns the delta into one small CSR run --
+    sorting only what arrived -- and merges RAM runs only while the newest is at least a quarter the size of
+    the one before it. A run that grows past `seal_at`, and every RAM run at a checkpoint, is written to its own
+    files and MAPPED (disk.py), and those merge in the background, streamed. So RAM holds the recent postings
+    only, and CPU per flush follows what ARRIVED, not the size of the store."""
 
-    RATIO = 4
+    dtypes = disk.POSTING_DTYPES
+    seal_at = 1 << 22
 
-    def __init__(self):
-        self.runs: list = []          # oldest first: (keys u64 sorted unique, starts i64, post u32)
+    def __init__(self, kind: str = "idx"):
+        super().__init__(kind)
         self.delta: dict[int, list] = {}
 
     def add(self, key: int, seq: int) -> None:
@@ -178,10 +164,10 @@ class _Postings:
             parts.append(np.asarray(d, dtype=np.uint32))
         if not parts:
             return np.zeros(0, dtype=np.uint32)
-        return parts[0] if len(parts) == 1 else np.concatenate(parts)
+        return np.asarray(parts[0]) if len(parts) == 1 else np.concatenate(parts)
 
     def member(self, key: int, seqs: np.ndarray) -> np.ndarray:
-        """Boolean mask: which of `seqs` carry `key` — binary search inside each run's slice for the key,
+        """Boolean mask: which of `seqs` carry `key` -- binary search inside each run's slice for the key,
         no copy of the posting list (a common key like an empty `d` can hold millions)."""
         seqs = np.asarray(seqs, dtype=np.uint32)
         out = np.zeros(len(seqs), dtype=bool)
@@ -202,63 +188,44 @@ class _Postings:
             out |= np.isin(seqs, np.asarray(d, dtype=np.uint32))
         return out
 
-    def merge(self, dead=None) -> None:
-        if self.delta:
-            items = sorted(self.delta.items())
-            keys = np.fromiter((k for k, _ in items), dtype=np.uint64, count=len(items))
-            lens = np.fromiter((len(v) for _, v in items), dtype=np.int64, count=len(items))
-            starts = np.zeros(len(items) + 1, dtype=np.int64)
-            np.cumsum(lens, out=starts[1:])
-            post = np.fromiter((x for _, v in items for x in v), dtype=np.uint32, count=int(starts[-1]))
-            self.runs.append((keys, starts, post))
-            self.delta = {}
-        while len(self.runs) > 1 and len(self.runs[-1][2]) * self.RATIO >= len(self.runs[-2][2]):
-            b = self.runs.pop()
-            a = self.runs.pop()
-            self.runs.append(_merge_runs(*a, *b, dead=dead))
+    def _has_delta(self) -> bool:
+        return bool(self.delta)
 
-    def nbytes(self) -> int:
-        return sum(k.nbytes + s.nbytes + p.nbytes for k, s, p in self.runs)
+    def _delta_run(self):
+        items = sorted(self.delta.items())
+        keys = np.fromiter((k for k, _ in items), dtype=np.uint64, count=len(items))
+        lens = np.fromiter((len(v) for _, v in items), dtype=np.int64, count=len(items))
+        starts = np.zeros(len(items) + 1, dtype=np.int64)
+        np.cumsum(lens, out=starts[1:])
+        post = np.fromiter((x for _, v in items for x in v), dtype=np.uint32, count=int(starts[-1]))
+        return disk.Run([keys, starts, post])
+
+    def _clear_delta(self) -> None:
+        self.delta = {}
+
+    def _merge(self, a, b, sink, live=None, pace=None):
+        if sink.dirpath is None:                       # two small RAM runs: one pass
+            return disk.Run(disk.merge_postings_mem(*a, *b, live))
+        return disk.merge_postings(a, b, sink, live, pace)
 
 
-class _Prefix:
+class _Prefix(disk.StrRuns):
     """Sorted (value, seq) runs for prefix matching on ONE tag letter (`#d~`, the app's folder reads).
-    Leveled like the postings; only events that carry the tag pay for it.
+    Leveled like the postings; only events that carry the tag pay for it. Runs are numpy (a byte blob + offsets +
+    seqs, disk.py) -- they used to be Python lists of tuples, ~200 bytes an entry, a third of a relay's events.
 
     A `#d~` read is how every app table loads, a page of 1000 at a time, so the same prefix is asked for
-    hundreds of times in a row against runs that do not change. Walking the matches in Python per page --
-    and sorting them again -- cost O(table) Python work per page under the store lock: a 388k-row table
-    took 20 minutes to load and the relay sat at 100% while it did (2026-10-10). So each run keeps a
-    parallel (values, seqs) view built once, the range is found with two bisects, and the sorted set of
-    matching seqs is cached per prefix until a run changes; only the small unmerged delta is scanned per
-    call. Runs are never mutated in place (a merge builds new lists), which is what keeps the views valid."""
+    hundreds of times in a row against runs that do not change. So the range is found with two binary searches and
+    the sorted set of matching seqs is cached per prefix until a run changes; only the small unmerged delta is
+    scanned per call. Runs are never mutated in place (a merge builds a new one), which is what keeps the cache
+    valid."""
 
     def __init__(self):
-        self.runs: list = []
-        self.delta: list = []
-        self._views: dict = {}          # id(run) -> (run, values, seqs ndarray)
-        self._cache: dict = {}          # (prefix, run ids) -> (those runs, sorted unique seqs of their matches)
+        super().__init__("dp")
+        self._cache: dict = {}          # (prefix, run ids) -> [those runs, delta scanned, sorted unique seqs]
 
     def add(self, value: str, seq: int) -> None:
         self.delta.append((value, seq))
-
-    def merge(self, dead=None) -> None:
-        if self.delta:
-            self.runs.append(sorted(self.delta))
-            self.delta = []
-        while len(self.runs) > 1 and len(self.runs[-1]) * 4 >= len(self.runs[-2]):
-            b = self.runs.pop(); a = self.runs.pop()
-            self.runs.append(sorted(x for x in a + b if dead is None or not dead[x[1]]))
-
-    def _view(self, run):
-        v = self._views.get(id(run))
-        if v is None or v[0] is not run:
-            live = {id(r) for r in self.runs}
-            for k in [k for k in self._views if k not in live]:
-                del self._views[k]
-            v = (run, [x[0] for x in run], np.fromiter((x[1] for x in run), dtype=np.uint32, count=len(run)))
-            self._views[id(run)] = v
-        return v
 
     @staticmethod
     def _upper(pre: str):
@@ -278,22 +245,23 @@ class _Prefix:
         appended, never re-sorted in."""
         runs = tuple(self.runs)
         key = (pre, tuple(id(r) for r in runs))
-        ent = self._cache.get(key)          # [runs (kept alive: no id reuse), delta scanned, seqs]
+        ent = self._cache.get(key)
         if ent is None:
             hi = self._upper(pre)
+            pb, hb = disk.enc(pre), (disk.enc(hi) if hi is not None else None)
             parts = []
             for run in runs:
-                _r, vals, sq = self._view(run)
-                i = bisect.bisect_left(vals, pre)
-                j = bisect.bisect_left(vals, hi) if hi is not None else len(vals)
+                i, j = self.range(run, pb, hb)
                 if j > i:
-                    parts.append(sq[i:j])
+                    parts.append(np.asarray(run[2][i:j]))
             base = np.unique(np.concatenate(parts)).astype(np.uint32) if parts else np.zeros(0, dtype=np.uint32)
             if len(self._cache) > 64:
                 self._cache.clear()
             self._cache = {k: v for k, v in self._cache.items() if k[1] == key[1]}
             ent = self._cache[key] = [runs, 0, base]
         d = self.delta
+        if ent[1] > len(d):
+            ent[1] = 0                                   # the delta was merged since: its matches are in the runs
         if ent[1] < len(d):
             new = sorted({q for v, q in d[ent[1]:] if v.startswith(pre)})
             ent[1] = len(d)
@@ -308,6 +276,82 @@ class _Prefix:
 
     def prefix(self, pre: str) -> list:
         return [int(q) for q in self.seqs(pre)]
+
+    def pairs(self, pre: str) -> list:
+        """[(value, seq)] for every value starting with `pre` (dead ones included), runs then delta."""
+        hi = self._upper(pre)
+        pb, hb = disk.enc(pre), (disk.enc(hi) if hi is not None else None)
+        out = []
+        for run in list(self.runs):
+            i, j = self.range(run, pb, hb)
+            for x in range(i, j):
+                out.append((disk.dec(disk.str_at(run, x)), int(run[2][x])))
+        out += [(v, q) for v, q in self.delta if v.startswith(pre)]
+        return out
+
+
+class _Authors:
+    """Interned public keys: 32 raw bytes each in a column FILE, found by their first 8 bytes (KVRuns) -- the old
+    list + dict cost ~250 bytes a key in RAM. Iterates and indexes like the list it replaces (`_authors[i]` -> hex)."""
+
+    def __init__(self, col, runs):
+        self.col, self.runs = col, runs
+
+    def __len__(self) -> int:
+        return len(self.col) // 32
+
+    def __getitem__(self, i: int) -> str:
+        n = len(self)
+        if i < 0:
+            i += n
+        if not 0 <= i < n:
+            raise IndexError("author index out of range")
+        return self.col[i * 32:i * 32 + 32].hex()
+
+    def __iter__(self):
+        raw = self.col[0:len(self.col)]
+        return (raw[i:i + 32].hex() for i in range(0, len(raw), 32))
+
+    def ix(self, pk):
+        if not isinstance(pk, str) or len(pk) != 64:
+            return None
+        try:
+            key = int(pk[:16], 16)
+        except ValueError:
+            return None
+        for c in self.runs.get(key):
+            if self.col[c * 32:c * 32 + 32].hex() == pk:
+                return c
+        return None
+
+    def add(self, pk: str) -> int:
+        raw = bytes.fromhex(pk) if isinstance(pk, str) and len(pk) == 64 else b""
+        if len(raw) != 32 or raw.hex() != pk:
+            raise ValueError("a pubkey is 64 lowercase hex characters: %r" % (pk,))
+        aid = len(self)
+        self.col.extend(raw)
+        self.runs.add(int(pk[:16], 16), aid)
+        return aid
+
+
+class _AuthorIndex:
+    """pubkey -> interned index, with the dict surface callers used (`get`, `in`, `[]`)."""
+
+    def __init__(self, authors: _Authors):
+        self.a = authors
+
+    def get(self, pk, default=None):
+        i = self.a.ix(pk)
+        return default if i is None else i
+
+    def __contains__(self, pk) -> bool:
+        return self.a.ix(pk) is not None
+
+    def __getitem__(self, pk) -> int:
+        i = self.a.ix(pk)
+        if i is None:
+            raise KeyError(pk)
+        return i
 
 
 ORIGINS = {"direct": 0, "wot": 1, "bridge": 2, "ancestor": 3}
@@ -338,58 +382,91 @@ class Store:
         self._since_snap = 0          # log records written since the last snapshot (what a restart would replay)
         self.last_open = {}
         self._lock = threading.RLock()
+        self._cols: dict = {}
+        self._ckpt_id = 0
+        self._run_seq = 0
+        os.makedirs(path, exist_ok=True)
         self._reset_state()
         self._flushed = 0        # bytes of the active segment's arena that are on disk
         self._pending_n = 0
         self._last_flush = time.monotonic()
         self._active = 0
         self._file = None
-        os.makedirs(path, exist_ok=True)
         self._open()
 
-    def _reset_state(self) -> None:
-        """Every index and column, empty — used before a full replay (and after a snapshot that failed part-way)."""
+    # the per-event columns: (name, array code). Each is a FILE (col-<name>.bin) mapped copy-on-write (disk.Column).
+    COLUMNS = (("seg", "I"), ("off", "Q"), ("length", "I"), ("created", "Q"), ("kind", "I"), ("expires", "Q"),
+               ("origin", "B"), ("author", "I"), ("dead", "B"), ("ids", "B"), ("pm", "Q"), ("authors", "B"))
+
+    def _col_path(self, name: str) -> str:
+        return os.path.join(self.path, "col-%s.bin" % name)
+
+    def _next_run(self) -> int:
+        self._run_seq += 1
+        return self._run_seq
+
+    def _reset_state(self, lengths: dict | None = None) -> None:
+        """Every index and column EMPTY (before a full replay, and after a checkpoint that cannot be used) -- or, with
+        `lengths`, the columns opened at a checkpoint's lengths (checkpoint.load fills in the rest)."""
         # Events whose SEARCH words are not indexed yet (a copy and a log replay defer them: the Postgres-exact
         # tokenizer is ~93% of the cost of storing a real event). A search catches them up first, so answers
         # stay exact; the relay store indexes the rest in the background (pcdb_store._index_words).
         self._unworded = collections.deque()
-        self._pm = np.zeros(0, dtype=np.uint64)    # running max of `created` by seq (the newest-first scan's proof)
-        self._pm_n = 0
-        # per-event columns (index = sequence number)
+        # per-event columns (index = sequence number), in files: RAM holds what the kernel caches of them
+        for c in self._cols.values():
+            c.close()
+        self._cols = {}
+        for name, code in self.COLUMNS:
+            c = disk.Column(self._col_path(name), code, (lengths or {}).get(name, 0))
+            if lengths is None:
+                c.reset()
+            self._cols[name] = c
+        (self.seg, self.off, self.length, self.created, self.kind, self.expires, self.origin, self.author, self.dead,
+         self.ids, self._pmc, authors_col) = (self._cols[n] for n, _ in self.COLUMNS)
         self.arenas: dict = {}                     # segment id -> its file's bytes (resident) or None (cold)
         self.seg_size: dict[int, int] = {}         # bytes of each segment (file + unflushed tail)
         self.seg_hits: dict[int, float] = {}       # recent reads per segment (decayed by the cache governor)
         self.seg_last: dict[int, float] = {}       # last read, monotonic
         self._fds: dict[int, int] = {}             # read-only fds for cold reads
-        self.ids = bytearray()                     # 32 raw bytes per event: id checks never touch a record
-        self.seg = array.array("I")
-        self.off = array.array("Q")
-        self.length = array.array("I")
-        self.created = array.array("Q")
-        self.kind = array.array("I")
-        self.expires = array.array("Q")
-        self.origin = bytearray()
-        self.author = array.array("I")             # interned public key
-        self.dead = bytearray()
-        self._authors: list[str] = []
-        self._author_ix: dict[str, int] = {}
         # per-segment bookkeeping: bytes of records, bytes of dead records
         self.seg_bytes: dict[int, int] = {}
         self.seg_dead: dict[int, int] = {}
-        # the OP_DEAD/OP_DERIVED payloads each segment holds, kept in RAM so compaction never has to
-        # read a segment back from disk to find what must be carried forward
-        self.seg_markers: dict[int, list] = {}
+        # the OP_DEAD/OP_DERIVED payloads each segment holds, so compaction never has to read a segment back to find
+        # what must be carried forward: a list for the active segment (and any just replayed), None once written to
+        # the segment's `.mk` file (a closed segment's markers never change)
+        self.seg_markers: dict = {}
         self._compacting = False
         self.derived: dict[int, set] = {}   # seq -> {(tag, value)}: re-emitted beside a record whenever it moves
-        # id -> seq: leveled sorted runs + delta
-        self._id_runs: list = []
-        # 8-byte id prefix -> seqs. A LIST: two ids can share a prefix (2^32 work to grind one on purpose), and a
-        # dict of single seqs lost the earlier one for good at the next merge -- that event could never be found
-        # by id again (dedupe, NIP-09, has_event). tests/test_pcdb_relay_store.py
-        self._id_delta: dict[int, list] = {}
-        self.idx = _Postings()       # author+kind, author, kind, single-letter tags
-        self.words = _Postings()     # search
-        self.dprefix = _Prefix()     # `#d~` prefix reads
+        # id -> seq, by the id's first 8 bytes. A LIST per key: two ids can share a prefix (2^32 work to grind one on
+        # purpose), and keeping one seq lost the other for good -- that event could never be found by id again
+        # (dedupe, NIP-09, has_event). tests/test_pcdb_relay_store.py
+        self._idk = disk.KVRuns("id")
+        self._aurun = disk.KVRuns("au")
+        self.idx = _Postings("idx")      # author+kind, author, kind, single-letter tags
+        self.words = _Postings("w")      # search
+        self.dprefix = _Prefix()         # `#d~` prefix reads
+        for lv in self._leveled():
+            # no checkpoints, no index files: such a store keeps its runs in RAM (and must never write over a
+            # directory another store has checkpointed -- the tests open one beside the other)
+            lv.dir, lv.next_id = (self.path if self.snapshots else None), self._next_run
+        if lengths is None:
+            # a fresh start never reuses a run file's name (one left by a checkpoint that was refused)
+            nums = [int(m.group(1)) for m in (re.match(r"^run-[a-z]+-(\d+)\.", f) for f in os.listdir(self.path)) if m]
+            self._run_seq = max(nums + [self._run_seq])
+        self._authors = _Authors(authors_col, self._aurun)
+        self._author_ix = _AuthorIndex(self._authors)
+
+    def _leveled(self) -> list:
+        return [self.idx, self.words, self.dprefix, self._idk, self._aurun]
+
+    def _live_of(self, lv):
+        """The filter a merge of `lv` applies: dead events' postings go; an id whose record was compacted away goes;
+        the author lookup keeps everything. Called under the store lock (views die before it is released)."""
+        if lv is self._aurun:
+            return None
+        if lv is self._idk:
+            return lambda v: self.seg.view()[v] != DROPPED
+        return lambda p: self.dead.view()[p] == 0
 
     # ---------------------------------------------------------------- disk
     def _seg_path(self, sid: int) -> str:
@@ -421,42 +498,68 @@ class Store:
         except OSError:
             pass
 
-    def _open(self) -> None:
+    def _open(self, force_replay: bool = False) -> None:
         t0 = time.monotonic()
         sids = self._segments()
         if not sids:
             self._new_segment(1)
             sids = [1]
-        meta = None
-        if self.snapshots:
-            ok, why, meta = snapshot.load(self)
-            if not ok:
-                if meta is None and why != "no snapshot":
-                    self.log("[posterchandb] snapshot not used: %s — replaying the whole log" % why)
-                self._reset_state()
+        meta, how = None, "replay"
+        if self.snapshots and not force_replay:
+            ok, why, meta = checkpoint.load(self)
+            if ok:
+                how = "checkpoint"
+            else:
                 meta = None
-        replayed = 0
-        for sid in sids:
+                if why == "no checkpoint" and os.path.exists(os.path.join(self.path, snapshot.NAME)):
+                    ok, why, meta = checkpoint.import_legacy(self)      # the index.snap of the previous format
+                    how = "legacy" if ok else how
+                    meta = meta if ok else None
+                if meta is None:
+                    if why != "no checkpoint":
+                        self.log("[posterchandb] checkpoint not used: %s — replaying the whole log" % why)
+                    self._reset_state()
+            sids = self._segments()                   # a load removes what a finished compaction left behind
+        replayed = since = 0
+        for k, sid in enumerate(sids):
             p = self._seg_path(sid)
+            last = sid == sids[-1]
             self.seg_bytes.setdefault(sid, 0)
             self.seg_dead.setdefault(sid, 0)
-            self.seg_markers.setdefault(sid, [])
-            if meta is not None and sid < meta["active"] and sid != sids[-1]:
-                # Closed and covered by the snapshot: NOT READ. It starts cold (served by pread through the page
-                # cache) and the cache governor brings it into RAM when it is actually read. Reading every segment
-                # at open made a start cost one full pass over the data -- 2.8 GB today, and growing with it.
+            if meta is not None and sid < meta["active"] and not last:
+                # Closed and covered by the checkpoint: NOT READ. It starts cold (served by pread through the page
+                # cache) and the cache governor brings it into RAM when it is actually read. Its markers are in its
+                # `.mk` file (or are found by a scan the day compaction needs them).
                 self.seg_size[sid] = os.path.getsize(p)
                 self.arenas[sid] = None
+                self.seg_markers[sid] = None
                 continue
             with open(p, "rb") as f:
                 data = f.read()
+            if meta is not None and sid <= meta["active"]:
+                # The checkpoint covers this (resident) segment up to `cover`: its frames are walked -- CRC-checked,
+                # nothing decoded -- for its markers. A bad frame INSIDE the covered part means the checkpoint
+                # points at bytes that are no longer what was written: it is not used, and the whole log replays
+                # (which cuts the damage off, as a torn tail always was).
+                cover = len(data) if sid < meta["active"] else meta["flushed"]
+                ms, ok_to = self._scan_markers(data, cover, verify=True)
+                if ok_to < cover:
+                    self.log("[posterchandb] %s is damaged inside the checkpoint's range — replaying the whole log"
+                             % os.path.basename(p))
+                    del data
+                    self._reset_state()
+                    return self._open(force_replay=True)
+                self.seg_markers[sid] = ms
             if meta is not None and sid < meta["active"]:
-                good = len(data)                       # covered by the snapshot: nothing to parse
+                good = len(data)                       # covered by the checkpoint: nothing to parse
             else:
                 start = meta["flushed"] if (meta is not None and sid == meta["active"]) else None
+                if not start:
+                    self.seg_markers[sid] = []
                 n0 = len(self.off)
                 good = self._replay(sid, data, start)
                 replayed += len(self.off) - n0
+                since += len(self.off) - n0
             if good < len(data):
                 # Only the LAST segment can legitimately have a torn tail; an earlier one means a
                 # crash mid-compaction left a partial copy — its records are also in a later segment.
@@ -467,19 +570,93 @@ class Store:
                     os.fsync(f.fileno())
             self.seg_size[sid] = good
             # the active (last) segment is always resident; a closed one only while RAM allows
-            self.arenas[sid] = bytearray(data[:good]) if (sid == sids[-1] or self.admit(good)) else None
+            self.arenas[sid] = bytearray(data[:good]) if (last or self.admit(good)) else None
             del data
+            if not last and since and self.snapshots:
+                # A LONG REPLAY CHECKPOINTS AS IT GOES: what it built is written out segment by segment, so RAM holds
+                # one segment's worth of new index at a time, and a crash part-way resumes from here.
+                nxt = sids[k + 1]
+                self._active, self._flushed = nxt, len(MAGIC)
+                self.seg_size.setdefault(nxt, len(MAGIC))
+                self._merge_all()
+                while self.merge_disk_runs():
+                    pass
+                checkpoint.save(self)
+                since = 0
         self._active = sids[-1]
         self._flushed = self.seg_size[self._active]
         self._file = open(self._seg_path(self._active), "ab")
         self._merge_all()
-        self._since_snap = replayed if meta is not None else len(self.off)
+        self._since_snap = since
+        if how == "legacy" and self.snapshots:
+            checkpoint.save(self)                      # the new format exists before the old file goes
+            self._since_snap = 0
+            try:
+                os.remove(os.path.join(self.path, snapshot.NAME))
+            except OSError:
+                pass
         try:
-            self.last_snapshot = os.path.getmtime(os.path.join(self.path, snapshot.NAME))
+            self.last_snapshot = os.path.getmtime(os.path.join(self.path, checkpoint.NAME))
         except OSError:
             self.last_snapshot = 0.0
-        self.last_open = {"snapshot": meta is not None, "events": len(self.off), "replayed": replayed,
+        self.last_open = {"snapshot": meta is not None, "how": how, "events": len(self.off), "replayed": replayed,
                           "seconds": round(time.monotonic() - t0, 3)}
+
+    @staticmethod
+    def _scan_markers(data, end: int, verify: bool = False):
+        """The OP_DEAD/OP_DERIVED payloads in a segment's bytes up to `end` (frames walked, nothing decoded). With
+        `verify`, every frame's CRC is checked and (markers, offset of the first bad frame or `end`) is returned."""
+        out, i = [], len(MAGIC)
+        end = min(end, len(data))
+        mv = memoryview(data)
+        while i + _FRAME.size <= end:
+            n, crc = _FRAME.unpack_from(data, i)
+            j = i + _FRAME.size
+            if n == 0 or j + n > end:
+                break
+            if verify and zlib.crc32(mv[j:j + n]) & 0xFFFFFFFF != crc:
+                break
+            if data[j] != OP_PUT:
+                out.append(bytes(data[j:j + n]))
+            i = j + n
+        mv.release()
+        return (out, i) if verify else out
+
+    def _mk_path(self, sid: int) -> str:
+        return os.path.join(self.path, "seg-%06d.mk" % sid)
+
+    def _write_markers(self, sid: int) -> None:
+        """A CLOSED segment's markers go to its `.mk` file and leave RAM (they cannot change any more)."""
+        ms = self.seg_markers.get(sid)
+        if ms is None:
+            return
+        p = self._mk_path(sid)
+        with open(p + ".tmp", "wb") as f:
+            f.write(b"".join(struct.pack("<I", len(m)) + m for m in ms))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(p + ".tmp", p)
+        self.seg_markers[sid] = None
+
+    def _markers_of(self, sid: int) -> list:
+        ms = self.seg_markers.get(sid)
+        if ms is not None:
+            return ms
+        try:
+            with open(self._mk_path(sid), "rb") as f:
+                raw = f.read()
+            out, i = [], 0
+            while i + 4 <= len(raw):
+                (n,) = struct.unpack_from("<I", raw, i)
+                if i + 4 + n > len(raw):
+                    raise ValueError("torn")
+                out.append(raw[i + 4:i + 4 + n])
+                i += 4 + n
+            return out
+        except (OSError, ValueError):
+            with open(self._seg_path(sid), "rb") as f:     # no (good) .mk: read the segment once
+                data = f.read()
+            return self._scan_markers(data, len(data))
 
     def _replay(self, sid: int, data, start=None) -> int:
         if not data.startswith(MAGIC):
@@ -536,19 +713,33 @@ class Store:
         return start
 
     def _merge_all(self) -> None:
-        dead = np.frombuffer(self.dead, dtype=np.uint8) if len(self.dead) else None
-        self.idx.merge(dead)
-        self.words.merge(dead)
-        self.dprefix.merge(self.dead)
-        self._merge_ids()
+        for lv in self._leveled():
+            lv.merge(self._live_of(lv))
+
+    def merge_disk_runs(self, pace=None, max_steps: int = 1) -> int:
+        """Background housekeeping (maintenance): merge disk runs, STREAMED, with the lock taken only to pick a pair,
+        to filter a piece, and to swap the result in. Returns how many merges ran."""
+        n = 0
+        for lv in self._leveled():
+            for _ in range(max_steps):
+                with self._lock:
+                    live = self._live_of(lv)
+                if not lv.disk_merge(self._lock, live, pace):
+                    break
+                n += 1
+        return n
 
     def _drain(self, fsync: bool) -> int:
         """Hand the buffer to the kernel in ONE sequential write; fsync only when asked."""
         n = self._pending_n
         arena = self.arenas[self._active]
         if len(arena) > self._flushed:
-            self._file.write(memoryview(arena)[self._flushed:])
-            self._file.flush()
+            try:
+                self._file.write(memoryview(arena)[self._flushed:])
+                self._file.flush()
+            except OSError:
+                self._undo_partial_write()
+                raise
             self._flushed = len(arena)
             self._pending_n = 0
         if fsync:
@@ -559,12 +750,39 @@ class Store:
                 pass
         return n
 
+    def _undo_partial_write(self) -> None:
+        """A FAILED WRITE LEAVES THE SEGMENT EXACTLY AS IT WAS (a full disk, an I/O error).
+
+        Part of the batch may already be in the file -- and, with a buffered file object, part may still sit in
+        its buffer, to be written by the next flush or by close(). Left there, every later record was appended
+        AFTER a half record, and the next open's CRC check cut the whole tail away: all events flushed after the
+        disk filled, lost (tests/test_posterchandb_disk_full.py measured 72 of 120). So the file is cut back to
+        the last byte known good, and the file object -- buffer and all -- is replaced. The batch is still in the
+        arena and `_flushed` did not move, so the next flush writes it again, whole."""
+        old, path = self._file, self._seg_path(self._active)
+        try:
+            raw = getattr(old, "raw", None)
+            fd = old.fileno()
+            os.ftruncate(fd, self._flushed)
+            os.fsync(fd)
+            if raw is not None:
+                raw.close()                # closing the raw file first discards the buffered remainder
+            else:
+                old.close()
+        except (OSError, ValueError):
+            pass
+        self._file = open(path, "ab")
+
     def _rotate_if_full(self) -> None:
         """A full segment is closed, so compaction can later rewrite it on its own."""
         if self._flushed < self.segment_bytes:
             return
         os.fsync(self._file.fileno())
         self._file.close()
+        try:
+            self._write_markers(self._active)       # closed: its markers leave RAM for its .mk file
+        except OSError as e:
+            self.log("[posterchandb] markers of segment %d kept in RAM: %s" % (self._active, e))
         self._active += 1
         self._new_segment(self._active)
         self.arenas[self._active] = bytearray(MAGIC)
@@ -648,37 +866,39 @@ class Store:
             return len(seqs)
 
     def snapshot(self):
-        """Write an index snapshot now (flushes first). None while a compaction is running. Deferred search words
-        are recorded in it (a restart from it resumes indexing them), so pending words never block one. Only the
-        gathering holds the lock; the file is written outside it."""
+        """A CHECKPOINT now (checkpoint.py): the log is fsynced, the RAM runs are written out, the columns' new rows are
+        appended to their files and their changed pages journaled. It writes what changed since the last one, not
+        the index, so it is cheap at any size. None while a compaction is running (it takes its own)."""
         with self._lock:
             if self._file is None or self._compacting:
                 return None
-            self.flush()
-            gathered = snapshot.collect(self)
+            res = checkpoint.save(self)
             self._since_snap = 0
-        res = snapshot.write(*gathered)
-        self.last_snapshot = time.time()
-        return res
+            self.last_snapshot = time.time()
+            return res
 
     def close(self, take_snapshot: bool = True) -> None:
-        """Flush (fsync) and close. `snapshot=False` for a stop with a deadline (the relay has systemd's 10 s):
-        the snapshot is the slow part, and the log alone is complete -- the next start replays its tail."""
+        """Flush (fsync), checkpoint, close. The checkpoint is what makes the next start replay nothing; it writes only
+        what changed, so it is taken at every clean stop (`take_snapshot` is kept for callers and no longer skips
+        it -- it used to, because a full snapshot did not fit systemd's 10 s, and then every deploy replayed up to a
+        day of log)."""
         with self._lock:
             if self._file is None:
                 return
             self.flush()
-            if take_snapshot and self.snapshots and self._since_snap >= self.snapshot_min_events:
+            if self.snapshots and self._since_snap > 0 and not self._compacting:
                 try:
-                    snapshot.save(self)          # a clean stop: the next start loads instead of re-indexing
+                    checkpoint.save(self)
                     self._since_snap = 0
                 except OSError as e:
-                    self.log("[posterchandb] snapshot at close failed (%s) — the next start replays" % e)
+                    self.log("[posterchandb] checkpoint at close failed (%s) — the next start replays" % e)
             self._file.close()
             self._file = None
             for fd in self._fds.values():
                 os.close(fd)
             self._fds = {}
+            for c in self._cols.values():
+                c.close()
 
     def disk_bytes(self) -> int:
         return sum(self.seg_size.values())
@@ -688,12 +908,15 @@ class Store:
             return self._stats_locked()
 
     def _stats_locked(self) -> dict:
-        dead = int(np.count_nonzero(np.frombuffer(self.dead, np.uint8))) if len(self.dead) else 0
+        dead = int(np.count_nonzero(self.dead.view())) if len(self.dead) else 0
         return {"events": len(self.off), "live": len(self.off) - dead, "dead": dead,
                 "disk_bytes": self.disk_bytes(),
                 "arena_bytes": self.resident_bytes(),
                 "cold_segments": sum(1 for a in self.arenas.values() if a is None),
-                "index_bytes": self.idx.nbytes() + self.words.nbytes() + sum(k.nbytes + v.nbytes for k, v in self._id_runs),
+                "index_bytes": sum(lv.nbytes() for lv in self._leveled()),
+                "index_ram_bytes": sum(lv.ram_bytes() for lv in self._leveled()),
+                "index_disk_bytes": sum(lv.disk_bytes() for lv in self._leveled()),
+                "column_anon_bytes": sum(c.anon_bytes() for c in self._cols.values()),
                 "segments": len(self.arenas), "runs": len(self.idx.runs), "id_bytes": len(self.ids),
                 "unflushed": self._pending_n, "since_flush_s": round(time.monotonic() - self._last_flush, 1)}
 
@@ -741,43 +964,27 @@ class Store:
                 return size
             return 0
 
+    def trim_index(self) -> int:
+        """Give the index's resident pages back to the kernel (the cache governor, when the store is over its RAM
+        budget or the machine is short of memory): every run mapping and column mapping. Returns how many mappings.
+        The next read of a page faults it back in from the page cache or the disk -- slower, never wrong."""
+        n = 0
+        for lv in self._leveled():
+            with self._lock:
+                maps = [m for r in lv.runs if r.name is not None for m in map(disk.mapping_of, r) if m is not None]
+            for m in maps:
+                disk.release_mapping(m, file_backed_only=True)
+                n += 1
+        for c in list(self._cols.values()):
+            with self._lock:
+                disk.release_mapping(c._mm, file_backed_only=False)
+            n += 1
+        return n
+
     def pubkey_of(self, seq: int) -> str:
         return self._authors[self.author[seq]]
 
     # ---------------------------------------------------------------- ids
-    def _merge_ids(self) -> None:
-        if self._id_delta:
-            n = sum(len(v) for v in self._id_delta.values())
-            k = np.fromiter((key for key, vs in self._id_delta.items() for _ in vs), dtype=np.uint64, count=n)
-            v = np.fromiter((x for vs in self._id_delta.values() for x in vs), dtype=np.uint32, count=n)
-            o = np.argsort(k)
-            self._id_runs.append((k[o], v[o]))
-            self._id_delta = {}
-        seg = np.frombuffer(self.seg, dtype=np.uint32) if len(self.seg) else None
-        while len(self._id_runs) > 1 and len(self._id_runs[-1][0]) * 4 >= len(self._id_runs[-2][0]):
-            kb, vb = self._id_runs.pop()
-            ka, va = self._id_runs.pop()
-            k = np.concatenate([ka, kb]); v = np.concatenate([va, vb])
-            if seg is not None:      # records compacted away are forgotten, here, in a merge that happens anyway
-                keep = seg[v] != DROPPED
-                k, v = k[keep], v[keep]
-            o = np.argsort(k, kind="stable")
-            self._id_runs.append((k[o], v[o]))
-
-    def _merge_ids_once_more(self) -> None:
-        """Merge the two newest id runs regardless of size (snapshot: one run)."""
-        if len(self._id_runs) < 2:
-            return
-        seg = np.frombuffer(self.seg, dtype=np.uint32) if len(self.seg) else None
-        kb, vb = self._id_runs.pop()
-        ka, va = self._id_runs.pop()
-        k = np.concatenate([ka, kb]); v = np.concatenate([va, vb])
-        if seg is not None:
-            keep = seg[v] != DROPPED
-            k, v = k[keep], v[keep]
-        o = np.argsort(k, kind="stable")
-        self._id_runs.append((k[o], v[o]))
-
     def _seq_of(self, eid: str):
         if not isinstance(eid, str) or len(eid) != 64:
             return None
@@ -785,13 +992,7 @@ class Store:
             key = int(eid[:16], 16)
         except ValueError:
             return None
-        cands = list(self._id_delta.get(key, ()))
-        ku = np.uint64(key)
-        for keys, seqs in self._id_runs:
-            lo = int(np.searchsorted(keys, ku, "left"))
-            if lo < len(keys) and keys[lo] == ku:
-                hi = int(np.searchsorted(keys, ku, "right"))
-                cands += [int(x) for x in seqs[lo:hi]]
+        cands = self._idk.get(key)
         # An 8-byte prefix can collide: confirm against the record's own id. One id can have SEVERAL records --
         # an event pruned or purged and then received again (the firehose re-sends old events) is stored
         # again, exactly as the relay's Postgres re-inserts a deleted row -- so the LIVE one is the answer.
@@ -922,7 +1123,7 @@ class Store:
             self.add_derived_tag(eid, "_quote_author", recipient)
         if int(ev["kind"]) == 1:
             quoting = np.asarray(self.idx.get(_h("t:q:%s" % eid)), dtype=np.uint32)
-            for s in self._live(quoting[np.frombuffer(self.kind, dtype=np.uint32)[quoting] == 1] if len(quoting) else []):
+            for s in self._live(quoting[self.kind.view(np.uint32)[quoting] == 1] if len(quoting) else []):
                 q = self.get(s)
                 if eid in quoted_ids_without_author({"kind": 1, "tags": q["tags"]}):
                     self.add_derived_tag(q["id"], "_quote_author", ev["pubkey"])
@@ -954,13 +1155,12 @@ class Store:
         _grow(self.expires.append, exp if exp and exp > 0 else 0)
         _grow(self.origin.append, origin)
         pk = ev["pubkey"]
-        aid = self._author_ix.get(pk)
+        aid = self._authors.ix(pk)
         if aid is None:
-            aid = self._author_ix[pk] = len(self._authors)
-            self._authors.append(pk)
+            aid = self._authors.add(pk)
         _grow(self.author.append, aid)
         _grow(self.dead.append, 0)
-        self._id_delta.setdefault(int(ev["id"][:16], 16), []).append(seq)
+        self._idk.add(int(ev["id"][:16], 16), seq)
         k = ev["kind"]
         self.idx.add(_h("ak:%s:%d" % (pk, k)), seq)
         self.idx.add(_h("au:%s" % pk), seq)
@@ -1057,7 +1257,7 @@ class Store:
                 return {"compacted": None}
             self._compacting = True
         try:
-            seqs = np.nonzero(np.frombuffer(self.seg, dtype=np.uint32) == sid)[0]
+            seqs = np.nonzero(self.seg.view(np.uint32) == sid)[0]
             moved = written = 0
             i = 0
             while i < len(seqs):
@@ -1086,7 +1286,7 @@ class Store:
                     pace(chunk, time.thread_time() - t0)
             with self._lock:
                 carried = 0
-                for payload in self.seg_markers.get(sid, []):
+                for payload in self._markers_of(sid):
                     s = self._seq_of(bytes(payload[1:33]).hex())
                     if s is None:
                         continue
@@ -1098,8 +1298,6 @@ class Store:
                         self._frame(payload); carried += 1
                 self._drain(fsync=True)
                 self._rotate_if_full()
-                os.remove(self._seg_path(sid))
-                self._fsync_dir()
                 seg = self.seg
                 for s in seqs:                                # dead records here now have no bytes anywhere
                     s = int(s)
@@ -1115,6 +1313,19 @@ class Store:
                 self.seg_bytes.pop(sid, None)
                 self.seg_dead.pop(sid, None)
                 self.seg_markers.pop(sid, None)
+                # A checkpoint that no longer lists the segment, THEN the file goes: a crash in between finds it
+                # named in the checkpoint's `deleted` and removes it (a crash before finds the old checkpoint, whose
+                # columns still point into the segment -- still there).
+                if self.snapshots:
+                    checkpoint.save(self, deleted=[sid])
+                    self._since_snap = 0
+                    self.last_snapshot = time.time()
+                for f in (self._seg_path(sid), self._mk_path(sid)):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+                self._fsync_dir()
                 return {"compacted": sid, "moved": moved, "written": written, "carried": carried}
         finally:
             self._compacting = False
@@ -1146,7 +1357,7 @@ class Store:
                 for name, col, dt in (("created", self.created, np.uint64), ("kind", self.kind, np.uint32),
                                       ("origin", self.origin, np.uint8), ("author", self.author, np.uint32),
                                       ("dead", self.dead, np.uint8), ("expires", self.expires, np.uint64)):
-                    v = np.frombuffer(col, dtype=dt)
+                    v = col.view(dt)
                     out[name][lo:hi] = v[lo:hi]
                     del v                           # no view may outlive the lock (see _grow)
             lo = hi
@@ -1169,18 +1380,9 @@ class Store:
             return np.unique(self.idx.get(_h("au:%s" % pubkey)))
 
     def d_prefix_pairs(self, pre: str) -> list:
-        """[(d value, seq)] for every `d` tag starting with `pre` (dead ones included). The runs are never
-        mutated in place (a merge builds a new list), so only the references and the small delta are taken under
-        the lock and the scan runs outside it."""
+        """[(d value, seq)] for every `d` tag starting with `pre` (dead ones included)."""
         with self._lock:
-            runs = list(self.dprefix.runs)
-            out = [(v, q) for v, q in self.dprefix.delta if v.startswith(pre)]
-        for run in runs:
-            i = bisect.bisect_left(run, (pre, -1))
-            while i < len(run) and run[i][0].startswith(pre):
-                out.append(run[i])
-                i += 1
-        return out
+            return self.dprefix.pairs(pre)
 
     def columns_for(self, seqs, chunk: int = 4096) -> list:
         """[(kind, origin, created, dead, expires)] for a few seqs (one author's), read under the lock in pieces."""
@@ -1221,22 +1423,19 @@ class Store:
             return self._query_locked(flt, now)
 
     def _prefmax(self, n: int) -> np.ndarray:
-        """max(created[0..i]) for every seq i < n, kept incrementally in a growable buffer (append-only columns)."""
-        if self._pm_n > n:
-            self._pm_n = 0                          # a reset/reload shrank the store: rebuild
-        if self._pm_n < n:
-            created = np.frombuffer(self.created, dtype=np.uint64)[:n]
-            if len(self._pm) < n:
-                grown = np.zeros(max(n, 2 * len(self._pm), 1024), dtype=np.uint64)
-                grown[:self._pm_n] = self._pm[:self._pm_n]
-                self._pm = grown
-            tail = np.maximum.accumulate(created[self._pm_n:n])
-            if self._pm_n:
-                np.maximum(tail, self._pm[self._pm_n - 1], out=tail)
-            self._pm[self._pm_n:n] = tail
-            self._pm_n = n
+        """max(created[0..i]) for every seq i < n, kept incrementally in its own column (append-only columns)."""
+        pm = self._pmc
+        if len(pm) > n:
+            pm.truncate(n)
+        m = len(pm)
+        if m < n:
+            created = self.created.view()[:n]
+            tail = np.maximum.accumulate(created[m:n])
+            if m:
+                np.maximum(tail, np.uint64(pm[m - 1]), out=tail)
             del created
-        return self._pm[:n]
+            pm.write_range(m, tail)
+        return pm.view()[:n]
 
     def _newest_first(self, flt: dict, kinds, n: int, now: int) -> np.ndarray:
         """Candidate seqs for a filter with nothing selective, found newest-first. A superset of the answer: the
@@ -1245,10 +1444,10 @@ class Store:
         decides -- can never be cut off."""
         limit = max(1, min(int(flt.get("limit") or 500), 5000))
         pm = self._prefmax(n)
-        created = np.frombuffer(self.created, dtype=np.uint64)[:n]
-        dead = np.frombuffer(self.dead, dtype=np.uint8)[:n]
-        expires = np.frombuffer(self.expires, dtype=np.uint64)[:n]
-        kind_col = np.frombuffer(self.kind, dtype=np.uint32)[:n]
+        created = self.created.view(np.uint64)[:n]
+        dead = self.dead.view(np.uint8)[:n]
+        expires = self.expires.view(np.uint64)[:n]
+        kind_col = self.kind.view(np.uint32)[:n]
         kinds_arr = np.asarray([int(k) for k in kinds], dtype=np.uint32) if kinds else None
         since = int(flt["since"]) if flt.get("since") is not None else None
         until = int(flt["until"]) if flt.get("until") is not None else None
@@ -1302,7 +1501,7 @@ class Store:
             cand = self._match_locked(flt, now, exhaustive=False)
             if not len(cand):
                 return []
-            created = np.frombuffer(self.created, dtype=np.uint64)
+            created = self.created.view(np.uint64)
             # The relay's own rule (store.py _query_one): `limit or 500`, clamped to 1..5000.
             limit = max(1, min(int(flt.get("limit") or 500), 5000))
             c = created[cand]
@@ -1312,7 +1511,7 @@ class Store:
                 sel = c >= cut
                 cand, c = cand[sel], c[sel]
             # ORDER BY created_at DESC, id DESC — the id as four big-endian words is its exact hex order
-            idw = np.frombuffer(self.ids, dtype=">u8").reshape(-1, 4)[cand]
+            idw = self.ids.view(">u8").reshape(-1, 4)[cand]
             order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
             return [self.get(int(s)) for s in cand[order]]
 
@@ -1363,7 +1562,7 @@ class Store:
                     return _none           # plainto_tsquery with no lexemes matches nothing
                 for w in words:
                     sets.append(_union([self.words.get(_h(w))]))
-            kind_col = np.frombuffer(self.kind, dtype=np.uint32)
+            kind_col = self.kind.view(np.uint32)
             if sets:
                 sets.sort(key=len)
                 cand = sets[0]
@@ -1385,9 +1584,9 @@ class Store:
                 cand = np.arange(n, dtype=np.uint32)
             if not len(cand):
                 return _none
-            created = np.frombuffer(self.created, dtype=np.uint64)
-            expires = np.frombuffer(self.expires, dtype=np.uint64)
-            dead = np.frombuffer(self.dead, dtype=np.uint8)
+            created = self.created.view(np.uint64)
+            expires = self.expires.view(np.uint64)
+            dead = self.dead.view(np.uint8)
             keep = dead[cand] == 0
             exp = expires[cand]
             keep &= (exp == 0) | (exp > now)

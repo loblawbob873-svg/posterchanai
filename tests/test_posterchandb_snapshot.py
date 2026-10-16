@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from app.services.posterchandb import snapshot as snap
+from app.services.posterchandb import checkpoint as snap
 from app.services.posterchandb.store import Store
 
 from tests.pcdb_gen import Gen   # (the same event and filter generator)
@@ -95,24 +95,20 @@ def test_a_crash_after_the_snapshot_recovers_the_tail_from_the_log(tmp_path):
         fast.close()
 
 
-@pytest.mark.parametrize("how", ["compacted", "tokenizer", "corrupt", "truncated"])
+@pytest.mark.parametrize("how", ["tokenizer", "corrupt", "truncated"])
 def test_a_snapshot_that_does_not_match_is_never_used(tmp_path, monkeypatch, how):
     p = str(tmp_path / "db")
     s, g = _fill(p, 4, segment_bytes=60000)
     s.snapshot()
-    if how == "compacted":
-        s.kill([q for q in range(len(s.off)) if s.seg[q] == 1 and not s.dead[q]][5:])
-        s.flush()
-        assert s.compact(sid=1, pace=lambda *a: None)["compacted"] == 1
     s.flush()
     s._file.close()
     f = os.path.join(p, snap.NAME)
     if how == "tokenizer":
-        monkeypatch.setattr(snap, "_fingerprint", lambda: "another-parser")
+        monkeypatch.setattr(snap, "fingerprint", lambda: "another-parser")
     elif how == "corrupt":
         with open(f, "r+b") as fh:
             fh.seek(os.path.getsize(f) // 2)
-            fh.write(b"\x00" * 4096)
+            fh.write(b"\x00" * 64)
     elif how == "truncated":
         with open(f, "r+b") as fh:
             fh.truncate(os.path.getsize(f) // 3)
@@ -120,6 +116,27 @@ def test_a_snapshot_that_does_not_match_is_never_used(tmp_path, monkeypatch, how
     full = Store(p, snapshots=False)
     try:
         assert fast.last_open["snapshot"] is False, (how, fast.last_open)
+        assert _answers(fast, g) == _answers(full, g)
+    finally:
+        full.close()
+        fast.close()
+
+
+def test_a_compaction_keeps_the_checkpoint_usable(tmp_path):
+    """The old snapshot listed every segment, so a compaction made it useless and the next start replayed the whole
+    log (at 200 GB: hours). A compaction now takes a checkpoint that no longer names the segment before deleting it,
+    so a start after it -- or after a crash right after it -- replays nothing and answers exactly."""
+    p = str(tmp_path / "db")
+    s, g = _fill(p, 4, segment_bytes=60000)
+    s.snapshot()
+    s.kill([q for q in range(len(s.off)) if s.seg[q] == 1 and not s.dead[q]][5:])
+    s.flush()
+    assert s.compact(sid=1, pace=lambda *a: None)["compacted"] == 1
+    s._file.close()                                   # the process dies right after the compaction
+    fast = Store(p)
+    full = Store(p, snapshots=False)
+    try:
+        assert fast.last_open["snapshot"] and fast.last_open["replayed"] == 0, fast.last_open
         assert _answers(fast, g) == _answers(full, g)
     finally:
         full.close()
@@ -147,7 +164,7 @@ def test_maintenance_snapshots_after_a_compaction(tmp_path):
     th = M.Throttle(io_mb_s=1000, cpu_pct=100, busy_load=0, sleep=lambda x: None)
     m = M.Maintainer(s, lambda: M.Policy(min_free_pct=0), throttle=th)
     r = m.run_pass()
-    assert r["compacted"] and r["snapshot"], r
+    assert r["compacted"], r                          # the compaction checkpoints itself before deleting the file
     s.flush()
     s._file.close()
     again = Store(p)
