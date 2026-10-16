@@ -27576,7 +27576,24 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     } else if (metadata && Object.prototype.hasOwnProperty.call(metadata, "banner") && metadata.banner === null) delete body.banner;
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()], ...authority];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
-    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
+    /* A NEW EDITION MUST WIN ITS VERSION SLOT, or the save changes nothing anywhere.
+     *
+     * Editions fold as a chain: version n links to n-1 by hash, and where several editions claim one version
+     * the fold keeps the LOWEST rumor id. PosterChan's chain was forked on 2026-10-15 -- a client that read no
+     * prior metadata (the desktop's local-relay cache answered empty) wrote a fresh v1 -- and from then on the
+     * fold anchored on that v1 while the v2 slot was won by the ORIGINAL v2 (lower id, linked to the other v1):
+     * a gap, so the community froze at the wipe and every later save (version 2, linked correctly) lost the
+     * tie-break and was silently ignored -- "set the icon, says saved, does not show". The id is a hash over
+     * the send time, so pick the millisecond that makes ours the lowest id in the slot. Same fold, same rule,
+     * in every client: Armada and Vector compute the same head. */
+    const rivals = openControlWraps(controlWraps || [], groups).filter((e) => e.vsk === VSK_METADATA && bytesToHex2(e.entityId) === entityHex && e.version === version2).map((e) => bytesToHex2(e.rumorId));
+    const lowest = rivals.length ? rivals.reduce((a, b) => (a < b ? a : b)) : null;
+    const now = Date.now();
+    let rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: now, tags });
+    for (let i = 1; lowest && !(rumor.id < lowest) && i < 200000; i++) {
+      rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: now - i, tags });
+    }
+    if (lowest && !(rumor.id < lowest)) throw new Error("this community's settings history is blocked at version " + version2 + " -- nothing was changed");
     const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), metadata: body };
   }
