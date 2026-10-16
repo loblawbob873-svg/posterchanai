@@ -5536,9 +5536,20 @@
   }
   async function quickBanReview(p,room,target){
     const owner=room.cord.bundle.owner,keep=[...new Set([owner,...roomParticipants(room,owner)])].filter(pk=>pk&&pk!==target);
-    const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member',others=keep.filter(pk=>pk!==owner).length;
-    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${name}? They lose access to this community for good. The other ${others} member${others===1?'':'s'} on Known members keep access; anyone not on that list will need a new invite.`,{ok:'Ban',danger:true}):true;
-    return ok?{recipients:keep.map(pubkey=>({pubkey})),channelRecipients:{},removed:[target]}:null;
+    const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
+    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${name} from this community?`,{ok:'Ban',danger:true}):true;
+    if(!ok)return null;
+    // Each private channel keeps the members holding its channel role (and the owner) -- the same people who hold its key.
+    const channelRecipients={},reader=window.PosterCordReader,loadKey=room.communityId||room.naddr;
+    if((room.cord.bundle.channels||[]).length){
+      const info=reader.inspectControl(room.cord.bundle,roomControls.get(loadKey)||[]),kept=new Set(keep);
+      for(const ch of room.cord.bundle.channels){
+        const roleIds=new Set((info.roles||[]).filter(r=>r.scope==='channel'&&r.channelId===ch.id).map(r=>r.id));
+        const members=Object.entries(info.grants||{}).filter(([pk,ids])=>kept.has(pk)&&(ids||[]).some(id=>roleIds.has(id))).map(([pk])=>pk);
+        channelRecipients[ch.id]=[...new Set([owner,...members])].map(pubkey=>({pubkey}));
+      }
+    }
+    return {recipients:keep.map(pubkey=>({pubkey})),channelRecipients,removed:[target]};
   }
   function bindRefoundingControl(p,$){
     const saveButton=$('#cc-settings-save'),room=saved()[state.community],owner=deliveryOwner(p);
@@ -6458,11 +6469,11 @@
       const actor=deliveryOwner(p),room=saved()[state.community];if(!room?.cord?.bundle)return p.toast('Community moderation is not ready.');
       if(room.cord.refounding)return p.toast('Resume the pending key rotation in community settings first.');
       try{
-        /* "why is banning UI so complex? I only care about the person I am banning" (2026-10-16). With no private
-         * channels the only decision IS who is banned: everyone else on Known members keeps access, so a ban is one
-         * confirmation. Private channels keep the full review -- their access is whoever was handed the channel key,
-         * which the community does not list, so guessing would either lock members out or let members in. */
-        const reviewed=(room.cord.bundle.channels||[]).length?await reviewRefoundingRecipients(p,room,[target]):await quickBanReview(p,room,target);if(!reviewed)return;
+        /* "why is banning UI so complex? I only care about the person I am banning" / "a simple button to ban like
+         * every other program" (2026-10-16). The only decision IS who is banned: everyone else keeps exactly the access
+         * they have -- the community to everyone on Known members, each private channel to the members its channel
+         * role is granted to (CORD's own rule: privateChannelInvite refuses anyone without it). quickBanReview. */
+        const reviewed=await quickBanReview(p,room,target);if(!reviewed)return;
         if(deliveryOwner(p)!==actor)throw new Error('The signing account changed during access review.');
         await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
       }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
