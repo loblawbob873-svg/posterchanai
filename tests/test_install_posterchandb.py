@@ -78,8 +78,14 @@ def test_the_app_resolves_the_same_directory(monkeypatch):
     from app.services import posterchandb
     monkeypatch.setenv("POSTERCHANDB_DIR", "/usb/posterchandb")
     assert posterchandb.data_dir() == "/usb/posterchandb"
-    monkeypatch.delenv("POSTERCHANDB_DIR")
-    assert posterchandb.data_dir() == "/var/lib/posterchandb"
+    # The default is asked of a process that is not pytest: under pytest data_dir() refuses it (it is this
+    # machine's live store -- tests/test_tests_never_open_the_production_store.py).
+    import subprocess
+    import sys
+    env = {k: v for k, v in os.environ.items() if k != "POSTERCHANDB_DIR"}
+    out = subprocess.run([sys.executable, "-c", "from app.services import posterchandb; print(posterchandb.data_dir())"],
+                         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=120)
+    assert out.stdout.strip() == "/var/lib/posterchandb", out.stderr[-500:]
 
 
 def test_every_install_path_prepares_it_and_posterchanos_points_at_a_nocow_dir():

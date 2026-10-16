@@ -43,6 +43,11 @@ def pytest_configure(config):
     helper = ROOT / "scripts" / "private_tmp.py"
     if helper.is_file():             # a partial copy of the tree (a mutation test's) may not carry it
         runpy.run_path(str(helper))["enter"]("pct-pytest-")
+    # Never this machine's real store: a relay a test starts (in this process or a child, which inherits the
+    # environment) opens PosterChanDB under the run's private temp dir. See posterchandb.data_dir().
+    if os.path.realpath(os.environ.get("POSTERCHANDB_DIR") or "/var/lib/posterchandb") == "/var/lib/posterchandb":
+        import tempfile
+        os.environ["POSTERCHANDB_DIR"] = os.path.join(tempfile.gettempdir(), "posterchandb-test")
 
 
 def pytest_sessionfinish(session, exitstatus):
