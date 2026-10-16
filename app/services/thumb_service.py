@@ -31,6 +31,8 @@ CACHE_CAP = int(os.environ.get("POSTERCHANAI_THUMB_CACHE_MB", "512")) * 1024 * 1
 _ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "thumbs")
 _sem = asyncio.Semaphore(3)              # resizes at once: a cheap VPS must stay responsive
 _writes = 0
+MAX_PENDING = 400                        # thumbnails queued for the background; beyond it the original is served
+_pending: dict = {}
 
 
 def snap(w) -> int:
@@ -128,6 +130,34 @@ def _prune() -> None:
             pass
 
 
+def peek(url: str, w: int):
+    """What the cache already knows, without a fetch: WebP bytes, b"" (the original is right), or None (not made)."""
+    try:
+        with open(_path(url, snap(w)), "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def schedule(url: str, w: int) -> None:
+    """Make the thumbnail in the background (once per url+width). A client is NEVER made to wait for it.
+
+    2026-10-16: the route resized inline -- a picture not seen before cost ~2.5 s (download the original, resize), three
+    at a time, and the service worker's own re-fetch of every image paid it twice. A first scroll through new posts
+    showed empty image boxes for 15 s+ ("vyram said it's worse now"). Now the first view gets the original at once (what
+    the client did before thumbnails), and every view after it gets the small copy."""
+    w = snap(w)
+    key = (w, url)
+    if key in _pending or len(_pending) >= MAX_PENDING:
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(thumb(url, w))
+    except RuntimeError:
+        return
+    _pending[key] = task
+    task.add_done_callback(lambda _t, k=key: _pending.pop(k, None))
+
+
 async def thumb(url: str, w: int):
     """WebP bytes for `url` at ladder width `w`, or None (serve the original)."""
     global _writes
@@ -146,10 +176,10 @@ async def thumb(url: str, w: int):
             src = await _fetch(url)
         except Exception as e:                            # noqa: BLE001 -- a host that will not answer
             logger.debug("[thumb] fetch failed: %s", e)
-            return None
-        if not src:
-            return None
-        out = await asyncio.to_thread(resize, src, w)
+            src = None
+        # A source that could not be had is remembered as "the original is right" too: the original is what the
+        # client then loads anyway, and without the marker every view would queue the same failing fetch again.
+        out = await asyncio.to_thread(resize, src, w) if src else None
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         tmp = "%s.%d.tmp" % (p, os.getpid())

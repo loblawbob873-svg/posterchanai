@@ -2590,17 +2590,26 @@ async def client_thumb(request: Request, u: str = Query(..., max_length=4096), w
     from app.services import thumb_service
     if not (u.startswith("https://") or u.startswith("http://")):
         raise HTTPException(status_code=400, detail="not an http(s) URL")
-    data = await thumb_service.thumb(u, w)
+    # Only a NAVIGATION is refused: a redirect there would be an open redirect off this domain. An <img>, and the
+    # service worker's own re-fetch of one (destination "empty"), get the redirect -- a 400 to the worker cost every
+    # new picture a second round trip.
+    dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    mode = (request.headers.get("sec-fetch-mode") or "").lower()
+    if mode == "navigate" or dest in ("document", "iframe", "frame", "embed", "object") or not (dest or mode):
+        raise HTTPException(status_code=400, detail="thumbnails are for images")
+    data = thumb_service.peek(u, w)
     if data:
         return Response(content=data, media_type="image/webp", headers={
             "Cache-Control": "public, max-age=604800, immutable",
             "Access-Control-Allow-Origin": "*",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox"})
-    dest = (request.headers.get("sec-fetch-dest") or "").lower()
-    if dest != "image":
-        raise HTTPException(status_code=400, detail="thumbnails are for images")
-    return RedirectResponse(u, status_code=302, headers={"Cache-Control": "public, max-age=86400"})
+    if data is None:
+        # Not made yet: never wait for it. The original now, the thumbnail from the next view on -- so this redirect
+        # must not be cached, or the device would keep the full-size picture for a day.
+        thumb_service.schedule(u, w)
+        return RedirectResponse(u, status_code=302, headers={"Cache-Control": "no-store", "Access-Control-Allow-Origin": "*"})
+    return RedirectResponse(u, status_code=302, headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"})
 
 
 @router.get("/xdc")
