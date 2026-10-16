@@ -8,6 +8,7 @@ Measured in the shipped bundle at tablet size, with all windows closed, after a 
     composer on EVERY render -- added a capture keydown on the document and a resize on the window that held the
     textarea (and the card tree around it) for ever;
   * the Terminal kept +64 nodes: the WebGL renderer's `document.fonts` listener held the addon and the terminal.
+  * Music kept ~160 nodes and 21 listeners: every open added a playlists watcher that was never removed.
 Both now leave nothing. This drives the real desk: double-click the icon, close with the window's own X.
 """
 import asyncio
@@ -30,7 +31,7 @@ ROUNDS = 5
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('view', ['global', 'terminal'])
+@pytest.mark.parametrize('view', ['global', 'terminal', '__music'])
 def test_a_closed_window_leaves_nothing_behind(view):
     got = {'nodes': []}
 

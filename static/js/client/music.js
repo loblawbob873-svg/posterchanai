@@ -27,6 +27,7 @@ window.PCMusicFactory = function(dep){
    * uploading is one button away rather than the thing you arrive at.
    * It reuses _renderMusicList for the rows and the floating MusicPlayer for playback, so there is
    * one library, one queue, and one set of controls that cannot drift out of step. */
+  let _plUnwatch = null;
   function renderMusicApp(){
     const feed=$('#feed'); if(!feed) return;
     /* CLAIM THE VIEW. #feed is one element shared by every screen, and the live timeline appends to
@@ -127,7 +128,13 @@ window.PCMusicFactory = function(dep){
     }
     if(window.PCPlaylists){
       PCPlaylists.load().then(()=>{ if(document.getElementById('ma-lib')) paint(); }).catch(()=>{});
-      PCPlaylists.onChange(()=>{ if(document.getElementById('ma-lib')) paint(); });
+      /* ONE WATCHER, replaced on every open. Each render used to ADD one and none was ever removed: every closed
+       * Music window stayed in memory through it (its whole screen, ~160 nodes and 21 listeners per open,
+       * measured) and every playlist change repainted all of the dead copies. In the APK every desktop window
+       * lives in ONE WebView, so that is what Android's low-memory killer eventually took -- "android tablet
+       * keeps restarting in the middle of using it, desktop mode" (2026-10-15). */
+      if(_plUnwatch){ try{ _plUnwatch(); }catch(_){ } }
+      _plUnwatch = PCPlaylists.onChange(()=>{ if(lib.isConnected) paint(); else if(_plUnwatch){ _plUnwatch(); _plUnwatch=null; } });
     }
     // Safe to reconcile now: a track the server no longer has is MARKED, not hidden, so this can
     // annotate the library but never empty it. A failed fetch leaves _blobHave null and marks nothing.
