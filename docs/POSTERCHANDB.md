@@ -146,6 +146,7 @@ PosterChanDB writes each event ONCE, sequentially. The design budget (49k events
 | log append (872 B/event, batched per flush into large sequential writes) | **~43 MB** |
 | checkpoint — at a clean stop, after a compaction, and at most every `posterchandb_snapshot_hours` | only what changed since the last one |
 | compaction — a log file is rewritten only when **> 40%** of it is dead (`posterchandb_compact_dead_pct`) | proportional to deletes |
+| index-run merges (2026-10-16) — new index entries stay in RAM until a checkpoint or until a run passes a few tens of MB, then are written once; disk runs are merged in the background, so an entry is rewritten about log₄(store / run) times in its life, paced by the maintenance cap | estimated ≤ 150–200 MB on poster.place (not yet measured) |
 
 **Measured on server1, 2026-10-15 — the snapshot term dominates, and it is not small.** The index snapshot is
 now **1.24 GB** (4.7M events, 758 MB of index; ~260 B an event), and with the default then of **1 hour**
@@ -169,6 +170,38 @@ Things that keep it that way:
 - **No double-write.** The log IS the data; there is no separate WAL plus heap plus index pages.
 
 
+## How the database cleans itself (and when)
+
+Two layers: the RELAY decides what to delete, the DATABASE gives the space back. Nothing here needs an operator.
+
+**What gets deleted -- the relay's rules (`nostr_relay/thread.py`, the same rules on every store):**
+
+| When | What |
+|---|---|
+| **Auto-clean, once a day** -- checked 5 min after the relay starts and then every 24 h, with a persisted stamp so a restart neither skips nor repeats it (`nostr_relay_prune_interval_sec`, default 86400) | other people's synced feed posts older than `nostr_relay_retention_days` (default **30**), expired events (NIP-40), retired kinds, the count cap if `nostr_relay_max_events` is set. NEVER a direct write (members' posts, settings, Notes, calendars) and never a preserved author. Admin → Nostr Relay → **Run auto-clean now** runs it at once. |
+| **Block purge, nightly between 02:00 and 04:00** | events from blocked accounts, words, languages and bridges |
+
+Measured on server1: the auto-clean of 2026-10-15 14:53 removed 57,004 events; the block purge of 2026-10-16 02:47
+removed 282.
+
+**How the space comes back -- this database (`maintenance.py`, `store.compact`, `disk.py`):**
+
+1. **A delete is a dead bit.** The event disappears from every answer at once; its bytes stay in its segment file
+   (and an `OP_DEAD` marker is appended to the log, so the decision survives a restart).
+2. **Compaction**, every housekeeping pass (**10 min**, `posterchandb_maint_interval_sec`): one closed ~256 MB
+   segment that is more than **40 %** dead (`posterchandb_compact_dead_pct`) has its live records copied forward
+   and its file deleted -- after a checkpoint that no longer names it.
+3. **The index cleans itself**: a dead event's postings, id entry and `#d~` entry are dropped whenever the run
+   holding them is merged -- the RAM runs at each flush, the disk runs in the same housekeeping pass (up to 4 merges a
+   pass, streamed).
+4. **The disk guard**: below **5 %** free on the filesystem, the OLDEST re-fetchable copies (synced feed posts)
+   go first until it recovers. Never a direct write, never a preserved author.
+
+**What housekeeping may cost** (all live in Admin → Nostr Relay → Database): at most **8 MB/s** of writes
+(`posterchandb_maint_io_mb_s`), at most **10 %** of a CPU (`posterchandb_maint_cpu_pct`), idle CPU and IO priority,
+and it waits while the machine is busy (`posterchandb_maint_busy_load`). So a cleanup of a million events is a few
+MB of appended markers at the time, and its disk is given back a segment at a time over the following passes.
+
 ## Settings (Admin → Nostr Relay → Database)
 
 Declared in `SettingsResponse` (or they never hydrate -- see CLAUDE.md), defined with their ranges in
@@ -184,7 +217,7 @@ An out-of-range value is clamped to the range below.
 | `posterchandb_cache_low_water_mb` | **0 = auto** | The free-RAM floor at which the cache governor drains the read cache (MemAvailable + PSI, `cache.py`). |
 | `posterchandb_snapshot_hours` | **24** h (0.25–48) | An index snapshot at most this often (and on a clean stop), so a restart loads the snapshot and replays only the log after it. |
 | `posterchandb_compact_dead_pct` | **40** % (10–90) | A closed segment is rewritten once this share of it is dead (deleted, expired, replaced). |
-| `posterchandb_maint_interval_sec` | **600** s (60–86400) | How often the housekeeping pass (snapshot, compaction, prune) runs. |
+| `posterchandb_maint_interval_sec` | **600** s (60–86400) | How often the housekeeping pass (compaction, index-run merges, checkpoint when due) runs. The relay's auto-clean has its own daily schedule (see "How the database cleans itself"). |
 | `posterchandb_maint_io_mb_s` | **8** MB/s | Housekeeping's write ceiling, so it never competes with the live relay or wears an SSD in bursts. |
 | `posterchandb_maint_cpu_pct` | **10** % | Housekeeping's CPU share. |
 | `posterchandb_maint_busy_load` | **0.75** load/CPU (0 = never wait) | Housekeeping waits while the machine is busier than this. |
