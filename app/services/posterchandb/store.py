@@ -1538,11 +1538,22 @@ class Store:
                 sets.append(np.unique(np.array([x for x in got if x is not None], dtype=np.uint32)))
             authors, kinds = flt.get("authors"), flt.get("kinds")
             kinds_done = False
+            # A feed of 4,109 followed accounts sorted its whole candidate list (np.unique) on EVERY request:
+            # 197 ms with kinds, 1.6 s without, measured on the production copy 2026-10-16 -- the relay's main CPU.
+            # Per-author (and per-author-and-kind) posting lists are DISJOINT once the keys are unique (an event has
+            # one author and one kind), so when they are the only selective part and the caller re-orders by time
+            # anyway (`query`, not the ascending `match`), concatenating them is the whole union.
+            alone = not exhaustive and not ids and not flt.get("search") and \
+                not any(isinstance(k, str) and k.startswith("#") and v for k, v in flt.items())
+            if authors:
+                authors = list(dict.fromkeys(authors))
             if authors and kinds:
-                sets.append(_union([self.idx.get(_h("ak:%s:%d" % (a, int(k)))) for a in authors for k in kinds]))
+                lists = [self.idx.get(_h("ak:%s:%d" % (a, int(k)))) for a in authors for k in dict.fromkeys(int(k) for k in kinds)]
+                sets.append(_concat(lists) if alone else _union(lists))
                 kinds_done = True
             elif authors:
-                sets.append(_union([self.idx.get(_h("au:%s" % a)) for a in authors]))
+                lists = [self.idx.get(_h("au:%s" % a)) for a in authors]
+                sets.append(_concat(lists) if alone else _union(lists))
             for key, vals in flt.items():
                 if not (isinstance(key, str) and key.startswith("#") and vals):
                     continue
@@ -1618,6 +1629,14 @@ def _union(arrs) -> np.ndarray:
     if len(arrs) == 1 and (len(a) < 2 or bool(np.all(a[1:] >= a[:-1]))):
         return a if len(a) < 2 else a[np.concatenate(([True], a[1:] != a[:-1]))]
     return np.unique(a)
+
+
+def _concat(arrs) -> np.ndarray:
+    """The union of posting lists known to be DISJOINT, in no particular order (no sort, no de-duplication)."""
+    arrs = [a for a in arrs if len(a)]
+    if not arrs:
+        return np.zeros(0, dtype=np.uint32)
+    return arrs[0] if len(arrs) == 1 else np.concatenate(arrs)
 
 
 def _intersect(small: np.ndarray, big: np.ndarray) -> np.ndarray:
