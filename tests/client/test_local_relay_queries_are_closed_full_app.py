@@ -51,3 +51,40 @@ def test_reading_the_local_relay_never_runs_out_of_subscriptions():
         relay.stop()
         shutil.rmtree(tmp, ignore_errors=True)
     assert got.get('reads') == 150, ('reads of a record the local relay holds came back empty', got)
+
+
+BOOT_READ = r'''
+(()=>{const t=setInterval(()=>{if(!window.Store||!Store.lrGet)return;clearInterval(t);
+  window.__bootRead=Store.lrGet([localStorage.getItem('__want')||'x'],4000).then(m=>m.size);},0);})();
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_read_made_while_the_page_is_booting_waits_for_the_local_relay():
+    """The other half of the PosterChan fork: Concord asks for its cached controls as a window boots, before the
+    Store's local-relay socket is open, and lrGet answered an empty Map -- read as "no settings history"."""
+    tmp = H.tmpdir()
+    relay = H.LocalRelay(tmp)
+    got = {}
+    try:
+        relay.start()
+        e = H.ev(bytes([8] * 32), 1, "there at boot", created_at=int(time.time()) - 60)
+
+        async def seed():
+            async with H.Client(relay.url) as c:
+                ok, why = await c.publish(e)
+                assert ok, why
+        asyncio.run(seed())
+
+        async def check(b):
+            await desktop.login(b)
+            await b.js("localStorage.setItem('__want','%s')" % e['id'])
+            await b.call('Page.reload')
+            await b.until('!!window.__bootRead')
+            got['boot'] = await b.js('window.__bootRead')
+
+        asyncio.run(desktop.with_browser('online', '', check, INIT.replace('LOCALRELAY', relay.url) + BOOT_READ, pre_init=PRE))
+    finally:
+        relay.stop()
+        shutil.rmtree(tmp, ignore_errors=True)
+    assert got.get('boot') == 1, ('a read at boot answered empty for a record the local relay holds', got)
