@@ -151,6 +151,12 @@ class VoiceService:
 
             self._model_id = model_id
             self._device = device
+            # the checkpoint was read into host RAM and moved to the device: give the host copy back
+            try:
+                from app.services.vram_manager import release_host_memory
+                release_host_memory()
+            except Exception:
+                pass
             self._sample_rate = int(getattr(self._model, "sr", _SAMPLE_RATE_FALLBACK) or _SAMPLE_RATE_FALLBACK)
             logger.info("[voice] loaded on %s (%dHz)", device, self._sample_rate)
             return self._model

@@ -180,10 +180,27 @@ def _get_vram_settings(db: Session) -> dict:
     }
 
 
+def release_host_memory() -> int:
+    """Hand freed host memory back to the OS (glibc `malloc_trim`). Returns 1 when something was released.
+
+    Every model here is LOADED THROUGH HOST RAM -- a checkpoint is read into CPU tensors and then moved to the
+    GPU -- and glibc keeps large freed blocks in the process instead of returning them. Measured 2026-10-16 on
+    server1: the app process grew 0.6-1.1 GB per chat<->voice swap and reached 38.5 GB (a talking bot swaps on
+    every reply), starving the deploy gate; loading and unloading the voice model on CPU kept 4.2 GB after the
+    unload, and 1.2 GB with this call (tests/test_release_host_memory.py measures the helper itself)."""
+    try:
+        import ctypes
+        return int(ctypes.CDLL("libc.so.6").malloc_trim(0))
+    except (OSError, AttributeError):        # not glibc (musl, macOS): nothing to do
+        return 0
+
+
 def reset_vram_mode():
-    """Reset VRAM mode (call when models are unloaded outside of VRAM manager)"""
+    """Reset VRAM mode (call when models are unloaded outside of VRAM manager). Every model's unload calls this,
+    so it is also where the memory that model freed goes back to the OS."""
     global _current_mode
     _current_mode = None
+    release_host_memory()
     logger.debug("VRAM mode reset to None")
 
 
