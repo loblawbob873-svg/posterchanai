@@ -29,7 +29,7 @@ IUSE="monero gamescope +office"
 RDEPEND="
 	>=dev-lang/python-3.10
 	app-arch/libarchive
-	>=app-misc/posterchan-desktop-1.0.1930
+	>=app-misc/posterchan-desktop-1.0.1931
 	app-misc/posterchan-server
 	app-misc/posterchan-relay
 	dev-vcs/ngit
