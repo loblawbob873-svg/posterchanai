@@ -938,7 +938,7 @@
           <!-- .mb-fit is the box the stage is fitted INTO (see _fitStage) — it owns the leftover height, the
                stage owns the project's aspect ratio, and neither has to know about the other. -->
           <div class="mb-fit">
-            <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
+            <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};--ar:${((+P.w||1)/(+P.h||1)).toFixed(5)};background:${P.bg}">
               ${_stageOrder().map(stageEl).join('')}
               <!-- Snap guides: shown only while a drag is actually snapped to that line (see applySnaps). -->
               <i class="mb-guide mb-gv" id="mb-gv" style="display:none"></i>

@@ -47,7 +47,11 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-meme-match-check"
 
 PROJ_W, PROJ_H = 720, 1280
 # Desktop and tablet, i.e. both `body{zoom}` tiers, plus a phone (where _fitStage owns the box).
-WIDTHS = [(1920, 1080), (1280, 720), (390, 844)]
+WIDTHS = [(1920, 1080, None), (1280, 720, None), (390, 844, None),
+          # PosterChanOS draws the client at a UI zoom ABOVE 1 (1.25 on a 4K desk), the one tier the browser's own
+          # .67/.77 never reach. At that zoom the stage's fixed 58vh height outgrew the window's width and the
+          # stage stopped being the canvas's shape (2026-10-16: 1.796 for a 1.905 canvas, every layer misplaced).
+          (1386, 900, 1.25)]
 
 # Canvas pixels. The stage is a few hundred screen pixels wide, so one screen pixel is ~3 canvas
 # pixels and anti-aliasing costs a couple more — but a real disagreement is tens of pixels.
@@ -352,7 +356,15 @@ async def drive(url, shots, payload):
 
             await call("Runtime.enable")
             await call("Page.enable")
-            for w, h in WIDTHS:
+            zoom_script = None
+            for w, h, zoom in WIDTHS:
+                if zoom_script:
+                    await call("Page.removeScriptToEvaluateOnNewDocument", {"identifier": zoom_script})
+                    zoom_script = None
+                if zoom:
+                    zoom_script = (await call("Page.addScriptToEvaluateOnNewDocument", {"source":
+                        "document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');"
+                        "s.textContent='body{zoom:%s !important}';document.head.appendChild(s);});" % zoom}) or {}).get("identifier")
                 await call("Emulation.setDeviceMetricsOverride",
                            {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": w < 821})
                 await call("Page.navigate", {"url": url})
