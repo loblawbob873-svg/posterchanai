@@ -75,7 +75,7 @@ COLUMNS = ("username", "email", "password_hash", "is_admin", "email_verified", "
            "telegram_notifications", "telegram_key", "telegram_key_expires_at", "nostr_enabled", "nostr_nsec",
            "nostr_npub", "nostr_relays", "nostr_media_service", "nostr_media_endpoint", "google_sub",
            "google_email", "stream_record", "pleroma_enabled", "pleroma_instance_url", "pleroma_acct",
-           "social_notif_enabled", "nostr_notif_since", "created_at")
+           "social_notif_enabled", "nostr_notif_since", "tokens_valid_after", "created_at")
 _DATETIMES = frozenset(("telegram_key_expires_at", "created_at"))
 _DEFAULTS = {"is_admin": False, "email_verified": False, "theme": "cyberpunk", "storage_quota": 0,
              "can_image": True, "can_music": True, "can_video": True, "can_torrent": True, "can_media": False,

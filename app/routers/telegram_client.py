@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, get_current_user_optional
+from app.auth import get_current_user, get_current_user_optional, token_revoked
 from app.database import SessionLocal, get_db
 from app.services.user_table import UserRow as User
 from app.services import instance_membership, user_table
@@ -285,6 +285,8 @@ async def events(ws: WebSocket):
         except Unavailable:
             await ws.close(code=1013)        # "try again later" -- never 4401: the session is not invalid
             return
+        if token_revoked(payload, user):
+            user = None
         if user is None:
             await ws.close(code=4401)
             return
@@ -363,6 +365,8 @@ async def call_media(ws: WebSocket):
         except Unavailable:
             await ws.close(code=1013)        # "try again later" -- never 4401: the session is not invalid
             return
+        if token_revoked(payload, user):
+            user = None
         if user is None:
             await ws.close(code=4401)
             return

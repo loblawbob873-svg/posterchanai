@@ -85,6 +85,8 @@ class User(Base):
     # Social notification relay → Telegram (master per-user toggle + cursor)
     social_notif_enabled = Column(Boolean, default=False)
     nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
+    # "Sign out everywhere": a session token issued before this unix second is refused (app/auth.token_revoked).
+    tokens_valid_after = Column(Integer, nullable=True)
 
 
     created_at = Column(DateTime, default=datetime.utcnow)

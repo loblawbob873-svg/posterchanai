@@ -26,7 +26,7 @@ window.PCSettingsFactory = function(dep){
     _prefTouched, _scheduleAutoMutes, _sheet, _signerBackgroundHint, _standalone,
     _stopCelebrations, _updateAutoMutes, _updateNewPostsPill, _wireNavHide,
     _wireNotificationSettings, _wirePushToggle, _wireStayConnected, _withPhoneShell, applyTheme, pickTheme,
-    carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession,
+    carryPrivateToRelays, closeModal, copyValue, defaultRelays, detectProto, enc, ensureAiSession, _setAiToken,
     followMany, logout, modal, normalizeRelay, openQrScanner, publish, qrImg, renderMessages, renderView,
     restoreMediaServer, saveClientPrefsNostr, saveMutedWords, sign, siteDefaultTheme,
     stashPrivateBeforeRelayChange, stopNarration, switchView, timeAgo, toast, uiConfirm, uiPrompt,
@@ -769,6 +769,8 @@ window.PCSettingsFactory = function(dep){
           <div class="muted small">API keys let external apps use the AI API as you.</div>
           <div class="set-actions"><input class="input" id="us-key-name" placeholder="Key name (optional)"><button class="btn btn-ghost small" id="us-key-new">Generate new key</button></div>
           <div id="us-key-list"></div>
+          <div class="muted small" style="margin-top:14px">Signed in on a device you no longer have, or think someone else is? This ends every other sign-in to this account. This device stays signed in; API keys are not affected.</div>
+          <div class="set-actions"><button class="btn btn-ghost small" id="us-sessions-revoke">Sign out all other devices</button><span class="muted small" id="us-sessions-said" role="status"></span></div>
         </div>
         <!-- Tor has its own pane. It was two blocks bolted to the end of Profile, which by then also
              carried the instance picker, the relays-only switch, the media cache and the email/news
@@ -1441,6 +1443,20 @@ window.PCSettingsFactory = function(dep){
         b.disabled=false;
     }; }
     // Finance: remove the stored key
+    // Sign out everywhere else (app/routers/auth.py revoke_other_sessions): every older session token stops
+    // working; the answer carries this device's fresh one, which replaces the in-memory bearer.
+    { const rb=$('#us-sessions-revoke'); if(rb) rb.onclick=async()=>{
+        if(!await uiConfirm('Sign out every other device signed in to this account?', {ok:'Sign them out', danger:true})) return;
+        const said=$('#us-sessions-said'); rb.disabled=true;
+        try{
+          const r=await fetch('/api/auth/sessions/revoke',{method:'POST'});
+          const d=r.ok ? await r.json() : null;
+          if(!d || !d.ok) throw new Error('HTTP '+r.status);
+          if(d.access_token && _setAiToken) _setAiToken(d.access_token);
+          if(said) said.textContent=' ✓ every other device is signed out';
+        }catch(e){ if(said) said.textContent=' could not sign them out: '+((e&&e.message)||e); }
+        rb.disabled=false;
+    }; }
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
