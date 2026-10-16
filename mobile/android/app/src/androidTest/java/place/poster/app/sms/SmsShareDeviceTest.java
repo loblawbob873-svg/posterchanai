@@ -92,12 +92,13 @@ public class SmsShareDeviceTest {
     }
 
     /** Waits for the share's first dialog; when it is the conversation picker, takes "New number…". */
-    private static void awaitNumberBox() throws InterruptedException {
+    private void awaitNumberBox() throws InterruptedException {
+        final String newNumber = ctx.getString(place.poster.app.R.string.sms_new_number);
         for (int i = 0; i < 50; i++) {
             try { onView(isAssignableFrom(EditText.class)).inRoot(isDialog()).check(matches(isDisplayed())); return; }
             catch (Throwable ignoredNoNumberBoxYet) { }
             try {
-                onView(withText(place.poster.app.R.string.sms_new_number)).inRoot(isDialog()).perform(click());
+                onView(withText(newNumber)).inRoot(isDialog()).perform(click());
                 continue;
             } catch (Throwable ignoredNoPickerYet) { }
             Thread.sleep(100);
