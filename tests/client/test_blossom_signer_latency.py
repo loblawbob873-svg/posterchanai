@@ -32,8 +32,12 @@ def test_blob_listing_cannot_leave_an_infinite_spinner():
     render = APP[APP.index("async function renderPublicFiles(pane){"):]
     render = render[:render.index("\n  }\n") + 4]   # its own closing brace: _vodNameMap stayed in app.js
     assert "Array.isArray(_S._filesGridList)" in render
-    assert "new AbortController()" in render
-    assert "12000" in render
+    # The 12 s ceiling lives with the DOWNLOAD (`_listGet`, shared by every repaint of one open), not with
+    # whichever repaint asked first -- test_files_list_downloads_once_per_open_full_app.py.
+    assert "_listGet(server" in render
+    get = APP[APP.index("function _listGet(server, pk){"):]
+    get = get[:get.index("\n  }\n") + 4]
+    assert "new AbortController()" in get and "12000" in get
     assert 'id="bl-list-retry"' in render
 
 

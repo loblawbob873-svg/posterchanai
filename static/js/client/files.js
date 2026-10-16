@@ -2503,6 +2503,33 @@ window.PCFilesFactory = function(dep){
   }
 
   let _filesRenderLoadedKey='';
+  /* ONE DOWNLOAD OF THE DRIVE LISTING PER OPEN. Every repaint of Files fetched the whole `/list/<pubkey>` again -- on a
+   * 5,225-file drive ~2 MB each -- and one open repaints up to three times by itself (the drive index arriving, the
+   * synced folders arriving, the drive list changing), so a phone downloaded the listing three times before showing
+   * anything ("files -> all on android is taking forever to load", 2026-10-16). A listing in flight is SHARED, and
+   * one that arrived in the last 15 s is reused -- but only while no upload, mirror or delete has touched a blob
+   * store since (`window.__pcBlobWrites`, counted by blossom.js), so a new upload is never hidden. The 12 s ceiling
+   * belongs to the download itself, not to whichever repaint asked first. */
+  let _listMemo=null;
+  function _listGet(server, pk){
+    const key=String(server).replace(/\/$/,'')+'|'+pk, writes=window.__pcBlobWrites||0, now=Date.now();
+    const m=_listMemo;
+    if(m && m.key===key && m.writes===writes && (!m.at || now-m.at<15000)) return m.p.then(l=>l.slice());   // each caller its own array
+    const memo={key,writes,at:0,p:null};
+    memo.p=(async()=>{
+      const ctl=typeof AbortController!=='undefined'?new AbortController():null;
+      const t=ctl?setTimeout(()=>ctl.abort(),12000):null;
+      try{
+        const r=await fetch(String(server).replace(/\/$/,'')+'/list/'+pk, Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const list=await r.json(); if(!Array.isArray(list)) throw new Error('invalid response');
+        memo.at=Date.now(); return list;
+      }catch(e){ if(_listMemo===memo) _listMemo=null; throw e; }
+      finally{ if(t) clearTimeout(t); }
+    })();
+    _listMemo=memo;
+    return memo.p.then(l=>l.slice());
+  }
   /* SEARCH THE FILE MANAGER, NOT ONE DRAWER.
    *
    * Each source keeps its own storage contract, so aggregation happens here and remains read-only:
@@ -2521,8 +2548,7 @@ window.PCFilesFactory = function(dep){
     const server = mediaServer();
     const jobs = [];
     if(!drive && server){
-      jobs.push(fetch(server.replace(/\/$/,'') + '/list/' + _S.ME.pubkey, {cache:'no-store'})
-        .then(r => { if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      jobs.push(_listGet(server, _S.ME.pubkey)
         .then(rows => { if(Array.isArray(rows)) drive = _S._filesGridList = rows; }).catch(()=>{}));
     }
     _adoptSyncPairs();
@@ -2677,12 +2703,7 @@ window.PCFilesFactory = function(dep){
         else _renderFilesGrid($('#bl-grid',pane),cachedList); }catch(_){}
     }
     let list=null, _listFetched=false;
-    const ctl=typeof AbortController!=='undefined'?new AbortController():null;
-    const listTimer=ctl?setTimeout(()=>ctl.abort(),12000):null;
-    try{ const r=await fetch(server+'/list/'+_S.ME.pubkey,
-      Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
-      if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json();
-      if(!Array.isArray(list)) throw new Error('invalid response'); _listFetched=true; }
+    try{ list=await _listGet(server,_S.ME.pubkey); _listFetched=true; }
     catch(e){
       /* OFFLINE: the list kept on this device. The names are in the drive index, which is already on
        * the device; without this, a folder you had just looked at was an error over an empty grid. */
@@ -2697,7 +2718,7 @@ window.PCFilesFactory = function(dep){
         g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e&&e.name==='AbortError'?'timed out':e.message)+'). <button class="btn btn-ghost small" id="bl-list-retry">Retry</button></div>';
         const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
       } }
-    }finally{ if(listTimer)clearTimeout(listTimer); }
+    }
     /* A media server that answers its listing with an OBJECT (an error body served with 200, a proxy's JSON) is
      * not a list. It used to throw "list.filter is not a function" out of this view -- "action failed", the File
      * Manager half-drawn. Say the server answered something that is not a list, with Retry, as for any failure. */
