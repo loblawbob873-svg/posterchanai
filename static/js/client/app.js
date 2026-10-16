@@ -8928,7 +8928,7 @@
     e.preventDefault(); e.stopPropagation();
     const car=(nav||dot).closest('.media-car'); const track=car&&car.querySelector('.mc-track'); if(!track) return;
     if(nav) track.scrollBy({ left:(nav.classList.contains('mc-next')?1:-1)*track.clientWidth, behavior:'smooth' });
-    else { const k=[...car.querySelectorAll('.mc-dots i')].indexOf(dot); if(k>=0) track.scrollTo({ left:k*track.clientWidth, behavior:'smooth' }); }
+    else { const k=[...car.querySelectorAll('.mc-dots i')].indexOf(dot), it=track.children[k]; if(it) track.scrollTo({ left:it.offsetLeft-track.children[0].offsetLeft, behavior:'smooth' }); }
   }, true);
   const _SHORTCODE_STRIP=/:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/g;   // strip NIP-30 shortcodes (incl. federated @host) from plain text
   // Every wss:// relay hint carried on an event's e-tags — fed to fetchEvent so an ancestor whose

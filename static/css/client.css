@@ -2053,6 +2053,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .mc-nav{opacity:1;width:30px;height:30px;font-size:20px}   /* no hover on touch — always show the arrows */
   .mc-item img,.mc-item video{--mh:340px;max-height:340px}
 }
+/* TWO AT A TIME ("show images 2 at a time and then you can scroll to the right to see the other 2", 2026-10-16).
+   Each picture fills its half of a fixed-height strip (cropped to fill; a tap opens the whole picture), the track
+   pages by two, and the strip's height never depends on the bytes -- so nothing below it moves when they land. */
+.media-car .mc-track{gap:3px}
+.media-car .mc-item{flex:0 0 calc(50% - 1.5px);min-width:calc(50% - 1.5px);height:280px;scroll-snap-align:start;overflow:hidden}
+.media-car .mc-item img,.media-car .mc-item video{aspect-ratio:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;margin:0;border:0;border-radius:0}
+.quoted .media-car .mc-item,.notif-ctx .media-car .mc-item{height:180px}
+@media(max-width:820px){ .media-car .mc-item{height:200px} .quoted .media-car .mc-item,.notif-ctx .media-car .mc-item{height:140px} }
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .media-row img,.media-row video{--mh:300px;max-height:300px;max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
 .thread-hl .media-row img,.thread-hl .media-row video{--mh:420px;max-height:420px}
@@ -5038,10 +5046,12 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
   .usf-sel{font-size:16px}      /* 16px or iOS zooms on focus and never zooms back */
 }
 .mc-list{max-height:46vh;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:2px}
-.mc-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:start;
+/* Scoped to its list: a bare `.mc-item` here also matched the feed's picture carousel (`.media-car .mc-item`) and
+   padded every slide 8px 10px with a hover border -- the inset frame around carousel pictures. */
+.mc-list .mc-item{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;text-align:start;
   padding:8px 10px;border:1px solid transparent;border-radius:10px;background:transparent;
   color:inherit;cursor:pointer;min-height:44px}
-.mc-item:hover{border-color:var(--neon);background:var(--panel)}
+.mc-list .mc-item:hover{border-color:var(--neon);background:var(--panel)}
 .mc-name{font-weight:600;font-size:15px}
 .mc-mail{overflow-wrap:anywhere}
 @media(max-width:820px){
