@@ -547,8 +547,12 @@ class Store:
         n = self._pending_n
         arena = self.arenas[self._active]
         if len(arena) > self._flushed:
-            self._file.write(memoryview(arena)[self._flushed:])
-            self._file.flush()
+            try:
+                self._file.write(memoryview(arena)[self._flushed:])
+                self._file.flush()
+            except OSError:
+                self._undo_partial_write()
+                raise
             self._flushed = len(arena)
             self._pending_n = 0
         if fsync:
@@ -558,6 +562,29 @@ class Store:
             except (AttributeError, OSError):
                 pass
         return n
+
+    def _undo_partial_write(self) -> None:
+        """A FAILED WRITE LEAVES THE SEGMENT EXACTLY AS IT WAS (a full disk, an I/O error).
+
+        Part of the batch may already be in the file -- and, with a buffered file object, part may still sit in
+        its buffer, to be written by the next flush or by close(). Left there, every later record was appended
+        AFTER a half record, and the next open's CRC check cut the whole tail away: all events flushed after the
+        disk filled, lost (tests/test_posterchandb_disk_full.py measured 72 of 120). So the file is cut back to
+        the last byte known good, and the file object -- buffer and all -- is replaced. The batch is still in the
+        arena and `_flushed` did not move, so the next flush writes it again, whole."""
+        old, path = self._file, self._seg_path(self._active)
+        try:
+            raw = getattr(old, "raw", None)
+            fd = old.fileno()
+            os.ftruncate(fd, self._flushed)
+            os.fsync(fd)
+            if raw is not None:
+                raw.close()                # closing the raw file first discards the buffered remainder
+            else:
+                old.close()
+        except (OSError, ValueError):
+            pass
+        self._file = open(path, "ab")
 
     def _rotate_if_full(self) -> None:
         """A full segment is closed, so compaction can later rewrite it on its own."""
