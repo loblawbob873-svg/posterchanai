@@ -1,4 +1,5 @@
-"""An owner signed in through a REMOTE signer can ban -- the member leaves Known members and the ban folds.
+"""An owner can ban whether or not the community keys can be rotated -- with a REMOTE signer, and with a local key
+when a community relay will not answer. Originally: an owner signed in through a REMOTE signer can ban -- the member leaves Known members and the ban folds.
 
 "Dr Todd still appears in known members despite me banning him on firefox" (2026-10-16). The owner's ban rotates the
 community keys, which needs NIP-44 over raw bytes; a NIP-46 / NIP-07 / NIP-55 signer only encrypts text, so the ban
@@ -32,7 +33,8 @@ ROOM = r"""(async()=>{
   __PC.relayPublishRoom=async(_r,ev)=>{window.__published.push(ev);return {ok:true,accepted:1,uncertain:false,msg:''};};
   window.__bundle=bundle;
   // a REMOTE signer (NIP-46 / NIP-07 / NIP-55): text NIP-44 only, no binary rekeys
-  __PC.cordRekeyEncrypt=async()=>{throw new Error('this signer does not support binary Concord rekeys');};
+  if(%s) __PC.cordRekeyEncrypt=async()=>{throw new Error('this signer does not support binary Concord rekeys');};
+  else __PC.cordRekeyEncrypt=async()=>'';   // a key on this device: rotation is attempted (and the community's relay never answers)
   __PC.switchView('concord');
   return true;
 })()"""
@@ -44,15 +46,15 @@ def bundled_assets():
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
-@pytest.mark.parametrize("legacy", [True, False])
-def test_an_owner_with_a_remote_signer_can_ban(legacy):
+@pytest.mark.parametrize("legacy,remote", [(True, True), (False, True), (True, False), (False, False)])
+def test_an_owner_with_a_remote_signer_can_ban(legacy, remote):
     got = {}
 
     async def check(b):
         await b.call("Emulation.setDeviceMetricsOverride", dict(width=1500, height=900, deviceScaleFactor=1, mobile=False))
         await desktop.login(b)
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
-        await b.js(ROOM % ("true" if legacy else "false"))
+        await b.js(ROOM % ("true" if legacy else "false", "true" if remote else "false"))
         await b.js("PCConcord.render()")
         await b.until("document.querySelectorAll('.cc-members-pane .cc-member').length>=3")
         me = await b.js("__PC.me().pubkey")
@@ -65,13 +67,18 @@ def test_an_owner_with_a_remote_signer_can_ban(legacy):
         ban = "[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Ban'&&x.getBoundingClientRect().width>0)"
         await b.until("!!" + ban)
         await b.js(ban + ".click()")
-        await b.until("[...document.querySelectorAll('.toast')].some(t=>/banned|needs attention/i.test(t.textContent))")
+        for _ in range(80):   # rotation waits on relays that never answer before it gives up
+            if await b.js("[...document.querySelectorAll('.toast')].some(t=>/banned|needs attention/i.test(t.textContent))"):
+                break
+            await asyncio.sleep(0.5)
         await asyncio.sleep(.5)
         got['toast'] = await b.js("[...document.querySelectorAll('.toast')].map(t=>t.textContent).join(' | ')")
         got['listed'] = await b.js("[...document.querySelectorAll('.cc-members-pane .cc-member')].some(r=>r.dataset.ccMember===%r)" % target)
         got['folded'] = await b.js("window.PosterCordReader.inspectControl(window.__bundle,window.__published.filter(e=>e.kind===1059)).banned.includes(%r)" % target)
 
     asyncio.run(desktop.with_browser("online", "", check, ""))
+    # remote signer: cannot rotate; local key: rotation fails on a relay that never answers ("banning todd failed
+    # again!" -- "every control relay must complete"). Either way the BAN lands.
     assert "Member banned" in got['toast'] and "not rotated" in got['toast'], got['toast']
     assert not got['listed'], "the banned member is still on Known members"
     assert got['folded'], "the published ban does not fold"

@@ -6509,8 +6509,15 @@
          * a rotation, failed before anything was published and the member stayed ("Dr Todd still appears in known
          * members despite me banning him", 2026-10-16, signed in through a remote signer). The ban itself is a
          * control-plane write the owner may always sign: publish that, and say the keys were not rotated. */
-        if(!(await canRotateKeys(p))){ await publishModeration(room,target,'ban'); render(); p.toast('Member banned. The community keys were not rotated: this signer cannot do it (sign in with your key on this device to rotate them).'); return; }
-        await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
+        /* THE BAN IS PUBLISHED FIRST, AND KEY ROTATION CAN NEVER UNDO IT. Rotation reads the whole control history from
+         * EVERY relay the community lists before it will start, and PosterChan's lists a relay this server refuses
+         * (relay.ditto.pub) -- so the owner's ban failed with "every control relay must complete before refounding"
+         * and nothing was published: "banning todd failed again!" (2026-10-16). The ban is the control-plane write
+         * the owner may always sign; rotation, when this signer and these relays allow it, follows it. */
+        await publishModeration(room,target,'ban'); render();
+        if(!(await canRotateKeys(p))){ p.toast('Member banned. The community keys were not rotated: this signer cannot do it (sign in with your key on this device to rotate them).'); return; }
+        try{ await refoundRoom(p,saved()[state.community]||room,{...reviewed,banTarget:target}); render(); p.toast('Member banned and community keys rotated.'); }
+        catch(e){ render(); p.toast('Member banned. The community keys were not rotated: '+(e&&e.message||e)); }
       }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
     };
     /* KICK (anyone holding KICK, the owner included) and a STAFF BAN (a holder of BAN who is not the
