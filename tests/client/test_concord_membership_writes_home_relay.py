@@ -40,8 +40,19 @@ def test_the_home_relay_is_written_first_and_nothing_is_lost():
 def test_every_membership_write_goes_through_it_and_the_client_exposes_the_home_relay():
     # Both membership writers -- the Armada vault (33302/13302) and the kind-10009 group list -- go through it,
     # and the old public-only spelling is gone from the file.
-    assert CONCORD.count("relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev)") == 2
+    # Relay.publishTo SKIPS a pooled relay (the home relay always is) unless includeManaged -- the 10-08 version of this
+    # test checked the target LIST and passed while no write ever reached the home relay. The behaviour is driven by
+    # concord_membership_reaches_this_node_runtime.mjs; here, no membership write may omit the flag.
+    assert CONCORD.count("relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev,{includeManaged:true") == 2
+    assert "relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev)" not in CONCORD
     assert "relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...CORD_RELAYS])],ev)" not in CONCORD
     k10009 = CONCORD[CONCORD.index("kind:10009,created_at:now"): CONCORD.index("kind:10009,created_at:now") + 200]
     assert "membershipWriteRelays(p,CORD_RELAYS)" in k10009, "the group-list write skips the home relay"
     assert "homeRelay: () => (CFG && CFG.relay_url)" in APP
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node required")
+def test_a_leave_reaches_this_nodes_relay_and_a_stale_copy_is_healed():
+    r = subprocess.run(["node", str(ROOT / "tests/client/concord_membership_reaches_this_node_runtime.mjs")],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0 and "runtime ok" in r.stdout, (r.stdout + r.stderr)[-2000:]

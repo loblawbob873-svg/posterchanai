@@ -3682,7 +3682,7 @@
     if(!changed)return true;
     const now=Math.max(Math.floor(Date.now()/1000),Number(event.created_at)+1);
     const ev=await p.signTemplate({kind:10009,created_at:now,tags,content});
-    return !!(await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev));
+    return !!(await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev,{includeManaged:true,max:16}));
   }
   async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
@@ -3741,6 +3741,18 @@
     latest[at]={...latest[at],nip29Hydrated:true};save(latest);if(sameRoom(latest[state.community],room))backgroundRender();
   }
   const membershipFragmentReads=new Map();
+  /* A membership copy newer than anything this node's relay holds (written before membership writes reached it, or by
+   * another client) is handed to it: the event is the owner's own signed copy, so this repairs, never invents. */
+  function healHomeMembership(p,pubkey,local,remote){
+    const home=p&&p.homeRelay?p.homeRelay():'';if(!home||!p.relayPublishTo)return;
+    const coord=e=>e.kind+':'+(((e.tags||[]).find(t=>t[0]==='d')||[])[1]||''),best=new Map();
+    for(const e of local||[])if(e&&e.pubkey===pubkey){const k=coord(e),o=best.get(k);if(!o||e.created_at>o.created_at)best.set(k,e);}
+    for(const e of remote||[]){
+      if(!e||e.pubkey!==pubkey||![13302,33302].includes(e.kind))continue;
+      const o=best.get(coord(e));if(o&&o.created_at>=e.created_at)continue;
+      best.set(coord(e),e);void Promise.resolve(p.relayPublishTo([home],e,{includeManaged:true})).catch(()=>{});
+    }
+  }
   async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null,fullFragments=false}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
@@ -3761,6 +3773,7 @@
         remote=await Promise.resolve(p.relayQueryFrom([...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],[filter],{timeout:8000,max:6,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
         externalDone(tag);
       }
+      if(remote&&remote.length)healHomeMembership(p,pubkey,local,remote);
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
     const released=await query({kinds:[13302],authors:[pubkey],limit:1});
@@ -4428,7 +4441,17 @@
       const latest=await cordMembershipState(p,owner);live();
       for(const {index}of events){const seen=latest.fragments.get(index)?.event,was=state.fragments.get(index)?.event;if(seen&&(!was||seen.created_at>was.created_at||seen.created_at===was.created_at&&seen.id<was.id))throw new Error('membership changed while signing; retry this update');}
       events.sort((a,b)=>(a.index>=state.count?0:1)-(b.index>=state.count?0:1)||(a.index>=state.count?b.index-a.index:a.index-b.index));
-      for(const {ev}of events){live();const accepted=await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
+      /* THIS NODE'S RELAY GETS EVERY MEMBERSHIP WRITE, AND MUST TAKE IT. Relay.publishTo skips a relay already in the
+       * managed pool unless told otherwise -- and the instance relay is ALWAYS in the pool -- so every join and leave
+       * went to the outside relays only, "accepted" by any one of them. A fresh session reads this node first and got
+       * a weeks-old list: "I left communities on my phone, I just logged in Firefox and I am in those communities"
+       * (2026-10-16; the node held the 10-08 fragment, the 14:10 leave existed only outside). */
+      const home=p.homeRelay?p.homeRelay():'';
+      for(const {ev}of events){live();
+        if(home){const own=await p.relayPublishTo([home],ev,{includeManaged:true,detailed:true});live();if(!(own&&own.ok))throw new Error('this server did not take the membership update: '+String(own&&own.msg||'no answer'));}
+        const accepted=home?1:await p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS),ev,{includeManaged:true,max:16});live();
+        if(home)void Promise.resolve(p.relayPublishTo(membershipWriteRelays(p,CORD_RELAYS).filter(u=>normalizeRelay(u)!==normalizeRelay(home)),ev,{includeManaged:true,max:16})).catch(()=>{});
+        if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
         const held=membershipPublished.get(owner)||[];membershipPublished.set(owner,[...held.filter(e=>(e.tags||[]).find(t=>t[0]==='d')?.[1]!==ev.tags[0][1]),ev]);}
       return true;
     });membershipWrites.set(owner,job);return job;
