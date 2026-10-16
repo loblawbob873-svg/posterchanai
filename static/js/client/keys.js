@@ -977,7 +977,7 @@ window.PCKeysFactory = function(dep){
     const i=els.indexOf(im);
     // data-vsrc for an UNMOUNTED video (VideoMount only attaches a src to what's on screen) — without it a
     // lazily-mounted attachment stepped to in the lightbox would open with an empty src.
-    return { items: els.map(el=>({ src: el.currentSrc||el.src||VideoMount.url(el), kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
+    return { items: els.map(el=>({ src: el.dataset.osrc||el.currentSrc||el.src||VideoMount.url(el), kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
   }
 
 

@@ -196,7 +196,7 @@ window.PCCardsFactory = function(dep){
     const ended=endsAt && endsAt<Math.floor(Date.now()/1000);
     const optHtml=opts.map(o=>`<button class="poll-opt" data-poll="${ev.id}" data-opt="${enc(o.id)}"${ended?' disabled':''}><span class="poll-bar"></span><span class="poll-label">${enc(o.label)}</span><span class="poll-pct"></span></button>`).join('');
     return `<article class="note poll" data-id="${ev.id}" data-pk="${ev.pubkey}" tabindex="0">
-      <img alt="" class="av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
+      <img alt="" class="av" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(p.picture||S.LOGO, 48):String(p.picture||S.LOGO||'')))}" data-osrc="${enc(p.picture||'')}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'">
       <div class="body">
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
@@ -361,6 +361,7 @@ window.PCCardsFactory = function(dep){
   // `encUrl` is ALREADY html-encoded; `cls` = optional layout class ("m"); `onerr` = optional onerror.
   // "alt" = the description the author wrote (NIP-92 imeta "alt"), unescaped; without one a screen reader
   // is told it is an image the post carries rather than reading out the URL's file name.
+  function _unenc(s){ return String(s).replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&'); }
   function _media(encUrl, kind, cls, onerr, alt){
     if(S.NO_IMAGES) return _phold(encUrl, kind, cls, onerr);
     const c = cls?` class="${cls}"`:''; const oe = onerr?` onerror="${onerr}"`:'';
@@ -377,7 +378,12 @@ window.PCCardsFactory = function(dep){
     // Android WebView. The poster behaviour above is unchanged; it just happens on mount instead of on
     // parse, so only the videos actually on screen ever hold a media player.
     if(kind==='video') return `<video${c} data-vsrc="${encUrl}"${dim} controls preload="none" playsinline></video>`;
-    return `<img${c} src="${encUrl}" alt="${alt ? enc(alt) : 'Attached image'}"${dim} loading="lazy" decoding="async"${oe}>`;
+    // Drawn at most the feed column's width: a thumbnail of that size (PCThumb), the original kept as data-osrc
+    // for the lightbox and as data-dimkey for MediaDims. A failed thumbnail falls back to the original first.
+    const raw = _unenc(encUrl), th = (typeof PCThumb!=='undefined'?PCThumb.src(raw, Math.min(640, (window.innerWidth || 640))):String(raw||''));
+    const oe2 = th === raw ? oe : ` onerror="if(window.PCThumb&&PCThumb.err(this))return;${onerr || ''}"`;
+    const extra = th === raw ? '' : ` data-osrc="${encUrl}" data-dimkey="${encUrl}"`;
+    return `<img${c} src="${enc(th)}"${extra} alt="${alt ? enc(alt) : 'Attached image'}"${dim} loading="lazy" decoding="async"${oe2}>`;
   }
   // ---- VideoMount: only the videos you can SEE hold a media player -------------------------------
   // A <video> with a src is not markup, it is a live decoder: the WebView allocates a MediaCodec/media
@@ -885,7 +891,7 @@ window.PCCardsFactory = function(dep){
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
     const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}" tabindex="0"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"${_notePaymentXmr(ev)?' data-xmr-note="1"':''}`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
-      <img alt="" class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
+      <img alt="" class="av" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(av, 48):String(av||'')))}" data-osrc="${enc(av)}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${S.PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}${(window.Outbox&&Outbox.has(ev.id))?'<span class="pending-badge" data-pending="'+enc(ev.id)+'" title="Waiting to send — tap to send now or discard">Pending</span>':''}</div>
@@ -961,7 +967,7 @@ window.PCCardsFactory = function(dep){
     const cw=S.BLUR_NSFW && (!!cwTag || isSensitive(o));
     const cwReason=cwTag ? String(cwTag[1]||'').trim() : (cw?'NSFW':'');
     return `<div class="quoted" data-open="${o.id}">
-      <div class="hd"><img alt="" class="qav" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      <div class="hd"><img alt="" class="qav" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(av, 24):String(av||'')))}" data-osrc="${enc(av)}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
       ${mediaFlowHtml(mp, o)}
       ${cw?`</div></div>`:''}</div>`; }
@@ -1378,7 +1384,7 @@ window.PCCardsFactory = function(dep){
         else if(/^audio\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'audio'); }
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
         return; }   // docs: fall through to the link (download / new tab)
-      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src, null, _lbGroup(im)); return; }
+      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img'); if(im){ e.preventDefault(); openLightbox(im.dataset.osrc||im.currentSrc||im.src, null, _lbGroup(im)); return; }
       const xv=e.target.closest('.xt-verify'); if(xv){ e.stopPropagation();   // Monero tip: copy a ready-to-run verify command for the viewer's own wallet
         const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
         if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
