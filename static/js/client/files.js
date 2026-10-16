@@ -3597,6 +3597,14 @@ window.PCFilesFactory = function(dep){
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
 
+  // The nearest ancestor that scrolls (null = the viewport): what a "near the bottom" observer must watch.
+  function _scrollRoot(el){
+    for(let e = el && el.parentElement; e && e !== document.body && e !== document.documentElement; e = e.parentElement){
+      const oy = getComputedStyle(e).overflowY;
+      if(oy === 'auto' || oy === 'scroll' || oy === 'overlay') return e;
+    }
+    return null;
+  }
   function _renderFilesGrid(grid, list){
     if(!grid) return;
     _S._filesGridList = list;
@@ -3696,10 +3704,16 @@ window.PCFilesFactory = function(dep){
        * 1,972 indexed files must not look like a 60-file folder merely because its paging control
        * is several screens below the last visible row. One page per intersection keeps initial DOM
        * work bounded; scrolling further progressively reveals the whole folder. */
+      /* THE ROOT IS THE ELEMENT THAT ACTUALLY SCROLLS. It was `.fx-main`, which scrolls on the desktop layout
+       * but on a phone is as tall as its content (overflow: visible) inside the scrolling `.files-pane`: the
+       * button was always "inside" its root, so every page loaded the next one with nobody scrolling --
+       * measured on a 5,225-file drive at phone size: 60 -> 2,040 cards in 90 s, each step re-rendering the
+       * whole grid, the main thread never free ("files -> all on android is taking forever ... not able to
+       * open video files", 2026-10-16). */
       if(window.IntersectionObserver){
         const observer=new IntersectionObserver(entries=>{ if(entries.some(x=>x.isIntersecting)){
           observer.disconnect(); if(mb.isConnected)mb.click();
-        } },{root:mb.closest('.fx-main'),rootMargin:'600px 0px'});
+        } },{root:_scrollRoot(mb),rootMargin:'600px 0px'});
         observer.observe(mb);
       }
     } }
