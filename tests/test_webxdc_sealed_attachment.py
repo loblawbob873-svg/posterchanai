@@ -203,3 +203,18 @@ def test_play_on_a_keyless_card_takes_the_key_from_the_message():
     """)
     assert got.get("enc") == {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}, got
     assert got["uuid"] == "ccede1cf-73a4-4e26-a54c-147033e64d2c", ("the card's lobby must be kept", got)
+
+
+def test_an_attachment_with_an_empty_url_is_found_by_its_hash():
+    """Josephus's real post (2026-10-15): `["imeta","url ", ... "x <hash>", sealed]` with the link only in the
+    message text. The parser dropped every imeta without an http url, so the link was drawn as a bare card with no
+    key, no hash and no session -- "looks encrypted" / "not a zip" on a game that decrypts fine."""
+    s = _sealed()
+    url = "https://blossom.ditto.pub/" + s["x"] + ".xdc"
+    tag = ["imeta", "url ", "m application/x-webxdc", "x " + s["x"], "size 99311", "name dc20-dice (15).xdc",
+           "webxdc ccede1cf-73a4-4e26-a54c-147033e64d2c", "summary DC20 Dice"] + _seal_fields(s)
+    got = _cards(tag, text=url)
+    assert len(got) == 1, got
+    assert got[0]["enc"] == {"key": s["key"], "nonce": s["nonce"], "ox": s["ox"]}, ("the card lost the seal's key", got)
+    assert got[0]["sha"] == s["x"] and got[0]["uuid"] == "ccede1cf-73a4-4e26-a54c-147033e64d2c", got
+    assert _load(s, {"url": url, "sha": s["x"], "uuid": "u", "name": "DC20 Dice", "enc": got[0]["enc"]})["ok"]
