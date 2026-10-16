@@ -423,7 +423,16 @@
         }
       } else if (msg[0] === 'EVENT' || msg[0] === 'EOSE' || msg[0] === 'CLOSED'){
         const r = LR.reqs.get(msg[1]); if (!r) return;
-        if (msg[0] === 'EVENT') r.events.push(msg[2]); else { LR.reqs.delete(msg[1]); r.done(r.events); }
+        if (msg[0] === 'EVENT') r.events.push(msg[2]);
+        else {
+          LR.reqs.delete(msg[1]); r.done(r.events);
+          /* CLOSE IT. A relay keeps a subscription open after EOSE until it is closed, and these queries were
+           * only ever closed on a TIMEOUT -- so every completed read stayed open on the relay, and after its
+           * max_subs_per_conn (64 on the local relay) every later REQ on this socket was answered
+           * "rate-limited: too many subscriptions": every cached Concord control read as missing, so icons,
+           * banners, channels and plane keys vanished minutes after each start (.102, 2026-10-15). */
+          if (msg[0] === 'EOSE'){ try { LR.ws.send(JSON.stringify(['CLOSE', msg[1]])); } catch(_){ } }
+        }
       }
     };
     ws.onclose = ws.onerror = () => {
