@@ -6334,7 +6334,13 @@ body.modal-open .mobilenav{display:none}
    wrong place. Fixing the height and letting aspect-ratio derive the width keeps preview geometry equal
    to render geometry, which is the whole contract here. max-width keeps a 16:9 project inside the column.
    Under 1100px _fitStage overrides both axes in px — same contract, measured instead of guessed. */
-.mb-stage{position:relative;height:58vh;max-width:100%;margin:0 auto;overflow:hidden;
+/* The stage is sized by WIDTH and its height comes from the canvas's aspect-ratio (inline, plus --ar): it can
+   never be any shape but the project's. It used to be a fixed `height:58vh` + `max-width:100%`, so whenever the
+   width cap bit -- a wide canvas, a narrow window, PosterChanOS's 1.25 UI zoom (58vh = 1153px wants a 2196px-wide
+   1200x630 stage in a 2071px window) -- the height stayed, the aspect ratio gave way, and every layer's %-position
+   and every `contain` picture moved: "the preview layer alignment is vastly different from the final"
+   (2026-10-16, measured 2589x1441 = 1.796 for a 1.905 canvas). check_meme_render_match.py --zoom 1.25. */
+.mb-stage{position:relative;height:auto;width:min(100%, calc(58vh * var(--ar, 1.7778)));max-width:100%;margin:0 auto;overflow:hidden;
   border:1px solid var(--line);border-radius:var(--r);container-type:size}
 .mb-item{position:absolute;cursor:grab;touch-action:none}   /* touch-action:none → we own the gesture */
 .mb-item.sel{outline:2px solid var(--neon);outline-offset:1px}
@@ -6413,7 +6419,7 @@ body.modal-open .mobilenav{display:none}
 .mb-wrap.drawing .mb-playrow{display:none}
 /* Desktop: the stage gives up some height while drawing so the bar under it stays on screen (under
    1100px _fitStage sizes the stage from the space actually left, inline, so this does not apply). */
-.mb-wrap.drawing .mb-stage{height:46vh}
+.mb-wrap.drawing .mb-stage{width:min(100%, calc(46vh * var(--ar, 1.7778)))}
 .mb-drawbar{max-width:760px;width:100%;margin-inline:auto;box-sizing:border-box}
 .mb-playrow .btn{margin:0}
 .mb-scrub{flex:1;min-width:0;accent-color:var(--neon)}
