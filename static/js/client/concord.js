@@ -844,9 +844,22 @@
        * drawn until they sent something or changed room. Paint the messages now; the deferred
        * full render still follows on focusout for the rail, the member list and the unread marks. */
       try{ patchMessageList(); }catch(e){ console.warn('Concord message repaint failed',e); }
+      try{ patchServerRail(); }catch(e){ console.warn('Concord rail repaint failed',e); }
       return false;
     }
     backgroundRenderPending=false;backgroundFocusHost=null;render();return true;
+  }
+  /* THE COMMUNITY ICONS, REPAINTED IN PLACE. An encrypted icon decrypts after the rail was drawn and asks for a
+   * background render -- which is deferred for as long as the cursor is in the message box, i.e. the whole time
+   * somebody is chatting. So a community icon that had just been saved (and decrypted fine) went on showing its
+   * two letters ("PO") until the user clicked out of the box. Only the icon inside each rail button is touched;
+   * nothing near the composer moves. */
+  function patchServerRail(){
+    const p=PC(),rooms=saved();if(!p||!p.enc||!document.querySelectorAll)return;
+    for(const btn of document.querySelectorAll('[data-cc-server]')){
+      const i=Number(btn.dataset.ccServer),r=rooms[i];if(!r)continue;
+      const html=roomIcon(p,r,i);if(btn.innerHTML!==html)btn.innerHTML=html;
+    }
   }
   /* REPAINT THE MESSAGES WITHOUT REPLACING THE COMPOSER.
    *
@@ -2161,8 +2174,15 @@
         if(scope.current())break;
         if(attempt>=2)throw new Error('this community’s settings kept changing while saving — nothing was changed, try again');
       }
-      const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
+      const auth=cordPlaneAuth(p,scope,made.wrap.pubkey,relays),accepted=await p.relayPublishRoom(relays,made.wrap,auth);
       if(!accepted?.ok)throw new Error('community relays rejected the profile update');
+      /* AND STRAIGHT TO THE COMMUNITY'S OWN RELAYS. This node's relay answers OK once ANY one upstream took the
+       * write, and its upstreams are the relays it mirrors -- not necessarily the ones the community lists, nor
+       * every one of them. A settings edition that reached computingcache only was invisible to every refresh
+       * that read the community's relays: the icon and the banner each showed and vanished in turn ("banner
+       * can't be used at the same time as the community icon"). Settings writes are rare and must be seen
+       * everywhere, so they are also sent to every listed relay; a duplicate is harmless (same id). */
+      if(p.relayPublishTo){try{await p.relayPublishTo(relays,made.wrap,{includeManaged:true,detailed:true,authScope:auth});}catch(e){console.warn('Concord settings direct publish failed',e);}}
       if(values.bannerRef||values.banner===null)bannerStage=null;
       if(!scope.membershipCurrent())throw new Error('Concord membership changed during profile update');   // published already: only a real membership change is an error here
       wraps=[...(wraps||[]),made.wrap];roomControls.set(loadKey,wraps);
@@ -6167,7 +6187,7 @@
     if(current){
       const conversation=p.$('.cc-conversation');
       if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><div class="cc-icon-current" id="cc-icon-current" title="Current icon">${roomIcon(p,current,state.community)}</div><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
       /* SEARCH THE KNOWN MEMBERS ("will be useful for large rooms"). By name, NIP-05 or key. The query
        * is the module's, so the repaint every arriving message causes keeps it and the filtered list;
        * the box that had focus gets it back (render() re-creates it). */
@@ -7258,6 +7278,7 @@
   window.PCConcord.__testLiveRepaint=()=>whenHandLeaves(()=>preserveChatScroll(()=>backgroundRender()));
   window.PCConcord.__testEnterChatBottom=()=>enterChatBottom(true);
   window.PCConcord.__testStartRoomsLive=p=>startRoomsLive(p);
+  window.PCConcord.__testPatchServerRail=()=>patchServerRail();
   window.PCConcord.__testSetControls=(loadKey,wraps)=>roomControls.set(loadKey,wraps);
   window.PCConcord.mentionsUnread=()=>mentionsUnread();
   window.PCConcord.__testNotifyMentions=(p,room,msgs,viewer,me,ch)=>notifyMentions(p,room,msgs,viewer,me,ch);
