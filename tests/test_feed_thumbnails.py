@@ -9,6 +9,7 @@ the client helper that chooses it:
   * the SHIPPED PCThumb (app.js) asks for a thumbnail on an instance, never without one, never for GIF/SVG, and a
     failed thumbnail falls back to the original before any other fallback.
 """
+import asyncio
 import io
 import json
 import os
@@ -47,29 +48,49 @@ def test_a_big_picture_is_resized_and_small_or_animated_ones_are_not():
 
 
 def test_the_route(monkeypatch, tmp_path):
+    """No request ever waits for a resize ("vyram said it's worse now", 2026-10-16: a new picture cost ~2.5 s inline,
+    3 at a time, and the service worker's own re-fetch got a 400 after paying it -- so it was paid twice)."""
+    import time
     from fastapi.testclient import TestClient
     from app.main import app
     monkeypatch.setattr(thumb_service, "_ROOT", str(tmp_path))
     fetched = []
 
-    async def fake_fetch(url):
+    async def slow_fetch(url):
         fetched.append(url)
+        await asyncio.sleep(2.0)                    # a far host and a big original
         return _png(2000, 1000) if "big" in url else None
-    monkeypatch.setattr(thumb_service, "_fetch", fake_fetch)
-    c = TestClient(app)
-    r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 132}, headers={"Sec-Fetch-Dest": "image"})
-    assert r.status_code == 200 and r.headers["content-type"] == "image/webp"
-    assert Image.open(io.BytesIO(r.content)).size == (160, 80)
-    assert "nosniff" in r.headers.get("x-content-type-options", "")
-    c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 140}, headers={"Sec-Fetch-Dest": "image"})
-    assert len(fetched) == 1, "the second request for the same size must come from the cache"
-    r = c.get("/client/thumb", params={"u": "https://pics.example/gone.png"}, headers={"Sec-Fetch-Dest": "image"},
-              follow_redirects=False)
-    assert r.status_code == 302 and r.headers["location"] == "https://pics.example/gone.png"
-    r = c.get("/client/thumb", params={"u": "https://evil.example/phish"}, headers={"Sec-Fetch-Dest": "document"},
-              follow_redirects=False)
-    assert r.status_code == 400, "a navigation must never be redirected off this domain"
-    assert c.get("/client/thumb", params={"u": "file:///etc/passwd"}).status_code == 400
+    monkeypatch.setattr(thumb_service, "_fetch", slow_fetch)
+    img = {"Sec-Fetch-Dest": "image", "Sec-Fetch-Mode": "no-cors"}
+    worker = {"Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors"}          # the service worker's own fetch
+    with TestClient(app) as c:
+        t = time.monotonic()
+        r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 132}, headers=img, follow_redirects=False)
+        assert time.monotonic() - t < 0.5, "the first view waited for the resize"
+        assert r.status_code == 302 and r.headers["location"] == "https://pics.example/big.png"
+        assert "no-store" in r.headers.get("cache-control", ""), "a not-yet-made redirect must not be cached"
+        r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 132}, headers=worker, follow_redirects=False)
+        assert r.status_code == 302, "the service worker's fetch must be redirected, not refused"
+        for _ in range(60):                         # the background resize lands
+            time.sleep(0.1)
+            r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 140}, headers=img, follow_redirects=False)
+            if r.status_code == 200:
+                break
+        assert r.status_code == 200 and r.headers["content-type"] == "image/webp"
+        assert Image.open(io.BytesIO(r.content)).size == (160, 80)
+        assert "nosniff" in r.headers.get("x-content-type-options", "")
+        assert len(fetched) == 1, "one picture, one fetch -- however many requests asked for it meanwhile"
+        c.get("/client/thumb", params={"u": "https://pics.example/gone.png"}, headers=img, follow_redirects=False)
+        for _ in range(40):
+            time.sleep(0.1)
+            if thumb_service.peek("https://pics.example/gone.png", 320) is not None:
+                break
+        r = c.get("/client/thumb", params={"u": "https://pics.example/gone.png"}, headers=img, follow_redirects=False)
+        assert r.status_code == 302 and "max-age" in r.headers.get("cache-control", ""), "a known 'original is right'"
+        for h in ({"Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate"}, {}):
+            r = c.get("/client/thumb", params={"u": "https://evil.example/phish"}, headers=h, follow_redirects=False)
+            assert r.status_code == 400, "a navigation must never be redirected off this domain"
+        assert c.get("/client/thumb", params={"u": "file:///etc/passwd"}, headers=img).status_code == 400
 
 
 NODE = shutil.which("node")
