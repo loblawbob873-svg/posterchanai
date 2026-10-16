@@ -5488,7 +5488,14 @@
   /* Before Communities has ever been opened in this page the live timer is not running, and the
    * sidebar's Communities badge would still know nothing. The sweep runs on its own then — only for a
    * signed-in account, and never alongside the live timer, which calls it itself. */
-  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
+  /* ONE PAGE PER DESK SWEEPS. On PosterChanOS every app window is its own copy of the client, and each ran this sweep --
+   * a live subscription to every relay of every community, through this account's tunnel share. Nine windows (Notes,
+   * Mail, Texts, Terminal, ...) held 4-10 tunnels each, filled the 128-tunnel share, and every other device of the
+   * account was refused: "0 of 5 of this community's relays answered", no community icons or banners on the laptop and
+   * in Firefox (2026-10-16, measured per window over a minute). A window that is not Communities leaves it to the
+   * desktop page (whose badge it is) and to the Communities window. */
+  function sweepHere(){ try{ const W=window.PCOSWin; return !(W&&W.isWindow&&W.isWindow()&&W.viewOf&&W.viewOf()!=='concord'); }catch(_){ return true; } }
+  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
