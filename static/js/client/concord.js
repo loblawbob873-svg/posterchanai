@@ -5534,6 +5534,12 @@
       document.body.append(overlay);fields.values().next().value?.focus();
     });
   }
+  /* Can this signer rotate community keys? Rotation needs NIP-44 over raw bytes, which only a key held on this device
+   * can do; a remote signer says so at once (no round trip). Asked by encrypting 40 zero bytes to ourselves. */
+  async function canRotateKeys(p){
+    const me=p.viewer?p.viewer().pubkey:'';if(!me||!p.cordRekeyEncrypt)return false;
+    try{ await p.cordRekeyEncrypt(me,new Uint8Array(40)); return true; }catch(_){ return false; }
+  }
   async function quickBanReview(p,room,target){
     const owner=room.cord.bundle.owner,keep=[...new Set([owner,...roomParticipants(room,owner)])].filter(pk=>pk&&pk!==target);
     const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
@@ -6475,6 +6481,12 @@
          * role is granted to (CORD's own rule: privateChannelInvite refuses anyone without it). quickBanReview. */
         const reviewed=await quickBanReview(p,room,target);if(!reviewed)return;
         if(deliveryOwner(p)!==actor)throw new Error('The signing account changed during access review.');
+        /* A REMOTE SIGNER CANNOT ROTATE THE KEYS, AND THAT MUST NOT MEAN "NO BAN". Rotation wraps raw 40-136 byte
+         * secrets with NIP-44 (CORD-06), and NIP-46/NIP-07/NIP-55 only encrypt TEXT -- so the owner's ban, which is
+         * a rotation, failed before anything was published and the member stayed ("Dr Todd still appears in known
+         * members despite me banning him", 2026-10-16, signed in through a remote signer). The ban itself is a
+         * control-plane write the owner may always sign: publish that, and say the keys were not rotated. */
+        if(!(await canRotateKeys(p))){ await publishModeration(room,target,'ban'); render(); p.toast('Member banned. The community keys were not rotated: this signer cannot do it (sign in with your key on this device to rotate them).'); return; }
         await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
       }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
     };
@@ -6482,12 +6494,9 @@
      * owner): Vector's delegated moderation. A kick removes the member from the guestbook — they can
      * rejoin with an invite; a ban stops them for good. The owner's ban stays banMember above, which
      * also rotates the keys (only the owner can refound). */
-    const staffModerate=async(target,verb)=>{
-      const room=saved()[state.community],reader=window.PosterCordReader,bundle=room?.cord?.bundle,me=viewer.pubkey;
-      if(!bundle||!reader)return p.toast('Community moderation is not ready.');
-      const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
-      const ok=p.uiConfirm?await p.uiConfirm(verb==='kick'?`Kick ${name}? They can rejoin with an invite.`:`Ban ${name} from this community?`,{ok:verb==='kick'?'Kick':'Ban',danger:true}):true; if(!ok)return;
-      try{
+    /* Publish a kick or a ban as one control/guestbook write (no key rotation); throws when it did not land. */
+    const publishModeration=async(room,target,verb)=>{
+        const reader=window.PosterCordReader,bundle=room?.cord?.bundle,me=viewer.pubkey;
         const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle),wraps=roomControls.get(loadKey)||[];
         const scope=cordPlaneContext(p,bundle,wraps,room);
         const made=verb==='kick'?await reader.createKickWrap(bundle,wraps,target,me,p.signTemplate):await reader.createBanWrap(bundle,wraps,target,me,p.signTemplate);
@@ -6500,6 +6509,16 @@
          * list ("i just kicked a member out of the community and it does not work, he still there", 2026-10-16).
          * The accepted kick joins the held guestbook (and its cache) at once, exactly as if it had been read back. */
         if(verb==='kick')noteOwnGuestbookEvent(room,made.wrap,deliveryOwner(p));
+        if(verb==='ban'){ const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===roomIdentity(room));
+          if(at>=0){ const banned=[...new Set([...(rooms[at].banned||[]),target])]; rooms[at]={...rooms[at],banned}; save(rooms); } }
+    };
+    const staffModerate=async(target,verb)=>{
+      const room=saved()[state.community],reader=window.PosterCordReader,bundle=room?.cord?.bundle;
+      if(!bundle||!reader)return p.toast('Community moderation is not ready.');
+      const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
+      const ok=p.uiConfirm?await p.uiConfirm(verb==='kick'?`Kick ${name}? They can rejoin with an invite.`:`Ban ${name} from this community?`,{ok:verb==='kick'?'Kick':'Ban',danger:true}):true; if(!ok)return;
+      try{
+        await publishModeration(room,target,verb);
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
