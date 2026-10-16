@@ -164,7 +164,9 @@ class _Housekeeper(maint_mod.Maintainer):
 
     def run_pass(self) -> dict:
         c = self.store.compact(pace=self.throttle)
-        return {"compacted": c.get("compacted"),
+        # the index's disk runs merge here, streamed and paced like compaction (store.merge_disk_runs)
+        merged = self.store.merge_disk_runs(pace=self.throttle, max_steps=4)
+        return {"compacted": c.get("compacted"), "merged": merged,
                 "snapshot": self._maybe_snapshot(after_compaction=bool(c.get("compacted")))}
 
 
@@ -268,7 +270,7 @@ class PcdbRelayStore(RelayStore):
         self._scan_exec.shutdown(wait=True)
         self._read_exec.shutdown(wait=False)
         if self.store is not None:
-            # No snapshot: the stop has systemd's 10 s, the log is complete, the hourly snapshot bounds the replay.
+            # The store checkpoints at close: it writes only what changed (checkpoint.py), well inside systemd's 10 s.
             self.store.close(take_snapshot=False)
 
     async def checkpoint(self) -> None:
@@ -310,7 +312,7 @@ class PcdbRelayStore(RelayStore):
             b = min(n, lo + rows)
             with st._lock:
                 t0 = time.perf_counter()
-                out = {c: np.frombuffer(getattr(st, c), dtype=_COLS[c])[lo:b].copy() for c in cols}
+                out = {c: getattr(st, c).view(_COLS[c])[lo:b].copy() for c in cols}
                 self._held(t0)
             yield lo, b, out
 
@@ -797,7 +799,7 @@ class PcdbRelayStore(RelayStore):
             seqs = st.match(dict(flt), now=now)
             if len(excl) and len(seqs):
                 with st._lock:
-                    k = np.frombuffer(st.kind, dtype=np.uint32)[seqs]
+                    k = st.kind.view(np.uint32)[seqs]
                 seqs = seqs[~np.isin(k, excl)]
             return seqs
 
@@ -823,7 +825,7 @@ class PcdbRelayStore(RelayStore):
             if not len(seqs):
                 continue
             with st._lock:
-                c = np.frombuffer(st.created, dtype=np.uint64)[seqs].astype(np.int64)
+                c = st.created.view(np.uint64)[seqs].astype(np.int64)
             if cap and len(seqs) > cap:                # ORDER BY created_at DESC LIMIT cap
                 keep = np.argsort(-c, kind="stable")[:cap]
                 seqs, c = seqs[keep], c[keep]
@@ -1086,7 +1088,7 @@ class PcdbRelayStore(RelayStore):
         retired_by_kind: dict = {}
         if len(retired_seqs):
             with self.store._lock:
-                ks = np.frombuffer(self.store.kind, dtype=np.uint32)[retired_seqs].copy()
+                ks = self.store.kind.view(np.uint32)[retired_seqs].copy()
             for k, c in zip(*np.unique(ks, return_counts=True)):
                 retired_by_kind[int(k)] = int(c)
         retired = sum(retired_by_kind.values())

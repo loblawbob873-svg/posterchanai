@@ -214,7 +214,8 @@ def test_compaction_reads_nothing_from_disk(tmp_path, monkeypatch):
     real = builtins.open
 
     def guarded(f, mode="r", *a, **k):
-        if "seg-" in str(f) and "r" in mode and "+" not in mode:
+        # the segment's MARKERS live in its small `.mk` file now (not RAM); its records must not be read back
+        if "seg-" in str(f) and str(f).endswith(".log") and "r" in mode and "+" not in mode:
             raise AssertionError("compaction read a segment back from disk")
         return real(f, mode, *a, **k)
     monkeypatch.setattr(builtins, "open", guarded)
@@ -232,7 +233,7 @@ def test_markers_are_carried_forward_so_a_compaction_never_brings_anything_back(
     _fill(s, 60)                             # several more segments
     s.kill([s.seq_of(target["id"])])          # OP_DEAD lands in a LATER segment than its target
     _fill(s, 60)
-    marker_seg = max(sid for sid, ms in s.seg_markers.items() if ms)
+    marker_seg = max(sid for sid in s.seg_markers if s._markers_of(sid))
     s.flush()
     # compact the segment holding the OP_DEAD (its target lives in segment 1): the marker must move on
     s.compact(sid=marker_seg, pace=lambda *a: None)
@@ -247,19 +248,33 @@ def test_markers_are_carried_forward_so_a_compaction_never_brings_anything_back(
     s.close()
 
 
-def test_a_crash_between_copy_and_delete_loses_and_duplicates_nothing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("when", ["before-checkpoint", "before-delete"])
+def test_a_crash_between_copy_and_delete_loses_and_duplicates_nothing(tmp_path, monkeypatch, when):
+    """Two crash points: the copies are fsynced but the checkpoint that retires the segment was not written (the
+    old checkpoint, whose columns still point into the segment, is used), or it was written and the old file was
+    not deleted yet (the open deletes it)."""
+    from app.services.posterchandb import checkpoint
     p = str(tmp_path / "db")
     s = Store(p, flush_interval=3600, direct_durable=False, segment_bytes=16384)
     evs = _fill(s, 80)
     s.kill([s.seq_of(e["id"]) for e in evs if s.seg[s.seq_of(e["id"])] == 1][2:])
     s.flush()
+    s.snapshot()
     expect = ids(s)
-    monkeypatch.setattr(os, "remove", lambda f: (_ for _ in ()).throw(OSError("power cut")))
-    with pytest.raises(OSError):
+    if when == "before-checkpoint":
+        monkeypatch.setattr(checkpoint, "_atomic_json", lambda *a: (_ for _ in ()).throw(OSError("power cut")))
+        with pytest.raises(OSError):
+            s.compact(sid=1, pace=lambda *a: None)
+    else:
+        monkeypatch.setattr(os, "remove", lambda f: (_ for _ in ()).throw(OSError("power cut")))
         s.compact(sid=1, pace=lambda *a: None)
+        assert os.path.exists(os.path.join(p, "seg-000001.log"))
     monkeypatch.undo()
     s._file.close()                          # the process died: no close(), no flush
     s = Store(p)
+    assert s.last_open["snapshot"], s.last_open
+    if when == "before-delete":
+        assert not os.path.exists(os.path.join(p, "seg-000001.log")), "the retired segment was left behind"
     got = s.query({"limit": 5000}, now=NOW)
     assert {e["id"] for e in got} == expect
     assert len(got) == len(expect), "a record copied by the interrupted compaction appears twice"
@@ -308,8 +323,10 @@ def test_compaction_writes_in_big_sequential_pieces_and_is_paced_between_them(tm
     s.compact(sid=1, pace=lambda nbytes, cpu: paced.append(nbytes))
     assert len(paced) >= 2, "the whole segment went out in one unpaced burst"
     assert max(paced) <= COMPACT_CHUNK + 7000
-    assert len([w for w in writes if w[1]]) == 1, "one fsync per compacted segment, not one per chunk"
-    assert min(n for n, f in writes[:-1]) >= COMPACT_CHUNK // 2, "small writes are RAID5 read-modify-writes"
+    # one fsync for the copies, one inside the checkpoint that retires the segment -- never one per chunk
+    assert len([w for w in writes if w[1]]) <= 2, "an fsync per chunk"
+    data = [n for n, f in writes if n]           # (the retiring checkpoint's drain has nothing left to write)
+    assert min(data[:-1]) >= COMPACT_CHUNK // 2, "small writes are RAID5 read-modify-writes"
     s.close()
 
 

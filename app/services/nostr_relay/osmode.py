@@ -262,7 +262,7 @@ class OsCacheStore(PcdbRelayStore):
         except (OSError, ValueError, TypeError):
             used = None
         with st._lock:
-            created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
+            created = st.created.view(np.uint64)[:n].astype(np.int64)
         created = np.clip(created, 0, int(time.time())).astype(np.uint32)
         if used is None:
             used = created
@@ -333,10 +333,10 @@ class OsCacheStore(PcdbRelayStore):
         pairs = st.d_prefix_pairs("pcai:")
         with st._lock:
             n = len(st.off)
-            kinds = np.frombuffer(st.kind, dtype=np.uint32)[:n].copy()
-            dead = np.frombuffer(st.dead, dtype=np.uint8)[:n].copy()
-            created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
-            author = np.frombuffer(st.author, dtype=np.uint32)[:n].copy()
+            kinds = st.kind.view(np.uint32)[:n].copy()
+            dead = st.dead.view(np.uint8)[:n].copy()
+            created = st.created.view(np.uint64)[:n].astype(np.int64)
+            author = st.author.view(np.uint32)[:n].copy()
             me = st._author_ix.get(owner) if owner else None
             authors = {q: st.pubkey_of(q) for d, q in pairs
                        if q < n and d.startswith(os_pins.D_OWN_PREFIX)}
@@ -367,8 +367,8 @@ class OsCacheStore(PcdbRelayStore):
         st = self.store
         with st._lock:
             n = len(st.off)
-            dead = np.frombuffer(st.dead, dtype=np.uint8)[:n].copy()
-            length = np.frombuffer(st.length, dtype=np.uint32)[:n].astype(np.int64)
+            dead = st.dead.view(np.uint8)[:n].copy()
+            length = st.length.view(np.uint32)[:n].astype(np.int64)
         live = np.nonzero(dead == 0)[0]
         total = int(length[live].sum())
         if total <= self.max_bytes:

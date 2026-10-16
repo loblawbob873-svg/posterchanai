@@ -118,7 +118,7 @@ def _author_mask(store, n: int, pubkeys) -> np.ndarray:
     ids = [store._author_ix[p] for p in pubkeys if p in store._author_ix]
     if not ids or not n:
         return np.zeros(n, dtype=bool)
-    return np.isin(np.frombuffer(store.author, dtype=np.uint32)[:n], np.asarray(ids, dtype=np.uint32))
+    return np.isin(store.author.view(np.uint32)[:n], np.asarray(ids, dtype=np.uint32))
 
 
 def _git_comment_exempt(store, n: int) -> np.ndarray:
@@ -191,11 +191,11 @@ class Maintainer:
         st = self.store
         with st._lock:
             n = len(st.off)
-            dead = np.frombuffer(st.dead, dtype=np.uint8)[:n].copy()
-            kind = np.frombuffer(st.kind, dtype=np.uint32)[:n].copy()
-            created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
-            expires = np.frombuffer(st.expires, dtype=np.uint64)[:n].astype(np.int64)
-            origin = np.frombuffer(st.origin, dtype=np.uint8)[:n].copy()
+            dead = st.dead.view(np.uint8)[:n].copy()
+            kind = st.kind.view(np.uint32)[:n].copy()
+            created = st.created.view(np.uint64)[:n].astype(np.int64)
+            expires = st.expires.view(np.uint64)[:n].astype(np.int64)
+            origin = st.origin.view(np.uint8)[:n].copy()
             preserved = _author_mask(st, n, pol.preserve_pubkeys)
             subs = _author_mask(st, n, pol.subscribers)
             git_exempt = _git_comment_exempt(st, n)
@@ -229,10 +229,10 @@ class Maintainer:
             return out
         cutoff = now - pol.retention_days * DAY
         with st._lock:
-            kind = np.frombuffer(st.kind, dtype=np.uint32)[:n]
-            created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
-            origin = np.frombuffer(st.origin, dtype=np.uint8)[:n]
-            dead = np.frombuffer(st.dead, dtype=np.uint8)[:n]
+            kind = st.kind.view(np.uint32)[:n]
+            created = st.created.view(np.uint64)[:n].astype(np.int64)
+            origin = st.origin.view(np.uint8)[:n]
+            dead = st.dead.view(np.uint8)[:n]
             cand = np.nonzero((kind == 9735) & (origin != ORIGINS["direct"]) & (created < cutoff) & (dead == 0))[0]
         for i in range(0, len(cand), 2000):
             t0 = time.thread_time()
@@ -275,6 +275,7 @@ class Maintainer:
         res["guard"] = self.disk_guard(pol)
         c = self.store.compact(pace=self.throttle)
         res["compacted"] = c.get("compacted")
+        res["merged"] = self.store.merge_disk_runs(pace=self.throttle, max_steps=4)
         res["snapshot"] = self._maybe_snapshot(after_compaction=bool(res["compacted"]))
         return res
 
@@ -298,13 +299,13 @@ class Maintainer:
         st = self.store
         with st._lock:
             n = len(st.off)
-            dead = np.frombuffer(st.dead, dtype=np.uint8)[:n]
+            dead = st.dead.view(np.uint8)[:n]
             live_idx = np.nonzero(dead == 0)[0]
             if len(live_idx) <= pol.max_events:
                 return np.zeros(n, dtype=bool)
-            created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
-            kind = np.frombuffer(st.kind, dtype=np.uint32)[:n]
-            origin = np.frombuffer(st.origin, dtype=np.uint8)[:n]
+            created = st.created.view(np.uint64)[:n].astype(np.int64)
+            kind = st.kind.view(np.uint32)[:n]
+            origin = st.origin.view(np.uint8)[:n]
             preserved = _author_mask(st, n, pol.preserve_pubkeys)
             subs = _author_mask(st, n, pol.subscribers)
             git_exempt = _git_comment_exempt(st, n)
@@ -327,10 +328,10 @@ class Maintainer:
             st = self.store
             with st._lock:
                 n = len(st.off)
-                dead = np.frombuffer(st.dead, dtype=np.uint8)[:n]
-                kind = np.frombuffer(st.kind, dtype=np.uint32)[:n]
-                origin = np.frombuffer(st.origin, dtype=np.uint8)[:n]
-                created = np.frombuffer(st.created, dtype=np.uint64)[:n].astype(np.int64)
+                dead = st.dead.view(np.uint8)[:n]
+                kind = st.kind.view(np.uint32)[:n]
+                origin = st.origin.view(np.uint8)[:n]
+                created = st.created.view(np.uint64)[:n].astype(np.int64)
                 preserved = _author_mask(st, n, pol.preserve_pubkeys)
                 git_exempt = _git_comment_exempt(st, n)
             ok = (dead == 0) & np.isin(kind, np.asarray(relay._PRUNABLE_KINDS, dtype=np.uint32)) & \
