@@ -208,5 +208,46 @@ class AConfinedSocketDoesNotLingerForEver(unittest.TestCase):
                                   "closes ordinary PosterChan clients on a timer")
 
 
+class OtherClientsStillReachMembers(unittest.TestCase):
+    """"make sure other clients can interact with posterchan users like me, I only use relay.poster.place" (2026-10-16).
+    With "PosterChan clients only" on, a member who lists only this relay must still get replies and reactions from
+    Damus/Primal/Amethyst, be readable by them, and Concord rooms created here (this relay their only one) must stay
+    readable to Vector/Armada members. The switch still keeps strangers from using this as a general relay."""
+
+    ME, STRANGER = "a" * 64, "b" * 64
+    local = staticmethod(lambda pk: pk == "a" * 64)
+
+    def ok(self, typ, msg):
+        return S._restricted_traffic(typ, msg, self.local)
+
+    def test_a_reply_or_reaction_to_a_member_is_delivered(self):
+        for kind in (1, 7, 9735, 6, 16):
+            self.assertTrue(self.ok("EVENT", ["EVENT", {"kind": kind, "tags": [["e", "c" * 64], ["p", self.ME]]}]), kind)
+
+    def test_a_note_to_nobody_here_is_still_refused(self):
+        self.assertFalse(self.ok("EVENT", ["EVENT", {"kind": 1, "tags": [["p", self.STRANGER]]}]))
+        self.assertFalse(self.ok("EVENT", ["EVENT", {"kind": 1, "tags": []}]))
+
+    def test_a_members_posts_and_profile_are_readable(self):
+        self.assertTrue(self.ok("REQ", ["REQ", "s", {"authors": [self.ME], "kinds": [0, 1, 10002]}]))
+        self.assertTrue(self.ok("REQ", ["REQ", "s", {"authors": [self.ME]}]))
+
+    def test_reading_anything_else_is_still_refused(self):
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"authors": [self.ME, self.STRANGER], "kinds": [1]}]))
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"kinds": [1], "limit": 50}]), "a global feed")
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"authors": [self.ME]}, {"kinds": [1]}]),
+                         "one unrestricted filter makes the whole REQ unrestricted")
+
+    def test_concord_rooms_are_readable_by_stream_key_never_by_recipient(self):
+        self.assertTrue(self.ok("REQ", ["REQ", "s", {"kinds": [1059], "authors": ["d" * 64, "e" * 64]}]))
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"kinds": [1059], "#p": [self.ME]}]), "who receives DMs")
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"kinds": [1059], "authors": ["d" * 64], "#p": [self.ME]}]))
+        self.assertFalse(self.ok("REQ", ["REQ", "s", {"kinds": [1059]}]))
+
+    def test_without_the_member_check_it_is_the_old_rule(self):
+        self.assertFalse(S._restricted_traffic("EVENT", ["EVENT", {"kind": 1, "tags": [["p", self.ME]]}]))
+        self.assertFalse(S._restricted_traffic("REQ", ["REQ", "s", {"authors": [self.ME]}]))
+
+
 if __name__ == "__main__":
     unittest.main()

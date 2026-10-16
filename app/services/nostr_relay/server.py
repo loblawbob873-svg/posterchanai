@@ -501,22 +501,51 @@ _RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
 _NO_RECORDS: dict = {}
 
 
-def _restricted_traffic(typ, msg) -> bool:
+def _restricted_traffic(typ, msg, is_local=None) -> bool:
     """May a confined (non-PosterChan) socket send this message?
 
     WRITES are the signer channel and inbound DMs. READS are the signer channel only: delivering a
     DM needs no subscription, and reading one is what the switch is deliberately excluding. A REQ
     filter with no `kinds` asks for EVERYTHING, so it is refused rather than read generously.
+
+    THE SWITCH KEEPS OTHER CLIENTS FROM USING THIS RELAY, NEVER FROM REACHING ITS MEMBERS ("make sure other
+    clients can interact with posterchan users like me, I only use relay.poster.place", 2026-10-16). A member who
+    lists only this relay has it as their inbox AND outbox, so with `is_local` (this node's own accounts) a
+    stranger may also: WRITE an event that tags a member (a reply, reaction, zap, repost or mention -- NIP-10/25/
+    57/18 all carry the `p`), READ events BY members (their notes, profile, relay list), and READ Concord's
+    encrypted kind-1059 by stream key (`authors`) -- the rooms created here live on this relay alone. A 1059 read
+    by recipient (`#p`) stays refused: who receives DMs is not anybody's to list.
     """
     if typ in ("CLOSE", "AUTH", "PING", "PONG"):
         return True
     if typ == "EVENT" and len(msg) >= 2:
-        return isinstance(msg[1], dict) and msg[1].get("kind") in _RESTRICTED_WRITE_KINDS
+        ev = msg[1]
+        if not isinstance(ev, dict):
+            return False
+        if ev.get("kind") in _RESTRICTED_WRITE_KINDS:
+            return True
+        if is_local is not None:
+            for t in ev.get("tags") or ():
+                if isinstance(t, list) and len(t) >= 2 and t[0] == "p" and isinstance(t[1], str) and is_local(t[1]):
+                    return True
+        return False
     if typ == "REQ" and len(msg) >= 3:
         filters = [f for f in msg[2:] if isinstance(f, dict)]
         if not filters:
             return False
-        return all(f.get("kinds") == [24133] for f in filters)
+
+        def one(f):
+            if f.get("kinds") == [24133]:
+                return True
+            if is_local is None:
+                return False
+            authors = f.get("authors")
+            if not (isinstance(authors, list) and authors and len(authors) <= 500):
+                return False
+            if f.get("kinds") == [1059]:
+                return not f.get("#p")                       # by stream key, never by recipient
+            return all(isinstance(a, str) and is_local(a) for a in authors)
+        return all(one(f) for f in filters)
     return False
 
 
@@ -1248,11 +1277,12 @@ class RelayServer:
         if not isinstance(msg, list) or not msg:
             return
         typ = msg[0]
-        if getattr(conn, "_pcai_signer_only", False) and _restricted_traffic(typ, msg) \
+        _local = getattr(getattr(self, "gate", None), "is_operator", None)
+        if getattr(conn, "_pcai_signer_only", False) and _restricted_traffic(typ, msg, _local) \
                 and typ in ("EVENT", "REQ"):
             # It is doing the one job it was admitted for. Stop counting it down.
             setattr(conn, "_pcai_signer_used", True)
-        if getattr(conn, "_pcai_signer_only", False) and not _restricted_traffic(typ, msg):
+        if getattr(conn, "_pcai_signer_only", False) and not _restricted_traffic(typ, msg, _local):
             # Said out loud rather than dropped: a signer that is refused must be able to report why,
             # and a silent drop is indistinguishable from a relay that is simply slow.
             self._send(conn, ["NOTICE", "this relay serves PosterChan clients and members of this "
