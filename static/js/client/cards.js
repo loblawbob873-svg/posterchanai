@@ -628,9 +628,9 @@ window.PCCardsFactory = function(dep){
     return `<div class="media-car" data-n="${n}">`
       +`<div class="mc-track">${media.map(m=>`<div class="mc-item">${m}</div>`).join('')}</div>`
       +`<button class="mc-nav mc-prev" aria-label="Previous" disabled>‹</button>`
-      +`<button class="mc-nav mc-next" aria-label="Next">›</button>`
-      +`<span class="mc-count">1/${n}</span>`
-      +`<div class="mc-dots">${media.map((_,i)=>`<i${i?'':' class="on"'}></i>`).join('')}</div>`
+      +`<button class="mc-nav mc-next" aria-label="Next"${n<=2?' disabled':''}>›</button>`
+      +`<span class="mc-count">${n>2?'1\u20132':'1\u2013'+n}/${n}</span>`
+      +`<div class="mc-dots">${media.map((_,i)=>`<i${i<2?' class="on"':''}></i>`).join('')}</div>`
       +`</div>`;
   }
   /* A NOTE IS DRAWN IN THE ORDER IT WAS WRITTEN. Media used to be LIFTED OUT of the text into one
@@ -683,15 +683,20 @@ window.PCCardsFactory = function(dep){
   // Bound ONCE by delegation. Carousels are emitted as HTML strings by mediaParts and land in the
   // timeline, threads, profiles, bookmarks, search and article views — per-render binding would have to
   // be duplicated into every one of those paths AND re-run on each live timeline redraw.
+  // One picture's width plus the gap: what a step along the track is.
+  function _mcStep(track){ const a=track.children[0], b=track.children[1]; return a ? (b ? b.offsetLeft-a.offsetLeft : a.offsetWidth) : 1; }
   function _mcSync(track){
     const car=track.closest('.media-car'); if(!car) return;
     const n=track.children.length; if(!n) return;
-    const idx=Math.max(0, Math.min(n-1, Math.round(track.scrollLeft/Math.max(1,track.clientWidth))));
-    const cnt=car.querySelector('.mc-count'); if(cnt) cnt.textContent=(idx+1)+'/'+n;
-    car.querySelectorAll('.mc-dots i').forEach((d,k)=> d.classList.toggle('on', k===idx));
+    // Two pictures per view: the index is the LEFT one, and the view shows it and the next.
+    const step=_mcStep(track), shown=Math.max(1, Math.round(track.clientWidth/Math.max(1,step)));
+    const idx=Math.max(0, Math.min(Math.max(0,n-shown), Math.round(track.scrollLeft/Math.max(1,step))));
+    const last=Math.min(n, idx+shown);
+    const cnt=car.querySelector('.mc-count'); if(cnt) cnt.textContent=(last-idx>1?(idx+1)+'\u2013'+last:(idx+1))+'/'+n;
+    car.querySelectorAll('.mc-dots i').forEach((d,k)=> d.classList.toggle('on', k>=idx && k<last));
     const p=car.querySelector('.mc-prev'), nx=car.querySelector('.mc-next');
     if(p) p.disabled = idx<=0;
-    if(nx) nx.disabled = idx>=n-1;
+    if(nx) nx.disabled = last>=n;
   }
   // ---- NIP-30 custom emoji ----------------------------------------------------------------------
   // Fediverse-bridged notes (and reactions) carry ["emoji", shortcode, url] tags; render the actual
@@ -1484,7 +1489,7 @@ window.PCCardsFactory = function(dep){
   }
 
   return {
-    _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
+    _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcStep, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
     applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiHtml, emojiName,
     feedNoteHtml, hydratePolls, invalidateCounts, mediaFlowHtml, mediaParts, myReaction, myReactionIds, needAddr,
     needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyContextHtml, replyParentId, repostWithWarning,
