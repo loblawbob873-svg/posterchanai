@@ -130,6 +130,16 @@ async def set_blocked_many(db, targets: list, blocked: bool) -> dict:
         trigger_block_reload()
     except Exception as e:
         logger.warning("[relay-blocklist] reload failed: %s", e)
+    if blocked:
+        # "Block this npub on the relay? Their events get rejected AND PURGED" -- the reload only rejects NEW
+        # events; everything already stored stayed until the nightly purge, so a blocked person's posts kept
+        # showing ("i blocked todd at the relay, why is his posts showing", 2026-10-16). Delete what is stored
+        # for exactly these keys now (by author -- not the whole-corpus word/language purge).
+        try:
+            from app.services.nostr_relay.thread import trigger_delete_author
+            trigger_delete_author(sorted(wanted))
+        except Exception as e:
+            logger.warning("[relay-blocklist] purge of the blocked authors failed: %s", e)
     return {"ok": True, "blocked": blocked, "count": len(cur), "changed": abs(len(cur) - before), "refused": refused}
 
 
