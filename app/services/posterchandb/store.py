@@ -361,6 +361,32 @@ DROPPED = 0xFFFFFFFF            # `seg` of a dead record whose segment was compa
 COMPACT_CHUNK = 4 * 1024 * 1024 # compaction writes in large sequential pieces (full RAID5 stripes, no RMW)
 
 
+class StoreBusy(RuntimeError):
+    """The directory is open in another Store (this process or another one)."""
+
+
+def _lock_directory(path: str) -> int:
+    """An exclusive, non-blocking flock on <path>/STORE.lock for as long as the Store is open.
+
+    2026-10-16 09:36: a process that was not the relay opened server1's LIVE store directory (a default path, nothing
+    to stop it), imported its index, wrote a checkpoint and run files into it and deleted index.snap -- underneath the
+    running relay. Two writers on one directory is never right, so the second is refused, whoever it is. The kernel
+    drops the lock when the holder exits, crashed or not, so there is nothing stale to clean up."""
+    import fcntl
+    fd = os.open(os.path.join(path, "STORE.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        try:
+            holder = os.pread(fd, 32, 0).decode("ascii", "replace").strip() or "?"
+        finally:
+            os.close(fd)
+        raise StoreBusy("%s is open in another PosterChanDB store (pid %s) -- refusing a second writer" % (path, holder))
+    os.ftruncate(fd, 0)
+    os.pwrite(fd, str(os.getpid()).encode(), 0)
+    return fd
+
+
 class Store:
     """See the module docstring. Every public method is thread-safe (one re-entrant lock)."""
 
@@ -386,13 +412,26 @@ class Store:
         self._ckpt_id = 0
         self._run_seq = 0
         os.makedirs(path, exist_ok=True)
+        self._dirlock = _lock_directory(path)
         self._reset_state()
         self._flushed = 0        # bytes of the active segment's arena that are on disk
         self._pending_n = 0
         self._last_flush = time.monotonic()
         self._active = 0
         self._file = None
-        self._open()
+        try:
+            self._open()
+        except BaseException:
+            self._release_dirlock()
+            raise
+
+    def _release_dirlock(self) -> None:
+        fd, self._dirlock = getattr(self, "_dirlock", None), None
+        if fd is not None:
+            try:
+                os.close(fd)                 # closing the descriptor drops the flock
+            except OSError:
+                pass
 
     # the per-event columns: (name, array code). Each is a FILE (col-<name>.bin) mapped copy-on-write (disk.Column).
     COLUMNS = (("seg", "I"), ("off", "Q"), ("length", "I"), ("created", "Q"), ("kind", "I"), ("expires", "Q"),
@@ -899,6 +938,7 @@ class Store:
             self._fds = {}
             for c in self._cols.values():
                 c.close()
+            self._release_dirlock()
 
     def disk_bytes(self) -> int:
         return sum(self.seg_size.values())
