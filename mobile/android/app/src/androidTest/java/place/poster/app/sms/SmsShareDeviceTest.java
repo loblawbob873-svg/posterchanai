@@ -5,6 +5,7 @@ import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static androidx.test.espresso.matcher.RootMatchers.isDialog;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
 
 import android.app.Instrumentation;
 import android.content.Context;
@@ -71,6 +72,9 @@ public class SmsShareDeviceTest {
         Instrumentation.ActivityMonitor monitor = inst.addMonitor(ThreadActivity.class.getName(), null, false);
         ThreadActivity thread = null;
         try (ActivityScenario<SendToActivity> route = ActivityScenario.launch(share.setClass(ctx, SendToActivity.class))) {
+            // A device that already has conversations is first asked WHICH one (SendToActivity.pickConversation,
+            // read off the main thread); "New number…" is the way to a number. With none, the number box is first.
+            awaitNumberBox();
             // The recipient field lives in an AlertDialog above the transparent routing Activity.
             // The default Activity root never gains focus while that dialog is open.
             onView(isAssignableFrom(EditText.class)).inRoot(isDialog()).perform(replaceText(who), closeSoftKeyboard());
@@ -84,6 +88,19 @@ public class SmsShareDeviceTest {
         } finally {
             if (thread != null) { final ThreadActivity shown = thread; inst.runOnMainSync(shown::finish); }
             inst.removeMonitor(monitor); MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, "");
+        }
+    }
+
+    /** Waits for the share's first dialog; when it is the conversation picker, takes "New number…". */
+    private static void awaitNumberBox() throws InterruptedException {
+        for (int i = 0; i < 50; i++) {
+            try { onView(isAssignableFrom(EditText.class)).inRoot(isDialog()).check(matches(isDisplayed())); return; }
+            catch (Throwable ignoredNoNumberBoxYet) { }
+            try {
+                onView(withText(place.poster.app.R.string.sms_new_number)).inRoot(isDialog()).perform(click());
+                continue;
+            } catch (Throwable ignoredNoPickerYet) { }
+            Thread.sleep(100);
         }
     }
 
