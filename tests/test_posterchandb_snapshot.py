@@ -24,6 +24,14 @@ from app.services.posterchandb.store import Store
 
 from tests.pcdb_gen import Gen   # (the same event and filter generator)
 
+def _copy_store(p):
+    """A copy of a store directory, for a second Store to replay beside the first (a directory takes one Store)."""
+    import shutil
+    dst = str(p).rstrip("/") + "-full"
+    shutil.copytree(p, dst, ignore=shutil.ignore_patterns("STORE.lock"))
+    return dst
+
+
 
 def _fill(path, seed, n=1500, **kw):
     s = Store(path, flush_interval=3600, direct_durable=False, snapshot_min_events=1, **kw)
@@ -46,8 +54,9 @@ def test_a_snapshot_reopen_answers_exactly_like_a_full_replay_and_replays_nothin
     s, g = _fill(p, 1)
     s.close()                                         # clean stop: writes the snapshot
     assert os.path.exists(os.path.join(p, snap.NAME))
+    full_dir = _copy_store(p)                    # one Store per directory: the full replay gets a copy
     fast = Store(p)
-    full = Store(p, snapshots=False)
+    full = Store(full_dir, snapshots=False)
     try:
         assert fast.last_open["snapshot"] is True and fast.last_open["replayed"] == 0, fast.last_open
         assert full.last_open["snapshot"] is False
@@ -85,8 +94,10 @@ def test_a_crash_after_the_snapshot_recovers_the_tail_from_the_log(tmp_path):
         s.put(g.event(), origin="wot")
     s.flush()
     s._file.close()                                    # the process dies: no close(), no new snapshot
+    s._release_dirlock()                 # ...and the kernel drops its lock
+    full_dir = _copy_store(p)                    # one Store per directory: the full replay gets a copy
     fast = Store(p)
-    full = Store(p, snapshots=False)
+    full = Store(full_dir, snapshots=False)
     try:
         assert fast.last_open["snapshot"] and 0 < fast.last_open["replayed"] <= 400, fast.last_open
         assert _answers(fast, g) == _answers(full, g)
@@ -102,6 +113,7 @@ def test_a_snapshot_that_does_not_match_is_never_used(tmp_path, monkeypatch, how
     s.snapshot()
     s.flush()
     s._file.close()
+    s._release_dirlock()                 # ...and the kernel drops its lock
     f = os.path.join(p, snap.NAME)
     if how == "tokenizer":
         monkeypatch.setattr(snap, "fingerprint", lambda: "another-parser")
@@ -112,8 +124,9 @@ def test_a_snapshot_that_does_not_match_is_never_used(tmp_path, monkeypatch, how
     elif how == "truncated":
         with open(f, "r+b") as fh:
             fh.truncate(os.path.getsize(f) // 3)
+    full_dir = _copy_store(p)                    # one Store per directory: the full replay gets a copy
     fast = Store(p)
-    full = Store(p, snapshots=False)
+    full = Store(full_dir, snapshots=False)
     try:
         assert fast.last_open["snapshot"] is False, (how, fast.last_open)
         assert _answers(fast, g) == _answers(full, g)
@@ -133,8 +146,10 @@ def test_a_compaction_keeps_the_checkpoint_usable(tmp_path):
     s.flush()
     assert s.compact(sid=1, pace=lambda *a: None)["compacted"] == 1
     s._file.close()                                   # the process dies right after the compaction
+    s._release_dirlock()                 # ...and the kernel drops its lock
+    full_dir = _copy_store(p)                    # one Store per directory: the full replay gets a copy
     fast = Store(p)
-    full = Store(p, snapshots=False)
+    full = Store(full_dir, snapshots=False)
     try:
         assert fast.last_open["snapshot"] and fast.last_open["replayed"] == 0, fast.last_open
         assert _answers(fast, g) == _answers(full, g)
@@ -167,6 +182,7 @@ def test_maintenance_snapshots_after_a_compaction(tmp_path):
     assert r["compacted"], r                          # the compaction checkpoints itself before deleting the file
     s.flush()
     s._file.close()
+    s._release_dirlock()                 # ...and the kernel drops its lock
     again = Store(p)
     try:
         assert again.last_open["snapshot"] is True, again.last_open
