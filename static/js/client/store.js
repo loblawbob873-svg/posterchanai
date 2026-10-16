@@ -423,7 +423,16 @@
         }
       } else if (msg[0] === 'EVENT' || msg[0] === 'EOSE' || msg[0] === 'CLOSED'){
         const r = LR.reqs.get(msg[1]); if (!r) return;
-        if (msg[0] === 'EVENT') r.events.push(msg[2]); else { LR.reqs.delete(msg[1]); r.done(r.events); }
+        if (msg[0] === 'EVENT') r.events.push(msg[2]);
+        else {
+          LR.reqs.delete(msg[1]); r.done(r.events);
+          /* CLOSE IT. A relay keeps a subscription open after EOSE until it is closed, and these queries were
+           * only ever closed on a TIMEOUT -- so every completed read stayed open on the relay, and after its
+           * max_subs_per_conn (64 on the local relay) every later REQ on this socket was answered
+           * "rate-limited: too many subscriptions": every cached Concord control read as missing, so icons,
+           * banners, channels and plane keys vanished minutes after each start (.102, 2026-10-15). */
+          if (msg[0] === 'EOSE'){ try { LR.ws.send(JSON.stringify(['CLOSE', msg[1]])); } catch(_){ } }
+        }
       }
     };
     ws.onclose = ws.onerror = () => {
@@ -686,6 +695,16 @@
     async lrGet(ids, ms){
       const out = new Map();
       const want = [...new Set((ids || []).filter(x => typeof x === 'string' && x))];
+      /* WAIT FOR THE SOCKET, don't answer "nothing" before it opens. Concord reads its cached controls the
+       * moment a window boots, which is before this connection is up -- and an empty answer there is not a
+       * miss, it is a community with no settings history: the settings sheet then wrote a brand-new v1,
+       * forking the chain (PosterChan, 2026-10-15: the icon wiped and every later save ignored). */
+      if (want.length && !_lrLive()){
+        // Before Store.init has run there is no URL or socket yet: wait for init to start one.
+        const t0 = Date.now(), cap = Math.min(ms || 3000, 5000);
+        while (!LR.ws && !LR.url && _lrUrl() && Date.now() - t0 < cap) await new Promise(r => setTimeout(r, 25));
+        if (LR.url) await _lrWait(Math.max(0, cap - (Date.now() - t0)));
+      }
       for (let i = 0; i < want.length && _lrLive(); i += 500){
         const chunk = want.slice(i, i + 500), set = new Set(chunk);
         for (const ev of await _lrQuery([{ ids: chunk, limit: chunk.length }], ms || 3000))

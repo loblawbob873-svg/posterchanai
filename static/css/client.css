@@ -12342,3 +12342,10 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .gi-c.gi-hl{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan)}
 .gi-compose{margin-top:18px}
 @media (max-width:600px){ .gi-page{padding:10px 10px 20px} .gi-title{font-size:19px} .gi-c-hd .gi-re{flex-basis:100%;order:9} .gi-c-hd .gi-name{max-width:38%} }
+
+/* Community settings: the icon the community has NOW. An uploaded icon is encrypted and has no text form, so the
+   Icon field alone showed an empty box over a community whose icon was set ("community icon missing from
+   community settings"). Same drawing as the rail (roomIcon). */
+.cc-icon-current{width:56px;height:56px;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center;
+  background:var(--panel,rgba(255,255,255,.06));border:1px solid var(--line,rgba(255,255,255,.12));margin:4px 0 8px;font-weight:700}
+.cc-icon-current img{width:100%;height:100%;object-fit:cover;display:block}

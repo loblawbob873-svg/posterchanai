@@ -173,3 +173,71 @@ def test_a_banner_only_save_keeps_the_communitys_other_settings():
         assert meta['name'] == 'Settings keeper', ('the banner save changed the name', meta)
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_save_after_a_forked_history_still_changes_the_community():
+    """PosterChan, 2026-10-15, measured on the owner's desktop: a client that read NO prior metadata (its local
+    cache answered empty) wrote a fresh v1, forking the edition chain. The fold keeps the lowest rumor id per
+    version, so it anchored on one v1 while the v2 slot went to the original v2 -- a gap -- and every save after
+    that (v2, linked to the anchored v1) lost the tie-break: "says saved, does not show", ten times. A new
+    edition now takes the lowest id in its slot, so the save lands, in this client and in every other."""
+    async def check(b):
+        minted = await setup(b, 1280, 'Forked keeper')
+        # v2: a real icon and description, saved normally.
+        await b.js(r'''(async()=>{const made=await PosterCordReader.createMetadataWrap(__cordBundle,''' + CONTROLS + r''',
+          {description:'original',icon:'🌌'},__PC.me().pubkey,__PC.signTemplate);__relaySeed([made.wrap]);})()''')
+        # The fork: saves written from an EMPTY read are fresh v1s; repeat until one of them sorts below the
+        # creation v1 (the shape PosterChan has: the rogue v1 anchors, the original v2 owns the next slot).
+        got = await b.js(r'''(async()=>{const C=()=>''' + CONTROLS + r''';let n=0;
+          for(;n<40;n++){const made=await PosterCordReader.createMetadataWrap(__cordBundle,[],{description:'WIPED'},__PC.me().pubkey,__PC.signTemplate);
+            __relaySeed([made.wrap]);if(PosterCordReader.inspectControl(__cordBundle,C()).description==='WIPED')break;}
+          return {n,desc:PosterCordReader.inspectControl(__cordBundle,C()).description}})()''')
+        assert got['desc'] == 'WIPED', ('could not reproduce the fork', got)
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        res = await b.js(r'''(async()=>{const me=__PC.me().pubkey,room=JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+me)||'[]').find(r=>r.name==='Forked keeper');
+          let err='';try{await PCConcord.saveCommunitySettings(__PC,room,{description:'after the fork'});}catch(e){err=String(e.message||e);}
+          return {err,desc:PosterCordReader.inspectControl(__cordBundle,''' + CONTROLS + r''').description}})()''')
+        assert res['err'] == '' and res['desc'] == 'after the fork', ('a save after the fork changed nothing', res)
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_settings_save_reaches_every_relay_the_community_lists():
+    """PosterChan, 2026-10-15: this node's relay answered OK once ANY one upstream took a settings edition --
+    for PosterChan that was a relay the community does not list -- so a refresh that read the community's own
+    relays never saw the new icon or banner, and each showed and vanished in turn. A settings save now also
+    goes to every listed relay."""
+    async def check(b):
+        minted = await setup(b, 1280, 'Everywhere keeper')
+        await b.js("window.__direct=[];__PC.relayPublishTo=async(relays,ev)=>{__direct.push({relays,id:ev.id});return {ok:true};};true")
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        res = await b.js(r'''(async()=>{const me=__PC.me().pubkey,room=JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+me)||'[]').find(r=>r.name==='Everywhere keeper');
+          await PCConcord.saveCommunitySettings(__PC,room,{description:'seen everywhere'});
+          return {direct:__direct, relays:PCConcord.roomRelays(room.cord.bundle)}})()''')
+        assert res['direct'], ('the settings edition went only to this node\'s relay', res)
+        assert sorted(res['direct'][-1]['relays']) == sorted(res['relays']), res
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_settings_sheet_shows_the_icon_the_community_has():
+    """"community icon missing from community settings": an uploaded icon is encrypted and has no text form, so
+    the sheet's Icon box was blank over a community whose icon was set. The sheet now draws the current icon."""
+    async def check(b):
+        minted = await setup(b, 1280, 'Icon keeper')
+        await b.js(r'''(async()=>{const made=await PosterCordReader.createMetadataWrap(__cordBundle,''' + CONTROLS + r''',
+          {icon:'🌌'},__PC.me().pubkey,__PC.signTemplate);__relaySeed([made.wrap]);})()''')
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        # The icon is on the rail first (the room loaded its settings), then the sheet is opened.
+        await b.until("[...document.querySelectorAll('[data-cc-server]')].some(x=>x.textContent.includes('🌌'))")
+        await b.until("!!document.querySelector('#cc-edit-icon')")
+        await click(b, '#cc-edit-icon')
+        await b.until("!document.querySelector('#cc-settings-dialog').classList.contains('hidden')")
+        await b.until("!!document.querySelector('#cc-icon-current')")
+        cur = await b.js("document.querySelector('#cc-icon-current').textContent.trim()||(document.querySelector('#cc-icon-current img')?'img':'')")
+        assert cur == '🌌', ('the sheet does not show the community icon', cur)
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))
