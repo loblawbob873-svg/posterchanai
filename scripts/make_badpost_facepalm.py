@@ -2,9 +2,9 @@
 """Build static/mascot/badpost-facepalm.png -- PosterChan facepalming, for the Bad Post of the Day bot.
 
 Derived from the shipped mascot frames, never drawn from scratch, so it is the same character as the
-desktop buddy: the body is dance-5 (hands on hips, the disappointed stance), the hand is dance-2's raised
-open palm, laid over her eyes. The crop stops above the hips, so the two hip hands leave the frame and
-the facepalm arm is the only one that reaches the face.
+desktop buddy: the body is dance-5 (hands on hips, the disappointed stance), cropped above the hips so the hip
+hands leave the frame; her right hand -- drawn in her line-art colours, back of the hand to the viewer, out of
+the hoodie sleeve -- covers her eyes.
 
 Run once after changing the mascot art (needs Pillow with FreeType, i.e. the app's venv):
     venv-unified/bin/python scripts/make_badpost_facepalm.py
@@ -12,7 +12,7 @@ Run once after changing the mascot art (needs Pillow with FreeType, i.e. the app
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MASCOT = os.path.join(ROOT, "static", "mascot")
@@ -23,53 +23,85 @@ YELLOW = (255, 230, 0, 255)          # the star on her hoodie
 
 BUST = (105, 52, 315, 207)            # dance-5: hair top to mid-hoodie (the hip hands are out of frame)
 SCALE = 720 * 0.95 / (BUST[2] - BUST[0])
-PALM_AT = (212, 117)                   # dance-5 coordinates: both eyes behind the hand
-ARM_TILT = -14                         # degrees; the elbow goes out to her right, off the bottom edge
-HAND = 1.08                            # the hand a little larger than the waving one, so it covers both eyes
+EYES = (213, 116)                      # dance-5 coordinates: between her eyes
 INK = (70, 32, 28, 255)                # the line-art brown of her outlines
+SKIN = (255, 233, 220, 255)            # sampled from her face
+SKIN_SHADE = (240, 196, 182, 255)
+SLEEVE = (26, 24, 30, 255)             # the hoodie
+SLEEVE_HI = (58, 54, 66, 255)
+SS = 4                                 # the hand is drawn at 4x and scaled down: smooth lines, no staircase
 
 
 def _up(im: Image.Image, k: float) -> Image.Image:
     return im.resize((round(im.width * k), round(im.height * k)), Image.LANCZOS)
 
 
-def _arm() -> Image.Image:
-    """dance-2's waving arm, cut out along the skin (no hair, no hoodie), MIRRORED -- a palm-out right
-    hand mirrored is the BACK of her right hand, which is what a facepalm shows the viewer."""
-    src = Image.open(os.path.join(MASCOT, "dance", "dance-2.webp")).convert("RGBA")
-    cut = Image.new("L", src.size, 0)
-    ImageDraw.Draw(cut).polygon([(86, 0), (150, 0), (150, 40), (140, 70), (146, 100), (150, 125),
-                                 (122, 128), (106, 104), (98, 62), (86, 40)], fill=255)
-    arm = Image.new("RGBA", src.size, (0, 0, 0, 0))
-    arm.paste(src, (0, 0), Image.composite(src.split()[3], cut, cut))
-    return ImageOps.mirror(arm.crop((80, 0, 165, 150)))
+def _hand(unit: float) -> Image.Image:
+    """Her RIGHT hand seen from the BACK, the way a facepalm looks to the person watching: fingers together over her
+    eyes, thumb on the outside, the wrist going into the hoodie's cuff and the sleeve running off the bottom of the
+    frame. Drawn (no frame of the mascot shows a hand like this) in her own line-art colours; `unit` = one dance-5
+    pixel at the final scale, so the hand is sized to HER face (the previous image reused the waving arm: a bare arm,
+    palm to the viewer -- "the hand is backwards and longer than normal", 2026-10-16).
+    Local frame: wrist at (0, 0), fingers pointing up (-y); rotated by the caller."""
+    u = unit * SS
+    W, H = int(160 * u), int(160 * u)
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    ox, oy = W / 2, H * 0.40                    # the wrist
+    P = lambda x, y: (ox + x * u, oy + y * u)  # noqa: E731
+    lw = max(2, round(1.0 * u))
+    # the sleeve: a loose hoodie sleeve -- wide, rounded, a fold or two -- from the cuff down out of the frame
+    sleeve = [P(-12, 3), P(-15, 14), P(-21, 30), P(-26, 50), P(-27, 70), P(25, 70), P(23, 48), P(19, 28), P(14, 12), P(12, 3)]
+    d.polygon(sleeve, fill=SLEEVE, outline=(0, 0, 0, 255), width=lw)
+    for x0, y0, x1, y1 in ((-4, 14, -9, 40), (6, 20, 9, 52), (-15, 30, -19, 58)):
+        d.line([P(x0, y0), P(x1, y1)], fill=SLEEVE_HI, width=round(1.2 * u))
+    d.rounded_rectangle([P(-13, -1), P(13, 7)], radius=3 * u, fill=SLEEVE, outline=(0, 0, 0, 255), width=lw)
+    d.line([P(-11, 3), P(11, 3)], fill=SLEEVE_HI, width=round(.8 * u))
+    # the back of the hand
+    back = [P(-9.5, -1), P(9.5, -1), P(13, -12), P(13.5, -22), P(-12.5, -23), P(-11.5, -11)]
+    d.polygon(back, fill=SKIN, outline=INK, width=lw)
+    d.line([P(-4, -6), P(-2, -18)], fill=SKIN_SHADE, width=round(.9 * u))          # a tendon or two
+    d.line([P(4, -6), P(5, -18)], fill=SKIN_SHADE, width=round(.9 * u))
+    # four fingers side by side (index on the thumb side = the viewer's left), together, gently fanned
+    fingers = [(-9.3, -22, 6.4, 20, -3), (-3.1, -23, 6.6, 23, -1), (3.2, -23, 6.4, 21.5, 1.5), (9.2, -22, 5.8, 17, 4)]
+    for cx, top, w, ln, lean in fingers:
+        tx = cx + lean
+        tip = top - ln
+        d.polygon([P(cx - w / 2, top + 1.5), P(cx + w / 2, top + 1.5), P(tx + w / 2, tip + w / 2), P(tx - w / 2, tip + w / 2)],
+                  fill=SKIN, outline=INK, width=lw)
+        d.ellipse([P(tx - w / 2, tip), P(tx + w / 2, tip + w)], fill=SKIN, outline=INK, width=lw)
+        d.polygon([P(cx - w / 2 + .7, top), P(cx + w / 2 - .7, top), P(tx + w / 2 - .7, tip + w / 2),
+                   P(tx - w / 2 + .7, tip + w / 2)], fill=SKIN)                                         # no seam at the tip
+        d.ellipse([P(tx - w * .22, tip + w * .25), P(tx + w * .22, tip + w * .75)], fill=(255, 220, 210, 255))   # the nail
+        k = top - ln * .48
+        d.arc([P(cx + lean * .5 - w * .3, k - 1.2), P(cx + lean * .5 + w * .3, k + 1.2)], 200, 340, fill=SKIN_SHADE,
+              width=round(.8 * u))                                                                  # the middle joint
+    # the thumb, along the outer edge toward her temple
+    th = [P(-10.5, -1.5), P(-15.5, -6.5), P(-19.6, -13.5), P(-14.4, -16.5), P(-11.8, -12.5)]
+    d.polygon(th, fill=SKIN, outline=INK, width=lw)
+    d.ellipse([P(-20.6, -17.8), P(-14.2, -11.4)], fill=SKIN, outline=INK, width=lw)               # the thumb tip, rounded
+    d.polygon([P(-10.8, -2.4), P(-15.2, -7), P(-19, -13.6), P(-14.8, -15.8), P(-12.4, -12.4)], fill=SKIN)  # no seam
+    d.ellipse([P(-19, -16.6), P(-16.2, -13.8)], fill=(255, 220, 210, 255))                       # its nail
+    d.line([P(-11.6, -12.4), P(-10.6, -2)], fill=INK, width=lw)
+    d.line([P(12, -4), P(12.8, -20)], fill=SKIN_SHADE, width=round(1.6 * u))      # shade on the far edge
+    return im
 
 
 def figure() -> Image.Image:
-    """Composed at the FINAL scale: the art is upscaled first and the arm's edge and outline are cut
-    afterwards, so they are smooth lines rather than a 3x-magnified pixel staircase (the old image's
-    pale, jagged halo). The forearm runs off the bottom of the frame, so there is no seam where an arm
-    stops in mid-air."""
+    """dance-5 (hands on hips, the disappointed stance), cropped above the hips, with her right hand over her eyes."""
     body = _up(Image.open(os.path.join(MASCOT, "dance", "dance-5.webp")).convert("RGBA").crop(BUST), SCALE)
-    k = SCALE * HAND
-    arm = _up(_arm(), k)
-    alpha = arm.split()[3].filter(ImageFilter.GaussianBlur(1.2)).point(lambda v: 255 if v > 150 else 0)
-    alpha = alpha.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(0.8))
-    ring = alpha.filter(ImageFilter.MaxFilter(7))
-    inked = Image.new("RGBA", arm.size, (0, 0, 0, 0))
-    inked.paste(Image.new("RGBA", arm.size, INK), (0, 0), ring)
-    arm.putalpha(alpha)
-    inked.alpha_composite(arm)
-    palm = ((84 - (112 - 80)) * k, 30 * k)          # palm centre of the mirrored crop, scaled
-    pad = max(inked.size) * 2
-    big = Image.new("RGBA", (pad, pad), (0, 0, 0, 0))
-    big.alpha_composite(inked, (round(pad / 2 - palm[0]), round(pad / 2 - palm[1])))
-    big = big.rotate(ARM_TILT, resample=Image.BICUBIC, center=(pad / 2, pad / 2))
-    at = ((PALM_AT[0] - BUST[0]) * SCALE, (PALM_AT[1] - BUST[1]) * SCALE)
+    hand = _hand(SCALE)
+    hand = hand.rotate(-20, resample=Image.BICUBIC, center=(hand.width / 2, hand.height * 0.40), expand=False)
+    hand = hand.resize((hand.width // SS, hand.height // SS), Image.LANCZOS)
+    # the fingers' middle lands on her eyes: in the hand's frame that is ~26 dance-5 px above the wrist, tilted
+    import math
+    a = math.radians(20)
+    tip_dx, tip_dy = 31 * math.sin(a) * SCALE, -31 * math.cos(a) * SCALE
+    eyes = ((EYES[0] - BUST[0]) * SCALE, (EYES[1] - BUST[1]) * SCALE)
+    wrist = (eyes[0] - tip_dx, eyes[1] - tip_dy)
     out = body.copy()
-    out.alpha_composite(big.crop((round(pad / 2 - at[0]), round(pad / 2 - at[1]),
-                                  round(pad / 2 - at[0]) + out.width, round(pad / 2 - at[1]) + out.height)))
-    return out.filter(ImageFilter.UnsharpMask(radius=2, percent=90, threshold=2))
+    out.alpha_composite(hand, (round(wrist[0] - hand.width / 2), round(wrist[1] - hand.height * 0.40)))
+    return out.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
 
 
 def font(size: int):

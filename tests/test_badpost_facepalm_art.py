@@ -1,12 +1,12 @@
-"""The Bad Post of the Day facepalm: one connected arm, and the shipped PNG is what the script builds.
+"""The Bad Post of the Day facepalm: a hand of normal size, BACK to the viewer, over BOTH eyes, out of her sleeve --
+and the shipped PNG is what the script builds.
 
-Asked for 2026-10-14: "improve the face palm graphic". The old picture pasted dance-2's waving palm over her
-eyes with its forearm CUT OFF halfway down the hoodie -- an arm that ends in mid-air -- with a pale, jagged
-halo from cutting the art out at its native size and then magnifying it 3x. The hand is now the mirrored
-arm (the back of her right hand), and its forearm runs off the bottom edge of the frame.
+History: the first picture pasted dance-2's waving palm over her eyes with its forearm cut off in mid-air; the
+second ran that bare arm off the bottom edge -- "the hand is backwards and longer than normal" (2026-10-16): it was
+the PALM (the waving arm mirrored) and a bare forearm the length of her torso, though she wears a long-sleeved
+hoodie. The hand is now drawn: back of the right hand, thumb on the outside, the wrist in the hoodie cuff.
 
-Measured on the picture people actually see: the skin under her palm is followed, pixel to pixel, and must
-leave the frame at the bottom on her right side. The old image's arm stopped ~190 px above the edge.
+Measured on the picture people actually see.
 """
 import importlib.util
 import os
@@ -27,35 +27,48 @@ def _script():
     return mod
 
 
-def _palm_xy(mod):
+def _at(mod, dx, dy):
+    """dance-5 coordinates -> pixel in the shipped picture."""
     fig_w = round((mod.BUST[2] - mod.BUST[0]) * mod.SCALE)
     fig_h = round((mod.BUST[3] - mod.BUST[1]) * mod.SCALE)
     x0, y0 = (mod.SIZE - fig_w) // 2, mod.SIZE - fig_h
-    return (round(x0 + (mod.PALM_AT[0] - mod.BUST[0]) * mod.SCALE),
-            round(y0 + (mod.PALM_AT[1] - mod.BUST[1]) * mod.SCALE))
+    return round(x0 + (dx - mod.BUST[0]) * mod.SCALE), round(y0 + (dy - mod.BUST[1]) * mod.SCALE)
 
 
-def test_the_hand_over_her_eyes_belongs_to_an_arm_that_leaves_the_frame():
+def _skin(px):
+    r, g, b = px[..., 0], px[..., 1], px[..., 2]
+    return (r > 200) & (g > 165) & (b > 135) & (r - b > 22) & (r - b < 110)   # warm: not the white caption
+
+
+def test_one_normal_sized_hand_covers_both_eyes_and_comes_out_of_her_sleeve():
     mod = _script()
     px = np.asarray(Image.open(PNG).convert("RGB")).astype(int)
-    r, g, b = px[..., 0], px[..., 1], px[..., 2]
-    skin = (r > 200) & (g > 165) & (b > 135) & (r - b > 22) & (r - b < 110)   # warm: not the white caption
-    labels, _ = ndimage.label(skin)
-    x, y = _palm_xy(mod)
-    # The palm centre itself may fall on a knuckle line; take the skin component nearest to it.
-    win = labels[y - 12:y + 13, x - 12:x + 13]
-    ids = [v for v in np.unique(win) if v]
-    assert ids, ("no skin under the palm -- the hand is not over her eyes", (x, y))
-    arm = max(ids, key=lambda v: int((labels == v).sum()))
-    comp = labels == arm
-    # Her right forearm leaves the frame on HER right (the viewer's left), well clear of her neck: the skin
-    # under the palm is otherwise joined to the bottom edge only down her neckline, which is what the old
-    # picture's cut-off arm amounted to.
-    bottom = np.where(comp[mod.SIZE - 20:].any(axis=0))[0]
-    assert len(bottom) and bottom.min() < x - 80, ("the hand over her eyes is not joined to an arm leaving the "
-                                                   "frame -- a forearm cut off in mid-air", bottom[:5].tolist())
-    rows = np.where(comp.any(axis=1))[0]
-    assert rows.min() < y, "the skin found is not the hand over her face"
+    labels, _ = ndimage.label(_skin(px))
+    eyes = getattr(mod, "EYES", None) or mod.PALM_AT
+    hand = np.zeros(labels.shape, dtype=bool)
+    for dx in (-7, 7):                                     # her two eyes, ~7 dance-5 px either side of centre
+        x, y = _at(mod, eyes[0] + dx, eyes[1])
+        win = labels[y - 6:y + 7, x - 6:x + 7]
+        ids = [v for v in np.unique(win) if v]
+        assert ids, ("an eye is not covered by the hand", dx, (x, y))
+        for v in ids:                                      # fingers and the back are outlined apart: their union
+            hand |= labels == v
+    rows, cols = np.where(hand.any(axis=1))[0], np.where(hand.any(axis=0))[0]
+    face = 30 * mod.SCALE                                  # her face is ~30 dance-5 px tall
+    assert rows.max() - rows.min() < 1.9 * face, ("the hand is far longer than her face: a bare arm, not a hand",
+                                                  rows.max() - rows.min(), face)
+    # below the hand: the dark sleeve, connected to the bottom edge of the picture
+    dark = px.sum(axis=2) < 150
+    dlab, _ = ndimage.label(dark)
+    wrist_y = rows.max()
+    cx = int(np.mean(np.where(hand[wrist_y - 3])[0]))
+    below = [v for v in np.unique(dlab[wrist_y + 4:wrist_y + 20, cx - 12:cx + 12]) if v]
+    assert below, "nothing dark under the wrist: the hand is not in her sleeve"
+    assert any(dlab[mod.SIZE - 1][dlab[mod.SIZE - 1] == v].size for v in below), "the sleeve does not leave the frame"
+    # the BACK of her right hand: the thumb sits on the viewer's left, below the fingertips
+    left = cols.min()
+    assert hand[:, left].any() and np.where(hand[:, left])[0].mean() > rows.min() + 0.25 * (rows.max() - rows.min()), \
+        "the thumb is not on the outside (viewer's left): the hand is backwards"
 
 
 def test_the_shipped_png_is_what_the_script_builds(tmp_path, monkeypatch):
