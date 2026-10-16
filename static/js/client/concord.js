@@ -1358,6 +1358,16 @@
     }catch(e){if(current())console.warn('Concord member history unavailable',e);}
     finally{entry.pending=false;}
   }
+  /* An envelope this client just published to the guestbook, folded in without waiting for the next read. */
+  function noteOwnGuestbookEvent(room,wrap,owner){
+    try{
+      const entry=roomGuestbooks.get(owner+'\n'+roomIdentity(room));
+      if(!entry||!wrap)return;
+      entry.wraps=mergeEnvelopes(entry.wraps,[wrap]);entry.projection=null;
+      const loadKey=room.communityId||room.naddr;
+      void cacheEnvelopes(envelopeCacheKey(loadKey,'guestbook:'+owner),[wrap]).catch(()=>{});
+    }catch(_){ }
+  }
   function roomParticipants(room,viewerPubkey=''){
     ownGuestbookViewer(viewerPubkey);
     const observed=channelsOf(room).flatMap(channel=>testMessages(channelStoreId(room,channel.name))).filter(Boolean),fromMessages=observed.map(message=>message.pubkey);
@@ -6143,7 +6153,11 @@
     /* The composer's text is left out of the comparison: the draft in the markup was READ from the
      * live box (captureComposer), so a difference there is only the person typing -- and rebuilding
      * for it replaced the text box under their fingers. */
-    const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2');
+    /* ...and the KNOWN MEMBERS list is part of what is drawn, though it is inserted after this markup: a change
+     * to it alone (a kick, a join, a profile name landing) left identical markup, this returned, and the panel kept
+     * the old list -- "i just kicked a member out of the community and it does not work, he still there". */
+    const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2')
+      +'\u0001'+String(memberRows);
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
     /* A FULL REBUILD, deliberately: everything outside the message list is bound with listeners that a
      * kept node would collect once per repaint (the composer's own input handlers among them). The
@@ -6460,6 +6474,11 @@
         const r=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
         if(!r?.ok)throw new Error('the community relays did not accept it');
         if(verb==='ban')roomControls.set(loadKey,[...wraps,made.wrap]);
+        /* A KICK IS A GUESTBOOK EVENT, and the member list is folded from the guestbook THIS client holds -- which
+         * is re-read at most once a minute and never contained our own kick. So the kicked member stayed on the
+         * list ("i just kicked a member out of the community and it does not work, he still there", 2026-10-16).
+         * The accepted kick joins the held guestbook (and its cache) at once, exactly as if it had been read back. */
+        if(verb==='kick')noteOwnGuestbookEvent(room,made.wrap,deliveryOwner(p));
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
