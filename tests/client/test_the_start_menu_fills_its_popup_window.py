@@ -160,12 +160,14 @@ class TestTheMenuFillsItsWindow(unittest.TestCase):
                       "a skin's re-centring transform survives into the popup window")
 
     def test_it_takes_the_whole_height_and_width(self):
-        self.assertEqual(self.won.get("height", ""), "100vh",
-                         "the menu is shorter than the window that was placed for it")
+        # The window's height in LAYOUT pixels: under the desktop UI zoom a bare 100vh is 125% of the window and
+        # the footer (account chip, power buttons) falls below it -- test_start_popup_footer_is_visible_full_app.py.
+        self.assertEqual(self.won.get("height", ""), "calc(100vh / var(--zf, 1))",
+                         "the menu is not the height of the window that was placed for it")
         self.assertEqual(self.won.get("width", ""), "100%",
                          "the menu is narrower than the window that was placed for it")
-        maxh = self.won.get("max-height", "100vh")
-        self.assertIn(maxh, ("100vh", "none"),
+        maxh = self.won.get("max-height", "calc(100vh / var(--zf, 1))")
+        self.assertIn(maxh, ("calc(100vh / var(--zf, 1))", "none"),
                       f"max-height:{maxh} claws back the height the rule above just gave it")
 
     def test_the_desktop_rule_is_what_this_replaces(self):
@@ -179,7 +181,7 @@ class TestTheMenuFillsItsWindow(unittest.TestCase):
             CSS = keep
         self.assertEqual(fallen.get("bottom"), "56px",
                          "the rule being tested is not the one holding the menu down")
-        self.assertNotEqual(fallen.get("height"), "100vh")
+        self.assertNotEqual(fallen.get("height"), "calc(100vh / var(--zf, 1))")
 
 
 if __name__ == "__main__":

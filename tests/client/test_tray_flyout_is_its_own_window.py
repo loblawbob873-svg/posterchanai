@@ -158,7 +158,8 @@ def test_the_tray_flyout_hugs_its_content_instead_of_padding_it_out():
     assert ".os-popup-body.os-tray-popup .os-pop{" in CSS
     rule = CSS.split(".os-popup-body.os-tray-popup .os-pop{", 1)[1].split("}", 1)[0]
     assert "height:auto" in rule, "the flyout still stretches to the whole window"
-    assert "max-height:100vh" in rule, "a tall sub-panel must still be allowed the whole window"
+    # the whole window in LAYOUT pixels (a bare 100vh overflows the window under the desktop's UI zoom)
+    assert "max-height:calc(100vh / var(--zf, 1))" in rule, "a tall sub-panel must still be allowed the whole window"
     # Its own edge comes back: against a transparent window a square-cornered panel that simply
     # stops looks like a clipped surface rather than a flyout.
     assert "border-radius" in rule

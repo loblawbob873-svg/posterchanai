@@ -211,7 +211,7 @@ def test_the_panel_fills_the_window_it_is_hosted_in():
     assert ".os-popup-body .os-noti{" in CSS
     rule = CSS.split(".os-popup-body .os-noti{", 1)[1].split("}", 1)[0]
     assert "position:static" in rule
-    assert "height:100vh" in rule
+    assert "height:calc(100vh / var(--zf, 1))" in rule        # the window's height in layout pixels, at any UI zoom
 
 
 # ── the router, RUN ──────────────────────────────────────────────────────────────────────────────
