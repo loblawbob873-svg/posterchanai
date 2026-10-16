@@ -27116,7 +27116,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const roles=roleIds.map(id=>roleById(folded.roster,id)),priorRoles=rolesOf(folded.roster,member);
     if(pubkey!==community.owner&&[...roles,...priorRoles].some(role=>!outranks(folded.roster,pubkey,community.owner,role.position)))throw new Error('grant signer must outrank every target role');
     const body={member,role_ids:[...roleIds]};
-    if(roles.some(role=>(role.permissions&STAFF_CONTROL_BITS)!==0n)){
+    /* The control-key hand-off exists only where the control plane HAS a separate signer (split keys, CORD-02).
+     * A community from before split keys signs control writes with the key every member already holds, so there is
+     * nothing to deliver -- and demanding it made Moderator impossible to grant in every such community
+     * ("staff promotion requires binary key", 2026-10-16: PosterChan and Anime, both created before 09-15). */
+    if(bundle.control_pk&&roles.some(role=>(role.permissions&STAFF_CONTROL_BITS)!==0n)){
       if(!bundle.control_root||typeof encryptBytes!=='function')throw new Error('staff promotion requires binary control key delivery');
       if(groupKeyCached('concord/control-signer',hex32(bundle.control_root),community.id,rekeyEpoch(bundle.root_epoch)).pk!==bundle.control_pk)throw new Error('staff control signer mismatch');
       body.control_wrap=await encryptBytes(member,concatBytes3(epochBytes(bundle.root_epoch),hex32(bundle.control_root)));

@@ -108,3 +108,19 @@ assert.equal(diss.wrap.pubkey,R.dissolutionPubkey(bundle),'dissolutionPubkey is 
 assert(R.inspectDissolution(bundle,[diss.wrap]),'our own dissolution is not recognised');
 await assert.rejects(()=>R.createDissolutionWrap(bundle,mod.pk,mod.sign),/only the owner/);
 console.log('dissolution passed');
+
+// ── a community from BEFORE split control keys (no control_pk): the owner makes a Moderator, who then bans ─────
+// "staff promotion requires binary key" (2026-10-16): PosterChan and Anime predate split keys, and the grant demanded a
+// control-key hand-off that such a community does not have -- every member already holds its control signer.
+{
+  const L=key(),lmod=key(),lalice=key();
+  const lmade=await PosterCord.createCommunity({owner:L.pk,name:'Before split keys',relays:['wss://r.example'],base:'https://fixture.example',signEvent:L.sign});
+  const old={...PosterCord.openInvite(lmade.url,lmade.events).bundle};delete old.control_pk;delete old.control_root;
+  let lc=[];const linfo=()=>R.inspectControl(old,lc);
+  const lrole=await R.createRoleWrap(old,lc,'moderator',L.pk,L.sign);lc=[...lc,lrole.wrap];await tick();
+  const lgrant=await R.createRoleGrantWrap(old,lc,lmod.pk,[lrole.roleId],L.pk,L.sign,async()=>{throw new Error('no control key to deliver here');});
+  lc=[...lc,lgrant.wrap];assert.deepEqual(linfo().grants[lmod.pk],[lrole.roleId],'the Moderator grant did not apply');await tick();
+  const lban=await R.createBanWrap(old,lc,lalice.pk,lmod.pk,lmod.sign);lc=[...lc,lban.wrap];
+  assert(!linfo().members.includes(lalice.pk),'the new Moderator could not ban');
+  console.log('moderator in a community without split control keys passed');
+}

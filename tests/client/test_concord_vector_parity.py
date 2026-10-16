@@ -37,7 +37,8 @@ def _run(script, *markers):
 def test_the_writers_vector_has():
     _run("tests/client/concord_vector_parity_runtime.mjs", "roles passed", "authority citation passed",
          "delegated ban passed", "kick passed", "channel edit passed", "encrypted icon passed", "typing passed",
-         "pins passed", "rekey chunking passed", "dissolution passed")
+         "pins passed", "rekey chunking passed", "dissolution passed",
+         "moderator in a community without split control keys passed")
 
 
 def test_what_a_vector_user_and_ours_see_of_each_other():
