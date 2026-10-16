@@ -145,7 +145,7 @@ def _mentioned_pubkeys(text: str) -> list:
 
 async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = None,
                     media_list: list | None = None, media_cfg: dict | None = None,
-                    hashtags: list | None = None) -> dict:
+                    hashtags: list | None = None, require_accepted: bool = False) -> dict:
     """Build, sign and publish a kind-1 note. Uploads media first and embeds URLs.
 
     `reply_to` is a parent event dict to reply to (adds NIP-10 tags) -- or, when the parent is a
@@ -176,7 +176,11 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
                 seen.add(h)
                 tags.append(["t", h])
     ev = _event.build_event(seckey, kind, text, tags=tags)
-    await relay.publish(relays, ev)
+    accepted = await relay.publish(relays, ev)
+    if require_accepted and not accepted:
+        # A note no relay took is not "posted": the bots logged "posted note" for an hour while their relay refused
+        # every event ("not in web of trust", 2026-10-16), and nobody could tell from the bot's log.
+        raise RuntimeError("no relay accepted the note (refused or unreachable: %s)" % ", ".join(relays))
     return ev
 
 
