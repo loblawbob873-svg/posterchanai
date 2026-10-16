@@ -5534,6 +5534,12 @@
       document.body.append(overlay);fields.values().next().value?.focus();
     });
   }
+  async function quickBanReview(p,room,target){
+    const owner=room.cord.bundle.owner,keep=[...new Set([owner,...roomParticipants(room,owner)])].filter(pk=>pk&&pk!==target);
+    const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member',others=keep.filter(pk=>pk!==owner).length;
+    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${name}? They lose access to this community for good. The other ${others} member${others===1?'':'s'} on Known members keep access; anyone not on that list will need a new invite.`,{ok:'Ban',danger:true}):true;
+    return ok?{recipients:keep.map(pubkey=>({pubkey})),channelRecipients:{},removed:[target]}:null;
+  }
   function bindRefoundingControl(p,$){
     const saveButton=$('#cc-settings-save'),room=saved()[state.community],owner=deliveryOwner(p);
     if(!saveButton||!room?.cord?.bundle||room.cord.bundle.owner!==owner||room.cord.bundle.dissolved||$('#cc-refound'))return;
@@ -6452,7 +6458,11 @@
       const actor=deliveryOwner(p),room=saved()[state.community];if(!room?.cord?.bundle)return p.toast('Community moderation is not ready.');
       if(room.cord.refounding)return p.toast('Resume the pending key rotation in community settings first.');
       try{
-        const reviewed=await reviewRefoundingRecipients(p,room,[target]);if(!reviewed)return;
+        /* "why is banning UI so complex? I only care about the person I am banning" (2026-10-16). With no private
+         * channels the only decision IS who is banned: everyone else on Known members keeps access, so a ban is one
+         * confirmation. Private channels keep the full review -- their access is whoever was handed the channel key,
+         * which the community does not list, so guessing would either lock members out or let members in. */
+        const reviewed=(room.cord.bundle.channels||[]).length?await reviewRefoundingRecipients(p,room,[target]):await quickBanReview(p,room,target);if(!reviewed)return;
         if(deliveryOwner(p)!==actor)throw new Error('The signing account changed during access review.');
         await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
       }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
