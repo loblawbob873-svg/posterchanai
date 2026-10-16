@@ -840,13 +840,19 @@ def _color_mode(arg):
         return arg
     if os.environ.get("NO_COLOR"):
         return "none"
+    # GNU screen 4.x has no 24-bit colour: it parses every truecolor code and re-emits the nearest of its EIGHT basic
+    # colours, so the screen it draws is a different app (2026-10-16, the PosterChanOS terminal's SSH sessions run in
+    # `screen -xRR` on any host without tmux -- server1, nas). 256 colours pass through it untouched. Checked BEFORE
+    # COLORTERM, because a session started from a truecolor terminal (or a .screenrc `setenv`) carries one in.
+    term = os.environ.get("TERM", "")
+    if (os.environ.get("STY") and not os.environ.get("TMUX")) or term.startswith("screen"):
+        return "256"
     if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
         return "truecolor"
     # ssh does not forward COLORTERM, so its absence says nothing about the terminal at the other end -- and every
     # terminal anyone opens a server in today (xterm.js, kitty, alacritty, GNOME/KDE, Windows Terminal, tmux)
     # draws truecolor. Only the consoles that cannot get the 256-colour fallback.
-    term = os.environ.get("TERM", "")
-    if term in ("linux", "screen", "dumb") or term.startswith(("vt", "ansi", "cons")):
+    if term in ("linux", "dumb") or term.startswith(("vt", "ansi", "cons")):
         return "256"
     return "truecolor"
 

@@ -437,6 +437,8 @@ def test_over_ssh_without_colorterm_a_modern_terminal_still_gets_truecolor(monke
     m = _load()
     monkeypatch.delenv("COLORTERM", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("STY", raising=False)
+    monkeypatch.delenv("TMUX", raising=False)
     for term in ("xterm-256color", "xterm", "tmux-256color", "alacritty", "xterm-kitty"):
         monkeypatch.setenv("TERM", term)
         assert m._color_mode(None) == "truecolor", term
@@ -445,6 +447,73 @@ def test_over_ssh_without_colorterm_a_modern_terminal_still_gets_truecolor(monke
         assert m._color_mode(None) == "256", term
     monkeypatch.setenv("TERM", "xterm-256color")
     assert m._color_mode("256") == "256"                      # --colors still decides
+
+
+# "why is ptop still look like ass when I ssh into server1 ... it looks like a totally different app" (2026-10-16).
+# The PosterChanOS terminal runs an SSH session inside `screen -xRR` on a host without tmux, and GNU screen 4.x turns
+# every 24-bit colour into one of its 8 basic colours. Measured through a real screen: truecolor in -> 0 colour codes
+# out of 100+ basic ones; 256 in -> 357 256-colour codes out, none crushed.
+
+def test_inside_gnu_screen_it_uses_the_colours_screen_can_pass(monkeypatch):
+    m = _load()
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv("COLORTERM", "truecolor")              # what a .screenrc setenv / the outer terminal hands in
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("STY", "90067.pts-0.server1")
+    assert m._color_mode(None) == "256"
+    monkeypatch.delenv("STY")
+    for term in ("screen", "screen-256color", "screen.xterm-256color"):
+        monkeypatch.setenv("TERM", term)
+        assert m._color_mode(None) == "256", term
+    monkeypatch.setenv("TERM", "tmux-256color")               # tmux passes truecolor: left alone
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1/default,1,0")
+    monkeypatch.setenv("STY", "1.x")                          # tmux started from inside screen: tmux is what draws
+    assert m._color_mode(None) == "truecolor"
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("STY", "1.x")
+    monkeypatch.delenv("TMUX")
+    assert m._color_mode("truecolor") == "truecolor"          # --colors still decides
+
+
+def test_through_a_real_gnu_screen_the_colours_arrive():
+    """Run ptop in a real screen session in a pty and read what screen sends to the terminal."""
+    import shutil
+    if not shutil.which("screen"):
+        pytest.skip("GNU screen is not installed here")
+    import pty, select, time, fcntl, termios, struct
+    name = "ptoptest%d" % os.getpid()
+    pid, fd = pty.fork()
+    if pid == 0:
+        env = {k: v for k, v in os.environ.items() if k not in ("STY", "TMUX", "SCREENDIR")}
+        env.update(TERM="xterm-256color", LANG="C.UTF-8", COLORTERM="truecolor", HOME=os.environ.get("HOME", "/tmp"))
+        os.execvpe("screen", ["screen", "-q", "-c", "/dev/null", "-S", name, sys.executable, PTOP, "--once",
+                              "--size", "120x40"], env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    buf, end = b"", time.time() + 20
+    try:
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                try:
+                    d = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not d:
+                    break
+                buf += d
+    finally:
+        subprocess.run(["screen", "-S", name, "-X", "quit"], capture_output=True)
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        os.close(fd)
+    s = buf.decode("utf-8", "replace")
+    assert "CPU" in s, s[-500:]
+    rich = len(re.findall(r"\x1b\[[0-9;]*38;5;\d+", s))
+    crushed = len(re.findall(r"\x1b\[3[0-7]m", s))
+    assert rich > 100 and crushed < rich // 10, (rich, crushed)
 
 
 def test_the_256_colour_fallback_picks_the_nearest_xterm_colour():
