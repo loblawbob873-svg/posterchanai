@@ -66,7 +66,7 @@ window.PCLinkCardsFactory = function(dep){
       const av = p.picture || S.LOGO;
       const desc = String(ev.content || '').trim();
       return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
-        <img alt="" class="av" src="${enc(av)}" onerror="this.src='${S.LOGO}'">
+        <img alt="" class="av" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(av, 48):String(av||'')))}" data-osrc="${enc(av)}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'">
         <div class="body">
           <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span>
             <span class="vchk"></span><span class="time">${timeAgo(ev.created_at)}</span></div>

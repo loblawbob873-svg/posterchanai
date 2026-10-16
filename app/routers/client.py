@@ -2579,6 +2579,30 @@ async def client_proxy_image(url: str = Query(...)):
         raise HTTPException(status_code=502, detail="failed to fetch image")
 
 
+@router.get("/thumb")
+async def client_thumb(request: Request, u: str = Query(..., max_length=4096), w: int = Query(320)):
+    """A remote picture at the width the client draws it (thumb_service). An avatar or a feed picture is fetched
+    once, resized and cached; anything that should not be resized -- an animation, a picture no bigger than
+    asked, a host that will not answer -- REDIRECTS to the original, i.e. exactly what the client loaded before.
+
+    The redirect is only given to an image load (`Sec-Fetch-Dest: image`): to anything else it would be an open
+    redirect off this domain, so a page navigation is refused instead."""
+    from app.services import thumb_service
+    if not (u.startswith("https://") or u.startswith("http://")):
+        raise HTTPException(status_code=400, detail="not an http(s) URL")
+    data = await thumb_service.thumb(u, w)
+    if data:
+        return Response(content=data, media_type="image/webp", headers={
+            "Cache-Control": "public, max-age=604800, immutable",
+            "Access-Control-Allow-Origin": "*",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox"})
+    dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    if dest != "image":
+        raise HTTPException(status_code=400, detail="thumbnails are for images")
+    return RedirectResponse(u, status_code=302, headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/xdc")
 async def client_proxy_xdc(url: str = Query(...)):
     """Same-origin fallback for downloading a mini app's `.xdc`.

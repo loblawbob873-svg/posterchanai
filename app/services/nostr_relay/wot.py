@@ -39,12 +39,21 @@ class WotGate:
         self._bridged: set = set()
         self.built_at: float = 0.0
         self.last_build_partial: bool = False   # last crawl looked partial (kept cache) → don't stamp it
+        # pubkey -> when add_members admitted it. A full build CRAWLS for minutes and then replaces the whole set:
+        # anything admitted while it ran (a bot just created, a signup) was not in what it crawled, and the swap
+        # silently threw it out -- "shaniqua bot is not doing anything" (2026-10-16): admitted 08:36:32, dropped by
+        # the build that finished 08:43:07, every write refused "not in web of trust" for an hour after. A build
+        # keeps every member added since it STARTED.
+        self._added_at: dict = {}
 
     def add_members(self, pubkeys) -> None:
         """Add members immediately (e.g. a freshly-followed signup) without a full rebuild."""
         extra = {p for p in (pubkeys or []) if p}
         if extra:
             self._members = self._members | frozenset(extra)
+            now = time.time()
+            for p in extra:
+                self._added_at[p] = now
 
     def set_operator(self, operator_hex) -> None:
         self._operator = frozenset(operator_hex or [])
@@ -147,6 +156,7 @@ class WotGate:
         KEEPS the cached set if a crawl resolves < `min_keep_ratio` of the cached size (partial crawl
         protection — an upstream timeout must not shrink/degrade the trusted set)."""
         self.last_build_partial = False
+        started = time.time()
         seeds = [s for s in (seeds_hex or []) if s]
         if not seeds or depth < 1:
             self._members = frozenset(seeds)
@@ -219,6 +229,9 @@ class WotGate:
             top = [pk for pk, _ in outer.most_common()][:room]
             members = core | set(top)
 
+        # members admitted WHILE this crawl ran were not in what it crawled: keep them (see _added_at)
+        members |= {p for p, t in self._added_at.items() if t >= started and p not in barred}
+        self._added_at = {p: t for p, t in self._added_at.items() if t >= started}
         new_members = frozenset(members)
         # WHY each member is here, for the profile's "Trace" panel: the tier that admitted it and how
         # many accounts of the tier below vouched for it. The rebuild is otherwise a bare set, so the

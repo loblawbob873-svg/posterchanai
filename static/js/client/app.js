@@ -6630,6 +6630,32 @@
   /* Add the Monero / Bitcoin Cash marks to an already-drawn card once its author's profile lands.
      Only ever ADDS: a per-note `monero_address` tag already won at render and must not be replaced
      by the profile's address, which would misroute the tip to the author's default wallet. */
+  /* FEED PICTURES AT THE SIZE THEY ARE DRAWN. Measured on poster.place's Nostrverse at phone width
+     (2026-10-16, Vyram's "choppy scroll, you see black on the timeline"): the feed's images held 619 MB
+     decoded against 72 MB needed for the size shown -- 111 avatars of 22-44 px were 319 MB of it, a
+     1500x1500 original behind each. The instance resizes (`/client/thumb`, thumb_service.py); the ORIGINAL
+     stays on the element as `data-osrc` for everything that needs the real file (the lightbox, retries).
+     No instance (a bundled app run without one), a GIF/SVG, a data:/blob: URL: the original, as before.
+     `err` is the fallback: a thumbnail that fails (an instance without the route) loads the original. */
+  window.PCThumb = (function(){
+    function base(){
+      try{ return (typeof window.__PC_API_BASE__ !== 'undefined') ? (window.__PC_API_BASE__ || '') : (location.origin || ''); }
+      catch(_){ return ''; }
+    }
+    function src(u, css){
+      u = String(u || ''); const b = base();
+      if(!b || !/^https?:\/\//i.test(u) || /\.(gif|svg)(?:[?#]|$)/i.test(u) || u.indexOf('/client/thumb?') >= 0) return u;
+      const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+      return b + '/client/thumb?w=' + Math.round((css || 64) * dpr) + '&u=' + encodeURIComponent(u);
+    }
+    function err(img, fallback){
+      const o = img && img.dataset && img.dataset.osrc;
+      if(o && img.getAttribute('src') !== o){ img.src = o; return true; }
+      if(fallback){ img.onerror = null; img.src = fallback; }
+      return false;
+    }
+    return { src, err };
+  })();
   function _tipMarks(n, p){
     try{
       const bolt = n.querySelector('.actz .tipbolt'); if(!bolt) return;
@@ -6665,7 +6691,9 @@
      arrived ("posterchan still slow" on an Oukitel WP55 Pro, "slightly better with autoload off").
      `data-pic` remembers what WE last assigned, so an avatar whose picture is broken (onerror swaps in
      the logo) is retried once, not on every pass. */
-  function _setPic(img, url){ if(!img || !url || img.dataset.pic===url) return; img.dataset.pic=url; if(img.getAttribute('src')!==url) img.src=url; }
+  function _setPic(img, url){ if(!img || !url || img.dataset.pic===url) return; img.dataset.pic=url; img.dataset.osrc=url;
+    const T=(typeof window!=='undefined')&&window.PCThumb, t=T ? T.src(url, img.classList && img.classList.contains('qav') ? 24 : 48) : url;
+    if(img.getAttribute('src')!==t) img.src=t; }
   function _setText(el, t){ if(el && t && el.textContent!==t) el.textContent=t; }
   function decorateProfiles(){
     /* THE TIP AFFORDANCE IS RESOLVED AT RENDER, AND A CARD IS DRAWN ONCE.

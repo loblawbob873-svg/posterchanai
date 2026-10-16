@@ -670,7 +670,7 @@ def send_reply(status_obj, reply_text, own_acct=None, visibility=None,
     media = _to_media_list(image_bytes, video_bytes, audio_bytes)
     try:
         _run(_svc.post_note(_SECKEY, _RELAYS, reply_text or "", reply_to=parent,
-                            media_list=media, media_cfg=_MEDIA_CFG))
+                            media_list=media, media_cfg=_MEDIA_CFG, require_accepted=True))
         print(f"[nostr] replied to {(parent or {}).get('id','?')[:12]}")
     except Exception as e:
         print(f"[nostr] send_reply failed: {e}")
@@ -683,7 +683,7 @@ def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_byte
     media = _to_media_list(image_bytes, video_bytes, audio_bytes)
     try:
         _run(_svc.post_note(_SECKEY, _RELAYS, text or "", media_list=media, media_cfg=_MEDIA_CFG,
-                            hashtags=hashtags))
+                            hashtags=hashtags, require_accepted=True))
         print("[nostr] posted note")
     except Exception as e:
         print(f"[nostr] post failed: {e}")
