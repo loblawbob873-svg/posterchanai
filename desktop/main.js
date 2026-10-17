@@ -4086,7 +4086,12 @@ ipcMain.handle('pc:audio:streammute', (e, id, on) => { fsGuard(e); return audio.
 ipcMain.handle('pc:bt:status', (e, scan) => { fsGuard(e); return bluetooth.status(!!scan); });
 ipcMain.handle('pc:bt:power', (e, on) => { fsGuard(e); return bluetooth.power(!!on); });
 ipcMain.handle('pc:bt:device', (e, address, action) => {
-  fsGuard(e); return bluetooth.device(String(address||''),String(action||''));
+  fsGuard(e);
+  const sender = e.sender;
+  // A keyboard's pairing code goes to the window that asked, while the pairing is still waiting for it.
+  return bluetooth.device(String(address||''), String(action||''), (code) => {
+    try{ if(!sender.isDestroyed()) sender.send('pc:bt:code', { address: String(address||'').toUpperCase(), code: String(code) }); }catch(_){ }
+  });
 });
 const dateTime = require('./datetime.js');
 ipcMain.handle('pc:datetime:status', e => { fsGuard(e); return dateTime.status(); });

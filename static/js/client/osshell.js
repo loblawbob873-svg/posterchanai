@@ -607,6 +607,11 @@
             ? (s.tor.bootstrapped >= 100 ? 'On' : H(s.tor.bootstrapped) + '%') : 'Off'}</span></button>`);
     tiles.push(`<button class="os-qs-tile${s.keepAwake ? ' on' : ''}" data-os="awake">
         ${ICO('eye')}<b>Keep Awake</b><span>${s.keepAwake ? 'On' : 'Off'}</span></button>`);
+    /* Bluetooth on the flyout itself: it lived only inside the sound mixer ("i see no ui to configure
+       bluetooth", 2026-10-17) -- a keyboard or a mouse is not a sound device. */
+    if(root.pcBluetooth)
+      tiles.push(`<button class="os-qs-tile" data-os="bluetooth">
+          ${ICO('bluetooth')}<b>Bluetooth</b><span>Devices, pairing</span></button>`);
     tiles.push(`<button class="os-qs-tile" data-os="power">
         ${ICO('power')}<b>Power</b><span>${H(s.profile || 'Sleep, restart…')}</span></button>`);
 
@@ -1472,18 +1477,50 @@
     });
   }
 
+  /* System Settings' Bluetooth control. openControl('bluetooth') called this and it did not exist, so
+   * the control threw "bluetoothPop is not defined" and no device could be added (2026-10-17). It is the
+   * SAME panel the Quick Settings tile draws -- one implementation -- in its own popover, with no "back"
+   * into a sound mixer it was never opened from. */
+  async function bluetoothPop(anchor){
+    if(!root.pcBluetooth) return;
+    const d = openPop(anchor, `<div class="os-pop-h">${ICO('bluetooth')}Bluetooth</div><div class="os-pop-b"><div class="os-pop-none">Looking…</div></div>`,
+                      { cls: 'os-pop-bt' });
+    if(d && d.dataset) d.dataset.btStandalone = '1';
+    await bluetoothPanel(false);
+    return d;
+  }
+
   async function bluetoothPanel(scan){
     const bt=root.pcBluetooth,d=_pop;if(!bt||!d)return;
-    d.innerHTML=`<div class="os-pop-h"><button class="os-pop-back" data-os="mixer" aria-label="Back">${ICO('chevron-left')}</button>Bluetooth audio</div><div class="os-pop-b"><div class="os-pop-none">${scan?'Scanning…':'Looking…'}</div></div>`;
+    const back = (d.dataset && d.dataset.btStandalone) ? ''
+      : `<button class="os-pop-back" data-os="${(d.dataset && d.dataset.btBack) || 'mixer'}" aria-label="Back">${ICO('chevron-left')}</button>`;
+    d.innerHTML=`<div class="os-pop-h">${back}Bluetooth</div><div class="os-pop-b"><div class="os-pop-none">${scan?'Scanning…':'Looking…'}</div></div>`;
     bindPanel(d);let st;try{st=await bt.status(!!scan);}catch(e){st={available:false,error:String(e)}}
     if(_pop!==d)return;const body=d.querySelector('.os-pop-b');if(!body)return;
     if(!st.available){body.innerHTML=`<div class="os-pop-none">Bluetooth is unavailable.${st.error?' '+H(st.error):''}</div>`;return;}
     const devices=(st.devices||[]).slice().sort((a,b)=>Number(b.connected)-Number(a.connected)||Number(b.paired)-Number(a.paired)||a.name.localeCompare(b.name));
     body.innerHTML=`<div class="os-bt-tools"><label><input type="checkbox" data-bt-power ${st.powered?'checked':''}> Bluetooth</label><button class="btn btn-ghost small" data-bt-scan ${st.powered?'':'disabled'}>${ICO('refresh')} Scan</button></div>
-      <div class="os-bt-list">${!st.powered?'<div class="os-pop-none">Turn Bluetooth on to find devices.</div>':devices.length?devices.map(x=>`<div class="os-bt-row"><span class="os-bt-icon">${ICO(x.audio?'headphones':'monitor')}</span><span class="os-bt-name"><b>${H(x.name||x.address)}</b><small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${x.connected?`<button class="btn btn-ghost small" data-bt-act="disconnect" data-bt-mac="${H(x.address)}">Disconnect</button>`:x.paired?`<button class="btn small" data-bt-act="connect" data-bt-mac="${H(x.address)}">Connect</button>`:`<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`}${x.paired?`<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>`:''}</span></div>`).join(''):'<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>'}</div>`;
+      <div class="os-bt-list">${!st.powered?'<div class="os-pop-none">Turn Bluetooth on to find devices.</div>':devices.length?devices.map(x=>`<div class="os-bt-row"><span class="os-bt-icon">${ICO(x.audio?'headphones':(x.input?'keyboard':'monitor'))}</span><span class="os-bt-name"><b>${H(x.name||x.address)}</b><small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${x.connected?`<button class="btn btn-ghost small" data-bt-act="disconnect" data-bt-mac="${H(x.address)}">Disconnect</button>`:x.paired?`<button class="btn small" data-bt-act="connect" data-bt-mac="${H(x.address)}">Connect</button>`:`<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`}${x.paired?`<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>`:''}</span></div>`).join(''):'<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>'}</div>`;
     const power=body.querySelector('[data-bt-power]');if(power)power.onchange=async()=>{power.disabled=true;const r=await bt.power(power.checked);if(!r.ok)toast(r.error||'Bluetooth power failed');bluetoothPanel(power.checked);};
     const scanBtn=body.querySelector('[data-bt-scan]');if(scanBtn)scanBtn.onclick=()=>bluetoothPanel(true);
-    body.querySelectorAll('[data-bt-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await bt.device(b.dataset.btMac,b.dataset.btAct);if(!r.ok)toast(r.error||'Bluetooth action failed');await bluetoothPanel(false);});
+    body.querySelectorAll('[data-bt-act]').forEach(b=>b.onclick=async()=>{
+      b.disabled=true;
+      /* A KEYBOARD SHOWS ITS CODE HERE, while pairing waits for it -- the bridge hands over what bluetoothctl
+       * asked for (desktop/bluetooth.js pairInteractive). Without it a keyboard could not be paired at all. */
+      let off=null;
+      if(b.dataset.btAct==='pair'){
+        const row=b.closest('.os-bt-row'), small=row&&row.querySelector('.os-bt-name small');
+        if(small) small.textContent='Pairing… put the device in pairing mode';
+        if(typeof bt.onCode==='function') off=bt.onCode(x=>{
+          if(!x||String(x.address||'').toUpperCase()!==String(b.dataset.btMac).toUpperCase()||!small) return;
+          small.innerHTML=`Type <b class="os-bt-code">${H(x.code)}</b> on the device, then press Enter`;
+        });
+      }
+      let r;
+      try{ r=await bt.device(b.dataset.btMac,b.dataset.btAct); }finally{ if(off) try{ off(); }catch(_){} }
+      if(!r||!r.ok) toast((r&&r.error)||'Bluetooth action failed');
+      else if(r.warning) toast(r.warning);
+      await bluetoothPanel(false);});
   }
 
   /* A SCREENSHOT, AND THEN A SENTENCE SAYING WHERE IT WENT. A screenshot whose only feedback is a
@@ -1895,7 +1932,11 @@
       }
       if(kind === 'outputs'){ outputsPanel(); return; }
       if(kind === 'mixer'){ mixerPanel(); return; }
-      if(kind === 'bluetooth'){ bluetoothPanel(false); return; }
+      if(kind === 'bluetooth'){
+        /* Back goes where it was opened from: the flyout's tile, or the mixer's Devices button. */
+        if(_pop && _pop.dataset) _pop.dataset.btBack = b.closest && b.closest('.os-mix-section') ? 'mixer' : 'quickback';
+        bluetoothPanel(false); return;
+      }
       if(kind === 'shot'){ shotPanel(); return; }
       if(kind === 'awake'){
         const p = POWER();
