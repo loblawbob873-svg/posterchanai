@@ -29,7 +29,8 @@ def test_twenty_authenticated_reads_use_one_connection_and_close_their_subscript
             docs = await nostr_store.get_docs(relay.port, ["pcai:t:pooltest:a"], seckey=SK, strict=True)
             got.append(docs.get("pcai:t:pooltest:a"))
         # a pooled socket hears nothing more once its query is done: the subscription was CLOSEd
-        idle = [ws for key, socks in nostr_store._QUERY_POOL.items() for ws in socks]
+        me = asyncio.get_running_loop()
+        idle = [ws for key, (lp, socks) in nostr_store._QUERY_POOL.items() if lp is me for ws in socks]
         assert idle, "nothing was pooled"
         assert await nostr_store.put_doc(relay.port, SK, "pcai:t:pooltest:a", {"v": 2})
         await asyncio.sleep(0.5)

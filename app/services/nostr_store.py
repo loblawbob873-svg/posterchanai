@@ -241,29 +241,27 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
 # connection -- and handed back after the query's subscription is CLOSEd (a REQ stays live after EOSE; returned
 # without the CLOSE it would keep streaming to the pool). A reused connection that fails is dropped and the
 # query retried once on a fresh one, so a relay restart costs one retry, never a wrong answer.
-_QUERY_POOL: dict = {}            # (id(loop), auth pubkey or "") -> [idle websocket, ...]
+_QUERY_POOL: dict = {}            # (port, auth pubkey or "") -> (event loop, [idle websocket, ...])
 _QUERY_POOL_IDLE = 4
 
 
-def _query_pool_key(auth_seckey):
+def _query_idle(port: int, auth_seckey) -> list:
+    """The idle sockets for this port and key ON THE RUNNING LOOP. Keyed by the loop OBJECT, never its id: a
+    closed loop's id is reused by the next one, and a socket from a dead loop (or another port) must never be
+    handed out."""
     loop = asyncio.get_running_loop()
-    for k in [k for k in _QUERY_POOL if k[0] != id(loop) and _loop_closed(k[0])]:
-        _QUERY_POOL.pop(k, None)
     pk = ""
     if auth_seckey:
         try:
             pk = bip340.pubkey_from_seckey(auth_seckey).hex()
         except Exception:
             pk = "?"
-    return (id(loop), pk)
-
-
-_LOOPS: dict = {}
-
-
-def _loop_closed(loop_id) -> bool:
-    lp = _LOOPS.get(loop_id)
-    return lp is None or lp.is_closed()
+    key = (int(port), pk)
+    entry = _QUERY_POOL.get(key)
+    if entry is None or entry[0] is not loop:
+        entry = (loop, [])
+        _QUERY_POOL[key] = entry
+    return entry[1]
 
 
 async def _query_on(ws, uri: str, sub: str, filters: list, timeout: float, auth_seckey) -> list:
@@ -309,9 +307,7 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     uri = f"ws://127.0.0.1:{port}/relay"
     sub = "repo" + os.urandom(4).hex()
     try:
-        key = _query_pool_key(auth_seckey)
-        _LOOPS[key[0]] = asyncio.get_running_loop()
-        idle = _QUERY_POOL.setdefault(key, [])
+        idle = _query_idle(port, auth_seckey)
         for attempt in (0, 1):
             ws = idle.pop() if (idle and attempt == 0) else None
             fresh = ws is None
