@@ -10261,6 +10261,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-mix-device select{width:100%;height:31px;padding:4px 8px;font-size:12px}
 .os-mix-master{background:rgba(var(--accent-rgb),.045);border-radius:8px}
 .os-bt-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line)}.os-bt-tools label{display:flex;align-items:center;gap:8px;font-weight:650}.os-bt-list{display:flex;flex-direction:column;gap:6px;padding-top:8px}.os-bt-row{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(var(--accent-rgb),.035)}.os-bt-icon{width:24px;height:24px;display:grid;place-items:center;color:var(--neon)}.os-bt-icon svg{width:18px;height:18px}.os-bt-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.os-bt-name b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.os-bt-name small{font-size:11px;color:var(--muted)}.os-bt-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.os-bt-actions .btn{padding:6px 8px;font-size:11px}
+.os-bt-code{font-size:16px;letter-spacing:.12em;color:var(--neon)}   /* the code a keyboard asks you to type (osshell.js bluetoothPanel) */
 
 .os-applist-h{
   padding:10px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;

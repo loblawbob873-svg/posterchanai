@@ -608,6 +608,8 @@ if (isOurPage) {
     status: (scan) => ipcRenderer.invoke('pc:bt:status', !!scan),
     power: (on) => ipcRenderer.invoke('pc:bt:power', !!on),
     device: (address, action) => ipcRenderer.invoke('pc:bt:device', String(address||''), String(action||'')),
+    /* The code a keyboard asks you to type while it pairs. Returns an unsubscribe. */
+    onCode: (cb) => { const h = (_e, d) => { try{ cb(d); }catch(_){ } }; ipcRenderer.on('pc:bt:code', h); return () => ipcRenderer.removeListener('pc:bt:code', h); },
   });
 
   contextBridge.exposeInMainWorld('pcDateTime', {
