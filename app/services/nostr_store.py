@@ -285,6 +285,7 @@ def _caller_tag() -> str:
     5 minutes) could not be traced to a caller."""
     import sys
     f = sys._getframe(2)
+    table = ""
     for _ in range(25):
         if f is None:
             break
@@ -292,8 +293,12 @@ def _caller_tag() -> str:
         if mod and not mod.startswith(_SKIP_MODULES):
             name = mod.rsplit(".", 1)[-1]
             return ("q" + "".join(c for c in name if c.isalpha() or c == "_"))[:12] + "-"
+        if not table and mod == "app.services.doc_table":
+            t = f.f_locals.get("self")
+            table = str(getattr(t, "name", "") or "")
         f = f.f_back
-    return "repo"
+    # A DocTable load on its own thread has nothing above the plumbing: name the TABLE.
+    return ("t" + "".join(c for c in table if c.isalpha() or c == "_"))[:12] + "-" if table else "repo"
 
 
 def _pk_of(auth_seckey) -> str:

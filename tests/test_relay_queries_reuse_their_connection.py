@@ -147,3 +147,18 @@ def test_a_query_names_the_module_that_asked_so_the_relay_cost_line_can_say_who(
         return inner()
     tag = asked_from_here()
     assert tag == "qtest_relay_-", tag
+
+
+def test_a_table_load_on_its_own_thread_names_the_table():
+    """A DocTable load runs on its own thread: every frame above it is plumbing, and it used to show as "repo"."""
+    import threading
+    import types
+    store_ns = {"__name__": "app.services.nostr_store", "nostr_store": nostr_store}
+    exec("def ask():\n    return nostr_store._caller_tag()\n", store_ns)          # stands in for _ws_query
+    table_ns = {"__name__": "app.services.doc_table", "ask": store_ns["ask"], "types": types}
+    exec("def load(self):\n    return ask()\n"
+         "def entry(box):\n    box.append(load(types.SimpleNamespace(name='users')))\n", table_ns)
+    box = []
+    t = threading.Thread(target=table_ns["entry"], args=(box,))
+    t.start(); t.join()
+    assert box == ["tusers-"], box

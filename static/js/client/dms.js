@@ -293,6 +293,15 @@ window.PCDmsFactory = function(dep){
         if(!batch || !batch.length) break;
         const fresh = batch.filter(e=>Store.saveEvent(e));
         if(fresh.length){ await _queueDmHistory(fresh); _scheduleDmRefresh(); }
+        /* STOP AT WHAT THIS DEVICE ALREADY HOLDS. "Nothing new to the Store" was the only stop, and the Store does
+         * not keep gift wraps across sessions -- so every visit paged the WHOLE history again, 500 wraps a page:
+         * 106 such pages in 5 minutes were the relay's single biggest answer (2026-10-17, ~52,000 frames). The
+         * messages themselves are in DmCache, which does persist; a page whose every wrap is already there is
+         * history this device has read, and the pages under it are too. A cache that lost entries (evicted,
+         * cleared) reports them missing, and the drain carries on exactly as before. */
+        let unread = fresh.length;
+        try{ if(DmCache.hasMany){ const held = await DmCache.hasMany(batch.map(e=>e.id)); unread = batch.filter(e=>!held.has(e.id)).length; } }catch(_){}
+        if(!unread) break;
         const oldest = batch.reduce((a,e)=>Math.min(a, e.created_at||0), Infinity);
         if(!isFinite(oldest) || oldest > until) break;   // relay ignored `until` → stop rather than loop
         // INCLUSIVE cursor: several wraps can share a second, and `oldest - 1` skipped any that the
@@ -434,6 +443,21 @@ window.PCDmsFactory = function(dep){
         const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) }, key, new Uint8Array(rec.ct));
         return JSON.parse(new TextDecoder().decode(pt));
       }catch(_){ return null; }
+    },
+    // Which of these wraps are already cached -- keys only, no decrypt (the history drain asks per page).
+    async hasMany(ids){
+      const out = new Set();
+      if(this._dead() || !ids || !ids.length) return out;
+      try{
+        const db = await this._idb();
+        const store = db.transaction('msgs', 'readonly').objectStore('msgs');
+        await Promise.all(ids.map(id => new Promise(res => {
+          const q = store.getKey(this._k(id));
+          q.onsuccess = () => { if(q.result !== undefined) out.add(id); res(); };
+          q.onerror = () => res();
+        })));
+      }catch(_){}
+      return out;
     },
     async get(id){
       if(this._dead()) return null;
