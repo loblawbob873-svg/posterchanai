@@ -549,6 +549,46 @@ def _restricted_traffic(typ, msg, is_local=None) -> bool:
     return False
 
 
+# ONE EVENT IS ENCODED ONCE. Every subscriber an event fans out to, and every query answer that includes it, used to
+# run json.dumps on it again: on server1 (py-spy, 2026-10-16) encoding + compressing outgoing events was over a
+# quarter of the relay's CPU, the same popular events (profiles, contact lists, feed tops) encoded thousands of
+# times. The event's text is kept (bounded by count and bytes, oldest first out) and spliced into the frame -- the
+# frame is byte-identical to json.dumps(["EVENT", sub_id, ev]). Keyed on the event's id AND signature: an event
+# is immutable, so an id names one text; a dict without both is encoded as before.
+_EV_JSON = None   # an OrderedDict, created on first use
+_EV_JSON_MAX, _EV_JSON_BYTES_MAX = 4096, 32 * 1024 * 1024
+_ev_json_bytes = 0
+
+
+def _event_text(ev: dict) -> str:
+    global _EV_JSON, _ev_json_bytes
+    eid, sig = ev.get("id"), ev.get("sig")
+    if not (isinstance(eid, str) and isinstance(sig, str)):
+        return json.dumps(ev)
+    if _EV_JSON is None:
+        from collections import OrderedDict
+        _EV_JSON = OrderedDict()
+    key = (eid, sig)
+    txt = _EV_JSON.get(key)
+    if txt is not None:
+        _EV_JSON.move_to_end(key)
+        return txt
+    txt = json.dumps(ev)
+    _EV_JSON[key] = txt
+    _ev_json_bytes += len(txt)
+    while _EV_JSON and (len(_EV_JSON) > _EV_JSON_MAX or _ev_json_bytes > _EV_JSON_BYTES_MAX):
+        _k, old = _EV_JSON.popitem(last=False)
+        _ev_json_bytes -= len(old)
+    return txt
+
+
+def _frame(obj) -> str:
+    """json.dumps(obj), with an EVENT's event taken from the encode-once cache."""
+    if obj and len(obj) == 3 and obj[0] == "EVENT" and isinstance(obj[2], dict):
+        return '["EVENT", ' + json.dumps(obj[1]) + ', ' + _event_text(obj[2]) + ']'
+    return json.dumps(obj)
+
+
 class _OutQ:
     """One connection's outbound frame queue: a bounded deque + a wakeup event.
 
@@ -662,7 +702,7 @@ class RelayServer:
         q = self._outq.get(conn)
         if q is None:
             return
-        q.push(json.dumps(obj), obj[0] == "EVENT" if obj else False)
+        q.push(_frame(obj), obj[0] == "EVENT" if obj else False)
         # The session line below only prints when a connection CLOSES, which can be hours after it
         # started struggling — no use while someone is telling you it's happening right now. So say
         # it once, the moment a connection first falls behind. `dropped` only ever increments, so

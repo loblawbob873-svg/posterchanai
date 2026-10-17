@@ -419,6 +419,9 @@ class Store:
         self._since_snap = 0          # log records written since the last snapshot (what a restart would replay)
         self.last_open = {}
         self._lock = threading.RLock()
+        from collections import OrderedDict
+        self._dec = OrderedDict()      # seq -> (decoded event, raw bytes): see get()
+        self._dec_bytes = 0
         self._cols: dict = {}
         self._ckpt_id = 0
         self._run_seq = 0
@@ -1464,6 +1467,29 @@ class Store:
     def get(self, seq: int) -> dict:
         return self.codec.decode(self._rec(seq))
 
+    def _get_cached(self, seq: int) -> dict:
+        """The event at `seq`, for a QUERY ANSWER: decoded once and kept (bounded by raw bytes, oldest first out): the same popular events
+        -- contact lists of thousands of p-tags, profiles, feed tops -- are in answer after answer, and decoding them
+        each time was a tenth of the relay's CPU (py-spy, 2026-10-16). An event never changes, so its seq names one
+        dict; each caller gets its own shallow copy, so one that adds a key cannot change it for the next."""
+        with self._lock:
+            hit = self._dec.get(seq)
+            if hit is not None:
+                self._dec.move_to_end(seq)
+                sid = self.seg[seq]                 # still a read of that segment, for the RAM governor (cache.py)
+                self.seg_hits[sid] = self.seg_hits.get(sid, 0) + 1
+                self.seg_last[sid] = time.monotonic()
+                return dict(hit[0])
+            rec = self._rec(seq)
+            ev = self.codec.decode(rec)
+            n = len(rec)
+            self._dec[seq] = (ev, n)
+            self._dec_bytes += n
+            while self._dec and self._dec_bytes > _DECODED_CACHE_BYTES:
+                _k, (_e, m) = self._dec.popitem(last=False)
+                self._dec_bytes -= m
+            return dict(ev)
+
     def seq_of(self, eid: str):
         with self._lock:
             return self._seq_of(eid)
@@ -1566,7 +1592,8 @@ class Store:
             # ORDER BY created_at DESC, id DESC — the id as four big-endian words is its exact hex order
             idw = self.ids.view(">u8").reshape(-1, 4)[cand]
             order = np.lexsort((idw[:, 3], idw[:, 2], idw[:, 1], idw[:, 0], c))[::-1][:limit]
-            return [self.get(int(s)) for s in cand[order]]
+            # Answers read through the decoded-event cache; scans and cleaners use get() and never flood it.
+            return [self._get_cached(int(s)) for s in cand[order]]
 
     def match(self, flt: dict, now: int | None = None) -> np.ndarray:
         """EVERY live, unexpired seq the filter matches (no `limit`), ascending -- for COUNT and negentropy, which
@@ -1676,6 +1703,7 @@ class Store:
 
 
 _SCAN_CHUNK = 65536
+_DECODED_CACHE_BYTES = 48 * 1024 * 1024   # raw record bytes of decoded events kept for get()
 _RARE_KIND_POSTINGS = 50000   # at most this many events of the requested kinds: read their index, never walk the store
 
 
