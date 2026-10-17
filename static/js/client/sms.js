@@ -124,6 +124,7 @@
    * not on the other devices. */
   async function rescan(){
     resetArchiveMarkers();
+    _readThrough.clear();             // a person asking for a re-read gets the WHOLE archive again
     S.archive.error = '';
     S.archive.published = 0;
     /* The one thing that offers a refused attachment to the phone again. Held for this pass only,
@@ -1166,6 +1167,16 @@
     return S.historyIncomplete ? '<div class="muted small" role="status">Message history is incomplete. Reopen Texts to retry; saved messages are still available.</div>' : '';
   }
 
+  /* ONE WHOLE READ OF THE ARCHIVE PER SESSION; EVERY REFRESH AFTER IT ASKS ONLY WHAT CHANGED.
+   *
+   * `refresh` runs on entry, on focus, on every lifecycle resume and behind the live subscription, and
+   * each run paged the WHOLE labelled archive off the relay (4,619 documents on this deployment, pages
+   * doubling to 5,000). On server1 2026-10-16 that was half of the relay's busiest queries -- one account's
+   * phone re-reading its Texts every time it woke. Archive documents are replaceable: an edit or a
+   * tombstone is a NEWER document at the same address, so `since` the start of the last COMPLETE read
+   * (less slack for clocks) finds every change. Only a complete read moves the mark; Rescan clears it. */
+  const _readThrough = new Map();   // account pubkey -> unix seconds the last complete archive read began
+  const _REREAD_SLACK = 600;
   let _refreshing = false;
   async function refresh(){
     const owner = ME().pubkey || '', epoch = _archiveEpoch;
@@ -1173,8 +1184,12 @@
     if(_refreshing) return;
     _refreshing = true;
     try{
-      const complete=await readArchive(FILTER(),currentAccount);
+      const started = Math.floor(Date.now()/1000), through = _readThrough.get(owner);
+      const filter = FILTER();
+      if(through) filter.since = through - _REREAD_SLACK;
+      const complete=await readArchive(filter,currentAccount);
       if(!currentAccount()) return;
+      if(complete) _readThrough.set(owner, Math.max(through || 0, started));
       historyResult('label',complete); paint();
     }catch(_){ if(currentAccount()){ historyResult('label',false); paint(); } }
     finally{ if(currentAccount()) _refreshing = false; }

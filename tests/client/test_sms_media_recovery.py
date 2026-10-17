@@ -931,3 +931,20 @@ class ARecentPictureArchivedWithoutItsPictureIsRepaired(unittest.TestCase):
         res = run(steps=["load", "mirror", "settle"], **self._state())
         self.assertIn("hwm", res)
         self.assertGreaterEqual(res["hwm"], NOW, "reading the week moved the mark back: %r" % (res["hwm"],))
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class AResumeDoesNotReReadTheWholeArchive(unittest.TestCase):
+    def test_only_the_first_refresh_reads_everything(self):
+        """server1 2026-10-16: half of the relay's busiest queries were one phone re-paging its whole Texts archive
+        (4,619 documents) on every focus and resume. After one complete read, a refresh asks `since` it: two
+        resumes add no whole-archive pages."""
+        def unbounded(steps):
+            res = run(isPhone=False, cached=[], generatedArchive=1200, realArchiveFilters=True, steps=steps)
+            pages = [c[1] for c in calls_of(res, "archivePage") if c[1].get("#l") and c[1].get("limit", 0) >= 256]
+            return sum("since" not in p for p in pages), sum("since" in p for p in pages)
+        once, _ = unbounded(["load", "settle"])
+        resumed, incremental = unbounded(["load", "settle", "foreground", "settle", "foreground", "settle"])
+        self.assertGreater(once, 0)
+        self.assertEqual(resumed, once, "a resume re-read the whole archive (%d whole-archive pages, not %d)" % (resumed, once))
+        self.assertGreaterEqual(incremental, 2, "the resumes did not ask for what changed")

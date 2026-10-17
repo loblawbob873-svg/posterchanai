@@ -306,7 +306,7 @@ global.Relay = {
       if(opt.failArchiveAt===archiveQueries && !relayBackUp){const partial=[];partial.complete=false;return partial;}
       let hits=Array.from(relay.values()).filter(e=>f.authors.includes(e.pubkey)&&f.kinds.includes(e.kind)&&
         (!f['#l']||e.tags.some(t=>t[0]==='l'&&f['#l'].includes(t[1])))&&
-        (f.until===undefined||e.created_at<=f.until)&&
+        (f.until===undefined||e.created_at<=f.until)&&(f.since===undefined||e.created_at>=f.since)&&
         (!f._cursor||opt.ignoreArchiveCursor||e.created_at<f._cursor[0]||e.created_at===f._cursor[0]&&e.id<f._cursor[1]));
       hits.sort((a,b)=>b.created_at-a.created_at||b.id.localeCompare(a.id));
       const cap=Math.min(f.limit||500,opt.archiveRelayCap||5000);
@@ -333,7 +333,7 @@ global.Relay = {
       for(const ev of hits) if(!ev.id || !out.some(old => old.id === ev.id)) out.push(ev);
     }
     const f=filters[0]||{};
-    const result=out.filter(e=>(f.until===undefined||e.created_at<=f.until)&&
+    const result=out.filter(e=>(f.until===undefined||e.created_at<=f.until)&&(f.since===undefined||e.created_at>=f.since)&&
       (!f._cursor||e.created_at<f._cursor[0]||e.created_at===f._cursor[0]&&e.id<f._cursor[1]));
     result.sort((a,b)=>b.created_at-a.created_at||b.id.localeCompare(a.id));
     result.pageCounts=[result.length]; result.pageBounds=[result.length?[result.at(-1).created_at,result.at(-1).id]:null];return result;
