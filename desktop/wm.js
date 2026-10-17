@@ -26,6 +26,7 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { cleanSpawn, notFound } = require('./cleanspawn');
 
 const MAGIC = Buffer.from('i3-ipc');
 const HEAD = MAGIC.length + 8;
@@ -625,7 +626,9 @@ class WM {
    * until somebody reads it. */
   launch(argv, opts){
     const o = opts || {};
-    const child = spawn(argv[0], argv.slice(1), {
+    // cleanSpawn: the app gets NONE of the desktop's descriptors (see cleanspawn.js -- Steam held the
+    // desktop's debugging listener). Same PID: the shell execs the app.
+    const child = cleanSpawn(spawn, argv, {
       detached: true, stdio: 'ignore', cwd: o.cwd || undefined,
       env: Object.assign({}, process.env, o.env || {}),
     });
@@ -640,6 +643,8 @@ class WM {
       e && e.code === 'ENOENT' ? argv[0] + ' is not installed'
       : e && e.code === 'EACCES' ? argv[0] + ' is not executable'
       : String((e && e.message) || e)));
+    // Launched through a shell, a missing program is exit 127 rather than ENOENT -- same message.
+    child.on('exit', (code) => { if(notFound(code)) onFail(argv[0] + ' is not installed'); });
     child.unref();
     return { pid: child.pid, failed };
   }

@@ -2,6 +2,7 @@
  * identity's VMs and disks belong to that Unix identity, just like the rest of its private home. */
 'use strict';
 const { execFile, spawn } = require('child_process');
+const { cleanArgv } = require('./cleanspawn');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -356,7 +357,8 @@ function launchViewer(command,args,start=spawn){
     const finish=result=>{ if(settled) return; settled=true; resolve(result); };
     const failed=error=>finish({ok:false,error:'Could not open VM display: '+String(error&&error.message||error)});
     try{
-      child=start(command,args,{detached:true,stdio:'ignore'});
+      const a=cleanArgv([command].concat(args));   // the viewer inherits none of the desktop's descriptors
+      child=start(a[0],a.slice(1),{detached:true,stdio:'ignore'});
       child.once('error',failed);
       child.once('spawn',()=>{
         try{ child.unref(); }catch(_){}

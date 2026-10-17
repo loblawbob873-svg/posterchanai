@@ -7,6 +7,7 @@ const fs=require('fs');
 const path=require('path');
 const os=require('os');
 const {spawn}=require('child_process');
+const {cleanSpawn,notFound}=require('./cleanspawn');
 const {clampRectToOutputs,pidFamily,rememberWorkArea,workAreaFor}=require('./wm.js');
 
 function wayfireSockets(explicit){
@@ -548,7 +549,7 @@ class WayfireWM{
     this._openActionSocket();this.subscribed=true;
   }
   on(name,fn){if(!this.listeners.has(name))this.listeners.set(name,new Set());this.listeners.get(name).add(fn);return()=>this.listeners.get(name).delete(fn);}
-  launch(argv,opts){const o=opts||{},child=spawn(argv[0],argv.slice(1),{detached:true,stdio:'ignore',cwd:o.cwd||undefined,env:Object.assign({},process.env,o.env||{})});let fail;const failed=new Promise(r=>{fail=r;});child.on('error',e=>fail(e&&e.code==='ENOENT'?argv[0]+' is not installed':String(e&&e.message||e)));child.unref();return{pid:child.pid,failed};}
+  launch(argv,opts){const o=opts||{},child=cleanSpawn(spawn,argv,{detached:true,stdio:'ignore',cwd:o.cwd||undefined,env:Object.assign({},process.env,o.env||{})});let fail;const failed=new Promise(r=>{fail=r;});child.on('error',e=>fail(e&&e.code==='ENOENT'?argv[0]+' is not installed':String(e&&e.message||e)));child.on('exit',c=>{if(notFound(c))fail(argv[0]+' is not installed');});child.unref();return{pid:child.pid,failed};}
   async waitForWindow(pid,ms,kin){const end=Date.now()+(ms||15000),roots=[Number(pid),...(kin||[]).map(Number)];let family=pidFamily(roots,[]);for(;;){family=pidFamily([...family],procParents());const hit=(await this.windows().catch(()=>[])).find(w=>family.has(w.pid));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}
   async waitForNewWindow(before,ms,accept){const old=new Set((before||[]).map(Number)),end=Date.now()+(ms||15000);for(;;){const hit=(await this.windows().catch(()=>[])).find(w=>!old.has(w.id)&&(!accept||accept(w)));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}
 }
