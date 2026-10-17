@@ -26,7 +26,9 @@ async function status(scan){
     const realName=(/^\s*Name:\s*(.+)$/mi.exec(s)||[])[1];
     rows.push({address:m[1].toUpperCase(),name:(realName||m[2]).trim(),named:!!realName,paired:yes(s,'Paired'),
       trusted:yes(s,'Trusted'),connected:yes(s,'Connected'),audio:/Audio Sink|Audio Source|Headset|Headphones/i.test(s),
-      input:/Icon:\s*input-|Human Interface Device/i.test(s)});
+      input:/Icon:\s*input-|Human Interface Device/i.test(s),
+      // A keyboard/mouse/headset that reports its battery: "Battery Percentage: 0x26 (38)".
+      battery:(m=>m?Number(m[1]):null)(/Battery Percentage:.*\((\d+)\)/i.exec(s))});
   }
   return {available:true,powered:yes(show.out,'Powered'),discovering:yes(show.out,'Discovering'),devices:rows};
 }

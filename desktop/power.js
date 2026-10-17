@@ -107,7 +107,11 @@ async function setBrightness(percent) {
 function battery() {
   let names = [];
   try { names = fs.readdirSync(POWER_SUPPLY); } catch (_) { return { present: false }; }
-  const bats = names.filter((n) => /^BAT/i.test(n) || readStr(path.join(POWER_SUPPLY, n, 'type')) === 'Battery');
+  /* THE MACHINE'S battery, never a device's. A Bluetooth keyboard or mouse reports its own battery as a
+   * power supply too (`hid-<address>-battery`), marked scope=Device by the kernel. On a TV with no battery of
+   * its own the taskbar took the keyboard's for the system's and drew it as an empty battery (2026-10-17). */
+  const bats = names.filter((n) => (/^BAT/i.test(n) || readStr(path.join(POWER_SUPPLY, n, 'type')) === 'Battery')
+    && readStr(path.join(POWER_SUPPLY, n, 'scope')) !== 'Device' && !/^hid-/i.test(n));
   if (!bats.length) return { present: false };
   const dir = path.join(POWER_SUPPLY, bats[0]);
   let pct = readNum(path.join(dir, 'capacity'));
