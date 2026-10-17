@@ -324,12 +324,20 @@
   /* The background half. Never blocks a paint; re-renders only if something actually changed and
    * the user isn't mid-edit. */
   let _refreshing = false;
+  /* ONE WHOLE READ OF THE LIBRARY PER SESSION; EVERY REFRESH AFTER IT ASKS ONLY WHAT CHANGED. Opening Notes
+   * re-read every note (up to 5,000) off the relay each time -- one of the label reads that topped the relay's
+   * answer cost (2026-10-17). A note is replaceable: an edit is a NEWER event at the same address, so `since` the
+   * start of the last complete read (less slack for clocks) finds every change. Only a complete read moves it. */
+  const _readThrough = new Map();      // account pubkey -> unix seconds the last complete library read began
   async function refresh(){
     if(_refreshing || !_lib) return;
     const mine = _owner, lib = _lib;
     _refreshing = true;
     try{
-      const live = await Relay().query([FILTER()]);
+      const started = now(), through = _readThrough.get(mine);
+      const f = FILTER(); if(through) f.since = through - 600;
+      const live = await Relay().query([f]);
+      if(live && live.complete !== false) _readThrough.set(mine, Math.max(through || 0, started));
       if(mine !== _owner || lib !== _lib) return;
       if(live && live.length){
         const before = _stamp();

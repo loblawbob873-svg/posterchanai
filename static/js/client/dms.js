@@ -190,7 +190,13 @@ window.PCDmsFactory = function(dep){
       // backlog (ingest silently, NO notification); only wraps arriving AFTER EOSE are genuinely new.
       // Without this every historical DM fired a notification on login — the "flooded on login" bug.
       let _dmLive = false;
-      Relay.subscribe([{ kinds:[1059], '#p':[S.ME.pubkey] }], {
+      /* BOUNDED, BUT FAR WIDER THAN THE RANDOMISATION. NIP-59 puts a wrap's created_at "up to two days in the
+       * past", so a 7-day window loses no new message -- and the live sub is re-sent on EVERY reconnect (a phone
+       * waking, a network change): unbounded, each one replayed the inbox up to the relay's 500-wrap cap. Measured
+       * on server1 2026-10-17 as 250 DM replays / 5 min. History older than this is the one-shot read's job
+       * (ensureDMs below), which is unchanged. */
+      const _wrapWindow = Math.floor(Date.now()/1000) - 7*86400;
+      Relay.subscribe([{ kinds:[1059], '#p':[S.ME.pubkey], since:_wrapWindow }], {
         /* THE STORE'S DEDUP MUST NOT GATE THE UNWRAP. `saveEvent` answers false for an event the
          * Store already holds — which is true the moment this wrap has been SEEN, not when it has
          * been read. So a wrap whose first unwrap failed (a remote signer that timed out, a crypto

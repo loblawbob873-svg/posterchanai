@@ -45,7 +45,7 @@ def test_a_failed_unwrap_is_retried_and_a_good_one_is_not_repeated():
 
 def test_the_live_subscription_does_not_gate_the_unwrap_on_the_store():
     """THE BUG, in one line. The Store's dedup is about having seen the event, not having read it."""
-    sub = APP_JS[APP_JS.index("Relay.subscribe([{ kinds:[1059], '#p':[S.ME.pubkey] }]"):]   # dms.js reads ME as S.ME
+    sub = APP_JS[APP_JS.index("Relay.subscribe([{ kinds:[1059], '#p':[S.ME.pubkey], since:_wrapWindow }]"):]   # dms.js reads ME as S.ME; bounded to 7 days
     sub = sub[:sub.index("onEose")]
     assert "if(!Store.saveEvent(ev)) return;" not in sub, (
         "the live DM subscription skips the unwrap for any wrap the Store already holds — which "
