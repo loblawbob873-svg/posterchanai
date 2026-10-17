@@ -3081,6 +3081,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .statbtn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:0}
 .statbtn:hover{color:var(--cyan)} .statbtn b{color:var(--text);font-size:15px}
 .people-list{max-height:60vh;overflow:auto;margin-top:8px}
+.people-q{width:100%;margin-top:10px}            /* Following/Followers: search the whole list (profile.js peopleModal) */
+.people-count{min-height:1.2em;margin-top:4px}
 /* Threaded conversation view: root post first, replies nested (indented) under their parent, with the
    post you clicked highlighted. A faint guide line on nested replies shows the indent depth. */
 .thread-node{position:relative}
