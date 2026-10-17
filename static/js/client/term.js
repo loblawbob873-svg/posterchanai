@@ -95,28 +95,27 @@
       });
       return _glP;
     }
-    /* The symbol face must be LOADED before the GPU atlas draws a glyph: a canvas does not fetch a
-     * unicode-range face the way laid-out text does, so `\u25b8` came out as an empty box. Sample text
-     * from its ranges, because load()'s default sample is a space, which is outside them. */
-    async function _gpuRenderer(t){
-      try{ await document.fonts.load(fontSize() + 'px "PC Term Symbols"', '\u25b8\u2500\u2588\u2800'); }catch(_){}
-      if(!(await _loadWebgl()) || term !== t) return;
-      try{
-        const gl = new (window.WebglAddon.WebglAddon || window.WebglAddon)();
-        gl.onContextLoss(() => { try{ gl.dispose(); }catch(_){} });   // back to the DOM renderer
-        t.loadAddon(gl);
-        /* Both are let go in unmount(). A `loadingdone` listener left on document.fonts held this addon, and
-         * through it the terminal and its canvas, for the rest of the session: measured in desktop mode as
-         * +64 nodes and a window resize listener per Terminal window opened and closed (flat without this
-         * renderer). In the APK every desktop window shares ONE WebView, so that is memory a tablet never gets
-         * back. tests/client/test_desktop_windows_release_memory_full_app.py */
-        const relayout = () => { try{ gl.clearTextureAtlas(); }catch(_){} };
-        try{ document.fonts.addEventListener('loadingdone', relayout); }catch(_){}
-        _glAddon = gl;
-        _glFontsOff = () => { try{ document.fonts.removeEventListener('loadingdone', relayout); }catch(_){} };
-      }catch(_){}                                                       // no WebGL here: the DOM renderer stays
+    /* A LOST GPU CONTEXT TURNS WEBGL OFF FOR THIS DEVICE, FOR A WEEK. A context loss is not always a
+     * tidy event: on PosterChanOS (an RX 6700, Mesa radeonsi) the whole desktop froze for 21 seconds
+     * with an amdgpu page fault in the GPU process while a Terminal had focus, and xterm's WebGL addon
+     * is the only GL this screen makes. The old handler disposed that ONE addon and the next terminal
+     * opened WebGL again, i.e. offered the same driver the same chance to hang the machine. So a loss
+     * in ANY pane is recorded (per device: localStorage, wrapped -- a browser that refuses storage
+     * simply keeps the in-memory switch for this page) and every pane drops its addon at once; the DOM
+     * renderer draws everything until GL_LOST_DAYS have passed. Box glyphs draw less exactly there,
+     * which is a cosmetic price; a frozen desktop is not. tests/client/test_terminal_split_panes_full_app.py */
+    const GL_LOST_KEY = 'pc_term_gl_lost', GL_LOST_DAYS = 7;
+    let _glLostAt = 0;
+    function _glBlocked(){
+      let at = _glLostAt;
+      try{ at = Math.max(at, Number(localStorage.getItem(GL_LOST_KEY)) || 0); }catch(_){}
+      return at > 0 && Date.now() - at < GL_LOST_DAYS * 864e5;
     }
-    let _glAddon = null, _glFontsOff = null;
+    function _glLost(){
+      _glLostAt = Date.now();
+      try{ localStorage.setItem(GL_LOST_KEY, String(_glLostAt)); }catch(_){}
+      for(const p of panes){ try{ p.dropGl(); }catch(_){} }
+    }
     /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
      * every line that mentions it is unreachable rather than broken. */
     const LOCAL = () => window.pcTerm || null;
@@ -176,108 +175,47 @@
      * instruction for one opening, never a preference. */
     let _want = '';
 
-    let term = null, fit = null, ws = null, link = null, host = null, ro = null;
-    /* WHICH TAB THIS IS, on the host. It is half of the remote tmux session's name, so it is what
-     * decides whether a new tab is a new shell or a second view of the one you are already in —
-     * see _mux_name in app/services/ssh_service.py. Carried on every open frame, including a
-     * resume, because a resume whose session has gone falls through to opening one. */
-    let label = '';
-    let hosts = [], connected = false, ctrl = false, mounted = null;
-    let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
+    /* ── WHAT EVERY PANE SHARES ─────────────────────────────────────────────────────────────────
+     *
+     * SPLIT VIEW. The screen shows ONE OR MORE PANES side by side, stacked or in a grid, and each pane
+     * is a whole terminal of its own: its own xterm, its own transport (`link`), its own session id,
+     * cursor, reconnect backoff, scroll memory and size. That per-shell state lives in _makePane()
+     * below, and it is the SAME code that drove the single terminal before — one implementation of the
+     * transport, the replay gates, the scroll pinning and the fit, used by every pane, rather than a
+     * second copy for "the other pane" that would drift from the first.
+     *
+     * What is shared stays out here: the host list, the tab strip (the account's running shells),
+     * window titles, the status bar, the menus, the key bar and the find panel. Exactly ONE pane is
+     * FOCUSED (`cur`), and everything that is about "the shell you are typing into" — the key bar, the
+     * phone's input catcher, ✨ Type in terminal, Run, Detach, Kill, find, a click on a tab — acts on
+     * it. A click or focus inside a pane focuses it. With one pane this is exactly the old screen. */
+    let hosts = [], ctrl = false, mounted = null;
+    let live = [];
     let findHits = [], findAt = -1;
-    let followBottom = true, scrollingByUs = false;
     /* A monitor handoff crosses renderers. Tabs are PTY session identities, never numeric indexes:
      * the local/server session list may arrive in a different order on the destination monitor. */
-    let handoffOrder = [], handoffScroll = null;
+    let handoffOrder = [];
     const tabScroll = new Map();             // session id -> {pinned, aboveBottom}
     /* What each shell calls itself (OSC 0/2 — every prompt sets `user@host: ~/dir`). It is what
      * makes a tab say WHICH shell it is rather than only which machine. */
     const titles = new Map();                // session id -> window title the shell set
     /* A monitor handoff names the session the destination must show; an ordinary open never does. */
     let _adopt = '';
-    /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
-     * has finished laying out the enlarged scrollback element.  A large reattach measured in the
-     * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
-     * callback had called scrollToBottom().  Keep one generation of post-layout pinning alive until
-     * the newest write has crossed two paint frames and a short layout quiescence.  Older callbacks
-     * may never release the guard underneath a newer write. */
-    let bottomPinEpoch = 0, bottomPinT = null, handoffRestoreT = null;
-
-    function _stopFollowing(){
-      /* A write may keep `scrollingByUs` true across two paints while xterm grows its viewport.
-       * A real wheel/swipe/PageUp during that interval must win immediately; otherwise onScroll
-       * mistakes the person's movement for xterm's layout movement and the next settle callback
-       * yanks them back to the prompt. Invalidating the generation also makes every already queued
-       * RAF/timer harmless. Scrolling back to baseY re-enables following through onScroll below. */
-      followBottom = false;
-      scrollingByUs = false;
-      ++bottomPinEpoch;
-      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
-    }
-
-    /* Reading scrollback survives a resize: rows from the bottom, measured before FitAddon reflows
-     * and restored after it. Without this a person reading history was left at the old viewport
-     * index, which after a narrower reflow is somewhere else entirely. null = could not measure. */
-    function _rowsAboveBottom(){
-      try{ const b = term && term.buffer && term.buffer.active;
-        return b ? Math.max(0, (b.baseY | 0) - (b.viewportY | 0)) : null; }catch(_){ return null; }
-    }
-    function _keepRowsAboveBottom(n){
-      if(n == null || !term) return;
-      try{ const b = term.buffer.active; term.scrollToLine(Math.max(0, (b.baseY | 0) - n)); }catch(_){}
-    }
     /* Dragging the SCROLLBAR is the one way of reading history that sends no wheel, touch or key
      * event, so onScroll could not tell it from xterm's own layout movement and a live prompt yanked
-     * the reader back down. While a press that started on the viewport (the bar) is held, an upward
-     * scroll is the person's. */
+     * the reader back down. While a press that started on a viewport (a bar) is held, an upward
+     * scroll is the person's. One pointer, so one flag for every pane. */
     let _barDrag = false;
-    function _scrollFromBar(y){
-      if(!_barDrag) return false;
-      const b = term && term.buffer && term.buffer.active;
-      if(b && y < b.baseY){ _stopFollowing(); return true; }
-      return false;
-    }
-
-    /* A tap focuses the terminal and, on Android, opens the keyboard. It is not a scroll choice.
-     * Keep this decision pure so touch/wheel surfaces cannot drift: only movement (or an upward
-     * wheel) means the reader deliberately left current output. */
-    function _scrollsAway(kind, delta){
-      return kind==='touchmove' || (kind==='wheel' && Number(delta)<0);
-    }
-
-    function _pinBottomAfterLayout(){
-      if(!term) return;
-      const mine = ++bottomPinEpoch;
-      scrollingByUs = true;
-      const settle = () => {
-        if(mine !== bottomPinEpoch || !term) return;
-        try{ term.scrollToBottom(); }catch(_){}
-        if(bottomPinT) clearTimeout(bottomPinT);
-        bottomPinT = setTimeout(() => {
-          if(mine !== bottomPinEpoch || !term) return;
-          try{ term.scrollToBottom(); }catch(_){}
-          scrollingByUs = false;
-          bottomPinT = null;
-        }, 80);
-      };
-      /* Two frames are intentional: the first commits xterm's canvas/row update and the second sees
-       * the resulting viewport height. Backgrounded renderers may not deliver RAF promptly, so the
-       * timer is also a bounded fallback rather than leaving user scrolling disabled forever. */
-      try{ requestAnimationFrame(() => requestAnimationFrame(settle)); }
-      catch(_){ settle(); }
-      setTimeout(settle, 120);
-    }
+    /* The panes, in screen order, and the focused one. panes[0] is the PRIMARY pane: the one whose
+     * session id is remembered per browser tab, the one a monitor handoff lands in, and the one that
+     * carries `#tty-screen`. `layout` is how two or more are arranged: 'cols' (split right), 'rows'
+     * (split down) or 'grid'. */
+    const MAX_PANES = 4;
+    let panes = [], cur = null, layout = 'single';
     /* A mount can cross awaits (host list, session list). Raising the same Terminal window twice
      * starts a second render before the first resumes; without a generation token BOTH continuations
      * mount xterm and attach input, so every physical key is written twice. */
     let renderEpoch = 0;
-    /* Every connect/attach owns a generation. Authentication and PTY startup both cross awaits;
-     * without this, a slower OLD tab switch can finish after the newest one and replace its link,
-     * which is the exact shape of tabs sharing input or snapping back to the previous shell. */
-    let openEpoch = 0;
-    // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
-    // having worked — see the ready handler.
-    let provenT = null;
 
     /* The session id is kept PER BROWSER TAB AND INSTANCE. localStorage is shared by every tab:
      * opening a second Terminal made it recall and attach to the first one's PTY, so both windows
@@ -285,31 +223,7 @@
      * sessionStorage survives reloads but is isolated between tabs/windows, which is exactly the
      * lifetime of this terminal view. Running shells remain discoverable through the session list. */
     const SKEY = () => 'pc_tty_sid:' + (window.__PC_API_BASE__ || location.origin);
-    function _remember(id){
-      sid = id || '';
-      try{ sid ? sessionStorage.setItem(SKEY(), sid) : sessionStorage.removeItem(SKEY()); }catch(_){}
-    }
     function _recall(){ try{ return sessionStorage.getItem(SKEY()) || ''; }catch(_){ return ''; } }
-
-    function fontSize(){
-      // The terminal cancels page zoom; keep its text readable in actual screen pixels.
-      try{
-        const saved=Number(localStorage.getItem('pc_tty_font_size'));
-        if(Number.isInteger(saved) && saved>=10 && saved<=24) return saved;
-      }catch(_){}
-      const box=document.getElementById('tty-screen');
-      const width=box && box.getBoundingClientRect().width;
-      const w=width>0 ? width : Math.min(window.innerWidth,window.innerHeight*1.6);
-      return w < 420 ? 11 : w < 700 ? 12 : 14;
-    }
-
-    function _changeFont(delta){
-      const size=Math.max(10,Math.min(24,fontSize()+delta));
-      try{ localStorage.setItem('pc_tty_font_size',String(size)); }
-      catch(_){ toast('Could not save terminal text size'); return; }
-      _fitPixels=''; _fit();
-      _focus();
-    }
 
     /* ── SHELL HISTORY ─────────────────────────────────────────────────────────────────────────
      *
@@ -324,7 +238,10 @@
      * NEVER WITHOUT A KEY. Signed out, there is nothing to encrypt to and nothing to sign with, so
      * the collector is not even built — a terminal still works, it simply has no history.
      */
+    /* One collector PER PANE: a collector pairs keystrokes with their echo, and two shells typed
+     * into in turn would otherwise interleave into one line that neither of them ran. */
     let hist = null, ring = null, histOff = null, histSeen = null;
+    const collectors = new Map();            // pane -> collector
 
     const _histLabel = () => {
       try{
@@ -338,7 +255,7 @@
       if(!H || hist) return;
       let me = ''; try{ me = (PC.me && PC.me() && PC.me().pubkey) || (window.ME && ME.pubkey) || ''; }catch(_){}
       if(!me) return;
-      hist = H.makeCollector();
+      hist = H;
       ring = H.makeRing();
       histSeen = new Set();
       /* Everything published SINCE NOW. A terminal opened today has no business replaying what a
@@ -361,14 +278,21 @@
 
     function _histStop(){
       if(histOff){ try{ histOff(); }catch(_){} histOff = null; }
-      hist = null; ring = null; histSeen = null;
+      hist = null; ring = null; histSeen = null; collectors.clear();
     }
 
-    /** Keystrokes on the way to the shell. Returns nothing; publishing is its own decision. */
-    function _histTyped(d){
-      if(!hist) return;
+    function _collector(p){
+      if(!hist || !p) return null;
+      let c = collectors.get(p);
+      if(!c){ try{ c = hist.makeCollector(); }catch(_){ return null; } collectors.set(p, c); }
+      return c;
+    }
+
+    /** Keystrokes on the way to a pane's shell. Returns nothing; publishing is its own decision. */
+    function _histTypedIn(p, d){
+      const c = _collector(p); if(!c) return;
       let lines = [];
-      try{ lines = hist.typed(d) || []; }catch(_){ return; }
+      try{ lines = c.typed(d) || []; }catch(_){ return; }
       for(const l of lines){
         if(!l.publish) continue;              // not echoed, too long, or secret-shaped — see termhist.js
         _histPublish(l.line);
@@ -376,7 +300,9 @@
     }
 
     /** Bytes coming back. Echo is the permission — see termhist.js. */
-    function _histSaw(d){ if(hist){ try{ hist.saw(d); }catch(_){} } }
+    function _histSawIn(p, d){ const c = _collector(p); if(c){ try{ c.saw(d); }catch(_){} } }
+    /** The focused pane's, for the callers out here (Run). */
+    function _histTyped(d){ _histTypedIn(cur, d); }
 
     async function _histPublish(line){
       const H = HIST(); if(!H || !ring) return;
@@ -421,7 +347,7 @@
         const r = rows[Number(b.dataset.h)];
         if(r) _send({ t: 'in', d: r.line });     // typed, never run — see above
         box.hidden = true;
-        try{ if(term) term.focus(); }catch(_){}
+        try{ if(cur && cur.term) cur.term.focus(); }catch(_){}
       });
     }
 
@@ -451,10 +377,19 @@
                     aria-label="Find in terminal"><svg class="ic"><use href="#i-search"></use></svg></button>
             <button class="tty-ib tty-txt" id="tty-font-less" title="Smaller terminal text" aria-label="Smaller terminal text">A−</button>
             <button class="tty-ib tty-txt" id="tty-font-more" title="Larger terminal text" aria-label="Larger terminal text">A+</button>
+            <button class="tty-ib" id="tty-split" title="Split view — see two or more tabs at once"
+                    aria-label="Split view" aria-haspopup="menu" aria-expanded="false"><svg class="ic"><use href="#i-layout"></use></svg></button>
             <button class="tty-ib tty-txt" id="tty-more" title="More" aria-label="More terminal actions"
                     aria-haspopup="menu" aria-expanded="false">···</button>
           </div>
           <div class="tty-menu" id="tty-new-menu" role="menu" aria-label="New terminal" hidden></div>
+          <div class="tty-menu tty-menu-end" id="tty-split-menu" role="menu" aria-label="Split view" hidden>
+            <button id="tty-split-right" role="menuitem">Split right<small>another tab beside this one</small></button>
+            <button id="tty-split-down" role="menuitem">Split down<small>another tab below this one</small></button>
+            <button id="tty-split-grid" role="menuitem">Grid<small>four tabs at once</small></button>
+            <button class="hidden" id="tty-pane-close" role="menuitem">Close this pane<small>its shell keeps running as a tab</small></button>
+            <button class="hidden" id="tty-pane-single" role="menuitem">Back to one pane<small>the others keep running as tabs</small></button>
+          </div>
           <div class="tty-menu tty-menu-end" id="tty-more-menu" role="menu" aria-label="Terminal actions" hidden>
             <button class="hidden" id="tty-stop" role="menuitem" title="Leave it running">Detach<small>leave it running</small></button>
             <button class="hidden tty-kill" id="tty-kill" role="menuitem" title="End this session">Kill session<small>stops what runs in it</small></button>
@@ -462,7 +397,14 @@
           </div>
         </div>
         <div class="tty-screen">
-          <div class="tty-fit" id="tty-screen"></div>
+          <div class="tty-panes" id="tty-panes">
+            <div class="tty-pane">
+              <div class="tty-pane-head"><b class="tty-pane-name"></b><button class="tty-pane-close"
+                   title="Close this pane (the shell keeps running as a tab)" aria-label="Close pane">×</button></div>
+              <div class="tty-fit" id="tty-screen"></div>
+              <div class="tty-pane-empty" hidden>Pick a tab above to show it here, or + for a new shell.</div>
+            </div>
+          </div>
           <div class="tty-find" id="tty-find-panel" hidden>
             <input class="input" id="tty-find-input" type="search" autocomplete="off"
                    spellcheck="false" placeholder="Find in terminal" aria-label="Find in terminal">
@@ -630,8 +572,158 @@
       }finally{ if(generation === _hostsGeneration) _scheduleHostsRefresh(); }
     }
 
+    /* ── A PANE: ONE SHELL ON SCREEN ───────────────────────────────────────────────────────────
+     *
+     * Everything below, down to the end of _makePane, is the per-shell half of this file — the code
+     * that drove THE terminal before split view, unchanged in what it does, now closed over one
+     * pane's own state instead of the module's. Its functions keep their names and their indentation
+     * on purpose: the comments in them document real bugs, the tests read several of them straight
+     * out of this file, and a split view must not have quietly changed any of it.
+     *
+     * Three things differ, all at the edges: the screen is looked up inside the pane (`_box()`, never
+     * a document-wide id — a second pane has none), and the status line, the Detach/Kill chrome and
+     * the keyboard focus are touched only by the FOCUSED pane (`_state`/`_chrome`/`_focus` below), so a
+     * pane reconnecting in the background cannot paint its "reconnecting…" over the shell you are
+     * typing into, or pull the keyboard away from it. */
+    function _makePane(){
+    const P = { st: null, chromeOn: false };
+    let root = null;                         // this pane's .tty-pane element, while mounted
+    const _box = () => (root && root.querySelector('.tty-fit')) || null;
+    let term = null, fit = null, ws = null, link = null, host = null, ro = null;
+    /* WHICH TAB THIS IS, on the host. It is half of the remote tmux session's name, so it is what
+     * decides whether a new tab is a new shell or a second view of the one you are already in —
+     * see _mux_name in app/services/ssh_service.py. Carried on every open frame, including a
+     * resume, because a resume whose session has gone falls through to opening one. */
+    let label = '';
+    let connected = false;
+    let sid = '', cursor = 0, retry = 0, retryT = null, want = false;
+    let followBottom = true, scrollingByUs = false;
+    /* A handoff (or a tab switch) carries a scroll choice to reinstate once the replay has drawn. */
+    let handoffScroll = null;
+    /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
+     * has finished laying out the enlarged scrollback element.  A large reattach measured in the
+     * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
+     * callback had called scrollToBottom().  Keep one generation of post-layout pinning alive until
+     * the newest write has crossed two paint frames and a short layout quiescence.  Older callbacks
+     * may never release the guard underneath a newer write. */
+    let bottomPinEpoch = 0, bottomPinT = null, handoffRestoreT = null;
+    const _state = (msg, cls, long) => { P.st = [msg, cls, long]; if(P === cur) _barState(msg, cls, long); };
+    const _chrome = (on) => { P.chromeOn = !!on; if(P === cur) _barChrome(on); };
+    const _focus = () => { if(P === cur) _barFocus(); };
+    const _histTyped = (d) => _histTypedIn(P, d), _histSaw = (d) => _histSawIn(P, d);
+
+    /* The symbol face must be LOADED before the GPU atlas draws a glyph: a canvas does not fetch a
+     * unicode-range face the way laid-out text does, so `\u25b8` came out as an empty box. Sample text
+     * from its ranges, because load()'s default sample is a space, which is outside them. */
+    async function _gpuRenderer(t){
+      try{ await document.fonts.load(fontSize() + 'px "PC Term Symbols"', '\u25b8\u2500\u2588\u2800'); }catch(_){}
+      /* ONE CONTEXT PER PANE, AND NONE AT ALL ON A DEVICE WHOSE GPU HAS ALREADY LOST ONE. See _glLost. */
+      if(_glBlocked() || _glAddon) return;
+      if(!(await _loadWebgl()) || term !== t || _glBlocked() || _glAddon) return;
+      try{
+        const gl = new (window.WebglAddon.WebglAddon || window.WebglAddon)();
+        gl.onContextLoss(() => _glLost());                                // every pane back to the DOM renderer
+        t.loadAddon(gl);
+        /* Both are let go in unmount(). A `loadingdone` listener left on document.fonts held this addon, and
+         * through it the terminal and its canvas, for the rest of the session: measured in desktop mode as
+         * +64 nodes and a window resize listener per Terminal window opened and closed (flat without this
+         * renderer). In the APK every desktop window shares ONE WebView, so that is memory a tablet never gets
+         * back. tests/client/test_desktop_windows_release_memory_full_app.py */
+        const relayout = () => { try{ gl.clearTextureAtlas(); }catch(_){} };
+        try{ document.fonts.addEventListener('loadingdone', relayout); }catch(_){}
+        _glAddon = gl;
+        _glFontsOff = () => { try{ document.fonts.removeEventListener('loadingdone', relayout); }catch(_){} };
+      }catch(_){}                                                       // no WebGL here: the DOM renderer stays
+    }
+    let _glAddon = null, _glFontsOff = null;
+    /* Let this pane's WebGL renderer go — on close, on unmount, and on ANY pane's context loss. xterm
+     * returns to its DOM renderer when the addon is disposed; the terminal itself keeps running. */
+    function _dropGl(){
+      if(_glFontsOff){ _glFontsOff(); _glFontsOff = null; }
+      if(_glAddon){ try{ _glAddon.dispose(); }catch(_){} _glAddon = null; }
+    }
+
+    function _stopFollowing(){
+      /* A write may keep `scrollingByUs` true across two paints while xterm grows its viewport.
+       * A real wheel/swipe/PageUp during that interval must win immediately; otherwise onScroll
+       * mistakes the person's movement for xterm's layout movement and the next settle callback
+       * yanks them back to the prompt. Invalidating the generation also makes every already queued
+       * RAF/timer harmless. Scrolling back to baseY re-enables following through onScroll below. */
+      followBottom = false;
+      scrollingByUs = false;
+      ++bottomPinEpoch;
+      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
+    }
+
+    /* Reading scrollback survives a resize: rows from the bottom, measured before FitAddon reflows
+     * and restored after it. Without this a person reading history was left at the old viewport
+     * index, which after a narrower reflow is somewhere else entirely. null = could not measure. */
+    function _rowsAboveBottom(){
+      try{ const b = term && term.buffer && term.buffer.active;
+        return b ? Math.max(0, (b.baseY | 0) - (b.viewportY | 0)) : null; }catch(_){ return null; }
+    }
+    function _keepRowsAboveBottom(n){
+      if(n == null || !term) return;
+      try{ const b = term.buffer.active; term.scrollToLine(Math.max(0, (b.baseY | 0) - n)); }catch(_){}
+    }
+    /* Dragging the SCROLLBAR is the one way of reading history that sends no wheel, touch or key
+     * event, so onScroll could not tell it from xterm's own layout movement and a live prompt yanked
+     * the reader back down. While a press that started on the viewport (the bar) is held, an upward
+     * scroll is the person's. */
+    function _scrollFromBar(y){
+      if(!_barDrag) return false;
+      const b = term && term.buffer && term.buffer.active;
+      if(b && y < b.baseY){ _stopFollowing(); return true; }
+      return false;
+    }
+
+    /* A tap focuses the terminal and, on Android, opens the keyboard. It is not a scroll choice.
+     * Keep this decision pure so touch/wheel surfaces cannot drift: only movement (or an upward
+     * wheel) means the reader deliberately left current output. */
+    function _scrollsAway(kind, delta){
+      return kind==='touchmove' || (kind==='wheel' && Number(delta)<0);
+    }
+
+    function _pinBottomAfterLayout(){
+      if(!term) return;
+      const mine = ++bottomPinEpoch;
+      scrollingByUs = true;
+      const settle = () => {
+        if(mine !== bottomPinEpoch || !term) return;
+        try{ term.scrollToBottom(); }catch(_){}
+        if(bottomPinT) clearTimeout(bottomPinT);
+        bottomPinT = setTimeout(() => {
+          if(mine !== bottomPinEpoch || !term) return;
+          try{ term.scrollToBottom(); }catch(_){}
+          scrollingByUs = false;
+          bottomPinT = null;
+        }, 80);
+      };
+      /* Two frames are intentional: the first commits xterm's canvas/row update and the second sees
+       * the resulting viewport height. Backgrounded renderers may not deliver RAF promptly, so the
+       * timer is also a bounded fallback rather than leaving user scrolling disabled forever. */
+      try{ requestAnimationFrame(() => requestAnimationFrame(settle)); }
+      catch(_){ settle(); }
+      setTimeout(settle, 120);
+    }
+    /* Every connect/attach owns a generation. Authentication and PTY startup both cross awaits;
+     * without this, a slower OLD tab switch can finish after the newest one and replace its link,
+     * which is the exact shape of tabs sharing input or snapping back to the previous shell. */
+    let openEpoch = 0;
+    // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
+    // having worked — see the ready handler.
+    let provenT = null;
+
+    function _remember(id){
+      sid = id || '';
+      /* Only the PRIMARY pane is "the session this browser tab left": a reload reopens one shell, and
+       * the other panes come back from the saved layout (_layoutSave) instead. */
+      if(P !== panes[0]) return;
+      try{ sid ? sessionStorage.setItem(SKEY(), sid) : sessionStorage.removeItem(SKEY()); }catch(_){}
+    }
+
     function _mountTerm(){
-      const box = $('#tty-screen'); if(!box || !XT()) return false;
+      const box = _box(); if(!box || !XT()) return false;
       term = new (XT())({
         fontSize: fontSize(),
         fontFamily: TERM_FONT,
@@ -803,7 +895,7 @@
      * that HOLDS is a real resize and is fitted; a transient that reverts never is. */
     function _bgFit(){
       if(_bgFitT) clearTimeout(_bgFitT);
-      const read = () => { const b = $('#tty-screen'); if(!b || !b.isConnected) return '';
+      const read = () => { const b = _box(); if(!b || !b.isConnected) return '';
         const r = b.getBoundingClientRect(); return r.width < 2 || r.height < 2 ? '' : Math.round(r.width*10)+'x'+Math.round(r.height*10); };
       _bgFitT = setTimeout(() => {
         const first = read();
@@ -854,7 +946,7 @@
          * silently disabling both the unfocused-window guard and pixel-size deduplication. Resolve
          * the live terminal host in this callback, after the debounce, so a parked/repainted window
          * is measured only if it is still the element this terminal owns. */
-        const box = $('#tty-screen');
+        const box = _box();
         if(!box || !box.isConnected) return;
         /* FOCUS MAY CHANGE Z-ORDER, NEVER TERMINAL GEOMETRY. PosterChanOS parks/moves the shared
          * feed while another window takes focus, and that transition fires ResizeObserver with a
@@ -927,36 +1019,6 @@
       ws = null;
     }
 
-    function _wsUrl(){
-      const base = (window.__PC_API_BASE__ || location.origin).replace(/^http/, 'ws').replace(/\/+$/, '');
-      return base + '/ws/ssh';
-    }
-
-    /* LABELS ALREADY SPOKEN FOR ON THIS PAGE. `live` is refreshed on `ready`, which is AFTER the
-     * open frame has gone out — so two quick presses of + would both read the same list, pick the
-     * same label, and land in the same shell, which is the bug this whole mechanism exists to fix.
-     * Requested labels are remembered here and never re-offered. */
-    const asked = new Set();
-
-    /* A LABEL NOBODY IS USING ON THIS HOST. `main` first, so the ordinary single-tab case keeps the
-     * name a shell already has and reattaches to it across a restart of this node; then 2, 3, …
-     *
-     * Per HOST, because the tmux session's name is per (account, label) and two hosts are two
-     * machines — `main` on server1 and `main` on nas are already different shells. */
-    function _freeLabel(hostName){
-      const taken = new Set();
-      for(const x of live)
-        if(x && String(x.host || '') === String(hostName || '') && x.label) taken.add(String(x.label));
-      for(const k of asked){
-        const i = k.indexOf('\u0000');
-        if(i > 0 && k.slice(0, i) === String(hostName || '')) taken.add(k.slice(i + 1));
-      }
-      let pick = 'main';
-      for(let n = 2; taken.has(pick); n++) pick = String(n);
-      asked.add(String(hostName || '') + '\u0000' + pick);
-      return pick;
-    }
-
     function _resetForReplay(){
       /* xterm emits onScroll from reset(). That is an internal buffer change, not somebody choosing
        * to read history. If it lands unguarded it flips followBottom false before the resumed
@@ -994,47 +1056,6 @@
        * schedules the no-output fallback; any real replay cancels it in _restoreHandoffScroll. */
       if(!handoffScroll||handoffRestoreT)return;
       handoffRestoreT=setTimeout(()=>{handoffRestoreT=null;_restoreHandoffScroll();},160);
-    }
-
-    /* A LOCAL REATTACH HAS TWO INPUTS: the cumulative backlog snapshot and the live IPC push.
-     * Subscribe-before-snapshot is necessary (otherwise bytes printed between the two calls are
-     * lost), but drawing pushes immediately is not safe. Chromium may hold an unfocused renderer's
-     * IPC callback until focus returns. That old callback can then race the new snapshot and either
-     * draw the same bytes twice or advance the cumulative cursor past bytes which have not been
-     * drawn at all. Hold pushes behind one small gate until the snapshot has crossed `_frame`;
-     * `_frame`'s sequence check then removes the overlap and the remaining suffix is delivered once.
-     * `current` also invalidates callbacks already queued by Electron before removeListener ran. */
-    function _makeLocalReplayGate(current, deliver){
-      let pending=[], ready=false;
-      return {
-        push(ev){
-          if(!current()) return;
-          if(!ready){ pending.push(ev); return; }
-          deliver(ev);
-        },
-        finish(snapshot){
-          if(!current()){ pending=[]; return false; }
-          if(snapshot) deliver(snapshot);
-          ready=true;
-          const queued=pending; pending=[];
-          /* IPC preserves order, but sequence sorting makes the invariant explicit and keeps an
-           * unsequenced `end` behind all output if a platform ever batches the callbacks. */
-          queued.sort((a,b)=>{
-            const as=typeof a.seq==='number'?a.seq:Number.MAX_SAFE_INTEGER;
-            const bs=typeof b.seq==='number'?b.seq:Number.MAX_SAFE_INTEGER;
-            return as-bs;
-          });
-          for(const ev of queued){ if(current()) deliver(ev); }
-          return current();
-        }
-      };
-    }
-
-    /* The host a bare "new terminal" means: this computer when it has a shell, else the first
-     * host the node lists. */
-    function _defaultHost(){
-      const h = hosts.find(x => x && x.local) || hosts[0];
-      return h ? h.name : '';
     }
 
     async function connect(hostName){
@@ -1103,25 +1124,6 @@
       handoffScroll=saved?{pinned:saved.pinned!==false,
         aboveBottom:Math.max(0,Number(saved.aboveBottom)||0)}:null;
       attach(id,hostName,labelName);return true;
-    }
-
-    function _cycleTab(step){
-      const tabs=[...document.querySelectorAll('#tty-sessions [data-tab]')];
-      if(tabs.length<2)return;
-      let at=tabs.findIndex(x=>x.dataset.tab===sid);if(at<0)at=0;
-      const next=tabs[(at+(step<0?-1:1)+tabs.length)%tabs.length];
-      if(next&&next.dataset.tab!==sid)switchTab(next.dataset.tab,next.dataset.host,next.dataset.label);
-    }
-
-    /* The phone keyboard types through #tty-catch, not xterm's textarea. Keeping this chord only in
-     * attachCustomKeyEventHandler made Ctrl+PageUp/PageDown work with a desktop keyboard and do
-     * nothing on Android. Both input surfaces call this one owner; true means the key was consumed. */
-    function _tabChord(ev){
-      if(!ev || ev.type!=='keydown' || !(ev.ctrlKey||ev.metaKey)
-          || (ev.key!=='PageUp'&&ev.key!=='PageDown')) return false;
-      ev.preventDefault();
-      _cycleTab(ev.key==='PageUp'?-1:1);
-      return true;
     }
 
     let lastFrame = null;              // what _retryOpen re-sends when there is no session to resume yet
@@ -1317,6 +1319,7 @@
             if(label) asked.add(String(host || '') + '\u0000' + String(label));
             _state(m.resumed ? 'reattached' : 'connected', 'ok', (m.resumed ? 'Reattached to ' : 'Connected to ') + host);
             _chrome(true); _fit(); _focus();
+            paintHead(); _layoutSave();
             /* A reconnect is not a new terminal. If the person was reading scrollback when the
              * socket dropped, keep that deliberate position; forcing follow mode here yanked them
              * to the prompt on every phone wake/network change. Fresh opens and explicit tab
@@ -1424,7 +1427,6 @@
     // unlocking is the single most common way this socket dies.
     function _wake(){
       if(document.visibilityState !== 'visible') return;
-      if(mounted) _hostsRefresh();
       if(!want || !sid || connected || !mounted) return;
       if(retryT){ clearTimeout(retryT); retryT = null; }
       retry = 0; _open({ resume: sid, host, label });
@@ -1448,27 +1450,216 @@
       _sessions();
     }
 
+    /* ── This pane's edges: its element, its little header, and letting it all go. ── */
+    function bind(el){
+      root = el || null;
+      if(!root) return;
+      /* A press or a focus anywhere in the pane makes it the one you are typing into. Capture, so it
+       * is decided BEFORE xterm handles the same press and takes the keyboard. */
+      root.addEventListener('pointerdown', () => _setCur(P), true);
+      root.addEventListener('focusin', () => _setCur(P));
+      const x = root.querySelector('.tty-pane-close');
+      if(x) x.onclick = (ev) => { ev.stopPropagation(); _closePane(P); };
+      paintHead();
+    }
+    function paintHead(){
+      if(!root) return;
+      const nm = root.querySelector('.tty-pane-name');
+      if(nm){
+        const x = live.find(t => t && t.sid === sid) || { sid, host: host || '', label };
+        nm.textContent = sid ? _tabName(x, 0) : 'empty pane';
+        nm.title = nm.textContent;
+      }
+      const e = root.querySelector('.tty-pane-empty');
+      if(e) e.hidden = !!(sid || want || term);
+    }
+    /* The renderer half of unmount(): the shell is NOT touched (_bye already detached from it), so
+     * this pane's state -- its session id, host, label -- survives for the next render to reattach. */
+    function _dispose(){
+      ++openEpoch;
+      if(ro){ try{ ro.disconnect(); }catch(_){} ro = null; }
+      _dropGl();                     // before the terminal it belongs to
+      if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
+      ++bottomPinEpoch;
+      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
+      if(handoffRestoreT){ clearTimeout(handoffRestoreT); handoffRestoreT = null; }
+      scrollingByUs = false;
+      _fitPixels = '';
+      if(_fitT){ clearTimeout(_fitT); _fitT = null; }
+      if(_bgFitT){ clearTimeout(_bgFitT); _bgFitT = null; }
+      _sentSize = '';
+      root = null;
+    }
+    /* A monitor handoff: this pane takes the tab the source monitor was showing. */
+    function adopt(o){
+      host = String(o.host || host || '');
+      label = String(o.label || '');
+      handoffScroll = o.scroll || null;
+      followBottom = !handoffScroll || handoffScroll.pinned !== false;
+      _remember(o.id);
+      cursor = 0;
+    }
+    /* Killed from the strip or the menu while this pane showed it. */
+    function ended(){ _bye(); _remember(''); cursor = 0; _state('session ended'); paintHead(); }
+    function grid(){ return term ? { rows: term.rows, cols: term.cols } : null; }
+
+    Object.defineProperties(P, Object.getOwnPropertyDescriptors({
+      get sid(){ return sid; }, get host(){ return host; }, get label(){ return label; },
+      get connected(){ return connected; }, get term(){ return term; }, get want(){ return want; },
+      root: () => root, box: _box, bind, paintHead, grid, adopt, ended, dropGl: _dropGl,
+      connect, attach, switchTab, detach, scrollChoice: _scrollChoice, remember: _remember,
+      _send, _bye, _dispose, _wake, hasLink: () => !!link,
+      fit: () => _fit(), refit: () => { _fitPixels = ''; _fit(); },
+    }));
+    return P;
+    }
+
+    function fontSize(){
+      // The terminal cancels page zoom; keep its text readable in actual screen pixels.
+      try{
+        const saved=Number(localStorage.getItem('pc_tty_font_size'));
+        if(Number.isInteger(saved) && saved>=10 && saved<=24) return saved;
+      }catch(_){}
+      const box=document.getElementById('tty-screen');
+      const width=box && box.getBoundingClientRect().width;
+      const w=width>0 ? width : Math.min(window.innerWidth,window.innerHeight*1.6);
+      return w < 420 ? 11 : w < 700 ? 12 : 14;
+    }
+
+    function _changeFont(delta){
+      const size=Math.max(10,Math.min(24,fontSize()+delta));
+      try{ localStorage.setItem('pc_tty_font_size',String(size)); }
+      catch(_){ toast('Could not save terminal text size'); return; }
+      _refitAll();
+      _focus();
+    }
+
+    function _wsUrl(){
+      const base = (window.__PC_API_BASE__ || location.origin).replace(/^http/, 'ws').replace(/\/+$/, '');
+      return base + '/ws/ssh';
+    }
+
+    /* LABELS ALREADY SPOKEN FOR ON THIS PAGE. `live` is refreshed on `ready`, which is AFTER the
+     * open frame has gone out — so two quick presses of + would both read the same list, pick the
+     * same label, and land in the same shell, which is the bug this whole mechanism exists to fix.
+     * Requested labels are remembered here and never re-offered. */
+    const asked = new Set();
+
+    /* A LABEL NOBODY IS USING ON THIS HOST. `main` first, so the ordinary single-tab case keeps the
+     * name a shell already has and reattaches to it across a restart of this node; then 2, 3, …
+     *
+     * Per HOST, because the tmux session's name is per (account, label) and two hosts are two
+     * machines — `main` on server1 and `main` on nas are already different shells. */
+    function _freeLabel(hostName){
+      const taken = new Set();
+      for(const x of live)
+        if(x && String(x.host || '') === String(hostName || '') && x.label) taken.add(String(x.label));
+      for(const k of asked){
+        const i = k.indexOf('\u0000');
+        if(i > 0 && k.slice(0, i) === String(hostName || '')) taken.add(k.slice(i + 1));
+      }
+      let pick = 'main';
+      for(let n = 2; taken.has(pick); n++) pick = String(n);
+      asked.add(String(hostName || '') + '\u0000' + pick);
+      return pick;
+    }
+
+    /* A LOCAL REATTACH HAS TWO INPUTS: the cumulative backlog snapshot and the live IPC push.
+     * Subscribe-before-snapshot is necessary (otherwise bytes printed between the two calls are
+     * lost), but drawing pushes immediately is not safe. Chromium may hold an unfocused renderer's
+     * IPC callback until focus returns. That old callback can then race the new snapshot and either
+     * draw the same bytes twice or advance the cumulative cursor past bytes which have not been
+     * drawn at all. Hold pushes behind one small gate until the snapshot has crossed `_frame`;
+     * `_frame`'s sequence check then removes the overlap and the remaining suffix is delivered once.
+     * `current` also invalidates callbacks already queued by Electron before removeListener ran. */
+    function _makeLocalReplayGate(current, deliver){
+      let pending=[], ready=false;
+      return {
+        push(ev){
+          if(!current()) return;
+          if(!ready){ pending.push(ev); return; }
+          deliver(ev);
+        },
+        finish(snapshot){
+          if(!current()){ pending=[]; return false; }
+          if(snapshot) deliver(snapshot);
+          ready=true;
+          const queued=pending; pending=[];
+          /* IPC preserves order, but sequence sorting makes the invariant explicit and keeps an
+           * unsequenced `end` behind all output if a platform ever batches the callbacks. */
+          queued.sort((a,b)=>{
+            const as=typeof a.seq==='number'?a.seq:Number.MAX_SAFE_INTEGER;
+            const bs=typeof b.seq==='number'?b.seq:Number.MAX_SAFE_INTEGER;
+            return as-bs;
+          });
+          for(const ev of queued){ if(current()) deliver(ev); }
+          return current();
+        }
+      };
+    }
+
+    /* The host a bare "new terminal" means: this computer when it has a shell, else the first
+     * host the node lists. */
+    function _defaultHost(){
+      const h = hosts.find(x => x && x.local) || hosts[0];
+      return h ? h.name : '';
+    }
+
+    function _cycleTab(step){
+      const sid=cur?cur.sid:'';
+      const tabs=[...document.querySelectorAll('#tty-sessions [data-tab]')];
+      if(tabs.length<2)return;
+      let at=tabs.findIndex(x=>x.dataset.tab===sid);if(at<0)at=0;
+      const next=tabs[(at+(step<0?-1:1)+tabs.length)%tabs.length];
+      if(next&&next.dataset.tab!==sid)_selectTab(next.dataset.tab,next.dataset.host,next.dataset.label);
+    }
+
+    /* A TAB CHOSEN FROM THE STRIP goes into the focused pane -- unless another pane is already showing
+     * it, in which case that pane is focused instead. One shell is never in two panes: two views of
+     * one local PTY share one main-process subscription (desktop/main.js keys it per renderer and
+     * session), so closing either would silently stop the other. */
+    function _selectTab(id, hostName, labelName){
+      id = String(id || ''); if(!id) return false;
+      const other = panes.find(p => p.sid === id);
+      if(other){ if(other !== cur){ _setCur(other); _focus(); } return false; }
+      return cur ? cur.switchTab(id, hostName, labelName) : false;
+    }
+
+    /* The phone keyboard types through #tty-catch, not xterm's textarea. Keeping this chord only in
+     * attachCustomKeyEventHandler made Ctrl+PageUp/PageDown work with a desktop keyboard and do
+     * nothing on Android. Both input surfaces call this one owner; true means the key was consumed. */
+    function _tabChord(ev){
+      if(!ev || ev.type!=='keydown' || !(ev.ctrlKey||ev.metaKey)
+          || (ev.key!=='PageUp'&&ev.key!=='PageDown')) return false;
+      ev.preventDefault();
+      _cycleTab(ev.key==='PageUp'?-1:1);
+      return true;
+    }
+
     /* KILL: end it. Nothing here expires, so this is the only way a session ends. */
     async function kill(id){
+      const sid = cur ? cur.sid : '';
       const target = id || sid;
       if(!target) return;
       const ok = await PC.uiConfirm('End this session? Anything running in it is stopped.',
                                     { ok: 'Kill', danger: true });
       if(!ok) return;
+      /* The pane showing it, if any -- the focused one or another. */
+      const owner = panes.find(p => p.sid === target) || null;
       if(isLocalSid(target)){
         /* No server to ask: the shell is a process in the desktop, and this is the only thing that
          * ends it. Ending the one we are attached to goes through the link so the session's own
          * teardown runs; any other is ended by id. */
-        if(target === sid && link) _send({ t: 'close' });
+        if(owner && owner.hasLink()) owner._send({ t: 'close' });
         else { try{ LOCAL() && LOCAL().close(String(target).replace(/^local:/, '')); }catch(_){} }
       }
-      else if(target === sid && link){ _send({ t: 'close' }); }
+      else if(owner && owner.hasLink()){ owner._send({ t: 'close' }); }
       else {
         try{ await authFetch('/api/ssh/sessions/kill', { method: 'POST',
              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid: target }) }); }
         catch(_){}
       }
-      if(target === sid){ _bye(); _remember(''); cursor = 0; _state('session ended'); }
+      if(owner) owner.ended();
       _sessions();
     }
 
@@ -1486,9 +1677,13 @@
 
     function _paintSessions(){
       const box = $('#tty-sessions'); if(!box) return;
-      const tabs = live.slice();
-      if(sid && !tabs.some(x => x.sid === sid))
-        tabs.unshift({ sid, host:host || 'local', label, age:0, alive:true });
+      const tabs = live.filter((x, i) => x && live.findIndex(y => y && y.sid === x.sid) === i);   // one tab per shell
+      for(const p of panes.slice().reverse())
+        if(p.sid && !tabs.some(x => x.sid === p.sid))
+          tabs.unshift({ sid: p.sid, host: p.host || 'local', label: p.label, age:0, alive:true });
+      const sid = cur ? cur.sid : '';
+      /* The tabs OTHER panes are showing are marked too, so the strip says what is on screen. */
+      const shown = new Set(panes.length > 1 ? panes.map(p => p.sid).filter(Boolean) : []);
       if(handoffOrder.length){
         const rank=new Map(handoffOrder.map((id,n)=>[String(id),n]));
         tabs.sort((a,b)=>(rank.has(String(a.sid))?rank.get(String(a.sid)):1e9)
@@ -1499,7 +1694,7 @@
         const lab = String(x.label || '');
         const nm = _tabName(x, n);
         const kind = isLocalSid(x.sid) ? 'local' : 'ssh';
-        return `<span class="tty-sess tty-tab tty-${kind}${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
+        return `<span class="tty-sess tty-tab tty-${kind}${x.sid === sid ? ' active' : shown.has(x.sid) ? ' shown' : ''}" data-tab="${enc(x.sid)}"
                data-host="${enc(x.host || '')}" data-label="${enc(lab)}" role="tab" tabindex="0"
                aria-selected="${x.sid === sid ? 'true' : 'false'}"
                title="${enc(nm)} — ${kind === 'local' ? 'this computer' : 'SSH'}, idle ${_ago(x.age)}"><i class="tty-dot"></i><b>${enc(nm)}</b>`
@@ -1508,6 +1703,7 @@
       }).join('')
         + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal" aria-label="New terminal"'
         + ' aria-haspopup="menu" aria-expanded="false">+</button>';
+      for(const p of panes) p.paintHead();
     }
 
     async function _remoteSessions(){
@@ -1523,16 +1719,21 @@
 
     async function _sessions(waitRemote){
       const box = $('#tty-sessions'); if(!box) return;
-      live = [];
       /* THIS MACHINE'S OWN SHELLS. They are listed the same way and for the same reason: a reload,
-       * or closing the window, leaves one running with nothing pointing at it. */
+       * or closing the window, leaves one running with nothing pointing at it.
+       *
+       * Built aside and ASSIGNED ONCE, after the await. Emptying `live` first and pushing into it after
+       * the await meant two refreshes in flight -- every pane that becomes ready asks for one, and a
+       * grid makes three at once -- each pushed the whole list into the same array: every tab twice. */
+      const loc = [];
       if(LOCAL()){
         try{
           const mine = await LOCAL().list();
           for(const x of (mine || []))
-            live.push({ sid: localSid(x.id), host: 'local', age: Math.round((x.idle || 0)), alive: x.alive });
+            loc.push({ sid: localSid(x.id), host: 'local', age: Math.round((x.idle || 0)), alive: x.alive });
         }catch(_){}
       }
+      live = loc;
       /* A local terminal is painted and returned to its opener before ANY instance request. The
        * remote tabs are useful, but connectivity is not a prerequisite for a shell on this device.
        * In particular authFetch can remain pending while the signer relay reconnects. */
@@ -1571,8 +1772,8 @@
      * wherever the window goes (a desktop window, a popped-out toplevel, a phone) with no popover
      * layer to lose track of. One open at a time; a click anywhere else or Esc closes it. */
     function _menuClose(){
-      for(const id of ['#tty-new-menu', '#tty-more-menu']){ const m = $(id); if(m) m.hidden = true; }
-      for(const id of ['#tty-tab-new', '#tty-more']){ const b = $(id); if(b) b.setAttribute('aria-expanded', 'false'); }
+      for(const id of ['#tty-new-menu', '#tty-more-menu', '#tty-split-menu']){ const m = $(id); if(m) m.hidden = true; }
+      for(const id of ['#tty-tab-new', '#tty-more', '#tty-split']){ const b = $(id); if(b) b.setAttribute('aria-expanded', 'false'); }
     }
     function _menuOpen(menuSel, btn){
       const m = $(menuSel), bar = $('.tty-bar');
@@ -1581,6 +1782,7 @@
       _menuClose();
       if(was) return;
       if(menuSel === '#tty-new-menu') _paintHosts();
+      if(menuSel === '#tty-split-menu') _paintSplitMenu();
       m.hidden = false;
       btn.setAttribute('aria-expanded', 'true');
       /* Placed under its button, measured in the bar's own (zoomed) space and kept inside it. */
@@ -1595,19 +1797,31 @@
     }
     function _menuOutside(ev){
       const t = ev && ev.target;
-      if(t && t.closest && t.closest('.tty-menu, #tty-tab-new, #tty-more')) return;
+      if(t && t.closest && t.closest('.tty-menu, #tty-tab-new, #tty-more, #tty-split')) return;
       _menuClose();
     }
 
     function _focus(){
       // xterm takes the keyboard on a desktop; a phone needs a real focused input to raise the soft
       // keyboard, so the hidden catcher is what gets focused there.
+      const term = _curTerm();
       const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
       if(touch){ const c = $('#tty-catch'); if(c) c.focus(); }
       else if(term) term.focus();
     }
+    /* The focused pane's emulator: what find, the key bar, ✨ Type and Run act on. */
+    const _curTerm = () => (cur && cur.term) || null;
+    /* The module's own status line, chrome and focus, under names a pane can reach past its own
+     * focused-only wrappers of the same three. */
+    function _barState(msg, cls, long){ _state(msg, cls, long); }
+    function _barChrome(on){ _chrome(on); }
+    function _barFocus(){ _focus(); }
+    /* ONE WAY OUT, for everything out here (the key bar, the catcher, the history panel, Run): the
+     * focused pane's transport. */
+    function _send(o){ if(cur) cur._send(o); }
 
     function _findScan(step){
+      const term = _curTerm();
       const input = $('#tty-find-input'), count = $('#tty-find-count');
       const q = String(input && input.value || '');
       findHits = []; findAt = -1;
@@ -1632,6 +1846,7 @@
     }
 
     function _findShow(){
+      const term = _curTerm();
       if(!term || !findHits.length) return;
       findAt = (findAt + findHits.length) % findHits.length;
       const h = findHits[findAt], count = $('#tty-find-count');
@@ -1653,6 +1868,7 @@
 
     function _findClose(){
       const panel = $('#tty-find-panel'); if(panel) panel.hidden = true;
+      const term = _curTerm();
       try{ term && term.clearSelection(); }catch(_){}
       findHits = []; findAt = -1; _focus();
     }
@@ -1671,22 +1887,33 @@
 
     function _wire(){
       _paintHosts();
-      { const b = $('#tty-stop'); if(b) b.onclick = () => { _menuClose(); detach(); }; }
+      { const b = $('#tty-stop'); if(b) b.onclick = () => { _menuClose(); if(cur) cur.detach(); }; }
       { const b = $('#tty-kill'); if(b) b.onclick = () => { _menuClose(); kill(); }; }
       { const b = $('#tty-more'); if(b) b.onclick = (ev) => { ev.stopPropagation(); _menuOpen('#tty-more-menu', b); }; }
       { const b = $('#tty-more-font-reset'); if(b) b.onclick = () => {
           _menuClose();
           try{ localStorage.removeItem('pc_tty_font_size'); }catch(_){}
-          _fitPixels=''; _fit(); _focus();
+          _refitAll(); _focus();
+        }; }
+      /* SPLIT VIEW: the layout button and its menu. Each entry adds or removes a PANE; see _split. */
+      { const b = $('#tty-split'); if(b) b.onclick = (ev) => { ev.stopPropagation(); _menuOpen('#tty-split-menu', b); }; }
+      { const m = $('#tty-split-menu'); if(m) m.onclick = (ev) => {
+          const b = ev.target.closest('button'); if(!b || b.disabled) return;
+          _menuClose();
+          if(b.id === 'tty-split-right') _split('cols');
+          else if(b.id === 'tty-split-down') _split('rows');
+          else if(b.id === 'tty-split-grid') _split('grid');
+          else if(b.id === 'tty-pane-close') _closePane(cur);
+          else if(b.id === 'tty-pane-single') _singleView();
         }; }
       /* THE + MENU: every entry opens a NEW tab on that host. `connect` names the tab itself (see
        * _freeLabel), so choosing the same SSH host twice is two shells, never one shell twice. */
       { const m = $('#tty-new-menu'); if(m) m.onclick = (ev) => {
           const b = ev.target.closest('[data-new]'); if(!b) return;
-          _menuClose(); connect(b.dataset.new);
+          _menuClose(); if(cur) cur.connect(b.dataset.new);
         }; }
       { const bar = $('.tty-bar'); if(bar) bar.onkeydown = (ev) => {
-          if(ev.key === 'Escape' && (!$('#tty-new-menu').hidden || !$('#tty-more-menu').hidden)){
+          if(ev.key === 'Escape' && (!$('#tty-new-menu').hidden || !$('#tty-more-menu').hidden || !$('#tty-split-menu').hidden)){
             ev.preventDefault(); _menuClose(); _focus();
           }
         }; }
@@ -1708,7 +1935,7 @@
           const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
           const add = ev.target.closest('#tty-tab-new'); if(add){ ev.stopPropagation(); return _menuOpen('#tty-new-menu', add); }
           const a = ev.target.closest('[data-tab]');
-          if(a && a.dataset.tab !== sid) return switchTab(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
+          if(a && a.dataset.tab !== (cur && cur.sid)) return _selectTab(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
       { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
           const b = ev.target.closest('[data-k]'); if(!b) return;
           ev.preventDefault(); _key(b.dataset.k); }; }
@@ -1734,12 +1961,8 @@
           if(SEQ[ev.key]){ ev.preventDefault(); _send({ t: 'in', d: SEQ[ev.key] }); }
         };
       }
-      window.addEventListener('resize', _fit);
+      window.addEventListener('resize', _onResize);
     }
-
-    /* The shell's host name. render() takes a parameter called `host` (the element to mount
-     * into), which shadows this file's `host` inside it — hence a reader defined out here. */
-    function _shellHost(){ return host; }
 
     /* `host` is optional and is how PosterChan Code puts a real shell in its bottom panel.
      *
@@ -1772,12 +1995,19 @@
       /* A RENDER WHILE ALREADY MOUNTED IS A REPAINT, not an opening (a theme change, the same nav
        * item pressed twice, a handoff repainting its window): the shell on screen stays on screen.
        * Captured before unmount, which keeps `sid` but forgets that anything was mounted. */
+      /* The opening below is decided for the PRIMARY pane, exactly as it was for the one terminal;
+       * `attach`/`connect`/`label` here are that pane's. The other panes come back from a repaint as
+       * they were, or from the saved layout (_restorePanes) once the session list is known. */
+      const P = panes[0], sid = P.sid, label = P.label;
+      const attach = (id, h, l) => P.attach(id, h, l), connect = (h) => P.connect(h);
       const repaint = !!mounted && !!sid;
-      const onScreen = { sid, host: _shellHost(), label };   // `host` here is the ELEMENT
+      const onScreen = { sid, host: P.host, label };   // `host` here is the ELEMENT
+      const others = repaint ? panes.slice(1).map(p => p.sid) : null;
       unmount();
       const epoch = ++renderEpoch;
       feed.innerHTML = _shellHtml();
       mounted = feed;
+      _mountPanes(repaint ? null : _layoutLoad(), repaint);
       _baseline = null;
       _state('');
       /* The collector is built here rather than on the first keystroke: it has to be watching the
@@ -1789,7 +2019,7 @@
       if(epoch !== renderEpoch || mounted !== feed) return;
       _wire();
       { const hb = $('#tty-hist'); if(hb) hb.onclick = _histToggle; }
-      document.addEventListener('visibilitychange', _wake);
+      document.addEventListener('visibilitychange', _wakeAll);
       if(ok && !hosts.length) _state('no hosts', 'err', 'No hosts configured — add some in Admin → Nodes.');
       if(ok){
         await _sessions();
@@ -1799,7 +2029,7 @@
          *    shell, not a new one. */
         if(adopt && (isLocalSid(adopt) ? LOCAL() : live.some(x => x.sid === adopt))){
           const s0 = live.find(x => x.sid === adopt) || {};
-          attach(adopt, s0.host || (isLocalSid(adopt) ? 'local' : _shellHost()), s0.label || label);
+          attach(adopt, s0.host || (isLocalSid(adopt) ? 'local' : P.host), s0.label || label);
         }
         /* 2. A REPAINT keeps the shell that was already on screen. */
         else if(repaint && (isLocalSid(onScreen.sid) ? LOCAL() : live.some(x => x.sid === onScreen.sid))){
@@ -1831,10 +2061,11 @@
             const s0 = live.find(x => x.sid === prev);
             attach(prev, s0 && s0.host, s0 && s0.label);
           }else{
-            if(prev) _remember('');   // it is gone; do not offer to reattach to nothing
+            if(prev) P.remember('');   // it is gone; do not offer to reattach to nothing
             if(!live.length && hosts.length) connect();
           }
         }
+        _restorePanes(others || _layoutSids);
       }
       // xterm is a separate <script>; if it has not run yet the screen would be a blank box with no
       // explanation, which is the failure mode this app has been bitten by all week.
@@ -1843,28 +2074,203 @@
 
     function unmount(){
       clearTimeout(_hostsRetry); _hostsRetry = null;
-      ++openEpoch;
       ++renderEpoch;                 // every pending continuation now belongs to a dead screen
       // LEAVING THE SCREEN IS DETACHING, never killing: the shell keeps running and the id is kept,
       // so coming back reattaches. This used to close the socket AND that was the end of the session.
-      _bye();
-      document.removeEventListener('visibilitychange', _wake);
-      if(ro){ try{ ro.disconnect(); }catch(_){} ro = null; }
-      if(_glFontsOff){ _glFontsOff(); _glFontsOff = null; }
-      if(_glAddon){ try{ _glAddon.dispose(); }catch(_){} _glAddon = null; }   // before the terminal it belongs to
-      if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
-      ++bottomPinEpoch;
-      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
-      if(handoffRestoreT){ clearTimeout(handoffRestoreT); handoffRestoreT = null; }
-      scrollingByUs = false;
-      _fitPixels = '';
-      if(_fitT){ clearTimeout(_fitT); _fitT = null; }
-      window.removeEventListener('resize', _fit);
+      for(const p of panes){ p._bye(); p._dispose(); }
+      document.removeEventListener('visibilitychange', _wakeAll);
+      window.removeEventListener('resize', _onResize);
       document.removeEventListener('pointerdown', _menuOutside, true);
       /* The relay subscription goes with the screen. Left running it decrypts other devices'
        * commands into a ring nothing will ever draw, for the rest of the session. */
       _histStop();
       mounted = null;
+    }
+
+    // Come back to a foregrounded tab immediately rather than waiting out the backoff — a phone
+    // unlocking is the single most common way this socket dies. Every pane's socket, not only the
+    // focused one's.
+    function _wakeAll(){
+      if(document.visibilityState !== 'visible') return;
+      if(mounted) _hostsRefresh();
+      for(const p of panes) p._wake();
+    }
+    function _refitAll(){ for(const p of panes) p.refit(); }
+    function _onResize(){ _layoutApply(); for(const p of panes) p.fit(); }
+
+    /* ── SPLIT VIEW ────────────────────────────────────────────────────────────────────────────
+     *
+     * "terminal add way to split view two tabs or more or grid". Each pane is a live, independent
+     * session (its own xterm, transport, reconnect and PTY size); the focused one is outlined and is
+     * what the key bar, the catcher, find and the tab strip act on. Split right/down ADDS a pane,
+     * Grid fills four, and closing a pane DETACHES its shell -- it stays on the strip as a tab,
+     * because a layout change is not a reason to end anybody's build.
+     *
+     * ON A PHONE (<= 820px) THE PANES STACK, top to bottom, whatever the layout says: side by side
+     * at 390px is two 25-column shells, and nothing prints usefully at 25 columns. The layout itself
+     * is kept, so the same device widened again (a tablet rotated) shows it as chosen.
+     *
+     * The layout is remembered PER DEVICE (localStorage), as a convenience: an unreadable or refused
+     * store simply opens one pane, which is what the Terminal always did. */
+    const LAYOUT_KEY = 'pc_tty_layout';
+    let _layoutSids = [];                    // the saved panes' sessions, for _restorePanes
+    function _layoutLoad(){
+      try{
+        const o = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null');
+        const n = Math.min(MAX_PANES, Number(o && o.n) | 0);
+        if(o && ['cols', 'rows', 'grid'].includes(o.mode) && n > 1)
+          return { mode: o.mode, n, sids: Array.isArray(o.sids) ? o.sids.map(x => String(x || '')) : [] };
+      }catch(_){}
+      return null;
+    }
+    function _layoutSave(){
+      try{
+        if(panes.length < 2) localStorage.removeItem(LAYOUT_KEY);
+        else localStorage.setItem(LAYOUT_KEY, JSON.stringify({ mode: layout, n: panes.length, sids: panes.map(p => p.sid) }));
+      }catch(_){}
+    }
+    function _paneEl(){
+      const el = document.createElement('div');
+      el.className = 'tty-pane';
+      el.innerHTML = '<div class="tty-pane-head"><b class="tty-pane-name"></b><button class="tty-pane-close"'
+        + ' title="Close this pane (the shell keeps running as a tab)" aria-label="Close pane">×</button></div>'
+        + '<div class="tty-fit"></div>'
+        + '<div class="tty-pane-empty" hidden>Pick a tab above to show it here, or + for a new shell.</div>';
+      return el;
+    }
+    /* Give every pane an element in the freshly drawn screen. The first one is in _shellHtml's markup
+     * already (it carries #tty-screen); the rest are made here. */
+    function _mountPanes(saved, repaint){
+      if(!panes.length) panes.push(_makePane());
+      if(saved){
+        layout = saved.mode;
+        while(panes.length < saved.n) panes.push(_makePane());
+        panes.length = Math.min(panes.length, saved.n);
+        _layoutSids = saved.sids.slice(1);
+      }else if(!repaint){
+        layout = 'single'; panes.length = 1; _layoutSids = [];
+      }
+      if(!panes.includes(cur)) cur = panes[0];
+      if(!repaint) cur = panes[0];
+      const grid = mounted && mounted.querySelector('.tty-panes');
+      if(!grid) return;
+      const first = grid.querySelector('.tty-pane');
+      panes.forEach((p, i) => {
+        const el = i === 0 && first ? first : _paneEl();
+        if(el !== first) grid.appendChild(el);
+        p.bind(el);
+      });
+      _layoutApply();
+    }
+    function _narrow(){
+      try{ if(window.matchMedia && window.matchMedia('(max-width: 820px)').matches) return true; }catch(_){}
+      return false;
+    }
+    /* Arrange the panes. A CSS grid, so every pane gets a whole share of the screen and each one's
+     * ResizeObserver tells ITS PTY its own size. */
+    function _layoutApply(){
+      const grid = mounted && mounted.querySelector('.tty-panes');
+      if(!grid) return;
+      const n = panes.length;
+      let c = 1, r = 1;
+      if(n > 1){
+        if(_narrow() || layout === 'rows'){ c = 1; r = n; }
+        else if(layout === 'cols'){ c = n; r = 1; }
+        else { c = Math.ceil(Math.sqrt(n)); r = Math.ceil(n / c); }
+      }
+      grid.style.gridTemplateColumns = 'repeat(' + c + ', minmax(0, 1fr))';
+      grid.style.gridTemplateRows = 'repeat(' + r + ', minmax(0, 1fr))';
+      grid.dataset.layout = n > 1 ? layout : 'single';
+      const wrap = mounted.querySelector('.tty-wrap');
+      if(wrap) wrap.classList.toggle('tty-split', n > 1);
+      panes.forEach((p, i) => {
+        const el = p.root(); if(!el) return;
+        el.classList.toggle('focused', n > 1 && p === cur);
+        /* #tty-screen stays on the PRIMARY pane: the checks and the desktop measure it. */
+        const box = el.querySelector('.tty-fit');
+        if(box){ if(i === 0) box.id = 'tty-screen'; else box.removeAttribute('id'); }
+        p.paintHead();
+      });
+    }
+    function _paintSplitMenu(){
+      const many = panes.length > 1, full = panes.length >= MAX_PANES;
+      for(const id of ['#tty-split-right', '#tty-split-down']){ const b = $(id); if(b) b.disabled = full; }
+      { const b = $('#tty-split-grid'); if(b) b.disabled = full && layout === 'grid'; }
+      for(const id of ['#tty-pane-close', '#tty-pane-single']){ const b = $(id); if(b) b.classList.toggle('hidden', !many); }
+    }
+    /* Make `p` the pane you are typing into: the status line, Detach/Kill and the strip follow it. */
+    function _setCur(p){
+      if(!p || p === cur || !panes.includes(p)) return;
+      cur = p;
+      for(const q of panes){ const el = q.root(); if(el) el.classList.toggle('focused', panes.length > 1 && q === cur); }
+      const st = p.st || [''];
+      _state(st[0], st[1], st[2]);
+      _chrome(!!p.chromeOn);
+      _paintSessions();
+    }
+    /* What a new pane shows: a running shell nobody has on screen (the one you most likely split
+     * for), else a NEW shell on the host the focused pane is on -- never a second view of a shell
+     * that is already in a pane. */
+    function _fillPane(p, o){
+      o = o || {};
+      const shown = new Set(panes.map(x => x.sid).filter(Boolean));
+      const free = x => x && x.sid && !shown.has(x.sid) && x.alive !== false
+        && (!isLocalSid(x.sid) || !!LOCAL());
+      const pick = (o.prefer && live.find(x => x.sid === o.prefer && free(x))) || live.find(free);
+      if(pick){ p.attach(pick.sid, pick.host, pick.label); return; }
+      /* Opening the screen never starts shells on its own for the extra panes: one whose shell is
+       * gone stays empty and says how to fill it. Only a split -- somebody asking for a pane -- does. */
+      if(!o.spawn){ p.paintHead(); return; }
+      const h = hosts.find(x => x && x.name === o.onHost) ? o.onHost : _defaultHost();
+      if(h) p.connect(h);
+    }
+    function _addPane(onHost){
+      const grid = mounted && mounted.querySelector('.tty-panes');
+      if(!grid || panes.length >= MAX_PANES) return null;
+      const p = _makePane();
+      panes.push(p);
+      const el = _paneEl(); grid.appendChild(el); p.bind(el);
+      _setCur(p);
+      _layoutApply();
+      _fillPane(p, { spawn: true, onHost });
+      return p;
+    }
+    function _split(mode){
+      if(!mounted) return;
+      const onHost = cur && cur.host;
+      if(mode === 'grid'){
+        layout = 'grid';
+        if(panes.length >= MAX_PANES){ _layoutApply(); _layoutSave(); return; }
+        while(panes.length < MAX_PANES && _addPane(onHost)){}
+      }else{
+        if(panes.length >= MAX_PANES){ toast('At most ' + MAX_PANES + ' panes'); return; }
+        layout = mode;
+        _addPane(onHost);
+      }
+      _layoutApply(); _layoutSave(); _paintSessions(); _focus();
+    }
+    /* Close a pane. Its shell is DETACHED, not killed -- it stays on the strip as a tab. */
+    function _closePane(p){
+      if(!p || panes.length < 2 || !panes.includes(p)) return;
+      const i = panes.indexOf(p), el = p.root();
+      p._bye(); p._dispose();
+      if(el) el.remove();
+      panes.splice(i, 1);
+      if(panes.length < 2) layout = 'single';
+      if(cur === p){ cur = null; _setCur(panes[Math.min(i, panes.length - 1)]); }
+      /* The pane now first is the primary: it is "the session this browser tab left". */
+      panes[0].remember(panes[0].sid);
+      _layoutApply(); _layoutSave(); _paintSessions();
+      for(const q of panes) q.fit();
+      _focus();
+    }
+    function _singleView(){ for(const p of panes.slice()) if(p !== cur) _closePane(p); }
+    /* After a render: give the other panes their shells back -- the ones they had (a repaint) or the
+     * ones the saved layout names, when those are still running. */
+    function _restorePanes(sids){
+      panes.slice(1).forEach((p, i) => _fillPane(p, { prefer: (sids || [])[i] || '' }));
+      _layoutSids = [];
+      _layoutApply();
     }
 
     /* Open the terminal ON THIS COMPUTER. Sets the intent and lets whoever is routing views do the
@@ -1877,6 +2283,7 @@
        * nothing re-runs the block that reads `_want`. It is also the important idempotence case:
        * a second shortcut focuses the current shell; it must not manufacture another PTY. */
       if(mounted && hosts.some(h => h && h.local)){
+        const term = _curTerm();
         if(term) _focus();
         return true;
       }
@@ -1886,14 +2293,15 @@
 
     /* Move this terminal VIEW to another monitor without changing the shell behind it. The PTY is
      * owned by the desktop/server and is therefore attachable from the destination renderer; only
-     * its id must cross before render() runs. */
+     * its id must cross before render() runs. The FOCUSED pane is what crosses. */
     function adoptSession(id){
       return acceptHandoff({activeSid:id});
     }
 
     function handoffState(){
-      const current=_scrollChoice();if(sid)tabScroll.set(String(sid),current);
-      return {activeSid:String(sid||''),host:String(host||''),label:String(label||''),
+      const P=cur||panes[0],sid=P.sid;
+      const current=P.scrollChoice();if(sid)tabScroll.set(String(sid),current);
+      return {activeSid:String(sid||''),host:String(P.host||''),label:String(P.label||''),
         tabs:live.map(x=>({sid:String(x.sid||''),host:String(x.host||''),label:String(x.label||''),
           scroll:tabScroll.get(String(x.sid||''))||null}))
           .filter(x=>x.sid),scroll:current};
@@ -1910,17 +2318,17 @@
       handoffOrder=tabs.map(x=>x.sid);
       if(tabs.length) live=tabs;
       const active=tabs.find(x=>x.sid===id);
-      host=String(state.host||(active&&active.host)||host||'');
-      label=String(state.label||(active&&active.label)||'');
-      handoffScroll=state.scroll&&typeof state.scroll==='object'?{
-        pinned:state.scroll.pinned!==false,aboveBottom:Math.max(0,Number(state.scroll.aboveBottom)||0)}:null;
-      followBottom=!handoffScroll||handoffScroll.pinned!==false;
-      _remember(id);
+      /* It lands in the PRIMARY pane, which the next render opens first. */
+      const P=panes[0];cur=P;
+      P.adopt({id,host:String(state.host||(active&&active.host)||P.host||''),
+        label:String(state.label||(active&&active.label)||''),
+        scroll:state.scroll&&typeof state.scroll==='object'?{
+          pinned:state.scroll.pinned!==false,aboveBottom:Math.max(0,Number(state.scroll.aboveBottom)||0)}:null});
       _want=isLocalSid(id)?'local':'';
       _adopt=id;
-      cursor=0;
       return true;
     }
+
 
     /* TYPE A COMMAND AT THE PROMPT, NEVER RUN IT (the window ✨ panel's "Type in terminal"). One
      * line of printable text only: a newline or carriage return IS Enter, and ESC and the other
@@ -1932,7 +2340,8 @@
       return !!t && t.length <= 400 && !/[\x00-\x1f\x7f]/.test(t);
     }
     function typeIn(text){
-      if(!term || !mounted || !connected || !typeable(text)) return false;
+      const term = _curTerm();
+      if(!term || !mounted || !cur.connected || !typeable(text)) return false;
       try{ term.paste(String(text)); }catch(_){ return false; }
       try{ term.focus(); }catch(_){ }
       return true;
@@ -1947,13 +2356,19 @@
       return true;
     }
     const box0 = () => document.getElementById('tty-screen');
-    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected, typeIn, run, _typeable: typeable,
-                      openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff,
+    panes.push(_makePane()); cur = panes[0];
+    window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => !!(cur && cur.connected), typeIn, run, _typeable: typeable,
+                      openLocal, sessionId: () => (cur ? cur.sid : ''), adoptSession, handoffState, acceptHandoff,
                       _barUp: () => { _barDrag = false; },
                       // Read-only, for checks: the live grid and which renderer drew it (a GPU-drawn terminal
-                      // has no `.xterm-rows` children to count).
-                      _grid: () => term ? { rows: term.rows, cols: term.cols,
-                        gpu: !!(box0() && box0().querySelector('.xterm-screen canvas')) } : null };
+                      // has no `.xterm-rows` children to count). The PRIMARY pane's, which owns #tty-screen.
+                      _grid: () => { const g = panes[0] && panes[0].grid();
+                        return g ? { rows: g.rows, cols: g.cols,
+                          gpu: !!(box0() && box0().querySelector('.xterm-screen canvas')) } : null; },
+                      // Read-only, for checks: every pane, in screen order -- its shell, its grid, and
+                      // whether it is the focused one.
+                      _panes: () => panes.map(p => ({ sid: p.sid, focused: p === cur, layout,
+                        grid: p.grid(), connected: p.connected })) };
   }
   init();
 })();

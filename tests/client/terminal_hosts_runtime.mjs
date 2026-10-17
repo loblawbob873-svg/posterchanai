@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
 const source = fs.readFileSync(process.argv[2] || new URL('../../static/js/client/term.js', import.meta.url), 'utf8');
-const code = source.slice(source.indexOf('    function _withLocal('), source.indexOf('    function _mountTerm('));
+const code = source.slice(source.indexOf('    function _withLocal('), source.indexOf('    /* ── A PANE: ONE SHELL ON SCREEN'));
 const remote = {name:'server',label:'user@server',keyed:true};
 function setup(local=true){
   let reply=async()=>({ok:true,status:200,json:async()=>({hosts:[remote]})}), key='alice', auth=async()=>{};

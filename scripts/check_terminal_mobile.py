@@ -73,7 +73,7 @@ PAGE = """<!doctype html><meta charset="utf-8">
       '<span class="tty-sess tty-tab tty-ssh' + (i ? '' : ' active') + '"><i class="tty-dot"></i><b>' + h + '</b>' +
       '<button class="tty-kill">×</button></span>').join('') +
     '<button class="tty-tab-new" id="tty-tab-new">+</button>';
-  for(const id of ['tty-new-menu','tty-more-menu','tty-find-panel','tty-hist-panel'])
+  for(const id of ['tty-new-menu','tty-more-menu','tty-split-menu','tty-find-panel','tty-hist-panel'])
     document.getElementById(id).hidden = true;
   document.getElementById('tty-state').textContent = 'connected to server1';
   const out = {};
