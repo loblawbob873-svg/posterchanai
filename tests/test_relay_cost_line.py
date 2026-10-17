@@ -63,10 +63,36 @@ def test_a_loopback_connection_is_this_nodes_own_even_when_its_source_was_rewrit
     natted, outside = Conn("127.0.0.1"), Conn("192.168.0.2")
     srv._conn_ips = {natted: "192.168.0.2", outside: "192.168.0.1"}
     assert S.RelayServer._req_origin(srv, natted, "repo1a2b") == "L:repo"
-    assert S.RelayServer._req_origin(srv, outside, "repo1a2b") == "R"
+    assert S.RelayServer._req_origin(srv, outside, "repo1a2b") == "R:repo"
 
 
 def test_a_library_read_by_label_names_the_app():
     shape = S.RelayServer._req_shape([{"kinds": [30078], "authors": ["a" * 64], "#l": ["pcai-notes"], "limit": 5000}])
     assert shape == "[30078|a1|#l=pcai-notes]", shape
     assert "aaaa" not in S.RelayServer._req_shape([{"kinds": [1], "authors": ["a" * 64]}]), "an author key was printed"
+
+
+def test_one_connection_asking_hundreds_of_times_a_minute_is_named_in_the_log(caplog, monkeypatch):
+    """2026-10-17: one desktop client sent ~15 REQs/s for 12 minutes (1.1 GB) and nothing named it."""
+    srv = S.RelayServer.__new__(S.RelayServer)
+
+    class Conn:
+        _pcai_ip = "192.168.0.102"
+    c, t = Conn(), [1000.0]
+    monkeypatch.setattr(S.time, "time", lambda: t[0])
+    flt = [{"kinds": [30078], "authors": ["a" * 64], "until": 5}]
+    for _ in range(400):
+        srv._note_heavy(c, "R:sub-notes-", flt, 380)
+    t[0] += 61
+    with caplog.at_level(logging.WARNING):
+        srv._note_heavy(c, "R:sub-notes-", flt, 380)
+    msg = [r.getMessage() for r in caplog.records if "heavy client" in r.getMessage()]
+    assert msg and "400 REQs" in msg[0] and "192.168.0.102" in msg[0] and "R:sub-notes-" in msg[0] \
+        and "[30078|a1|u]" in msg[0], msg
+    caplog.clear()
+    for _ in range(10):
+        srv._note_heavy(c, "R:sub-notes-", flt, 380)
+    t[0] += 61
+    with caplog.at_level(logging.WARNING):
+        srv._note_heavy(c, "R:sub-notes-", flt, 380)
+    assert not [r for r in caplog.records if "heavy client" in r.getMessage()], "an ordinary client was reported"

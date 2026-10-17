@@ -844,9 +844,34 @@ class RelayServer:
                     or here.startswith("127.") or here == "::1"):
                 m = re.match(r"[A-Za-z_-]{1,12}", str(sub_id or ""))
                 return "L:" + (m.group(0) if m else "?")
-            return "R"
+            # A remote client's id prefix too: the web client names each subscription after the file that opened
+            # it (relay.js `_callerTag`, "sub-notes-..."), and without it a client paging 1.1 GB through this relay
+            # could not be traced to its code (2026-10-17).
+            m = re.match(r"[A-Za-z_-]{1,14}", str(sub_id or ""))
+            return "R:" + (m.group(0) if m else "?")
         except Exception:                               # noqa: BLE001
             return "?"
+
+    HEAVY_REQS_PER_MIN = 300
+
+    def _note_heavy(self, conn, origin: str, filters, sent: int) -> None:
+        """ONE CONNECTION ASKING HUNDREDS OF TIMES A MINUTE IS NAMED IN THE LOG, once a minute: its address, the id
+        prefix (which client code) and the filter shape. 2026-10-17 a single desktop client sent ~15 REQs a second
+        for 12 minutes (1.1 GB) and the cost line could only say "R [30078|a1|u]"."""
+        try:
+            now = time.time()
+            st = getattr(conn, "_pcai_heavy", None)
+            if st is None or now - st[0] >= 60:
+                if st is not None and st[1] >= self.HEAVY_REQS_PER_MIN:
+                    logger.warning("[nostr-relay] heavy client: %d REQs (%d frames) in %ds from ip=%s %s %s",
+                                   st[1], st[2], int(now - st[0]), getattr(conn, "_pcai_ip", "") or "?",
+                                   origin, self._req_shape(filters))
+                st = [now, 0, 0]
+                setattr(conn, "_pcai_heavy", st)
+            st[1] += 1
+            st[2] += int(sent or 0)
+        except Exception:                               # noqa: BLE001 -- a statistic never costs a request
+            pass
 
     def _note_req_cost(self, filters, sent: int, origin: str = "") -> None:
         try:
@@ -2271,7 +2296,9 @@ class RelayServer:
             sent += 1
             if n % 512 == 511:
                 await asyncio.sleep(0)
-        self._note_req_cost(filters, sent, self._req_origin(conn, sub_id))
+        _origin = self._req_origin(conn, sub_id)
+        self._note_req_cost(filters, sent, _origin)
+        self._note_heavy(conn, _origin, filters, sent)
         # SAY WHEN A PRIVATE REPO WAS LEFT OUT OF AN AUTHOR-BOUND ANSWER. Withholding one silently
         # (an ordinary EOSE) is indistinguishable from "this person has no such repo", so a client
         # has nothing to act on -- the owner's own Git page listed none of their private repos, ever.

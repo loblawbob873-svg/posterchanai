@@ -35,6 +35,20 @@
      ReferenceError on every relay, refused all of them, and hung seven tests. A predicate this small
      should not be able to fail because of what is missing around it. The host must be non-empty, or
      a bare "wss://" would pass. */
+  /* WHO ASKED, IN THE SUBSCRIPTION ID: the client file whose code opened it ("sub-notes-x7k2", "sub-dms-...").
+   * 2026-10-17 one desktop client pulled its whole private library, 1.1 GB in ~12 minutes, and took the relay over
+   * a core -- and nothing could say which code did it: every subscription was "sub" + random. The relay's cost
+   * line prints this prefix. A file NAME only, never data; "" when the stack cannot be read. */
+  function _callerTag(){
+    try{
+      const lines = String(new Error().stack || '').split('\n');
+      for(const l of lines){
+        const m = l.match(/\/([A-Za-z0-9_-]+)\.js(?:\?[^:]*)?:\d+/);
+        if(m && m[1] !== 'relay') return '-' + m[1].replace(/[^A-Za-z_-]/g, '').slice(0, 7) + '-';
+      }
+    }catch(_){ }
+    return '';
+  }
   var _WSURL = /^wss?:\/\/[^\s/?#]+/i;
   function _isRelayUrl(u){
     return _WSURL.test(String(u || '').trim());
@@ -745,7 +759,7 @@
 
     // filters: array of filter objects. Returns subId. live=true keeps it open for new events.
     subscribe(filters, { onEvent, onEose, live=true, collectPages=false } = {}){
-      const id = 'sub' + Math.random().toString(36).slice(2,9);
+      const id = 'sub' + _callerTag() + Math.random().toString(36).slice(2,9);
       const sub = { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set(), sent: new Set() };
       if(collectPages) Object.assign(sub,{pageIds:new Map(),pageBounds:new Map(),pageAsked:new Set(),pageEosed:new Set(),pagePending:0,pageInvalid:false,pageClosed:false});
       this._subs.set(id, sub);
