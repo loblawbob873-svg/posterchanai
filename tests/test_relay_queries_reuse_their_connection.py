@@ -136,3 +136,14 @@ def test_many_users_keys_never_park_more_than_the_cap(relay, monkeypatch):  # no
     assert len(made) == 30
     assert parked <= nostr_store._QUERY_POOL_TOTAL, parked
     assert len(still_open) <= nostr_store._QUERY_POOL_TOTAL, ("idle sockets past the cap were left open", len(still_open))
+
+
+def test_a_query_names_the_module_that_asked_so_the_relay_cost_line_can_say_who():
+    """Every query was "repo...", so the relay's busiest shape ([30078|a1|#d], up to 839 per 5 min on server1)
+    could not be traced to a caller."""
+    def asked_from_here():
+        def inner():
+            return nostr_store._caller_tag()
+        return inner()
+    tag = asked_from_here()
+    assert tag == "qtest_relay_-", tag

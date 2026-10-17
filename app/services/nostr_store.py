@@ -275,6 +275,27 @@ def _reap_closed_pools() -> None:
                 _drop_raw(ws)
 
 
+_SKIP_MODULES = ("app.services.nostr_store", "asyncio", "app.services.doc_table", "concurrent", "threading")
+
+
+def _caller_tag() -> str:
+    """The subscription id names WHO asked: the first module outside this one (and the DocTable plumbing), so the
+    relay's cost line -- which prints a loopback query's id prefix -- says which feature its top answers go to.
+    Every query here used to be "repo...", and the relay's busiest shape on server1 ([30078|a1|#d], up to 839 per
+    5 minutes) could not be traced to a caller."""
+    import sys
+    f = sys._getframe(2)
+    for _ in range(25):
+        if f is None:
+            break
+        mod = f.f_globals.get("__name__", "")
+        if mod and not mod.startswith(_SKIP_MODULES):
+            name = mod.rsplit(".", 1)[-1]
+            return ("q" + "".join(c for c in name if c.isalpha() or c == "_"))[:12] + "-"
+        f = f.f_back
+    return "repo"
+
+
 def _pk_of(auth_seckey) -> str:
     if not auth_seckey:
         return ""
@@ -360,7 +381,7 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     """
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"
-    sub = "repo" + os.urandom(4).hex()
+    sub = _caller_tag() + os.urandom(4).hex()
     try:
         idle = _query_idle(port, auth_seckey)
         for attempt in (0, 1):
