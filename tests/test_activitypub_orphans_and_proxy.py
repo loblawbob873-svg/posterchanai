@@ -197,3 +197,19 @@ def test_the_proxys_direct_leg_refuses_private_addresses():
         with pytest.raises(Exception):
             asyncio.run(_public_address(host, 443))
     assert asyncio.run(_public_address("8.8.8.8", 443)) == "8.8.8.8"
+
+
+def test_a_proxy_that_connects_and_then_never_answers_is_asked_again_directly_and_remembered(monkeypatch):
+    """2026-10-17: through Tor two of five Pleroma inboxes hung 23-30 s while direct answered in 0.1 s, and the
+    worker logged 113-146 ReadTimeouts per server in 6 h -- deliveries lost, because only CONNECT errors fell back."""
+    remote._direct_until.clear()
+    t = _transport(monkeypatch, proxy_fail=httpx.ReadTimeout("no answer through the circuit"))
+    assert asyncio.run(_get(t, "https://cawfee.example/inbox")).status_code == 200, "the delivery was lost"
+    assert [h for h, _ in t._direct.calls] == ["cawfee.example"]
+    assert t._proxy.calls[0][1]["read"] <= remote._PROXY_READ, "a proxied answer may eat the whole delivery deadline"
+    assert t._direct.calls[0][1]["read"] == 12.0, "the direct retry kept the proxy's shortened read timeout"
+    asyncio.run(_get(t, "https://cawfee.example/inbox"))                  # the next request skips the proxy
+    assert len(t._proxy.calls) == 1 and len(t._direct.calls) == 2
+    asyncio.run(_get(t, "https://other.example/inbox"))                   # other servers still use it
+    assert len(t._proxy.calls) == 2
+    remote._direct_until.clear()

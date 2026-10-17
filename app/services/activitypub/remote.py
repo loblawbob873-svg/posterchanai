@@ -73,6 +73,18 @@ class _PinnedTransport(httpx.AsyncHTTPTransport):
 
 # Connection-phase failures only: nothing was sent, so trying again directly cannot double-deliver.
 _PROXY_FALLBACK_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError, httpx.PoolTimeout)
+# THE PROXY CAN ALSO CONNECT AND THEN NEVER ANSWER -- and that fell through to "delivery failed". Measured
+# 2026-10-17 from server1, the same inbox POST: 0.1-0.3 s direct to five Pleroma servers, 1.8-3 s through Tor for
+# three of them and a 23-30 s hang for the other two; the worker logged 113-146 ReadTimeouts per server in 6 h to
+# noauthority.social, cawfee.club, clubcyberia.co, tsundere.love ... so followers there missed our posts and our
+# reads of nicecrew (keys, outboxes) failed the same way. A proxied request that times out or breaks after
+# connecting is asked again DIRECTLY, once -- the same direct leg a connect failure has always taken -- and that
+# server is reached directly for _DIRECT_FOR seconds, so only the first request pays the wait.
+_PROXY_RETRY_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.WriteError,
+                       httpx.RemoteProtocolError)
+_PROXY_READ = 8.0               # a proxied answer gets this long, so the direct retry fits inside a delivery
+_DIRECT_FOR = 3600.0
+_direct_until: dict = {}        # host -> monotonic time until which it is reached directly
 
 
 def _proxy_url() -> str:
@@ -104,19 +116,30 @@ class _ProxyFirstTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request):
         host = request.url.host
-        if self._proxy is None or config.lan_trusted(host):
+        if self._proxy is None or config.lan_trusted(host) or _direct_until.get(host, 0) > time.monotonic():
             return await self._direct.handle_async_request(request)
         await _judge(host, request.url.port or 443)
         # Tor builds a circuit before the tunnel opens, and the proxy tries a second daemon before
         # going direct: the connect phase needs more than the 6s a direct dial gets.
-        t = dict(request.extensions.get("timeout") or {})
+        plain = dict(request.extensions.get("timeout") or {})
+        t = dict(plain)
         t["connect"] = max(float(t.get("connect") or 0), 25.0)
         t["pool"] = max(float(t.get("pool") or 0), 25.0)
+        t["read"] = min(float(t.get("read") or _PROXY_READ), _PROXY_READ)
         request.extensions = {**request.extensions, "timeout": t}
         try:
             return await self._proxy.handle_async_request(request)
         except _PROXY_FALLBACK_ERRORS as e:
             logger.info("[activitypub] %s via the proxy failed (%s); connecting directly", host, type(e).__name__)
+            request.extensions = {**request.extensions, "timeout": plain}
+            return await self._direct.handle_async_request(request)
+        except _PROXY_RETRY_ERRORS as e:
+            _direct_until[host] = time.monotonic() + _DIRECT_FOR
+            if len(_direct_until) > 20000:
+                _direct_until.clear()
+            logger.info("[activitypub] %s via the proxy stalled (%s); asking directly, and directly for the next "
+                        "hour", host, type(e).__name__)
+            request.extensions = {**request.extensions, "timeout": plain}
             return await self._direct.handle_async_request(request)
 
     async def aclose(self):
