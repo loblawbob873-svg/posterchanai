@@ -50,3 +50,13 @@ def test_the_cost_line_names_the_queries_the_answers_go_to(caplog):
     assert line.index("[30078|a1|#d] x3 -> 600 frames") < line.index("[1,6||s] x1 -> 40 frames"), line
     assert "a" * 64 not in line, "a pubkey reached the log"
     assert srv._req_cost == {}, "the next window must start from zero"
+
+
+def test_a_loopback_connection_is_this_nodes_own_even_when_its_source_was_rewritten():
+    """server1's NAT rewrites the source of loopback connections to its LAN address: the relay's own end (127.0.0.1)
+    is what says the asker is a process on this machine. Read by the peer, every one of them was tagged remote."""
+    srv = S.RelayServer.__new__(S.RelayServer)
+    natted, outside = SimpleNamespace(local_address=("127.0.0.1", 3052)), SimpleNamespace(local_address=("192.168.0.2", 3052))
+    srv._conn_ips = {natted: "192.168.0.2", outside: "192.168.0.1"}
+    assert S.RelayServer._req_origin(srv, natted, "repo1a2b") == "L:repo"
+    assert S.RelayServer._req_origin(srv, outside, "repo1a2b") == "R"
