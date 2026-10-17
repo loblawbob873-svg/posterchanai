@@ -6287,10 +6287,24 @@
       // Wait for a live socket first: a REQ fired while still CONNECTING is silently dropped, and since the
       // latch above is never re-armed on an EMPTY result, one cold call pinned FOLLOWERS at 0 for the whole
       // session (the "0 followers on first open, fine after reload" symptom).
+      /* INCREMENTAL, like the notifications seed: 1,000 full contact lists per start (every PosterChanOS window,
+       * twice when an empty answer re-armed it) was the relay's main query cost (py-spy, 2026-10-16). This
+       * account's followers are kept on the device; only lists saved since the last look are asked for, and a
+       * full re-read once a day lets an unfollow drop out. */
+      const KEY='pc_followers:'+ME.pubkey, now=Math.floor(Date.now()/1000);
+      let kept=null; try{ kept=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){ kept=null; }
+      // `full`: the last complete re-read (at most a day old, or the list is re-read whole); `at`: the last look.
+      const fresh = !!(kept && Array.isArray(kept.pks) && now - (+kept.full||0) < 86400 && +kept.at);
+      const flt = { kinds:[3], '#p':[ME.pubkey], limit:1000 };
+      if(fresh){ kept.pks.forEach(pk=>FOLLOWERS.add(pk)); flt.since = (+kept.at) - 600; }
       const live = await Relay.ready();
-      const evs = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
+      const evs = await Relay.query([flt]);
       evs.forEach(e=> FOLLOWERS.add(e.pubkey));
-      if(!live && !evs.length) _myFollowersLoaded = false;   // never reached a relay → allow a genuine retry
+      if(evs.complete){
+        const pks = fresh ? [...FOLLOWERS] : evs.map(e=>e.pubkey);
+        try{ localStorage.setItem(KEY, JSON.stringify({ full: fresh ? +kept.full : now, at: now, pks })); }catch(_){}
+      }
+      if(!live && !evs.length && !fresh) _myFollowersLoaded = false;   // never reached a relay → allow a genuine retry
     }catch(_){ _myFollowersLoaded = false; }   // allow a retry if the query failed
   }
   async function toggleMute(pk){

@@ -137,11 +137,21 @@ window.PCNotifsFactory = function(dep){
       // "never recorded", so the next time they re-saved their contact list (~25 of them do daily) the
       // live sub scored it genuine=true and pinned it at NOW: an old follower resurfacing as a brand-new
       // "followed you", with a badge. Keep the best (longest) answer across attempts.
+      /* INCREMENTAL AFTER THE FIRST TIME. The seed only needs to know WHO follows you, and every follower it
+       * ever found is already kept here (pc_follow_seen). Pulling up to 1,000 full contact lists -- each one
+       * thousands of p-tags -- in every window, on every start, was 40% of the relay's CPU (py-spy, server1,
+       * 2026-10-16: 346 ms per request for one busy account). After a complete seed on this device only the
+       * lists saved since then are asked for. */
+      const SEED_AT='pc_follow_seed_at:'+S.ME.pubkey, known=Object.keys(_followSeen).length>0;
+      let lastSeed=0; try{ lastSeed=+localStorage.getItem(SEED_AT)||0; }catch(_){}
+      const incremental=!!(lastSeed && known);
+      const seedFilter={ kinds:[3], '#p':[S.ME.pubkey], limit:1000 };
+      if(incremental){ seedFilter.since=lastSeed-_LIVE_SLACK; for(const k of Object.keys(_followSeen)) FOLLOWERS.add(k); }
       let followers=[], seedComplete=false;
       for(let attempt=0; attempt<4 && !seedComplete; attempt++){
         if(attempt>0) await new Promise(r=>setTimeout(r, 600*attempt));
         try{
-          const r = (await Relay.query([{ kinds:[3], '#p':[S.ME.pubkey], limit:1000 }]))||[];
+          const r = (await Relay.query([seedFilter]))||[];
           if(r.length >= followers.length) followers = r;
           if(r.complete) seedComplete = true;
         }catch(_){}
@@ -158,14 +168,16 @@ window.PCNotifsFactory = function(dep){
       // claimed as the baseline: everything absent from it would score as a never-seen follower and get
       // pinned at its re-save time. (Harmless when you genuinely have no followers — there's no kind-3
       // to mis-pin.)
-      _followSeeded = seedComplete && followers.length>0;
+      _followSeeded = seedComplete && (followers.length>0 || incremental);
+      if(seedComplete){ try{ localStorage.setItem(SEED_AT, String(Math.floor(Date.now()/1000))); }catch(_){} }
       renderNotificationsSoon();   // reflect the seeded ordering once the async seed lands
     }catch(_){}
       // Sub B — follows (kind-3), subscribed only AFTER the seed above, so every kind-3 is judged against a
       // populated _followSeen: an existing follower re-saving their contact list is firstTime=false and
       // never resurfaces; only a pubkey we've NEVER recorded, arriving after THIS sub's own EOSE, badges as
       // a new follow. Its own _followReady (not the mentions sub's EOSE) is the backlog→live boundary.
-      Relay.subscribe([{ '#p':[S.ME.pubkey], kinds:[3], limit:150 }], {
+      // From now on only: history is the seed's. Without `since` every (re)connect replayed 150 full contact lists.
+      Relay.subscribe([{ '#p':[S.ME.pubkey], kinds:[3], since:_watchSince-_LIVE_SLACK, limit:150 }], {
         onEvent: ev => { if(ev.pubkey===S.ME.pubkey) return; _quoteHit(ev); if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
           if(!_followSeen[ev.pubkey]) _adoptPins();
