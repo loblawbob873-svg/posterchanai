@@ -226,11 +226,16 @@ cases=''.join('<testcase classname="%s" name="t" file="%s" time="0.5">%s</testca
               % (f[:-3].replace('/','.'), f, '<failure message="AssertionError: the canary text never appeared&#10;second line">tb</failure>' if (full and f==fail) else '') for f in files) \
       or '<testcase name="required"/>'
 Path(report).write_text('<testsuites><testsuite>'+cases+'</testsuite></testsuites>')
-log=os.environ.get('FULL_SEEN')
-if full and log:
+log=os.environ.get('FULL_SEEN') if full else os.environ.get('REQ_SEEN')
+if log:
     with open(log,'a') as out: out.write('\\n'.join(files)+'\\n')
 raise SystemExit(1 if (full and fail in files) else 0)
 '''
+
+
+def gate_module():
+    import runpy
+    return type('G', (), runpy.run_path(str(GATE)))
 
 
 def _full_env(tmp_path, **extra):
@@ -239,7 +244,7 @@ def _full_env(tmp_path, **extra):
     # tests/test_gate_skips_browser_for_server_only.py (the real repo's diff must not decide it here).
     extra.setdefault('PC_GATE_FULL_BROWSER', '1')
     return dict(os.environ, PYTHONPATH=str(tmp_path), XDG_CACHE_HOME=str(tmp_path / 'cache'),
-                FULL_SEEN=str(tmp_path / 'seen'), **extra)
+                FULL_SEEN=str(tmp_path / 'seen'), REQ_SEEN=str(tmp_path / 'req_seen'), **extra)
 
 
 def test_full_mode_runs_every_discovered_test_file_exactly_once(tmp_path):
@@ -247,9 +252,15 @@ def test_full_mode_runs_every_discovered_test_file_exactly_once(tmp_path):
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     seen = [line for line in (tmp_path / 'seen').read_text().splitlines() if line]
+    required = {line for line in (tmp_path / 'req_seen').read_text().splitlines() if line}
     discovered = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'tests').rglob('test_*.py')
                         if '__pycache__' not in p.parts)
-    assert sorted(seen) == discovered, 'a test file was skipped or run twice'
+    assert len(seen) == len(set(seen)), 'the full suite ran a test file twice'
+    assert set(seen) | required >= set(discovered), 'a test file was run by neither stage'
+    whole = {t for t in gate_module().TESTS if '::' not in t}
+    assert not (set(seen) & whole), 'a file the required stage ran whole was run again by the full suite'
+    narrowed = {t.split('::')[0] for t in gate_module().TESTS if '::' in t} - whole
+    assert narrowed <= set(seen), 'a file the required stage ran only PART of lost the rest of its tests'
     assert 'full suite' in result.stdout
 
 
@@ -266,7 +277,7 @@ def test_a_failure_anywhere_in_the_full_suite_blocks_the_deploy_and_names_it(tmp
 
 def test_a_shard_that_cannot_complete_blocks_the_deploy(tmp_path):
     result = subprocess.run([sys.executable, str(GATE), '--full'],
-                            env=_full_env(tmp_path, FULL_CRASH_FILE='tests/test_deploy_regression_gate.py'),
+                            env=_full_env(tmp_path, FULL_CRASH_FILE='tests/test_nitter_removed.py'),
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'did not complete' in result.stdout

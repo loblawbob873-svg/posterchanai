@@ -766,7 +766,12 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
             return 1
         print('[regressions] PASS: ' + str(len(cases)) + ' required cases, none skipped')
         if full:
-            ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser)
+            # A file the required stage just ran WHOLE (no `::test` narrowing) is not run a second time: the
+            # required stage is the stricter of the two (no skips allowed), so its pass already covers it. It was
+            # 14 of a deploy's ~66 minutes (2,316 required cases, every one repeated in the full suite).
+            whole = {t for t in required if '::' not in t}
+            ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser,
+                                         select=lambda f: f not in whole)
             if not ok:
                 if receipt:
                     Path(receipt).unlink(missing_ok=True)   # the required pass wrote it; this run failed
