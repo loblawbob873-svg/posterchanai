@@ -29,7 +29,7 @@ window.PCCardsFactory = function(dep){
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
     npubOf, observeCelebrations, openArticle, openLightbox, openPostMenu, openRepo, openStream,
     openThread, pickEmoji, profOf, publish, renderHashtag, renderProfileView, renderThread,
-    renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, translatePost, uiConfirm,
+    renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, toggleReaction, translatePost, uiConfirm,
     uiPrompt, webxdcCardHtml, webxdcFileCard, xmrForNote, xmrTipBadge, zapAmount,
   } = dep;
   /* EVERY CARD KIND IS CAUGHT HERE, not just kind 1 — and that is what stops one bad event taking a
@@ -863,11 +863,11 @@ window.PCCardsFactory = function(dep){
     const hasNoteXmr = isXmrAddr(xmrForNote(ev)) || _advertises(ev.pubkey,'monero');
     const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey))) || _advertises(ev.pubkey,'bitcoincash');
     const _rtAct = _repostAction(ev.id, counts.iRt);
-    return `<div class="acts">
+    return `<div class="rx-bar">${reactionBarInner(ev.id)}</div><div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}${_rtAct.pending?' rt-unconfirmed':''}" data-a="repost" title="${_rtAct.label}" aria-label="${_rtAct.label}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
-          <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
+          <button class="act ${liked?'on':''}" data-a="react" title="${liked?'add another reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
           <button class="act actm ${S.BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
         </div>`;
@@ -1210,7 +1210,7 @@ window.PCCardsFactory = function(dep){
   function invalidateCounts(){ CIDX = null; }
   let _cidxErrs = 0;
   function buildCounts(){
-    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, myReactIds:{}, sob:{}, tips:{}, tipN:{} };
+    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, myReactIds:{}, sob:{}, tips:{}, tipN:{}, rx:{} };
     const lastE = e => { const tg=(e&&e.tags)||[]; for(let i=tg.length-1;i>=0;i--) if(tg[i]&&tg[i][0]==='e') return tg[i][1]; return null; };
     // This index is what EVERY note card asks for (countsFor/myReaction), and CIDX is only assigned at
     // the end — so anything that throws in here doesn't cost one post's like count, it costs the whole
@@ -1239,6 +1239,11 @@ window.PCCardsFactory = function(dep){
       // ALL of mine on a post (another client may have left several) so one tap clears the lot.
       else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1;
         if(S.ME && e.pubkey===S.ME.pubkey){ c.myReact[id]=reactDisp(e); (c.myReactIds[id]=c.myReactIds[id]||[]).push(e.id); }
+        // The reaction BAR: one group per emoji, counted by distinct PEOPLE (a client that published
+        // the same emoji twice is still one person), with the ids of MY reactions in it -- removing a
+        // chip is a NIP-09 delete of exactly those, never of my other emoji on the same post.
+        { const k=rxKey(e.content), g=(c.rx[id]=c.rx[id]||{}), x=g[k]||(g[k]={rep:e, pks:new Set(), mine:[]});
+          x.pks.add(e.pubkey); if(S.ME && e.pubkey===S.ME.pubkey) x.mine.push(e.id); }
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
       else if((e.kind===6||e.kind===16)&&!_repostDeleted(e)){ c.reposts[id]=(c.reposts[id]||0)+1; if(S.ME && e.pubkey===S.ME.pubkey){c.myRt.add(id);} }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
@@ -1272,6 +1277,30 @@ window.PCCardsFactory = function(dep){
       if(!parts.length && counts.tipN) parts.push('ɱ' in t || t.XMR === 0 ? 'ɱ' : '🟢');
     }
     return parts.join(' ');
+  }
+  /* SEVERAL REACTIONS PER PERSON, the way Pleroma/Akkoma/Misskey show them: a bar of emoji chips
+   * under the post, each with how many people used it, yours highlighted. NIP-25 already allows it --
+   * every kind-7 is its own event -- so a chip is just the kind-7s of one emoji grouped together.
+   * `+`/empty IS the heart and `-` the thumbs-down (what reactDisp shows), and the emoji variation
+   * selector is not part of the identity, so ❤ and ❤️ are one chip. A custom emoji is its :shortcode:. */
+  function rxKey(content){
+    const c=String(content==null?'':content).trim();
+    if(c===''||c==='+') return '\u2764';
+    if(c==='-') return '\u{1F44E}';
+    return c.replace(/\uFE0F/g,'');
+  }
+  function reactionGroups(id){
+    if(!CIDX) buildCounts();
+    const g=CIDX.rx[id]; if(!g) return [];
+    return Object.keys(g).map(k=>{ const x=g[k], rep=x.rep;
+      const emo=(/^:[^:\s]+:$/.test(k) && (rep.tags||[]).find(t=>t[0]==='emoji'&&t[1]===k.slice(1,-1)&&t[2])) || null;
+      return { key:k, n:x.pks.size, mine:x.mine.slice(), disp:reactDisp(rep),
+               content:(rep.content==='+'||rep.content==='')?'+':String(rep.content||''), emoji:emo }; })
+      .sort((a,b)=>(b.n-a.n)||(a.key<b.key?-1:a.key>b.key?1:0));
+  }
+  // The bar's inner HTML (no whitespace between chips, so an empty bar is :empty and takes no room).
+  function reactionBarInner(id){
+    return reactionGroups(id).map(r=>`<button type="button" class="rx-chip${r.mine.length?' on':''}" data-rx="${enc(r.key)}" aria-pressed="${r.mine.length?'true':'false'}" title="${r.mine.length?'remove your reaction':'react with this'}" aria-label="${enc(r.key)} ${r.n}${r.mine.length?', yours — remove':''}"><span class="rx-e">${r.disp}</span><span class="rx-n">${r.n>999?fmtSats(r.n):r.n}</span></button>`).join('');
   }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
   function myReactionIds(id){ if(!CIDX) buildCounts(); return CIDX.myReactIds[id]||[]; }
@@ -1424,6 +1453,9 @@ window.PCCardsFactory = function(dep){
                        text:d.text, cw:d.cw, cwReason:d.cwReason});
         return;
       }
+      // A reaction chip toggles THAT emoji for you (add it, or take back exactly your reaction of it).
+      const rxc=e.target.closest('.rx-chip');
+      if(rxc){ const ra=rxc.closest('.note'); if(ra && ra.dataset.id) toggleReaction(ra.dataset.id, ra.dataset.pk, rxc.dataset.rx, rxc); return; }
       const btn=e.target.closest('.act');
       const art=e.target.closest('.note');
       // Click anywhere else on the card body opens the post's thread, so the user doesn't have to
@@ -1492,7 +1524,7 @@ window.PCCardsFactory = function(dep){
     _dimAttrs, _dimLearn, _healGhostPairs, _hold, _mcStep, _mcSync, _media, _reaskMissing, actsRow, addrDiv,
     applyEmojis, applySobLive, bindDmMediaActions, bindFeedActions, countsFor, emojiHtml, emojiName,
     feedNoteHtml, hydratePolls, invalidateCounts, mediaFlowHtml, mediaParts, myReaction, myReactionIds, needAddr,
-    needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, replyContextHtml, replyParentId, repostWithWarning,
+    needEvent, noteHtml, openNaddr, quotedDiv, reactDisp, reactionBarInner, reactionGroups, replyContextHtml, rxKey, replyParentId, repostWithWarning,
     get MediaDims(){ return MediaDims; },
     get VideoMount(){ return VideoMount; },
     get InstEmoji(){ return InstEmoji; },

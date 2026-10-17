@@ -310,6 +310,24 @@ def like(ev: dict, *, base: str, actor: str, target: str) -> dict:
     return act
 
 
+def emoji_react(ev: dict, *, base: str, actor: str, target: str) -> dict:
+    """An ADDITIONAL emoji reaction by somebody who already has one on that post (see outbox.plan).
+    `EmojiReact` is Pleroma/Akkoma's own type, and they keep many per person; Mastodon drops a type
+    it does not know -- which is the point: a second `Like` would be a duplicate favourite there, and
+    its Undo would take away the favourite the FIRST reaction is still holding. Same id scheme as
+    `like`, so a deletion names it the same way. A NIP-25 "+" is the heart, which is what Pleroma
+    shows for a Like (EmojiReact must carry an emoji)."""
+    content = (ev.get("content") or "+").strip()
+    if content in ("+", ""):
+        content = "\u2764\ufe0f"
+    act = {"@context": AS_CONTEXT, "id": activity_url(base, ev["id"]), "type": "EmojiReact",
+           "actor": actor, "object": target, "content": content[:64]}
+    emo = emoji_tags(ev, content)
+    if emo:
+        act["tag"] = emo
+    return act
+
+
 def announce(ev: dict, *, base: str, actor: str, followers: str, target: str, target_actor: str = "") -> dict:
     cc = [followers] + ([target_actor] if target_actor else [])
     return {"@context": AS_CONTEXT, "id": activity_url(base, ev["id"]), "type": "Announce",
@@ -324,7 +342,7 @@ def delete_note(ev_id: str, *, base: str, actor: str, followers: str, deletion_i
 
 
 def undo(inner_id: str, inner_type: str, *, base: str, actor: str, target: str, deletion_id: str) -> dict:
-    """Undo of a Like/Announce. `target` is what the inner activity was ABOUT, and it is not optional
+    """Undo of a Like/EmojiReact/Announce. `target` is what the inner activity was ABOUT, and it is not optional
     in practice: Mastodon and Misskey find the favourite to remove through it, so an Undo naming ""
     reached them and removed nothing."""
     return {"@context": AS_CONTEXT, "id": activity_url(base, deletion_id, "undo"), "type": "Undo",
