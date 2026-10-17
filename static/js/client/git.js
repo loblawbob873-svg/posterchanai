@@ -457,7 +457,7 @@ window.PCGitFactory = function(dep){
       <label class="fld">Repo id <span class="muted small">(letters, digits, . _ - — e.g. my-app)</span><input class="input" id="cr-d" placeholder="my-app"></label>
       <label class="fld">Name<input class="input" id="cr-name" placeholder="My App"></label>
       <label class="fld">Description<textarea class="input" id="cr-desc" rows="2"></textarea></label>
-      <label class="fld fld-check"><input type="checkbox" id="cr-private"> <span>Private — only you (+ readers) can clone; not announced</span></label>
+      <label class="fld fld-check"><input type="checkbox" id="cr-private"> <span>Private — only you, maintainers and readers can see or clone it</span></label>
       <div class="set-actions"><button class="btn btn-neon small" id="cr-go">Create</button><button class="btn btn-ghost small" id="cr-cancel">Cancel</button></div>
       <div class="muted small" id="cr-status"></div>`,
       root=>{
@@ -488,6 +488,23 @@ window.PCGitFactory = function(dep){
     if(!j || !j.ok){ st.textContent='host: '+((j&&j.error)||'create failed'); return; }
     const cloneUrl=j.clone||clone;
     let ev=null;
+    /* A PRIVATE REPO IS ANNOUNCED TOO, TO THIS NODE'S RELAY ONLY. Since GRASP-08 its announcement carries
+     * ["private","true"] and the relay serves it only to maintainers and readers -- that is the event Git ->
+     * Mine lists. Skipping it (the old "private = never announced" rule) left a repo made here findable
+     * nowhere ("Create repo, not listed under Mine"). Never the wider relay list: other relays would show
+     * it to everybody. */
+    if(priv && Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length){
+      st.textContent='announcing privately…';
+      const home=window.Relay && Relay._home;
+      if(!home){ st.textContent='created ✓ but this node’s relay is not connected — reopen Git to announce it'; return; }
+      try{
+        const e=await sign(30617,'',j.announce_tags_30617);
+        const n=await Relay.publishTo([home], e, { timeout:8000 });
+        if(!n){ st.textContent='created ✓ — the private announcement is not confirmed yet (this node’s relay hasn’t answered)'; return; }
+        try{ Store.saveEvent(e); }catch(_){ }
+        ev=e;
+      }catch(err){ st.textContent='created ✓ but the private announcement failed: '+((err&&err.message)||err); return; }
+    }
     if(!priv && Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length){
       st.textContent='announcing…';
       try{ const r=await publish(30617,'',j.announce_tags_30617);
