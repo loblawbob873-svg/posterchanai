@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from app.auth import get_admin_user, get_current_user
-from app.services.activitypub import actors, config, convert, health, httpsig, inbox, remote, state
+from app.services.activitypub import actors, config, convert, health, httpsig, inbox, intake, remote, state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["activitypub"])
@@ -495,20 +495,41 @@ def _client_ip(request: Request) -> str:
     return peer
 
 
+def _key_host(request: Request) -> str:
+    """The server a delivery CLAIMS to come from (its signature's keyId) -- only for the intake count of
+    deliveries that never verified; everything after verification is counted by who actually signed."""
+    m = re.search(r'keyId="([^"]+)"', request.headers.get("signature") or request.headers.get("authorization") or "")
+    return remote.host_of(m.group(1)) if m else "?"
+
+
 async def _receive(request: Request) -> Response:
+    seen: dict = {}
+    try:
+        resp = await _receive_core(request, seen)
+    except HTTPException as e:
+        intake.received(seen.get("host") or _key_host(request), f"{e.status_code} {e.detail}"[:60])
+        raise
+    intake.received(seen.get("host") or _key_host(request), seen.get("why") or str(resp.status_code))
+    return resp
+
+
+async def _receive_core(request: Request, seen: dict) -> Response:
     _on()
     # The budget is charged to WHO SIGNED, after verification. Charged to the keyId's host before it,
     # anybody could spend a real instance's budget by naming it in junk requests and make every
     # genuine delivery from it 429. Unverified traffic is charged to the connection instead.
     ip = "ip:" + _client_ip(request)
     if not _rate_ok(ip, peek=True):
+        seen["why"] = "429 connection"
         return Response(status_code=429, headers={"Retry-After": "60"})
     try:
         activity, signer = await _verified(request)
     except _RELAY_DOWN:
+        seen["why"] = "503 relay down"
         return _relay_down()
     except HTTPException as e:
         if e.status_code == 202:
+            seen["why"] = "dropped: relay" if e.detail == "relay" else "dropped: blocked"
             if e.detail != "relay":            # a subscribed relay's traffic is expected, and costs nothing
                 _rate_ok(ip)                   # unverified, and it may cost one fetch (confirm_gone)
             return Response(status_code=202)
@@ -516,9 +537,12 @@ async def _receive(request: Request) -> Response:
             _rate_ok(ip)
         raise
     host = remote.host_of(signer)
+    seen["host"] = host
     if not _rate_ok(host):
+        seen["why"] = "429 server"
         return Response(status_code=429, headers={"Retry-After": "60"})
     if config.is_own_host(host) or config.host_blocked(host):
+        seen["why"] = "dropped: blocked"
         return Response(status_code=202)          # blocked instances: accepted and dropped, so they stop
     # The puppet registry and the delivered-notes ledger decide identity and dedup for everything this
     # activity will do. Unreadable, 503 -- the sender retries -- rather than a 202 for work that would
@@ -530,23 +554,30 @@ async def _receive(request: Request) -> Response:
     try:
         await fedi_tables.aready()
     except Unavailable:
+        seen["why"] = "503 ledger"
         return _relay_down()
     if convert.id_of(activity.get("actor")) != signer:
         # A FORWARDED reply (Mastodon relays its users' replies, signed by itself). Refusing it made
         # the forwarder retry for days; it is taken as a pointer and fetched from its own server.
         if activity.get("type") in ("Create", "Update") and convert.id_of(activity.get("object")):
             if not inbox.schedule({"type": inbox.FORWARDED, "object": convert.id_of(activity.get("object"))}, signer):
+                seen["why"] = "503 busy"
                 return Response(status_code=503, headers={"Retry-After": "120"})
+            seen["why"] = "scheduled"
             return Response(status_code=202)
         # A forwarded DELETE (Mastodon forwards a reply's deletion too): confirmed with the post's own
         # server. A 401 here was retried for days, exactly like the forwarded Create used to be.
         if activity.get("type") == "Delete" and convert.id_of(activity.get("object")):
             if not inbox.schedule({"type": inbox.FORWARDED_DELETE, "object": convert.id_of(activity.get("object"))}, signer):
+                seen["why"] = "503 busy"
                 return Response(status_code=503, headers={"Retry-After": "120"})
+            seen["why"] = "scheduled"
             return Response(status_code=202)
         raise HTTPException(401, "Signed by somebody other than the actor")
     if not inbox.schedule(activity, signer):
+        seen["why"] = "503 busy"
         return Response(status_code=503, headers={"Retry-After": "120"})
+    seen["why"] = "scheduled"
     return Response(status_code=202)
 
 

@@ -102,9 +102,13 @@ async def authentic(obj, signer: str) -> dict:
 
 
 async def _run(activity: dict, signer: str) -> None:
+    from app.services.activitypub import intake
+    kind = str(activity.get("type") or "?")
     try:
-        await asyncio.wait_for(process(activity, signer), timeout=90)
+        what = await asyncio.wait_for(process(activity, signer), timeout=90)
+        intake.processed(remote.host_of(signer), f"{kind} {what}")
     except Exception as e:
+        intake.processed(remote.host_of(signer), f"{kind} failed: {type(e).__name__}")
         logger.info("[activitypub] %s from %s not processed: %s: %s", activity.get("type"),
                     remote.host_of(signer), type(e).__name__, e)
 

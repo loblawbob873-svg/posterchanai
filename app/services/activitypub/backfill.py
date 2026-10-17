@@ -39,7 +39,9 @@ _POSTS = ("Note", "Article", "Question", "Page")
 _MARK = "pcai:ap:backfilled:"
 # PACING -- this reads other people's servers, and writes into our own relay.
 PACE = 30.0                 # seconds between BACKGROUND reads (discovery, catch-up, a follow)
-HOST_GAP = 300.0            # one server is read in the background at most this often
+HOST_GAP = 120.0            # one server is read in the background at most this often (was 300: at 104 followed
+                            # accounts on one server, a re-read of each took ~9 hours)
+RECHECK = 3 * 3600          # a followed account's outbox is read again this long after the last read
 BUSY_REST = 3600.0          # a server that answered 429 or 5xx is left alone this long
 NOTE_GAP = 0.25             # between posts written into our relay
 DISCOVERY_PER_HOUR = 120    # newly met accounts queued per hour, at most
@@ -320,17 +322,24 @@ def schedule(actor_uri: str, *, min_age: float = REFRESH) -> bool:
     return True
 
 
-async def catch_up(per_tick: int = 2) -> int:
-    """The accounts followed BEFORE backfill existed: a few per tick, each once (its marker), so 300+
-    accounts arrive over a few hours rather than as a burst. Returns how many it read this tick."""
+async def catch_up(per_tick: int = 2, now: float | None = None) -> int:
+    """Every followed account's outbox, read again and again: never-read accounts first, then the one read
+    longest ago once RECHECK has passed -- a few per tick, so 300+ accounts are a trickle, not a burst.
+    Returns how many it read this tick.
+
+    A DELIVERY CAN BE LOST AND NOTHING ELSE BRINGS IT BACK. It used to read each account ONCE (its marker
+    never expired), which only filled in history from before backfill existed. 2026-10-17: nicecrew.digital's
+    posts fell from ~100 an hour to ~15 for a day and every missed post stayed missed; re-reading the outboxes
+    is what a missed delivery costs now -- a few hours' delay, never the post."""
     try:
         followed = await state.followed_actors(max_age=300)
         from app.services import nostr_store
         done = await nostr_store.list_docs(state._port(), _MARK, seckey=state._seckey(), strict=True, limit=100000)
     except Exception:
         return 0                        # could not ask what is done: do nothing rather than repeat
-    have = {d.get("actor") for d in done.values() if isinstance(d, dict)}
-    todo = [a for a in sorted(followed) if a not in have]
+    now = time.time() if now is None else now
+    last = {d.get("actor"): int(d.get("at") or 0) for d in done.values() if isinstance(d, dict)}
+    todo = sorted((a for a in followed if now - last.get(a, 0) >= RECHECK), key=lambda a: (last.get(a, 0), a))
     n = 0
     for actor in todo:
         if n >= per_tick:

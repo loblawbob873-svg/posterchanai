@@ -146,23 +146,31 @@ def test_following_somebody_brings_their_history(fedi, monkeypatch):
     assert asked == [REMOTE]
 
 
-def test_accounts_followed_before_this_existed_are_caught_up_a_few_at_a_time(fedi, monkeypatch):
+def test_followed_accounts_are_read_a_few_at_a_time_and_read_AGAIN_after_the_recheck(fedi, monkeypatch):
+    """Not once ever: a delivery that was lost (nicecrew.digital, 2026-10-17: ~85 posts an hour for a day) is only
+    ever brought back by reading the outbox again."""
     others = [f"https://mastodon.example/users/u{i}" for i in range(5)]
     for i, a in enumerate(others):
         fedi["docs"][f"pcai:ap:following:{ALICE}:{i}"] = {"actor": a, "inbox": "i", "state": "accepted"}
     done = []
+    NOW = 1_800_000_000
 
     async def fake(actor, **k):
         done.append(actor)
-        await state._put(backfill._MARK + state._h(actor), {"actor": actor, "at": 1})
+        await state._put(backfill._MARK + state._h(actor), {"actor": actor, "at": clock[0]})
         return {}
+    clock = [NOW]
     monkeypatch.setattr(backfill, "backfill_actor", fake)
     state.forget_followed_cache()
-    assert run(backfill.catch_up(per_tick=2)) == 2
-    assert run(backfill.catch_up(per_tick=2)) == 2
-    assert run(backfill.catch_up(per_tick=2)) == 1
-    assert run(backfill.catch_up(per_tick=2)) == 0, "an account already caught up was read again"
+    assert run(backfill.catch_up(per_tick=2, now=NOW)) == 2
+    assert run(backfill.catch_up(per_tick=2, now=NOW)) == 2
+    assert run(backfill.catch_up(per_tick=2, now=NOW)) == 1
+    assert run(backfill.catch_up(per_tick=2, now=NOW)) == 0, "an account read a moment ago was read again"
     assert sorted(done) == sorted(others)
+    later = NOW + backfill.RECHECK
+    clock[0] = later
+    assert run(backfill.catch_up(per_tick=2, now=later)) == 2, "an account read hours ago is never read again"
+    assert done[-2:] == sorted(others)[:2], "the one read longest ago goes first"
 
 
 # ---- threads --------------------------------------------------------------------------------------
