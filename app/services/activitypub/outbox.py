@@ -9,6 +9,7 @@ the relay by the same id (`/ap/objects/<event id>`), so there is exactly one cop
                                     arrive on the fediverse with no context, so it stays on Nostr)
     kind 6         → Announce       of a fediverse note or a member's post
     kind 7         → Like           ditto; sent to the author, who is the one it concerns
+                     (a member's FURTHER different emoji on the same post → EmojiReact)
     kind 1068      → Create(Question)  a NIP-88 poll; its tallies go out as Update(Question)
     kind 1018      → a vote (Note with `name`) on a fediverse poll, to the poll's author
     kind 5         → Delete / Undo  for what was sent -- only the deleter's own
@@ -390,7 +391,18 @@ async def plan(ev: dict, member: str) -> list:
         elif (ev.get("content") or "").strip() == "-":
             return []                          # a NIP-25 dislike: the fediverse has no such thing
         else:
-            act = convert.like(ev, base=base, actor=me, target=target["uri"])
+            # SEVERAL REACTIONS FROM ONE PERSON. The first live one goes as a `Like` carrying the emoji
+            # (what every server understands); any further, DIFFERENT emoji on the same post goes as an
+            # `EmojiReact`, which Pleroma/Akkoma keep alongside it and Mastodon ignores -- a second Like
+            # would be a duplicate favourite there, and undoing it would remove the favourite the first
+            # reaction still holds. The same emoji twice is sent once.
+            shape = await _reaction_shape(ev, member, target_id)
+            if shape == "duplicate":
+                return []
+            if shape == "EmojiReact":
+                act = convert.emoji_react(ev, base=base, actor=me, target=target["uri"])
+            else:
+                act = convert.like(ev, base=base, actor=me, target=target["uri"])
             inboxes = {author_inbox} - {""}
             if not target.get("remote"):
                 # A member's post: every server holding a copy, AND the reactor's own followers -- the
@@ -399,7 +411,7 @@ async def plan(ev: dict, member: str) -> list:
                 # reacted to may have no fediverse followers at all.
                 inboxes |= await _copies_of(target_id) | set(fol)
             out = [(i, act) for i in sorted(inboxes)]
-            await _remember_sent(ev["id"], inboxes, kind=7, by=member, target=target["uri"])
+            await _remember_sent(ev["id"], inboxes, kind=7, by=member, target=target["uri"], as_type=act["type"])
 
     elif kind == 5:
         kinds = {t[1] for t in ev.get("tags") or [] if len(t) > 1 and t[0] == "k"}
@@ -429,7 +441,10 @@ async def plan(ev: dict, member: str) -> list:
                 was = "7" if ("7" in kinds and "1" not in kinds) else "6" if ("6" in kinds and "1" not in kinds) else "1"
             extra = set(rec.get("inboxes") or [])
             if was == "7":
-                act = convert.undo(convert.activity_url(base, gone), "Like", base=base, actor=me,
+                # The Undo names the SAME type that went out: an extra reaction was an EmojiReact, and an
+                # Undo(Like) of it would make Mastodon/Misskey drop the person's one favourite/reaction.
+                inner = rec.get("as") if rec.get("as") in ("Like", "EmojiReact") else "Like"
+                act = convert.undo(convert.activity_url(base, gone), inner, base=base, actor=me,
                                    target=rec.get("target") or "", deletion_id=ev["id"])
                 out += [(i, act) for i in sorted(extra)]
             elif was == "6":
@@ -690,7 +705,44 @@ def _h(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
-async def _remember_sent(event_id: str, inbox, kind: int = 7, *, by: str = "", target: str = "") -> None:
+def _reaction_key(content) -> str:
+    """One emoji's identity, as the client groups it: "+"/empty is the heart, the variation selector
+    is not part of it."""
+    c = str(content or "").strip()
+    if c in ("", "+"):
+        return "\u2764"
+    return c.replace("\ufe0f", "")
+
+
+def _last_e(ev: dict) -> str:
+    return next((t[1] for t in reversed(ev.get("tags") or []) if len(t) > 1 and t[0] == "e"), "")
+
+
+async def _reaction_shape(ev: dict, member: str, target_id: str) -> str:
+    """"Like" when this is the member's only (or earliest) live reaction on that post, "EmojiReact"
+    when an earlier one with a different emoji is still live, "duplicate" when an earlier one is the
+    same emoji. Ordered by (created_at, id), the order the delivery pass reads them in. Deleted
+    reactions are gone from the relay, so they never count. A relay that cannot be asked answers
+    "Like" -- exactly what was sent before several reactions existed."""
+    try:
+        evs = await nostr_store._ws_query(settings_store._port(), [{"kinds": [7], "authors": [member],
+                                          "#e": [target_id], "limit": 200}], strict=True)
+    except Exception:
+        return "Like"
+    me_at = (int(ev.get("created_at") or 0), str(ev.get("id") or ""))
+    key = _reaction_key(ev.get("content"))
+    earlier = [r for r in evs or [] if r.get("id") != ev.get("id") and r.get("pubkey") == member
+               and _last_e(r) == target_id and str(r.get("content") or "").strip() != "-"
+               and (int(r.get("created_at") or 0), str(r.get("id") or "")) < me_at]
+    if not earlier:
+        return "Like"
+    if any(_reaction_key(r.get("content")) == key for r in earlier):
+        return "duplicate"
+    return "EmojiReact"
+
+
+async def _remember_sent(event_id: str, inbox, kind: int = 7, *, by: str = "", target: str = "",
+                         as_type: str = "") -> None:
     """Where an event went BEYOND the followers (the replied-to author, the mentioned, the boosted or
     liked author), what it was, WHO sent it and what it was about -- so its deletion reaches the same
     servers, as the right verb, naming the right object, even when the kind-5 carries no `k` tag and
@@ -704,6 +756,8 @@ async def _remember_sent(event_id: str, inbox, kind: int = 7, *, by: str = "", t
         doc["by"] = by
     if target:
         doc["target"] = target
+    if as_type:
+        doc["as"] = as_type
     try:
         await nostr_store.put_doc(settings_store._port(), settings_store._operator_seckey(None), _SENT + event_id, doc)
     except Exception:
@@ -720,7 +774,8 @@ async def _sent_rec(event_id: str) -> dict:
         return {}
     inboxes = doc.get("inboxes") or ([doc["inbox"]] if doc.get("inbox") else [])
     return {"kind": doc.get("kind"), "inboxes": [i for i in inboxes if isinstance(i, str) and i],
-            "by": str(doc.get("by") or ""), "target": str(doc.get("target") or "")}
+            "by": str(doc.get("by") or ""), "target": str(doc.get("target") or ""),
+            "as": str(doc.get("as") or "")}
 
 
 # ------------------------------------------------------------------------------------ delivery
