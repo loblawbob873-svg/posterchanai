@@ -42,11 +42,14 @@ def test_feed_queries_answer_exactly_as_the_sorted_path(tmp_path, monkeypatch):
             {"authors": authors[:3], "limit": 5000},
         ]
         fast = [_ids(st.query(f)) for f in filters]
-        # the old path: every union sorted and de-duplicated
-        monkeypatch.setattr(store_mod, "_concat", store_mod._union)
-        slow = [_ids(st.query(f)) for f in filters]
-        for f, a, b in zip(filters, fast, slow):
-            assert a == b, f
+        # Brute force from the events themselves: every match, newest first (id breaks a tie), cut at `limit`.
+        def ref(f):
+            au, kinds = set(f["authors"]), set(f.get("kinds") or [])
+            hits = [e for e in evs if e["pubkey"] in au and (not kinds or e["kind"] in kinds)]
+            hits.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
+            return [e["id"] for e in hits[: max(1, min(int(f.get("limit") or 500), 5000))]]
+        for f, a in zip(filters, fast):
+            assert a == ref(f), f
             assert len(a) == len(set(a)), ("a duplicate event in the answer", f)
         m = st.match({"authors": authors + authors[:5], "kinds": [1, 6]})
         assert len(m) and bool(np.all(m[1:] > m[:-1])), "match() must stay ascending and unique"
