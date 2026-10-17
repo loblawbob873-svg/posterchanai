@@ -727,7 +727,8 @@ class RelayServer:
     _cost_base = (0, 0, 0)
 
     def _cost_line(self, now: float) -> None:
-        total, fan, acc = self._frames_out, getattr(self.subs, "fanout_frames", 0), self._accepted
+        subs = getattr(self, "subs", None)
+        total, fan, acc = self._frames_out, getattr(subs, "fanout_frames", 0), getattr(self, "_accepted", 0)
         t0, f0, a0 = self._cost_base
         dt = max(1.0, now - self._cost_at) if self._cost_at else 0.0
         self._cost_at, self._cost_base = now, (total, fan, acc)
@@ -735,7 +736,8 @@ class RelayServer:
             return
         logger.info("[nostr-relay] cost: %.0f frames/s out (live delivery %.0f/s, answers+control %.0f/s), "
                     "%.1f events/s accepted, %d conns, %d subs", (total - t0) / dt, (fan - f0) / dt,
-                    ((total - t0) - (fan - f0)) / dt, (acc - a0) / dt, len(self._outq), self.subs.total())
+                    ((total - t0) - (fan - f0)) / dt, (acc - a0) / dt, len(getattr(self, "_outq", {})),
+                    subs.total() if subs is not None else 0)
 
     # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
     # cure from becoming the disease (see _note_refused).
