@@ -90,8 +90,12 @@ _TLS = _threading.local()
 
 class _Pool(dict):
     """This thread's sockets. The sync client runs its own receive thread, which would keep a socket open after the
-    thread that asked has ended -- so the pool closes them when the thread's locals are dropped."""
-    def __del__(self):
+    thread that asked has ended -- so the pool closes them when the thread's locals are dropped. NOT at interpreter
+    exit: close() joins the receive thread, daemon threads are frozen by then, and the join never returns (the git
+    pre-receive hook hung for good); the process ending closes the sockets anyway."""
+    def __del__(self, _finalizing=__import__("sys").is_finalizing):
+        if _finalizing():
+            return
         for ws in list(self.values()):
             try:
                 ws.close()
