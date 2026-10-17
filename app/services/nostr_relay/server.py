@@ -354,6 +354,8 @@ class SubscriptionManager:
         """Open subscriptions across every connection — the fan-out cost per stored event."""
         return sum(len(s) for s in self._subs.values())
 
+    fanout_frames = 0                     # EVENT frames enqueued by live delivery (the cost line, _send)
+
     def fanout(self, ev: dict, send, allow) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
         non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose.
@@ -377,6 +379,7 @@ class SubscriptionManager:
                 continue
             for sub_id, filters in list(subs.items()):
                 if _matches(filters, ev, tags):
+                    self.fanout_frames += 1
                     send(conn, ["EVENT", sub_id, ev])
 
 
@@ -703,6 +706,10 @@ class RelayServer:
         if q is None:
             return
         q.push(_frame(obj), obj[0] == "EVENT" if obj else False)
+        self._frames_out += 1
+        now = time.monotonic()
+        if now - self._cost_at >= 300:
+            self._cost_line(now)
         # The session line below only prints when a connection CLOSES, which can be hours after it
         # started struggling — no use while someone is telling you it's happening right now. So say
         # it once, the moment a connection first falls behind. `dropped` only ever increments, so
@@ -711,6 +718,24 @@ class RelayServer:
             logger.warning("[nostr-relay] conn ip=%s is not keeping up — queue full (%d), dropping "
                            "frames; see its 'conn closed' line for the total",
                            self._conn_ips.get(conn) or "?", q.maxlen)
+
+    # THE COST LINE: what the relay spends its sends on, every 5 minutes, measured. Most of its CPU is
+    # building, compressing and writing frames, so frames/s -- live delivery vs answers to REQs -- is the
+    # number to move; guessing at it cost a day (2026-10-16).
+    _frames_out = 0
+    _cost_at = 0.0
+    _cost_base = (0, 0, 0)
+
+    def _cost_line(self, now: float) -> None:
+        total, fan, acc = self._frames_out, getattr(self.subs, "fanout_frames", 0), self._accepted
+        t0, f0, a0 = self._cost_base
+        dt = max(1.0, now - self._cost_at) if self._cost_at else 0.0
+        self._cost_at, self._cost_base = now, (total, fan, acc)
+        if not dt:
+            return
+        logger.info("[nostr-relay] cost: %.0f frames/s out (live delivery %.0f/s, answers+control %.0f/s), "
+                    "%.1f events/s accepted, %d conns, %d subs", (total - t0) / dt, (fan - f0) / dt,
+                    ((total - t0) - (fan - f0)) / dt, (acc - a0) / dt, len(self._outq), self.subs.total())
 
     # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
     # cure from becoming the disease (see _note_refused).
