@@ -46,7 +46,11 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
   let release;const x=setup({pull:()=>new Promise(r=>release=r)});
   const pending=x.ensureDMs();assert.equal(x.subs.length,2);
   const live=x.subs.find(s=>s.filters[0].kinds[0]===1059);
-  assert.equal(live.filters[0].since,undefined,'randomized gift-wrap dates must not be filtered');
+  // Randomised gift-wrap dates must never be cut: NIP-59 puts them up to two days in the past, so the live
+  // window reaches at least six days back (it is 7). It is bounded on purpose -- unbounded, every reconnect
+  // replayed the whole inbox (server1, 2026-10-17).
+  { const since=live.filters[0].since, now=Math.floor(Date.now()/1000);
+    assert.ok(Number.isFinite(since)&&since<=now-6*86400&&since>=now-8*86400,'the live gift-wrap window must reach well past the 2-day randomisation and stay bounded: '+since); }
   live.onEose();const ev={id:'application-from-last-night',kind:1059,created_at:1};
   await live.onEvent(ev);assert.equal(x.received[0].ev,ev);assert.equal(x.received[0].live,true);
   release(0);await pending;
