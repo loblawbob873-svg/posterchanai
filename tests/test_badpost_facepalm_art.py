@@ -1,10 +1,8 @@
-"""The Bad Post of the Day facepalm: a hand of normal size, BACK to the viewer, over BOTH eyes, out of her sleeve --
-and the shipped PNG is what the script builds.
+"""The Bad Post of the Day card: PosterChan sad and crying -- no hand -- and the shipped PNG is what the script builds.
 
-History: the first picture pasted dance-2's waving palm over her eyes with its forearm cut off in mid-air; the
-second ran that bare arm off the bottom edge -- "the hand is backwards and longer than normal" (2026-10-16): it was
-the PALM (the waving arm mirrored) and a bare forearm the length of her torso, though she wears a long-sleeved
-hoodie. The hand is now drawn: back of the right hand, thumb on the outside, the wrist in the hoodie cuff.
+History: three facepalm hands in a row read as wrong (a pasted waving palm, then a bare arm "longer than normal",
+then a drawn back-of-hand); "just make her look sad and crying, stop with the hand crap" (2026-10-16). Her face is
+now redrawn: worried brows, eyes squeezed shut, tears down both cheeks, a frown.
 
 Measured on the picture people actually see.
 """
@@ -13,7 +11,6 @@ import os
 
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG = os.path.join(ROOT, "static", "mascot", "badpost-facepalm.png")
@@ -40,35 +37,26 @@ def _skin(px):
     return (r > 200) & (g > 165) & (b > 135) & (r - b > 22) & (r - b < 110)   # warm: not the white caption
 
 
-def test_one_normal_sized_hand_covers_both_eyes_and_comes_out_of_her_sleeve():
+def test_she_is_crying_with_her_eyes_shut_and_no_hand_over_her_face():
     mod = _script()
     px = np.asarray(Image.open(PNG).convert("RGB")).astype(int)
-    labels, _ = ndimage.label(_skin(px))
-    eyes = getattr(mod, "EYES", None) or mod.PALM_AT
-    hand = np.zeros(labels.shape, dtype=bool)
-    for dx in (-7, 7):                                     # her two eyes, ~7 dance-5 px either side of centre
-        x, y = _at(mod, eyes[0] + dx, eyes[1])
-        win = labels[y - 6:y + 7, x - 6:x + 7]
-        ids = [v for v in np.unique(win) if v]
-        assert ids, ("an eye is not covered by the hand", dx, (x, y))
-        for v in ids:                                      # fingers and the back are outlined apart: their union
-            hand |= labels == v
-    rows, cols = np.where(hand.any(axis=1))[0], np.where(hand.any(axis=0))[0]
-    face = 30 * mod.SCALE                                  # her face is ~30 dance-5 px tall
-    assert rows.max() - rows.min() < 1.9 * face, ("the hand is far longer than her face: a bare arm, not a hand",
-                                                  rows.max() - rows.min(), face)
-    # below the hand: the dark sleeve, connected to the bottom edge of the picture
-    dark = px.sum(axis=2) < 150
-    dlab, _ = ndimage.label(dark)
-    wrist_y = rows.max()
-    cx = int(np.mean(np.where(hand[wrist_y - 3])[0]))
-    below = [v for v in np.unique(dlab[wrist_y + 4:wrist_y + 20, cx - 12:cx + 12]) if v]
-    assert below, "nothing dark under the wrist: the hand is not in her sleeve"
-    assert any(dlab[mod.SIZE - 1][dlab[mod.SIZE - 1] == v].size for v in below), "the sleeve does not leave the frame"
-    # the BACK of her right hand: the thumb sits on the viewer's left, below the fingertips
-    left = cols.min()
-    assert hand[:, left].any() and np.where(hand[:, left])[0].mean() > rows.min() + 0.25 * (rows.max() - rows.min()), \
-        "the thumb is not on the outside (viewer's left): the hand is backwards"
+    r, g, b = px[..., 0], px[..., 1], px[..., 2]
+    tear = (b > 220) & (g > 180) & (r < 200) & (b - r > 40)
+    sleeve = px.sum(axis=2) < 150
+    u = mod.SCALE
+    for side in (-1, 1):                                   # each eye: a tear running down that cheek
+        x, y = _at(mod, mod.EYES[0] + side * 11, mod.EYES[1])
+        cheek = tear[y + round(4 * u):y + round(20 * u), x - round(6 * u):x + round(6 * u)]
+        rows = np.where(cheek.any(axis=1))[0]
+        assert rows.size and rows.max() - rows.min() > 8 * u, ("no tear stream down the cheek", side)
+        # eye shut: no open eye (its orange iris) left at the eye
+        eye = px[y - round(3 * u):y + round(4 * u), x - round(5 * u) - side * round(3 * u):x + round(5 * u) - side * round(3 * u)]
+        iris = (eye[..., 0] > 170) & (eye[..., 0] - eye[..., 2] > 120) & (eye[..., 1] < 160)
+        assert iris.sum() < 0.03 * iris.size, ("an open eye is still drawn", side, int(iris.sum()))
+    # no hand: nothing dark (a sleeve) or skin-coloured rises from below over her face's middle
+    fx, fy = _at(mod, mod.EYES[0], mod.EYES[1])
+    assert not sleeve[fy + round(2 * u):fy + round(14 * u), fx - round(2 * u):fx + round(2 * u)].any(), \
+        "something dark crosses her face: a hand/sleeve is still drawn"
 
 
 def test_the_shipped_png_is_what_the_script_builds(tmp_path, monkeypatch):
