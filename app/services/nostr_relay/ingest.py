@@ -442,16 +442,35 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
 _LOOKUP_KINDS = [0, 3, 10002, 10050, 10133]
 
 
+# ASKED IS ASKED. This runs every 45 s, and most of the pubkeys it finds missing have no profile ANYWHERE -- so the
+# same ~1,500 were asked of every upstream relay every 45 s for ever, each pass opening TLS connections to them, after
+# a scan of the whole store's columns to find them again. Measured on server1 2026-10-16: ~14% of the relay's CPU.
+# A pubkey that was asked is not asked again for _ASK_AGAIN; the missing list itself is recomputed every
+# _MISSING_EVERY (what arrives in between is already stored -- this only decides whom to go and ask).
+_ASK_AGAIN = 6 * 3600
+_MISSING_EVERY = 600
+_asked: dict = {}                 # pubkey -> monotonic time it was last asked for
+_missing_memo = {"at": float("-inf"), "list": []}
+
+
 async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
                                 direct: bool = False, *, gate=None, blocked_relays=None) -> int:
     """Pull lookup metadata (profile, contacts, relay lists and NIP-A3 payment targets) for WoT
     members that lack it, so clients can use this relay to resolve who-is-who and where each
     member posts (the outbox / NIP-65 lookup-relay role). Batched + paced; replaceable events
     keep only the newest. These authors are WoT members, so they pass the gate."""
-    missing = await store.wot_missing_metadata()
+    now = time.monotonic()
+    if now - _missing_memo["at"] >= _MISSING_EVERY:
+        _missing_memo["list"] = await store.wot_missing_metadata()
+        _missing_memo["at"] = now
+    missing = [pk for pk in _missing_memo["list"] if now - _asked.get(pk, float("-inf")) >= _ASK_AGAIN][:limit]
     if not missing:
         return 0
-    missing = missing[:limit]
+    for pk in missing:                       # stamped BEFORE the ask: a relay that errors is not re-asked every pass
+        _asked[pk] = now
+    if len(_asked) > 200_000:
+        for pk in [k for k, t in _asked.items() if now - t >= _ASK_AGAIN]:
+            _asked.pop(pk, None)
     stored = 0
     for i in range(0, len(missing), batch):
         if i > 0 and pace > 0:
