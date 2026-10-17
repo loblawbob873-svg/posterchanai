@@ -120,6 +120,8 @@ async def test_signed_sync_and_meme_requests_require_membership_and_valid_owners
         def filter(self,*args): return self
         def first(self): return None
     app.dependency_overrides[client_router.get_db]=lambda:EmptyDB()
+    async def no_account(db,npub): return None      # accounts are a relay table: never this machine's real one
+    monkeypatch.setattr(client_router.user_table,'aby_npub',no_account)
     reached=[]
     def disabled(db):
         reached.append(True)

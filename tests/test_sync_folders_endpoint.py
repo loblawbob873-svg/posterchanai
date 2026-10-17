@@ -122,7 +122,8 @@ class TestSyncFolders(unittest.TestCase):
         req = C.SyncFoldersReq(pubkey="a" * 64, auth="x")
         with mock.patch.object(C.nostr_service, "to_pubkey_hex", lambda p: "a" * 64), \
                 mock.patch.object(C.nostr_service, "npub_of", lambda p: "npub1fake"), \
-                mock.patch.object(C, "_verify_self_auth", lambda a, p: True):
+                mock.patch.object(C, "_verify_self_auth", lambda a, p: True), \
+                mock.patch.object(C.user_table, "aby_npub", _by_npub):   # never this machine's real accounts
             resp = asyncio.run(C.sync_folders(req, db=_FakeDB(None)))
         import json
         self.assertEqual(json.loads(bytes(resp.body)), {"ok": True, "folders": []})
