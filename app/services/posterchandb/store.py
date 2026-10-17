@@ -166,6 +166,17 @@ class _Postings(disk.Leveled):
             return np.zeros(0, dtype=np.uint32)
         return np.asarray(parts[0]) if len(parts) == 1 else np.concatenate(parts)
 
+    def count(self, key: int) -> int:
+        """How many postings `key` has, from the run boundaries -- nothing copied (a kind can hold millions)."""
+        n = 0
+        k = np.uint64(key)
+        for keys, starts, _post in self.runs:
+            i = int(np.searchsorted(keys, k))
+            if i < len(keys) and keys[i] == k:
+                n += int(starts[i + 1] - starts[i])
+        d = self.delta.get(key)
+        return n + (len(d) if d else 0)
+
     def member(self, key: int, seqs: np.ndarray) -> np.ndarray:
         """Boolean mask: which of `seqs` carry `key` -- binary search inside each run's slice for the key,
         no copy of the posting list (a common key like an empty `d` can hold millions)."""
@@ -1509,6 +1520,8 @@ class Store:
                 picks.append(got)
                 total += len(got)
             hi = lo
+            if hi and since is not None and int(pm[hi - 1]) < since:
+                break                                   # everything older is older than `since`: nothing left to find
             if hi and total >= limit:
                 allc = created[np.concatenate(picks)]
                 kth = int(np.partition(allc, len(allc) - limit)[len(allc) - limit])
@@ -1623,6 +1636,12 @@ class Store:
                     cand = _intersect(cand, other)
                 if kinds and not kinds_done and len(cand):
                     cand = cand[np.isin(kind_col[cand], np.asarray([int(k) for k in kinds], dtype=np.uint32))]
+            elif not exhaustive and not isinstance(flt.get("_cursor"), list) and kinds and \
+                    sum(self.idx.count(_h("k:%d" % int(k))) for k in kinds) <= _RARE_KIND_POSTINGS:
+                # A RARE kind is answered from its own posting list. The newest-first walk below never reaches
+                # `limit` matches for one, so it scanned the WHOLE store per request: {"kinds":[54],"since":...}
+                # polled by a client kept the relay over a core (py-spy, server1, 2026-10-16).
+                cand = _union([self.idx.get(_h("k:%d" % int(k))) for k in kinds])
             elif not exhaustive and not isinstance(flt.get("_cursor"), list):
                 # Nothing selective (only `kinds`, or no filter at all): walk newest-first and stop as soon as the
                 # newest `limit` are certain. Building the union of every kind-1 and kind-6 posting and sorting it
@@ -1657,6 +1676,7 @@ class Store:
 
 
 _SCAN_CHUNK = 65536
+_RARE_KIND_POSTINGS = 50000   # at most this many events of the requested kinds: read their index, never walk the store
 
 
 def _union(arrs) -> np.ndarray:
