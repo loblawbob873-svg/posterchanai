@@ -376,7 +376,15 @@
 
     <main class="main">
         <header class="topbar glass">
-            <h2 id="view-title">Nostrverse</h2>
+            <h2 id="view-title"></h2>
+            <!-- A WINDOW NEVER STARTS UNDER ANOTHER VIEW'S NAME. A PosterChanOS window (?pcwin=<view>) boots this same
+                 shell, and until the app routed it (~2 s) its title read "Nostrverse" over an empty page: "opening a
+                 profile page from a thread opens up a social timeline for a split second" (2026-10-16, measured on
+                 the real desktop). Named here, before the first paint, from the window's own view. -->
+            <script>(function(){var el=document.getElementById('view-title');try{var v=new URLSearchParams(location.search).get('pcwin');if(!v){el.textContent='Nostrverse';return;}
+              var t=/^doc:prof:/.test(v)?'Profile':/^doc:post:/.test(v)?'Post':v==='doc:search'?'Search':/^doc:file:/.test(v)?'File':/^doc:trace:/.test(v)?'Trace':'';
+              if(!t){var n=document.querySelector('.nav-item[data-view="'+v.replace(/"/g,'')+'"]');t=n?(n.textContent||'').trim():'';}
+              el.textContent=t;}catch(e){el.textContent=el.textContent||'Nostrverse';}})();</script>
             <!-- The ▦ media-grid toggle moved into the timeline's own tab row (it only ever applied to
                  Home/Nostrverse), which lets the whole topbar hide on those views — see body.tl-view. -->
             <!-- Mobile-only search: the desktop one lives under the sidebar logo (#nav-search-input).
