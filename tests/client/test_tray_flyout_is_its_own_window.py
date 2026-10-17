@@ -84,7 +84,10 @@ def test_the_popup_renderer_draws_the_tray_itself():
 def test_the_window_refreshes_the_readings_before_it_paints():
     """It is a different process from the desktop's: it has no summary yet, and a flyout drawn from
     an empty one shows a muted speaker and no networks."""
-    body = _fn("  async function openTrayPopup(){", SHELL)
+    # openTrayPopup draws ONCE per window through _drawTrayPopup (Start -> Power was being redrawn over);
+    # the refresh belongs to the draw.
+    assert "_trayDrawn = _drawTrayPopup();" in _fn("  async function openTrayPopup(){", SHELL)
+    body = _fn("  async function _drawTrayPopup(){", SHELL)
     assert "await refresh()" in body
 
 
