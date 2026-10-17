@@ -234,6 +234,67 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
     return await _ws_publish(port, event, timeout=timeout)
 
 
+# QUERIES REUSE THEIR CONNECTION. Every read used to open a websocket, answer the relay's NIP-42 challenge (a
+# Schnorr signature the relay then verifies), send one REQ and close -- measured on server1 2026-10-17 as ~4 new
+# loopback connections a second and 242 sockets in TIME-WAIT, Folder Sync's per-batch record reads alone over
+# 1,000 per 5 minutes. A connection is kept per (event loop, signing key) -- AUTH is answered once per
+# connection -- and handed back after the query's subscription is CLOSEd (a REQ stays live after EOSE; returned
+# without the CLOSE it would keep streaming to the pool). A reused connection that fails is dropped and the
+# query retried once on a fresh one, so a relay restart costs one retry, never a wrong answer.
+_QUERY_POOL: dict = {}            # (id(loop), auth pubkey or "") -> [idle websocket, ...]
+_QUERY_POOL_IDLE = 4
+
+
+def _query_pool_key(auth_seckey):
+    loop = asyncio.get_running_loop()
+    for k in [k for k in _QUERY_POOL if k[0] != id(loop) and _loop_closed(k[0])]:
+        _QUERY_POOL.pop(k, None)
+    pk = ""
+    if auth_seckey:
+        try:
+            pk = bip340.pubkey_from_seckey(auth_seckey).hex()
+        except Exception:
+            pk = "?"
+    return (id(loop), pk)
+
+
+_LOOPS: dict = {}
+
+
+def _loop_closed(loop_id) -> bool:
+    lp = _LOOPS.get(loop_id)
+    return lp is None or lp.is_closed()
+
+
+async def _query_on(ws, uri: str, sub: str, filters: list, timeout: float, auth_seckey) -> list:
+    out: list = []
+    await ws.send(json.dumps(["REQ", sub, *filters]))
+    auth_id = None
+    retried = False
+    while True:
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+        if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
+            auth = _auth_event(uri, str(msg[1]), auth_seckey)
+            auth_id = auth["id"]
+            await ws.send(json.dumps(["AUTH", auth]))
+        elif msg[0] == "OK" and msg[1] == auth_id:
+            if not msg[2]:
+                raise PermissionError("relay rejected NIP-42 AUTH")
+            if not retried:
+                retried = True
+                await ws.send(json.dumps(["REQ", sub, *filters]))
+        elif msg[0] == "EVENT" and msg[1] == sub:
+            out.append(msg[2])
+        elif msg[0] == "CLOSED" and msg[1] == sub and str(msg[2] if len(msg) > 2 else "").startswith("auth-required") and auth_seckey:
+            # The connect challenge is already queued ahead of this on compliant relays;
+            # wait for its AUTH OK, which triggers the exact REQ replay above.
+            continue
+        elif msg[0] in ("EOSE", "CLOSED") and msg[1] == sub:
+            if msg[0] == "EOSE":
+                await ws.send(json.dumps(["CLOSE", sub]))   # or it stays live and streams to the pool
+            return out
+
+
 async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: bool = False,
                     auth_seckey: bytes | None = None) -> list:
     """Query the local relay. Returns the matching events.
@@ -247,37 +308,40 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"
     sub = "repo" + os.urandom(4).hex()
-    out: list = []
     try:
-        async with websockets.connect(uri, open_timeout=timeout, close_timeout=2, **loopback_kw(uri)) as ws:
-            await ws.send(json.dumps(["REQ", sub, *filters]))
-            auth_id = None
-            retried = False
-            while True:
-                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
-                    auth = _auth_event(uri, str(msg[1]), auth_seckey)
-                    auth_id = auth["id"]
-                    await ws.send(json.dumps(["AUTH", auth]))
-                elif msg[0] == "OK" and msg[1] == auth_id:
-                    if not msg[2]:
-                        raise PermissionError("relay rejected NIP-42 AUTH")
-                    if not retried:
-                        retried = True
-                        await ws.send(json.dumps(["REQ", sub, *filters]))
-                elif msg[0] == "EVENT" and msg[1] == sub:
-                    out.append(msg[2])
-                elif msg[0] == "CLOSED" and msg[1] == sub and str(msg[2] if len(msg)>2 else "").startswith("auth-required") and auth_seckey:
-                    # The connect challenge is already queued ahead of this on compliant relays;
-                    # wait for its AUTH OK, which triggers the exact REQ replay above.
-                    continue
-                elif msg[0] in ("EOSE", "CLOSED") and msg[1] == sub:
-                    break
+        key = _query_pool_key(auth_seckey)
+        _LOOPS[key[0]] = asyncio.get_running_loop()
+        idle = _QUERY_POOL.setdefault(key, [])
+        for attempt in (0, 1):
+            ws = idle.pop() if (idle and attempt == 0) else None
+            fresh = ws is None
+            if fresh:
+                ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2, max_size=None,
+                                              **loopback_kw(uri))
+            try:
+                out = await _query_on(ws, uri, sub, filters, timeout, auth_seckey)
+            except Exception:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+                if fresh:
+                    raise
+                continue                                   # a stale pooled socket: once more, fresh
+            if len(idle) < _QUERY_POOL_IDLE:
+                idle.append(ws)
+            else:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+            return out
+        return []
     except Exception as e:
         logger.debug("[nostr-store] query failed: %s", e)
         if strict:
             raise
-    return out
+        return []
 
 
 # ---- decrypted-content cache ----
