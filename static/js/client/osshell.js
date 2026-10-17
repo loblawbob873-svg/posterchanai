@@ -611,7 +611,7 @@
        bluetooth", 2026-10-17) -- a keyboard or a mouse is not a sound device. */
     if(root.pcBluetooth)
       tiles.push(`<button class="os-qs-tile" data-os="bluetooth">
-          ${ICO('bluetooth')}<b>Bluetooth</b><span>Devices, pairing</span></button>`);
+          ${ICO('bluetooth')}<b>Bluetooth</b><span>Devices</span></button>`);
     tiles.push(`<button class="os-qs-tile" data-os="power">
         ${ICO('power')}<b>Power</b><span>${H(s.profile || 'Sleep, restart…')}</span></button>`);
 
@@ -1490,6 +1490,28 @@
     return d;
   }
 
+  /* NAMES FIRST. A scan answers with every phone, watch and tag advertising nearby, and most of them never send
+   * a name -- so the list was a column of MAC addresses with the keyboard you were looking for somewhere in it
+   * ("i see mostly mac addresses", 2026-10-17). Named or paired devices are listed; the anonymous rest fold into
+   * one line you can open. An input device (keyboard, mouse) wears a keyboard. */
+  function _btRow(x){
+    const icon = x.audio ? 'headphones' : (x.input ? 'keyboard' : 'monitor');
+    const act = x.connected ? `<button class="btn btn-ghost small" data-bt-act="disconnect" data-bt-mac="${H(x.address)}">Disconnect</button>`
+      : x.paired ? `<button class="btn small" data-bt-act="connect" data-bt-mac="${H(x.address)}">Connect</button>`
+      : `<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`;
+    const forget = x.paired ? `<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>` : '';
+    return `<div class="os-bt-row"><span class="os-bt-icon">${ICO(icon)}</span><span class="os-bt-name"><b title="${H(x.address)}">${H(x.name||x.address)}</b>`
+      + `<small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${act}${forget}</span></div>`;
+  }
+  function _btListHtml(devices){
+    if(!devices.length) return '<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>';
+    const shown = devices.filter(x => x.named !== false || x.paired || x.connected);
+    const hidden = devices.filter(x => !(x.named !== false || x.paired || x.connected));
+    return (shown.length ? shown.map(_btRow).join('')
+                         : '<div class="os-pop-none">No named devices yet. Put the device in pairing mode and press Scan.</div>')
+      + (hidden.length ? `<details class="os-bt-anon"><summary>${hidden.length} unnamed nearby device${hidden.length===1?'':'s'}</summary>${hidden.map(_btRow).join('')}</details>` : '');
+  }
+
   async function bluetoothPanel(scan){
     const bt=root.pcBluetooth,d=_pop;if(!bt||!d)return;
     const back = (d.dataset && d.dataset.btStandalone) ? ''
@@ -1500,7 +1522,7 @@
     if(!st.available){body.innerHTML=`<div class="os-pop-none">Bluetooth is unavailable.${st.error?' '+H(st.error):''}</div>`;return;}
     const devices=(st.devices||[]).slice().sort((a,b)=>Number(b.connected)-Number(a.connected)||Number(b.paired)-Number(a.paired)||a.name.localeCompare(b.name));
     body.innerHTML=`<div class="os-bt-tools"><label><input type="checkbox" data-bt-power ${st.powered?'checked':''}> Bluetooth</label><button class="btn btn-ghost small" data-bt-scan ${st.powered?'':'disabled'}>${ICO('refresh')} Scan</button></div>
-      <div class="os-bt-list">${!st.powered?'<div class="os-pop-none">Turn Bluetooth on to find devices.</div>':devices.length?devices.map(x=>`<div class="os-bt-row"><span class="os-bt-icon">${ICO(x.audio?'headphones':(x.input?'keyboard':'monitor'))}</span><span class="os-bt-name"><b>${H(x.name||x.address)}</b><small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${x.connected?`<button class="btn btn-ghost small" data-bt-act="disconnect" data-bt-mac="${H(x.address)}">Disconnect</button>`:x.paired?`<button class="btn small" data-bt-act="connect" data-bt-mac="${H(x.address)}">Connect</button>`:`<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`}${x.paired?`<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>`:''}</span></div>`).join(''):'<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>'}</div>`;
+      <div class="os-bt-list">${!st.powered?'<div class="os-pop-none">Turn Bluetooth on to find devices.</div>':_btListHtml(devices)}</div>`;
     const power=body.querySelector('[data-bt-power]');if(power)power.onchange=async()=>{power.disabled=true;const r=await bt.power(power.checked);if(!r.ok)toast(r.error||'Bluetooth power failed');bluetoothPanel(power.checked);};
     const scanBtn=body.querySelector('[data-bt-scan]');if(scanBtn)scanBtn.onclick=()=>bluetoothPanel(true);
     body.querySelectorAll('[data-bt-act]').forEach(b=>b.onclick=async()=>{

@@ -13,13 +13,18 @@ const yes = (s,k) => new RegExp('^\\s*'+k+':\\s*yes\\s*$','mi').test(s);
 async function status(scan){
   const show=await run(['show']);
   if(!show.ok) return {available:false,powered:false,devices:[],error:show.error};
-  if(scan && yes(show.out,'Powered')) await run(['--timeout','7','scan','on'],10000);
+  // 15 s, not 7: a keyboard in pairing mode can take several seconds to answer with its NAME (an Arteck
+  // never showed up by name in 7 s -- 2026-10-17), and until it does it is one more MAC address in the list.
+  if(scan && yes(show.out,'Powered')) await run(['--timeout','15','scan','on'],18000);
   const d=await run(['devices']);
   const rows=[];
   for(const line of d.out.split(/\r?\n/)){
     const m=/^Device\s+([0-9A-F:]{17})\s+(.+)$/.exec(line.trim());if(!m)continue;
     const info=await run(['info',m[1]]); const s=info.out;
-    rows.push({address:m[1].toUpperCase(),name:m[2].trim(),paired:yes(s,'Paired'),
+    // `devices` prints the ALIAS, which for a device that never sent a name is its address with dashes.
+    // `named` is whether it really has one: the panel lists those, and folds the anonymous rest away.
+    const realName=(/^\s*Name:\s*(.+)$/mi.exec(s)||[])[1];
+    rows.push({address:m[1].toUpperCase(),name:(realName||m[2]).trim(),named:!!realName,paired:yes(s,'Paired'),
       trusted:yes(s,'Trusted'),connected:yes(s,'Connected'),audio:/Audio Sink|Audio Source|Headset|Headphones/i.test(s),
       input:/Icon:\s*input-|Human Interface Device/i.test(s)});
   }

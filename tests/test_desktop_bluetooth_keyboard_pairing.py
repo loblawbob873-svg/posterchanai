@@ -74,3 +74,28 @@ def test_an_older_keyboard_asking_for_a_pin_gets_one_and_it_is_shown(tmp_path):
 def test_a_failed_pairing_says_so(tmp_path):
     got, _ = _pair(tmp_path, "fail")
     assert got["r"]["ok"] is False and "AuthenticationFailed" in got["r"]["error"], got
+
+
+STATUS_FAKE = r'''#!/bin/sh
+case "$1" in
+  show) printf 'Controller 3C:78:95:9B:85:1D\n\tPowered: yes\n\tDiscovering: no\n';;
+  devices) printf 'Device DC:2C:26:00:11:22 Arteck HB030B\nDevice 4B:63:A7:9F:65:30 4B-63-A7-9F-65-30\n';;
+  info) if [ "$2" = "DC:2C:26:00:11:22" ]; then printf '\tName: Arteck HB030B\n\tIcon: input-keyboard\n\tPaired: no\n\tConnected: no\n';
+        else printf '\tAlias: 4B-63-A7-9F-65-30\n\tPaired: no\n\tConnected: no\n'; fi;;
+esac
+'''
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_status_says_which_devices_really_have_a_name(tmp_path):
+    """A device that never sent a name is listed by BlueZ under its address with dashes; the panel folds those."""
+    fake = tmp_path / "btctl"
+    fake.write_text(STATUS_FAKE)
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    js = "require(%r).status(false).then(s=>{process.stdout.write(JSON.stringify(s));process.exit(0);})" % str(ROOT / "desktop/bluetooth.js")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30,
+                         env=dict(os.environ, PC_BLUETOOTHCTL=str(fake)))
+    assert out.returncode == 0, out.stderr
+    rows = {d["address"]: d for d in json.loads(out.stdout)["devices"]}
+    assert rows["DC:2C:26:00:11:22"]["named"] is True and rows["DC:2C:26:00:11:22"]["input"] is True, rows
+    assert rows["4B:63:A7:9F:65:30"]["named"] is False, rows

@@ -10208,7 +10208,10 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-qs-tile:hover{ border-color:var(--neon,#3ce8ff); }
 .os-qs-tile.on{ background:rgba(60,232,255,.16); border-color:var(--neon,#3ce8ff); }
 .os-qs-tile .ic{ width:28px; height:28px; margin-bottom:6px; color:var(--neon,#3ce8ff); }
-.os-qs-tile b{ font-size:15px; font-weight:600; }
+.os-qs-tile b{ font-size:15px; font-weight:600; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* A tile is a grid item, and a grid item is as wide as its longest word unless told otherwise -- the Bluetooth
+   tile's text ran out of the flyout on the TV (2026-10-17). It takes its column's width and its text ends in "…". */
+.os-qs-tile{ min-width:0; overflow:hidden; }
 .os-qs-tile span{
   font-size:15px; color:var(--muted,#7a8699);
   max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -10261,7 +10264,20 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-mix-device select{width:100%;height:31px;padding:4px 8px;font-size:12px}
 .os-mix-master{background:rgba(var(--accent-rgb),.045);border-radius:8px}
 .os-bt-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line)}.os-bt-tools label{display:flex;align-items:center;gap:8px;font-weight:650}.os-bt-list{display:flex;flex-direction:column;gap:6px;padding-top:8px}.os-bt-row{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:10px;background:rgba(var(--accent-rgb),.035)}.os-bt-icon{width:24px;height:24px;display:grid;place-items:center;color:var(--neon)}.os-bt-icon svg{width:18px;height:18px}.os-bt-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.os-bt-name b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.os-bt-name small{font-size:11px;color:var(--muted)}.os-bt-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.os-bt-actions .btn{padding:6px 8px;font-size:11px}
-.os-bt-code{font-size:16px;letter-spacing:.12em;color:var(--neon)}   /* the code a keyboard asks you to type (osshell.js bluetoothPanel) */
+.os-bt-code{font-size:16px;letter-spacing:.12em;color:var(--neon)}
+/* The Bluetooth panel fits its flyout: the list scrolls inside it, and a row's buttons wrap under the name rather
+   than pushing past the edge on a 360px flyout (the TV, 2026-10-17). */
+.os-bt-list{max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain}
+/* Opened from System Settings it is a popover of its own: never taller than the window it is in, its list scrolling. */
+.os-pop.os-pop-bt{max-height:calc(100vh - 16px);display:flex;flex-direction:column}
+.os-pop.os-pop-bt .os-pop-b{flex:1 1 auto;min-height:0;max-height:none}
+.os-pop.os-pop-bt .os-bt-list{max-height:none;flex:1 1 auto;min-height:0}
+.os-bt-row{flex-wrap:wrap;min-width:0}
+.os-bt-name{min-width:120px}
+.os-bt-actions{margin-left:auto}
+.os-bt-anon{margin-top:4px}
+.os-bt-anon>summary{cursor:pointer;color:var(--muted);font-size:12px;padding:6px 4px}
+.os-bt-anon .os-bt-row{margin-top:6px}   /* the code a keyboard asks you to type (osshell.js bluetoothPanel) */
 
 .os-applist-h{
   padding:10px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
