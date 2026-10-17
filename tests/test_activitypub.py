@@ -82,6 +82,7 @@ def world(monkeypatch):
     actors._pin_owner_cache.clear()
     actors._nick_owner_cache.clear()
     outbox._done.clear()
+    outbox._last_full.clear()
     outbox._retries_loaded = False
     state._moved_cache.update(at=0.0, map={})
     inbox._locks.clear()
@@ -1927,6 +1928,11 @@ def test_the_community_api_is_for_the_bots_and_admins_only(monkeypatch):
         return (key, key) if key in users else (None, None)
     monkeypatch.setattr(auth_utils, "aquery_api_key", aquery)
     monkeypatch.setattr(auth_utils, "get_user_from_api_key", lambda db, uid: users.get(uid))
+    from app.services import bot_table
+
+    async def no_bots(db=None):                 # the bots are a relay table: never this machine's real one
+        return []
+    monkeypatch.setattr(bot_table, "aall_bots", no_bots)
 
     class Q:
         def query(self, *a):
