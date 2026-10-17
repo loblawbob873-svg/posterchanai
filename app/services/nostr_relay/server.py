@@ -726,6 +726,38 @@ class RelayServer:
     _cost_at = 0.0
     _cost_base = (0, 0, 0)
 
+    _req_cost: dict = {}
+
+    @staticmethod
+    def _req_shape(filters) -> str:
+        """What a REQ asks for, without who: kinds, the fields it uses, and the size of an author list."""
+        out = []
+        for f in (filters or [])[:3]:
+            if not isinstance(f, dict):
+                continue
+            ks = f.get("kinds") or []
+            kinds = ",".join(str(k) for k in sorted(k for k in ks if isinstance(k, int))[:6]) + ("+" if len(ks) > 6 else "")
+            a = len(f.get("authors") or [])
+            who = "" if not a else ("a1" if a == 1 else "a<10" if a < 10 else "a<100" if a < 100 else "a100+")
+            fields = "".join(sorted(k[0] if k[0] != "#" else k[:2] for k in f if k not in ("kinds", "authors", "limit")))
+            out.append("[%s|%s|%s]" % (kinds or "*", who, fields))
+        return " ".join(out) or "?"
+
+    def _note_req_cost(self, filters, sent: int) -> None:
+        try:
+            if not isinstance(self._req_cost, dict) or self._req_cost is RelayServer._req_cost:
+                self._req_cost = {}
+            k = self._req_shape(filters)
+            row = self._req_cost.get(k)
+            if row is None:
+                if len(self._req_cost) >= 2000:
+                    return
+                row = self._req_cost[k] = [0, 0]
+            row[0] += 1
+            row[1] += sent
+        except Exception:                               # noqa: BLE001 -- a statistic never breaks an answer
+            pass
+
     def _cost_line(self, now: float) -> None:
         subs = getattr(self, "subs", None)
         total, fan, acc = self._frames_out, getattr(subs, "fanout_frames", 0), getattr(self, "_accepted", 0)
@@ -738,6 +770,12 @@ class RelayServer:
                     "%.1f events/s accepted, %d conns, %d subs", (total - t0) / dt, (fan - f0) / dt,
                     ((total - t0) - (fan - f0)) / dt, (acc - a0) / dt, len(getattr(self, "_outq", {})),
                     subs.total() if subs is not None else 0)
+        rc = getattr(self, "_req_cost", None)
+        if isinstance(rc, dict) and rc and rc is not RelayServer._req_cost:
+            top = sorted(rc.items(), key=lambda kv: -kv[1][1])[:5]
+            logger.info("[nostr-relay] cost: top answers -- %s", "; ".join(
+                "%s x%d -> %d frames" % (k, n, f) for k, (n, f) in top))
+            self._req_cost = {}
 
     # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
     # cure from becoming the disease (see _note_refused).
@@ -2085,13 +2123,16 @@ class RelayServer:
         # subs also enqueuing) overflows it and this client loses events it asked for. (The EOSE
         # itself is safe either way now: _OutQ never drops a control frame.)
         withheld_repo = False
+        sent = 0
         for n, ev in enumerate(reversed(events)):
             if not self._can_serve_event(conn, ev):
                 withheld_repo = withheld_repo or self._is_private_repo_event(ev)
                 continue
             self._send(conn, ["EVENT", sub_id, ev])
+            sent += 1
             if n % 512 == 511:
                 await asyncio.sleep(0)
+        self._note_req_cost(filters, sent)
         # SAY WHEN A PRIVATE REPO WAS LEFT OUT OF AN AUTHOR-BOUND ANSWER. Withholding one silently
         # (an ordinary EOSE) is indistinguishable from "this person has no such repo", so a client
         # has nothing to act on -- the owner's own Git page listed none of their private repos, ever.

@@ -30,3 +30,23 @@ def test_the_cost_line_splits_live_delivery_from_answers(caplog):
         S.RelayServer._cost_line(srv, 1300.0)
     line = [r.getMessage() for r in caplog.records if "cost:" in r.getMessage()][0]
     assert "10 frames/s out (live delivery 4/s, answers+control 6/s), 1.0 events/s accepted, 2 conns, 7 subs" in line, line
+
+
+def test_the_cost_line_names_the_queries_the_answers_go_to(caplog):
+    """490 of 508 frames/s on server1 after 2026-10-17's fixes were ANSWERS -- the line now says to which REQ
+    shapes (kinds, fields, author-list size; never whose), costliest first, and starts over each window."""
+    srv = S.RelayServer.__new__(S.RelayServer)
+    srv._frames_out, srv._accepted, srv._cost_at, srv._cost_base, srv._outq = 0, 0, 0.0, (0, 0, 0), {}
+    srv.subs = SimpleNamespace(fanout_frames=0, total=lambda: 0)
+    for _ in range(3):
+        srv._note_req_cost([{"kinds": [30078], "authors": ["a" * 64], "#d": ["x"], "limit": 256}], 200)
+    srv._note_req_cost([{"kinds": [1, 6], "since": 5, "limit": 50}], 40)
+    srv._note_req_cost([{"ids": ["b" * 64]}], 1)
+    S.RelayServer._cost_line(srv, 1000.0)
+    srv._frames_out = 700
+    with caplog.at_level(logging.INFO):
+        S.RelayServer._cost_line(srv, 1300.0)
+    line = [r.getMessage() for r in caplog.records if "top answers" in r.getMessage()][0]
+    assert line.index("[30078|a1|#d] x3 -> 600 frames") < line.index("[1,6||s] x1 -> 40 frames"), line
+    assert "a" * 64 not in line, "a pubkey reached the log"
+    assert srv._req_cost == {}, "the next window must start from zero"
