@@ -821,6 +821,12 @@ class RelayServer:
             a = len(f.get("authors") or [])
             who = "" if not a else ("a1" if a == 1 else "a<10" if a < 10 else "a<100" if a < 100 else "a100+")
             fields = "".join(sorted(k[0] if k[0] != "#" else k[:2] for k in f if k not in ("kinds", "authors", "limit")))
+            # A `#l` LABEL is an app's fixed name for its document set (pcai-notes, the vault, playlists...), never a
+            # person's data -- the one tag value worth printing: "[30078|a1|#l]" alone could not say which app's
+            # library reads topped the remote answers (2026-10-17).
+            lab = f.get("#l")
+            if isinstance(lab, list) and lab and all(isinstance(x, str) and len(x) <= 24 for x in lab[:2]):
+                fields += "=" + "/".join(sorted(lab)[:2])
             out.append("[%s|%s|%s]" % (kinds or "*", who, fields))
         return " ".join(out) or "?"
 

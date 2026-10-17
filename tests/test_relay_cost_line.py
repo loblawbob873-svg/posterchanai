@@ -64,3 +64,9 @@ def test_a_loopback_connection_is_this_nodes_own_even_when_its_source_was_rewrit
     srv._conn_ips = {natted: "192.168.0.2", outside: "192.168.0.1"}
     assert S.RelayServer._req_origin(srv, natted, "repo1a2b") == "L:repo"
     assert S.RelayServer._req_origin(srv, outside, "repo1a2b") == "R"
+
+
+def test_a_library_read_by_label_names_the_app():
+    shape = S.RelayServer._req_shape([{"kinds": [30078], "authors": ["a" * 64], "#l": ["pcai-notes"], "limit": 5000}])
+    assert shape == "[30078|a1|#l=pcai-notes]", shape
+    assert "aaaa" not in S.RelayServer._req_shape([{"kinds": [1], "authors": ["a" * 64]}]), "an author key was printed"
