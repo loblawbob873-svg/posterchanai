@@ -56,7 +56,10 @@ def test_a_loopback_connection_is_this_nodes_own_even_when_its_source_was_rewrit
     """server1's NAT rewrites the source of loopback connections to its LAN address: the relay's own end (127.0.0.1)
     is what says the asker is a process on this machine. Read by the peer, every one of them was tagged remote."""
     srv = S.RelayServer.__new__(S.RelayServer)
-    natted, outside = SimpleNamespace(local_address=("127.0.0.1", 3052)), SimpleNamespace(local_address=("192.168.0.2", 3052))
+    class Conn:
+        def __init__(self, here):
+            self.local_address = (here, 3052)
+    natted, outside = Conn("127.0.0.1"), Conn("192.168.0.2")
     srv._conn_ips = {natted: "192.168.0.2", outside: "192.168.0.1"}
     assert S.RelayServer._req_origin(srv, natted, "repo1a2b") == "L:repo"
     assert S.RelayServer._req_origin(srv, outside, "repo1a2b") == "R"
