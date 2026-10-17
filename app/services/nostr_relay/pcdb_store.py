@@ -596,6 +596,29 @@ class PcdbRelayStore(RelayStore):
     async def delete_by_proxy(self) -> int:
         return await self._s(self._delete_by_proxy_sync)
 
+    def _delete_reposts_of_sync(self, pubkeys) -> int:
+        """Every stored kind-6/16 repost of these authors (the `p` index, then the embedded author checked): a
+        repost CARRIES the reposted post, so a blocked author's posts lived on in every repost of them."""
+        if self._writes_closed:
+            return 0
+        from .server import reposted_authors
+        pks = set(pubkeys)
+        if not pks:
+            return 0
+        evs = self._query_sync([{"kinds": [6, 16], "#p": sorted(pks), "limit": 1_000_000}], 1_000_000)
+        ids = [e["id"] for e in evs if reposted_authors(e) & pks]
+
+        def _kill():
+            if self._writes_closed:
+                return 0
+            n = self._kill_seqs([s for s in self._live_seqs_of(ids) if s is not None])
+            self.store.sync()
+            return n
+        return self._on_writer(_kill) if ids else 0
+
+    async def delete_reposts_of(self, pubkeys) -> int:
+        return await self._s(self._delete_reposts_of_sync, list(pubkeys))
+
     # ------------------------------------------------------------ scans that only read
     # The bridge scans below used to DECODE EVERY STORED EVENT in Python, on every relay start and on every
     # reload-blocks the app sends (2026-10-10, server1 promoted to PRIMARY with 3.28M events: the relay's main

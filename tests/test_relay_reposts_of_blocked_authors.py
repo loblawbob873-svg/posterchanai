@@ -1,0 +1,85 @@
+"""A blocked author's posts do not come back as somebody else's repost.
+
+2026-10-17: "how is The_Toddstr's posts still making it to our service despite being blocked at the relay?" The
+client reads only this relay, and the relay held none of his posts -- but it held 17 kind-6 reposts of them from
+other people, and a repost CARRIES the reposted post (its content is that event's JSON). The block checked who
+SIGNED, so every repost passed and the client drew his post inside it. Drives the relay's own event path and the
+real PosterChanDB purge.
+"""
+import asyncio
+import json
+
+from app.services.nostr.event import build_event
+from app.services.nostr.nostr_service import derive_pubkey
+from app.services.nostr_relay.server import RelayServer
+from tests.test_relay_prune import _ev, _run, store_factory  # noqa: F401  (fixture)
+
+TODD, ALICE, BOB = bytes([7]) * 32, bytes([8]) * 32, bytes([9]) * 32
+TODD_PK = derive_pubkey(TODD)
+
+
+class Gate:
+    def is_member(self, _pk): return True
+    def is_operator(self, _pk): return False
+    def is_puppet_event(self, _ev): return False
+    def is_blocked(self, pk): return pk == TODD_PK
+
+
+class Store:
+    def __init__(self):
+        self.saved = []
+    async def add_event(self, ev, origin="direct", **_kw):
+        self.saved.append(ev["id"])
+        return True
+    async def has_event(self, eid):
+        return eid in self.saved
+
+
+def _server():
+    srv = RelayServer(Store(), Gate(), {"wot_enabled": False})
+    srv.sent = []
+    srv._send = lambda conn, obj: srv.sent.append((conn, obj))
+    srv._conn_ips.update({"you": "8.8.4.4"})
+    return srv
+
+
+def test_a_repost_of_a_blocked_author_is_refused_and_one_of_anybody_else_is_not():
+    his = build_event(TODD, 1, "a post from a blocked account", [])
+    hers = build_event(BOB, 1, "an ordinary post", [])
+    reposts = {
+        "kind 6 carrying his post": build_event(ALICE, 6, json.dumps(his), [["e", his["id"]], ["p", TODD_PK]]),
+        "kind 16 naming him": build_event(ALICE, 16, "", [["e", his["id"]], ["p", TODD_PK], ["k", "1"]]),
+        "kind 6 carrying his post, p tag left off": build_event(ALICE, 6, json.dumps(his), [["e", his["id"]]]),
+    }
+    fine = build_event(ALICE, 6, json.dumps(hers), [["e", hers["id"]], ["p", hers["pubkey"]]])
+    srv = _server()
+
+    async def run():
+        for e in [*reposts.values(), fine]:
+            await srv._on_event("you", e)
+    asyncio.new_event_loop().run_until_complete(run())
+    oks = {m[1]: (m[2], m[3]) for _c, m in srv.sent if isinstance(m, list) and m[0] == "OK"}
+    for name, e in reposts.items():
+        assert oks[e["id"]][0] is False and "blocked" in oks[e["id"]][1], (name, oks.get(e["id"]))
+        assert e["id"] not in srv.store.saved, name
+    assert fine["id"] in srv.store.saved, "a repost of somebody not blocked was refused"
+
+
+def test_the_block_purge_removes_reposts_already_stored(store_factory):  # noqa: F811
+    todd, other = "d" * 64, "e" * 64
+
+    def repost(i, author, embedded=True):
+        ev = _ev(i, kind=6, pubkey="c" * 64)
+        ev["tags"] = [["e", f"{i + 1000:064x}"], ["p", author]]
+        if embedded:
+            ev["content"] = json.dumps({"id": f"{i + 1000:064x}", "pubkey": author, "kind": 1, "content": "x"})
+        return ev
+
+    async def go(loop):
+        store = store_factory(loop)
+        await store.add_events_bulk([repost(1, todd), repost(2, todd, embedded=False), repost(3, other),
+                                     _ev(4, kind=1, pubkey="c" * 64)])
+        assert await store.delete_reposts_of([todd]) == 2
+        left = {e["id"] for e in await store.query([{"limit": 100}])}
+        assert left == {f"{3:064x}", f"{4:064x}"}, left
+    _run(go)

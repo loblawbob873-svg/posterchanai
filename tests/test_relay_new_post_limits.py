@@ -130,7 +130,8 @@ def test_the_inbox_answers_remote_servers_before_the_relay_decides():
     from app.routers import activitypub as ap
     src = inspect.getsource(ap)
     i = src.index("if not inbox.schedule(activity, signer):")
-    assert "return Response(status_code=202)" in src[i:i + 200]
+    rest = src[i:src.index("@router.post", i)]              # the end of the handler, wherever that is
+    assert "return Response(status_code=202)" in rest and "status_code=4" not in rest
 
 
 def test_every_route_into_the_timeline_consults_the_limits():

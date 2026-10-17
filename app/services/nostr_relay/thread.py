@@ -1235,6 +1235,9 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         await _refresh_preserve(store)
         by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"], spare_preserved=False) or 0) \
             if fresh["blocked_pubkeys"] else 0
+        # ...and every repost of them: a repost carries the whole reposted post (server.reposted_authors).
+        if fresh["blocked_pubkeys"] and hasattr(store, "delete_reposts_of"):
+            by_pk += (await store.delete_reposts_of(fresh["blocked_pubkeys"]) or 0)
         by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
         by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
         by_bridge = (await _apply_blocked_relays(store, gate, fresh["blocked_relays"]) or 0) if fresh["blocked_relays"] else 0

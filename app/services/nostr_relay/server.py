@@ -533,6 +533,31 @@ _RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
 _NO_RECORDS: dict = {}
 
 
+_REPOST_KINDS = (6, 16)
+
+
+def reposted_authors(ev) -> set:
+    """Who a kind-6/16 repost reposts: the embedded event's author (its content is that event's JSON) and every
+    `p` it names (NIP-18 tags the reposted author). Empty for any other kind."""
+    if not isinstance(ev, dict) or ev.get("kind") not in _REPOST_KINDS:
+        return set()
+    out = {t[1] for t in ev.get("tags") or () if isinstance(t, list) and len(t) >= 2 and t[0] == "p"
+           and isinstance(t[1], str)}
+    c = ev.get("content") or ""
+    if isinstance(c, str) and c.startswith("{"):
+        try:
+            inner = json.loads(c)
+            if isinstance(inner, dict) and isinstance(inner.get("pubkey"), str):
+                out.add(inner["pubkey"])
+        except ValueError:
+            pass
+    return out
+
+
+def reposted_blocked(ev, is_blocked) -> bool:
+    return any(is_blocked(pk) for pk in reposted_authors(ev))
+
+
 def _restricted_traffic(typ, msg, is_local=None) -> bool:
     """May a confined (non-PosterChan) socket send this message?
 
@@ -1701,6 +1726,13 @@ class RelayServer:
         # throwaway key, so a blocked person's NIP-17 DM cannot be recognised here; the client hides those.
         if self.gate.is_blocked(ev.get("pubkey", "")):
             self._refuse(conn, eid, ev, "blocked: author blocked")
+            return
+        # NOR DOES A REPOST OF ONE. A kind-6/16 repost CARRIES the reposted post (its content is that event's
+        # JSON), so a client reading only this relay drew a blocked author's posts in full whenever anybody else
+        # reposted them -- 17 of The_Toddstr's in one week after he was blocked (2026-10-17). Signed by the
+        # reposter, it passed the check above.
+        if reposted_blocked(ev, self.gate.is_blocked):
+            self._refuse(conn, eid, ev, "blocked: reposts a blocked author")
             return
         kind = int(ev.get("kind", 1))
         # NIP-42 authentication events are protocol messages, never publishable events. In
