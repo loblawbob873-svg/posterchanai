@@ -8958,10 +8958,10 @@
      * so is what makes the figure read as a fault. See RelayServer.online_breakdown. */
     const refused = n(st && st.relay_confined);
     const relayTip = sockets > 0
-      ? n(st && st.relay).toLocaleString() + ' distinct client addresses, from ' + sockets.toLocaleString()
-        + ' open connections' + (mine > 0 ? ' (' + mine.toLocaleString() + ' of them this machine\u2019s own)' : '')
-        + (refused > 0 ? ' \u2014 ' + refused.toLocaleString() + ' are clients this relay is refusing, and are '
-           + 'not people using it' : '')
+      ? n(st && st.relay).toLocaleString() + ' people (signed-in accounts, plus one per address for guests), from '
+        + sockets.toLocaleString() + ' open connections'
+        + (refused > 0 ? ' \u2014 ' + refused.toLocaleString() + ' refused clients and this machine\u2019s own '
+           + 'connections are not counted' : '')
       : 'people connected to this relay right now';
     return [{ icon: 'i-wot',       n: n(st && st.users),  label: 'WoT',      tip: 'people in this relay\u2019s web of trust' },
             { icon: 'i-livedot',   n: n(st && st.online), label: 'online',   tip: 'people using this site right now' },

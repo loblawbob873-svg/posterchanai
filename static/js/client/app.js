@@ -5478,11 +5478,10 @@
        * lower it (a refused client redials, so occupancy is arrival rate times hold time and we set
        * the hold time, not the arrival rate) — saying so does. */
       const relayTitle = relaySockets > 0
-        ? relay.toLocaleString() + ' distinct client addresses, from ' + relaySockets.toLocaleString()
-          + ' open connections'
-          + (relayInternal > 0 ? ' (' + relayInternal.toLocaleString() + ' of them this node\u2019s own machines)' : '')
-          + (relayConfined > 0 ? ' \u2014 ' + relayConfined.toLocaleString() + ' are clients this relay is '
-             + 'refusing, and are not people using it' : '')
+        ? relay.toLocaleString() + ' people (signed-in accounts, plus one per address for guests), from '
+          + relaySockets.toLocaleString() + ' open connections'
+          + (relayConfined > 0 ? ' \u2014 ' + relayConfined.toLocaleString() + ' refused clients and this '
+             + 'node\u2019s own connections are not counted' : '')
         : 'People connected to this relay right now';
       _lastRelayTitle = relayTitle;      // the ☰ More sheet is built synchronously; same words there
       parts.push(`<span class="uc-stat" title="${enc(relayTitle)}">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);

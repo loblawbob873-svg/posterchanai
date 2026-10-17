@@ -513,9 +513,18 @@ def _bot_viewer_ids() -> set:
     return s
 
 
+# What the client actually sends (app.js `_viewerId`): "k" + 16 hex of the signed-in key, or "a" + a random
+# base-36 browser id. Anything else is not a viewer id -- it used to count as a person for 2.5 minutes, so any
+# `curl '/client/stats?v=whatever'` (or a loop of them) added people to "online"; it falls back to the address,
+# which is dropped when private like every other internal caller.
+_VIEWER_ID = re.compile(r"^(k[0-9a-f]{16}|a[0-9a-z]{8,24})$")
+
+
 def _record_viewer(request: Request, vid: str) -> int:
     now = _time.monotonic()
     key = (vid or "").strip()[:80]
+    if key and not _VIEWER_ID.match(key):
+        key = ""
     if not key:
         xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
         key = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "?")

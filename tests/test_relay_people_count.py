@@ -162,3 +162,51 @@ def test_client_stats_ships_the_socket_count_beside_the_people_count(monkeypatch
 
 async def _zero():
     return 0
+
+
+# --- people, not sockets (2026-10-17: "make sure the number of users online is accurate") ---------
+
+class _Conn:
+    def __init__(self, here="192.168.0.2", confined=False):
+        self.local_address = (here, 3052)
+        self._pcai_signer_only = confined
+        self._pcai_signer_used = False
+
+
+class _Gate:
+    def is_operator(self, pk):
+        return pk == "op"
+
+
+def _people(rows):
+    """rows: (ip, conn, signed-in pubkeys)."""
+    srv = RelayServer.__new__(RelayServer)
+    srv._conn_ips = {c: ip for ip, c, _pks in rows}
+    srv._auth_pubkeys = {c: set(pks) for _ip, c, pks in rows if pks}
+    srv._conns = len(rows)
+    srv.gate = _Gate()
+    return srv.online_breakdown()
+
+
+def test_refused_strangers_and_our_own_processes_are_not_people():
+    """110 'on relay' on server1: 68 sockets were confined strangers, and the app's own loopback sockets arrive
+    through a NAT rule as the box's LAN address."""
+    b = _people([("41.0.0.1", _Conn(), ()),                                # a guest
+                 ("41.0.0.2", _Conn(confined=True), ()),                   # refused, redialling
+                 ("41.0.0.3", _Conn(confined=True), ()),
+                 ("192.168.0.2", _Conn(here="127.0.0.1"), ["op"])])        # this node, NAT'd
+    assert b["online"] == 1, b
+    assert (b["confined"], b["loopback_conns"], b["conns"]) == (2, 1, 4)
+
+
+def test_one_signed_in_person_on_two_networks_is_one_and_a_shared_address_is_not_folded():
+    b = _people([("41.0.0.1", _Conn(), ["alice"]),                         # phone
+                 ("82.0.0.9", _Conn(), ["alice"]),                         # laptop
+                 ("90.0.0.5", _Conn(), ["bob"]), ("90.0.0.5", _Conn(), ["carol"]),   # one household
+                 ("90.0.0.5", _Conn(), ())])                               # carol's second tab, not signed in
+    assert b["online"] == 3 and b["accounts"] == 3, b
+
+
+def test_the_operator_key_is_not_a_person():
+    b = _people([("41.0.0.1", _Conn(), ["op"])])
+    assert b["online"] == 1 and b["accounts"] == 0, "counted once as an address, never as an account"

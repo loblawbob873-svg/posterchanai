@@ -44,7 +44,7 @@ class HeadcountsAreLabelled(unittest.TestCase):
         """The regression: the chip said only "People connected to this relay right now"."""
         self.assertIn("relay_sockets", self.app,
                       "the sidebar never reads the socket count it was deduped from")
-        self.assertIn("distinct client addresses", self.app,
+        self.assertIn("signed-in accounts, plus one per address for guests", self.app,
                       "the chip does not say what its number counts")
 
     def test_the_chip_degrades_when_the_relay_cannot_say(self):

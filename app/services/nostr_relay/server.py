@@ -1440,20 +1440,44 @@ class RelayServer:
                     "unknown": 0, "loopback_conns": 0, "confined": 0, "measured": False}
         _local = {"127.0.0.1", "::1", "localhost"}
         remote, internal, unknown, loopback = set(), set(), 0, 0
-        # Sockets the client filter admitted but confined — refused every read, waiting to be closed.
-        confined = sum(1 for conn in self._conn_ips
-                       if getattr(conn, "_pcai_signer_only", False)
-                       and not getattr(conn, "_pcai_signer_used", False))
-        for ip in self._conn_ips.values():
+        confined = 0
+        # THE HEADLINE IS PEOPLE, decided per socket (2026-10-17, "make sure the number of users online is
+        # accurate"): it read 110 while 68 of the sockets were confined strangers refused every read and 7
+        # addresses were this network's own machines. Now a socket that is signed in (NIP-42) is the ACCOUNT it
+        # signed in as -- one person on a phone and a laptop is one, and nobody behind a shared address is
+        # folded into a neighbour; a socket that is not signed in is its address, as before; a confined socket
+        # and this node's own processes are nobody. remote/internal/unknown/confined still say what the
+        # sockets are, so the figure stays reconcilable.
+        accounts, anon_ips, anon_unknown = set(), set(), 0
+        authed_ips = set()
+        is_op = getattr(getattr(self, "gate", None), "is_operator", None) or (lambda _pk: False)
+        auth = getattr(self, "_auth_pubkeys", None) or {}
+        for conn, ip in self._conn_ips.items():
+            here = getattr(conn, "local_address", None)
+            here = str(here[0]) if isinstance(here, (tuple, list)) and here else ""
+            if (ip in _local) or here.startswith("127.") or here == "::1":
+                loopback += 1              # our own bots / app / worker (server1's NAT shows them as its LAN address)
+                continue
             if not ip:
-                unknown += 1               # IP unknown → count this conn on its own
-            elif ip in _local:
-                loopback += 1              # our own bots / app / worker — never a person online
+                unknown += 1
             elif self._is_internal(ip):
-                internal.add(ip)           # one of our own machines out on the LAN
+                internal.add(ip)
             else:
-                remote.add(ip)             # a real remote person
-        return {"online": len(remote) + len(internal) + unknown, "conns": conns,
+                remote.add(ip)
+            if getattr(conn, "_pcai_signer_only", False) and not getattr(conn, "_pcai_signer_used", False):
+                confined += 1              # admitted and refused everything: a connection, not a person
+                continue
+            pks = [pk for pk in (auth.get(conn) or ()) if not is_op(pk)]
+            if pks:
+                accounts.update(pks)
+                if ip:
+                    authed_ips.add(ip)
+            elif ip:
+                anon_ips.add(ip)
+            else:
+                anon_unknown += 1
+        people = len(accounts) + len(anon_ips - authed_ips) + anon_unknown
+        return {"online": people, "conns": conns, "accounts": len(accounts),
                 "remote": len(remote), "internal": len(internal), "unknown": unknown,
                 "loopback_conns": loopback, "confined": confined, "measured": True}
 
