@@ -292,8 +292,37 @@ def _event_tags(ev: dict, name: str, cache: dict | None) -> set:
     return have
 
 
+def _private_doc_deletion(ev: dict) -> bool:
+    """A kind-5 that deletes only its author's own kind-30078 documents (private app data). Nobody but that author
+    can ever read those documents here (NIP-78 reads need AUTH as the author), so nobody else can hold anything it
+    deletes -- yet every client's `{kinds:[5]}` subscription was handed every one of them: the operator's DocTables
+    alone write ~9,400 a day, each client's boot took the latest 500, and every new one went to every client live
+    (server1, 2026-10-17). Decided from its own tags: every kind it names (`k`, and the kind in each `a`) is 30078,
+    and it names at least one. Anything else -- including a deletion naming no kinds -- is ordinary."""
+    if ev.get("kind") != 5:
+        return False
+    named = set()
+    for t in ev.get("tags") or []:
+        if len(t) > 1 and t[0] == "k":
+            named.add(str(t[1]))
+        elif len(t) > 1 and t[0] == "a":
+            named.add(str(t[1]).split(":", 1)[0])
+    return bool(named) and named == {"30078"}
+
+
+def _names_author(flt: dict, pubkey: str) -> bool:
+    authors = flt.get("authors") if isinstance(flt, dict) else None
+    try:
+        return bool(authors) and pubkey in authors
+    except TypeError:
+        return False
+
+
 def _match_one(flt: dict, ev: dict, _tags: dict | None = None) -> bool:
     if "ids" in flt and ev["id"] not in flt["ids"]:
+        return False
+    # Private-document deletions go only to a filter that names their author (see _private_doc_deletion).
+    if ev.get("kind") == 5 and _private_doc_deletion(ev) and not _names_author(flt, ev.get("pubkey", "")):
         return False
     if "authors" in flt and ev["pubkey"] not in flt["authors"]:
         return False
@@ -743,11 +772,24 @@ class RelayServer:
             out.append("[%s|%s|%s]" % (kinds or "*", who, fields))
         return " ".join(out) or "?"
 
-    def _note_req_cost(self, filters, sent: int) -> None:
+    def _req_origin(self, conn, sub_id) -> str:
+        """WHO asks: `L:` this server's own processes over loopback, with their subscription-id prefix (the app's
+        helpers name theirs -- `repo…`, `dt-…`), `R:` everyone else. 6,028 `#d` lookups in 5 minutes could not be
+        traced to a caller without it."""
+        try:
+            ip = str((getattr(self, "_conn_ips", {}) or {}).get(conn) or "")
+            if ip.startswith("127.") or ip in ("::1", "localhost"):
+                m = re.match(r"[A-Za-z_-]{1,12}", str(sub_id or ""))
+                return "L:" + (m.group(0) if m else "?")
+            return "R"
+        except Exception:                               # noqa: BLE001
+            return "?"
+
+    def _note_req_cost(self, filters, sent: int, origin: str = "") -> None:
         try:
             if not isinstance(self._req_cost, dict) or self._req_cost is RelayServer._req_cost:
                 self._req_cost = {}
-            k = self._req_shape(filters)
+            k = (origin + " " if origin else "") + self._req_shape(filters)
             row = self._req_cost.get(k)
             if row is None:
                 if len(self._req_cost) >= 2000:
@@ -2128,11 +2170,14 @@ class RelayServer:
             if not self._can_serve_event(conn, ev):
                 withheld_repo = withheld_repo or self._is_private_repo_event(ev)
                 continue
+            if ev.get("kind") == 5 and _private_doc_deletion(ev) and \
+                    not any(_names_author(f, ev.get("pubkey", "")) for f in filters):
+                continue                                # nobody but its author holds what it deletes
             self._send(conn, ["EVENT", sub_id, ev])
             sent += 1
             if n % 512 == 511:
                 await asyncio.sleep(0)
-        self._note_req_cost(filters, sent)
+        self._note_req_cost(filters, sent, self._req_origin(conn, sub_id))
         # SAY WHEN A PRIVATE REPO WAS LEFT OUT OF AN AUTHOR-BOUND ANSWER. Withholding one silently
         # (an ordinary EOSE) is indistinguishable from "this person has no such repo", so a client
         # has nothing to act on -- the owner's own Git page listed none of their private repos, ever.
