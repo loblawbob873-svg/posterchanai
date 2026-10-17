@@ -88,10 +88,21 @@ import threading as _threading
 _TLS = _threading.local()
 
 
+class _Pool(dict):
+    """This thread's sockets. The sync client runs its own receive thread, which would keep a socket open after the
+    thread that asked has ended -- so the pool closes them when the thread's locals are dropped."""
+    def __del__(self):
+        for ws in list(self.values()):
+            try:
+                ws.close()
+            except Exception:       # noqa: BLE001
+                pass
+
+
 def _pooled(target: str, auth_seckey, timeout: float):
     pool = getattr(_TLS, "pool", None)
     if pool is None:
-        pool = _TLS.pool = {}
+        pool = _TLS.pool = _Pool()
     key = (target, auth_seckey or b"")
     ws = pool.get(key)
     if ws is not None:

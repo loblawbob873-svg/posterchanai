@@ -202,7 +202,7 @@ def test_counts_come_back_in_order_and_a_refused_count_is_unavailable_not_zero()
         srv.shutdown()
 
 
-def _counting_relay(serve_once=False):
+def _counting_relay(serve_once=False, idle=5):
     """Answers every REQ on a socket until it closes, and counts the sockets. With serve_once the socket is
     dropped after its first answer -- what a relay restart looks like to a cached connection."""
     conns = []
@@ -211,7 +211,7 @@ def _counting_relay(serve_once=False):
         conns.append(1)
         while True:
             try:
-                msg = json.loads(ws.recv(timeout=5))
+                msg = json.loads(ws.recv(timeout=idle))
             except Exception:
                 return
             if msg[0] != "REQ":
@@ -255,5 +255,29 @@ def test_threads_never_share_a_connection():
               for _ in range(3)]
         [t.start() for t in ts]; [t.join() for t in ts]
         assert len(out) == 3 and len(conns) == 3
+    finally:
+        srv.shutdown()
+
+
+def test_a_thread_that_ends_closes_its_connection():
+    """Short-lived threads must not leave a socket behind (the sync client's own receive thread keeps it open)."""
+    import time
+    h, conns = _counting_relay(idle=60)          # only the CLIENT may close these
+    open_now = []
+    real = h
+
+    def tracking(ws):
+        open_now.append(ws)
+        real(ws)
+        open_now.remove(ws)
+    srv, port = _relay(tracking)
+    try:
+        for _ in range(5):
+            t = threading.Thread(target=lambda: rr.query([{"kinds": [1]}], port=port, timeout=5))
+            t.start(); t.join()
+        deadline = time.time() + 3
+        while open_now and time.time() < deadline:
+            time.sleep(0.05)
+        assert not open_now, ("threads that ended left their sockets open", len(open_now))
     finally:
         srv.shutdown()
