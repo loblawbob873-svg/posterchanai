@@ -51,8 +51,15 @@ def test_the_route(monkeypatch, tmp_path):
     """No request ever waits for a resize ("vyram said it's worse now", 2026-10-16: a new picture cost ~2.5 s inline,
     3 at a time, and the service worker's own re-fetch got a 400 after paying it -- so it was paid twice)."""
     import time
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from app.main import app
+    from app.routers.client import router
+    # Just the route, never the whole app: `with TestClient(app)` runs the app's STARTUP, whose background table
+    # loads never finish in a test and outlive it -- the next test in the process (the stats bot's) then read
+    # "table fedi_puppets is still loading" (deploy 256's gate, 2026-10-16). The `with` is needed so the
+    # background resize keeps running between requests.
+    app = FastAPI()
+    app.include_router(router)
     monkeypatch.setattr(thumb_service, "_ROOT", str(tmp_path))
     fetched = []
 
