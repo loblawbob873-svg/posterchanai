@@ -27,11 +27,32 @@ async function status(scan){
     rows.push({address:m[1].toUpperCase(),name:(realName||m[2]).trim(),named:!!realName,paired:yes(s,'Paired'),
       trusted:yes(s,'Trusted'),connected:yes(s,'Connected'),audio:/Audio Sink|Audio Source|Headset|Headphones/i.test(s),
       input:/Icon:\s*input-|Human Interface Device/i.test(s),
-      // A keyboard/mouse/headset that reports its battery: "Battery Percentage: 0x26 (38)".
-      battery:(m=>m?Number(m[1]):null)(/Battery Percentage:.*\((\d+)\)/i.exec(s))});
+      battery:deviceBattery(m[1].toUpperCase(), s)});
   }
   return {available:true,powered:yes(show.out,'Powered'),discovering:yes(show.out,'Discovering'),devices:rows};
 }
+/* A DEVICE'S BATTERY, AS A PERCENTAGE THAT MEANS WHAT IT SAYS.
+ * Two sources: BlueZ's Battery Service ("Battery Percentage: 0x26 (38)") and, for a keyboard that reports it
+ * through HID instead, the kernel's /sys/class/power_supply/hid-<address>-battery -- the Arteck-style keyboard on
+ * the TV has only the second. And some of those keyboards declare their battery as 0-255 in the HID descriptor
+ * while SENDING a percentage, so the kernel scales a full charge to ~39% (the kernel corrects only a fixed list of
+ * devices, HID_BATTERY_QUIRK_PERCENT). Measured 2026-10-17: a just-charged keyboard (green LED) read 38%, its
+ * descriptor `15 00 26 ff 00` = 0..255. The same correction, for the devices known to need it, by vendor:product. */
+const HID_PERCENT_QUIRK = new Set(['045E:005F']);     // "Bluetooth 5.1 Keyboard" clones using a Microsoft id
+const SYSFS = process.env.PC_SYSFS || '/sys';
+function deviceBattery(mac, info){
+  const m = /Battery Percentage:.*\((\d+)\)/i.exec(info || '');
+  if(m) return Number(m[1]);
+  try{
+    const fs = require('fs'), path = require('path');
+    const cap = Number(fs.readFileSync(path.join(SYSFS, 'class', 'power_supply', 'hid-' + mac.toLowerCase() + '-battery', 'capacity'), 'utf8').trim());
+    if(!Number.isFinite(cap)) return null;
+    const ma = /Modalias:\s*\S*v([0-9A-F]{4})p([0-9A-F]{4})/i.exec(info || '');
+    const id = ma ? (ma[1] + ':' + ma[2]).toUpperCase() : '';
+    return HID_PERCENT_QUIRK.has(id) ? Math.min(100, Math.round(cap * 255 / 100)) : cap;
+  }catch(_){ return null; }
+}
+
 async function power(on){return run(['power',on?'on':'off']);}
 
 /* PAIRING A KEYBOARD NEEDS AN AGENT, AND THE PERSON NEEDS TO SEE ITS CODE.
@@ -81,4 +102,4 @@ async function device(address,action,onCode){
   if(action==='pair') return pairInteractive(mac,onCode);
   return run([action,mac],30000);
 }
-module.exports={status,power,device,pairInteractive,MAC};
+module.exports={status,power,device,pairInteractive,deviceBattery,HID_PERCENT_QUIRK,MAC};

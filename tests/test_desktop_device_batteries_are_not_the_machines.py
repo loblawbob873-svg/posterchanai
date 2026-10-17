@@ -45,25 +45,40 @@ def test_a_laptop_reports_its_own_battery_not_the_keyboards(tmp_path):
     assert b["present"] and b["name"] == "BAT0" and b["percent"] == 81, b
 
 
-FAKE = r'''#!/bin/sh
-case "$1" in
-  show) printf '\tPowered: yes\n';;
-  devices) printf 'Device D1:01:09:03:96:AE Bluetooth 5.1 Keyboard\n';;
-  info) printf '\tName: Bluetooth 5.1 Keyboard\n\tIcon: input-keyboard\n\tPaired: yes\n\tConnected: yes\n\tBattery Percentage: 0x26 (38)\n';;
-esac
-'''
-
-
-@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
-def test_the_bluetooth_row_carries_the_devices_battery(tmp_path):
+def _bt_status(tmp_path, info):
     fake = tmp_path / "btctl"
-    fake.write_text(FAKE)
+    fake.write_text("#!/bin/sh\ncase \"$1\" in\n  show) printf '\\tPowered: yes\\n';;\n"
+                    "  devices) printf 'Device D1:01:09:03:96:AE Bluetooth 5.1 Keyboard\\n';;\n"
+                    "  info) printf '%s';;\nesac\n" % info.replace("\n", "\\n").replace("\t", "\\t"))
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     js = "require(%r).status(false).then(s=>{process.stdout.write(JSON.stringify(s));process.exit(0);})" % str(ROOT / "desktop/bluetooth.js")
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30,
-                         env=dict(os.environ, PC_BLUETOOTHCTL=str(fake)))
+                         env=dict(os.environ, PC_BLUETOOTHCTL=str(fake), PC_SYSFS=str(tmp_path)))
     assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout)["devices"][0]["battery"] == 38
+    return json.loads(out.stdout)["devices"][0]
+
+
+BASE_INFO = "\tName: Bluetooth 5.1 Keyboard\n\tIcon: input-keyboard\n\tPaired: yes\n\tConnected: yes\n"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_a_hid_keyboard_that_sends_percent_on_a_0_255_scale_reads_full_when_full(tmp_path):
+    """The TV's keyboard, just charged (green LED): descriptor 0..255, kernel says 38 -- it is ~97%."""
+    _supply(tmp_path, "hid-d1:01:09:03:96:ae-battery", type="Battery", scope="Device", capacity=38)
+    dev = _bt_status(tmp_path, BASE_INFO + "\tModalias: usb:v045Ep005Fd011B\n")
+    assert dev["battery"] == 97, dev
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_any_other_hid_keyboard_is_shown_as_the_kernel_reports_it(tmp_path):
+    _supply(tmp_path, "hid-d1:01:09:03:96:ae-battery", type="Battery", scope="Device", capacity=38)
+    assert _bt_status(tmp_path, BASE_INFO + "\tModalias: usb:v046DpB35Bd0001\n")["battery"] == 38
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_a_bluez_battery_reading_is_used_as_it_is(tmp_path):
+    dev = _bt_status(tmp_path, BASE_INFO + "\tBattery Percentage: 0x26 (38)\n")
+    assert dev["battery"] == 38, dev
     src = (ROOT / "static/js/client/osshell.js").read_text()
     row = src[src.index("function _btRow(x){"):src.index("function _btListHtml(")]
     assert "x.battery" in row and "%" in row, "the panel does not show a device's battery"
