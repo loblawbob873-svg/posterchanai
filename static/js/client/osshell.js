@@ -1501,7 +1501,7 @@
       : `<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`;
     const forget = x.paired ? `<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>` : '';
     return `<div class="os-bt-row"><span class="os-bt-icon">${ICO(icon)}</span><span class="os-bt-name"><b title="${H(x.address)}">${H(x.name||x.address)}</b>`
-      + `<small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${act}${forget}</span></div>`;
+      + `<small>${x.connected?'Connected':x.paired?'Paired':'Available'}${Number.isFinite(x.battery)?` · ${H(x.battery)}%`:''}</small></span><span class="os-bt-actions">${act}${forget}</span></div>`;
   }
   function _btListHtml(devices){
     if(!devices.length) return '<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>';
