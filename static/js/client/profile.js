@@ -1097,7 +1097,7 @@ window.PCProfileFactory = function(dep){
       <details id="pf-payment-details"><summary>Payment targets</summary><div id="pf-payment-editor"></div></details>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
-      root.classList.add('modal-sticky');
+      root.classList.add('modal-sticky', 'pf-edit');   // its styles key on this class -- see client.css .modal.pf-edit
       _bindPaymentTargetEditor(root);
       { const x=$('#pf-close',root); if(x) x.onclick=()=>closeModal(); }
       // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —

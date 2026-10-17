@@ -91,4 +91,6 @@ def test_every_window_with_a_title_row_carries_the_avatar(view):
 
 def test_a_window_with_a_back_row_does_not_get_a_second_avatar():
     css = (Path(__file__).resolve().parents[2] / "static/css/client.css").read_text()
-    assert "html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after" in css
+    assert "html.pc-oswin .main:not(.has-navbar)>.topbar::after" in css
+    js = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+    assert "toggle('has-navbar', !!main.querySelector('.pc-navbar'))" in js
