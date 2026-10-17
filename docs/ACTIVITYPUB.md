@@ -74,6 +74,15 @@ Pleroma, Akkoma and Misskey read), with an `Emoji` tag for a custom one; an inco
 becomes a kind-7 with that emoji (and its NIP-30 tag). A NIP-25 downvote (`-`) is not sent — the
 fediverse has no dislike, and a Like would say the opposite.
 
+**Several reactions from one person on one post** (the client's reaction bar). The FIRST live
+reaction goes as that `Like`; any further, DIFFERENT emoji by the same person on the same post goes
+as an `EmojiReact` (Pleroma/Akkoma keep many per person; Mastodon ignores the type). A second `Like`
+would be a duplicate favourite on Mastodon, and its `Undo` would take away the favourite the first
+reaction still holds. The same emoji twice is sent once. The sent record (`pcai:ap:sent:`) keeps the
+type (`as`), so removing one reaction sends the `Undo` of exactly that activity, as that type. Misskey
+keeps one reaction per person, so it shows whichever arrived last. Incoming, every `EmojiReact` /
+Misskey `Like` is its own kind-7 from the sender's puppet, and an `Undo` deletes only that one.
+
 ## A profile's posts (the outbox)
 
 `/ap/users/<name>/outbox` is a real paged collection of the account's recent public posts, read

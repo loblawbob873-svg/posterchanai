@@ -8858,7 +8858,7 @@
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
     npubOf, observeCelebrations, openArticle, openLightbox, openPostMenu, openRepo, openStream,
     openThread, pickEmoji, profOf, publish, renderHashtag, renderProfileView, renderThread,
-    renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, translatePost, uiConfirm,
+    renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, toggleReaction, translatePost, uiConfirm,
     uiPrompt, webxdcCardHtml, webxdcFileCard, xmrForNote, xmrTipBadge, zapAmount,
   }; }
   function _cardsMod(){ return _lzGet('cards.js', 'PCCardsFactory', _cardsDeps); }
@@ -8892,6 +8892,9 @@
   function openNaddr(){ return _lzRun(_cardsMod, _cardsLoad, 'openNaddr', arguments); }
   function quotedDiv(){ return _lzRun(_cardsMod, _cardsLoad, 'quotedDiv', arguments); }
   function reactDisp(){ return _lzRun(_cardsMod, _cardsLoad, 'reactDisp', arguments); }
+  function reactionGroups(){ return _lzRun(_cardsMod, _cardsLoad, 'reactionGroups', arguments); }
+  function reactionBarInner(){ return _lzRun(_cardsMod, _cardsLoad, 'reactionBarInner', arguments); }
+  function rxKey(){ return _lzRun(_cardsMod, _cardsLoad, 'rxKey', arguments); }
   function replyParentId(){ return _lzRun(_cardsMod, _cardsLoad, 'replyParentId', arguments); }
   function replyContextHtml(){ return _lzRun(_cardsMod, _cardsLoad, 'replyContextHtml', arguments); }
   function repostWithWarning(){ return _lzRun(_cardsMod, _cardsLoad, 'repostWithWarning', arguments); }
@@ -9378,7 +9381,7 @@
     effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
     launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
-    postImageUrl, profOf, publish, repostWithWarning, requestBlossomAccess, switchView, toast,
+    postImageUrl, profOf, publish, reactionGroups, repostWithWarning, requestBlossomAccess, rxKey, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
     // Report (NIP-56): a guest sees it disabled with the reason; a report also goes to THIS node's relay.
     isGuest: () => GUEST || !signer,
@@ -9400,6 +9403,7 @@
   function reportItem(label){ const m=_menusMod(); return m ? m.reportItem(label)
     : ((GUEST || !signer) ? ['report', label+' — log in to report', '', {disabled:true, title:'Log in to file a report'}] : ['report', label]); }
   function pickEmoji(){ return _lzRun(_menusMod, _menusLoad, 'pickEmoji', arguments); }
+  function toggleReaction(){ return _lzRun(_menusMod, _menusLoad, 'toggleReaction', arguments); }
   function stopNarration(){ const m=_menusMod(); if(m) return m.stopNarration.apply(null, arguments); }   // nothing to do until it has loaded
   function translatePost(){ return _lzRun(_menusMod, _menusLoad, 'translatePost', arguments); }
   // 🔊 Read Aloud — narrate the post via the node's built-in TTS: author name, then the content.
@@ -13607,7 +13611,9 @@
       if(c.sob && !n.dataset.celebrate){ n.dataset.celebrate='sob'; n._celebNext=0; _newSob=true; }
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
       setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
-      const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); rk.title=mr?'remove your reaction':'react'; const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
+      const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); rk.title=mr?'add another reaction':'react'; const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
+      // The reaction chips: rewritten only when what they say changed (a string compare, no DOM churn).
+      const rb=n.querySelector('.rx-bar'); if(rb && (!rb.closest || rb.closest('.note')===n)){ const h=reactionBarInner(id); if(rb._rx!==h){ rb._rx=h; rb.innerHTML=h; } }
       /* `title` is a HOVER tooltip: on a phone — where most of this is read — it is not shown at all,
        * and a screen reader announces the icon, not the state. An undo that was signed and never
        * acknowledged has to be legible without a mouse, so the same one string is also the accessible

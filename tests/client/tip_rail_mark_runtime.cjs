@@ -50,7 +50,7 @@ function setup(){
     REPLY_ICON:'<r>',RT_ICON:'<t>',QUOTE_ICON:'<q>',REACT_ICON:'<k>',ZAP_ICON:'<z>',
     BOOKMARKS:new Set(),fmtSats:n=>String(n),tipCountLabel:()=>'',
     countsFor:()=>({replies:0,reactions:0,reposts:0,zaps:0,zapN:0,iRt:false,sob:0,tips:null,tipN:0}),
-    myReaction:()=>null,_repostAction:()=>({label:'repost',pending:false}),
+    myReaction:()=>null,reactionBarInner:()=>'',_repostAction:()=>({label:'repost',pending:false}),
     renderMe(){},decorateProfiles(){},Relay:{ready:async()=>true,query:async()=>[]},
   });
   vm.runInContext(

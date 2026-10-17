@@ -64,6 +64,7 @@ const enc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&am
 const fmtSats = (n) => String(n);
 const countsFor = () => ({ replies:2, reposts:1, reactions:3, zaps:0, tipN:0, iRt:false });
 const myReaction = () => '';
+const reactionBarInner = () => '';
 const isXmrAddr = () => false, xmrForNote = () => '', isBchAddr = () => false, bchOf = () => '';
 // Whether this author advertises a NIP-A3 payment rail — a mark on the tip button, nothing else.
 const _advertises = () => false;

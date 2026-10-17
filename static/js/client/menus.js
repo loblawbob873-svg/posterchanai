@@ -23,7 +23,7 @@ window.PCMenusFactory = function(dep){
     effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
     launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
-    postImageUrl, profOf, publish, repostWithWarning, requestBlossomAccess, switchView, toast,
+    postImageUrl, profOf, publish, reactionGroups, repostWithWarning, requestBlossomAccess, rxKey, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
   } = dep;
   function attachEmojiAutocomplete(ta){
@@ -209,6 +209,7 @@ window.PCMenusFactory = function(dep){
     // in chunks, so wiring is per-button and idempotent rather than one pass over the grid.
     function _wire(){
       $$('[data-e]:not([data-w])',pop).forEach(b=>{ b.dataset.w='1';
+        if(opts.chosen && opts.keyOf && opts.chosen.has(opts.keyOf(b.dataset.e))){ b.classList.add('ep-mine'); b.setAttribute('aria-pressed','true'); }
         b.onmousedown=ev=>{ ev.preventDefault(); _emojiRemember(b.dataset.e); onPick(b.dataset.e, close); }; });
     }
     _wire();
@@ -242,22 +243,55 @@ window.PCMenusFactory = function(dep){
    * as you typed. Keyed by the character itself; every entry of REACTION_EMOJIS must have one
    * (tests/client/test_concord_emoji_search_full_app.py checks). */
   const _EMOJI_NAMES={'❤️':'red heart love','🔥':'fire hot lit','😂':'joy tears laughing lol','🤣':'rofl rolling floor laughing','😮':'open mouth wow surprised','😯':'hushed surprised','😢':'cry sad tear','😭':'sob crying loudly','👍':'thumbsup thumbs up +1 like yes','👎':'thumbsdown thumbs down -1 dislike no','🤙':'call me shaka hang loose','💀':'skull dead','⚡':'zap lightning high voltage','🚀':'rocket launch','🤔':'thinking hmm','🥰':'smiling face with hearts love','😍':'heart eyes love','😘':'kissing heart kiss','😎':'sunglasses cool','🤩':'star struck','🥳':'partying party celebrate','😏':'smirk','😊':'blush smiling happy','🙂':'slightly smiling smile','😉':'wink','😌':'relieved','😋':'yum delicious','😛':'tongue','😜':'winking tongue crazy','🤪':'zany crazy goofy','😅':'sweat smile','😆':'laughing satisfied','😁':'grin beaming','😄':'smile smiling eyes happy','😀':'grinning smile happy','🙃':'upside down','😇':'innocent halo angel','🤗':'hugging hug','🤭':'hand over mouth giggle oops','🤫':'shushing quiet','🫡':'salute','🧐':'monocle','🤓':'nerd','🥸':'disguise','😐':'neutral','😑':'expressionless','😶':'no mouth silent','🙄':'eye roll rolling eyes','😬':'grimace','🤨':'raised eyebrow skeptical','😴':'sleeping zzz','🤤':'drooling','😪':'sleepy','😷':'mask sick','🤒':'thermometer sick','🤕':'bandage hurt','🤢':'nauseated sick','🤮':'vomiting puke','🥵':'hot','🥶':'cold freezing','🥴':'woozy drunk','😵':'dizzy','🤯':'exploding head mind blown','😳':'flushed embarrassed','🥺':'pleading puppy eyes','😤':'triumph huff','😠':'angry','😡':'rage pouting angry','🤬':'cursing swearing','😱':'scream fear','😨':'fearful','😰':'anxious sweat','😥':'sad relieved disappointed','😓':'downcast sweat','🥱':'yawning tired','🤠':'cowboy','😈':'smiling imp devil','👿':'imp angry devil','👹':'ogre','👺':'goblin','🤡':'clown','💩':'poop','👻':'ghost','👽':'alien','👾':'space invader alien monster','🤖':'robot','🎃':'jack o lantern pumpkin halloween','👀':'eyes look','👏':'clap','🙌':'raised hands hooray','🙏':'pray please thanks','🤝':'handshake deal','💪':'muscle strong flex','👊':'punch fist bump','✌️':'victory peace','🤞':'crossed fingers luck','🤟':'love you','🤘':'metal rock horns','👌':'ok','🫶':'heart hands','💯':'hundred 100','💔':'broken heart','🧡':'orange heart','💛':'yellow heart','💚':'green heart','💙':'blue heart','💜':'purple heart','🖤':'black heart','🤍':'white heart','⭐':'star','✨':'sparkles','💥':'boom collision','🎉':'tada party'};
-  // Tapping the react button when you have ALREADY reacted takes the reaction back (NIP-09 delete of
-  // your kind-7) instead of the old dead-end "already reacted" toast — which left no way to undo a
-  // mis-tap at all, on Nostr or on the fediverse the reaction was written back to.
-  async function unReact(id){
-    const ids=myReactionIds(id); if(!ids.length){ toast('already reacted'); return; }
+  // Tapping the react button when you have already reacted now ADDS another emoji (it used to take the
+  // only one back); picking an emoji you already used is what removes it.
+  /* SEVERAL REACTIONS PER PERSON (Pleroma/Akkoma/Misskey-style). Each emoji you put on a post is its
+   * OWN kind-7, and taking one back is a NIP-09 kind-5 naming exactly that emoji's reaction event(s)
+   * -- never your other emoji on the same post. The react button therefore always opens the picker:
+   * picking an emoji you have not used adds it, picking one you HAVE used removes it. The chips under
+   * the post toggle the same way.
+   *
+   * Nothing is shown as removed until the relay ACCEPTED the deletion (the repost-undo rule): the
+   * events are dropped from the Store only on an OK, and a failure says so and leaves the chip lit. */
+  const _rxBusy=new Set();
+  async function _rxRemove(id, ids){
     const tags=ids.map(r=>['e', r]); tags.push(['k','7']);   // NIP-09: k = kind being deleted
     const r=await publish(5, '', tags, {quiet:true});        // '' content: nothing to say about a reaction
-    // Only forget it locally once the relay took the tombstone — otherwise the button would go back to
-    // "not reacted" while the reaction is still live (and still on the fediverse).
-    if(!(r && r.ok)){ toast('couldn’t reach the relay — the reaction was NOT removed'); return; }
+    if(!(r && r.ok)){ toast('couldn’t reach the relay — the reaction was NOT removed'); return false; }
     ids.forEach(x=>{ try{ Store.removeEvent(x); }catch(_){} });
     invalidateCounts(); decorateCounts(); toast('reaction removed');
+    return true;
+  }
+  async function _rxAdd(id, pk, content, emojiTag){
+    const tags=eTags(id,pk);
+    if(emojiTag && !tags.some(t=>t[0]==='emoji'&&t[1]===emojiTag[1])) tags.push(['emoji', emojiTag[1], emojiTag[2]]);
+    const r=await publish(7, content, tags);   // failure toast by publish() (which also rolls the reaction back)
+    if(r && r.ok){ invalidateCounts(); decorateCounts(); toast('reacted '+content); }
+    return !!(r && r.ok);
+  }
+  // Toggle ONE emoji for me on a post: `key` is the chip's group (cards.js rxKey).
+  async function toggleReaction(id, pk, key, btn){
+    const lock=id+'\n'+key; if(_rxBusy.has(lock)) return; _rxBusy.add(lock);
+    if(btn) btn.disabled=true;
+    try{
+      const g=reactionGroups(id).find(x=>x.key===key);
+      if(g && g.mine.length) await _rxRemove(id, g.mine);
+      else if(g) await _rxAdd(id, pk, g.content, g.emoji);
+    } finally { _rxBusy.delete(lock); if(btn && btn.isConnected) btn.disabled=false; }
+  }
+  // Back-compat: take back EVERY reaction of mine on a post (one tap, the old single-reaction undo).
+  async function unReact(id){
+    const ids=myReactionIds(id); if(!ids.length) return;
+    await _rxRemove(id, ids);
   }
   function pickEmoji(id,pk,btn){
-    if(myReaction(id)){ unReact(id); return; }
-    openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(r=>{ if(r&&r.ok){ toast('reacted '+emoji); decorateCounts(); } }); });   // failure toast by publish() (which also rolls the reaction back)
+    const mine=new Set(reactionGroups(id).filter(g=>g.mine.length).map(g=>g.key));
+    openEmojiPopover(btn, (emoji, close)=>{ close();
+      const key=rxKey(emoji);
+      if(mine.has(key)) toggleReaction(id, pk, key);       // already yours -> remove just this one
+      else { const lock=id+'\n'+key; if(_rxBusy.has(lock)) return; _rxBusy.add(lock);
+        _rxAdd(id, pk, emoji).finally(()=>_rxBusy.delete(lock)); }
+    }, {chosen:mine, keyOf:rxKey});
   }
   // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
   // onPick(action) fires after the menu closes. Shared by the post menu and the profile menu.
@@ -853,6 +887,6 @@ window.PCMenusFactory = function(dep){
 
   return {
     attachEmojiAutocomplete, composeTranslate, narratePost, openEmojiPopover, openMenuPopover,
-    openPostMenu, openReport, pickEmoji, reportItem, stopNarration, translatePost,
+    openPostMenu, openReport, pickEmoji, reportItem, stopNarration, toggleReaction, translatePost, unReact,
   };
 };
