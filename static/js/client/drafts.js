@@ -112,6 +112,18 @@ window.PCDraftsFactory = function(dep){
   function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); bumpMoreBadge(); }
   // ---------- Scheduled posts: sign a note with a FUTURE created_at; the backend broadcasts it at that time.
   // The server never holds your key — signing stays here — so it works for nip07 / Amber / local nsec alike. ----
+  /* AN ANSWER THAT IS NOT JSON IS STILL AN ANSWER, AND IT MEANS "NOT SCHEDULED".
+   * `.then(r=>r.json())` turned the instance's error PAGE -- nginx's 502 while the app restarts for a
+   * deploy, a 504, a 413 -- into "schedule failed: Unexpected token '<'", which says nothing about whether
+   * the post was queued (it was not) or what to do (try again). Our own errors are JSON and keep their
+   * words; anything else is named by its status. */
+  async function _schedAnswer(r){
+    const ct = (r && r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    if(/json/i.test(ct)){ try{ return await r.json(); }catch(_){ } }
+    return { ok:false, error: (r && !r.ok)
+      ? 'the server did not answer (HTTP '+r.status+') — the post was NOT scheduled; try again in a moment'
+      : 'the server sent an answer this app cannot read — the post was NOT scheduled; try again' };
+  }
   const Scheduled = {
     _cache:null, _cacheAt:0,
     _proof(){ return selfProof(); },   // shared with Drafts → opening Drafts never triggers a 2nd signer prompt
@@ -120,7 +132,7 @@ window.PCDraftsFactory = function(dep){
       const ev=await sign(kind, content, t, whenTs);   // signed with the FUTURE created_at = the scheduled time
       try{
         const r=await fetch('/client/scheduled',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),event:ev,scheduled_at:whenTs})}).then(r=>r.json());
+          body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),event:ev,scheduled_at:whenTs})}).then(_schedAnswer);
         this._cache=null; return r;
       }catch(e){ return { ok:false, error:(e&&e.message)||'network' }; }
     },
@@ -128,11 +140,12 @@ window.PCDraftsFactory = function(dep){
       const now=Date.now();
       if(!force && this._cache && (now-this._cacheAt)<4000) return this._cache;   // short TTL: avoid re-fetch on rapid re-renders
       try{ const r=await fetch('/client/scheduled/list',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof()})}).then(r=>r.json());
-        const posts=(r&&Array.isArray(r.posts))?r.posts:[]; this._cache=posts; this._cacheAt=now; return posts;
+        body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof()})}).then(_schedAnswer);
+        if(!r || !Array.isArray(r.posts)) return this._cache||[];   // "could not ask" is never "nothing scheduled"
+        const posts=r.posts; this._cache=posts; this._cacheAt=now; return posts;
       }catch(_){ return this._cache||[]; } },
     async cancel(id){ try{ const r=await fetch('/client/scheduled/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),id})}).then(r=>r.json()); this._cache=null; return !!(r&&r.ok); }catch(_){ return false; } },
+      body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),id})}).then(_schedAnswer); this._cache=null; return !!(r&&r.ok); }catch(_){ return false; } },
   };
   function renderDrafts(){
     _reconcileDeliveredDrafts();

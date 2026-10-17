@@ -143,3 +143,36 @@ async def _schedule_list_cancel(b):
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
 def test_a_post_is_scheduled_listed_and_cancelled_in_the_real_client():
     asyncio.run(desktop.with_browser('online', '', _schedule_list_cancel, extra_init=RELAY + SERVER))
+
+
+GATEWAY_PAGE = r'''
+{const f0=window.fetch;window.fetch=function(url,opts){const u=String(url);
+ if(u.includes('/client/scheduled')&&!u.includes('/list')&&!u.includes('/cancel')){window.__schedTries=(window.__schedTries||0)+1;
+   return Promise.resolve(new Response('<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>',
+     {status:502,headers:{'Content-Type':'text/html'}}));}
+ if(u.includes('/client/scheduled/list'))return Promise.resolve(new Response(JSON.stringify({ok:true,posts:[]}),{status:200,headers:{'Content-Type':'application/json'}}));
+ if(u.includes('/client/drafts'))return Promise.resolve(new Response(JSON.stringify({ok:true,drafts:[]}),{status:200,headers:{'Content-Type':'application/json'}}));
+ return f0.apply(this,arguments);};}
+'''
+
+
+async def _schedule_into_a_gateway_page(b):
+    await desktop.login(b)
+    await _open_composer(b, TEXT)
+    await b.js("document.querySelector('#cmp-sched-row .sched-chip[data-min=\"60\"]').click()")
+    await b.until("/publishes/.test(document.querySelector('#cmp-sched-when').textContent)")
+    await b.js("document.querySelector('#cmp-sched-go').click()")
+    await b.until("(window.__schedTries||0)>=1 && /schedule failed/.test(document.querySelector('#cmp-status').textContent)")
+    said = await b.js("document.querySelector('#cmp-status').textContent")
+    assert 'Unexpected token' not in said and 'JSON' not in said, ("a gateway page read as a JSON error", said)
+    assert '502' in said and 'NOT scheduled' in said, said
+    assert await b.js("!!document.querySelector('#cmp') && document.querySelector('#cmp').value") == TEXT, \
+        'the composer closed (or lost the text) on a schedule that never happened'
+    assert not await b.js("document.querySelector('#cmp-sched-go').disabled"), 'Schedule stayed disabled: no way to retry'
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_an_error_page_from_the_instance_says_not_scheduled_not_unexpected_token():
+    """"scheduled posts is giving invalid json, scheduled failed, unexpected token" (2026-10-16): the instance
+    answered with nginx's HTML 502 (the app restarting for a deploy) and the client parsed it as JSON."""
+    asyncio.run(desktop.with_browser('online', '', _schedule_into_a_gateway_page, extra_init=RELAY + GATEWAY_PAGE))
