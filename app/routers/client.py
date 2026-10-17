@@ -1645,6 +1645,18 @@ async def client_federation():
         return JSONResponse({"error": "unavailable", "state": "unknown"}, status_code=503)
 
 
+@router.get("/trending")
+async def client_trending(window: int = 86400):
+    """Trending -> Hot: note ids ranked by reactions/reposts on this node's relay, computed once a minute for
+    everybody (app/services/trending_service.py). 503 when the relay could not be asked -- never an empty list."""
+    from app.services import trending_service
+    try:
+        return JSONResponse(await trending_service.hot(window), headers={"Cache-Control": "public, max-age=30"})
+    except Exception as e:
+        logger.warning("[client] trending failed: %s", type(e).__name__)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
 @router.get("/commands")
 async def client_commands():
     """The command catalogue for the client's help sheet — grouped, with descriptions.

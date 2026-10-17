@@ -1086,9 +1086,25 @@ window.PCDiscoverFactory = function(dep){
     const me=(S.ME&&S.ME.pubkey)||'';   // '' for a logged-out guest — FOLLOWS is empty there anyway
     const f={ kinds:[6,7], since, limit:TR_QUERY_LIMIT };
     if(follows){ const authors=[...S.FOLLOWS].filter(p=>p!==me); if(!authors.length){ const none=[]; none.complete=true; return none; } f.authors=authors; }
+    /* HOT IS THE SAME FOR EVERYBODY, SO THE INSTANCE RANKS IT. Pulling 3,000 reactions (2.2 MB) to every
+     * phone outran the query timer on mobile data and the view said "couldn't reach your relays" over a
+     * relay that had answered in 0.13 s. /client/trending is ~16 KB, computed once a minute. No instance,
+     * or it could not answer: the relay query below, as before. */
+    if(!follows){
+      try{
+        const ac = typeof AbortController!=='undefined' ? new AbortController() : null;
+        const tm = ac ? setTimeout(()=>ac.abort(), 8000) : 0;
+        const r = await fetch('/client/trending?window='+windowSec, {credentials:'include', signal: ac ? ac.signal : undefined});
+        clearTimeout(tm);
+        if(r.ok){ const j = await r.json(); if(j && Array.isArray(j.rows)){ const rows = j.rows; rows.complete = true; return rows; } }
+      }catch(_){ }
+    }
     let live=true; try{ if(Relay.ready) live = await Relay.ready(4000); }catch(_){ live=true; }
     let evs=[], complete=false;
-    try{ evs=await Relay.query([f]); complete = live && evs.complete !== false; }catch(_){ evs=[]; complete=false; }
+    /* An answer from THIS NODE'S relay is an answer (the rule every view here uses): one slow relay in a
+     * personal list must not turn a ranking we have into "couldn't reach your relays". */
+    const _home = got => { try{ return !!(Relay.homeAnswered && Relay.homeAnswered(got)); }catch(_){ return false; } };
+    try{ evs=await Relay.query([f]); complete = live && (evs.complete !== false || _home(evs)); }catch(_){ evs=[]; complete=false; }
     const tally={}, icon={};
     for(const e of evs){
       if(follows && e.pubkey===me) continue;   // your own likes aren't "from your follows"
