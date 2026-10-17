@@ -313,6 +313,8 @@ class TestMediaReservation(unittest.TestCase):
         """
         for label, vw, vh in VIEWPORTS:
             for r in self.rows("props", vw, vh):
+                if "carousel" in r["ctx"]:
+                    continue      # a fixed cell whatever the shape -- test_carousel_cells_do_not_depend_on_the_picture
                 want = r["w"] / r["h"]
                 got = r["reserved"][0] / max(0.01, r["reserved"][1])
                 self.assertAlmostEqual(
@@ -397,6 +399,22 @@ class TestMediaReservation(unittest.TestCase):
         vids = [r for r in self.rows("props", *VIEWPORTS[0][1:]) if r.get("kind") == "video"]
         self.assertGreaterEqual(len(vids), 2 * len(CONTEXTS), "video cases missing from the harness")
 
+    def test_carousel_cells_do_not_depend_on_the_picture(self):
+        """A post's pictures show TWO at a time (2026-10-16): each fills its half of a fixed-height strip, cropped.
+        So in a carousel every shape reserves the SAME cell -- a picture arriving can never move anything."""
+        for label, vw, vh in VIEWPORTS:
+            by_ctx = {}
+            for r in self.rows("props", vw, vh):
+                if "carousel" in r["ctx"]:
+                    by_ctx.setdefault(r["ctx"], []).append(r)
+            self.assertTrue(by_ctx, "carousel contexts missing from the harness")
+            for ctx, rows in by_ctx.items():
+                ws = [x["reserved"][0] for x in rows]
+                hs = [x["reserved"][1] for x in rows]
+                self.assertLess(max(ws) - min(ws), 2.5, f"{label} {ctx}: cell width depends on the picture {ws}")
+                self.assertLess(max(hs) - min(hs), 2.5, f"{label} {ctx}: cell height depends on the picture {hs}")
+                self.assertGreater(min(hs), 100, f"{label} {ctx}: the cell collapsed {hs}")
+
     def test_attribute_only_form_does_not_reserve(self):
         """width/height attributes alone reserve NOTHING, and this is the pin for that.
 
@@ -409,6 +427,8 @@ class TestMediaReservation(unittest.TestCase):
         landscape and a portrait clip alike — a box, but not the declared one, which is exactly the point.
         """
         for r in self.rows("attrs", *VIEWPORTS[0][1:]):
+            if "carousel" in r["ctx"]:
+                continue          # the strip's cell is sized by CSS alone (see below), attributes or not
             want = r["w"] / r["h"]
             got = r["reserved"][0] / max(0.01, r["reserved"][1])
             # Either the box is negligible (an <img> collapses to its 2px border) or it is not the declared

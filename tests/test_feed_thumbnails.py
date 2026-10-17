@@ -58,7 +58,7 @@ def test_the_route(monkeypatch, tmp_path):
 
     async def slow_fetch(url):
         fetched.append(url)
-        await asyncio.sleep(2.0)                    # a far host and a big original
+        await asyncio.sleep(3.0)                    # a far host and a big original
         return _png(2000, 1000) if "big" in url else None
     monkeypatch.setattr(thumb_service, "_fetch", slow_fetch)
     img = {"Sec-Fetch-Dest": "image", "Sec-Fetch-Mode": "no-cors"}
@@ -66,12 +66,13 @@ def test_the_route(monkeypatch, tmp_path):
     with TestClient(app) as c:
         t = time.monotonic()
         r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 132}, headers=img, follow_redirects=False)
-        assert time.monotonic() - t < 0.5, "the first view waited for the resize"
+        # Clearly less than the 3 s the resize takes (the first request also pays the app's own warm-up).
+        assert time.monotonic() - t < 1.5, "the first view waited for the resize"
         assert r.status_code == 302 and r.headers["location"] == "https://pics.example/big.png"
         assert "no-store" in r.headers.get("cache-control", ""), "a not-yet-made redirect must not be cached"
         r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 132}, headers=worker, follow_redirects=False)
         assert r.status_code == 302, "the service worker's fetch must be redirected, not refused"
-        for _ in range(60):                         # the background resize lands
+        for _ in range(80):                         # the background resize lands
             time.sleep(0.1)
             r = c.get("/client/thumb", params={"u": "https://pics.example/big.png", "w": 140}, headers=img, follow_redirects=False)
             if r.status_code == 200:
