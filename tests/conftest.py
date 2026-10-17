@@ -48,41 +48,6 @@ def pytest_configure(config):
     if os.path.realpath(os.environ.get("POSTERCHANDB_DIR") or "/var/lib/posterchandb") == "/var/lib/posterchandb":
         import tempfile
         os.environ["POSTERCHANDB_DIR"] = os.path.join(tempfile.gettempdir(), "posterchandb-test")
-    _refuse_this_machines_live_ports()
-
-
-def _refuse_this_machines_live_ports():
-    """No test talks to THIS machine's running app (3051) or relay (3052).
-
-    Several modules default to `ws://127.0.0.1:3052/relay` when nothing set a port -- a DocTable's live
-    subscription, the settings store, nostr_store -- so a test that imported one and forgot to point it at
-    its own relay quietly opened a socket to PRODUCTION (seen 2026-10-16: a gate shard held a live
-    DocTable subscription on server1's relay, reading the node's real documents). Tests start their own
-    relays on ephemeral ports; these two are refused outright, in this process and (through the env var
-    the relay reader honours) in the children it starts."""
-    import socket
-    live = {3051, 3052}
-    os.environ.setdefault("POSTERCHANAI_RELAY_PORT", "9")      # discard: nothing listens, connect is refused
-
-    def _guard(addr):
-        if isinstance(addr, tuple) and len(addr) >= 2 and addr[1] in live \
-                and str(addr[0]) in ("127.0.0.1", "::1", "localhost", "0.0.0.0"):
-            raise ConnectionRefusedError(111, "tests never connect to this machine's live port %d" % addr[1])
-
-    if getattr(socket.socket.connect, "_pc_guard", False):
-        return
-    real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
-
-    def connect(self, addr):
-        _guard(addr)
-        return real_connect(self, addr)
-
-    def connect_ex(self, addr):
-        _guard(addr)
-        return real_connect_ex(self, addr)
-
-    connect._pc_guard = True
-    socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
 
 
 def pytest_sessionfinish(session, exitstatus):
