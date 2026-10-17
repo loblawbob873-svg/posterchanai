@@ -144,7 +144,8 @@ def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_loc
     used to turn every focus/geometry guard into a silent no-op."""
     fit = TERM[TERM.index("function _fit("):
                TERM.index("/* ONE WAY OUT", TERM.index("function _fit("))]
-    resolve = "const box = $('#tty-screen')"
+    # The PANE's own screen (split view: a second pane has no #tty-screen), resolved in the callback.
+    resolve = "const box = _box()"
     assert resolve in fit
     assert fit.index(resolve) < fit.index("box.closest")
     assert fit.index(resolve) < fit.index("box.getBoundingClientRect")
