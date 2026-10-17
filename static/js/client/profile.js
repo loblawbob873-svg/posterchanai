@@ -1254,25 +1254,58 @@ window.PCProfileFactory = function(dep){
       return `<div class="prof-relay"><code>${enc(t[1])}</code><span class="muted small">${mode}</span></div>`;
     }).join('')+'</div>';
   }
+  /* FOLLOWING / FOLLOWERS: SEARCHABLE, OVER THE WHOLE LIST. It drew the first 400 and loaded profiles for
+   * the first 300, with no way to find anybody past that ("no way to search through it", 2026-10-17). The
+   * filter runs over EVERY key -- name, display name, NIP-05, npub -- and the profiles nobody has loaded yet
+   * are fetched behind the first paint, in batches, refreshing the results as they land. */
+  const _PEOPLE_SHOWN = 400;
+  function _personMatches(p, q){
+    if(!q) return true;
+    const m = Store.profile(p) || {};
+    let npub = ''; try{ npub = NT().nip19.npubEncode(p); }catch(_){ }
+    return [m.name, m.display_name, m.nip05, npub, p].some(v => v && String(v).toLowerCase().includes(q));
+  }
   async function peopleModal(title, pks){
-    modal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3 style="margin:0">${enc(title)} (${pks.length})</h3><button id="follow-all-back" class="btn btn-cyan small" style="display:none">Follow all back</button></div><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
-      const miss=pks.filter(p=>!Store.haveProfile(p)).slice(0,300);
-      if(miss.length){ try{ const evs=await Relay.query([{authors:miss,kinds:[0],limit:miss.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} }
+    modal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3 style="margin:0">${enc(title)} (${pks.length})</h3><button id="follow-all-back" class="btn btn-cyan small" style="display:none">Follow all back</button></div>
+      <input class="input people-q" id="people-q" type="search" placeholder="Search ${enc(title.toLowerCase())} — name, address or npub" aria-label="Search ${enc(title.toLowerCase())}" autocomplete="off">
+      <div class="muted small people-count" id="people-count"></div>
+      <div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
+      const missing = () => pks.filter(p=>!Store.haveProfile(p));
+      { const first=missing().slice(0,300); if(first.length){ try{ const evs=await Relay.query([{authors:first,kinds:[0],limit:first.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} } }
       await ensureMyFollowers();   // so we can flag mutuals ("Follows you") in any people list
       const list=$('#people-list',root); if(!list) return;
-      list.innerHTML = pks.length ? pks.slice(0,400).map(p=>{ const m=Store.profile(p)||{};
+      const qEl=$('#people-q',root), countEl=$('#people-count',root);
+      const paint=()=>{
+        const q=((qEl&&qEl.value)||'').trim().toLowerCase();
+        const hits=pks.filter(p=>_personMatches(p,q));
+        if(countEl) countEl.textContent = q ? `${hits.length} of ${pks.length}` : (pks.length>_PEOPLE_SHOWN ? `showing ${_PEOPLE_SHOWN} of ${pks.length} — search to find anyone` : '');
+        list.innerHTML = hits.length ? hits.slice(0,_PEOPLE_SHOWN).map(p=>{ const m=Store.profile(p)||{};
         // "Follows you" badge = this person follows ME back (mutual). "Follow back" button = anyone I
         // don't follow yet — so the Following list shows who's reciprocal and the Followers list shows
         // who I haven't followed back.
         const followsMe = p!==S.ME.pubkey && FOLLOWERS.has(p);
         const canFollow = p!==S.ME.pubkey && !S.FOLLOWS.has(p);
         return `<div class="psearch" data-prof="${p}"><img alt="" src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div class="pinfo"><b>${enc(m.name||m.display_name||NT().nip19.npubEncode(p).slice(0,14))}${followsMe?'<span class="follows-you">Follows you</span>':''}</b><div class="muted small">${enc(niceNip05(m.nip05)||'')}</div></div>${canFollow?`<button class="btn btn-cyan small pfollow" data-fb="${p}">Follow back</button>`:''}</div>`;
-      }).join('') : '<div class="empty">Nobody here.</div>';
-      $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
-      $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
-        try{ if(await toggleFollow(b.dataset.fb)){ b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
-             else { b.disabled=false; b.textContent='Follow back'; } }   // relay didn't store it (publish() toasted) → leave the button actionable
-        catch(_){ b.disabled=false; b.textContent='Follow back'; } });
+        }).join('') : `<div class="empty">${pks.length?'Nobody matches.':'Nobody here.'}</div>`;
+        $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
+        $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
+          try{ if(await toggleFollow(b.dataset.fb)){ b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
+               else { b.disabled=false; b.textContent='Follow back'; } }   // relay didn't store it (publish() toasted) → leave the button actionable
+          catch(_){ b.disabled=false; b.textContent='Follow back'; } });
+      };
+      paint();
+      let qT=0;
+      if(qEl) qEl.oninput=()=>{ clearTimeout(qT); qT=setTimeout(paint, 120); };
+      // The rest of the profiles, behind the paint: a name can only be searched once its profile is here.
+      (async()=>{
+        for(let i=0;i<20;i++){
+          const batch=missing().slice(0,500); if(!batch.length || !list.isConnected) break;
+          let got=[]; try{ got=await Relay.query([{authors:batch,kinds:[0],limit:batch.length}]); }catch(_){ }
+          got.forEach(e=>Store.saveProfile(e));
+          if(!got.length) break;                                 // nobody else answers: stop asking
+          if(list.isConnected && qEl && qEl.value.trim()) paint();
+        }
+      })();
       // "Follow all back": one-tap follow of everyone in this list I don't already follow (one publish).
       const followable=pks.filter(p=>p!==S.ME.pubkey && !S.FOLLOWS.has(p));
       const fab=$('#follow-all-back',root);

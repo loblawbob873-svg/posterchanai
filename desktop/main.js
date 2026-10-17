@@ -787,6 +787,17 @@ app.on('child-process-gone', (_e, d) => {
   _childDeaths.push(row);
   while (_childDeaths.length > 20) _childDeaths.shift();
   console.warn('[child] gone:', row.type, row.reason, row.code);
+  /* WHAT WAS ON SCREEN. A GPU process that dies takes the reason with it: 2026-10-17 on the RX 6700 desktop,
+   * an amdgpu page fault in this process hung the GPU for 21 s ("froze for a few seconds") and nothing said
+   * which window was drawing. Every window's title and which one had focus is the next clue, for free. */
+  if (row.type === 'GPU') {
+    try {
+      const f = BrowserWindow.getFocusedWindow();
+      const wins = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed())
+        .map(w => (w === f ? '*' : '') + (w.getTitle() || '?') + (w.isVisible() ? '' : ' (hidden)'));
+      console.warn('[child] gpu died with windows:', JSON.stringify(wins));
+    } catch (_) { }
+  }
 });
 
 /* The one line worth reading aloud. Everything else goes in the file. */

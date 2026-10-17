@@ -1421,7 +1421,7 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies, deadline: floa
 
     _fol_memo = {}
     try:
-        async with contextlib.aclosing(_windows(authors, max(1, min(since, now) - overlap), kinds, now)) as batches:
+        async with contextlib.aclosing(_pass_reads(authors, since, now, overlap, kinds, full)) as batches:
             async for batch in batches:
                 evs = sorted((e for e in batch if e.get("id") not in _seen and e.get("id", "")[:16] not in done),
                              key=lambda e: (e.get("created_at", 0), e["id"]))
@@ -1535,6 +1535,44 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies, deadline: floa
         logger.info("[activitypub] %s pass stopped at %d (%ds behind): %s", cursor_key, newest,
                     max(0, now - newest), stopped)
     return handled
+
+
+def _operator_pubkey() -> str:
+    try:
+        from app.services.nostr import bip340
+        sk = settings_store._operator_seckey(None)
+        return bip340.pubkey_from_seckey(sk).hex() if sk else ""
+    except Exception:                                    # noqa: BLE001 -- unknown: read everything, as before
+        return ""
+
+
+async def _pass_reads(authors, since: int, now: int, overlap: int, kinds: list, full: bool):
+    """The batches one pass reads. An ordinary tick reads the short overlap. The FULL re-read (every
+    _FULL_OVERLAP_EVERY) exists for LATE arrivals, and in its long tail it does not ask for the operator key's
+    deletions: on this node those are the DocTables deleting app documents -- ~25,000 kind-5s in six hours,
+    none of which federates (`_inert_deletion`) -- and they were most of what each full re-read pulled off the
+    relay. A member's own deletions are still read across the whole window, and the operator's within the
+    short overlap, so nothing a person deletes is missed."""
+    start = max(1, min(since, now) - overlap)
+    op = _operator_pubkey() if (full and 5 in kinds and overlap > _SHORT_OVERLAP) else ""
+    if not op:
+        async with contextlib.aclosing(_windows(authors, start, kinds, now)) as batches:
+            async for b in batches:
+                yield b
+        return
+    recent = max(start, min(since, now) - _SHORT_OVERLAP)
+    rest = [k for k in kinds if k != 5]
+    people = [a for a in authors if a != op] if authors is not None else None
+    segments = [(authors, start, rest, recent - 1)]
+    if people is None or people:
+        segments.append((people, start, [5], recent - 1))
+    segments.append((authors, recent, kinds, None))
+    for who, lo, ks, hi in segments:
+        if hi is not None and hi < lo:
+            continue
+        async with contextlib.aclosing(_windows(who, lo, ks, now, until=hi)) as batches:
+            async for b in batches:
+                yield b
 
 
 _failures: dict = {}

@@ -1457,9 +1457,13 @@ class _Handler(BaseHTTPRequestHandler):
         clone = "%s/%s/%s.git" % (base, npub, repo_id) if base else ""
         out = {"ok": True, "owner": owner_hex, "npub": npub, "repo_id": repo_id,
                "private": private, "clone": clone, "created": created}
-        if not private:
-            # Public repos: hand back the 30617 tags for the client to sign. Private repos are never
-            # announced (no 30617/30618), matching grasp_selfhost --private + create_repo(private=True).
+        if True:
+            # The 30617 tags for the client to sign -- PRIVATE repos too. Since GRASP-08 a private repo IS
+            # announced, tagged ["private","true"]; the relay serves that announcement only to its
+            # maintainers and readers, and the client publishes it only to this node's relay. "Never
+            # announced" was the pre-GRASP-08 rule, and it left a private repo made in the web UI with
+            # no announcement at all: not under Git -> Mine, findable nowhere ("Create repo, not listed
+            # under Mine", 2026-10-17).
             tags = [["d", repo_id]]
             if body.get("name"):
                 tags.append(["name", str(body["name"])[:200]])
@@ -1475,6 +1479,8 @@ class _Handler(BaseHTTPRequestHandler):
                 tags.append(["relays", relay])
             tags.append(["maintainers", owner_hex])
             tags.append(["alt", "git repository: %s" % str(body.get("name") or repo_id)[:80]])
+            if private:
+                tags.append(["private", "true"])
             out["announce_tags_30617"] = tags
         log.info("[git-host] create %s/%s by %s (private=%s)", npub[:12], repo_id, signer[:12], private)
         return self._json_out(out)
