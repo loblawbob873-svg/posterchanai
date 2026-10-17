@@ -17,6 +17,11 @@ from tests.client.test_native_power_confirm_browser import POWER
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+@pytest.fixture(scope="module", autouse=True)
+def bundled_assets():
+    yield from desktop.bundle.__wrapped__()
+
 BRIDGES = POWER + r'''
 window.__bt=[];
 window.pcBluetooth={status:async(scan)=>({available:true,powered:true,devices:scan?
