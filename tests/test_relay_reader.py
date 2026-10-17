@@ -200,3 +200,60 @@ def test_counts_come_back_in_order_and_a_refused_count_is_unavailable_not_zero()
             rr.counts([{"kinds": [5]}, {"kinds": [0]}, {"kinds": [9]}], port=port, timeout=5)
     finally:
         srv.shutdown()
+
+
+def _counting_relay(serve_once=False):
+    """Answers every REQ on a socket until it closes, and counts the sockets. With serve_once the socket is
+    dropped after its first answer -- what a relay restart looks like to a cached connection."""
+    conns = []
+
+    def h(ws):
+        conns.append(1)
+        while True:
+            try:
+                msg = json.loads(ws.recv(timeout=5))
+            except Exception:
+                return
+            if msg[0] != "REQ":
+                continue
+            ws.send(json.dumps(["EVENT", msg[1], {"id": "e%d" % len(conns)}]))
+            ws.send(json.dumps(["EOSE", msg[1]]))
+            if serve_once:
+                return
+    return h, conns
+
+
+def test_one_thread_asks_many_questions_on_ONE_connection():
+    """Every query used to connect, ask and close: ~176 loopback sockets sat in TIME-WAIT on server1."""
+    h, conns = _counting_relay()
+    srv, port = _relay(h)
+    try:
+        for _ in range(5):
+            assert [e["id"] for e in rr.query([{"kinds": [1]}], port=port, timeout=5)] == ["e1"]
+        assert len(conns) == 1
+    finally:
+        srv.shutdown()
+
+
+def test_a_cached_connection_the_relay_dropped_is_retried_once_on_a_fresh_one():
+    h, conns = _counting_relay(serve_once=True)
+    srv, port = _relay(h)
+    try:
+        assert rr.query([{"kinds": [1]}], port=port, timeout=5)
+        assert rr.query([{"kinds": [1]}], port=port, timeout=5)   # the old socket is dead: a new one answers
+        assert len(conns) == 2
+    finally:
+        srv.shutdown()
+
+
+def test_threads_never_share_a_connection():
+    h, conns = _counting_relay()
+    srv, port = _relay(h)
+    try:
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(rr.query([{"kinds": [1]}], port=port, timeout=5)))
+              for _ in range(3)]
+        [t.start() for t in ts]; [t.join() for t in ts]
+        assert len(out) == 3 and len(conns) == 3
+    finally:
+        srv.shutdown()
