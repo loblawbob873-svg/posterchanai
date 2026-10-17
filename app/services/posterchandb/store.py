@@ -166,6 +166,31 @@ class _Postings(disk.Leveled):
             return np.zeros(0, dtype=np.uint32)
         return np.asarray(parts[0]) if len(parts) == 1 else np.concatenate(parts)
 
+    def get_many(self, keys) -> np.ndarray:
+        """The postings of many keys, concatenated (no order, no de-duplication): ONE vectorised search per run for
+        all of them. A feed naming 4,109 authors did 8,000+ separate searches per run per request -- a fifth of
+        the relay's CPU (py-spy, server1, 2026-10-16)."""
+        if not keys:
+            return np.zeros(0, dtype=np.uint32)
+        ks = np.asarray(keys, dtype=np.uint64)
+        parts = []
+        for rkeys, starts, post in self.runs:
+            if not len(rkeys):
+                continue
+            i = np.searchsorted(rkeys, ks)
+            i = i[i < len(rkeys)]
+            i = i[np.isin(rkeys[i], ks, assume_unique=False)]
+            for j in np.unique(i):
+                parts.append(post[starts[j]:starts[j + 1]])
+        if self.delta:
+            for k in keys:
+                d = self.delta.get(int(k))
+                if d:
+                    parts.append(np.asarray(d, dtype=np.uint32))
+        if not parts:
+            return np.zeros(0, dtype=np.uint32)
+        return np.asarray(parts[0]) if len(parts) == 1 else np.concatenate(parts)
+
     def count(self, key: int) -> int:
         """How many postings `key` has, from the run boundaries -- nothing copied (a kind can hold millions)."""
         n = 0
@@ -1628,12 +1653,13 @@ class Store:
             if authors:
                 authors = list(dict.fromkeys(authors))
             if authors and kinds:
-                lists = [self.idx.get(_h("ak:%s:%d" % (a, int(k)))) for a in authors for k in dict.fromkeys(int(k) for k in kinds)]
-                sets.append(_concat(lists) if alone else _union(lists))
+                kk = list(dict.fromkeys(int(k) for k in kinds))
+                got = self.idx.get_many([_h("ak:%s:%d" % (a, k)) for a in authors for k in kk])
+                sets.append(got if alone else _union([got]))
                 kinds_done = True
             elif authors:
-                lists = [self.idx.get(_h("au:%s" % a)) for a in authors]
-                sets.append(_concat(lists) if alone else _union(lists))
+                got = self.idx.get_many([_h("au:%s" % a) for a in authors])
+                sets.append(got if alone else _union([got]))
             for key, vals in flt.items():
                 if not (isinstance(key, str) and key.startswith("#") and vals):
                     continue
