@@ -69,15 +69,26 @@ def main() -> None:
     signal.signal(signal.SIGINT, _stop)
 
     log.info("[nostr-relay] standalone process starting (pid %d)", os.getpid())
+    code = 0
     try:
         loop.run_until_complete(_t._main(cfg, store))
     except Exception:
         log.exception("[nostr-relay] process crashed")
+        code = 1
     finally:
         try:
             loop.close()
         except Exception:
             pass
+    # EXIT NOW. By here the store is checkpointed and closed (_main's teardown), so there is nothing left to
+    # protect -- but a normal interpreter exit JOINS every non-daemon thread still running: an executor worker
+    # in the middle of a query, an outbound socket waiting out its timeout. That wait ran past systemd's
+    # TimeoutStopSec on every stop (2026-10-17: "stopped" logged, then 'stop-sigterm' timed out, SIGKILL), so
+    # each deploy killed the relay and its restart took ~12 s instead of ~3.
+    try:
+        logging.shutdown()
+    finally:
+        os._exit(code)
 
 
 if __name__ == "__main__":

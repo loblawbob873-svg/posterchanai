@@ -1765,22 +1765,21 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
             _firehose["stop"].set()
         for t in (_firehose.get("tasks") or []):
             t.cancel()
-        try:
-            await asyncio.wait_for(server.mirror.stop(), 5)
-        except Exception:
-            pass
         outbox.stop()
         if private is not None:
             private.stop()      # or its worker and retry tasks outlive store.close()
         ws.close()
-        try:
-            # BOUNDED. A client that vanished without a closing handshake (a phone, Tor: code 1006) costs
-            # websockets' own 10 s close timeout, so an unbounded wait ran into systemd's TimeoutStopSec=10 and
-            # the relay was SIGKILLed on EVERY stop (measured: all five stops on 2026-10-09) -- before the
-            # PosterChanDB mirror's clean close, the store close and the status cleanup below ever ran.
-            await asyncio.wait_for(ws.wait_closed(), _WS_CLOSE_WAIT)
-        except Exception:
-            pass
+        # BOUNDED, AND SIDE BY SIDE. A client that vanished without a closing handshake (a phone, Tor: code 1006)
+        # costs websockets' own 10 s close timeout, so an unbounded wait ran into systemd's TimeoutStopSec=10 and
+        # the relay was SIGKILLed on EVERY stop (measured: all five stops on 2026-10-09). The Concord mirror's stop
+        # (5 s) and the clients' close handshakes (3 s) then ran one AFTER the other -- 8 s of every restart, with
+        # the relay already not answering (2026-10-17). Both now run at once inside the close budget.
+        async def _bounded(aw, limit):
+            try:
+                await asyncio.wait_for(aw, limit)
+            except Exception:
+                pass
+        await asyncio.gather(_bounded(server.mirror.stop(), _WS_CLOSE_WAIT), _bounded(ws.wait_closed(), _WS_CLOSE_WAIT))
         try:
             await store.checkpoint()             # everything written so far, fsynced
         except Exception as e:
