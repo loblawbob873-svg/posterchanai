@@ -78,6 +78,84 @@ def _target(url, port) -> str:
     return url or "ws://127.0.0.1:%d/relay" % (port or relay_port())
 
 
+# EACH THREAD KEEPS ITS CONNECTION. A query used to connect, sign in (a NIP-42 signature the relay must verify),
+# ask once and close -- the DocTables' worker threads doing it for every point read left ~176 loopback sockets in
+# TIME-WAIT on server1 (2026-10-17) after nostr_store's async reads were already pooled. One socket per thread per
+# (relay, key): no sharing, so no locking; a reused socket that fails is dropped and the query asked once more on
+# a fresh one, so a relay restart costs a retry, never a wrong answer.
+import threading as _threading
+
+_TLS = _threading.local()
+
+
+class _Pool(dict):
+    """This thread's sockets. The sync client runs its own receive thread, which would keep a socket open after the
+    thread that asked has ended -- so the pool closes them when the thread's locals are dropped. NOT at interpreter
+    exit: close() joins the receive thread, daemon threads are frozen by then, and the join never returns (the git
+    pre-receive hook hung for good); the process ending closes the sockets anyway."""
+    def __del__(self, _finalizing=__import__("sys").is_finalizing):
+        if _finalizing():
+            return
+        for ws in list(self.values()):
+            try:
+                ws.close()
+            except Exception:       # noqa: BLE001
+                pass
+
+
+def _pooled(target: str, auth_seckey, timeout: float):
+    pool = getattr(_TLS, "pool", None)
+    if pool is None:
+        pool = _TLS.pool = _Pool()
+    key = (target, auth_seckey or b"")
+    ws = pool.get(key)
+    if ws is not None:
+        return ws, False
+    from websockets.sync.client import connect
+    ws = connect(target, open_timeout=timeout, close_timeout=2, max_size=64 * 1024 * 1024, **loopback_kw(target))
+    try:
+        if auth_seckey:
+            _authenticate(ws, target, auth_seckey, timeout)
+    except Exception:
+        try:
+            ws.close()
+        except Exception:       # noqa: BLE001
+            pass
+        raise
+    pool[key] = ws
+    return ws, True
+
+
+def _drop(target: str, auth_seckey) -> None:
+    pool = getattr(_TLS, "pool", None) or {}
+    ws = pool.pop((target, auth_seckey or b""), None)
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception:       # noqa: BLE001
+            pass
+
+
+def _ask(ws, sub: str, filters: list, timeout: float) -> list:
+    out: list = []
+    ws.send(json.dumps(["REQ", sub, *filters]))
+    while True:
+        msg = json.loads(ws.recv(timeout=timeout))
+        if not isinstance(msg, list) or not msg:
+            continue
+        if msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub:
+            out.append(msg[2])
+        elif msg[0] == "EOSE" and msg[1] == sub:
+            break
+        elif msg[0] == "CLOSED" and msg[1] == sub:
+            raise Unavailable("the relay closed the query: %s" % (msg[2] if len(msg) > 2 else ""))
+    try:
+        ws.send(json.dumps(["CLOSE", sub]))
+    except Exception:       # noqa: BLE001
+        pass
+    return out
+
+
 def query(filters: list, *, port: int | None = None, timeout: float = 10.0, url: str | None = None,
           auth_seckey: bytes | None = None) -> list:
     """Every event matching `filters` (a list of NIP-01 filter dicts), up to each filter's own limit.
@@ -89,37 +167,25 @@ def query(filters: list, *, port: int | None = None, timeout: float = 10.0, url:
     if not filters:
         return []
     try:
-        from websockets.sync.client import connect
+        import importlib; importlib.import_module("websockets.sync.client")
     except Exception as e:      # noqa: BLE001
         raise Unavailable("websockets is not installed: %s" % e) from e
     target = _target(url, port)
     sub = "rr" + uuid.uuid4().hex[:10]
-    out: list = []
-    try:
-        with connect(target, open_timeout=timeout, close_timeout=2, max_size=64 * 1024 * 1024,
-                     **loopback_kw(target)) as ws:
-            if auth_seckey:
-                _authenticate(ws, target, auth_seckey, timeout)
-            ws.send(json.dumps(["REQ", sub, *filters]))
-            while True:
-                msg = json.loads(ws.recv(timeout=timeout))
-                if not isinstance(msg, list) or not msg:
-                    continue
-                if msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub:
-                    out.append(msg[2])
-                elif msg[0] == "EOSE" and msg[1] == sub:
-                    break
-                elif msg[0] == "CLOSED" and msg[1] == sub:
-                    raise Unavailable("the relay closed the query: %s" % (msg[2] if len(msg) > 2 else ""))
-            try:
-                ws.send(json.dumps(["CLOSE", sub]))
-            except Exception:       # noqa: BLE001
-                pass
-    except Unavailable:
-        raise
-    except Exception as e:      # noqa: BLE001
-        raise Unavailable("%s: %s" % (type(e).__name__, e)) from e
-    return out
+    for attempt in (0, 1):
+        try:
+            ws, fresh = _pooled(target, auth_seckey, timeout)
+        except Exception as e:  # noqa: BLE001
+            raise Unavailable("%s: %s" % (type(e).__name__, e)) from e
+        try:
+            return _ask(ws, sub, filters, timeout)
+        except Unavailable:
+            raise                                    # the relay answered "no": the socket itself is fine
+        except Exception as e:  # noqa: BLE001
+            _drop(target, auth_seckey)
+            if fresh or attempt:
+                raise Unavailable("%s: %s" % (type(e).__name__, e)) from e
+    raise Unavailable("unreachable")
 
 
 def counts(filters: list, *, port: int | None = None, timeout: float = 10.0, url: str | None = None,

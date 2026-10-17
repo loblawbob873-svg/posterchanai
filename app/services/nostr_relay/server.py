@@ -778,7 +778,12 @@ class RelayServer:
         traced to a caller without it."""
         try:
             ip = str((getattr(self, "_conn_ips", {}) or {}).get(conn) or "")
-            if ip.startswith("127.") or ip in ("::1", "localhost"):
+            # The socket's OWN end decides, not the peer: on server1 a NAT rule rewrites the source of loopback
+            # connections to the LAN address (192.168.0.2), so every one of this node's own reads read as remote.
+            here = getattr(conn, "local_address", None)
+            here = str(here[0]) if isinstance(here, (tuple, list)) and here else ""
+            if (ip.startswith("127.") or ip in ("::1", "localhost")
+                    or here.startswith("127.") or here == "::1"):
                 m = re.match(r"[A-Za-z_-]{1,12}", str(sub_id or ""))
                 return "L:" + (m.group(0) if m else "?")
             return "R"

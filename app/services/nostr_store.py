@@ -241,8 +241,33 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
 # connection -- and handed back after the query's subscription is CLOSEd (a REQ stays live after EOSE; returned
 # without the CLOSE it would keep streaming to the pool). A reused connection that fails is dropped and the
 # query retried once on a fresh one, so a relay restart costs one retry, never a wrong answer.
-_QUERY_POOL: dict = {}            # (port, auth pubkey or "") -> (event loop, [idle websocket, ...])
+# event loop -> {(port, auth pubkey or ""): [idle websocket, ...]}. ONE POOL PER LIVE LOOP. It used to be
+# ONE entry per (port, key) that remembered a single loop and was REPLACED whenever another loop asked: the worker
+# runs several long-lived loops, so they took turns throwing each other's pools away -- without closing them, and a
+# socket still registered with a live loop is never collected. server1, 2026-10-17, 35 minutes after deploy 272:
+# the worker held 2,578 idle connections to the relay (the relay's own count went from ~270 to ~630).
+# A pool whose loop has CLOSED is reaped on the next query from any loop: most sync helpers here run their read
+# under asyncio.run, a loop that lives for one call, and its parked sockets would otherwise stay open for ever.
+_QUERY_POOL: dict = {}
 _QUERY_POOL_IDLE = 4
+
+
+def _drop_raw(ws) -> None:
+    """Close a socket whose loop is gone. The transport cannot do it (closing schedules a callback on that loop),
+    so the file descriptor is closed directly; the relay sees an ordinary disconnect."""
+    try:
+        sock = getattr(getattr(ws, "transport", None), "_sock", None)
+        if sock is not None:
+            sock.close()
+    except Exception:       # noqa: BLE001
+        pass
+
+
+def _reap_closed_pools() -> None:
+    for lp in [lp for lp in list(_QUERY_POOL) if lp.is_closed()]:
+        for socks in (_QUERY_POOL.pop(lp, None) or {}).values():
+            for ws in socks:
+                _drop_raw(ws)
 
 
 def _query_idle(port: int, auth_seckey) -> list:
@@ -256,12 +281,11 @@ def _query_idle(port: int, auth_seckey) -> list:
             pk = bip340.pubkey_from_seckey(auth_seckey).hex()
         except Exception:
             pk = "?"
-    key = (int(port), pk)
-    entry = _QUERY_POOL.get(key)
-    if entry is None or entry[0] is not loop:
-        entry = (loop, [])
-        _QUERY_POOL[key] = entry
-    return entry[1]
+    _reap_closed_pools()
+    pools = _QUERY_POOL.get(loop)
+    if pools is None:
+        pools = _QUERY_POOL[loop] = {}
+    return pools.setdefault((int(port), pk), [])
 
 
 async def _query_on(ws, uri: str, sub: str, filters: list, timeout: float, auth_seckey) -> list:
