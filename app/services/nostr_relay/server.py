@@ -2231,9 +2231,39 @@ class RelayServer:
             self._send(conn, ["OK", eid, False, "unavailable: stored here, but none of this community's "
                                                   "relays accepted it yet — deliver it directly"])
 
+    # ONE CONNECTION CANNOT HAVE THE RELAY. A token bucket of ANSWER FRAMES per connection: a burst of BUDGET_BURST,
+    # refilled at BUDGET_RATE a second. A connection in debt waits (at most BUDGET_MAX_WAIT) before its next REQ is
+    # answered -- slowed, never refused and never truncated, so no client sees an error and none retries. 2026-10-17:
+    # one desktop client pulled its whole private library, ~15 REQs/s for 12 minutes, and took the relay past a full
+    # core while everyone else waited behind it. A fresh device loading its timeline, notes and DM history stays far
+    # inside the burst. This node's own processes (loopback) are not paced.
+    BUDGET_BURST = 30000
+    BUDGET_RATE = 500.0
+    BUDGET_MAX_WAIT = 5.0
+
+    def _budget_wait(self, conn, now: float) -> float:
+        b = getattr(conn, "_pcai_budget", None)
+        if b is None:
+            b = [float(self.BUDGET_BURST), now]
+            setattr(conn, "_pcai_budget", b)
+        b[0] = min(float(self.BUDGET_BURST), b[0] + (now - b[1]) * self.BUDGET_RATE)
+        b[1] = now
+        return 0.0 if b[0] >= 0 else min(self.BUDGET_MAX_WAIT, -b[0] / self.BUDGET_RATE)
+
+    def _budget_charge(self, conn, frames: int) -> None:
+        b = getattr(conn, "_pcai_budget", None)
+        if b is not None:
+            b[0] -= max(0, int(frames or 0))
+
     async def _on_req(self, conn, sub_id, filters) -> None:
         if not isinstance(sub_id, str):
             return
+        _paced = not str(self._req_origin(conn, sub_id)).startswith("L:")
+        if _paced:
+            _wait = self._budget_wait(conn, time.monotonic())
+            if _wait > 0:
+                self._paced_waits = getattr(self, "_paced_waits", 0) + 1
+                await asyncio.sleep(_wait)
         if self.subs.count(conn) >= self.cfg.get("max_subs_per_conn", 20):
             self._send(conn, ["CLOSED", sub_id, "rate-limited: too many subscriptions"])
             return
@@ -2299,6 +2329,8 @@ class RelayServer:
         _origin = self._req_origin(conn, sub_id)
         self._note_req_cost(filters, sent, _origin)
         self._note_heavy(conn, _origin, filters, sent)
+        if not _origin.startswith("L:"):
+            self._budget_charge(conn, sent)
         # SAY WHEN A PRIVATE REPO WAS LEFT OUT OF AN AUTHOR-BOUND ANSWER. Withholding one silently
         # (an ordinary EOSE) is indistinguishable from "this person has no such repo", so a client
         # has nothing to act on -- the owner's own Git page listed none of their private repos, ever.
