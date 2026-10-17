@@ -1364,6 +1364,7 @@ class RelayServer:
             self._conn_ips.pop(conn, None)
             self._auth_challenges.pop(conn, None)
             self._auth_pubkeys.pop(conn, None)
+            self.__dict__.get("_budgets", {}).pop(conn, None)
             self._relay_urls.pop(conn, None)
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
@@ -2242,16 +2243,16 @@ class RelayServer:
     BUDGET_MAX_WAIT = 5.0
 
     def _budget_wait(self, conn, now: float) -> float:
-        b = getattr(conn, "_pcai_budget", None)
+        budgets = self.__dict__.setdefault("_budgets", {})     # conn -> [tokens, at]; dropped on disconnect
+        b = budgets.get(conn)
         if b is None:
-            b = [float(self.BUDGET_BURST), now]
-            setattr(conn, "_pcai_budget", b)
+            b = budgets[conn] = [float(self.BUDGET_BURST), now]
         b[0] = min(float(self.BUDGET_BURST), b[0] + (now - b[1]) * self.BUDGET_RATE)
         b[1] = now
         return 0.0 if b[0] >= 0 else min(self.BUDGET_MAX_WAIT, -b[0] / self.BUDGET_RATE)
 
     def _budget_charge(self, conn, frames: int) -> None:
-        b = getattr(conn, "_pcai_budget", None)
+        b = self.__dict__.get("_budgets", {}).get(conn)
         if b is not None:
             b[0] -= max(0, int(frames or 0))
 
