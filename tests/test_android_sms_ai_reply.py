@@ -237,8 +237,12 @@ def test_the_real_endpoint_accepts_what_the_phone_sent(wire):
     async def member(pk):
         return pk == q["pubkey"]
 
+    async def no_account(db, npub):              # accounts are a relay table: never this machine's real one
+        return None
+
     with mock.patch("app.services.command_service.CommandService", _CS), \
-         mock.patch("app.services.nip05_access.is_member", member):
+         mock.patch("app.services.nip05_access.is_member", member), \
+         mock.patch("app.services.user_table.aby_npub", no_account):
         out = asyncio.run(T.texts_ai_reply(T.TextsAiReplyReq(**q), db=None, session_user=None))
     # The phone asked for five: one model call, five distinct drafts, `content` = the first.
     assert out.get("ok") is True and out.get("content") == "On my way", getattr(out, "body", out)

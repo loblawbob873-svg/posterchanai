@@ -52,6 +52,8 @@ def _relay_answers(monkeypatch, src):
             return {p: [1, 2] for p in args["pubkeys"][:1]}
         raise AssertionError(what)
     monkeypatch.setattr(aggregates, "ask", fake_ask)
+    # the app's bridge-puppet registry is a relay table too: the test's own, never this machine's
+    monkeypatch.setattr(stats_bot_service, "_puppet_pubkeys", lambda: {pk("puppet")})
 
 
 def _relay_down(monkeypatch):

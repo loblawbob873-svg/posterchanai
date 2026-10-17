@@ -61,9 +61,13 @@ def _run(req, chat, user=None, allowed=True, member=False):
     async def is_member(pk):
         return member
 
+    async def no_account(db, npub):              # accounts are a relay table: never this machine's real one
+        return None
+
     with mock.patch("app.services.command_service.CommandService", _CS), \
          mock.patch("app.services.nip05_access.ai_allowed", ai_allowed), \
-         mock.patch("app.services.nip05_access.is_member", is_member):
+         mock.patch("app.services.nip05_access.is_member", is_member), \
+         mock.patch("app.services.user_table.aby_npub", no_account):
         return asyncio.run(T.texts_ai_reply(req, db=None, session_user=user))
 
 

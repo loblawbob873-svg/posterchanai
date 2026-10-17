@@ -1217,7 +1217,23 @@
   /* Drawn INSIDE that window. The anchor is synthetic because there is no tray chip on this
    * surface — the panel fills the window (see .os-popup-body .os-pop) and positionPop's offsets are
    * ignored under `position:static`, so it only has to exist, not to be anywhere. */
+  /* DRAWN ONCE PER WINDOW. The popup renderer reaches this through os.js restore(), and app.js calls
+   * restore() up to three times while it boots -- so Start -> Power drew the flyout, opened the Power
+   * panel (consuming the one-shot request), and the next boot call drew the plain flyout straight over
+   * it: "it shows power widget then the widget panel itself". A later call only brings the readings
+   * up to date, and never over a sub-panel somebody is standing in. */
+  let _trayDrawn = null;
+  function _inSubPanel(d){ return !!(d && d.querySelector && d.querySelector('[data-os="quickback"]')); }
   async function openTrayPopup(){
+    if(_trayDrawn){
+      const d = await _trayDrawn;
+      if(d && !_inSubPanel(d)) await repaintQuick();
+      return d;
+    }
+    _trayDrawn = _drawTrayPopup();
+    return _trayDrawn;
+  }
+  async function _drawTrayPopup(){
     /* An ADDED host, never a replaced body — see popupHost() in os.js. Emptying the body deletes
      * the elements app.js binds after this runs, which threw on every open. */
     document.body.classList.add('os-popup-body', 'os-tray-popup');
@@ -1293,8 +1309,9 @@
   async function repaintQuick(){
     const d = _pop;
     if(!d || !d.className || String(d.className).indexOf('os-pop-quick') < 0) return;
+    if(_inSubPanel(d)) return;                 // a reading never throws somebody out of Power / Wi-Fi / Tor
     await refresh();
-    if(_pop !== d) return;
+    if(_pop !== d || _inSubPanel(d)) return;
     d.innerHTML = quickHTML(_sum, { shot: _shotCan || { ok: false, region: false } });
     wireQuick(d);
   }
