@@ -43,11 +43,11 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
 """)
         result = json.loads(got)
         self.assertEqual(result["success"], {"ok": True})
-        self.assertEqual(result["invocation"], {
-            "command": "/usr/bin/virt-viewer",
-            "args": ["--wait", "Test VM"],
-            "options": {"detached": True, "stdio": "ignore"},
-        })
+        inv = result["invocation"]
+        # Through desktop/cleanspawn.js: a shell closes the desktop's descriptors, then execs the viewer.
+        self.assertEqual(inv["command"], "/bin/sh")
+        self.assertEqual(inv["args"][-3:], ["/usr/bin/virt-viewer", "--wait", "Test VM"])
+        self.assertEqual(inv["options"], {"detached": True, "stdio": "ignore"})
         self.assertEqual(result["unrefs"], 1)
         self.assertFalse(result["asyncFailure"]["ok"])
         self.assertIn("permission denied", result["asyncFailure"]["error"])

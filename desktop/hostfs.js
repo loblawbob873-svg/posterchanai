@@ -27,6 +27,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
+const { cleanSpawn, notFound } = require('./cleanspawn');
 
 /* AN ABSOLUTE, NORMALISED PATH OR NOTHING. `..` is resolved rather than rejected — a file manager
  * navigates upwards constantly and refusing the segment would break the parent button — but the
@@ -273,12 +274,13 @@ function open(target) {
   const t = clean(target);
   if (!t) throw new Error('not a path');
   fs.lstatSync(t);
-  const child = spawn('xdg-open', [t], { detached: true, stdio: 'ignore' });
+  const child = cleanSpawn(spawn, ['xdg-open', t], { detached: true, stdio: 'ignore' });   // inherits none of the desktop's descriptors
   let onFail = null;
   const failed = new Promise((res) => { onFail = res; });
   child.on('error', (e) => onFail(e && e.code === 'ENOENT'
     ? 'this machine has no xdg-open, so nothing knows what opens that'
     : String((e && e.message) || e)));
+  child.on('exit', (code) => { if (notFound(code)) onFail('this machine has no xdg-open, so nothing knows what opens that'); });
   child.unref();
   return { pid: child.pid, failed };
 }
