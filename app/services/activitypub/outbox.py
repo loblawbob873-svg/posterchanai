@@ -1353,6 +1353,15 @@ async def _mirrored_among(event_ids) -> set:
 # behind the cursor, the cursor never runs ahead of the wall clock, and what was already SENT inside
 # the window is remembered on the relay (`done`), so a worker restart does not send it twice.
 _OVERLAP = {state.CURSOR: 6 * 3600, state.CURSOR_EVERYONE: 1800}
+# …BUT NOT ON EVERY TICK. Re-reading the whole overlap every 30 seconds was most of what the RELAY did all day:
+# measured on server1 2026-10-16, the everyone pass pulled 6,725 events (30 minutes of the firehose) and the
+# members pass six hours of members' events (~25,000 operator kind-5s among them) every tick -- thousands of
+# events decoded, encoded and shipped over loopback to find the few that were new. An ordinary tick re-reads
+# only _SHORT_OVERLAP (clock skew, an event landing mid-tick); the FULL window is re-read every
+# _FULL_OVERLAP_EVERY seconds, so a late arrival still federates, within that long instead of within 30 s.
+_SHORT_OVERLAP = 120
+_FULL_OVERLAP_EVERY = 900
+_last_full: dict = {}            # cursor key -> monotonic time the last FULL re-read finished
 _DONE_MAX = 1500
 _done: dict = {}                 # cursor key -> {event id[:16]: created_at} sent inside the window
 
@@ -1394,6 +1403,9 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies, deadline: floa
         _pass_report[cursor_key] = {"cursor": min(max(since, now - 60), now), "stopped": "", "at": now}
         return 0
     overlap = _OVERLAP.get(cursor_key, 900)
+    full = time.monotonic() - _last_full.get(cursor_key, float("-inf")) >= _FULL_OVERLAP_EVERY
+    if not full:
+        overlap = min(overlap, _SHORT_OVERLAP)
     done = _done.setdefault(cursor_key, {})
     for k, v in saved_done.items():
         done.setdefault(k, v)
@@ -1510,13 +1522,15 @@ async def _pass(cursor_key: str, authors, kinds: list, qualifies, deadline: floa
     # Never ahead of the clock: one future-dated event must not move the window past what is still
     # to arrive. Inclusive of the newest second handled (more may share it; `_seen` stops a replay).
     newest = min(newest, now)
-    floor = min(newest, now) - overlap
+    floor = min(newest, now) - _OVERLAP.get(cursor_key, 900)   # the FULL window: it is re-read every _FULL_OVERLAP_EVERY
     for k in [k for k, v in done.items() if v < floor]:
         done.pop(k, None)
     saved = newest != since or sent_any
     if saved:
         await _save_cursor(cursor_key, newest, done)
     _pass_report[cursor_key] = {"cursor": newest if saved else since, "stopped": stopped, "at": int(time.time())}
+    if full and not stopped:
+        _last_full[cursor_key] = time.monotonic()
     if stopped:
         logger.info("[activitypub] %s pass stopped at %d (%ds behind): %s", cursor_key, newest,
                     max(0, now - newest), stopped)

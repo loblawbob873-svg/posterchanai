@@ -111,6 +111,7 @@ def test_a_report_is_flagged_once_and_cannot_be_deleted_into_a_delete(world, mon
     # A restart: the pass's in-memory and cursor memory both gone -- the ledger still says "sent".
     outbox._seen.clear()
     outbox._done.clear()
+    outbox._last_full.clear()
     world["docs"]["pcai:ap:cursor"] = {"since": 1_700_000_000}
     run(outbox.tick())
     assert len([s for s in world["sent"] if s["activity"]["type"] == "Flag"]) == 1, "the report was flagged twice"

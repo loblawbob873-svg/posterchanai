@@ -487,6 +487,31 @@ window.PCTimelineFactory = function(dep){
   // append / trim must target that box — going straight at #feed would prepend new notes ABOVE the
   // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
   // Falls back to #feed for the views that render into it without a timeline header.
+  /* A TIMELINE YOU LEFT KEEPS ITS CARDS, so coming back REUSES them.
+   *
+   * renderView blanks #feed on every view change, so Home -> Trending -> Nostrverse threw away 100-400
+   * built cards and _reconcileNotes then built every one of them again from the Store -- the whole of
+   * "lag switching timelines" on a phone that the style-recalc fix did not cover (measured at 6x CPU
+   * throttle: ~300 ms to paint Nostrverse again, most of it _noteNode + layout of cards that had been on
+   * screen a second earlier). The reconcile already reuses any keyed card it finds in the box; this
+   * just hands it the box it had. Kept per view, detached (no layout, no style), and only while the
+   * account is the same and for ten minutes; Settings clears it (a display setting changes how a card
+   * is drawn). The media grid is never kept -- it is redrawn wholesale anyway. A refresh of the view you
+   * are ON never comes here: that stays a real rebuild. */
+  const _tlKept = new Map();
+  function _keepTimelineCards(feed){
+    const el = feed && feed.querySelector('#tl-notes');
+    const v = el && el.dataset.view;
+    if(!v || v === S.VIEW || el.querySelector('.pics-grid')) return;
+    el.remove();
+    _tlKept.set(v, { el, me: S.ME && S.ME.pubkey, at: Date.now() });
+  }
+  function _takeKeptCards(view){
+    const k = _tlKept.get(view); _tlKept.delete(view);
+    if(!k || k.me !== (S.ME && S.ME.pubkey) || Date.now() - k.at > 600e3) return null;
+    return k.el;
+  }
+  function _forgetKeptCards(){ _tlKept.clear(); }
   function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
   /* WHAT YOU ARE READING STAYS PUT WHEN SOMETHING ABOVE IT CHANGES SIZE.
    * "i think image/video loading/link previews is making the timeline jumpy on mobile". A card keeps
@@ -1304,7 +1329,10 @@ window.PCTimelineFactory = function(dep){
       _bindTimelineHeader(feed);
       { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
       notesEl=$('#tl-notes',feed);
+      const kept = !S._tlMedia && _takeKeptCards(S.VIEW);   // see _keepTimelineCards
+      if(kept){ notesEl.replaceWith(kept); notesEl = kept; }
     }
+    notesEl.dataset.view = S.VIEW;
     _holdReadingPlace(feed, notesEl);
     if(S._tlMedia){
       // Media grid: the SAME feed (your follows / the nostrverse), image posts only, as a picture
@@ -1372,7 +1400,7 @@ window.PCTimelineFactory = function(dep){
 
   return {
     _aiEmojiSuggest, _aiFramedCard, _aiNewspaper, _applyMediaCacheBudget, _autoCleanOnPost, _bindTimelineHeader,
-    _capFeedDom, _cleanLinksCmd, _drawTimeline, _fillMediaCacheStat, _fillMusicOfflineStat, _flim,
+    _capFeedDom, _forgetKeptCards, _keepTimelineCards, _cleanLinksCmd, _drawTimeline, _fillMediaCacheStat, _fillMusicOfflineStat, _flim,
     _flushPending, _hidePill, _noteKey, _noteNode, _noteTlPlace, _parkOffscreenTimelines, _putAnchor,
     _restoreTlAnchor, _timelineHeaderHtml, _tlAnchor, _tlNotes, _updateNewPostsPill, isSensitive,
     renderTimeline,

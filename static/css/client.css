@@ -1164,13 +1164,13 @@ body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-lef
    missing it ("texts is missing the posterchan avatar top right like other windows"), and a list is
    exactly what goes stale when a view is added. A window whose Back row already carries the avatar
    (.pc-navbar: posts, profiles, articles) does not get a second; the timelines hide the title row. */
-html.pc-oswin .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:block;margin-left:auto;
+html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;margin-left:auto;
   width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
   border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 /* …AND ON A PHONE, every screen's title row gets it too ("do that for mobile") -- the same badge,
    top right. The search box, where a screen keeps one, shrinks to make room (it is flex:1). */
 @media(max-width:820px){
-  .main:not(:has(.pc-navbar))>.topbar::after{content:"";display:block;margin-left:auto;
+  .main:not(.has-navbar)>.topbar::after{content:"";display:block;margin-left:auto;
     width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
     border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
   .topbar .searchbox{margin-right:10px}
@@ -3380,8 +3380,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
      pills — reported the moment the topbar one became legible enough to notice. Driven off the
      rendered DOM rather than a list of view names, so a view that grows (or loses) a search needs no
      second edit here, and the paths that bypass switchView (thread, profile, hashtag) can't leave a
-     stale flag behind. The title takes the freed width. */
-  .main:has(#feed input[type="search"]) .searchbox{display:none}
+     stale flag behind. The title takes the freed width. (`.own-search` is set by app.js _bindMainFlags off the
+     rendered #feed: a `:has()` on .main re-walked the whole timeline on every change.) */
+  .main.own-search .searchbox{display:none}
   .note,.tl-cmp{padding:14px 14px;gap:10px}
   .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
   .note .av,.tl-cmp-av{width:40px;height:40px}
@@ -11178,25 +11179,25 @@ html.pc-oswin .pv-sheet{top:38px}
 @media(max-width:600px){.pf-music-editor{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}.pf-music-row{grid-template-columns:minmax(0,1fr) auto}.pf-music-url{grid-column:1/3}.pf-music-actions .btn{flex:1 1 130px}.pf-music-actions .btn,.pf-music-remove,#pf-up,#pf-banner-up{min-height:42px}.prof-track audio{height:40px}}
 
 /* Edit Profile: preserve the form's DOM order and behavior while giving it a clearer hierarchy. */
-.modal:has(#pf-save){width:min(780px,100%);max-width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 20px;padding:24px;background:var(--bg);border:1px solid var(--line);box-shadow:0 24px 80px rgba(0,0,0,.35)}
-.modal:has(#pf-save)>*{min-width:0}
-.modal:has(#pf-save)>.cmp-hd{grid-column:1 / -1;position:sticky;top:-24px;z-index:3;margin:-24px -24px 0;padding:22px 24px 18px;background:var(--bg);border-bottom:1px solid var(--line);font-size:24px;letter-spacing:-.035em;line-height:1.2}
-.modal:has(#pf-save)>.fld{display:flex;flex-direction:column;gap:8px;margin:0;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.01em}
-.modal:has(#pf-save) .input,.modal:has(#pf-save) textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;background:rgba(var(--accent-rgb),.035);color:var(--text);font-size:15px;font-weight:400;letter-spacing:normal;padding:10px 12px;min-height:44px;box-shadow:none}
-.modal:has(#pf-save) .input:focus,.modal:has(#pf-save) textarea:focus{border-color:var(--neon);outline:2px solid rgba(var(--accent-rgb),.16);outline-offset:1px;background:rgba(var(--accent-rgb),.06)}
-.modal:has(#pf-save)>.fld:has(#pf-name),.modal:has(#pf-save)>.fld:has(#pf-xmr),.modal:has(#pf-save)>.fld:has(#pf-bch){grid-column:1 / -1}
-.modal:has(#pf-save) #pf-name{font-size:20px;font-weight:600;padding:12px;letter-spacing:-.02em}
-.modal:has(#pf-save)>.pf-music-editor{grid-column:1 / -1;border:1px solid var(--line);border-radius:14px;padding:14px;background:linear-gradient(120deg,rgba(var(--accent-rgb),.07),transparent)}
-.modal:has(#pf-save) .pf-music-editor>span{color:var(--text);font-size:15px}
-.modal:has(#pf-save) .pf-music-actions{margin-top:4px}
-.modal:has(#pf-save) .btn{border-radius:9px;min-height:42px;box-shadow:none}
-.modal:has(#pf-save)>.chk{grid-column:1 / -1;margin:0!important;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:rgba(var(--accent-rgb),.025);line-height:1.6}
-.modal:has(#pf-save)>.chk input{flex:none;width:18px;height:18px;accent-color:var(--neon)}
-.modal:has(#pf-save)>#pf-payment-details{grid-column:1 / -1;border:1px solid var(--line);border-radius:12px;padding:0 14px;min-width:0}
+.modal.pf-edit{width:min(780px,100%);max-width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 20px;padding:24px;background:var(--bg);border:1px solid var(--line);box-shadow:0 24px 80px rgba(0,0,0,.35)}
+.modal.pf-edit>*{min-width:0}
+.modal.pf-edit>.cmp-hd{grid-column:1 / -1;position:sticky;top:-24px;z-index:3;margin:-24px -24px 0;padding:22px 24px 18px;background:var(--bg);border-bottom:1px solid var(--line);font-size:24px;letter-spacing:-.035em;line-height:1.2}
+.modal.pf-edit>.fld{display:flex;flex-direction:column;gap:8px;margin:0;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.01em}
+.modal.pf-edit .input,.modal.pf-edit textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;background:rgba(var(--accent-rgb),.035);color:var(--text);font-size:15px;font-weight:400;letter-spacing:normal;padding:10px 12px;min-height:44px;box-shadow:none}
+.modal.pf-edit .input:focus,.modal.pf-edit textarea:focus{border-color:var(--neon);outline:2px solid rgba(var(--accent-rgb),.16);outline-offset:1px;background:rgba(var(--accent-rgb),.06)}
+.modal.pf-edit>.fld:has(#pf-name),.modal.pf-edit>.fld:has(#pf-xmr),.modal.pf-edit>.fld:has(#pf-bch){grid-column:1 / -1}
+.modal.pf-edit #pf-name{font-size:20px;font-weight:600;padding:12px;letter-spacing:-.02em}
+.modal.pf-edit>.pf-music-editor{grid-column:1 / -1;border:1px solid var(--line);border-radius:14px;padding:14px;background:linear-gradient(120deg,rgba(var(--accent-rgb),.07),transparent)}
+.modal.pf-edit .pf-music-editor>span{color:var(--text);font-size:15px}
+.modal.pf-edit .pf-music-actions{margin-top:4px}
+.modal.pf-edit .btn{border-radius:9px;min-height:42px;box-shadow:none}
+.modal.pf-edit>.chk{grid-column:1 / -1;margin:0!important;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:rgba(var(--accent-rgb),.025);line-height:1.6}
+.modal.pf-edit>.chk input{flex:none;width:18px;height:18px;accent-color:var(--neon)}
+.modal.pf-edit>#pf-payment-details{grid-column:1 / -1;border:1px solid var(--line);border-radius:12px;padding:0 14px;min-width:0}
 #pf-payment-details>summary{padding:14px 0;font-size:15px;font-weight:600;cursor:pointer;color:var(--text)}
 #pf-payment-editor{padding-bottom:14px;min-width:0}
 /* Picture + banner: drawn like the profile header they become, each with its own Upload. */
-.modal:has(#pf-save)>.pf-media{grid-column:1 / -1;display:flex;flex-direction:column;gap:0;min-width:0}
+.modal.pf-edit>.pf-media{grid-column:1 / -1;display:flex;flex-direction:column;gap:0;min-width:0}
 .pf-banner-prev{position:relative;aspect-ratio:3/1;max-height:200px;width:100%;border-radius:12px;border:1px solid var(--line);background:linear-gradient(120deg,rgba(var(--accent-rgb),.18),rgba(var(--accent-rgb),.04)) center/cover no-repeat;overflow:hidden}
 .pf-banner-prev #pf-banner-up{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.55);color:#fff;border-color:rgba(255,255,255,.35)}
 .pf-avatar-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:-34px 0 0 16px;position:relative;z-index:1;min-width:0}
@@ -11209,20 +11210,20 @@ html.pc-oswin .pv-sheet{top:38px}
 .pf-media-urls>summary{padding:10px 0;cursor:pointer;color:var(--muted);font-size:13px}
 .pf-media-urls .fld{display:flex;flex-direction:column;gap:6px;margin:0 0 12px;color:var(--muted);font-size:12px;font-weight:600}
 @media(max-width:600px){.pf-avatar-row{margin-left:10px}.pf-avatar-prev,.pf-avatar-none{width:72px;height:72px}.pf-avatar-row #pf-up,.pf-media-status{margin-top:34px}}
-.modal:has(#pf-save)>.fld:has(#pf-about){grid-column:1 / -1}
-.modal:has(#pf-save) #pf-about{min-height:130px;line-height:1.6;resize:vertical}
-.modal:has(#pf-save)>.row:last-child{grid-column:1 / -1;position:sticky;bottom:-24px;z-index:2;margin:0 -24px -24px;padding:16px 24px;gap:10px;background:var(--bg);border-top:1px solid var(--line)}
-.modal:has(#pf-save) #pf-save{min-width:120px;font-weight:650}
-.modal:has(#pf-save) #pf-close{width:44px;height:44px;min-height:44px;border-radius:10px}
-.modal:has(#pf-save) button:focus-visible,.modal:has(#pf-save) summary:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
+.modal.pf-edit>.fld:has(#pf-about){grid-column:1 / -1}
+.modal.pf-edit #pf-about{min-height:130px;line-height:1.6;resize:vertical}
+.modal.pf-edit>.row:last-child{grid-column:1 / -1;position:sticky;bottom:-24px;z-index:2;margin:0 -24px -24px;padding:16px 24px;gap:10px;background:var(--bg);border-top:1px solid var(--line)}
+.modal.pf-edit #pf-save{min-width:120px;font-weight:650}
+.modal.pf-edit #pf-close{width:44px;height:44px;min-height:44px;border-radius:10px}
+.modal.pf-edit button:focus-visible,.modal.pf-edit summary:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
 @media(max-width:600px){
-  .modal:has(#pf-save){grid-template-columns:minmax(0,1fr);gap:16px;padding:18px;border-radius:18px;max-height:92dvh}
-  .modal:has(#pf-save)>.cmp-hd{top:-18px;margin:-18px -18px 0;padding:18px;font-size:24px}
-  .modal:has(#pf-save) .input,.modal:has(#pf-save) textarea{font-size:16px}
-  .modal:has(#pf-save)>.pf-music-editor{padding:12px}
-  .modal:has(#pf-save) .btn{min-height:44px}
-  .modal:has(#pf-save)>.row:last-child{bottom:-18px;margin:0 -18px -18px;padding:12px 18px;padding-bottom:max(12px,env(safe-area-inset-bottom))}
-  .modal:has(#pf-save) #pf-save{min-width:100px}
+  .modal.pf-edit{grid-template-columns:minmax(0,1fr);gap:16px;padding:18px;border-radius:18px;max-height:92dvh}
+  .modal.pf-edit>.cmp-hd{top:-18px;margin:-18px -18px 0;padding:18px;font-size:24px}
+  .modal.pf-edit .input,.modal.pf-edit textarea{font-size:16px}
+  .modal.pf-edit>.pf-music-editor{padding:12px}
+  .modal.pf-edit .btn{min-height:44px}
+  .modal.pf-edit>.row:last-child{bottom:-18px;margin:0 -18px -18px;padding:12px 18px;padding-bottom:max(12px,env(safe-area-inset-bottom))}
+  .modal.pf-edit #pf-save{min-width:100px}
 }
 
 /* PosterChan Office launcher: a workspace surface, not an unstyled row of controls. */
@@ -11873,7 +11874,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
    the window's bottom edge; and the page header repeated "Telegram" directly under the window's own
    title bar ("telegram UI components don't fit properly in the OS window, waste of space"). */
 html.pc-oswin .feed:has(>.tg-app){padding:0!important}
-html.pc-oswin .main:has(>#feed>.tg-app)>.topbar{display:none}
+html.pc-oswin .main.tg-whole>.topbar{display:none}
 .tg-app{container:tgapp/inline-size;--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;
   font-family:inherit;color:var(--text)}
 .tg-boot{margin:auto;color:var(--accent);letter-spacing:.3em;font:600 12px var(--font-mono,ui-monospace,monospace);

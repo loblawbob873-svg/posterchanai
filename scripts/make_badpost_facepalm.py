@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build static/mascot/badpost-facepalm.png -- PosterChan facepalming, for the Bad Post of the Day bot.
+"""Build static/mascot/badpost-facepalm.png -- PosterChan in tears, for the Bad Post of the Day bot.
 
 Derived from the shipped mascot frames, never drawn from scratch, so it is the same character as the
-desktop buddy: the body is dance-5 (hands on hips, the disappointed stance), cropped above the hips so the hip
-hands leave the frame; her right hand -- drawn in her line-art colours, back of the hand to the viewer, out of
-the hoodie sleeve -- covers her eyes.
+desktop buddy: the body is dance-5 (hands on hips), cropped above the hips; her smiling face is painted out and
+redrawn sad and crying. No hand: every drawn facepalm hand read as wrong ("just make her look sad and crying,
+stop with the hand crap", 2026-10-16).
 
 Run once after changing the mascot art (needs Pillow with FreeType, i.e. the app's venv):
     venv-unified/bin/python scripts/make_badpost_facepalm.py
@@ -26,82 +26,70 @@ SCALE = 720 * 0.95 / (BUST[2] - BUST[0])
 EYES = (213, 116)                      # dance-5 coordinates: between her eyes
 INK = (70, 32, 28, 255)                # the line-art brown of her outlines
 SKIN = (255, 233, 220, 255)            # sampled from her face
-SKIN_SHADE = (240, 196, 182, 255)
-SLEEVE = (26, 24, 30, 255)             # the hoodie
-SLEEVE_HI = (58, 54, 66, 255)
-SS = 4                                 # the hand is drawn at 4x and scaled down: smooth lines, no staircase
+TEAR = (150, 210, 255, 255)
+TEAR_HI = (235, 248, 255, 255)
+SS = 4                                 # the face is drawn at 4x and scaled down: smooth lines, no staircase
+FACE = (191, 108, 233, 142)            # dance-5: brows to chin, the part of her face that is redrawn
 
 
 def _up(im: Image.Image, k: float) -> Image.Image:
     return im.resize((round(im.width * k), round(im.height * k)), Image.LANCZOS)
 
 
-def _hand(unit: float) -> Image.Image:
-    """Her RIGHT hand seen from the BACK, the way a facepalm looks to the person watching: fingers together over her
-    eyes, thumb on the outside, the wrist going into the hoodie's cuff and the sleeve running off the bottom of the
-    frame. Drawn (no frame of the mascot shows a hand like this) in her own line-art colours; `unit` = one dance-5
-    pixel at the final scale, so the hand is sized to HER face (the previous image reused the waving arm: a bare arm,
-    palm to the viewer -- "the hand is backwards and longer than normal", 2026-10-16).
-    Local frame: wrist at (0, 0), fingers pointing up (-y); rotated by the caller."""
+def _wipe_features(im: Image.Image) -> Image.Image:
+    """Her smiling brows, eyes and mouth painted out with her own skin, leaving the hair that falls over the face."""
+    a = np.asarray(im).copy()
+    x0, y0, x1, y1 = FACE
+    r, g, b = (a[y0:y1, x0:x1, i].astype(int) for i in range(3))
+    hair = (r > 170) & (r - b > 120) & (g < 200)
+    for ex0, ex1 in ((193, 209), (215, 232)):           # her eyes are orange too: never hair
+        hair[116 - y0:127 - y0, ex0 - x0:ex1 - x0] = False
+    keep = hair | (a[y0:y1, x0:x1, 3] < 200)
+    face = a[y0:y1, x0:x1]
+    face[~keep] = SKIN
+    return Image.fromarray(a)
+
+
+def _sad_face(size, unit: float) -> Image.Image:
+    """Sad and crying, in her line-art colours: brows raised in the middle, eyes squeezed shut, tears streaming down
+    both cheeks, a wobbling frown. `unit` = one dance-5 pixel at the final scale."""
     u = unit * SS
-    W, H = int(160 * u), int(160 * u)
-    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    im = Image.new("RGBA", (size[0] * SS, size[1] * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    ox, oy = W / 2, H * 0.40                    # the wrist
-    P = lambda x, y: (ox + x * u, oy + y * u)  # noqa: E731
-    lw = max(2, round(1.0 * u))
-    # the sleeve: a loose hoodie sleeve -- wide, rounded, a fold or two -- from the cuff down out of the frame
-    sleeve = [P(-12, 3), P(-15, 14), P(-21, 30), P(-26, 50), P(-27, 70), P(25, 70), P(23, 48), P(19, 28), P(14, 12), P(12, 3)]
-    d.polygon(sleeve, fill=SLEEVE, outline=(0, 0, 0, 255), width=lw)
-    for x0, y0, x1, y1 in ((-4, 14, -9, 40), (6, 20, 9, 52), (-15, 30, -19, 58)):
-        d.line([P(x0, y0), P(x1, y1)], fill=SLEEVE_HI, width=round(1.2 * u))
-    d.rounded_rectangle([P(-13, -1), P(13, 7)], radius=3 * u, fill=SLEEVE, outline=(0, 0, 0, 255), width=lw)
-    d.line([P(-11, 3), P(11, 3)], fill=SLEEVE_HI, width=round(.8 * u))
-    # the back of the hand
-    back = [P(-9.5, -1), P(9.5, -1), P(13, -12), P(13.5, -22), P(-12.5, -23), P(-11.5, -11)]
-    d.polygon(back, fill=SKIN, outline=INK, width=lw)
-    d.line([P(-4, -6), P(-2, -18)], fill=SKIN_SHADE, width=round(.9 * u))          # a tendon or two
-    d.line([P(4, -6), P(5, -18)], fill=SKIN_SHADE, width=round(.9 * u))
-    # four fingers side by side (index on the thumb side = the viewer's left), together, gently fanned
-    fingers = [(-9.3, -22, 6.4, 20, -3), (-3.1, -23, 6.6, 23, -1), (3.2, -23, 6.4, 21.5, 1.5), (9.2, -22, 5.8, 17, 4)]
-    for cx, top, w, ln, lean in fingers:
-        tx = cx + lean
-        tip = top - ln
-        d.polygon([P(cx - w / 2, top + 1.5), P(cx + w / 2, top + 1.5), P(tx + w / 2, tip + w / 2), P(tx - w / 2, tip + w / 2)],
-                  fill=SKIN, outline=INK, width=lw)
-        d.ellipse([P(tx - w / 2, tip), P(tx + w / 2, tip + w)], fill=SKIN, outline=INK, width=lw)
-        d.polygon([P(cx - w / 2 + .7, top), P(cx + w / 2 - .7, top), P(tx + w / 2 - .7, tip + w / 2),
-                   P(tx - w / 2 + .7, tip + w / 2)], fill=SKIN)                                         # no seam at the tip
-        d.ellipse([P(tx - w * .22, tip + w * .25), P(tx + w * .22, tip + w * .75)], fill=(255, 220, 210, 255))   # the nail
-        k = top - ln * .48
-        d.arc([P(cx + lean * .5 - w * .3, k - 1.2), P(cx + lean * .5 + w * .3, k + 1.2)], 200, 340, fill=SKIN_SHADE,
-              width=round(.8 * u))                                                                  # the middle joint
-    # the thumb, along the outer edge toward her temple
-    th = [P(-10.5, -1.5), P(-15.5, -6.5), P(-19.6, -13.5), P(-14.4, -16.5), P(-11.8, -12.5)]
-    d.polygon(th, fill=SKIN, outline=INK, width=lw)
-    d.ellipse([P(-20.6, -17.8), P(-14.2, -11.4)], fill=SKIN, outline=INK, width=lw)               # the thumb tip, rounded
-    d.polygon([P(-10.8, -2.4), P(-15.2, -7), P(-19, -13.6), P(-14.8, -15.8), P(-12.4, -12.4)], fill=SKIN)  # no seam
-    d.ellipse([P(-19, -16.6), P(-16.2, -13.8)], fill=(255, 220, 210, 255))                       # its nail
-    d.line([P(-11.6, -12.4), P(-10.6, -2)], fill=INK, width=lw)
-    d.line([P(12, -4), P(12.8, -20)], fill=SKIN_SHADE, width=round(1.6 * u))      # shade on the far edge
-    return im
+    P = lambda x, y: ((x - BUST[0]) * u, (y - BUST[1]) * u)  # noqa: E731
+    lw = round(1.3 * u)
+    # blush under the eyes
+    for cx in (199, 224):
+        d.ellipse([P(cx - 5, 125), P(cx + 5, 129)], fill=(255, 150, 160, 110))
+    # brows: the inner ends lifted -- the shape of worry
+    d.line([P(195.5, 115.5), P(201, 113.5), P(206.5, 110.5)], fill=INK, width=lw, joint="curve")
+    d.line([P(215.5, 110.5), P(221, 113.5), P(226.5, 115.5)], fill=INK, width=lw, joint="curve")
+    # eyes squeezed shut, curving down at the outside, a lash at each outer corner
+    for cx, side in ((201, -1), (222, 1)):
+        d.arc([P(cx - 6, 117.5), P(cx + 6, 125.5)], 200, 340, fill=INK, width=round(1.6 * u))
+        d.line([P(cx + side * 5.6, 120), P(cx + side * 7.6, 122.4)], fill=INK, width=lw)
+    # tears: a stream from each eye down the cheek, a drop gathering at the end
+    for cx, side in ((198, -1), (225, 1)):
+        x, top = cx + side * 1.5, 121.5
+        stream = [P(x - 1.6, top), P(x + 1.6, top), P(x + side * 1.2 + 1.9, 134), P(x + side * 1.2 - 1.9, 134)]
+        d.polygon(stream, fill=TEAR, outline=TEAR_HI, width=round(.6 * u))
+        dx, dy = x + side * 1.2, 136
+        d.ellipse([P(dx - 2.6, dy - 2.6), P(dx + 2.6, dy + 2.6)], fill=TEAR, outline=TEAR_HI, width=round(.6 * u))
+        d.ellipse([P(dx - 1.5, dy - 1.6), P(dx - .3, dy - .4)], fill=TEAR_HI)
+        d.line([P(x - .6, top + 2), P(x + side * .4 - .6, 131)], fill=TEAR_HI, width=round(.5 * u))
+    # the mouth: a small open frown, wobbling
+    d.chord([P(206.5, 134.5), P(215.5, 141.5)], 180, 360, fill=(120, 40, 50, 255), outline=INK, width=lw)
+    d.line([P(206.5, 138.2), P(208.5, 137.6), P(211, 138.3), P(213.5, 137.6), P(215.5, 138.2)], fill=INK, width=lw,
+           joint="curve")
+    return im.resize(size, Image.LANCZOS)
 
 
 def figure() -> Image.Image:
-    """dance-5 (hands on hips, the disappointed stance), cropped above the hips, with her right hand over her eyes."""
-    body = _up(Image.open(os.path.join(MASCOT, "dance", "dance-5.webp")).convert("RGBA").crop(BUST), SCALE)
-    hand = _hand(SCALE)
-    hand = hand.rotate(-20, resample=Image.BICUBIC, center=(hand.width / 2, hand.height * 0.40), expand=False)
-    hand = hand.resize((hand.width // SS, hand.height // SS), Image.LANCZOS)
-    # the fingers' middle lands on her eyes: in the hand's frame that is ~26 dance-5 px above the wrist, tilted
-    import math
-    a = math.radians(20)
-    tip_dx, tip_dy = 31 * math.sin(a) * SCALE, -31 * math.cos(a) * SCALE
-    eyes = ((EYES[0] - BUST[0]) * SCALE, (EYES[1] - BUST[1]) * SCALE)
-    wrist = (eyes[0] - tip_dx, eyes[1] - tip_dy)
-    out = body.copy()
-    out.alpha_composite(hand, (round(wrist[0] - hand.width / 2), round(wrist[1] - hand.height * 0.40)))
-    return out.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
+    """dance-5 (hands on hips, the disappointed stance), cropped above the hips, her face redrawn sad and crying."""
+    src = _wipe_features(Image.open(os.path.join(MASCOT, "dance", "dance-5.webp")).convert("RGBA"))
+    body = _up(src.crop(BUST), SCALE)
+    body.alpha_composite(_sad_face(body.size, SCALE))
+    return body.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
 
 
 def font(size: int):
@@ -133,13 +121,6 @@ def _gloom(fig_alpha, head, top):
     return Image.merge("RGBA", (Image.new("L", size, 40), Image.new("L", size, 50), Image.new("L", size, 120), mask))
 
 
-def _sweat(d, x, y):
-    d.ellipse([x - 22, y - 10, x + 22, y + 34], fill=(150, 205, 255, 255), outline=(255, 255, 255, 255), width=4)
-    d.polygon([(x - 20, y + 4), (x, y - 48), (x + 20, y + 4)], fill=(150, 205, 255, 255))
-    d.line([(x - 21, y + 6), (x, y - 48), (x + 21, y + 6)], fill=(255, 255, 255, 255), width=4)
-    d.ellipse([x - 10, y + 2, x - 2, y + 14], fill=(255, 255, 255, 255))     # the glint
-
-
 def main() -> None:
     canvas = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 255))
     grad = ImageDraw.Draw(canvas)
@@ -163,11 +144,10 @@ def main() -> None:
     canvas.alpha_composite(fig, (x, y))
     canvas.alpha_composite(_gloom(glow.split()[3], head, crown))
     d = ImageDraw.Draw(canvas)
-    _sweat(d, head + 122, crown + 70)
     outlined(d, (SIZE // 2, 62), "BAD POST", font(78), YELLOW)
     outlined(d, (SIZE // 2, 132), "OF THE DAY", font(48), (255, 255, 255, 255))
     # The caption sits in the clear space beside her head -- it used to be printed across the star.
-    outlined(d, (head + 222, crown + 190), "*facepalm*", font(30), (255, 255, 255, 255))
+    outlined(d, (head + 222, crown + 190), "*sob*", font(30), (255, 255, 255, 255))
     canvas.convert("RGB").save(OUT, optimize=True)
     print(f"wrote {OUT} ({os.path.getsize(OUT)} bytes)")
 

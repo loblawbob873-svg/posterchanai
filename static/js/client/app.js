@@ -4445,6 +4445,7 @@
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     _sbBind();              // the phone's top search bar slides away while reading (see _sbSync)
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
+    _bindMainFlags();
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
     /* No `anim-off` toggle of its own here any more: _tlBackground/_tlForeground below own it, so
@@ -7308,6 +7309,8 @@
      * function. renderView(true) is also called INCIDENTALLY (an outbox flush, a relay reconnect)
      * with no check on which view is open, so a fallthrough must be able to put back what it blanked
      * rather than leaving a spinner OR an error where somebody's thread was. */
+    if(reset && VIEW!=='admin' && feed) { try{ _keepTimelineCards(feed); }catch(_){ } }   // the timeline being LEFT keeps its cards
+    if(VIEW==='settings') { try{ _forgetKeptCards(); }catch(_){ } }   // …except across Settings, which changes how cards draw
     const _was = reset && feed ? feed.innerHTML : '';
     if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if(window.PCInstanceAccess && window.PCInstanceAccess.gate(VIEW,feed)) return;
@@ -7606,6 +7609,8 @@
   function _autoCleanOnPost(){ return _lzRun(_timelineMod, _timelineLoad, '_autoCleanOnPost', arguments); }
   function _bindTimelineHeader(){ return _lzRun(_timelineMod, _timelineLoad, '_bindTimelineHeader', arguments); }
   function _capFeedDom(){ return _lzRun(_timelineMod, _timelineLoad, '_capFeedDom', arguments); }
+  function _forgetKeptCards(){ return _lzRun(_timelineMod, _timelineLoad, '_forgetKeptCards', arguments); }
+  function _keepTimelineCards(){ return _lzRun(_timelineMod, _timelineLoad, '_keepTimelineCards', arguments); }
   function _cleanLinksCmd(){ return _lzRun(_timelineMod, _timelineLoad, '_cleanLinksCmd', arguments); }
   function _drawTimeline(){ return _lzRun(_timelineMod, _timelineLoad, '_drawTimeline', arguments); }
   function _fillMediaCacheStat(){ return _lzRun(_timelineMod, _timelineLoad, '_fillMediaCacheStat', arguments); }
@@ -7687,6 +7692,27 @@
   // engages at the very top of a list-style view, swipe only over plain content (not media/code/
   // games/inputs) and only between the bottom-nav's four primary feeds.
   let _gesturesBound = false;
+  /* .main's FLAGS, read off the rendered DOM -- `.main.has-navbar`, `.main.own-search`, `.main.tg-whole`.
+   *
+   * They were `.main:has(.pc-navbar)`, `.main:has(#feed input[type="search"])` and
+   * `.main:has(>#feed>.tg-app)` in client.css, and a `:has()` on an ancestor that big is re-checked by
+   * walking its WHOLE subtree whenever anything under it changes -- i.e. on every card the timeline
+   * draws. Measured at phone speed (6x CPU throttle): switching Nostrverse -> Trending restyled ~1,700
+   * elements and took 120 ms of style recalculation before a pixel moved ("lag switching timelines").
+   * Still driven off what is rendered, never a list of view names (the paths that bypass switchView --
+   * thread, profile, hashtag -- must not leave a stale flag), and a MutationObserver callback runs
+   * before the next paint, so no frame shows the wrong state. */
+  function _bindMainFlags(){
+    const main=document.querySelector('.main'); if(!main || main._pcFlags) return; main._pcFlags=1;
+    const sync=()=>{
+      const feed=document.getElementById('feed');
+      main.classList.toggle('has-navbar', !!main.querySelector('.pc-navbar'));
+      main.classList.toggle('own-search', !!(feed && feed.querySelector('input[type="search"]')));
+      main.classList.toggle('tg-whole', !!(feed && feed.querySelector(':scope>.tg-app')));
+    };
+    sync();
+    try{ new MutationObserver(sync).observe(main, {childList:true, subtree:true}); }catch(_){ }
+  }
   function bindMobileGestures(){
     const feed = $('#feed'); if(!feed || _gesturesBound) return; _gesturesBound = true;
     // Mobile bottom-nav order, with Trending slotted where its TAB sits (Home ▸ Nostrverse ▸ Trending):
