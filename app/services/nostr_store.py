@@ -250,6 +250,11 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
 # under asyncio.run, a loop that lives for one call, and its parked sockets would otherwise stay open for ever.
 _QUERY_POOL: dict = {}
 _QUERY_POOL_IDLE = 4
+# AND AT MOST THIS MANY IN ALL, per loop. The pool is keyed by the signing key, and the app reads each USER'S
+# private documents with that user's own key: every account that touched the app left up to four sockets parked
+# for good -- 2,593 idle connections from the app process to its relay on server1, 2026-10-17 (deploy 274 had
+# fixed the per-loop leak; this is the per-key one). The least recently used key's socket is closed first.
+_QUERY_POOL_TOTAL = 16
 
 
 def _drop_raw(ws) -> None:
@@ -270,22 +275,48 @@ def _reap_closed_pools() -> None:
                 _drop_raw(ws)
 
 
+def _pk_of(auth_seckey) -> str:
+    if not auth_seckey:
+        return ""
+    try:
+        return bip340.pubkey_from_seckey(auth_seckey).hex()
+    except Exception:
+        return "?"
+
+
 def _query_idle(port: int, auth_seckey) -> list:
     """The idle sockets for this port and key ON THE RUNNING LOOP. Keyed by the loop OBJECT, never its id: a
     closed loop's id is reused by the next one, and a socket from a dead loop (or another port) must never be
     handed out."""
     loop = asyncio.get_running_loop()
-    pk = ""
-    if auth_seckey:
-        try:
-            pk = bip340.pubkey_from_seckey(auth_seckey).hex()
-        except Exception:
-            pk = "?"
+    pk = _pk_of(auth_seckey)
     _reap_closed_pools()
     pools = _QUERY_POOL.get(loop)
     if pools is None:
         pools = _QUERY_POOL[loop] = {}
-    return pools.setdefault((int(port), pk), [])
+    key = (int(port), pk)
+    idle = pools.pop(key, None)
+    if idle is None:
+        idle = []
+    pools[key] = idle                       # re-inserted: dict order is least recently used first
+    return idle
+
+
+def _over_cap() -> list:
+    """Sockets past _QUERY_POOL_TOTAL on the running loop, taken out of the pool (oldest key first) for the
+    caller to close."""
+    pools = _QUERY_POOL.get(asyncio.get_running_loop()) or {}
+    extra = sum(len(v) for v in pools.values()) - _QUERY_POOL_TOTAL
+    out = []
+    for key in list(pools):
+        while extra > 0 and pools[key]:
+            out.append(pools[key].pop(0))
+            extra -= 1
+        if not pools[key]:
+            pools.pop(key, None)
+        if extra <= 0:
+            break
+    return out
 
 
 async def _query_on(ws, uri: str, sub: str, filters: list, timeout: float, auth_seckey) -> list:
@@ -350,6 +381,14 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
                 continue                                   # a stale pooled socket: once more, fresh
             if len(idle) < _QUERY_POOL_IDLE:
                 idle.append(ws)
+                pools = _QUERY_POOL.get(asyncio.get_running_loop())
+                if pools is not None and not any(v is idle for v in pools.values()):
+                    pools[(int(port), _pk_of(auth_seckey))] = idle      # evicted while this query ran
+                for old in _over_cap():
+                    try:
+                        await old.close()
+                    except Exception:
+                        pass
             else:
                 try:
                     await ws.close()

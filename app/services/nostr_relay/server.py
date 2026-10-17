@@ -403,13 +403,40 @@ class SubscriptionManager:
         it opens is silent. So there is no default: a caller with nothing to check passes
         `lambda conn, ev: True` and says so out loud."""
         tags: dict = {}                    # this event's tag values, shared by every filter below
+        stale = _stale_for_feeds(ev)
         for conn, subs in list(self._subs.items()):
             if not allow(conn, ev):
                 continue
             for sub_id, filters in list(subs.items()):
+                if stale and not _targeted(filters):
+                    continue
                 if _matches(filters, ev, tags):
                     self.fanout_frames += 1
                     send(conn, ["EVENT", sub_id, ev])
+
+
+# AN OLD POST IS STORED, NOT BROADCAST. A feed subscription is open for what is NEW; every client shows a post that
+# was written before it opened as history, never as live (timeline.js `_liveSince`). Yet an event stored late -- a
+# fediverse backfill, an ancestor fetched for a thread, a mirror catching up -- was pushed down every open feed:
+# 93 posts in 150 s to every phone during one backfill (2026-10-17), each one decoded and dropped by the client,
+# on a radio that "the entire point of posterchan is to be battery efficient" exists to keep quiet. A subscription
+# that ASKED for this event specifically -- by id, by thread (#e/#a/#q) or by person (#p: mentions, DMs) -- still
+# gets it. Queries are untouched: a stored event is returned to whoever asks.
+_FEED_KINDS = frozenset({1, 6, 7, 16, 1068, 1111, 30023})
+LIVE_WINDOW = 3600
+
+
+def _stale_for_feeds(ev, now: float | None = None) -> bool:
+    try:
+        return int(ev.get("kind", -1)) in _FEED_KINDS and \
+            int(ev.get("created_at") or 0) < (time.time() if now is None else now) - LIVE_WINDOW
+    except (TypeError, ValueError):
+        return False
+
+
+def _targeted(filters) -> bool:
+    return any(isinstance(f, dict) and (f.get("ids") or "#e" in f or "#a" in f or "#q" in f or "#p" in f)
+               for f in filters)
 
 
 # The ONLY kind-30078 documents whose `p` tag grants a read (see `_addressees`). Both halves must

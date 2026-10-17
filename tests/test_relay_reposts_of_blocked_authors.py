@@ -83,3 +83,24 @@ def test_the_block_purge_removes_reposts_already_stored(store_factory):  # noqa:
         left = {e["id"] for e in await store.query([{"limit": 100}])}
         assert left == {f"{3:064x}", f"{4:064x}"}, left
     _run(go)
+
+
+def test_an_old_post_stored_late_is_not_pushed_down_every_open_feed():
+    """93 backfilled posts in 150 s reached every phone's live feed (2026-10-17); none could be shown as new.
+    A subscription that asked for the thread, the person or the id still gets it."""
+    import time as _t
+    from app.services.nostr_relay.server import SubscriptionManager
+    subs = SubscriptionManager()
+    subs.add("feed", "global", [{"kinds": [1, 6, 1068, 5, 30023], "limit": 120}])
+    subs.add("thread", "t", [{"kinds": [1], "#e": ["a" * 64]}])
+    subs.add("me", "n", [{"kinds": [1, 7], "#p": ["b" * 64]}])
+    old = {"id": "1" * 64, "pubkey": "c" * 64, "kind": 1, "created_at": int(_t.time()) - 7200, "content": "x",
+           "tags": [["e", "a" * 64], ["p", "b" * 64]]}
+    new = {**old, "id": "2" * 64, "created_at": int(_t.time())}
+    for ev in (old, new):
+        sent = []
+        subs.fanout(ev, lambda c, m: sent.append(c), lambda c, e: True)
+        if ev is old:
+            assert sorted(sent) == ["me", "thread"], sent
+        else:
+            assert sorted(sent) == ["feed", "me", "thread"], sent

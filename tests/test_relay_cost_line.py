@@ -4,6 +4,7 @@ Most of the relay's CPU is building, compressing and writing frames (py-spy, ser
 measured how many or why -- each optimisation that day was found by sampling stacks instead.
 """
 import logging
+import time
 from types import SimpleNamespace
 
 from app.services.nostr_relay import server as S
@@ -16,7 +17,7 @@ def test_fanout_counts_the_frames_it_sends():
     subs.add(a, "s2", [{"kinds": [1, 7]}])
     subs.add(b, "s3", [{"kinds": [7]}])
     sent = []
-    subs.fanout({"id": "1" * 64, "pubkey": "2" * 64, "kind": 1, "created_at": 1, "tags": [], "content": ""},
+    subs.fanout({"id": "1" * 64, "pubkey": "2" * 64, "kind": 1, "created_at": int(time.time()), "tags": [], "content": ""},
                 lambda c, m: sent.append(m), lambda c, e: True)
     assert len(sent) == 2 and subs.fanout_frames == 2
 

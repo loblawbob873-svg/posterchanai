@@ -205,7 +205,7 @@ def test_the_dm_listener_drops_its_subscription_on_an_unreadable_ledger():
 def test_the_inbox_answers_503_while_the_tables_cannot_be_read():
     import inspect
     from app.routers import activitypub as routes
-    src = inspect.getsource(routes._receive)
+    src = inspect.getsource(routes._receive_core)   # _receive only counts what it answered (intake.py)
     assert "fedi_tables.aready()" in src and src.index("fedi_tables.aready()") < src.index("inbox.schedule(activity")
 
 

@@ -61,7 +61,10 @@ def test_quoted_pubkeys_do_not_leak_between_filters_through_the_tag_cache(monkey
     assert not S._match_one(S._compile_filter({"#p": [KEYS[9]]}), ev, cache), "the quote leaked into the cache"
 
 
-def test_fanout_delivers_to_exactly_the_matching_subscriptions():
+def test_fanout_delivers_to_exactly_the_matching_subscriptions(monkeypatch):
+    # Matching only: these events are stamped 1000-2000, and the age rule (server._stale_for_feeds) has its own test.
+    from app.services.nostr_relay import server as _srv
+    monkeypatch.setattr(_srv, "LIVE_WINDOW", 10 ** 12)
     r = random.Random(7)
     m = S.SubscriptionManager()
     raw = {}

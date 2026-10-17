@@ -108,3 +108,31 @@ def test_two_live_loops_keep_their_own_pools(relay, monkeypatch):  # noqa: F811
         for lp in loops:
             lp.call_soon_threadsafe(lp.stop)
         [t.join(5) for t in threads]
+
+
+def test_many_users_keys_never_park_more_than_the_cap(relay, monkeypatch):  # noqa: F811
+    """The app reads each USER'S private documents with that user's own key, and the pool is keyed by the key:
+    every account left up to four sockets parked for good -- 2,593 idle connections from the app process on
+    server1 (2026-10-17). One loop parks at most _QUERY_POOL_TOTAL, however many accounts ask."""
+    import os
+    import websockets
+    made = []
+    real = websockets.connect
+
+    async def recording(*a, **k):
+        ws = await real(*a, **k)
+        made.append(ws)
+        return ws
+    monkeypatch.setattr(websockets, "connect", recording)
+
+    async def go():
+        for _ in range(30):
+            await nostr_store.get_docs(relay.port, ["pcai:t:pooltest:c"], seckey=os.urandom(32), strict=True)
+        await asyncio.sleep(0.2)
+        me = asyncio.get_running_loop()
+        parked = sum(len(v) for v in nostr_store._QUERY_POOL.get(me, {}).values())
+        return parked, [ws for ws in made if _socket_open(ws)]
+    parked, still_open = asyncio.run(go())
+    assert len(made) == 30
+    assert parked <= nostr_store._QUERY_POOL_TOTAL, parked
+    assert len(still_open) <= nostr_store._QUERY_POOL_TOTAL, ("idle sockets past the cap were left open", len(still_open))
