@@ -197,8 +197,15 @@ def stop_worker_process():
 
 
 if __name__ == "__main__":
+    import signal
+
+    def _stop(_sig, _frm):
+        # A SIGTERM with no handler ends the process WITHOUT running atexit -- so the tables' restart snapshots
+        # (doc_table.save_snapshots) were never written here and every restart re-read them in full.
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, _stop)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [worker] %(name)s: %(message)s")
     try:
         asyncio.run(_run())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass

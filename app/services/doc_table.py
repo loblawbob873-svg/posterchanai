@@ -31,9 +31,12 @@ Rows are plain JSON-able dicts. Keys are strings the caller chooses (an id, an n
 anything a d-tag cannot hold; `key()` below makes any value safe.
 """
 import asyncio
+import atexit
 import json
 import logging
+import os
 import sys
+import zlib
 import threading
 import time
 import urllib.parse
@@ -97,6 +100,100 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+# ====================================================================== restart snapshots
+# A RESTART RE-READ EVERY TABLE IN FULL -- the 190k-row blob index, the 165k-row fediverse ledger, the puppets: ~380,000
+# documents through the relay in each process on every deploy (2026-10-18), the relay's largest burst. A table now
+# leaves an ENCRYPTED snapshot of its rows when the process stops cleanly with its live stream current, and the next
+# start loads it and reads from the relay only what changed since -- documents written AND deletions, both in full
+# pages (an unlimited REQ is capped at 500 by the relay, so the live replay cannot be the delta). Anything doubtful is
+# the old full load: no snapshot, unreadable or tampered, older than _SNAP_MAX_AGE, another table/namespace/key, or a
+# delta that could not be read to its end. Written only at a clean stop: nothing extra hits the SSD in steady state.
+_SNAP_MAGIC = b"PCDTS1"
+_SNAP_MAX_AGE = 3 * 86400
+_SNAP_MARGIN = 300              # the snapshot claims "complete up to now - margin": the live stream's lag, with room
+
+
+def _snapshot_dir() -> str:
+    d = os.environ.get("PC_DOCTABLE_SNAPSHOT_DIR")
+    if d is not None:
+        return d                                       # "" turns snapshots off
+    if "pytest" in sys.modules:
+        return ""                                      # tests never write the working tree's state
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                        "data", "doctable")
+
+
+def _snapshot_cipher(sk: bytes):
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"pcai doctable snapshot v1").derive(sk)
+    return AESGCM(key)
+
+
+def _write_snapshot(path: str, name: str, sk: bytes, payload: dict) -> int:
+    raw = zlib.compress(json.dumps(payload, separators=(",", ":"), default=str).encode(), 3)
+    nonce = os.urandom(12)
+    blob = _SNAP_MAGIC + nonce + _snapshot_cipher(sk).encrypt(nonce, raw, name.encode())
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "wb") as f:
+        f.write(blob)
+    os.replace(tmp, path)
+    return len(blob)
+
+
+def _read_snapshot(path: str, name: str, sk: bytes):
+    with open(path, "rb") as f:
+        blob = f.read()
+    if not blob.startswith(_SNAP_MAGIC):
+        raise ValueError("not a table snapshot")
+    nonce, ct = blob[len(_SNAP_MAGIC):len(_SNAP_MAGIC) + 12], blob[len(_SNAP_MAGIC) + 12:]
+    return json.loads(zlib.decompress(_snapshot_cipher(sk).decrypt(nonce, ct, name.encode())))
+
+
+async def _deletions_since(sk: bytes, pk: str, since: int, page: int = 2000) -> dict:
+    """{d_tag: created_at of the newest deletion} for every kind-5 the operator signed since `since` -- in full."""
+    out: dict = {}
+    cursor = None
+    while True:
+        flt = {"authors": [pk], "kinds": [5], "since": int(since), "limit": page}
+        if cursor:
+            flt["_cursor"] = [int(cursor[0]), str(cursor[1])]
+        evs = await nostr_store._ws_query(relay_port(), [flt], strict=True, auth_seckey=sk)
+        for ev in evs:
+            at = int(ev.get("created_at") or 0)
+            for t in ev.get("tags") or []:
+                if len(t) >= 2 and t[0] == "a":
+                    parts = str(t[1]).split(":", 2)
+                    if len(parts) == 3 and parts[1] == pk:
+                        out[parts[2]] = max(out.get(parts[2], 0), at)
+        if len(evs) < page:
+            return out
+        nxt = min((int(e.get("created_at") or 0), str(e.get("id") or "")) for e in evs)
+        if cursor is not None and nxt >= cursor:
+            raise nostr_store.IncompleteRead("deletions since %d could not be read to their end" % since)
+        cursor = nxt
+
+
+async def _docs_since(sk: bytes, prefix: str, since: int, page: int = 1000) -> dict:
+    """{d_tag: (value, created_at)} for every document under `prefix` written since `since` -- in full."""
+    out: dict = {}
+    cursor = None
+    while True:
+        docs = await nostr_store.list_docs(relay_port(), prefix, seckey=sk, strict=True, limit=page,
+                                           with_meta="cursor", cursor=cursor, since=int(since))
+        for d, (value, at, _eid) in docs.items():
+            if d not in out or at > out[d][1]:
+                out[d] = (value, at)
+        if len(docs) < page:
+            return out
+        nxt = min((at, eid) for _v, at, eid in docs.values())
+        if cursor is not None and nxt >= cursor:
+            raise nostr_store.IncompleteRead("%s since %d could not be read to its end" % (prefix, since))
+        cursor = nxt
+
+
 class Loading(Unavailable):
     """The table is being loaded in the background: ask again in `retry_after` seconds. Whole-table reads only --
     a point read is answered from the relay meanwhile."""
@@ -154,6 +251,8 @@ class DocTable:
         self._reload_wanted = False
         self.load_seconds = None        # how long the last strict load took (measured, reported)
         self.resync_s = _RESYNC_S       # None: never reload (the live stream keeps the table current)
+        self._live_ok = False           # the live stream is connected and has replayed its gap (EOSE)
+        self.loaded_from = None         # "snapshot" or "relay": how the last load was answered (reported)
 
     @property
     def loaded(self) -> bool:
@@ -190,14 +289,25 @@ class DocTable:
         self._start_live(pk)
         t0 = time.time() - 5
         started = time.monotonic()
-        try:
-            docs = await nostr_store.list_all_docs(relay_port(), self.prefix, seckey=sk)
-        except Exception as e:      # noqa: BLE001
-            raise Unavailable("could not read table %s: %s" % (self.name, e)) from e
-        rows = {}
-        for d, value in docs.items():
-            if isinstance(value, dict):
-                rows[sys.intern(urllib.parse.unquote(d[len(self.prefix):]))] = _compact(value)
+        rows = None
+        if not self._loaded_at:
+            try:
+                rows = await self._from_snapshot(sk, pk)
+            except Exception as e:      # noqa: BLE001 -- any doubt is the full load below
+                logger.info("[doctable] %s snapshot not used: %s", self.name, e)
+                rows = None
+        if rows is None:
+            try:
+                docs = await nostr_store.list_all_docs(relay_port(), self.prefix, seckey=sk)
+            except Exception as e:      # noqa: BLE001
+                raise Unavailable("could not read table %s: %s" % (self.name, e)) from e
+            rows = {}
+            for d, value in docs.items():
+                if isinstance(value, dict):
+                    rows[sys.intern(urllib.parse.unquote(d[len(self.prefix):]))] = _compact(value)
+            self.loaded_from = "relay"
+        else:
+            self.loaded_from = "snapshot"
         with self._lock:
             stamp = {}                  # a row loaded here is stamp 0 (`.get(k, 0)`): no entry per row
             for k, at in self._stamp.items():
@@ -212,6 +322,55 @@ class DocTable:
             self._loaded_at = time.time()
         self.load_seconds = round(time.monotonic() - started, 3)
         self._notify(None, None)
+
+    def _snapshot_path(self) -> str:
+        d = _snapshot_dir()
+        return os.path.join(d, self.name + ".snap") if d else ""
+
+    async def _from_snapshot(self, sk: bytes, pk: str):
+        """The rows of the last clean stop brought up to date from the relay, or None (use the full load)."""
+        path = self._snapshot_path()
+        if not path or not os.path.exists(path):
+            return None
+        snap = _read_snapshot(path, self.name, sk)
+        since = int(snap.get("since") or 0)
+        if snap.get("v") != 1 or snap.get("ns") != NS or snap.get("name") != self.name or snap.get("pk") != pk:
+            raise ValueError("made for another table or key")
+        if since <= time.time() - _SNAP_MAX_AGE:
+            raise ValueError("older than %d days" % (_SNAP_MAX_AGE // 86400))
+        rows = {sys.intern(k): _compact(v) for k, v in (snap.get("rows") or {}).items() if isinstance(v, dict)}
+        changed = await _docs_since(sk, self.prefix, since - 5)
+        deleted = await _deletions_since(sk, pk, since - 5)
+        n_changed = n_deleted = 0
+        for d, (value, at) in changed.items():
+            k = sys.intern(urllib.parse.unquote(d[len(self.prefix):]))
+            if isinstance(value, dict) and at > deleted.get(d, -1):
+                rows[k] = _compact(value)
+                n_changed += 1
+        for d in deleted:
+            if d.startswith(self.prefix) and not (d in changed and changed[d][1] > deleted[d]):
+                if rows.pop(urllib.parse.unquote(d[len(self.prefix):]), None) is not None:
+                    n_deleted += 1
+        logger.info("[doctable] %s: %d row(s) from its snapshot, %d changed and %d deleted since", self.name,
+                    len(rows), n_changed, n_deleted)
+        return rows
+
+    def save_snapshot(self) -> bool:
+        """Write this table's snapshot if it can vouch for it: loaded, and its live stream current. Clean stop only."""
+        path = self._snapshot_path()
+        if not path or not self._loaded_at or not self._live_ok:
+            return False
+        try:
+            sk, pk = _operator()
+            with self._lock:
+                rows = dict(self._rows)
+            n = _write_snapshot(path, self.name, sk, {"v": 1, "ns": NS, "name": self.name, "pk": pk,
+                                                      "since": int(time.time()) - _SNAP_MARGIN, "rows": rows})
+            logger.info("[doctable] %s snapshot saved: %d row(s), %d bytes", self.name, len(rows), n)
+            return True
+        except Exception as e:      # noqa: BLE001 -- a missing snapshot only means a full load next time
+            logger.warning("[doctable] %s snapshot not saved: %s", self.name, e)
+            return False
 
     def load(self, *, force: bool = False) -> None:
         with self._load_lock:
@@ -540,9 +699,11 @@ class DocTable:
                             self._apply_event(msg[2], sk)
                         elif msg[0] == "EOSE":
                             dropped_at = None           # the gap has been replayed
+                            self._live_ok = True
                         elif msg[0] == "CLOSED":
                             raise Unavailable("live subscription closed: %s" % (msg[2:] or ""))
             except Exception as e:      # noqa: BLE001 -- the stream reconnects; the periodic reload backstops it
+                self._live_ok = False
                 logger.debug("[doctable] %s live stream: %s", self.name, e)
                 if dropped_at is None:
                     dropped_at = time.time()
@@ -551,3 +712,11 @@ class DocTable:
                 # relay restarted.
             time.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
+
+
+def save_snapshots() -> int:
+    """Every loaded table's snapshot -- at a clean stop (registered with atexit; callable from a shutdown hook)."""
+    return sum(1 for t in list(DocTable._registry.values()) if t.save_snapshot())
+
+
+atexit.register(save_snapshots)
