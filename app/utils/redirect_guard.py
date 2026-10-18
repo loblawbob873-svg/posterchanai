@@ -13,6 +13,8 @@ The check is `rss_service.is_safe_host` (resolves the name; private, loopback, l
 `httpx.RequestError`, so a caller's existing "could not fetch" handling answers it.
 """
 import asyncio
+import ipaddress
+import socket
 
 import httpx
 
@@ -48,3 +50,45 @@ async def _check(request: httpx.Request) -> None:
 
 
 HOOKS = {"request": [_check]}
+
+
+class PinnedTransport(httpx.AsyncHTTPTransport):
+    """Connects to the address the guard JUDGED, not to whatever the name resolves to a moment later.
+
+    The hook above resolves a name and refuses private answers; httpx then resolved it AGAIN to connect, so a name
+    whose DNS answers public-then-private (rebinding, TTL 0) passed the check and reached this node's own network
+    (security review 2026-10-18, `/client/thumb`). Here the name is resolved once, every answer is judged by the
+    hook's own rules, and the connection is made to that IP with the name kept for TLS (SNI, certificate) and the
+    Host header. This deployment's own media hosts (`_own_media`) are connected to as resolved -- split-horizon DNS
+    is exactly why they are exempt. Use it WITH the hooks, which still judge every redirect hop's scheme and name:
+
+        httpx.AsyncClient(transport=redirect_guard.PinnedTransport(), event_hooks=redirect_guard.HOOKS, ...)
+    """
+
+    async def handle_async_request(self, request):
+        host = request.url.host
+        if _own_media(host):
+            return await super().handle_async_request(request)
+        if not host or host.lower() == "localhost" or host.lower().endswith((".local", ".internal", ".lan")):
+            raise RedirectRefused(f"refused: {host} is not a public address", request=request)
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
+        except OSError as e:
+            raise httpx.ConnectError(f"cannot resolve {host}", request=request) from e
+        addrs = []
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                continue
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast \
+                    or ip.is_unspecified or not ip.is_global:
+                raise RedirectRefused(f"refused: {host} resolves to a private address", request=request)
+            addrs.append(ip)
+        if not addrs:
+            raise httpx.ConnectError(f"cannot resolve {host}", request=request)
+        request.url = request.url.copy_with(host=str(addrs[0]))
+        if request.url.scheme == "https":
+            request.extensions = {**request.extensions, "sni_hostname": host}
+        return await super().handle_async_request(request)

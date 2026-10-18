@@ -141,6 +141,7 @@ def get_current_user(
             user = get_user_from_api_key(db, user_id)
             if user:
                 api_key_store.touch(api_key)       # last_used_at, throttled; never fails the request
+                request.state.via_api_key = True   # a route that MINTS a session must refuse this (routers/auth.py)
                 return _refuse_blocked(user)
 
         raise HTTPException(

@@ -86,6 +86,7 @@ async def _fetch(url: str):
     if not ok:
         return None
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0), follow_redirects=True,
+                                 transport=redirect_guard.PinnedTransport(),     # no DNS rebinding past the guard
                                  event_hooks=redirect_guard.HOOKS) as client:
         async with client.stream("GET", url, headers={"Accept": "image/*,*/*;q=0.5",
                                                        "User-Agent": "Mozilla/5.0 PosterChan thumbnailer"}) as r:
@@ -115,8 +116,11 @@ def _prune() -> None:
                 st = os.stat(p)
             except OSError:
                 continue
-            files.append((st.st_mtime, st.st_size, p))
-            total += st.st_size
+            # An empty "use the original" marker still costs an inode and a block: counted as one, or a stream of
+            # junk URLs (each a marker) grew the directory without limit while the byte total stayed at zero.
+            size = max(st.st_size, 4096)
+            files.append((st.st_mtime, size, p))
+            total += size
     if total <= CACHE_CAP:
         return
     files.sort()
