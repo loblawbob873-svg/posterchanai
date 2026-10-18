@@ -11942,6 +11942,11 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
    the window's bottom edge; and the page header repeated "Telegram" directly under the window's own
    title bar ("telegram UI components don't fit properly in the OS window, waste of space"). */
 html.pc-oswin .feed:has(>.tg-app){padding:0!important}
+/* ...AND IN THE DESKTOP APP. The same 90px band sat under the send button in the Windows/Linux/macOS app's main
+   window ("empty space after message window ... below send button, looks ugly", 2026-10-18): at a desktop width there
+   is no bottom nav, and the chat is a full-height app, not a feed that scrolls past a FAB. The phone layout (<=820px)
+   keeps its padding -- the bottom nav sits there. */
+@media(min-width:821px){.feed:has(>.tg-app){padding-bottom:0!important}}
 html.pc-oswin .main.tg-whole>.topbar{display:none}
 .tg-app{container:tgapp/inline-size;--tg-hot:#ff2b6d;height:100%;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;
   font-family:inherit;color:var(--text)}
