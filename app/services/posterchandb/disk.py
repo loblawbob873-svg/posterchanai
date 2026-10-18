@@ -244,6 +244,7 @@ class Run(tuple):
     def __new__(cls, arrays, name=None):
         r = tuple.__new__(cls, arrays)
         r.name = name
+        r.fences = None
         return r
 
     @property
@@ -266,6 +267,53 @@ def _random_access(mm) -> None:
         pass                                           # not Linux / not supported: only slower, never wrong
 
 
+# FENCE POINTERS. A run on disk is searched by binary search over a mapped key array: ~log2(n) page faults, each a
+# random read -- 20+ for 30M keys, and on a spinning disk every one is a seek (measured 2026-10-18, a 30M-event store
+# cold at the 200:30 RAM ratio: 80 ms per id lookup). The first key of every page, kept in RAM (8 bytes per 4 KB of
+# keys: 0.2% of the run), turns that into a search in RAM plus ONE page. Written beside the run as its last file
+# (`run-<name>.<k>.bin`, so the checkpoint's sweep removes it with its run); a run written before fences existed gets
+# them computed on first use instead.
+FENCE = 512                                            # keys per fence: one 4 KB page of uint64
+
+
+def _fence_path(dirpath: str, name: str, k: int) -> str:
+    return os.path.join(dirpath, "run-%s.%d.bin" % (name, k))
+
+
+def fences_of(run):
+    """The run's fences (keys[::FENCE], in RAM), or None for a run that needs none (built in RAM, or small)."""
+    f = run.fences
+    if f is None and run.name is not None and len(run) and run[0].dtype == np.uint64 and len(run[0]) > FENCE:
+        f = run.fences = np.array(run[0][::FENCE])
+    return f
+
+
+def search(run, key, side: str = "left") -> int:
+    """np.searchsorted(run[0], key, side) -- through the run's fences when it has them."""
+    keys = run[0]
+    f = fences_of(run)
+    if f is None:
+        return int(np.searchsorted(keys, key, side))
+    b = int(np.searchsorted(f, key, side))
+    lo = max(b - 1, 0) * FENCE
+    hi = min(b * FENCE + 1, len(keys))
+    return lo + int(np.searchsorted(keys[lo:hi], key, side))
+
+
+def save_fences(dirpath: str, run, k: int) -> bool:
+    """Write the fence file of a run that has none (one written before fences existed). True when written."""
+    fp = _fence_path(dirpath, run.name, k)
+    f = fences_of(run)
+    if f is None or os.path.exists(fp):
+        return False
+    with open(fp + ".tmp", "wb") as out:
+        out.write(f.tobytes())
+        out.flush()
+        os.fsync(out.fileno())
+    os.replace(fp + ".tmp", fp)
+    return True
+
+
 def map_run(dirpath: str, name: str, dtypes) -> Run:
     arrays = []
     for path, dt in zip(run_files(dirpath, name, len(dtypes)), dtypes):
@@ -279,7 +327,13 @@ def map_run(dirpath: str, name: str, dtypes) -> Run:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         _random_access(mm)
         arrays.append(np.frombuffer(mm, dtype=dt))
-    return Run(arrays, name)
+    run = Run(arrays, name)
+    fp = _fence_path(dirpath, name, len(dtypes))
+    if os.path.exists(fp):
+        f = np.fromfile(fp, dtype=np.uint64)
+        if len(arrays) and len(f) == -(-len(arrays[0]) // FENCE):
+            run.fences = f                             # a torn or foreign file is ignored: computed on first use
+    return run
 
 
 class RunSink:
@@ -316,6 +370,15 @@ class RunSink:
             f.close()
         for p in self.paths:
             os.replace(p + ".tmp", p)
+        if self.dtypes[0] == np.uint64 and self.count[0] > FENCE:
+            keys = np.memmap(self.paths[0], dtype=np.uint64, mode="r")
+            fp = _fence_path(self.dirpath, self.name, len(self.dtypes))
+            with open(fp + ".tmp", "wb") as f:
+                f.write(np.ascontiguousarray(keys[::FENCE]).tobytes())
+                f.flush()
+                os.fsync(f.fileno())
+            del keys
+            os.replace(fp + ".tmp", fp)
         fsync_dir(self.dirpath)
         return map_run(self.dirpath, self.name, self.dtypes)
 
@@ -330,7 +393,7 @@ class RunSink:
 
 
 def remove_run(dirpath: str, name: str, k: int) -> None:
-    for p in run_files(dirpath, name, k):
+    for p in run_files(dirpath, name, k) + [_fence_path(dirpath, name, k)]:
         for q in (p, p + ".tmp"):
             try:
                 os.remove(q)
@@ -502,9 +565,9 @@ def merge_kv(a, b, sink: RunSink, keep=None, pace=None) -> Run:
 def kv_get(run, key: int) -> list:
     keys, vals = run
     ku = np.uint64(key)
-    lo = int(np.searchsorted(keys, ku, "left"))
+    lo = search(run, ku, "left")
     if lo < len(keys) and keys[lo] == ku:
-        hi = int(np.searchsorted(keys, ku, "right"))
+        hi = search(run, ku, "right")
         return [int(x) for x in vals[lo:hi]]
     return []
 

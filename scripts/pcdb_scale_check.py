@@ -66,6 +66,10 @@ def compact(path: str) -> None:
         print("  %d merges, %.0f s" % (n, time.time() - t0), flush=True)
         if not k:
             break
+    from app.services.posterchandb import disk
+    wrote = sum(disk.save_fences(st.path, r, len(lv.dtypes)) for lv in st._leveled() for r in lv.runs
+                if r.name is not None)
+    print("  fence files written for %d older runs" % wrote, flush=True)
     st.close()
     print("compacted: %d merges in %.0f s" % (n, time.time() - t0), flush=True)
 

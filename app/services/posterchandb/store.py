@@ -46,6 +46,7 @@ from .codec import Codec
 MAGIC = b"PCDB1\n"
 OP_PUT, OP_DEAD, OP_DERIVED = 1, 2, 3   # OP_PUT payload: op, origin byte, codec record
 _FRAME = struct.Struct("<II")
+_FENCED_MANY = 64     # get_many: up to this many keys go through the fences (one page each), more use one vector search
 
 
 @lru_cache(maxsize=1 << 17)    # index keys repeat constantly (k:1, an author's au:/ak:): hashing was ~10% of ingest
@@ -155,8 +156,9 @@ class _Postings(disk.Leveled):
     def get(self, key: int) -> np.ndarray:
         parts = []
         k = np.uint64(key)
-        for keys, starts, post in self.runs:
-            i = int(np.searchsorted(keys, k))
+        for run in self.runs:
+            keys, starts, post = run
+            i = disk.search(run, k)
             if i < len(keys) and keys[i] == k:
                 parts.append(post[starts[i]:starts[i + 1]])
         d = self.delta.get(key)
@@ -174,10 +176,14 @@ class _Postings(disk.Leveled):
             return np.zeros(0, dtype=np.uint32)
         ks = np.asarray(keys, dtype=np.uint64)
         parts = []
-        for rkeys, starts, post in self.runs:
+        for run in self.runs:
+            rkeys, starts, post = run
             if not len(rkeys):
                 continue
-            i = np.searchsorted(rkeys, ks)
+            if len(ks) <= _FENCED_MANY:
+                i = np.fromiter((disk.search(run, k) for k in ks), dtype=np.int64, count=len(ks))
+            else:
+                i = np.searchsorted(rkeys, ks)          # a big batch touches most pages anyway: one vector search
             i = i[i < len(rkeys)]
             i = i[np.isin(rkeys[i], ks, assume_unique=False)]
             for j in np.unique(i):
@@ -195,8 +201,9 @@ class _Postings(disk.Leveled):
         """How many postings `key` has, from the run boundaries -- nothing copied (a kind can hold millions)."""
         n = 0
         k = np.uint64(key)
-        for keys, starts, _post in self.runs:
-            i = int(np.searchsorted(keys, k))
+        for run in self.runs:
+            keys, starts, _post = run
+            i = disk.search(run, k)
             if i < len(keys) and keys[i] == k:
                 n += int(starts[i + 1] - starts[i])
         d = self.delta.get(key)
@@ -210,8 +217,9 @@ class _Postings(disk.Leveled):
         if not len(seqs):
             return out
         k = np.uint64(key)
-        for keys, starts, post in self.runs:
-            i = int(np.searchsorted(keys, k))
+        for run in self.runs:
+            keys, starts, post = run
+            i = disk.search(run, k)
             if i < len(keys) and keys[i] == k:
                 sl = post[starts[i]:starts[i + 1]]
                 if len(sl) > 1 and not bool(np.all(sl[1:] >= sl[:-1])):
