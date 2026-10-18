@@ -74,7 +74,9 @@ def test_banning_asks_one_question(private):
 
     asyncio.run(desktop.with_browser("online", "", check, ""))
     assert not got['review'], ("banning opened the access-review dialog", got['text'])
-    assert "Ban alice from this community?" in got['text'], got['text']
+    # The question names the ACCOUNT, not just a display name (two "Todd"s were indistinguishable, 2026-10-18).
+    q = got['text'][got['text'].index("Ban alice — "):] if "Ban alice — " in got['text'] else ""
+    assert q and "npub1" in q.split("from this community?")[0] and "from this community?" in q, got['text']
     assert got['one_button'], got
     o = got['opts']
     assert o, ("the ban never reached key rotation", got['toast'])
@@ -86,3 +88,47 @@ def test_banning_asks_one_question(private):
         assert staff == {got['me'], got['staff']}, ("the private channel must keep exactly its role holders", staff)
     else:
         assert o['channelRecipients'] == {}, o
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_someone_who_is_not_listed_is_banned_by_npub():
+    """Todd, Beatbox and Josephus "keep reappearing" (2026-10-18): somebody who is not on the member list at that moment
+    could not be banned at all -- the only ban was a member-row menu. "Ban by npub…" takes the pasted account through
+    the SAME ban (one named confirmation, then key rotation), and nobody listed loses access."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=1500, height=900, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(SETUP)
+        await b.js(MEMBERS)
+        await b.js("PCConcord.render()")
+        await b.until("document.querySelectorAll('.cc-members-pane .cc-member').length>=20")
+        me = await b.js("__PC.me().pubkey")
+        others = await b.js("[...document.querySelectorAll('.cc-members-pane .cc-member')].map(r=>r.dataset.ccMember).filter(pk=>pk!==%r)" % me)
+        outsider = "8e1e3efef6509b9eff4523d8359096a0b6e655707d58b89d5f70f4f8547cc6e0"     # on no list here
+        npub = await b.js("NostrTools.nip19.npubEncode(%r)" % outsider)
+        got.update(me=me, others=others, outsider=outsider)
+        await b.js(CAPTURE % (others[0], others[1]))
+        await b.js("(()=>{const R=window.PosterCordReader,c=R.createBanWrap;R.createBanWrap=async(...a)=>{window.__banned=a[2];return c(...a);};})()")
+        await b.js(VISIBLE % ".cc-members-pane .cc-ban-npub" + ".click()")
+        await b.until("!!" + VISIBLE % ".uiprompt-in")
+        await b.js("(()=>{const i=%s;i.value=%r;i.dispatchEvent(new Event('input',{bubbles:true}));})()" % (VISIBLE % ".uiprompt-in", npub))
+        await b.js("[...document.querySelectorAll('.uiconfirm button')].find(x=>x.textContent.trim()==='Continue'&&x.getBoundingClientRect().width>0).click()")
+        await asyncio.sleep(.8)
+        got['question'] = await b.js("(document.querySelector('.uiconfirm-msg')||{}).textContent||''")
+        ban = "[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Ban'&&x.getBoundingClientRect().width>0)"
+        await b.js(ban + ".click()")
+        await asyncio.sleep(1.0)
+        got['banned'] = await b.js("window.__banned||null")
+        got['opts'] = await b.js("window.__opts||null")
+        got['toast'] = await b.js("[...document.querySelectorAll('.toast')].map(t=>t.textContent).join(' | ')")
+
+    asyncio.run(desktop.with_browser("online", "", check, ""))
+    assert "npub1" in got['question'] and "from this community?" in got['question'], got['question']
+    assert got['banned'] == got['outsider'], ("the ban was not written for the pasted account", got)
+    o = got['opts']
+    assert o and o['removed'] == [got['outsider']], ("the ban never reached key rotation for that account", got['toast'])
+    kept = {r['pubkey'] for r in o['recipients']}
+    assert {got['me']} | set(got['others']) <= kept, "a listed member lost access when an outsider was banned"
