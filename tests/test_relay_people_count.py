@@ -185,6 +185,7 @@ def _people(rows):
     srv._auth_pubkeys = {c: set(pks) for _ip, c, pks in rows if pks}
     srv._conns = len(rows)
     srv.gate = _Gate()
+    srv.cfg = {"node_pubkey": "op"}       # THIS node's key: the one signed-in key that is nobody
     return srv.online_breakdown()
 
 
