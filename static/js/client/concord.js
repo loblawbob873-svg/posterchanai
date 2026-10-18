@@ -1368,6 +1368,28 @@
       void cacheEnvelopes(envelopeCacheKey(loadKey,'guestbook:'+owner),[wrap]).catch(()=>{});
     }catch(_){ }
   }
+  /* WHO EXACTLY IS BEING BANNED. "Ban Todd?" named two different people: the owner's ban went to "Dr. Todd Smith"
+   * while THE TODDSTR stayed in the community (2026-10-18). The confirmation names the ACCOUNT -- display name, NIP-05
+   * and the npub's two ends -- never a display name alone. */
+  function banLabel(pubkey,profile,npub){
+    const pr=profile||{},name=String(pr.display_name||pr.name||'').trim()||'this account';
+    const short=npub&&npub.length>20?npub.slice(0,12)+'…'+npub.slice(-6):(npub||String(pubkey||'').slice(0,12)+'…');
+    return name+' — '+(pr.nip05?String(pr.nip05)+', ':'')+short;
+  }
+  /* "BAN BY NPUB": somebody who is not on the member list right now -- a banned person's second account, a kicked
+   * member who keeps rejoining -- could not be banned at all, because the only ban was a member-row menu. The paste
+   * is an npub (or hex); anything else, yourself or the owner is refused with the reason. */
+  function banTargetFromInput(raw,{viewer='',owner='',decode=null}={}){
+    let v=String(raw||'').trim().replace(/^nostr:/i,'');
+    if(!v)return {error:''};
+    let hex='';
+    if(/^[0-9a-f]{64}$/i.test(v))hex=v.toLowerCase();
+    else if(/^npub1[02-9ac-hj-np-z]+$/i.test(v)&&decode){try{const d=decode(v.toLowerCase());if(d&&d.type==='npub')hex=String(d.data).toLowerCase();}catch(_){}}
+    if(!/^[0-9a-f]{64}$/.test(hex))return {error:'That is not an npub.'};
+    if(hex===String(viewer).toLowerCase())return {error:'You cannot ban yourself.'};
+    if(hex===String(owner).toLowerCase())return {error:'The owner cannot be banned.'};
+    return {target:hex};
+  }
   function roomParticipants(room,viewerPubkey=''){
     ownGuestbookViewer(viewerPubkey);
     const observed=channelsOf(room).flatMap(channel=>testMessages(channelStoreId(room,channel.name))).filter(Boolean),fromMessages=observed.map(message=>message.pubkey);
@@ -5572,8 +5594,8 @@
   }
   async function quickBanReview(p,room,target){
     const owner=room.cord.bundle.owner,keep=[...new Set([owner,...roomParticipants(room,owner)])].filter(pk=>pk&&pk!==target);
-    const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
-    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${name} from this community?`,{ok:'Ban',danger:true}):true;
+    const label=banLabel(target,p.profOf&&p.profOf(target),(()=>{try{return window.NostrTools.nip19.npubEncode(target);}catch(_){return '';}})());
+    const ok=p.uiConfirm?await p.uiConfirm(`Ban ${label} from this community?`,{ok:'Ban',danger:true}):true;
     if(!ok)return null;
     // Each private channel keeps the members holding its channel role (and the owner) -- the same people who hold its key.
     const channelRecipients={},reader=window.PosterCordReader,loadKey=room.communityId||room.naddr;
@@ -6140,7 +6162,8 @@
          offered button that the fold declines, never a message removed by somebody who may not. */
       canModerate=isOwner||(Array.isArray(current&&current.moderators)
         && current.moderators.indexOf(viewer.pubkey)>=0),
-      memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
+      memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[],
+      canBanAny=!!current&&!current.local&&!!current.cord&&(isOwner||memberMay(current,viewer.pubkey,'BAN'));
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     wantProfiles(p,memberPks,saved()[state.community]);
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
@@ -6253,8 +6276,8 @@
     /* The tab bar is gone: Communities is its own view, reached from the sidebar. */
     if(current){
       const conversation=p.$('.cc-conversation');
-      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><div class="cc-icon-current" id="cc-icon-current" title="Current icon">${roomIcon(p,current,state.community)}</div><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
+      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div>${canBanAny?'<button type="button" class="btn btn-ghost small cc-ban-npub">Ban by npub…</button>':''}</aside>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions">${canBanAny?'<button type="button" class="btn btn-ghost cc-ban-npub">Ban by npub…</button>':''}<button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><div class="cc-icon-current" id="cc-icon-current" title="Current icon">${roomIcon(p,current,state.community)}</div><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
       /* SEARCH THE KNOWN MEMBERS ("will be useful for large rooms"). By name, NIP-05 or key. The query
        * is the module's, so the repaint every arriving message causes keeps it and the filtered list;
        * the box that had focus gets it back (render() re-creates it). */
@@ -6501,6 +6524,14 @@
         p.openMenuPopover(more,rows,a=>{ const b=$('#'+a); if(b)b.click(); });
       }; }
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
+    $$('.cc-ban-npub').forEach(b=>{b.onclick=async()=>{
+      const room=saved()[state.community],owner=String(room?.cord?.bundle?.owner||'');
+      const raw=p.uiPrompt?await p.uiPrompt('Ban by npub — paste the account\'s npub',{value:'',ok:'Continue'}):'';
+      const got=banTargetFromInput(raw,{viewer:viewer.pubkey,owner,decode:v=>window.NostrTools.nip19.decode(v)});
+      if(!got.target){if(got.error)p.toast(got.error);return;}
+      const isOwnerNow=!!owner&&owner===viewer.pubkey;
+      void (isOwnerNow?banMember(got.target):staffModerate(got.target,'ban'));
+    };});
     const banMember=async target=>{
       const actor=deliveryOwner(p),room=saved()[state.community];if(!room?.cord?.bundle)return p.toast('Community moderation is not ready.');
       if(room.cord.refounding)return p.toast('Resume the pending key rotation in community settings first.');
@@ -6552,7 +6583,7 @@
     const staffModerate=async(target,verb)=>{
       const room=saved()[state.community],reader=window.PosterCordReader,bundle=room?.cord?.bundle;
       if(!bundle||!reader)return p.toast('Community moderation is not ready.');
-      const name=(p.profOf&&(p.profOf(target)||{}).name)||'this member';
+      const name=banLabel(target,p.profOf&&p.profOf(target),(()=>{try{return window.NostrTools.nip19.npubEncode(target);}catch(_){return '';}})());
       const ok=p.uiConfirm?await p.uiConfirm(verb==='kick'?`Kick ${name}? They can rejoin with an invite.`:`Ban ${name} from this community?`,{ok:verb==='kick'?'Kick':'Ban',danger:true}):true; if(!ok)return;
       try{
         await publishModeration(room,target,verb);

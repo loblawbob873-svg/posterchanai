@@ -636,3 +636,6 @@ svg.ic.cc-starred{fill:currentColor}
 #cc-settings-dialog .cc-sheet-close{background:var(--cct-close);color:var(--cct-on-close);border-radius:50%;flex:0 0 34px;width:34px;height:34px;min-width:34px;min-height:34px}
 #cc-settings-dialog .cc-sheet-close:hover,#cc-settings-dialog .cc-sheet-close:focus-visible{background:var(--cct-close-hover);color:var(--cct-on-close)}
 #cc-settings-dialog .cc-sheet-close .ic{width:18px;height:18px}
+
+/* "Ban by npub" at the foot of the members pane: someone who is not listed right now can still be banned. */
+.cc-members-pane .cc-ban-npub{margin:8px 10px 10px;align-self:stretch;flex:0 0 auto}
