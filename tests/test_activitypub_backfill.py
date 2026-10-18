@@ -311,3 +311,23 @@ def test_opening_a_deep_reply_brings_the_thread_up_to_its_first_post_and_that_po
     stored = set(_stored(fedi))
     assert {f"post {i}" for i in range(1, 6)} <= stored, ("the ancestors were not climbed", counts, sorted(stored))
     assert "post 9" in stored, ("the first post's own replies were not read", counts, sorted(stored))
+
+
+def test_an_account_whose_posts_were_missed_is_read_again_sooner(fedi, monkeypatch):
+    """A server that is not delivering to us (nicecrew.digital, 2026-10-17: GETs only, no POSTs for an hour) must not
+    cost its followers three hours a post: an outbox read that found missed posts asks again after RECHECK_MISSED."""
+    quiet, missing = "https://mastodon.example/users/quiet", "https://mastodon.example/users/missing"
+    for i, a in enumerate((quiet, missing)):
+        fedi["docs"][f"pcai:ap:following:{ALICE}:{i}"] = {"actor": a, "inbox": "i", "state": "accepted"}
+    NOW = 1_800_000_000
+    run(state._put(backfill._MARK + state._h(quiet), {"actor": quiet, "at": NOW, "missed": 0}))
+    run(state._put(backfill._MARK + state._h(missing), {"actor": missing, "at": NOW, "missed": 4}))
+    done = []
+
+    async def fake(actor, **k):
+        done.append(actor)
+        return {}
+    monkeypatch.setattr(backfill, "backfill_actor", fake)
+    state.forget_followed_cache()
+    run(backfill.catch_up(per_tick=5, now=NOW + backfill.RECHECK_MISSED))
+    assert done == [missing], done

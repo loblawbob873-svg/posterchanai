@@ -38,10 +38,13 @@ REFRESH = 6 * 3600          # an account or thread is re-read at most this often
 _POSTS = ("Note", "Article", "Question", "Page")
 _MARK = "pcai:ap:backfilled:"
 # PACING -- this reads other people's servers, and writes into our own relay.
-PACE = 30.0                 # seconds between BACKGROUND reads (discovery, catch-up, a follow)
-HOST_GAP = 120.0            # one server is read in the background at most this often (was 300: at 104 followed
+PACE = 10.0                 # seconds between BACKGROUND reads (discovery, catch-up, a follow) -- 30 s capped the
+                            # whole re-read at 120 accounts an hour, below the 483 followed on server1 (2026-10-17)
+HOST_GAP = 60.0             # one server is read in the background at most once a minute (was 300, then 120: at 104
                             # accounts on one server, a re-read of each took ~9 hours)
 RECHECK = 3 * 3600          # a followed account's outbox is read again this long after the last read
+RECHECK_MISSED = 1800       # ...or this soon when the last read found posts that never arrived as deliveries
+                            # (a server that is not delivering to us -- nicecrew.digital, 2026-10-17: GETs, no POSTs)
 BUSY_REST = 3600.0          # a server that answered 429 or 5xx is left alone this long
 NOTE_GAP = 0.25             # between posts written into our relay
 DISCOVERY_PER_HOUR = 120    # newly met accounts queued per hour, at most
@@ -172,7 +175,8 @@ async def backfill_actor(actor_uri: str, *, limit: int = RECENT, min_age: float 
             except Exception as e:
                 what = f"error: {type(e).__name__}"
             counts[what.split(":")[0]] = counts.get(what.split(":")[0], 0) + 1
-        await state._put(key, {"actor": actor_uri, "at": int(time.time()), "n": len(notes)})
+        await state._put(key, {"actor": actor_uri, "at": int(time.time()), "n": len(notes),
+                               "missed": int(counts.get("stored", 0))})
     logger.info("[activitypub] backfilled %s: %s", remote.host_of(actor_uri), counts)
     return counts
 
@@ -322,7 +326,7 @@ def schedule(actor_uri: str, *, min_age: float = REFRESH) -> bool:
     return True
 
 
-async def catch_up(per_tick: int = 2, now: float | None = None) -> int:
+async def catch_up(per_tick: int = 6, now: float | None = None) -> int:
     """Every followed account's outbox, read again and again: never-read accounts first, then the one read
     longest ago once RECHECK has passed -- a few per tick, so 300+ accounts are a trickle, not a burst.
     Returns how many it read this tick.
@@ -339,7 +343,10 @@ async def catch_up(per_tick: int = 2, now: float | None = None) -> int:
         return 0                        # could not ask what is done: do nothing rather than repeat
     now = time.time() if now is None else now
     last = {d.get("actor"): int(d.get("at") or 0) for d in done.values() if isinstance(d, dict)}
-    todo = sorted((a for a in followed if now - last.get(a, 0) >= RECHECK), key=lambda a: (last.get(a, 0), a))
+    missed = {d.get("actor") for d in done.values() if isinstance(d, dict) and int(d.get("missed") or 0) > 0}
+    todo = sorted((a for a in followed
+                   if now - last.get(a, 0) >= (RECHECK_MISSED if a in missed else RECHECK)),
+                  key=lambda a: (a not in missed, last.get(a, 0), a))       # missed posts first
     n = 0
     for actor in todo:
         if n >= per_tick:
