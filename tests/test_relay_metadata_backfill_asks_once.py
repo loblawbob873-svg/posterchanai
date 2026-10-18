@@ -26,6 +26,7 @@ class Store:
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
     ingest._asked.clear()
+    getattr(ingest, "_empty", {}).clear()
     ingest._missing_memo.update(at=float("-inf"), list=[])
     asked = []
 
@@ -57,6 +58,55 @@ def test_new_members_and_old_ones_are_asked_again_later(fresh, monkeypatch):
     t[0] += ingest._MISSING_EVERY + 1                        # the list is recomputed: the newcomer is asked
     _run(store)
     assert fresh == ["a" * 64, "b" * 64]
-    t[0] += ingest._ASK_AGAIN                                # hours later both are worth asking again
+    t[0] += ingest._ASK_AGAIN                                # 6 h later: both came back EMPTY, so not yet
+    _run(store)
+    assert fresh[2:] == [], "a member nobody has metadata for was re-asked every 6 hours for good"
+    t[0] += 3 * ingest._ASK_AGAIN                            # a day after the first ask: asked again
     _run(store)
     assert sorted(fresh[2:]) == ["a" * 64, "b" * 64]
+
+
+class GroupedStore(Store):
+    def __init__(self, profile, relays, held=()):
+        super().__init__(profile + relays)
+        self.groups, self.held = {"profile": list(profile), "relays": list(relays)}, set(held)
+
+    async def wot_missing_metadata_groups(self):
+        self.scans += 1
+        return {k: list(v) for k, v in self.groups.items()}
+
+    async def filter_existing(self, ids):
+        return {i for i in ids if i in self.held}
+
+
+def test_a_member_with_a_profile_is_asked_only_for_what_it_lacks(monkeypatch):
+    """2026-10-18: a member with a profile but no relay list was asked for all five kinds of every upstream relay --
+    every relay re-sent the profile and the large contact list this relay already held."""
+    ingest._asked.clear(); ingest._empty.clear(); ingest._missing_memo.update(at=float("-inf"), list=[])
+    asked = []
+
+    async def query(relays, filters, direct=False):
+        asked.append((len(relays), filters[0]["kinds"], list(filters[0]["authors"])))
+        return []
+    monkeypatch.setattr(ingest._relay, "query", query)
+    ups = ["wss://r%d.example" % i for i in range(24)]
+    store = GroupedStore(["a" * 64], ["b" * 64])
+    asyncio.run(ingest.fetch_lookup_metadata(store, ups, 100, 1500, pace=0))
+    by_author = {a: k for _n, k, authors in asked for a in authors}
+    assert by_author["a" * 64] == ingest._LOOKUP_KINDS
+    assert 0 not in by_author["b" * 64] and 3 not in by_author["b" * 64] and 10002 in by_author["b" * 64]
+    assert all(n <= 8 for n, _k, _a in asked), "every upstream relay was asked for the same events"
+
+
+def test_an_answer_already_held_is_not_signature_checked(monkeypatch):
+    ingest._asked.clear(); ingest._empty.clear(); ingest._missing_memo.update(at=float("-inf"), list=[])
+    ev = {"id": "e" * 64, "pubkey": "a" * 64, "kind": 0, "created_at": 1, "tags": [], "content": "{}", "sig": "0" * 128}
+
+    async def query(relays, filters, direct=False):
+        return [dict(ev)]
+    monkeypatch.setattr(ingest._relay, "query", query)
+    checked = []
+    monkeypatch.setattr(ingest, "verify_event", lambda e: checked.append(e["id"]) or True)
+    store = GroupedStore(["a" * 64], [], held=[ev["id"]])
+    asyncio.run(ingest.fetch_lookup_metadata(store, ["wss://up.example"], 100, 1500, pace=0))
+    assert checked == [], "an event this relay already held was verified again"

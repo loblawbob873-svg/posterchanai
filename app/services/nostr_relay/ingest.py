@@ -456,50 +456,92 @@ _asked: dict = {}                 # pubkey -> monotonic time it was last asked f
 _missing_memo = {"at": float("-inf"), "list": []}
 
 
+# ...AND ASKED CAREFULLY (2026-10-18, py-spy: decoding upstream answers was ~11% of the relay's CPU). "Missing" means
+# no profile OR no relay list, and many people never publish a relay list anywhere, so the same members came back
+# every 6 h for good -- each asked of EVERY upstream relay for all five kinds, so every relay re-sent the profile and
+# the (large) contact list this relay already held, each copy decoded and signature-checked only to be dropped
+# (162k "stored" events in 6 h were nearly all duplicates). Now: a member with a profile is asked only for the kinds
+# it lacks; a member that comes back with NOTHING is asked less and less often (6 h, 1 day, 4 days, a week); each
+# batch asks a rotating sample of the upstream relays; and an answer this relay already holds is not verified.
+_RELAY_KINDS = [10002, 10050, 10133]
+_ASK_SAMPLE = 8
+_ASK_MAX = 7 * 24 * 3600
+_empty: dict = {}                 # pubkey -> consecutive asks that found nothing
+
+
+def _ask_after(pk: str) -> float:
+    return min(_ASK_AGAIN * (4 ** _empty.get(pk, 0)), _ASK_MAX)
+
+
 async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
                                 direct: bool = False, *, gate=None, blocked_relays=None) -> int:
     """Pull lookup metadata (profile, contacts, relay lists and NIP-A3 payment targets) for WoT
     members that lack it, so clients can use this relay to resolve who-is-who and where each
     member posts (the outbox / NIP-65 lookup-relay role). Batched + paced; replaceable events
     keep only the newest. These authors are WoT members, so they pass the gate."""
+    import random
     now = time.monotonic()
     if now - _missing_memo["at"] >= _MISSING_EVERY:
-        _missing_memo["list"] = await store.wot_missing_metadata()
+        groups = await store.wot_missing_metadata_groups() if hasattr(store, "wot_missing_metadata_groups") else None
+        if groups is None:
+            _missing_memo["list"] = [(pk, True) for pk in await store.wot_missing_metadata()]
+        else:
+            _missing_memo["list"] = [(pk, True) for pk in groups["profile"]] + [(pk, False) for pk in groups["relays"]]
         _missing_memo["at"] = now
-    missing = [pk for pk in _missing_memo["list"] if now - _asked.get(pk, float("-inf")) >= _ASK_AGAIN][:limit]
-    if not missing:
+    due = [(pk, prof) for pk, prof in _missing_memo["list"]
+           if now - _asked.get(pk, float("-inf")) >= _ask_after(pk)][:limit]
+    if not due:
         return 0
-    for pk in missing:                       # stamped BEFORE the ask: a relay that errors is not re-asked every pass
+    for pk, _p in due:                       # stamped BEFORE the ask: a relay that errors is not re-asked every pass
         _asked[pk] = now
     if len(_asked) > 200_000:
-        for pk in [k for k, t in _asked.items() if now - t >= _ASK_AGAIN]:
+        for pk in [k for k, t in _asked.items() if now - t >= _ASK_MAX]:
             _asked.pop(pk, None)
+            _empty.pop(pk, None)
+    ups = list(upstream or [])
     stored = 0
-    for i in range(0, len(missing), batch):
-        if i > 0 and pace > 0:
-            await asyncio.sleep(pace)
-        chunk = missing[i:i + batch]
-        try:
-            evs = await _relay.query(upstream, [{"authors": chunk, "kinds": _LOOKUP_KINDS}],
-                                     direct=direct)
-        except Exception:
-            continue
-        # Newest per (author, kind) — these are all replaceable.
-        latest: dict = {}
-        for ev in evs:
-            key = (ev.get("pubkey"), ev.get("kind"))
-            if key[0] is not None and ev.get("created_at", 0) >= latest.get(key, {}).get("created_at", -1):
-                latest[key] = ev
-        for ev in latest.values():
-            if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
-                if gate is not None:
-                    if author_on_blocked_bridge(ev, blocked_relays):
-                        gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
-                    else:
-                        gate.mark_bridged(ev.get("pubkey", ""))
-                continue   # never store a bridge account's profile/relay-list
-            if verify_event(ev) and await store.add_event(ev, origin="wot"):
-                stored += 1
+    first = True
+    for want_profile in (True, False):
+        pks = [pk for pk, p in due if p is want_profile]
+        kinds = _LOOKUP_KINDS if want_profile else _RELAY_KINDS
+        for i in range(0, len(pks), batch):
+            if not first and pace > 0:
+                await asyncio.sleep(pace)
+            first = False
+            chunk = pks[i:i + batch]
+            relays = random.sample(ups, _ASK_SAMPLE) if len(ups) > _ASK_SAMPLE else ups
+            try:
+                evs = await _relay.query(relays, [{"authors": chunk, "kinds": kinds}], direct=direct)
+            except Exception:
+                continue
+            # Newest per (author, kind) — these are all replaceable.
+            latest: dict = {}
+            for ev in evs:
+                key = (ev.get("pubkey"), ev.get("kind"))
+                if key[0] is not None and ev.get("created_at", 0) >= latest.get(key, {}).get("created_at", -1):
+                    latest[key] = ev
+            found = {k[0] for k in latest}
+            for pk in chunk:
+                if pk in found:
+                    _empty.pop(pk, None)
+                else:
+                    _empty[pk] = _empty.get(pk, 0) + 1
+            try:
+                held = await store.filter_existing([ev.get("id") for ev in latest.values() if ev.get("id")])
+            except Exception:
+                held = set()
+            for ev in latest.values():
+                if ev.get("id") in held:
+                    continue                         # already here: no signature check, no store call
+                if blocked_relays and reveals_blocked_bridge(ev, blocked_relays):
+                    if gate is not None:
+                        if author_on_blocked_bridge(ev, blocked_relays):
+                            gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
+                        else:
+                            gate.mark_bridged(ev.get("pubkey", ""))
+                    continue   # never store a bridge account's profile/relay-list
+                if verify_event(ev) and await store.add_event(ev, origin="wot"):
+                    stored += 1
     if stored:
         logger.info("[nostr-relay] fetched %d lookup-metadata event(s) (profiles/contacts/relay-lists)",
                     stored)

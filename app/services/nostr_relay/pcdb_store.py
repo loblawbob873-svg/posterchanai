@@ -1066,7 +1066,12 @@ class PcdbRelayStore(RelayStore):
         ghost = [pk for pk in visible if pk not in have_k0 and pk not in wot]
         rest = [pk for pk in (wot - have_k0) if pk not in visible]
         relay_only = [pk for pk in (wot & have_k0) if pk not in have_relay]
+        self._missing_split = {"profile": prio + ghost + rest, "relays": relay_only}
         return prio + ghost + rest + relay_only
+
+    def _wot_missing_metadata_groups_sync(self) -> dict:
+        self._wot_missing_metadata_sync()
+        return self._missing_split
 
     # ------------------------------------------------------------ the prune (the rules of store.py, over columns)
     def _exempt_subscribers(self) -> set:

@@ -1705,11 +1705,14 @@ class Store:
                 authors = list(dict.fromkeys(authors))
             if authors and kinds:
                 kk = list(dict.fromkeys(int(k) for k in kinds))
-                got = self.idx.get_many([_h("ak:%s:%d" % (a, k)) for a in authors for k in kk])
+                got = _window(self.idx.get_many([_h("ak:%s:%d" % (a, k)) for a in authors for k in kk]))
                 sets.append(got if alone else _union([got]))
                 kinds_done = True
             elif authors:
-                got = self.idx.get_many([_h("au:%s" % a) for a in authors])
+                # since/until first here too: a negentropy sync of "my follows' last week" (a PosterChanOS local relay,
+                # every few minutes) unioned and sorted every followed author's WHOLE history -- np.unique under
+                # NEG-OPEN was ~9% of the relay's CPU after the tag case was fixed (py-spy 2026-10-18).
+                got = _window(self.idx.get_many([_h("au:%s" % a) for a in authors]))
                 sets.append(got if alone else _union([got]))
             for key, vals in flt.items():
                 if not (isinstance(key, str) and key.startswith("#") and vals):
