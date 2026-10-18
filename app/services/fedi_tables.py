@@ -420,11 +420,16 @@ def forget_cached() -> None:
     _cache.clear()
 
 
-async def adelivered_by_uri(uri: str) -> Row | None:
-    """The first ledger row for a note URI, or None. Raises Unavailable ("could not ask" is never "new")."""
+async def adelivered_by_uri(uri: str, *, fresh: bool = False) -> Row | None:
+    """The first ledger row for a note URI, or None. Raises Unavailable ("could not ask" is never "new").
+
+    `fresh` reads past the cache: what a remote Delete or edit ACTS on must be the row as it is now. The cache is per
+    process, and the worker re-threads orphans (a new event id, the old row dropped) -- a Delete answered from a
+    10-minute-old cached row in the app process deleted the stale id and left the live copy for good (security review
+    2026-10-18)."""
     if not uri:
         return None
-    ok, row = _cget(("uri", uri))
+    ok, row = (False, None) if fresh else _cget(("uri", uri))
     if ok:
         return row
     row = _earliest(await _arows_by_uri(uri))
