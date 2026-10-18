@@ -350,6 +350,13 @@ class RelayStore:
     async def wot_missing_metadata(self) -> list:
         return await self._r(self._wot_missing_metadata_sync)
 
+    async def wot_missing_metadata_groups(self) -> dict:
+        """{"profile": [...], "relays": [...]}: members with no profile, and members with one but no relay list."""
+        return await self._r(self._wot_missing_metadata_groups_sync)
+
+    def _wot_missing_metadata_groups_sync(self) -> dict:
+        return {"profile": self._wot_missing_metadata_sync(), "relays": []}
+
     def set_preserve_pubkeys(self, pubkeys) -> None:
         """Authors whose notes are NEVER pruned (local users / operators)."""
         self.preserve_pubkeys = frozenset(p for p in (pubkeys or []) if p)
