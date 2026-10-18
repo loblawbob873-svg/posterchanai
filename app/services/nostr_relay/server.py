@@ -1485,7 +1485,11 @@ class RelayServer:
         # sockets are, so the figure stays reconcilable.
         accounts, anon_ips, anon_unknown = set(), set(), 0
         authed_ips = set()
-        is_op = getattr(getattr(self, "gate", None), "is_operator", None) or (lambda _pk: False)
+        # Only THIS NODE's key is nobody. `gate.is_operator` is every linked account, bot and storage key -- with it
+        # here a member signed in on a phone and a laptop fell back to per-address counting and was two people
+        # (correctness review 2026-10-18). Our own processes are already skipped above, as loopback.
+        node = str(((getattr(self, "cfg", None) or {}).get("node_pubkey")) or "")
+        is_op = (lambda pk: pk == node) if node else (lambda _pk: False)
         auth = getattr(self, "_auth_pubkeys", None) or {}
         for conn, ip in self._conn_ips.items():
             if _own_process(conn, ip):

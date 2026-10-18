@@ -46,3 +46,18 @@ def test_our_own_processes_are_still_ours():
 def test_a_forwarding_header_never_makes_a_client_ours():
     spoof = Conn("192.168.0.10", proxied=True)       # "X-Forwarded-For: 127.0.0.1" from outside
     assert not S._own_process(spoof, "127.0.0.1")
+
+
+def test_a_member_signed_in_on_two_devices_is_one_person():
+    """`gate.is_operator` is every linked account: a member was dropped from the per-account count and counted per
+    address instead -- a phone and a laptop on two networks were two people online (correctness review)."""
+    class Gate:
+        def is_operator(self, pk):
+            return True                                # a linked account: is_operator says yes
+
+    phone, laptop = Conn("10.0.0.5", proxied=True), Conn("10.0.0.5", proxied=True)
+    srv = _srv({phone: "198.51.100.7", laptop: "203.0.113.9"})
+    srv.gate = Gate()
+    srv.cfg = {"node_pubkey": "f" * 64}
+    srv._auth_pubkeys = {phone: {"a" * 64}, laptop: {"a" * 64}}
+    assert srv.online_breakdown()["online"] == 1
