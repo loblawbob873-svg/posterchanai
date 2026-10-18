@@ -195,4 +195,7 @@ def _fedi_ledger_cache_is_per_test():
     m = sys.modules.get("app.services.fedi_tables")
     if m is not None and hasattr(m, "forget_cached"):
         m.forget_cached()
+    st = sys.modules.get("app.services.activitypub.state")
+    if st is not None and hasattr(st, "_FOLLOWERS"):
+        st._FOLLOWERS.clear()                      # the per-member follower lists, likewise
     yield

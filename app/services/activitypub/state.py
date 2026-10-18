@@ -119,10 +119,43 @@ async def remove_follower(member: str, actor: str) -> None:
     await _put(f"{_FOLLOWER_PREFIX}{member}:{_h(actor)}", {"actor": actor, "gone": True, "at": int(time.time())})
 
 
+# A MEMBER'S FOLLOWERS ARE READ AS WHAT CHANGED. Delivery asked for a member's whole follower list (~235 documents,
+# every one decrypted) for EVERY event it federated -- the largest of this node's own reads through its relay
+# (2026-10-18). A follower is never deleted, only replaced by a tombstone ({"gone": true}, remove_follower), so a
+# read of the documents written since the last read is the complete change: new followers, refollows AND unfollows.
+# The list is kept per member and brought up to date that way; a full read at least every _FOLLOWERS_FULL_EVERY
+# backstops it. A delta that cannot be read raises (strict) exactly as the full read did -- "could not ask" is never
+# "nobody follows".
+_FOLLOWERS: dict = {}                 # member -> {"docs": {d_tag: doc}, "since": int, "full": float}
+_FOLLOWERS_FULL_EVERY = 3600.0
+_FOLLOWERS_MAX = 5000
+
+
 async def followers(member: str, *, strict: bool = True) -> list:
     """[{"actor", "inbox"}] for a member's live followers."""
-    docs = await nostr_store.list_docs(_port(), f"{_FOLLOWER_PREFIX}{member}:", seckey=_seckey(), strict=strict,
-                                       limit=100000)
+    prefix = f"{_FOLLOWER_PREFIX}{member}:"
+    now = time.time()
+    c = _FOLLOWERS.get(member)
+    if c is not None and now - c["full"] < _FOLLOWERS_FULL_EVERY:
+        start = int(now)
+        try:
+            changed = await nostr_store.list_docs(_port(), prefix, seckey=_seckey(), strict=True, limit=100000,
+                                                  since=c["since"] - 5)
+        except Exception:
+            if strict:
+                raise
+            changed = None
+        if changed is not None:
+            c["docs"].update(changed)
+            c["since"] = start
+        docs = c["docs"]
+    else:
+        start = int(now)
+        docs = await nostr_store.list_docs(_port(), prefix, seckey=_seckey(), strict=strict, limit=100000)
+        if strict:                                   # only a read that could not be short is worth keeping
+            if len(_FOLLOWERS) >= _FOLLOWERS_MAX:
+                _FOLLOWERS.clear()
+            _FOLLOWERS[member] = {"docs": dict(docs), "since": start, "full": now}
     return [d for d in docs.values() if isinstance(d, dict) and d.get("actor") and not d.get("gone")]
 
 
