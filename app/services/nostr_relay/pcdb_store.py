@@ -492,8 +492,10 @@ class PcdbRelayStore(RelayStore):
                 batch, self._sync_waiters = self._sync_waiters, []
             ok = True
             try:
-                if not self._writes_closed:
-                    self.store.sync()
+                # Even once writes are closed: these authors' events are in the log and are told "saved" below, so
+                # they are fsynced FIRST (Store.sync is a no-op on a closed file). Skipping it answered OK before the
+                # final fsync at close (correctness review 2026-10-18).
+                self.store.sync()
             except Exception as e:      # noqa: BLE001 -- every author in this batch is told it was not saved
                 logger.warning("[nostr-relay] group sync of %d write(s) failed: %s", len(batch), e)
                 ok = False
