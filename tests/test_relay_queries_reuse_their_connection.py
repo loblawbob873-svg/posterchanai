@@ -162,3 +162,33 @@ def test_a_table_load_on_its_own_thread_names_the_table():
     t = threading.Thread(target=table_ns["entry"], args=(box,))
     t.start(); t.join()
     assert box == ["tusers-"], box
+
+
+def test_a_cancelled_query_does_not_leak_its_connection(relay, monkeypatch):  # noqa: F811
+    """A caller that gives up (`asyncio.wait_for` around a read, the worker's tick deadline) cancels the query while
+    its socket is OUT of the pool: it was neither closed nor returned, and its keepalive held it open for the life of
+    the loop -- one leaked authenticated socket per timeout (correctness review 2026-10-18)."""
+    import websockets
+    made = []
+    real = websockets.connect
+
+    async def recording(*a, **k):
+        ws = await real(*a, **k)
+        made.append(ws)
+        return ws
+    monkeypatch.setattr(websockets, "connect", recording)
+
+    async def stuck(*a, **k):
+        await asyncio.sleep(60)                          # a relay that is slow to answer
+    monkeypatch.setattr(nostr_store, "_query_on", stuck)
+
+    async def go():
+        for _ in range(5):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(nostr_store.get_docs(relay.port, ["pcai:t:pooltest:c"], seckey=SK,
+                                                            strict=True), timeout=0.3)
+        await asyncio.sleep(0.2)
+        return [ws for ws in made if _socket_open(ws)]
+    still_open = asyncio.run(go())
+    assert made, "no connection was made"
+    assert not still_open, "%d of %d cancelled queries left their connection open" % (len(still_open), len(made))

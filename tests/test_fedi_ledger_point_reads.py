@@ -163,3 +163,33 @@ def test_repeated_questions_reach_the_relay_once_and_a_new_row_is_seen_at_once(w
                      {"platform": "activitypub", "instance_url": "https://mastodon.example", "note_id": new,
                       "note_uri": new, "nostr_event_id": "a" * 64, "created_at": "2026-10-17T00:00:00"})
     fedi_tables.forget_cached()   # the index entry is what another process writes; the point is only "no" was not kept
+
+
+def test_a_remote_delete_acts_on_the_row_as_it_is_now_not_a_cached_one(world, monkeypatch):
+    """Security review 2026-10-18: the ledger cache is per process. The worker re-threads an orphan (records the new
+    event id, drops the old row); the app process, holding the row from before in its 10-minute cache, then answered
+    the author's Delete with the STALE id -- deleting nothing that exists, while the live copy stayed for good."""
+    from app.services.activitypub import inbox
+    from app.services import fedi_bridge_identity
+    _index_complete(world["mem"])
+    fedi_tables.forget_cached()
+    old, new = "a" * 64, "b" * 64
+    run(fedi_tables.arecord(platform="activitypub", instance_url="https://mastodon.example", note_id=URI,
+                            note_uri=URI, nostr_event_id=old, nostr_pubkey="p" * 64))
+    assert run(fedi_tables.adelivered_by_uri(URI)).nostr_event_id == old          # this process caches it
+    key = fedi_tables.ledger_key("activitypub", "https://mastodon.example", URI)
+    row = dict(world["mem"].table(fedi_tables.LEDGER)[key])
+    row["nostr_event_id"] = new                                                  # ANOTHER process re-threads it
+    world["mem"].put(fedi_tables.LEDGER, key, row)
+    deleted = []
+
+    async def delete_note(port, author, eid, broadcast=False):
+        deleted.append(eid)
+        return True
+
+    async def author_of(row, signer):
+        return "p" * 64
+    monkeypatch.setattr(fedi_bridge_identity, "delete_note", delete_note)
+    monkeypatch.setattr(inbox, "_author_of", author_of)
+    assert run(inbox._delete(URI, "https://mastodon.example/users/bob")) == "deleted"
+    assert deleted == [new], "the Delete acted on a cached row: %s" % deleted

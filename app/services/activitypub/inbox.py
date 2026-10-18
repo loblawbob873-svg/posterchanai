@@ -577,9 +577,9 @@ def _record(uri: str, event_id: str, pubkey: str, acct: str = "") -> None:
 # connection and signed a fresh NIP-42 AUTH for the relay to verify. Production 2026-10-17: ~4,700 such lookups a
 # minute from this process were the relay's top cost ("relay is still using a ton of CPU"). On the app's own loop they
 # share the pooled, already-authenticated connection.
-async def _adelivered(uri: str):
+async def _adelivered(uri: str, *, fresh: bool = False):
     from app.services import fedi_tables
-    return await fedi_tables.adelivered_by_uri(uri) if uri else None
+    return await fedi_tables.adelivered_by_uri(uri, fresh=fresh) if uri else None
 
 
 async def _arecord(uri: str, event_id: str, pubkey: str, acct: str = "") -> None:
@@ -1002,7 +1002,7 @@ async def _edit(obj: dict, signer: str) -> str:
     if convert.id_of(note.get("attributedTo")) != signer:
         return "ignored: edit for somebody else"
     uri = convert.id_of(note)
-    row = await _adelivered(uri)
+    row = await _adelivered(uri, fresh=True)            # acted on: never a cached row
     if not row:
         return "ignored: edit of a note not stored here"
     author = await _author_of(row, signer)
@@ -1098,7 +1098,7 @@ async def _delete(uri: str, signer: str, *, undo: bool = False) -> str:
     any account on an instance would otherwise delete its neighbours' posts. The stored event's
     puppet is mapped back to the actor it was derived from, and that must be the signer."""
     from app.services.fedi_bridge_identity import delete_note
-    row = await _adelivered(uri)
+    row = await _adelivered(uri, fresh=True)            # acted on: never a cached row
     if not row:
         return "ignored: nothing stored for that"
     author = await _author_of(row, signer)

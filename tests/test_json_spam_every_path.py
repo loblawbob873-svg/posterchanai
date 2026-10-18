@@ -88,6 +88,9 @@ class Member:
     def is_operator(self, pk):
         return False
 
+    def is_blocked(self, pk):
+        return False
+
     def mark_bridged(self, pk):
         pass
 

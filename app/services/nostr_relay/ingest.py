@@ -19,6 +19,7 @@ from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word, is_machine_payload, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
+from .repost_block import reposted_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
+            if ev.get("kind") in (6, 16) and reposted_blocked(ev, gate.is_blocked):
+                continue   # a member's repost of a blocked author carries that author's post in its content
             if int(ev.get("kind", 1)) == 1 and not ev.get("content", "").strip():
                 continue   # empty note — spam/noise
             # ONE predicate for both filters, so this path and the backfill path cannot disagree
@@ -417,7 +420,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue
             # A parent may be outside the WoT (that's the point), but NEVER store a blocked
             # author's event — otherwise blocklisted spam leaks in as a thread ancestor.
-            if gate is not None and gate.is_blocked(ev.get("pubkey", "")):
+            if gate is not None and (gate.is_blocked(ev.get("pubkey", "")) or reposted_blocked(ev, gate.is_blocked)):
                 continue
             if block_bridged and is_bridged_post(ev) and not (gate is not None and gate.is_operator(ev.get("pubkey", ""))):
                 continue

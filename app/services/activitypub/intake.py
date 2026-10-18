@@ -30,15 +30,33 @@ def _host(host: str) -> str:
     return (host or "?").lower()[:80]
 
 
+MAX_HOSTS = 2000              # per window; the host is the one an UNVERIFIED keyId names, so it is bounded
+
+
+def _slot(table: dict, host: str) -> Counter:
+    """The host's counter -- or, once a window already names MAX_HOSTS servers, one shared "(other servers)" row. A
+    stream of junk POSTs each naming a new keyId host made one Counter apiece for the whole window (security review
+    2026-10-18)."""
+    h = _host(host)
+    c = table.get(h)
+    if c is None:
+        if len(table) >= MAX_HOSTS:
+            h = "(other servers)"
+            c = table.get(h)
+        if c is None:
+            c = table[h] = Counter()
+    return c
+
+
 def received(host: str, what: str) -> None:
     """The route's answer: scheduled / relay / blocked / own / 401 ... / 429 / 503 ..."""
-    _received.setdefault(_host(host), Counter())[what] += 1
+    _slot(_received, host)[what] += 1
     report()
 
 
 def processed(host: str, what: str) -> None:
     """What processing made of a scheduled activity -- `inbox.process`'s verdict, or the error class."""
-    _processed.setdefault(_host(host), Counter())[_short(what)] += 1
+    _slot(_processed, host)[_short(what)] += 1
 
 
 def _short(what: str) -> str:

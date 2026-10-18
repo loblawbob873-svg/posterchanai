@@ -24,6 +24,7 @@ from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, is_encoded_payload, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post, is_social_mirror
+from .repost_block import reposted_blocked   # one rule for the direct, firehose and ingest paths
 from .store import retired_kind_reason as _retired_kind_reason
 from .concord_mirror import KIND_REGISTER as _CONCORD_REGISTER
 from app.services.nostr.quotes import quote_pubkeys
@@ -478,6 +479,24 @@ def _one_header(hdrs, name: str) -> str:
     return (values[0] or "").strip() if len(values) == 1 else ""
 
 
+_FORWARDING_HEADERS = ("X-Real-IP", "CF-Connecting-IP", "X-Forwarded-For", "Forwarded")
+
+
+def _own_process(conn, ip: str) -> bool:
+    """THIS NODE'S OWN processes (the app, the worker, the bots): a loopback socket that did NOT come through a proxy.
+
+    The socket's own end is part of the test because on server1 a NAT rule rewrites the source of loopback connections
+    to the LAN address (192.168.0.2). But with nginx on the same machine -- what docs/RELAY.md tells an installer to
+    do -- EVERY public client also arrives on a 127.0.0.1 socket, and was exempt from the per-connection budget and
+    counted as nobody online (security + correctness reviews, 2026-10-18). A proxy always sends a forwarding header
+    (the documented config sets X-Real-IP); our own processes never do. Sending one only ever makes a client REMOTE."""
+    if getattr(conn, "_pcai_proxied", False):
+        return False
+    here = getattr(conn, "local_address", None)
+    here = str(here[0]) if isinstance(here, (tuple, list)) and here else ""
+    return ip.startswith("127.") or ip in ("::1", "localhost") or here.startswith("127.") or here == "::1"
+
+
 def _client_ip(hdrs, connection) -> str:
     """The real client IP behind the proxy chain (client → Cloudflare → cloudflared → nginx → here).
 
@@ -570,29 +589,7 @@ _RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
 _NO_RECORDS: dict = {}
 
 
-_REPOST_KINDS = (6, 16)
 
-
-def reposted_authors(ev) -> set:
-    """Who a kind-6/16 repost reposts: the embedded event's author (its content is that event's JSON) and every
-    `p` it names (NIP-18 tags the reposted author). Empty for any other kind."""
-    if not isinstance(ev, dict) or ev.get("kind") not in _REPOST_KINDS:
-        return set()
-    out = {t[1] for t in ev.get("tags") or () if isinstance(t, list) and len(t) >= 2 and t[0] == "p"
-           and isinstance(t[1], str)}
-    c = ev.get("content") or ""
-    if isinstance(c, str) and c.startswith("{"):
-        try:
-            inner = json.loads(c)
-            if isinstance(inner, dict) and isinstance(inner.get("pubkey"), str):
-                out.add(inner["pubkey"])
-        except ValueError:
-            pass
-    return out
-
-
-def reposted_blocked(ev, is_blocked) -> bool:
-    return any(is_blocked(pk) for pk in reposted_authors(ev))
 
 
 def _restricted_traffic(typ, msg, is_local=None) -> bool:
@@ -846,12 +843,7 @@ class RelayServer:
         traced to a caller without it."""
         try:
             ip = str((getattr(self, "_conn_ips", {}) or {}).get(conn) or "")
-            # The socket's OWN end decides, not the peer: on server1 a NAT rule rewrites the source of loopback
-            # connections to the LAN address (192.168.0.2), so every one of this node's own reads read as remote.
-            here = getattr(conn, "local_address", None)
-            here = str(here[0]) if isinstance(here, (tuple, list)) and here else ""
-            if (ip.startswith("127.") or ip in ("::1", "localhost")
-                    or here.startswith("127.") or here == "::1"):
+            if _own_process(conn, ip):
                 m = re.match(r"[A-Za-z_-]{1,12}", str(sub_id or ""))
                 return "L:" + (m.group(0) if m else "?")
             # A remote client's id prefix too: the web client names each subscription after the file that opened
@@ -1284,6 +1276,8 @@ class RelayServer:
                 setattr(connection, "_pcai_gate", verdict)
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
+                    # Came through a proxy: our own processes connect straight to the socket and send none of these.
+                    setattr(connection, "_pcai_proxied", any(_one_header(hdrs, h) for h in _FORWARDING_HEADERS))
                     host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
                     path = (getattr(request, "path", "") or "/relay").split("?", 1)[0]
                     proto = "ws" if str(host).startswith(("localhost", "127.0.0.1", "[::1]")) else "wss"
@@ -1480,7 +1474,6 @@ class RelayServer:
             # is the difference between "one person with 7 tabs" and "we could not tell".
             return {"online": conns, "conns": conns, "remote": 0, "internal": 0,
                     "unknown": 0, "loopback_conns": 0, "confined": 0, "measured": False}
-        _local = {"127.0.0.1", "::1", "localhost"}
         remote, internal, unknown, loopback = set(), set(), 0, 0
         confined = 0
         # THE HEADLINE IS PEOPLE, decided per socket (2026-10-17, "make sure the number of users online is
@@ -1492,12 +1485,14 @@ class RelayServer:
         # sockets are, so the figure stays reconcilable.
         accounts, anon_ips, anon_unknown = set(), set(), 0
         authed_ips = set()
-        is_op = getattr(getattr(self, "gate", None), "is_operator", None) or (lambda _pk: False)
+        # Only THIS NODE's key is nobody. `gate.is_operator` is every linked account, bot and storage key -- with it
+        # here a member signed in on a phone and a laptop fell back to per-address counting and was two people
+        # (correctness review 2026-10-18). Our own processes are already skipped above, as loopback.
+        node = str(((getattr(self, "cfg", None) or {}).get("node_pubkey")) or "")
+        is_op = (lambda pk: pk == node) if node else (lambda _pk: False)
         auth = getattr(self, "_auth_pubkeys", None) or {}
         for conn, ip in self._conn_ips.items():
-            here = getattr(conn, "local_address", None)
-            here = str(here[0]) if isinstance(here, (tuple, list)) and here else ""
-            if (ip in _local) or here.startswith("127.") or here == "::1":
+            if _own_process(conn, ip):
                 loopback += 1              # our own bots / app / worker (server1's NAT shows them as its LAN address)
                 continue
             if not ip:

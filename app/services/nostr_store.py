@@ -397,6 +397,15 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
                                               **loopback_kw(uri))
             try:
                 out = await _query_on(ws, uri, sub, filters, timeout, auth_seckey)
+            except asyncio.CancelledError:
+                # The caller gave up (a wait_for around it, a tick's deadline). The socket is out of the pool and
+                # mid-query: abort it NOW -- no await, we are being cancelled -- or its keepalive task holds it open
+                # for the life of the loop (correctness review 2026-10-18).
+                try:
+                    ws.transport.abort()
+                except Exception:       # noqa: BLE001
+                    _drop_raw(ws)
+                raise
             except Exception:
                 try:
                     await ws.close()

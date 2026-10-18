@@ -79,3 +79,48 @@ def test_a_transcription_that_never_ends_is_given_up_and_the_loop_kept_running(m
     assert result == (None, None), result
     assert took < 3, ("the time limit did not apply: %.1fs" % took)
     assert worst_gap < 0.5, ("the event loop froze for %.2fs" % worst_gap)
+
+
+class _Counting:
+    """A model that records how many decodes run at once."""
+    running = peak = 0
+    lock = threading.Lock()
+
+    def __init__(self, seconds, said="the secret thing somebody said"):
+        self.seconds, self.said = seconds, said
+
+    def transcribe(self, path, **kw):
+        def segs():
+            with _Counting.lock:
+                _Counting.running += 1
+                _Counting.peak = max(_Counting.peak, _Counting.running)
+            time.sleep(self.seconds)
+            with _Counting.lock:
+                _Counting.running -= 1
+            yield _Seg(self.said)
+        return segs(), _Info()
+
+
+def test_a_timed_out_clip_keeps_its_slot_until_its_thread_ends(monkeypatch):
+    """Security review 2026-10-18: the slot was released at the TIMEOUT while the thread went on decoding, so slow
+    clips stacked up decoding threads -- "one at a time" held for the waiting, not for the work."""
+    monkeypatch.setattr(stt_service, "get_model", lambda: _Counting(1.0))
+    monkeypatch.setattr(stt_service, "_stt_gate", None)
+    monkeypatch.setattr(stt_service, "_STT_TIMEOUT_S", 0.2)
+    _Counting.running = _Counting.peak = 0
+
+    async def go():
+        return await asyncio.gather(*[stt_service.transcribe_audio(b"RIFF....", "en") for _ in range(3)])
+    got = asyncio.run(go())
+    time.sleep(3.5)                                   # let every started decode finish
+    assert all(r == (None, None) for r in got)
+    assert _Counting.peak == 1, "%d decodes ran at once" % _Counting.peak
+
+
+def test_what_was_said_is_never_logged(monkeypatch, caplog):
+    monkeypatch.setattr(stt_service, "get_model", lambda: _Counting(0.0, said="my bank pin is 4421"))
+    monkeypatch.setattr(stt_service, "_stt_gate", None)
+    with caplog.at_level("DEBUG"):
+        text, _lang = asyncio.run(stt_service.transcribe_audio(b"RIFF....", "en"))
+    assert text == "my bank pin is 4421"
+    assert "4421" not in caplog.text and "bank" not in caplog.text, caplog.text

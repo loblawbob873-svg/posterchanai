@@ -520,21 +520,40 @@ def _bot_viewer_ids() -> set:
 _VIEWER_ID = re.compile(r"^(k[0-9a-f]{16}|a[0-9a-z]{8,24})$")
 
 
+_ANON_PER_ADDRESS = 4          # browser ids one address may claim (a household; not a loop of invented ids)
+_VIEWER_ADDR: dict = {}        # anonymous viewer id -> the address it was seen from
+_VIEWER_SWEPT = [0.0]
+
+
 def _record_viewer(request: Request, vid: str) -> int:
     now = _time.monotonic()
     key = (vid or "").strip()[:80]
     if key and not _VIEWER_ID.match(key):
         key = ""
+    # X-Real-IP is set (overwritten) by OUR nginx; the first X-Forwarded-For hop is whatever the client wrote.
+    addr = (request.headers.get("x-real-ip", "") or "").strip() or \
+        (request.headers.get("x-forwarded-for", "") or "").split(",")[0].strip() or \
+        (request.client.host if request.client else "?")
+    if key.startswith("a"):
+        # A browser id is random and costs nothing to invent: `?v=a<random>` in a loop added a person per request
+        # (security review 2026-10-18). Each address may claim a few; past that it counts as the address itself.
+        mine = [k for k, a in _VIEWER_ADDR.items() if a == addr and k in _VIEWERS]
+        if key not in mine and len(mine) >= _ANON_PER_ADDRESS:
+            key = ""
     if not key:
-        xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
-        key = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "?")
+        key = addr
     cutoff = now - _VIEWER_WINDOW
     # Count REAL people only: skip our own bots (by pubkey-id) and loopback/internal callers.
     if key and not _internal_caller(key) and key not in _bot_viewer_ids():
         _VIEWERS[key] = now
-    for _k in [k for k, t in _VIEWERS.items() if t < cutoff]:
-        _VIEWERS.pop(_k, None)
-    return len(_VIEWERS)
+        if key.startswith("a"):
+            _VIEWER_ADDR[key] = addr
+    if now - _VIEWER_SWEPT[0] >= 1.0:                 # the sweep is O(viewers): once a second, not per request
+        _VIEWER_SWEPT[0] = now
+        for _k in [k for k, t in _VIEWERS.items() if t < cutoff]:
+            _VIEWERS.pop(_k, None)
+            _VIEWER_ADDR.pop(_k, None)
+    return sum(1 for t in _VIEWERS.values() if t >= cutoff)
 
 
 @router.get("/stats")

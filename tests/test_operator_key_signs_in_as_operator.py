@@ -336,3 +336,21 @@ def test_the_repair_can_never_raise_out_of_the_gate(operator):
     with pytest.raises(HTTPException) as caught:
         auth_mod.get_admin_user(dupe, _AdminDB(op))
     assert caught.value.status_code == 403
+
+
+def test_the_operators_sign_out_everywhere_ends_a_healed_duplicate_session(operator):
+    """Security review 2026-10-18: a session on the old duplicate account is SERVED AS the operator, but was checked
+    only against the duplicate's own "sign out everywhere" -- so the operator pressing it left those sessions alive."""
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    auth_mod = _fresh_auth()
+    op, pk = operator
+    dupe = Row(id=7, username="npub_abc", is_admin=False, nostr_npub=nostr_service.npub_of(pk))
+    issued = 1_700_000_000
+    req = SimpleNamespace(state=SimpleNamespace(token_payload={"sub": "7", "iat": issued}))
+    op.tokens_valid_after = None
+    assert auth_mod.get_admin_user(dupe, _AdminDB(op), req) is op           # healed, as before
+    op.tokens_valid_after = issued + 60                                   # the operator signs out everywhere
+    with pytest.raises(HTTPException) as e:
+        auth_mod.get_admin_user(dupe, _AdminDB(op), req)
+    assert e.value.status_code == 401

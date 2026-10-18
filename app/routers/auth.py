@@ -345,6 +345,10 @@ async def revoke_other_sessions(response: Response, request: Request, current_us
     """SIGN OUT EVERYWHERE ELSE: every session token issued before now stops working (app/auth.token_revoked),
     and THIS device gets a fresh one so the person pressing the button stays signed in. API keys are separate
     credentials and are not touched -- they are revoked one by one where they are listed."""
+    if getattr(request.state, "via_api_key", False):
+        # An API key never becomes a session: the fresh token below would outlive the key's revocation, and the
+        # call would also sign the owner out everywhere (security review 2026-10-18).
+        raise HTTPException(status_code=403, detail="Sign in to do this; an API key cannot")
     from app.services import user_table
     now = int(time.time())
     current_user.tokens_valid_after = now

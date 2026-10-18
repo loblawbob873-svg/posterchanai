@@ -141,6 +141,7 @@ def get_current_user(
             user = get_user_from_api_key(db, user_id)
             if user:
                 api_key_store.touch(api_key)       # last_used_at, throttled; never fails the request
+                request.state.via_api_key = True   # a route that MINTS a session must refuse this (routers/auth.py)
                 return _refuse_blocked(user)
 
         raise HTTPException(
@@ -182,6 +183,7 @@ def get_current_user(
         )
     if token_revoked(payload, user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This session was signed out")
+    request.state.token_payload = payload             # get_admin_user's repair branch checks it against the operator
 
     return _refuse_blocked(user)
 
@@ -222,7 +224,7 @@ _OPERATOR_PK = _UNSET
 
 
 def get_admin_user(current_user: User = Depends(get_current_user),
-                   db: Session = Depends(get_db)) -> User:
+                   db: Session = Depends(get_db), request: Request = None) -> User:
     if current_user.is_admin:
         return current_user
 
@@ -245,11 +247,16 @@ def get_admin_user(current_user: User = Depends(get_current_user),
             if op_pk and nostr_service.to_pubkey_hex(npub) == op_pk:
                 from app.services import user_table
                 operator = user_table.operator(db)
+                # Served AS the operator, so the operator's "sign out everywhere" ends it too -- it was checked only
+                # against the duplicate account's switch (security review 2026-10-18).
+                payload = getattr(getattr(request, "state", None), "token_payload", None)
+                if operator and request is not None and token_revoked(payload, operator):
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This session was signed out")
                 if operator:
                     logger.info("[auth] session on %s carries the operator's own key — serving it "
                                 "as the operator", current_user.username)
                     return operator
-    except Unavailable:
+    except (Unavailable, HTTPException):
         raise
     except Exception as e:                                  # pragma: no cover - never fatal
         logger.warning("[auth] operator-session repair failed: %s", e)
