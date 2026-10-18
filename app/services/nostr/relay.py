@@ -18,6 +18,38 @@ from urllib.parse import urlparse
 
 import websockets
 
+
+def _tolerate_unfinished_connections() -> None:
+    """websockets 17: when a TLS handshake fails (through the Tor proxy, most often), asyncio calls connection_lost()
+    on a Connection whose connection_made() never ran -- so `recv_messages` does not exist and the callback raises
+    AttributeError. The connect call itself already failed and reported it; this was only the cleanup, logged as a
+    traceback ~130 times an hour by the relay (2026-10-18), burying real errors. A connection that was never set up is
+    settled and left alone; every other one runs the library's own connection_lost unchanged."""
+    try:
+        from websockets.asyncio import connection as _c
+    except Exception:       # noqa: BLE001 -- another websockets layout: nothing to patch
+        return
+    orig = _c.Connection.connection_lost
+    if getattr(orig, "_pc_tolerant", False):
+        return
+
+    def connection_lost(self, exc):
+        if not hasattr(self, "recv_messages"):
+            try:
+                self.protocol.receive_eof()
+            except Exception:       # noqa: BLE001
+                pass
+            w = getattr(self, "connection_lost_waiter", None)
+            if w is not None and not w.done():
+                w.set_result(None)
+            return None
+        return orig(self, exc)
+    connection_lost._pc_tolerant = True
+    _c.Connection.connection_lost = connection_lost
+
+
+_tolerate_unfinished_connections()
+
 logger = logging.getLogger(__name__)
 
 
