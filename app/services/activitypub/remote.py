@@ -82,6 +82,13 @@ _PROXY_FALLBACK_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyE
 # server is reached directly for _DIRECT_FOR seconds, so only the first request pays the wait.
 _PROXY_RETRY_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.WriteError,
                        httpx.RemoteProtocolError)
+# ...BUT NOT A DELIVERY THAT MAY ALREADY HAVE LANDED. A read error or timeout happens AFTER the whole request went
+# out: a slow server through Tor has often accepted the POST and is only late answering, and posting it again at once
+# delivered the same Create/Like/DM twice wherever the receiver does not dedupe by activity id (correctness review
+# 2026-10-18). Such a POST is not repeated here: the host goes direct for _DIRECT_FOR, and the failure goes to the
+# delivery's persistent retry queue. A WRITE error is still retried at once -- the server never got a whole request.
+# GETs (keys, actors, outboxes) are reads, and are always retried directly.
+_MAY_HAVE_LANDED = (httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError)
 _PROXY_READ = 8.0               # a proxied answer gets this long, so the direct retry fits inside a delivery
 _DIRECT_FOR = 3600.0
 _direct_until: dict = {}        # host -> monotonic time until which it is reached directly
@@ -137,6 +144,10 @@ class _ProxyFirstTransport(httpx.AsyncBaseTransport):
             _direct_until[host] = time.monotonic() + _DIRECT_FOR
             if len(_direct_until) > 20000:
                 _direct_until.clear()
+            if isinstance(e, _MAY_HAVE_LANDED) and request.method not in ("GET", "HEAD"):
+                logger.info("[activitypub] %s %s via the proxy got no answer (%s); not re-sent now (it may have "
+                            "landed) -- the retry queue sends it, directly", request.method, host, type(e).__name__)
+                raise
             logger.info("[activitypub] %s via the proxy stalled (%s); asking directly, and directly for the next "
                         "hour", host, type(e).__name__)
             request.extensions = {**request.extensions, "timeout": plain}

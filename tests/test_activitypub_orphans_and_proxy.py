@@ -213,3 +213,30 @@ def test_a_proxy_that_connects_and_then_never_answers_is_asked_again_directly_an
     asyncio.run(_get(t, "https://other.example/inbox"))                   # other servers still use it
     assert len(t._proxy.calls) == 2
     remote._direct_until.clear()
+
+
+async def _post(t, url):
+    async with httpx.AsyncClient(transport=t, timeout=httpx.Timeout(12.0, connect=6.0)) as c:
+        return await c.post(url, content=b'{"type":"Create"}')
+
+
+def test_a_delivery_that_may_have_landed_is_not_posted_again_at_once(monkeypatch):
+    """Correctness review 2026-10-18: a read timeout comes AFTER the whole POST went out -- a slow server through Tor
+    has often accepted it already -- and re-posting it directly at once delivered the same activity twice. It goes to
+    the retry queue instead (the failure propagates), and that server is reached directly from now on."""
+    remote._direct_until.clear()
+    t = _transport(monkeypatch, proxy_fail=httpx.ReadTimeout("accepted, but no answer through the circuit"))
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(_post(t, "https://cawfee.example/inbox"))
+    assert not t._direct.calls, "the same delivery was POSTed a second time straight away"
+    asyncio.run(_post(t, "https://cawfee.example/inbox"))                 # the retry: direct, through the proxy no more
+    assert len(t._proxy.calls) == 1 and len(t._direct.calls) == 1
+    remote._direct_until.clear()
+
+
+def test_a_post_that_never_fully_went_out_is_retried_directly_at_once(monkeypatch):
+    remote._direct_until.clear()
+    t = _transport(monkeypatch, proxy_fail=httpx.WriteError("circuit broke while sending"))
+    assert asyncio.run(_post(t, "https://cawfee.example/inbox")).status_code == 200
+    assert len(t._direct.calls) == 1, "a request the server never fully received is safe to send again"
+    remote._direct_until.clear()
