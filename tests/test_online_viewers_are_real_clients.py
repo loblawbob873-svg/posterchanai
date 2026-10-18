@@ -22,3 +22,21 @@ def test_only_the_clients_own_viewer_ids_are_people(monkeypatch):
     assert c._record_viewer(_req("41.0.0.9"), "made-up") == 3, "a junk id from a public address is that address"
     assert c._record_viewer(_req("41.0.0.9"), "also-made-up") == 3
     c._VIEWERS.clear()
+
+
+def test_a_loop_of_invented_browser_ids_is_not_a_crowd(monkeypatch):
+    """A valid-looking guest id is random and free to invent: `?v=a<random>` in a loop added a person per request
+    (security review 2026-10-18). One address may claim a few (a household); beyond that it is that address."""
+    import random
+    import string
+    monkeypatch.setattr(c, "_bot_viewer_ids", lambda: set())
+    c._VIEWERS.clear()
+    getattr(c, "_VIEWER_ADDR", {}).clear()
+    r = random.Random(4)
+    n = 0
+    for _ in range(500):
+        n = c._record_viewer(_req("41.0.0.77"), "a" + "".join(r.choice(string.ascii_lowercase) for _ in range(12)))
+    assert n <= 5, "%d people from one address" % n
+    assert c._record_viewer(_req("41.0.0.78"), "a" + "q" * 12) == n + 1, "another address is still a person"
+    c._VIEWERS.clear()
+    getattr(c, "_VIEWER_ADDR", {}).clear()
