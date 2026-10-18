@@ -982,6 +982,18 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    # The tables' restart snapshots, FIRST and here: uvicorn re-raises the SIGTERM it caught once shutdown is done
+    # (server.py: signal.raise_signal), and the default handler then ends the process WITHOUT running atexit -- so
+    # doc_table's atexit hook never ran in the app and every restart still re-read ~380k documents (2026-10-18).
+    # Bounded, so a slow disk cannot push the stop past systemd's 10 s.
+    import asyncio as _aio
+    import logging as _logging
+    try:
+        from app.services import doc_table
+        await _aio.wait_for(_aio.to_thread(doc_table.save_snapshots), timeout=6)
+    except Exception as e:      # noqa: BLE001 -- no snapshot only means a full load next time
+        _logging.getLogger(__name__).warning("[doctable] restart snapshots not saved: %s", e)
+
     # Stop health check
     from app.services.health_check import stop_health_check
     stop_health_check()

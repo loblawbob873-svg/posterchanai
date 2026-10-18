@@ -86,3 +86,37 @@ def test_no_snapshot_is_written_for_a_table_whose_stream_is_not_current(relay, s
     t._live_ok = False                                       # the stream dropped: rows may be behind
     assert not t.save_snapshot()
     assert not os.path.exists(os.path.join(str(snapdir), "snapz.snap"))
+
+
+CHILD = r"""
+import asyncio, os, signal, sys, time
+sys.path.insert(0, os.getcwd())
+os.environ["PC_DOCTABLE_SNAPSHOT_DIR"] = sys.argv[1] + "/snaps"
+os.environ["POSTERCHANAI_PORT"] = "39999"            # not the main instance: shutdown stops nothing else
+from tests.test_doc_table import _Relay, SK
+from app.services import keystore, doc_table
+from app.services.nostr import bech32
+keystore.get_operator_nsec = lambda: bech32.encode("nsec", SK)
+r = _Relay(sys.argv[1] + "/relay"); os.environ["POSTERCHANAI_RELAY_PORT"] = str(r.port)
+t = doc_table.DocTable("snapexit"); t.put("1", {"n": 1}); t.all()
+for _ in range(100):
+    if t._live_ok: break
+    time.sleep(0.1)
+import app.main
+asyncio.run(app.main.shutdown())
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+signal.raise_signal(signal.SIGTERM)                 # what uvicorn does after its shutdown: no atexit
+"""
+
+
+def test_the_app_saves_snapshots_although_uvicorn_ends_it_with_its_signal(tmp_path):
+    """2026-10-18: the snapshots were written from atexit -- and none was ever written by the app, because uvicorn
+    re-raises the SIGTERM it caught once shutdown completes, and the default handler ends the process without atexit."""
+    import subprocess
+    import sys as _sys
+    script = tmp_path / "child.py"
+    script.write_text(CHILD)
+    r = subprocess.run([_sys.executable, str(script), str(tmp_path)], cwd=os.getcwd(), capture_output=True, text=True,
+                       timeout=180)
+    assert r.returncode == -15, (r.returncode, r.stderr[-800:])
+    assert os.path.exists(tmp_path / "snaps" / "snapexit.snap"), "the app stopped without saving its snapshot"
