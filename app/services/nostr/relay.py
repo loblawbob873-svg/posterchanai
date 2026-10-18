@@ -308,8 +308,7 @@ def _note_tor_refused(relay: str) -> None:
     _tor_refused[relay] = time.time() + _TOR_REFUSED_TTL
 
 
-@contextlib.asynccontextmanager
-async def _connect(relay: str, direct: bool, **kw):
+async def _open(relay: str, direct: bool, **kw):
     """Open a relay websocket with PROXY-FIRST, FALL-BACK-TO-DIRECT resilience: try the configured
     built-in proxy (→ Tor) first, and if that connect fails, retry the SAME relay directly. So a
     flaky/down Tor proxy degrades to a direct connection instead of dropping federation entirely.
@@ -343,6 +342,13 @@ async def _connect(relay: str, direct: bool, **kw):
         raise
     if not _is_local(relay):
         _note_relay_ok(relay)         # connected → clear the failure streak / pause
+    return ws
+
+
+@contextlib.asynccontextmanager
+async def _connect(relay: str, direct: bool, **kw):
+    """`_open`, closed when the block ends."""
+    ws = await _open(relay, direct, **kw)
     try:
         yield ws
     finally:
@@ -350,6 +356,64 @@ async def _connect(relay: str, direct: bool, **kw):
             await ws.close()
         except Exception:
             pass
+
+
+# QUERIES REUSE THEIR CONNECTION. Every query opened a websocket -- a TLS handshake, through Tor -- to every upstream
+# relay and closed it after EOSE: the relay's sync sweep asks about the web of trust in author batches, so server1
+# made ~1,200 outbound connections a minute and TLS (handshakes + record reads) was ~17% of the relay process's CPU,
+# the largest single term (py-spy, 2026-10-18). An unauthenticated query now borrows an idle connection to the same
+# relay (same proxy route), CLOSEs its subscription after EOSE and hands it back. One idle connection per relay per
+# event loop; one unused for _POOL_IDLE_MAX is closed on the next return. A pooled socket that turns out dead is
+# replaced by a fresh one, once. Authenticated queries are not pooled: a socket's AUTH belongs to one key.
+_POOL: dict = {}               # loop -> {(relay, direct): (ws, idle_since)}
+_POOL_IDLE_MAX = 90.0
+
+
+def _pool() -> dict:
+    loop = asyncio.get_running_loop()
+    for lp in [lp for lp in _POOL if lp is not loop and lp.is_closed()]:
+        _POOL.pop(lp, None)                            # a finished asyncio.run(): its sockets died with it
+    return _POOL.setdefault(loop, {})
+
+
+def _usable(ws) -> bool:
+    try:
+        from websockets.protocol import State
+        return ws.state is State.OPEN
+    except Exception:       # noqa: BLE001
+        return False
+
+
+async def _borrow(relay: str, direct: bool):
+    """(ws, pooled) -- an idle pooled connection to `relay`, or a new one."""
+    p = _pool()
+    got = p.pop((relay, direct), None)
+    if got is not None:
+        ws, since = got
+        if _usable(ws) and time.monotonic() - since < _POOL_IDLE_MAX:
+            return ws, True
+        await _close_quietly(ws)
+    return await _open(relay, direct), False
+
+
+async def _give_back(relay: str, direct: bool, ws) -> None:
+    p = _pool()
+    now = time.monotonic()
+    for k, (old, since) in list(p.items()):
+        if now - since >= _POOL_IDLE_MAX:
+            p.pop(k, None)
+            await _close_quietly(old)
+    if _usable(ws) and (relay, direct) not in p:
+        p[(relay, direct)] = (ws, now)
+    else:
+        await _close_quietly(ws)
+
+
+async def _close_quietly(ws) -> None:
+    try:
+        await ws.close()
+    except Exception:       # noqa: BLE001
+        pass
 
 
 async def _publish_one(relay: str, event: dict, direct: bool = False) -> bool:
@@ -459,52 +523,91 @@ async def _query_one(relay: str, filters: list, out: dict, timeout: float, direc
                      auth_seckey: bytes | None = None) -> None:
     if not _is_local(relay) and _relay_paused(relay):
         return   # circuit breaker: relay paused after repeated connect failures — skip silently
-    sub_id = uuid.uuid4().hex[:16]
-    try:
-        async with _connect(relay, direct) as ws:
-            await ws.send(json.dumps(["REQ", sub_id] + filters))
-            auth_id = None
-            retried = False
-            deadline = asyncio.get_event_loop().time() + timeout
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    break
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    break
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(msg, list) or not msg:
-                    continue
-                if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
-                    from app.services.nostr.event import build_event
-                    auth = build_event(auth_seckey, 22242, "",
-                                       [["relay", relay], ["challenge", str(msg[1])]])
-                    auth_id = auth["id"]
-                    await ws.send(json.dumps(["AUTH", auth]))
-                elif msg[0] == "OK" and len(msg) >= 3 and msg[1] == auth_id:
-                    if msg[2] and not retried:
-                        retried = True
-                        await ws.send(json.dumps(["REQ", sub_id] + filters))
-                elif msg[0] == "CLOSED" and len(msg) >= 3 and msg[1] == sub_id \
-                        and str(msg[2]).startswith("auth-required") and auth_seckey:
-                    continue
-                elif msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub_id:
-                    ev = msg[2]
-                    if isinstance(ev, dict) and ev.get("id"):
-                        out[ev["id"]] = ev
-                elif msg[0] == "EOSE" and len(msg) >= 2 and msg[1] == sub_id:
-                    break
+    if auth_seckey:
+        try:
+            async with _connect(relay, direct) as ws:
+                await _run_query(ws, relay, filters, out, timeout, auth_seckey)
+        except Exception as e:
+            logger.warning(f"[nostr] query {relay} failed: {e}")
+        return
+    for attempt in (0, 1):
+        ws = None
+        try:
+            ws, pooled = await _borrow(relay, direct)
+        except Exception as e:
+            logger.warning(f"[nostr] query {relay} failed: {e}")
+            return
+        try:
+            done = await _run_query(ws, relay, filters, out, timeout, None)
+        except asyncio.CancelledError:
             try:
-                await ws.send(json.dumps(["CLOSE", sub_id]))
-            except Exception:
+                ws.transport.abort()                   # being cancelled: never leave it open, never pool it
+            except Exception:       # noqa: BLE001
                 pass
-    except Exception as e:
-        logger.warning(f"[nostr] query {relay} failed: {e}")
+            raise
+        except Exception as e:
+            await _close_quietly(ws)
+            if pooled and attempt == 0:
+                continue                               # a stale pooled socket: once more, fresh
+            logger.warning(f"[nostr] query {relay} failed: {e}")
+            return
+        if done:
+            await _give_back(relay, direct, ws)        # answered in full: its subscription is CLOSEd
+        else:
+            await _close_quietly(ws)                   # timed out: a slow relay may still be sending
+        return
+
+
+async def _run_query(ws, relay: str, filters: list, out: dict, timeout: float, auth_seckey) -> bool:
+    """One REQ on `ws` until EOSE (True) or the timeout (False); the subscription is CLOSEd either way."""
+    sub_id = uuid.uuid4().hex[:16]
+    await ws.send(json.dumps(["REQ", sub_id] + filters))
+    auth_id = None
+    retried = False
+    done = False
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        except asyncio.TimeoutError:
+            break
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(msg, list) or not msg:
+            continue
+        if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
+            from app.services.nostr.event import build_event
+            auth = build_event(auth_seckey, 22242, "",
+                               [["relay", relay], ["challenge", str(msg[1])]])
+            auth_id = auth["id"]
+            await ws.send(json.dumps(["AUTH", auth]))
+        elif msg[0] == "OK" and len(msg) >= 3 and msg[1] == auth_id:
+            if msg[2] and not retried:
+                retried = True
+                await ws.send(json.dumps(["REQ", sub_id] + filters))
+        elif msg[0] == "CLOSED" and len(msg) >= 3 and msg[1] == sub_id \
+                and str(msg[2]).startswith("auth-required") and auth_seckey:
+            continue
+        elif msg[0] == "CLOSED" and len(msg) >= 2 and msg[1] == sub_id:
+            break      # refused -- often a per-connection rate limit: stop waiting, and do not pool this socket
+        elif msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub_id:
+            ev = msg[2]
+            if isinstance(ev, dict) and ev.get("id"):
+                out[ev["id"]] = ev
+        elif msg[0] == "EOSE" and len(msg) >= 2 and msg[1] == sub_id:
+            done = True
+            break
+    try:
+        await ws.send(json.dumps(["CLOSE", sub_id]))
+    except Exception:
+        if done:
+            raise
+    return done
 
 
 async def query(relays, filters: list, timeout: float = _DEFAULT_QUERY_TIMEOUT,
