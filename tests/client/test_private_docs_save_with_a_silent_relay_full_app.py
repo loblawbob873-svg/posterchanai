@@ -54,8 +54,12 @@ async def until(b, fn, seconds, what):
         if got:
             return got
         await asyncio.sleep(.3)
+    # The read-marker's own state, so a CI-only failure says whether the mark was made and is waiting for a relay
+    # that "answered" (pending:true) or was never made at all -- it failed only on GitHub's runners (2026-10-17).
+    seen = await b.js("(()=>{try{return localStorage.getItem('pc_seen:'+((__PC.me&&__PC.me())||{}).pubkey)}catch(e){return String(e)}})()")
     raise AssertionError({'waiting for': what, 'toasts': await b.js('__toasts'), 'errors': await b.js('__errors'),
-                          'published 30078': [H._d(e) for e in H.STATE['pubs']]})
+                          'published 30078': [H._d(e) for e in H.STATE['pubs']], 'pc_seen': seen,
+                          'visibility': await b.js('document.visibilityState'), 'focus': await b.js('document.hasFocus()')})
 
 
 class Devices:
