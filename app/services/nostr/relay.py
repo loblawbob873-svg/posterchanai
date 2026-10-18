@@ -277,7 +277,10 @@ def _conn_kw(relay: str, direct: bool) -> dict:
     (the bot's Tor proxy) and tries to tunnel localhost through it (502 / handshake timeout).
     `direct=True` (the relay's own upstream) omits the kwarg; otherwise use the configured proxy."""
     if _is_local(relay):
-        return {"proxy": None}
+        # ...and no permessage-deflate: compressing bytes that never leave this machine is CPU on both ends -- the
+        # relay deflated every answer to the push service, the notification poller and the bots (~8% of its CPU,
+        # py-spy 2026-10-18). nostr_store/relay_reader made the same choice (relay_reader.loopback_kw).
+        return {"proxy": None, "compression": None}
     return {} if direct else _proxy_kw()
 
 

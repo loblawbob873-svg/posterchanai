@@ -13,6 +13,8 @@ import websockets
 
 from app.services.nostr import relay
 
+_REAL_CONN_KW = relay._conn_kw            # the autouse fixture below stubs it; the compression test needs the real one
+
 
 class Upstream:
     def __init__(self, mode="answer"):
@@ -89,3 +91,22 @@ def test_a_refused_or_unanswered_query_does_not_keep_its_connection():
         return up
     assert asyncio.run(go("refuse", 5)).connections == 3, "a rate-limited connection was reused"
     assert asyncio.run(go("silent", 0.3)).connections == 3, "a connection still streaming was reused"
+
+
+def test_a_connection_to_this_machines_relay_is_not_compressed(monkeypatch):
+    """Deflating answers that never leave the host cost the relay ~8% of its CPU (py-spy 2026-10-18): the push
+    service, the notification poller and the bots connect through this module, and negotiated permessage-deflate."""
+    monkeypatch.setattr(relay, "_is_local", lambda r: True)
+    monkeypatch.setattr(relay, "_conn_kw", _REAL_CONN_KW)
+
+    async def go():
+        async def h(ws):
+            await ws.wait_closed()
+        srv = await websockets.serve(h, "127.0.0.1", 0)       # offers permessage-deflate, as the relay does
+        url = "ws://127.0.0.1:%d/" % srv.sockets[0].getsockname()[1]
+        ws = await relay._open(url, False)
+        ext = [type(e).__name__ for e in ws.protocol.extensions]
+        await ws.close()
+        srv.close()
+        return ext
+    assert asyncio.run(go()) == [], "a loopback connection negotiated compression"
