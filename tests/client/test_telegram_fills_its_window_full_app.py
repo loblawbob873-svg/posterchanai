@@ -45,3 +45,25 @@ def test_telegram_uses_the_whole_os_window():
 
     asyncio.run(desktop.with_browser("online", "?pcwin=tg", check,
                                      extra_init=FAKE.replace("state:'none'", "state:'ready'") + WINDOW))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("w,h", [(1280, 800), (900, 700)])
+def test_telegram_reaches_the_bottom_of_the_desktop_apps_window(w, h):
+    """Reported 2026-10-18 from the Windows desktop app: "empty space after message window ... below send button,
+    looks ugly" -- measured 65px between the composer and the window's bottom edge at 1280x800 (the feed's padding for
+    the phone's bottom nav, at a width that has none)."""
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False})
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.switchView && __PC.switchView('tg')")
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("!!document.querySelector('.tg-composer')")
+        await asyncio.sleep(.3)
+        fit = await b.js(FIT)
+        assert fit["vh"] - fit["composerBottom"] <= 2, ("space under the composer in the desktop app", fit)
+
+    asyncio.run(desktop.with_browser("online", "", check,
+                                     extra_init=FAKE.replace("state:'none'", "state:'ready'")))
