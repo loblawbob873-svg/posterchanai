@@ -283,7 +283,7 @@ class Maintainer:
         """A compaction makes the last snapshot unusable (it lists the segment that was just deleted), so take
         one right after; otherwise only every `snapshot_hours`, and only when something was written."""
         st = self.store
-        if not getattr(st, "snapshots", False) or st._since_snap <= 0:
+        if not getattr(st, "snapshots", False) or not st._unsaved():
             return False
         age_h = (time.time() - getattr(st, "last_snapshot", 0.0)) / 3600.0
         if not after_compaction and (self.snapshot_hours <= 0 or age_h < self.snapshot_hours):

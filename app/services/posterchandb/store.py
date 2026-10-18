@@ -971,6 +971,12 @@ class Store:
             self.last_snapshot = time.time()
             return res
 
+    def _unsaved(self) -> bool:
+        """Anything a checkpoint would keep: log records since the last one, OR index runs merged or sealed since it
+        (housekeeping on a quiet store stores no events, and its merges were thrown away at every stop -- 2026-10-18,
+        tests/test_posterchandb_merges_survive_a_quiet_stop.py)."""
+        return self._since_snap > 0 or any(lv.garbage for lv in self._leveled())
+
     def close(self, take_snapshot: bool = True) -> None:
         """Flush (fsync), checkpoint, close. The checkpoint is what makes the next start replay nothing; it writes only
         what changed, so it is taken at every clean stop (`take_snapshot` is kept for callers and no longer skips
@@ -980,7 +986,7 @@ class Store:
             if self._file is None:
                 return
             self.flush()
-            if self.snapshots and self._since_snap > 0 and not self._compacting:
+            if self.snapshots and self._unsaved() and not self._compacting:
                 try:
                     checkpoint.save(self)
                     self._since_snap = 0
