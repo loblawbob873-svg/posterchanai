@@ -1673,6 +1673,27 @@ class Store:
                 sets.append(np.unique(np.array([x for x in got if x is not None], dtype=np.uint32)))
             authors, kinds = flt.get("authors"), flt.get("kinds")
             kinds_done = False
+            # SINCE/UNTIL BEFORE THE UNION. A poll asks about many keys "since a few seconds ago" -- the push service
+            # names every push subscriber in one `#p` -- and each key's posting list is its WHOLE history: the union
+            # sorted all of it to keep a handful (np.unique was ~10% of the relay's CPU, py-spy 2026-10-18). A list
+            # long enough to matter is cut by the created_at column first, so only what can match is sorted. The same
+            # test runs again on the candidates below; this only makes the union small.
+            lo_t = flt.get("since")
+            hi_t = flt.get("until")
+            lo_t = int(lo_t) if isinstance(lo_t, (int, float)) and not isinstance(lo_t, bool) else None
+            hi_t = int(hi_t) if isinstance(hi_t, (int, float)) and not isinstance(hi_t, bool) else None
+            created_col = self.created.view(np.uint64)
+
+            def _window(a):
+                if (lo_t is None and hi_t is None) or len(a) < _WINDOW_MIN:
+                    return a
+                c = created_col[a]
+                m = np.ones(len(a), dtype=bool)
+                if lo_t is not None:
+                    m &= c >= max(lo_t, 0)
+                if hi_t is not None:
+                    m &= c <= max(hi_t, 0)
+                return a[m]
             # A feed of 4,109 followed accounts sorted its whole candidate list (np.unique) on EVERY request:
             # 197 ms with kinds, 1.6 s without, measured on the production copy 2026-10-16 -- the relay's main CPU.
             # Per-author (and per-author-and-kind) posting lists are DISJOINT once the keys are unique (an event has
@@ -1695,7 +1716,7 @@ class Store:
                     continue
                 if len(key) == 2:
                     tags = [key[1]] + (["_quote_author"] if key == "#p" and flt.get("_include_quotes") is True else [])
-                    sets.append(_union([self.idx.get(_h("t:%s:%s" % (tg, v))) for tg in tags for v in vals]))
+                    sets.append(_union([_window(self.idx.get(_h("t:%s:%s" % (tg, v)))) for tg in tags for v in vals]))
                 elif len(key) == 3 and key.endswith("~"):
                     if key[1] != "d":
                         return _none          # prefix matching is indexed for `d` only — the app's one use
@@ -1759,6 +1780,7 @@ class Store:
 
 
 _SCAN_CHUNK = 65536
+_WINDOW_MIN = 256           # a posting list shorter than this is unioned as it is (the column read costs more)
 _DECODED_CACHE_BYTES = 48 * 1024 * 1024   # raw record bytes of decoded events kept for get()
 _RARE_KIND_POSTINGS = 50000   # at most this many events of the requested kinds: read their index, never walk the store
 
