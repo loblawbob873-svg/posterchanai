@@ -6931,9 +6931,18 @@
       'Reported by: '+name(reporter),
       'Open: '+notificationRoute(room,channel,m)].filter(Boolean).join('\n');
   }
+  /* MEMOISED ON THE CONTROL STATE IT WAS READ FROM, like canPinHere. authorityCitation folds the whole control stream,
+   * signatures included; the members list started asking for BAN on EVERY render ("Ban by npub", 2026-10-18), and a
+   * community that renders on each incoming message held a phone's main thread until the WebView stopped answering
+   * (the APK's every-view smoke test: 21 s). A new control array is a new answer; the same one is a Map lookup. */
+  const mayMemo=new WeakMap(),_noWraps=[];
   function memberMay(room,pubkey,permission){
     try{ const r=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle; if(!r||!r.authorityCitation||!bundle||!pubkey)return false;
-      r.authorityCitation(bundle,roomControls.get(room.communityId||room.naddr)||[],pubkey,permission); return true; }catch(_){ return false; }
+      const wraps=roomControls.get(room.communityId||room.naddr)||_noWraps;
+      let m=mayMemo.get(wraps); if(!m){m=new Map();mayMemo.set(wraps,m);}
+      const k=JSON.stringify([bundle.community_id||'',bundle.community_root||'',pubkey,permission]);
+      if(!m.has(k)){ let ok=false; try{ r.authorityCitation(bundle,wraps,pubkey,permission); ok=true; }catch(_){ ok=false; } m.set(k,ok); }
+      return m.get(k); }catch(_){ return false; }
   }
   /* PINS (CORD vsk 11 per channel, up to 25 proofs — Vector's pin_message/unpin_message). The list
    * is folded from the control plane; pinsOf is memoised on the control array it was read from, so a
