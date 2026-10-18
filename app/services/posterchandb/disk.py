@@ -255,6 +255,17 @@ def run_files(dirpath: str, name: str, k: int) -> list:
     return [os.path.join(dirpath, "run-%s.%d.bin" % (name, i)) for i in range(k)]
 
 
+def _random_access(mm) -> None:
+    """A run is read by binary search and by one posting slice per key -- RANDOM pages. Without this a page fault
+    reads around the device's whole readahead window: 2 MB on an md RAID (8 MB on its disks), 128 KB on an NVMe.
+    Measured 2026-10-18 on a 30M-event store under a 900 MB cap: 49 GB read from a 10.5 GB store before any answer
+    was printed -- every fault dragged in megabytes it did not need and evicted the pages that it did."""
+    try:
+        mm.madvise(mmap.MADV_RANDOM)
+    except (AttributeError, OSError, ValueError):
+        pass                                           # not Linux / not supported: only slower, never wrong
+
+
 def map_run(dirpath: str, name: str, dtypes) -> Run:
     arrays = []
     for path, dt in zip(run_files(dirpath, name, len(dtypes)), dtypes):
@@ -266,6 +277,7 @@ def map_run(dirpath: str, name: str, dtypes) -> Run:
             continue
         with open(path, "rb") as f:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        _random_access(mm)
         arrays.append(np.frombuffer(mm, dtype=dt))
     return Run(arrays, name)
 

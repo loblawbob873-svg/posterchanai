@@ -3,7 +3,9 @@
 
     # 1. a synthetic store (ScaleGen: realistic kinds, tags, words, `#d~` docs) -- on a big disk, never the SSD:
     venv-unified/bin/python scripts/pcdb_scale_check.py build --path /usb/pcdb-scale/big --events 30000000
-    # 2. open it COLD inside a memory-capped cgroup (no swap) and query it; prints latency, RSS and the cgroup peak:
+    # 2. merge its index runs, as the relay's housekeeping would have:
+    venv-unified/bin/python scripts/pcdb_scale_check.py compact --path /usb/pcdb-scale/big
+    # 3. open it COLD inside a memory-capped cgroup (no swap) and query it; prints latency, RSS and the cgroup peak:
     systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 \\
         venv-unified/bin/python scripts/pcdb_scale_check.py probe --path /usb/pcdb-scale/big --queries 300
 
@@ -52,6 +54,22 @@ def build(path: str, n: int, seed: int) -> None:
     print("built %d events, %.1f GB, %.0f s" % (n, _size(path) / 2 ** 30, time.time() - t0), flush=True)
 
 
+def compact(path: str) -> None:
+    """Merge the index runs the way the relay's housekeeping does in the background (a build made with flushes only
+    leaves dozens of runs per index -- not the shape any running node is in, and every lookup pays one search each)."""
+    from app.services.posterchandb.store import Store
+    st = Store(path, flush_interval=3600, direct_durable=False)
+    t0, n = time.time(), 0
+    while True:
+        k = st.merge_disk_runs(max_steps=64)
+        n += k
+        print("  %d merges, %.0f s" % (n, time.time() - t0), flush=True)
+        if not k:
+            break
+    st.close()
+    print("compacted: %d merges in %.0f s" % (n, time.time() - t0), flush=True)
+
+
 def _status(key: str) -> int:
     for line in open("/proc/self/status"):
         if line.startswith(key):
@@ -96,8 +114,9 @@ def probe(path: str, queries: int, seed: int) -> None:
         xs.sort()
         print("  %-11s n=%-4d p50 %7.1f ms  p99 %8.1f ms  max %8.1f ms" % (
             what, len(xs), statistics.median(xs), xs[max(0, int(len(xs) * 0.99) - 1)], xs[-1]))
-    print("RssAnon %.0f MB, VmRSS %.0f MB, cgroup peak %.0f MB" % (
-        _status("RssAnon") / 2 ** 20, _status("VmRSS") / 2 ** 20, _cgroup_peak() / 2 ** 20))
+    rb = next((int(l.split()[1]) for l in open("/proc/self/io") if l.startswith("read_bytes")), 0)
+    print("RssAnon %.0f MB, VmRSS %.0f MB, cgroup peak %.0f MB, read from disk %.1f GB" % (
+        _status("RssAnon") / 2 ** 20, _status("VmRSS") / 2 ** 20, _cgroup_peak() / 2 ** 20, rb / 2 ** 30))
     st.close(take_snapshot=False)
 
 
@@ -106,10 +125,16 @@ def main():
     sub = ap.add_subparsers(dest="mode", required=True)
     b = sub.add_parser("build"); b.add_argument("--path", required=True); b.add_argument("--events", type=int, required=True)
     p = sub.add_parser("probe"); p.add_argument("--path", required=True); p.add_argument("--queries", type=int, default=300)
+    c = sub.add_parser("compact"); c.add_argument("--path", required=True)
     for x in (b, p):
         x.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
-    build(a.path, a.events, a.seed) if a.mode == "build" else probe(a.path, a.queries, a.seed)
+    if a.mode == "build":
+        build(a.path, a.events, a.seed)
+    elif a.mode == "compact":
+        compact(a.path)
+    else:
+        probe(a.path, a.queries, a.seed)
 
 
 if __name__ == "__main__":
