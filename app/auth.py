@@ -102,6 +102,15 @@ def _refuse_blocked(user):
     return user
 
 
+def _note(request, key: str, value) -> None:
+    """Record how a request authenticated, for the routes that need it. A caller that is not an HTTP request (the
+    websocket and terminal paths hand in their own objects) simply carries no note."""
+    try:
+        setattr(request.state, key, value)
+    except AttributeError:
+        pass
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -141,7 +150,7 @@ def get_current_user(
             user = get_user_from_api_key(db, user_id)
             if user:
                 api_key_store.touch(api_key)       # last_used_at, throttled; never fails the request
-                request.state.via_api_key = True   # a route that MINTS a session must refuse this (routers/auth.py)
+                _note(request, "via_api_key", True)   # a route that MINTS a session must refuse this (routers/auth.py)
                 return _refuse_blocked(user)
 
         raise HTTPException(
@@ -183,7 +192,7 @@ def get_current_user(
         )
     if token_revoked(payload, user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This session was signed out")
-    request.state.token_payload = payload             # get_admin_user's repair branch checks it against the operator
+    _note(request, "token_payload", payload)          # get_admin_user's repair branch checks it against the operator
 
     return _refuse_blocked(user)
 
