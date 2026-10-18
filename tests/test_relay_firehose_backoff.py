@@ -206,3 +206,36 @@ def test_the_backoff_is_jittered():
     src = open(fh.__file__, encoding="utf-8").read()
     sleep = next(l for l in src.splitlines() if "stop.wait(), timeout=backoff" in l)
     assert "random.uniform(0, backoff)" in sleep, sleep
+
+
+def test_a_relay_the_breaker_paused_is_not_dialled_by_its_streams(monkeypatch):
+    """2026-10-18 (py-spy): seven dead upstreams were dialled ~120 times each in 30 minutes -- queries and publishes
+    honoured the circuit breaker's pause, the firehose streams (several per relay) did not, and every attempt was a
+    failed TLS handshake through Tor and then another direct. ~15% of the relay's CPU."""
+    import time as _t
+    from app.services.nostr import relay as R
+    url = "wss://dead.example/"
+    dialled = []
+
+    class _Refuse:
+        async def __aenter__(self):
+            dialled.append(1)
+            raise OSError("down")
+
+        async def __aexit__(self, *a):
+            return False
+    monkeypatch.setattr(fh, "_connect", lambda *a, **k: _Refuse())
+    monkeypatch.setitem(R._relay_paused_until, url, _t.time() + 600)
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(fh._run_one(url, [1], lambda e: None, stop, True))
+        await asyncio.sleep(0.5)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+    asyncio.run(go())
+    assert dialled == [], "a paused relay was dialled %d time(s)" % len(dialled)
+
+    R._relay_paused_until.pop(url, None)                 # the pause is over: the stream tries again
+    asyncio.run(go())
+    assert dialled, "a relay whose pause ended was never dialled again"

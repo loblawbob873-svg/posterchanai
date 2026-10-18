@@ -702,6 +702,13 @@ async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, dir
     "handle the backlog too" is recoverable, and silence is not."""
     backoff = 1
     while not stop.is_set():
+        wait = (_relay_paused_until.get(relay, 0) - time.time()) if not _is_local(relay) else 0
+        if wait > 0:                       # the breaker paused it: wait that out, never dial a dead relay in a loop
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=min(wait, 3600))
+                break
+            except asyncio.TimeoutError:
+                continue
         sub_id = uuid.uuid4().hex[:16]
         req_filters = [{**f, "since": int(time.time())} for f in filters] if since_now else filters
         try:

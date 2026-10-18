@@ -19,6 +19,7 @@ import asyncio
 import logging
 
 
+from app.services.nostr import relay as _relay_mod
 from app.services.nostr.relay import _connect
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,17 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
             pass
     backoff = 2
     while not stop.is_set():
+        # A RELAY THE BREAKER PAUSED IS NOT DIALLED. Queries and publishes already skip it; these streams did not,
+        # and each relay has several (the feed, the DM inbox, VM hosting) -- seven dead upstreams were dialled ~120
+        # times each in 30 minutes, every attempt a failed TLS handshake through Tor and then another direct: ~15%
+        # of the relay's CPU (py-spy, 2026-10-18). The pause escalates (10 minutes, doubling) as connects keep failing.
+        wait = _relay_mod._relay_paused_until.get(relay_url, 0) - time.time()
+        if wait > 0:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=min(wait, 3600) + random.uniform(0, 5))
+                break
+            except asyncio.TimeoutError:
+                continue
         opened = time.monotonic()
         try:
             # Generous frame cap: long-form articles (kind 30023) can be large; too small a
