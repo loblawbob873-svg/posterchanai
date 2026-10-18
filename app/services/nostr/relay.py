@@ -7,6 +7,8 @@ a dead relay can't stall a poll (mirrors the fedi bridge's defensive timeouts).
 """
 
 import json
+import os
+import sys
 import time
 import uuid
 import asyncio
@@ -118,12 +120,60 @@ def _relay_paused(relay: str) -> bool:
     return time.time() < _relay_paused_until.get(relay, 0)
 
 
+# THE BREAKER REMEMBERS ACROSS A RESTART. Its pauses lived in memory only, so every restart (each deploy) re-dialled
+# every dead upstream from scratch -- ~400 failed TLS handshakes in the relay's first two minutes on server1
+# (2026-10-18), re-learning what it had known a minute before. Pauses and their escalation streaks are written to a
+# small file when a pause starts or a paused relay recovers, and read back at import. Advisory state: a lost or
+# stale file only means re-learning, so any error reading or writing it is ignored.
+def _breaker_path() -> str:
+    p = os.environ.get("PC_RELAY_BREAKER_FILE")
+    if p is not None:
+        return p                                        # "" turns persistence off
+    if "pytest" in sys.modules:
+        return ""                                       # tests never write the working tree's state
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                        "data", "relay_breaker.json")
+
+
+def _save_breaker() -> None:
+    path = _breaker_path()
+    if not path:
+        return
+    now = time.time()
+    state = {r: [until, _relay_pause_streak.get(r, 0)] for r, until in _relay_paused_until.items() if until > now}
+    try:
+        tmp = "%s.%d.tmp" % (path, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _load_breaker() -> None:
+    path = _breaker_path()
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+        now = time.time()
+        for r, (until, streak) in (state or {}).items():
+            if isinstance(r, str) and float(until) > now:
+                _relay_paused_until[r] = float(until)
+                _relay_pause_streak[r] = int(streak)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def _note_relay_ok(relay: str) -> None:
     """A successful connect clears the relay's failure streak / pause / escalation."""
     _relay_fail.pop(relay, None)
-    _relay_pause_streak.pop(relay, None)
-    _relay_paused_until.pop(relay, None)
+    had = _relay_pause_streak.pop(relay, None) is not None
+    had = _relay_paused_until.pop(relay, None) is not None or had
     _relay_last_fail.pop(relay, None)
+    if had:
+        _save_breaker()
 
 
 def _is_429(e) -> bool:
@@ -147,6 +197,7 @@ def _note_relay_429(relay: str) -> None:
     _relay_paused_until[relay] = time.time() + _RELAY_429_PAUSE_SEC
     _relay_fail.pop(relay, None)
     _relay_last_fail.pop(relay, None)
+    _save_breaker()
 
 
 def _note_relay_fail(relay: str) -> None:
@@ -168,6 +219,7 @@ def _note_relay_fail(relay: str) -> None:
         pause = min(_RELAY_PAUSE_SEC * (2 ** (streak - 1)), _RELAY_PAUSE_MAX)
         _relay_paused_until[relay] = time.time() + pause
         _relay_fail.pop(relay, None)
+        _save_breaker()
         logger.warning("[nostr] pausing sync with %s for %dm — %d failures (Tor+direct), streak %d",
                        relay, pause // 60, n, streak)
 
@@ -769,3 +821,6 @@ async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, dir
             break
         await asyncio.sleep(min(backoff, 30))
         backoff = min(backoff * 2, 30)
+
+
+_load_breaker()
