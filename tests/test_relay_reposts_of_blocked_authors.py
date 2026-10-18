@@ -104,3 +104,26 @@ def test_an_old_post_stored_late_is_not_pushed_down_every_open_feed():
             assert sorted(sent) == ["me", "thread"], sent
         else:
             assert sorted(sent) == ["feed", "me", "thread"], sent
+
+
+def test_the_live_firehose_refuses_a_members_repost_of_a_blocked_author():
+    """Security review 2026-10-18: only the direct-write path refused these. A member's repost arriving from upstream
+    (the live firehose -- how almost the whole public feed arrives) was stored and served until the next block purge,
+    and that purge finds reposts by `p` tag, so one naming the author only in its content stayed for good."""
+    from tests import test_json_spam_every_path as F
+
+    class Blocking(F.Member):
+        def is_blocked(self, pk):
+            return pk == TODD_PK
+
+    fh, store, srv = F.firehose()
+    fh.__globals__["gate"] = Blocking()
+    todd_post = build_event(TODD, 1, "a post by a blocked account", [])
+    no_p = build_event(ALICE, 6, json.dumps(todd_post), [["e", todd_post["id"]]])            # author only in content
+    tagged = build_event(ALICE, 6, json.dumps(todd_post), [["e", todd_post["id"]], ["p", TODD_PK]])
+    for ev in (no_p, tagged):
+        asyncio.run(fh(ev))
+    store.add_event.assert_not_called()
+    srv.subs.fanout.assert_not_called()
+    asyncio.run(fh(build_event(ALICE, 1, "an ordinary post", [])))             # and nothing else is affected
+    store.add_event.assert_called_once()

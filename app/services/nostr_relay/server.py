@@ -24,6 +24,7 @@ from app.services import git_acceptance
 from app.services.vmhost import kinds as _vmhost_kinds
 from .langfilter import blocked_language, blocked_word, is_encoded_payload, is_hidden_payload, is_json_content, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post, is_social_mirror
+from .repost_block import reposted_blocked   # one rule for the direct, firehose and ingest paths
 from .store import retired_kind_reason as _retired_kind_reason
 from .concord_mirror import KIND_REGISTER as _CONCORD_REGISTER
 from app.services.nostr.quotes import quote_pubkeys
@@ -588,29 +589,7 @@ _RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
 _NO_RECORDS: dict = {}
 
 
-_REPOST_KINDS = (6, 16)
 
-
-def reposted_authors(ev) -> set:
-    """Who a kind-6/16 repost reposts: the embedded event's author (its content is that event's JSON) and every
-    `p` it names (NIP-18 tags the reposted author). Empty for any other kind."""
-    if not isinstance(ev, dict) or ev.get("kind") not in _REPOST_KINDS:
-        return set()
-    out = {t[1] for t in ev.get("tags") or () if isinstance(t, list) and len(t) >= 2 and t[0] == "p"
-           and isinstance(t[1], str)}
-    c = ev.get("content") or ""
-    if isinstance(c, str) and c.startswith("{"):
-        try:
-            inner = json.loads(c)
-            if isinstance(inner, dict) and isinstance(inner.get("pubkey"), str):
-                out.add(inner["pubkey"])
-        except ValueError:
-            pass
-    return out
-
-
-def reposted_blocked(ev, is_blocked) -> bool:
-    return any(is_blocked(pk) for pk in reposted_authors(ev))
 
 
 def _restricted_traffic(typ, msg, is_local=None) -> bool:

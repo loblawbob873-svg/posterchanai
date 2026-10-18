@@ -663,7 +663,7 @@ class PcdbRelayStore(RelayStore):
         repost CARRIES the reposted post, so a blocked author's posts lived on in every repost of them."""
         if self._writes_closed:
             return 0
-        from .server import reposted_authors
+        from .repost_block import reposted_authors
         pks = set(pubkeys)
         if not pks:
             return 0

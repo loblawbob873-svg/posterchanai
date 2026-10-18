@@ -28,6 +28,7 @@ from app.services import relay_tunables
 from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
+from .repost_block import reposted_blocked
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
                       author_on_blocked_bridge, is_bridged_post, is_social_mirror)
 from app.services.vmhost import kinds as _vmhost_kinds
@@ -1092,6 +1093,8 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         # Opt-in: drop any bridged (NIP-48 proxy) post from the live firehose, whatever bridge relayed
         # it. Operators / registered local users are exempt (first-party cross-posts).
         if cfg.get("block_bridged") and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
+            return
+        if ev.get("kind") in (6, 16) and reposted_blocked(ev, gate.is_blocked):
             return
         _kind = int(ev.get("kind", 1))
         if _kind in _RETIRED_KINDS:
