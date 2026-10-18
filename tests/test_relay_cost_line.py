@@ -96,3 +96,23 @@ def test_one_connection_asking_hundreds_of_times_a_minute_is_named_in_the_log(ca
     with caplog.at_level(logging.WARNING):
         srv._note_heavy(c, "R:sub-notes-", flt, 380)
     assert not [r for r in caplog.records if "heavy client" in r.getMessage()], "an ordinary client was reported"
+
+
+def test_the_cost_line_names_where_live_delivery_goes(caplog):
+    """1,900 live frames/s on production (2026-10-17) and nothing could say to which subscriptions."""
+    subs = S.SubscriptionManager()
+    subs.add("feed", "global", [{"kinds": [1]}], label="R:sub-timeli [1||]")
+    subs.add("me", "n", [{"kinds": [1], "#p": ["b" * 64]}], label="R:sub-notifs [1||#p]")
+    for i in range(3):
+        subs.fanout({"id": "%064x" % i, "pubkey": "c" * 64, "kind": 1, "created_at": int(time.time()),
+                     "tags": [], "content": ""}, lambda c, m: None, lambda c, e: True)
+    srv = S.RelayServer.__new__(S.RelayServer)
+    srv._frames_out, srv._accepted, srv._cost_at, srv._cost_base, srv._outq = 0, 0, 0.0, (0, 0, 0), {}
+    srv.subs = subs
+    S.RelayServer._cost_line(srv, 1000.0)
+    srv._frames_out = 3
+    with caplog.at_level(logging.INFO):
+        S.RelayServer._cost_line(srv, 1300.0)
+    line = [r.getMessage() for r in caplog.records if "live delivery --" in r.getMessage()]
+    assert line and "R:sub-timeli [1||] -> 3 frames" in line[0], line
+    assert "notifs" not in line[0], "an event that does not match a subscription was counted for it"

@@ -366,14 +366,19 @@ class SubscriptionManager:
         # conn -> {sub_id: filters}
         self._subs: dict = {}
 
-    def add(self, conn, sub_id: str, filters: list) -> None:
+    def add(self, conn, sub_id: str, filters: list, label: str = "") -> None:
         self._subs.setdefault(conn, {})[sub_id] = [_compile_filter(f) for f in (filters or [])]
+        if label:
+            self.__dict__.setdefault("_labels", {})[(conn, sub_id)] = label
 
     def remove(self, conn, sub_id: str) -> None:
         if conn in self._subs:
             self._subs[conn].pop(sub_id, None)
+        self.__dict__.get("_labels", {}).pop((conn, sub_id), None)
 
     def remove_conn(self, conn) -> None:
+        for sid in list(self._subs.get(conn, {})):
+            self.__dict__.get("_labels", {}).pop((conn, sid), None)
         self._subs.pop(conn, None)
 
     def count(self, conn) -> int:
@@ -404,6 +409,8 @@ class SubscriptionManager:
         `lambda conn, ev: True` and says so out loud."""
         tags: dict = {}                    # this event's tag values, shared by every filter below
         stale = _stale_for_feeds(ev)
+        labels = self.__dict__.get("_labels", {})
+        by = self.__dict__.setdefault("fanout_by", {})  # WHICH subscriptions live delivery goes to (the cost line)
         for conn, subs in list(self._subs.items()):
             if not allow(conn, ev):
                 continue
@@ -412,6 +419,9 @@ class SubscriptionManager:
                     continue
                 if _matches(filters, ev, tags):
                     self.fanout_frames += 1
+                    lab = labels.get((conn, sub_id))
+                    if lab:
+                        by[lab] = by.get(lab, 0) + 1
                     send(conn, ["EVENT", sub_id, ev])
 
 
@@ -906,6 +916,12 @@ class RelayServer:
             logger.info("[nostr-relay] cost: top answers -- %s", "; ".join(
                 "%s x%d -> %d frames" % (k, n, f) for k, (n, f) in top))
             self._req_cost = {}
+        # ...and where the LIVE delivery goes: 1,900 frames/s of it on 2026-10-17 with nothing to say to whom.
+        fb = getattr(subs, "fanout_by", None) if subs is not None else None
+        if isinstance(fb, dict) and fb:
+            top = sorted(fb.items(), key=lambda kv: -kv[1])[:5]
+            logger.info("[nostr-relay] cost: top live delivery -- %s", "; ".join("%s -> %d frames" % kv for kv in top))
+            fb.clear()
 
     # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
     # cure from becoming the disease (see _note_refused).
@@ -2297,7 +2313,7 @@ class RelayServer:
                 for dev in reversed(found):
                     self._send(conn, ["EVENT", sub_id, dev])
                 self._send(conn, ["EOSE", sub_id])
-                self.subs.add(conn, sub_id, filters)
+                self.subs.add(conn, sub_id, filters, self._req_origin(conn, sub_id) + " " + self._req_shape(filters))
                 return
             # A REGISTERED Concord stream this node is not in step with: "could not ask", never EOSE.
             _why = _m.req_refusal(filters, partial=str(sub_id).startswith(getattr(_m, "PARTIAL_SUB_PREFIX", "\0")))
@@ -2347,7 +2363,7 @@ class RelayServer:
                                   "auth-required: private repositories need AUTH as a maintainer or reader"])
                 return
         self._send(conn, ["EOSE", sub_id])
-        self.subs.add(conn, sub_id, filters)
+        self.subs.add(conn, sub_id, filters, self._req_origin(conn, sub_id) + " " + self._req_shape(filters))
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
