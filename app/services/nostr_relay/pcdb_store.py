@@ -269,6 +269,8 @@ class PcdbRelayStore(RelayStore):
             self._gov.stop(timeout=1.0)
         self._write_exec.shutdown(wait=True)
         self._scan_exec.shutdown(wait=True)
+        if getattr(self, "_memo_dirty", False):
+            self._save_scan_memos()             # the progress an hourly save held back
         self._read_exec.shutdown(wait=False)
         if self.store is not None:
             # The store checkpoints at close: it writes only what changed (checkpoint.py), well inside systemd's 10 s.
@@ -740,8 +742,30 @@ class PcdbRelayStore(RelayStore):
             m = memos[name] = {"key": key, "hi": 0, "anchor": None, "hits": {}}
         return m
 
+    # THE MEMO IS PROGRESS, NOT TRUTH, so it is written at most once an hour (and at a clean stop): a stale one only
+    # means a longer rescan after a crash. It was rewritten WHOLE -- 43.5 MB on server1, every historic hit -- on every
+    # incremental pass, the largest single term in the relay's ~5 GB/day of SSD writes (2026-10-18). Hits whose events
+    # have since died are dropped on save, so it stops growing for ever.
+    SCAN_MEMO_EVERY = 3600.0
+
+    def _save_scan_memos_soon(self) -> None:
+        if time.monotonic() - getattr(self, "_memo_saved_at", -1e12) >= self.SCAN_MEMO_EVERY:
+            self._save_scan_memos()
+        else:
+            self._memo_dirty = True
+
     def _save_scan_memos(self) -> None:
+        self._memo_saved_at = time.monotonic()
+        self._memo_dirty = False
         memos = getattr(self, "_memos", None) or {}
+        st = self.store
+        if st is not None:
+            with st._lock:
+                n = len(st.off)
+                for m in memos.values():
+                    hits = m.get("hits") or {}
+                    for k in [k for k in hits if k >= n or st.dead[k] or st.seg[k] == DROPPED]:
+                        hits.pop(k, None)
         path = os.path.join(self.path, self._SCAN_MEMO)
         tmp = path + ".tmp"
         try:
@@ -765,7 +789,7 @@ class PcdbRelayStore(RelayStore):
                     hits[s] = v
             self._decode(select(lo, hi), _check)
             m["hi"], m["anchor"] = hi, self.store._id_hex(hi - 1)
-            self._save_scan_memos()
+            self._save_scan_memos_soon()
         return self._live_hits(hits)
 
     def _bridged_pubkeys_sync(self, domains) -> set:

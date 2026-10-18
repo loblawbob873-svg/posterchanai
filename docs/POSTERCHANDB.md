@@ -168,6 +168,11 @@ Things that keep it that way:
 - **Replaceable churn does not rewrite anything.** A settings document saved 100 times is 100 appended
   records with 99 dead bits — reclaimed in bulk by compaction, not in place.
 - **No double-write.** The log IS the data; there is no separate WAL plus heap plus index pages.
+- **Progress files are saved hourly, never per pass.** The relay's bridge/mirror scans keep their progress in
+  `scan-memo.json`; it was rewritten WHOLE (43.5 MB on server1, every historic hit) on every incremental pass,
+  i.e. on every reload-blocks (2026-10-18). It is now saved at most once an hour and at a clean stop, and hits whose
+  events have died are dropped on save so it stops growing. A stale memo only means a longer rescan after a crash.
+  `tests/test_pcdb_scan_memo_writes.py`.
 
 
 ## How the database cleans itself (and when)
