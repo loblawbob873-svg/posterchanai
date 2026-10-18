@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+import time
 from datetime import datetime, timedelta
 
 from app.services import table_migrate as tm
@@ -382,9 +383,54 @@ def _blocking(coro):
     return doc_table._run(coro)
 
 
+# A SMALL CACHE IN FRONT OF THE LEDGER. The worker's delivery pass re-reads its window every tick and asks about the
+# same events again and again, and the outbox catch-up re-checks posts it already stored: ~25,000 ledger point reads
+# per 5 minutes reached the relay on production (2026-10-17) -- two relay reads each. Ledger rows are only ever ADDED
+# (a delete is a forget/prune, which clears this), so a POSITIVE answer is safe to keep. A NEGATIVE one is kept only
+# where it is about something recorded long ago (a referenced event, `_NEG_TTL`) -- never for the inbox's dedup, where
+# "not yet" turns into "yes" a moment later. "Could not ask" raises and is never cached.
+_POS_TTL, _NEG_TTL, _CACHE_MAX = 600.0, 120.0, 50000
+_cache: dict = {}
+
+
+def _ck(key):
+    from app.services import doc_table
+    return (doc_table.NS,) + tuple(key)     # one table namespace's answers are never another's
+
+
+def _cget(key):
+    key = _ck(key)
+    hit = _cache.get(key)
+    if hit is None:
+        return False, None
+    if hit[0] < time.monotonic():
+        _cache.pop(key, None)
+        return False, None
+    return True, hit[1]
+
+
+def _cput(key, value, ttl: float) -> None:
+    key = _ck(key)
+    if len(_cache) >= _CACHE_MAX:
+        _cache.clear()
+    _cache[key] = (time.monotonic() + ttl, value)
+
+
+def forget_cached() -> None:
+    _cache.clear()
+
+
 async def adelivered_by_uri(uri: str) -> Row | None:
     """The first ledger row for a note URI, or None. Raises Unavailable ("could not ask" is never "new")."""
-    return _earliest(await _arows_by_uri(uri)) if uri else None
+    if not uri:
+        return None
+    ok, row = _cget(("uri", uri))
+    if ok:
+        return row
+    row = _earliest(await _arows_by_uri(uri))
+    if row is not None:
+        _cput(("uri", uri), row, _POS_TTL)          # positive only: a new note must be seen the moment it is recorded
+    return row
 
 
 def delivered_by_uri(uri: str) -> Row | None:
@@ -393,7 +439,14 @@ def delivered_by_uri(uri: str) -> Row | None:
 
 async def adelivered_by_event(eid: str) -> Row | None:
     """The row of the mirrored fediverse note stored as event `eid` (rows with a note URI only), or None."""
-    return _earliest(await _arows_by_events([eid])) if eid else None
+    if not eid:
+        return None
+    ok, row = _cget(("eid", eid))
+    if ok:
+        return row
+    row = _earliest(await _arows_by_events([eid]))
+    _cput(("eid", eid), row, _POS_TTL if row is not None else _NEG_TTL)
+    return row
 
 
 def delivered_by_event(eid: str) -> Row | None:
@@ -407,7 +460,20 @@ async def adelivered(platform: str, instance_url: str, note_id: str) -> bool:
 
 async def amirrored_among(event_ids) -> set:
     """Which of these event ids are notes mirrored from the fediverse (a ledger row WITH a note URI)."""
-    return {r.get("nostr_event_id") for _k, r in await _arows_by_events(event_ids)}
+    ids = {e for e in event_ids if e}
+    out, ask = set(), []
+    for e in ids:
+        ok, yes = _cget(("mir", e))
+        if not ok:
+            ask.append(e)
+        elif yes:
+            out.add(e)
+    if ask:
+        found = {r.get("nostr_event_id") for _k, r in await _arows_by_events(ask)}
+        for e in ask:
+            _cput(("mir", e), e in found, _POS_TTL if e in found else _NEG_TTL)
+        out |= found
+    return out
 
 
 def mirrored_among(event_ids) -> set:
@@ -426,6 +492,8 @@ async def arecord(*, platform: str, instance_url: str, note_id: str, nostr_event
     k = ledger_key(platform, instance_url, note_id)
     await _aindex_add(k, row)
     await DocTable(LEDGER).aput(k, row)
+    for key in (("uri", note_uri), ("eid", nostr_event_id), ("mir", nostr_event_id)):
+        _cache.pop(_ck(key), None)                      # this process's own "no" about it is over
 
 
 def record(**kw) -> None:
@@ -442,6 +510,7 @@ def forget_uri(uri: str) -> int:
 async def _adrop(k: str, row: dict) -> None:
     await _aindex_drop(k, row)
     await DocTable(LEDGER).adelete(k)
+    _cache.clear()                                      # rare (a deletion, the daily prune): start clean
 
 
 async def aforget_uri(uri: str) -> int:

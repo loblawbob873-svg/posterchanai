@@ -147,7 +147,7 @@ async def _forwarded_delete(object_id: str) -> str:
     Tombstone) is the proof, and the stored copy goes. Answered 401, the forwarder retried for days."""
     if not object_id:
         return "ignored: forwarded nothing"
-    row = await asyncio.to_thread(_delivered, object_id)
+    row = await _adelivered(object_id)
     if not row:
         return "ignored: nothing stored for that"
     author = await asyncio.to_thread(_actor_of_puppet, row.nostr_pubkey or "")
@@ -572,6 +572,27 @@ def _record(uri: str, event_id: str, pubkey: str, acct: str = "") -> None:
         logger.warning("[activitypub] dedup row for %s not saved: %s", remote.host_of(uri), type(e).__name__)
 
 
+# THE ASYNC TWINS, for every call from this (async) module. The sync helpers above run under `asyncio.to_thread`, and
+# DocTable's sync bridge drives each call on a BRAND-NEW event loop -- so every dedup check opened its own relay
+# connection and signed a fresh NIP-42 AUTH for the relay to verify. Production 2026-10-17: ~4,700 such lookups a
+# minute from this process were the relay's top cost ("relay is still using a ton of CPU"). On the app's own loop they
+# share the pooled, already-authenticated connection.
+async def _adelivered(uri: str):
+    from app.services import fedi_tables
+    return await fedi_tables.adelivered_by_uri(uri) if uri else None
+
+
+async def _arecord(uri: str, event_id: str, pubkey: str, acct: str = "") -> None:
+    from app.services import fedi_tables
+    try:
+        if not await fedi_tables.adelivered_by_uri(uri):
+            await fedi_tables.arecord(platform="activitypub", instance_url=_origin(uri), note_id=uri[:255],
+                                      note_uri=uri[:512], author_acct=(acct or None),
+                                      nostr_event_id=event_id, nostr_pubkey=pubkey)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("[activitypub] dedup row for %s not saved: %s", remote.host_of(uri), type(e).__name__)
+
+
 async def _event(event_id: str) -> dict | None:
     from app.services.fedi_bridge_identity import query_one
     ok, ev = await query_one(_port(), {"ids": [event_id], "limit": 1})
@@ -584,7 +605,7 @@ async def _target(uri: str) -> tuple[str, str]:
     if eid:
         ev = await _event(eid)
         return (eid, ev.get("pubkey", "")) if ev else ("", "")
-    row = await asyncio.to_thread(_delivered, uri)
+    row = await _adelivered(uri)
     return (row.nostr_event_id, row.nostr_pubkey or "") if row else ("", "")
 
 
@@ -602,7 +623,7 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
         return "ignored: blocked account"
     if not convert.is_public(note):
         return "ignored: not public"
-    if await asyncio.to_thread(_delivered, uri):
+    if await _adelivered(uri):
         return "already stored"
     local = actors.local_actor_map()
     # A POLL becomes a NIP-88 poll (kind 1068) that Nostr users can vote in -- their votes go back to
@@ -685,7 +706,7 @@ async def store_note(note: dict, author: str, *, need_gate: bool, depth: int = 0
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    await asyncio.to_thread(_record, uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _arecord(uri, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     if reply_to and not parent_id:
         await _queue_orphan(note, author, uri, reply_to)
@@ -725,7 +746,7 @@ async def relink_orphans(limit: int = 20, now: int | None = None) -> dict:
     due = sorted((o for o in queue.values() if int(o.get("next") or 0) <= now), key=lambda o: o.get("next") or 0)
     for o in due[:limit]:
         uri, reply_to, author, note = o["uri"], o["reply_to"], o.get("author") or "", o["note"]
-        row = await asyncio.to_thread(_delivered, uri)
+        row = await _adelivered(uri)
         if not row:                  # the reply itself was deleted or pruned since
             await state.drop_orphan(uri)
             continue
@@ -761,7 +782,7 @@ async def relink_orphans(limit: int = 20, now: int | None = None) -> dict:
             result = await store_note(note, author, need_gate=False)
         finally:
             if result != "stored":
-                await asyncio.to_thread(_record, uri, old, row.nostr_pubkey or "", old_acct)
+                await _arecord(uri, old, row.nostr_pubkey or "", old_acct)
         if result != "stored":
             logger.info("[activitypub] orphan %s not re-threaded: %s", remote.host_of(uri), result)
             continue
@@ -893,7 +914,7 @@ async def _announce(activity: dict, signer: str) -> str:
         return "ignored: activity id is not the sender's"
     if not convert.is_public(activity):
         return "ignored: not public"
-    if await asyncio.to_thread(_delivered, act_id):
+    if await _adelivered(act_id):
         return "already stored"
     obj = activity.get("object")
     # FEP-1b12: a GROUP (a Lemmy community, a Guppe group) relays its members' posts as an Announce of
@@ -926,7 +947,7 @@ async def _announce(activity: dict, signer: str) -> str:
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    await asyncio.to_thread(_record, act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _arecord(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "boost stored"
 
@@ -939,7 +960,7 @@ async def _like(activity: dict, signer: str) -> str:
     eid, pk = await _target(convert.id_of(activity.get("object")))
     if not eid or not (actors.is_actor(pk) or await actors.exposed(pk)):
         return "ignored: like of something that is not ours"
-    if await asyncio.to_thread(_delivered, act_id):
+    if await _adelivered(act_id):
         return "already stored"
     puppet = await _puppet(await remote.actor(signer))
     if not puppet:
@@ -964,7 +985,7 @@ async def _like(activity: dict, signer: str) -> str:
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    await asyncio.to_thread(_record, act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
+    await _arecord(act_id, ev["id"], ev["pubkey"], puppet.get("acct", ""))
     await _reach_nostr_users(ev, puppet)
     return "like stored"
 
@@ -981,7 +1002,7 @@ async def _edit(obj: dict, signer: str) -> str:
     if convert.id_of(note.get("attributedTo")) != signer:
         return "ignored: edit for somebody else"
     uri = convert.id_of(note)
-    row = await asyncio.to_thread(_delivered, uri)
+    row = await _adelivered(uri)
     if not row:
         return "ignored: edit of a note not stored here"
     author = await _author_of(row, signer)
@@ -1006,7 +1027,7 @@ async def _edit(obj: dict, signer: str) -> str:
         if result != "stored":
             # Put the old copy's mapping back -- on a refusal AND on a failure or a timeout, or the
             # old post could never be deleted and a re-delivered Create would store a duplicate.
-            await asyncio.to_thread(_record, uri, old, row.nostr_pubkey or "", old_acct)
+            await _arecord(uri, old, row.nostr_pubkey or "", old_acct)
     if result != "stored":
         return f"edit not stored: {result}"
     await delete_note(_port(), author, old, broadcast=config.broadcast())
@@ -1077,7 +1098,7 @@ async def _delete(uri: str, signer: str, *, undo: bool = False) -> str:
     any account on an instance would otherwise delete its neighbours' posts. The stored event's
     puppet is mapped back to the actor it was derived from, and that must be the signer."""
     from app.services.fedi_bridge_identity import delete_note
-    row = await asyncio.to_thread(_delivered, uri)
+    row = await _adelivered(uri)
     if not row:
         return "ignored: nothing stored for that"
     author = await _author_of(row, signer)
@@ -1122,7 +1143,7 @@ async def _vote(note: dict, signer: str) -> str:
     oid = next((o for o, l in convert.poll_options(poll) if l == label), "")
     if not oid:
         return "ignored: no such option"
-    if await asyncio.to_thread(_delivered, vote_uri):
+    if await _adelivered(vote_uri):
         return "already stored"
     voter = puppet_from_actor(_voter_anchor(convert.object_url(config.base_url(), eid), signer))
     chosen = [oid]
@@ -1142,7 +1163,7 @@ async def _vote(note: dict, signer: str) -> str:
     ok, msg = await publish(_port(), ev)
     if not ok:
         return f"relay refused: {msg}"
-    await asyncio.to_thread(_record, vote_uri, ev["id"], ev["pubkey"], "")
+    await _arecord(vote_uri, ev["id"], ev["pubkey"], "")
     try:
         who = await remote.actor(signer)
         inbox_url = remote.inbox_of(who)

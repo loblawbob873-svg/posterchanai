@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -438,13 +439,70 @@ class PcdbRelayStore(RelayStore):
         if self._writes_closed:
             return False
         try:
-            ok = self._put(ev, origin)
-            if origin == "direct":
-                self.store.sync()            # the relay is about to tell the author "saved"
-            return ok
+            return self._put(ev, origin)     # durable before "saved" is said: add_event's group sync
         except Exception as e:      # noqa: BLE001 -- one malformed event costs only itself
             logger.warning("[nostr-relay] add_event %s failed: %s", str(ev.get("id", ""))[:12], e)
             return False
+
+    # GROUP COMMIT. A direct write (a person publishing) is fsynced before the relay says "saved" -- and that fsync
+    # ran on the ONE writer thread, per event, so the relay could take at most one direct write per fsync and every
+    # other write queued behind it. Load test 2026-10-17 (400 clients, ~13 posts/s): 25 s median and 50 s p99 to
+    # the OK, and each client's next REQ waited behind its own publish. Now the writer only stores; a syncer thread
+    # makes everything written so far durable with ONE fsync and releases every author waiting on it.
+    _group_durable = True
+
+    async def add_event(self, ev: dict, origin: str = "wot") -> bool:
+        if not self._admitted(ev):
+            return False
+        ok = await self._w(self._add_event_sync, ev, origin)
+        if ok and origin == "direct" and self._group_durable:
+            return await self._durable()
+        return ok
+
+    async def _durable(self) -> bool:
+        """Resolve once a sync that STARTED after this call has finished (it then covers every write before it)."""
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        with self._sync_cv():
+            self._sync_waiters.append((loop, fut))
+            if self._syncer is None or not self._syncer.is_alive():
+                self._syncer = threading.Thread(target=self._sync_loop, name="relay-pcdb-sync", daemon=True)
+                self._syncer.start()
+            self._sync_cond.notify()
+        return await fut
+
+    _syncer = None
+
+    def _sync_cv(self):
+        if not hasattr(self, "_sync_cond"):
+            self._sync_cond = threading.Condition()
+            self._sync_waiters = []
+        return self._sync_cond
+
+    def _sync_loop(self) -> None:
+        cv = self._sync_cv()
+        while True:
+            with cv:
+                while not self._sync_waiters:
+                    if self._stop.is_set():
+                        return
+                    cv.wait(1.0)
+                batch, self._sync_waiters = self._sync_waiters, []
+            ok = True
+            try:
+                if not self._writes_closed:
+                    self.store.sync()
+            except Exception as e:      # noqa: BLE001 -- every author in this batch is told it was not saved
+                logger.warning("[nostr-relay] group sync of %d write(s) failed: %s", len(batch), e)
+                ok = False
+            for loop, fut in batch:
+                def _set(f=fut, v=ok):
+                    if not f.done():
+                        f.set_result(v)
+                try:
+                    loop.call_soon_threadsafe(_set)
+                except RuntimeError:            # that loop is closed: nobody is waiting any more
+                    pass
 
     def _add_events_bulk_sync(self, events: list, origin: str) -> int:
         if self._writes_closed:

@@ -127,3 +127,39 @@ def test_forget_and_prune_keep_the_index_in_step(world):
 
 def test_the_index_table_name_is_the_shipped_one():
     assert fedi_tables.INDEX == INDEX
+
+
+def test_repeated_questions_reach_the_relay_once_and_a_new_row_is_seen_at_once(world, monkeypatch):
+    """~25,000 ledger point reads per 5 minutes reached production's relay (2026-10-17): the delivery pass asks about
+    the same events every tick. Positive answers are kept; a negative one only where it is about something old; a
+    row this process records is visible the moment it is written; the inbox's dedup never keeps a "no"."""
+    _index_complete(world["mem"])
+    fedi_tables.forget_cached()
+    reads = []
+    real = DocTable.aget_many
+
+    async def counting(self, keys):
+        reads.append(self.name)
+        return await real(self, keys)
+    monkeypatch.setattr(DocTable, "aget_many", counting)
+    eid = "e" * 64
+    run(fedi_tables.arecord(platform="activitypub", instance_url="https://mastodon.example", note_id=URI,
+                            note_uri=URI, nostr_event_id=eid, nostr_pubkey="p" * 64))
+    reads.clear()
+    for _ in range(10):
+        assert run(fedi_tables.amirrored_among([eid])) == {eid}
+        assert run(fedi_tables.adelivered_by_uri(URI)).nostr_event_id == eid
+    assert len(reads) <= 3, ("the same questions went to the relay every time", len(reads))   # each asked once
+    # a "no" about a referenced event is kept briefly -- and dropped the moment this process records the row
+    other = "f" * 64
+    assert run(fedi_tables.amirrored_among([other])) == set()
+    run(fedi_tables.arecord(platform="activitypub", instance_url="https://mastodon.example", note_id=URI + "x",
+                            note_uri=URI + "x", nostr_event_id=other, nostr_pubkey="p" * 64))
+    assert run(fedi_tables.amirrored_among([other])) == {other}, "a cached 'no' hid a row this process just wrote"
+    # the inbox dedup never caches a "no": a note recorded by ANOTHER process is seen at once
+    new = "https://mastodon.example/notes/new"
+    assert run(fedi_tables.adelivered_by_uri(new)) is None
+    world["mem"].put(fedi_tables.LEDGER, fedi_tables.ledger_key("activitypub", "https://mastodon.example", new),
+                     {"platform": "activitypub", "instance_url": "https://mastodon.example", "note_id": new,
+                      "note_uri": new, "nostr_event_id": "a" * 64, "created_at": "2026-10-17T00:00:00"})
+    fedi_tables.forget_cached()   # the index entry is what another process writes; the point is only "no" was not kept

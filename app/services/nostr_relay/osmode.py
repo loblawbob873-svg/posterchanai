@@ -290,6 +290,8 @@ class OsCacheStore(PcdbRelayStore):
         os.replace(p + ".json.tmp", p + ".json")
 
     # ------------------------------------------------------------ writes: no fsync per event
+    _group_durable = False          # a cache of signed copies: nothing here waits for a disk
+
     def _add_event_sync(self, ev: dict, origin: str) -> bool:
         if self._writes_closed:
             return False

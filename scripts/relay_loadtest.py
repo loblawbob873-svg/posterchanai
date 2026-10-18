@@ -76,15 +76,26 @@ async def _req(ws, filters, st: Stats, live=False, what="?"):
     sid = "lt%08x" % random.getrandbits(32)
     t0 = time.monotonic()
     await ws.send(json.dumps(["REQ", sid, *filters]))
+    first, mine, other = None, 0, 0
     while True:
         m = json.loads(await asyncio.wait_for(ws.recv(), 30))
         st.frames += 1
+        if m[0] == "EVENT" and m[1] == sid:
+            mine += 1
+            if first is None:
+                first = time.monotonic() - t0
+        elif m[0] != "EOSE":
+            other += 1
         if m[0] == "EOSE" and m[1] == sid:
             break
         if m[0] == "CLOSED" and m[1] == sid:
             st.errors += 1
             break
     st.lat.append((time.monotonic() - t0) * 1000)
+    if st.lat[-1] > 5000 and len(getattr(st, "slow", [])) < 8:
+        st.__dict__.setdefault("slow", []).append(
+            "%s %.1fs: first own event at %s, own events %d, other frames meanwhile %d" % (
+                what, st.lat[-1] / 1000, "%.1fs" % first if first is not None else "never", mine, other))
     st.by.setdefault(what, []).append(st.lat[-1])
     st.reqs += 1
     if not live:
@@ -117,7 +128,14 @@ async def client(port: int, authors: list, st: Stats, stop: asyncio.Event):
                     next_feed = now + 20
                 elif now >= next_post:
                     ev = build_event(sk, 1, "load test %d" % random.getrandbits(32), [])
+                    t0 = time.monotonic()
                     await ws.send(json.dumps(["EVENT", ev]))
+                    while True:                         # the OK: how long a publish holds this connection
+                        m = json.loads(await asyncio.wait_for(ws.recv(), 60))
+                        st.frames += 1
+                        if m[0] == "OK" and m[1] == ev["id"]:
+                            break
+                    st.by.setdefault("publish-ok", []).append((time.monotonic() - t0) * 1000)
                     next_post = now + 30
                 else:
                     try:
@@ -166,6 +184,8 @@ async def load(port: int, steps: list, seconds: float) -> None:
         print("%7d  %8.0f%%  %5.0f  %5.0f  %6.1f  %8.0f  %6d" % (
             n, cpu, statistics.median(lat), lat[int(len(lat) * 0.99) - 1 if len(lat) > 1 else 0],
             st.reqs / seconds, st.frames / seconds, st.errors), flush=True)
+        for line in getattr(st, "slow", []):
+            print("         slow:", line, flush=True)
         for what, xs in sorted(st.by.items()):
             xs = sorted(xs)
             print("         %-16s n=%-5d p50 %5.0f ms  p99 %6.0f ms  max %6.0f ms" % (

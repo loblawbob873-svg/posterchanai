@@ -185,3 +185,14 @@ def _searxng_settings_are_a_copy(tmp_path_factory):
             os.environ["SEARXNG_SETTINGS_PATH"] = old
         assert live.read_bytes() == before, (
             "the test suite rewrote this node's searxng/settings.yml — see this fixture")
+
+
+@pytest.fixture(autouse=True)
+def _fedi_ledger_cache_is_per_test():
+    """fedi_tables keeps ledger answers in-process (a production cache); tests reuse table namespaces, so one test's
+    answers must not become the next one's."""
+    import sys
+    m = sys.modules.get("app.services.fedi_tables")
+    if m is not None and hasattr(m, "forget_cached"):
+        m.forget_cached()
+    yield
