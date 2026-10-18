@@ -161,17 +161,34 @@ install -m 0755 "$(dirname "$SRC")/../scripts/publish_r2.py" \
 # firefox-theme-v<version>. Missing or unsigned is a NOTE, not a failure: the ebuild then installs
 # the plain policies and every other part of the session still updates.
 THEME_BUILD="$(dirname "$SRC")/firefox-theme/build.py"
-THEME_XPI=$(python3 "$THEME_BUILD" --name)
-THEME_VER=${THEME_XPI#posterchan-cyberpunk-}; THEME_VER=${THEME_VER%.xpi}
-THEME_URL="${THEME_URL_BASE:-https://github.com/loblawbob873-svg/posterchanai/releases/download}/firefox-theme-v${THEME_VER}/${THEME_XPI}"
+THEME_BASE="${THEME_URL_BASE:-https://github.com/loblawbob873-svg/posterchanai/releases/download}"
+THEME_API="${THEME_API:-https://api.github.com/repos/loblawbob873-svg/posterchanai/releases?per_page=100}"
+# The manifest's version first; while it waits for Mozilla (a LISTED version is signed only after a human review,
+# which took days for 1.1.0), the newest version that IS signed -- never no theme at all because the next one is
+# in review. Versions newest-first from the release tags.
+THEME_WANT=$(python3 "$THEME_BUILD" --name); THEME_WANT=${THEME_WANT#posterchan-cyberpunk-}; THEME_WANT=${THEME_WANT%.xpi}
+THEME_OLDER=$(curl -fsSL --retry 2 --max-time 60 "$THEME_API" 2>/dev/null | python3 -c '
+import json, re, sys
+try:
+    tags = [r.get("tag_name", "") for r in json.load(sys.stdin)]
+except ValueError:
+    tags = []
+vs = {m.group(1) for t in tags for m in [re.fullmatch(r"firefox-theme-v(\d+(?:\.\d+)*)", t)] if m}
+print(" ".join(sorted(vs, key=lambda v: [int(x) for x in v.split(".")], reverse=True)))' || true)
 rm -f "$TMP/app-misc/posterchanos-shell/files/"posterchan-cyberpunk-*.xpi
-THEME_DL="$(mktemp)"
-if curl -fsSL --retry 2 --max-time 120 -o "$THEME_DL" "$THEME_URL" && python3 "$THEME_BUILD" --signed "$THEME_DL"; then
-    install -m 0644 "$THEME_DL" "$TMP/app-misc/posterchanos-shell/files/$THEME_XPI"
-    echo "[overlay] Firefox theme: $THEME_XPI (signed)"
-else
-    echo "[overlay] NOTE: no SIGNED $THEME_XPI at $THEME_URL — shipping without the Firefox theme" >&2
-fi
+THEME_DL="$(mktemp)"; THEME_OK=""
+for THEME_VER in $THEME_WANT $THEME_OLDER; do
+    THEME_XPI="posterchan-cyberpunk-${THEME_VER}.xpi"
+    THEME_URL="$THEME_BASE/firefox-theme-v${THEME_VER}/${THEME_XPI}"
+    if curl -fsSL --retry 2 --max-time 120 -o "$THEME_DL" "$THEME_URL" && python3 "$THEME_BUILD" --signed "$THEME_DL"; then
+        install -m 0644 "$THEME_DL" "$TMP/app-misc/posterchanos-shell/files/$THEME_XPI"
+        if [ "$THEME_VER" = "$THEME_WANT" ]; then echo "[overlay] Firefox theme: $THEME_XPI (signed)"
+        else echo "[overlay] Firefox theme: $THEME_XPI (signed) -- $THEME_WANT is not signed yet"; fi
+        THEME_OK=1
+        break
+    fi
+done
+[ -n "$THEME_OK" ] || echo "[overlay] NOTE: no SIGNED Firefox theme (wanted $THEME_WANT) — shipping without the Firefox theme" >&2
 rm -f "$THEME_DL"
 # <<< firefox theme
 

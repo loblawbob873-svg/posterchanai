@@ -186,7 +186,9 @@ class Unlisted(Publish):
         wf = (ROOT / ".github/workflows/firefox-theme.yml").read_text()
         self.assertIn("os/firefox-theme/amo-channel", wf)
         self.assertIn('--channel "${ch:-listed}"', wf)
-        self.assertEqual((ROOT / "os/firefox-theme/amo-channel").read_text().strip(), "unlisted")
+        # Either is safe now: while a LISTED version waits for review, publish_overlay.sh ships the newest signed
+        # one (tests/test_firefox_theme.py::...while_the_next_is_in_review), so PosterChanOS never goes without.
+        self.assertIn((ROOT / "os/firefox-theme/amo-channel").read_text().strip(), ("listed", "unlisted"))
 
 
 def test_older_theme_releases_are_retired_only_after_the_new_one_is_published(tmp_path):

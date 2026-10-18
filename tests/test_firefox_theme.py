@@ -382,6 +382,20 @@ class ThePackage(unittest.TestCase):
         self.assertEqual(files, [])
         self.assertIn("shipping without the Firefox theme", r.stderr)
 
+    def test_publish_ships_the_newest_signed_theme_while_the_next_is_in_review(self):
+        """A LISTED version waits days for Mozilla's human review (1.1.0 did). Until it is signed the overlay must
+        ship the newest version that IS signed -- not no theme, and not an older one than that."""
+        signed = self._signed_zip()
+        api = json.dumps([{"tag_name": t} for t in ("desktop-v1.0.1952", "firefox-theme-v1.0.0",
+                                                    "firefox-theme-v1.1.2", "firefox-theme-v1.1.10")])
+        want = MANIFEST["version"]
+        files, r = self._publish_block(
+            'out=""; url=""; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift;; http*) url=$1;; esac; shift; done\n'
+            'case "$url" in *api.github.com*) echo \'%s\';; *v%s/*) exit 22;; *v1.1.10/*) cp "%s" "$out";; *) exit 22;; esac\n'
+            % (api, want, signed))
+        self.assertEqual(files, ["posterchan-cyberpunk-1.1.10.xpi"])
+        self.assertIn("%s is not signed yet" % want, r.stdout)
+
     def test_a_theme_change_triggers_an_overlay_publish(self):
         sync = (ROOT / "sync.sh").read_text(encoding="utf-8")
         self.assertIn("firefox-theme/", re.search(r"grep -qE '\^os/\(([^)]*)\)'", sync).group(1))
