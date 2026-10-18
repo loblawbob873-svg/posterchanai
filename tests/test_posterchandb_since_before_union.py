@@ -48,3 +48,34 @@ def test_since_cuts_the_postings_before_the_union_and_the_answer_is_the_same(tmp
                and e["created_at"] >= f.get("since", 0) and e["created_at"] <= f.get("until", 1 << 62)}
         assert {e["id"] for e in st.query(f)} == exp
     st.close()
+
+
+def test_a_follows_last_week_sync_sorts_only_last_week(tmp_path, monkeypatch):
+    """NEG-OPEN from a PosterChanOS local relay: {"authors": <follows>, "since": a week ago} -- exhaustive, so it used
+    to union every followed author's entire history before `since` dropped nearly all of it (~9% of relay CPU)."""
+    st = Store(str(tmp_path), flush_interval=3600, direct_durable=False)
+    r = random.Random(9)
+    authors = ["%064x" % (i + 7) for i in range(10)]
+    base = 1_700_000_000
+    evs = []
+    for i in range(8000):
+        t = base + i * 600 if i < 7980 else base + 8000 * 600 + r.randrange(60)
+        e = mk(kind=r.choice([1, 6, 7]), pubkey=r.choice(authors), created_at=t, content="a%d" % i)
+        st.put(e, origin="wot")
+        evs.append(e)
+    since = base + 8000 * 600
+    seen = []
+    real = S._union
+
+    def spy(arrs):
+        arrs = list(arrs)
+        seen.append(sum(len(a) for a in arrs))
+        return real(arrs)
+    monkeypatch.setattr(S, "_union", spy)
+    for flt in ({"authors": authors, "since": since}, {"authors": authors, "kinds": [1, 6, 7], "since": since}):
+        seen.clear()
+        got = st.match(flt)
+        want = sorted(st.seq_of(e["id"]) for e in evs if e["created_at"] >= since)
+        assert [int(x) for x in got] == want
+        assert max(seen) <= 100, "the union was handed %d postings to keep %d" % (max(seen), len(want))
+    st.close()
