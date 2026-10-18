@@ -683,6 +683,65 @@ class Leveled:
         if self.dir and self.runs and self.runs[-1].name is None and self._size(self.runs[-1]) >= self.seal_at:
             self.runs[-1] = self._seal(self.runs[-1])
 
+    def take_delta(self) -> None:
+        """Under the store lock: what arrived since the last flush becomes a RAM run at the end (a sort of the new
+        postings only -- cheap). The cascade and the seal that `merge` also does are `compact_ram`'s, off the lock."""
+        if self._has_delta():
+            r = self._delta_run()
+            self._clear_delta()
+            if self._size(r):
+                self.runs.append(r)
+
+    def compact_ram(self, lock, live=None) -> None:
+        """`merge`'s RAM-run cascade and its seal, WITHOUT holding `lock` while merging or writing: each step picks
+        under the lock, works on runs nothing mutates, and swaps the result in only if its inputs are still where they
+        were (the `disk_merge` rule). Under the lock the whole of it -- a merge of runs up to `seal_at` and, past
+        that, a run WRITTEN TO DISK -- blocked every reader: a load test (2026-10-17, 400 clients on a copy of
+        poster.place's store) measured timeline answers of 32 ms median and 45-53 s at the 99th percentile while
+        the relay sat at a quarter of a core, every query waiting behind the flush."""
+        def locked_live(x):
+            if live is None:
+                return np.ones(len(x), dtype=bool)
+            with lock:
+                return live(x)
+        while True:
+            with lock:
+                if not (len(self.runs) > 1 and self.runs[-1].name is None and self.runs[-2].name is None
+                        and self._size(self.runs[-1]) * self.RATIO >= self._size(self.runs[-2])):
+                    break
+                a, b = self.runs[-2], self.runs[-1]
+            out = self._merge(a, b, RunSink(self.dtypes), locked_live)
+            with lock:
+                for i in range(len(self.runs) - 1):
+                    if self.runs[i] is a and self.runs[i + 1] is b:
+                        self.runs[i:i + 2] = [out]
+                        self._changed()
+                        break
+                else:
+                    return                    # a checkpoint or another flush rearranged them: their result stands
+        if not self.dir:
+            return
+        with lock:
+            if not (self.runs and self.runs[-1].name is None and self._size(self.runs[-1]) >= self.seal_at):
+                return
+            r = self.runs[-1]
+            name = self._new_name()
+            self.pending.add(name)
+        try:
+            sealed = write_run(r, self.dtypes, self.dir, name)
+        except BaseException:
+            with lock:
+                self.pending.discard(name)
+            raise
+        with lock:
+            self.pending.discard(name)
+            for i, x in enumerate(self.runs):
+                if x is r:
+                    self.runs[i] = sealed
+                    self._changed()
+                    return
+            self.garbage.append(name)       # sealed meanwhile by a checkpoint: this copy is swept
+
     def seal_all(self, live=None) -> None:
         """Checkpoint: every RAM run merged into one and written out (under the store lock)."""
         self.merge(live)

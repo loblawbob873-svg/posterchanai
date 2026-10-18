@@ -872,13 +872,29 @@ class Store:
         self._file = open(self._seg_path(self._active), "ab")
 
     def flush(self) -> int:
-        """Write everything buffered to the active segment and fsync. Returns records written."""
+        """Write everything buffered to the active segment and fsync. Returns records written.
+
+        THE LOCK IS HELD ONLY FOR WHAT MUST NOT INTERLEAVE: handing the buffer to the kernel and turning the new
+        postings into RAM runs. The fsync, the RAM-run merge cascade and the write of a run past `seal_at` happen
+        off it (`sync`'s rule for the fsync, `disk_merge`'s for the runs) -- under it they held every reader, and a
+        load test measured 45-53 s query stalls (Leveled.compact_ram). Everything is still done before this returns,
+        so a caller sees the same store afterwards; one holding the lock already (a checkpoint) simply keeps it."""
         with self._lock:
-            n = self._drain(fsync=True)
-            self._merge_all()
+            n = self._drain(fsync=False)
+            for lv in self._leveled():
+                lv.take_delta()
             self._last_flush = time.monotonic()
+            f = self._file
             self._rotate_if_full()
-            return n
+        if f is not None:
+            try:
+                os.fsync(f.fileno())
+            except (ValueError, OSError):
+                if not f.closed:
+                    raise                           # closed = a rotation fsynced and closed it: durable
+        for lv in self._leveled():
+            lv.compact_ram(self._lock, self._live_of(lv))
+        return n
 
     def sync(self) -> int:
         """Make everything written so far durable WITHOUT the index merge a flush also does, and with the fsync

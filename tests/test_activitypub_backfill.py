@@ -331,3 +331,20 @@ def test_an_account_whose_posts_were_missed_is_read_again_sooner(fedi, monkeypat
     state.forget_followed_cache()
     run(backfill.catch_up(per_tick=5, now=NOW + backfill.RECHECK_MISSED))
     assert done == [missing], done
+
+
+def test_the_inbox_checks_its_ledger_with_the_async_api_not_a_new_loop_per_post(fedi, monkeypatch):
+    """Production 2026-10-17: ~4,700 dedup lookups a minute, each run through asyncio.to_thread -> DocTable's sync
+    bridge -> a brand-new event loop, i.e. a new relay connection and a new NIP-42 AUTH every time -- the relay's top
+    cost. The inbox must ask on its own loop (the pooled, authenticated connection)."""
+    from app.services import fedi_tables
+
+    def forbidden(*a, **k):
+        raise AssertionError("a sync ledger call on the inbox's async path")
+    monkeypatch.setattr(fedi_tables, "delivered_by_uri", forbidden)
+    monkeypatch.setattr(fedi_tables, "record", forbidden)
+    fedi["docs"][f"pcai:ap:following:{ALICE}:x"] = {"actor": REMOTE, "inbox": "i", "state": "accepted"}
+    note = _note(1)
+    act = {"id": note["id"] + "/activity", "type": "Create", "actor": REMOTE, "object": note}
+    assert run(inbox.process(act, REMOTE)) == "stored"
+    assert run(inbox.process(act, REMOTE)) == "already stored", "the ledger row was not written or not read back"
