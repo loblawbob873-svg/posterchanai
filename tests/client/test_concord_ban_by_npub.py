@@ -63,3 +63,26 @@ def test_both_member_lists_offer_it_to_whoever_may_ban_and_it_uses_the_real_ban(
     assert "canBanAny=!!current&&!current.local&&!!current.cord&&(isOwner||memberMay(current,viewer.pubkey,'BAN'))" in JS
     bind = JS[JS.index("$$('.cc-ban-npub')"):][:900]
     assert "isOwnerNow?banMember(got.target):staffModerate(got.target,'ban')" in bind
+
+
+def test_the_ban_permission_is_folded_once_per_control_state_not_per_render():
+    """The members list asks "may this viewer ban?" on every render. authorityCitation folds the whole control stream
+    (signatures included); asked per render, a busy community held the APK's main thread until the WebView stopped
+    answering (every-view smoke test, 2026-10-18). Same controls -> one fold; new controls -> a fresh answer."""
+    start = JS.index("  const mayMemo=new WeakMap()")
+    end = JS.index("\n  }\n", JS.index("  function memberMay(", start)) + 4
+    src = JS[start:end]
+    got = _run(src.replace("roomControls", "RC") + """
+const RC=new Map(); let calls=0; const allowed=new Set(['bb'.repeat(32)]);
+window.PosterCordReader={authorityCitation:(b,w,pk,perm)=>{calls++; if(!allowed.has(pk)) throw new Error('no');}};
+const room={communityId:'c1',cord:{bundle:{community_id:'c1',community_root:'r1'}}};
+RC.set('c1',[{id:1}]);
+const a=[]; for(let i=0;i<50;i++){ a.push(memberMay(room,'bb'.repeat(32),'BAN')); a.push(memberMay(room,'cc'.repeat(32),'BAN')); }
+const first=calls;
+RC.set('c1',[{id:1},{id:2}]);                          // a new control event: asked again
+allowed.delete('bb'.repeat(32));
+const after=memberMay(room,'bb'.repeat(32),'BAN');
+console.log(JSON.stringify({first, total:calls, yes:a[0], no:a[1], after}));""")
+    assert got["first"] == 2, "the control stream was folded %d times for 100 renders" % got["first"]
+    assert got["yes"] is True and got["no"] is False
+    assert got["total"] == 3 and got["after"] is False, "a new control state kept the old answer"
