@@ -927,8 +927,18 @@ async def _announce(activity: dict, signer: str) -> str:
         return f"ignored: relayed {obj.get('type')}"
     target_uri = convert.id_of(obj)
     eid, pk = await _target(target_uri)
+    # A SUBSCRIBED RELAY'S ANNOUNCE IS A POST FOR THE GLOBAL TIMELINE, NOT A BOOST. Relays (activityrelay, Pleroma
+    # relays) re-share every subscribed server's public posts as an Announce signed by the RELAY actor -- which nobody
+    # here follows, so it was dropped as "a boost of something nobody here asked for", and Global could never be busier
+    # than what members follow ("our global timeline should be busy regardless of what I follow, just like on
+    # activitypub", 2026-10-18). The relay is a pipe: the note is fetched from its OWN server as for any boost and
+    # stored, and no "the relay reposted this" kind 6 is made. Only for relays the admin listed AND that accepted us.
+    from app.services.activitypub import relays as _relays
+    via_relay = signer in await _relays.relay_actors()
+    if via_relay and eid:
+        return "already stored"
     if not eid:
-        if signer not in await state.followed_actors():
+        if not via_relay and signer not in await state.followed_actors():
             return "ignored: boost of something nobody here asked for"
         note = await authentic(obj, signer)                     # from its own server, as it really is
         if note.get("type") in ("Create", "Update"):             # a bare id that named the activity
@@ -939,6 +949,9 @@ async def _announce(activity: dict, signer: str) -> str:
         eid, pk = await _target(target_uri)
         if not eid:
             return "ignored: boosted note could not be stored"
+        if via_relay:
+            await _arecord(act_id, eid, pk or "")         # the Announce itself is now handled: dedup a re-send
+            return "relayed post stored"
     puppet = await _puppet(await remote.actor(signer))
     if not puppet:
         return "ignored: no puppet"
