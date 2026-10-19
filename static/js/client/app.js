@@ -4979,7 +4979,7 @@
     const local = (window.Store && Store.localRelayUrl) ? Store.localRelayUrl() : '';
     try{ if(Relay.setLocalRelay) Relay.setLocalRelay(local, (CFG && CFG.relay_url) || ''); }catch(_){}
     if (!list.length && CFG && CFG.relay_url){
-      if(local) return Relay.configure({ urls: [CFG.relay_url, local], verify: false });
+      if(local) return Relay.configure({ urls: [CFG.relay_url, local], verify: false, home: CFG.relay_url });
       return Relay.connect(CFG.relay_url);
     }
     if (!list.length) list = defaultRelays().filter(Boolean);

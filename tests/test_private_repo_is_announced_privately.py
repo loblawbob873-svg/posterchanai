@@ -64,5 +64,7 @@ def test_the_client_sends_a_private_announcement_to_this_node_only():
     start = src.index("async function _doCreateRepo")
     body = src[start:src.index("\n  }\n", start)]
     priv = body[body.index("if(priv &&"):body.index("if(!priv &&")]
-    assert "Relay.publishTo([home]" in priv and "Relay._home" in priv, priv
+    # Relay.publishHome, never publishTo([home]): that skips a pooled relay and sent nothing (2026-10-18; the run-time
+    # proof is tests/client/test_private_repo_reaches_this_node.py).
+    assert "Relay.publishHome(" in priv and "Relay._home" in priv, priv
     assert "publish(30617" not in priv, "a private announcement must not go through the general publish"

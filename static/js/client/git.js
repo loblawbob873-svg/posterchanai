@@ -495,12 +495,13 @@ window.PCGitFactory = function(dep){
      * it to everybody. */
     if(priv && Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length){
       st.textContent='announcing privately…';
-      const home=window.Relay && Relay._home;
-      if(!home){ st.textContent='created ✓ but this node’s relay is not connected — reopen Git to announce it'; return; }
+      if(!(window.Relay && Relay._home)){ st.textContent='created ✓ but this node’s relay is not connected — reopen Git to announce it'; return; }
       try{
         const e=await sign(30617,'',j.announce_tags_30617);
-        const n=await Relay.publishTo([home], e, { timeout:8000 });
-        if(!n){ st.textContent='created ✓ — the private announcement is not confirmed yet (this node’s relay hasn’t answered)'; return; }
+        const r=await Relay.publishHome(e, { timeout:8000 });
+        if(!r || !r.ok){ st.textContent=(r && r.uncertain)
+            ? 'created ✓ — the private announcement is not confirmed yet (this node’s relay hasn’t answered)'
+            : 'created ✓ but the private announcement was refused: '+((r && r.msg)||'no answer'); return; }
         try{ Store.saveEvent(e); }catch(_){ }
         ev=e;
       }catch(err){ st.textContent='created ✓ but the private announcement failed: '+((err&&err.message)||err); return; }
@@ -585,7 +586,17 @@ window.PCGitFactory = function(dep){
           tags.push(['alt',`git repository: ${v('rp-name')||d}`]);
           if(editing) existing.tags.forEach(t=>{ if(Array.isArray(t)&&t.length&&!_REPO_OWN_TAGS.has(t[0])) tags.push(t.slice()); });
           st.textContent=editing?'saving…':'publishing…';
-          try{ const r=await publish(30617,'',tags);
+          // A PRIVATE repo's announcement goes to this node's relay ONLY (Relay.publishHome): publish() would hand its
+          // name, description and maintainers to every relay in the pool.
+          const priv=_repoIsPrivate({tags});
+          const pubRepo=async()=>{
+            if(!priv) return publish(30617,'',tags);
+            const e=await sign(30617,'',tags);
+            const r=await Relay.publishHome(e, { timeout:8000 });
+            if(r && r.ok){ try{ Store.saveEvent(e); }catch(_){ } return { ok:true, ev:e }; }
+            return { ok:false, unconfirmed:!!(r && r.uncertain), msg:(r && r.msg)||'no answer' };
+          };
+          try{ const r=await pubRepo();
             if(r && r.ok===false){ st.textContent=(r.unconfirmed||r.msg==='timeout') ? 'Not confirmed yet — the relay hasn’t answered; the change may already be saved.' : 'relay: '+(r.msg||'rejected'); return; }
             closeModal();
             if(editing){

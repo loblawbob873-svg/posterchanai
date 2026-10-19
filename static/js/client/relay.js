@@ -344,7 +344,9 @@
       if (!this._conns.size) this._setStatus('off');
     },
     // back-compat single-relay entry point (built-in WoT relay, trusted)
-    connect(url){ this.configure({ urls: url ? [url] : [], verify: false }); },
+    // The ONE relay of the default pool is this instance's: name it home, or everything gated on "this node's relay
+    // answered" (Relay.homeAnswered, publishHome) is blind on the path most people are on -- no personal relay list.
+    connect(url){ this.configure({ urls: url ? [url] : [], verify: false, home: url || '' }); },
     // Every relay this pool talks to. `publish()` already broadcasts to all of them; this is for
     // telling ANOTHER device (the password extension) where else the same events can be read, so a
     // single relay being down is not a single point of failure for it.
@@ -1105,6 +1107,16 @@
     // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
+    /* THIS NODE'S RELAY AND NO OTHER -- for an event that must not leave the instance (a PRIVATE repo announcement:
+     * GRASP-08, the relay serves it only to its maintainers). It must not be `publish()` (that writes to every pooled
+     * relay, i.e. leaks it) and it must not be a bare `publishTo([home])`: publishTo skips relays already in the
+     * pool, and this node's relay is ALWAYS pooled, so that sent the event nowhere and answered 0 -- every private
+     * repo made in the web UI said "this node's relay hasn't answered" and had no announcement (2026-10-18).
+     * Resolves {ok, accepted, uncertain, msg}. */
+    async publishHome(event, { timeout=8000 } = {}){
+      if(!this._home) return { ok:false, accepted:0, uncertain:false, msg:'this node’s relay is not connected' };
+      return this.publishTo([this._home], event, { timeout, max:1, includeManaged:true, detailed:true });
+    },
     async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null, via=null } = {}){
       // Room sends must reach their exact relay set even when those URLs are already pooled.
       // Keep the external-only default for callers that already used publish() for the pool.
