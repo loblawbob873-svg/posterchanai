@@ -69,3 +69,45 @@ def test_a_full_read_still_happens_hourly_and_a_failed_delta_is_not_nobody(fake,
     monkeypatch.setattr(nostr_store, "list_docs", down)
     with pytest.raises(ConnectionError):
         asyncio.run(state.followers(m))                          # strict: "could not ask", never []
+
+
+def _put(fake, prefix, key, doc, at):
+    fake.docs[prefix + key] = (doc, at)
+
+
+def test_the_cross_member_reads_are_changes_too(fake, monkeypatch):
+    """`qstate-` was the relay's largest answer stream: everybody's following and everybody's followers re-read in
+    full every minute, by the inbox gate (app) and the everyone pass (worker). After the first read, only changes."""
+    now = int(time.time())
+    for i in range(150):
+        _put(fake, state._FOLLOWING_PREFIX, "%s:%d" % ("c" * 64, i), {"actor": "https://f%d.example/u" % i}, now - 3600)
+        _put(fake, state._FOLLOWER_PREFIX, "%s:%d" % ("d" * 64, i), {"actor": "https://g%d.example/u" % i}, now - 3600)
+    state.forget_followed_cache()
+    state._nonlocal_cache["at"] = 0.0
+    assert len(asyncio.run(state.followed_actors(max_age=0))) == 150
+    assert asyncio.run(state.nostr_users_with_followers(max_age=0)) == frozenset({"d" * 64})
+    fake.reads.clear()
+    for _ in range(10):
+        asyncio.run(state.followed_actors(max_age=0))
+        asyncio.run(state.nostr_users_with_followers(max_age=0))
+    assert fake.reads and all(k == "delta" and n == 0 for k, n in fake.reads), fake.reads
+    # an unfollow (a tombstone) and a new follow both arrive through the delta
+    _put(fake, state._FOLLOWING_PREFIX, "%s:%d" % ("c" * 64, 0), {"actor": "https://f0.example/u", "gone": True}, int(time.time()))
+    _put(fake, state._FOLLOWING_PREFIX, "%s:new" % ("e" * 64), {"actor": "https://new.example/u"}, int(time.time()))
+    got = asyncio.run(state.followed_actors(max_age=0))
+    assert "https://f0.example/u" not in got and got["https://new.example/u"] == {"e" * 64}
+    for i in range(150):                                    # every follower of d gone -> d has no followers
+        _put(fake, state._FOLLOWER_PREFIX, "%s:%d" % ("d" * 64, i), {"actor": "x", "gone": True}, int(time.time()))
+    assert asyncio.run(state.nostr_users_with_followers(max_age=0)) == frozenset()
+
+
+def test_a_failed_cross_member_delta_is_not_nobody(fake, monkeypatch):
+    _put(fake, state._FOLLOWER_PREFIX, "%s:1" % ("d" * 64), {"actor": "https://g.example/u"}, int(time.time()) - 10)
+    state._nonlocal_cache["at"] = 0.0
+    asyncio.run(state.nostr_users_with_followers(max_age=0))
+
+    async def down(*a, **k):
+        raise ConnectionError("relay down")
+    monkeypatch.setattr(nostr_store, "list_docs", down)
+    with pytest.raises(ConnectionError):
+        asyncio.run(state.nostr_users_with_followers(max_age=0))

@@ -131,6 +131,48 @@ _FOLLOWERS_FULL_EVERY = 3600.0
 _FOLLOWERS_MAX = 5000
 
 
+class _Mirror:
+    """EVERY document under one prefix, kept current by reading what CHANGED.
+
+    The cross-member reads -- everybody's following, everybody's followers, the gone and moved accounts -- were each
+    a full re-read of the whole prefix every minute or so, in the app (the inbox gate) AND the worker (the everyone
+    pass): `qstate-` was the relay's largest answer stream (~13,000-20,000 frames per 5 minutes, 2026-10-18). Every
+    document under these prefixes is only ever REPLACED (an unfollow, an unmark, a removal is a tombstone written
+    over it; nothing here deletes), so the documents written since the last read are the complete change. A full
+    read at least every _FOLLOWERS_FULL_EVERY backstops it; a delta that cannot be read raises (strict), exactly as
+    the full read did."""
+
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+        self.docs = None
+        self.since = 0
+        self.full = 0.0
+
+    async def read(self) -> dict:
+        now = time.time()
+        start = int(now)
+        if self.docs is not None and now - self.full < _FOLLOWERS_FULL_EVERY:
+            changed = await nostr_store.list_docs(_port(), self.prefix, seckey=_seckey(), strict=True, limit=100000,
+                                                  since=self.since - 5)
+            self.docs.update(changed)
+            self.since = start
+            return self.docs
+        docs = await nostr_store.list_docs(_port(), self.prefix, seckey=_seckey(), strict=True, limit=100000)
+        self.docs, self.since, self.full = dict(docs), start, now
+        return self.docs
+
+    def reset(self) -> None:
+        self.docs = None
+
+
+_ALL_FOLLOWERS = _Mirror(_FOLLOWER_PREFIX)
+
+
+async def all_follower_docs() -> dict:
+    """{d_tag: doc} for every member's followers, tombstones included (strict: raises when it cannot be read)."""
+    return await _ALL_FOLLOWERS.read()
+
+
 async def followers(member: str, *, strict: bool = True) -> list:
     """[{"actor", "inbox"}] for a member's live followers."""
     prefix = f"{_FOLLOWER_PREFIX}{member}:"
@@ -212,10 +254,11 @@ async def mark_gone(actor: str) -> None:
 
 
 async def gone_actors() -> set:
-    docs = await nostr_store.list_docs(_port(), _GONE_PREFIX, seckey=_seckey(), strict=False, limit=100000)
+    docs = await _ALL_GONE.read()
     return {d["actor"] for d in docs.values() if isinstance(d, dict) and d.get("actor") and not d.get("back")}
 
 
+_ALL_GONE = _Mirror(_GONE_PREFIX)
 _BLOCKED_PREFIX = "pcai:ap:blocked:"
 
 
@@ -248,6 +291,7 @@ async def following(member: str, *, strict: bool = True) -> dict:
 
 
 _followed_cache = {"at": 0.0, "map": {}}
+_ALL_FOLLOWING = _Mirror(_FOLLOWING_PREFIX)
 
 
 async def followed_actors(max_age: float = 60.0) -> dict:
@@ -260,8 +304,7 @@ async def followed_actors(max_age: float = 60.0) -> dict:
     if now - _followed_cache["at"] < max_age and _followed_cache["at"]:
         return _followed_cache["map"]
     try:
-        docs = await nostr_store.list_docs(_port(), _FOLLOWING_PREFIX, seckey=_seckey(), strict=True,
-                                           limit=100000)
+        docs = await _ALL_FOLLOWING.read()
     except Exception:
         return _followed_cache["map"]
     out: dict = {}
@@ -318,7 +361,7 @@ async def nostr_users_with_followers(max_age: float = 60.0) -> frozenset:
         return _nonlocal_cache["set"]
     # A failed read RAISES: this set decides which posts are sent, and answering "nobody has
     # followers" would make the everyone pass skip every post it reads -- and move past them.
-    docs = await nostr_store.list_docs(_port(), _FOLLOWER_PREFIX, seckey=_seckey(), strict=True, limit=100000)
+    docs = await _ALL_FOLLOWERS.read()
     out = frozenset(d_tag[len(_FOLLOWER_PREFIX):].split(":")[0] for d_tag, d in docs.items()
                     if isinstance(d, dict) and d.get("actor") and not d.get("gone"))
     _nonlocal_cache.update(at=now, set=out)
@@ -399,6 +442,7 @@ async def follow_by_id(follow_id: str) -> dict:
 # signed by the members), so delivery reads the old actor as the new one through this map.
 _MOVED_PREFIX = "pcai:ap:moved:"
 _moved_cache = {"at": 0.0, "map": {}}
+_ALL_MOVED = _Mirror(_MOVED_PREFIX)
 
 
 async def record_move(old: str, new: str) -> None:
@@ -412,7 +456,7 @@ async def moves(max_age: float = 120.0) -> dict:
     if _moved_cache["at"] and now - _moved_cache["at"] < max_age:
         return _moved_cache["map"]
     try:
-        docs = await nostr_store.list_docs(_port(), _MOVED_PREFIX, seckey=_seckey(), strict=True, limit=100000)
+        docs = await _ALL_MOVED.read()
     except Exception:
         return _moved_cache["map"]
     out = {d["old"]: d["new"] for d in docs.values() if isinstance(d, dict) and d.get("old") and d.get("new")}

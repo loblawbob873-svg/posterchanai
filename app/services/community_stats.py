@@ -314,8 +314,7 @@ async def follows() -> dict:
                 continue                      # only a LOCAL member's unfollow is this bot's business
             if ev["pubkey"] not in lists or int(ev["created_at"]) > lists[ev["pubkey"]]["at"]:
                 lists[ev["pubkey"]] = _contact_summary(ev, member_set)
-    docs = await nostr_store.list_docs(_port(), state._FOLLOWER_PREFIX, seckey=state._seckey(), strict=True,
-                                       limit=100000)
+    docs = await state.all_follower_docs()
     fedi = []
     for d_tag, d in docs.items():
         if not (isinstance(d, dict) and d.get("actor")):
