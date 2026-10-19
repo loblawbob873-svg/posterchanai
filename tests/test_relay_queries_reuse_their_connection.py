@@ -12,13 +12,26 @@ from app.services import nostr_store
 from tests.test_doc_table import SK, relay  # noqa: F401  (fixture)
 
 
+def _ours(relay, a, k, thread=None) -> bool:
+    """A connection THIS test made: to its own relay (and, when given, from its own thread). `websockets.connect` is
+    patched process-wide, so it also sees every other thread's dials -- a table loader an earlier test left behind
+    (its relay closed, its load retrying each page four times) counted into these totals in the deploy gate's
+    parallel run: "each read opened its own connection", 5."""
+    import threading
+    uri = str(a[0] if a else k.get("uri") or "")
+    return uri == "ws://127.0.0.1:%d/relay" % relay.port and (thread is None or threading.current_thread() is thread)
+
+
 def test_twenty_authenticated_reads_use_one_connection_and_close_their_subscription(relay, monkeypatch):  # noqa: F811
+    import threading
     import websockets
     opened = []
     real = websockets.connect
+    me = threading.current_thread()
 
     def counting(*a, **k):
-        opened.append(a[0] if a else k.get("uri"))
+        if _ours(relay, a, k, me):
+            opened.append(a[0] if a else k.get("uri"))
         return real(*a, **k)
     monkeypatch.setattr(websockets, "connect", counting)
 
@@ -68,7 +81,8 @@ def test_a_loop_that_ends_does_not_leave_its_connections_open(relay, monkeypatch
 
     async def recording(*a, **k):
         ws = await real(*a, **k)
-        made.append(ws)
+        if _ours(relay, a, k):
+            made.append(ws)
         return ws
     monkeypatch.setattr(websockets, "connect", recording)
 
@@ -91,7 +105,8 @@ def test_two_live_loops_keep_their_own_pools(relay, monkeypatch):  # noqa: F811
 
     async def recording(*a, **k):
         ws = await real(*a, **k)
-        made.append(ws)
+        if _ours(relay, a, k):
+            made.append(ws)
         return ws
     monkeypatch.setattr(websockets, "connect", recording)
     loops = [asyncio.new_event_loop() for _ in range(2)]
@@ -121,7 +136,8 @@ def test_many_users_keys_never_park_more_than_the_cap(relay, monkeypatch):  # no
 
     async def recording(*a, **k):
         ws = await real(*a, **k)
-        made.append(ws)
+        if _ours(relay, a, k):
+            made.append(ws)
         return ws
     monkeypatch.setattr(websockets, "connect", recording)
 
@@ -174,7 +190,8 @@ def test_a_cancelled_query_does_not_leak_its_connection(relay, monkeypatch):  # 
 
     async def recording(*a, **k):
         ws = await real(*a, **k)
-        made.append(ws)
+        if _ours(relay, a, k):
+            made.append(ws)
         return ws
     monkeypatch.setattr(websockets, "connect", recording)
 
