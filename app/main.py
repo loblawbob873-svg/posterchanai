@@ -46,25 +46,13 @@ from app.services.load_balancer import NoHealthyServersError
 from app.role import owns as _owns
 from fastapi.responses import JSONResponse
 
-# Custom JSON encoder to handle bytes and other non-serializable types
-import json
-from pathlib import Path
-
-class BytesSafeJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles bytes and Path objects."""
-    def default(self, obj):
-        if isinstance(obj, bytes):
-            return obj.decode('utf-8', errors='ignore')
-        elif isinstance(obj, Path):
-            return str(obj)
-        return super().default(obj)
-
 # Initialize FastAPI app
 app = FastAPI(
     title="Posterchanai",
     description="AI Chat Application",
     version="1.0.0",
-    json_encoder=BytesSafeJSONEncoder
+    # NO json_encoder=: it was never a FastAPI parameter -- older releases swallowed it in **extra and ignored it,
+    # and 0.145 (2026-10-18) removed **extra, so every fresh install crash-looped at import (the ISO server gate).
 )
 
 # CORS for the native app (Capacitor Android WebView): it bundles the web UI locally at the
