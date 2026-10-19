@@ -731,6 +731,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe, archive, archiveProbe,
     historyIncomplete:!!st.historyIncomplete,
+    storage: global.localStorage._all,
     // What the phone reported about itself — see publishStatus in sms.js.
     statuses: statuses.map(x => { try{ return JSON.parse(String(x.content).slice(4)); }
                                  catch(_){ return {bad:true}; } }),

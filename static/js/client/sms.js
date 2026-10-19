@@ -1225,8 +1225,21 @@
       const drain = _cacheDrain;
       if(drain) await drain;
       if(!currentAccount()) return;
-      const complete=await readArchive(BROAD_FILTER(),currentAccount);
+      /* ONCE PER DEVICE, NOT ONCE PER PAGE LOAD. The flag above lives in memory, and every deploy bumps the service
+       * worker, so every open client reloaded and re-swept the WHOLE kind-30078 datastore: measured on server1
+       * 2026-10-18, the relay's biggest answer stream (`sub-sms-` [30078|a1|u], ~45,000 frames per 5 min) arrived in
+       * a burst right after each restart. The start of the last COMPLETE sweep is kept per account; later sweeps ask
+       * only what was written since (less slack for clocks) -- but only while this device still HOLDS its Texts
+       * cache: a cleared cache needs the whole sweep again, or old unlabelled messages would never come back. */
+      const markKey = 'pc_sms_legacy_through_' + owner;
+      let through = 0;
+      try{ through = Number(localStorage.getItem(markKey)) || 0; }catch(_){ }
+      const filter = BROAD_FILTER();
+      if(through && S.msgs.size) filter.since = through - _REREAD_SLACK;
+      const started = Math.floor(Date.now()/1000);
+      const complete=await readArchive(filter,currentAccount);
       if(!currentAccount()) return;
+      if(complete){ try{ localStorage.setItem(markKey, String(Math.max(through, started))); }catch(_){ } }
       _legacySwept=complete;
       historyResult('legacy',complete);
       paint();
