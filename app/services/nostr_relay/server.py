@@ -366,20 +366,61 @@ class SubscriptionManager:
     def __init__(self):
         # conn -> {sub_id: filters}
         self._subs: dict = {}
+        # KIND INDEX: kind -> {conn: {sub_id}}, plus the subscriptions with a filter that names no kinds. Fan-out used to
+        # run the whole matcher for every open subscription on every event (py-spy 2026-10-19: ~6% of the relay); most
+        # subscriptions name their kinds (DM wraps, app documents, feeds), so an event now meets only those that can
+        # match it. _match_one still decides; the index only skips subscriptions it would reject on `kinds` alone.
+        self._by_kind: dict = {}
+        self._anykind: dict = {}
+
+    @staticmethod
+    def _kinds_of(filters):
+        """The union of the filters' kinds, or None when any filter is unrestricted by kind."""
+        out = set()
+        for f in filters:
+            k = f.get("kinds") if isinstance(f, dict) else None
+            if not k:
+                return None
+            try:
+                out.update(int(x) for x in k)
+            except (TypeError, ValueError):
+                return None
+        return out
+
+    def _index(self, conn, sub_id, filters, on: bool) -> None:
+        ks = self._kinds_of(filters)
+        buckets = [self._anykind] if ks is None else [self._by_kind.setdefault(k, {}) for k in ks]
+        for b in buckets:
+            if on:
+                b.setdefault(conn, set()).add(sub_id)
+            else:
+                sids = b.get(conn)
+                if sids is not None:
+                    sids.discard(sub_id)
+                    if not sids:
+                        b.pop(conn, None)
 
     def add(self, conn, sub_id: str, filters: list, label: str = "") -> None:
-        self._subs.setdefault(conn, {})[sub_id] = [_compile_filter(f) for f in (filters or [])]
+        old = self._subs.get(conn, {}).get(sub_id)
+        if old is not None:
+            self._index(conn, sub_id, old, False)          # a REQ that reuses its id replaces the subscription
+        compiled = [_compile_filter(f) for f in (filters or [])]
+        self._subs.setdefault(conn, {})[sub_id] = compiled
+        self._index(conn, sub_id, compiled, True)
         if label:
             self.__dict__.setdefault("_labels", {})[(conn, sub_id)] = label
 
     def remove(self, conn, sub_id: str) -> None:
         if conn in self._subs:
-            self._subs[conn].pop(sub_id, None)
+            old = self._subs[conn].pop(sub_id, None)
+            if old is not None:
+                self._index(conn, sub_id, old, False)
         self.__dict__.get("_labels", {}).pop((conn, sub_id), None)
 
     def remove_conn(self, conn) -> None:
-        for sid in list(self._subs.get(conn, {})):
+        for sid, filters in list(self._subs.get(conn, {}).items()):
             self.__dict__.get("_labels", {}).pop((conn, sid), None)
+            self._index(conn, sid, filters, False)
         self._subs.pop(conn, None)
 
     def count(self, conn) -> int:
@@ -412,10 +453,22 @@ class SubscriptionManager:
         stale = _stale_for_feeds(ev)
         labels = self.__dict__.get("_labels", {})
         by = self.__dict__.setdefault("fanout_by", {})  # WHICH subscriptions live delivery goes to (the cost line)
-        for conn, subs in list(self._subs.items()):
-            if not allow(conn, ev):
+        try:
+            kind = int(ev.get("kind"))
+        except (TypeError, ValueError):
+            kind = None
+        cand: dict = {}
+        for bucket in (self._by_kind.get(kind) or {}, self._anykind):
+            for conn, sids in bucket.items():
+                cand.setdefault(conn, set()).update(sids)
+        for conn, sids in cand.items():
+            subs = self._subs.get(conn)
+            if not subs or not allow(conn, ev):
                 continue
-            for sub_id, filters in list(subs.items()):
+            for sub_id in list(sids):
+                filters = subs.get(sub_id)
+                if filters is None:
+                    continue
                 if stale and not _targeted(filters):
                     continue
                 if _matches(filters, ev, tags):
