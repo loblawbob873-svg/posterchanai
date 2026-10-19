@@ -1559,6 +1559,17 @@ class Store:
             return self._seq_of(eid)
 
     def query(self, flt: dict, now: int | None = None) -> list:
+        # `limit: 0` IS "no stored events" (NIP-01: the initial query returns the newest `limit`) -- how clients open a
+        # live-only subscription. `limit or 500` below read it as the DEFAULT, so every such REQ (other clients'
+        # live feeds, our own push service's DM subscription) was answered with 500 old events (2026-10-18). A
+        # missing or null limit is still the default.
+        lim = flt.get("limit") if isinstance(flt, dict) else None
+        if lim is not None and not isinstance(lim, bool):
+            try:
+                if int(lim) <= 0:
+                    return []
+            except (TypeError, ValueError):
+                pass
         # The work runs in a helper so every numpy view it makes dies BEFORE the lock is released (see _grow).
         with self._lock:
             return self._query_locked(flt, now)
