@@ -465,3 +465,14 @@ A blocked write gets `["OK", id, false, "blocked: not in web of trust"]` (or `"â
 - The DB (hot + snapshot/disk) is per-node app data and is **not** in git.
 - Port scanners hitting the public port are silently ignored (handshake-failure logging is
   quieted).
+
+## NIP-42 AUTH across a reconnect (2026-10-18)
+
+A challenge is issued per connection. A client that reconnects may answer with the challenge of the socket it
+just closed -- measured: ~3,000 refusals an hour, all "the challenge of a socket closed 7s ago", from one address
+holding ~98 keys. `RelayServer._closed_socket_challenge` accepts such a challenge when THIS relay issued it, to the
+SAME client address, closed at most `PAST_CHALLENGE_S` (120 s) ago, once per AUTH event id. Another open socket's
+challenge, one never issued, an old one, or one from another address is still refused, and the refusal line says
+which. A confined (non-PosterChan) socket's `conn closed` line also carries `origin=<scheme://host> ua=<family>
+authed=<n> refused=<type:kinds xN>` -- software and message kinds, never content. `tests/test_relay_auth_survives_a_reconnect.py`
+(real relay, real websockets).

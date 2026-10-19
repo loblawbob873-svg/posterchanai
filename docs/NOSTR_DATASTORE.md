@@ -70,8 +70,10 @@ the worker (which turns SIGTERM into SystemExit). `save_snapshots()` logs `resta
 reason for every table it did not save. `tests/test_doc_table_restart_snapshot.py` (real relay: changes and
 deletions made by another process while this one was down; tamper; expiry; the uvicorn exit shape).
 
-**Status 2026-10-18: not yet effective in production** -- the first stops saved nothing (every table declined); the
-reason is being read from the new log line.
+**Status 2026-10-18 18:46: effective in production.** The first stops saved nothing because the process being
+stopped still ran the code from before the shutdown-hook save; from the first stop under the new code on, measured
+on server1: `blossom_blobs` 40.7 s -> 4.1 s, `fedi_bridge_delivered` 36.8 s -> 4.0 s (60 changed rows read),
+`fedi_puppets` 10.9 s -> 3.8 s.
 
 ## Key custody (the one irreducible local secret)
 Server-side AI/bots must read chats to generate replies, so true e2e is impossible — encryption is

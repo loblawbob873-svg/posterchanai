@@ -592,6 +592,58 @@ _NO_RECORDS: dict = {}
 
 
 
+def _client_family(headers) -> str:
+    """WHICH SOFTWARE a confined socket is, in a few words -- never anything about the person. 2026-10-18: one
+    address held ~98 keys, re-dialled every minute or two and was refused ~3,000 AUTHs an hour, and the log could
+    say its address and nothing else. The Origin's scheme+host and the User-Agent's product family are enough to
+    tell Amber from a bunker service from one of our own apps that lost its Origin."""
+    origin = _one_header(headers, "Origin").strip()
+    m = re.match(r"^([a-z][a-z0-9+.-]{0,15}://[^/\s]{0,60})", origin, re.I)
+    origin = m.group(1).lower() if m else ("none" if not origin else "other")
+    ua = _one_header(headers, "User-Agent")
+    fam = "none"
+    if ua:
+        for name, pat in (("posterchan", r"PosterChan"), ("electron", r"Electron/"), ("android-webview", r"; wv\)"),
+                          ("firefox", r"Firefox/"), ("edge", r"Edg/"), ("chrome", r"Chrome/"),
+                          ("safari", r"Safari/"), ("okhttp", r"okhttp"), ("dart", r"Dart/"),
+                          ("python", r"[Pp]ython|aiohttp|websockets/"), ("go", r"Go-http|^Go "),
+                          ("node", r"[Nn]ode|undici|ws/"), ("rust", r"tungstenite|reqwest|nostr-sdk"),
+                          ("curl", r"curl/")):
+            if re.search(pat, ua):
+                fam = name
+                break
+        else:
+            fam = re.sub(r"[^A-Za-z0-9._-]", "", ua.split("/", 1)[0])[:24] or "other"
+    return "origin=%s ua=%s" % (origin, fam)
+
+
+def _note_confined_refusal(conn, typ, msg) -> None:
+    """Tally what a confined socket asked for that it was refused: message type + kinds, never content."""
+    try:
+        tally = conn.__dict__.setdefault("_pcai_refused", {})
+        if typ == "EVENT" and len(msg) >= 2 and isinstance(msg[1], dict):
+            key = "EVENT:%s" % msg[1].get("kind")
+        elif typ == "REQ":
+            ks = sorted({k for f in msg[2:] if isinstance(f, dict) for k in (f.get("kinds") or ["*"])}, key=str)
+            key = "REQ:%s" % ",".join(str(k) for k in ks[:6])
+        else:
+            key = str(typ)[:12]
+        if key in tally or len(tally) < 12:
+            tally[key] = tally.get(key, 0) + 1
+    except Exception:
+        pass
+
+
+def _confined_summary(conn) -> str:
+    client = getattr(conn, "_pcai_client", "")
+    if not client:
+        return ""
+    tally = getattr(conn, "_pcai_refused", None) or {}
+    authed = getattr(conn, "_pcai_authed_n", 0)
+    return " %s authed=%d refused=%s" % (
+        client, authed, ",".join("%sx%d" % kv for kv in sorted(tally.items())) or "-")
+
+
 def _restricted_traffic(typ, msg, is_local=None) -> bool:
     """May a confined (non-PosterChan) socket send this message?
 
@@ -1276,6 +1328,8 @@ class RelayServer:
                 setattr(connection, "_pcai_gate", verdict)
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
+                    if verdict == "signer":
+                        setattr(connection, "_pcai_client", _client_family(hdrs))
                     # Came through a proxy: our own processes connect straight to the socket and send none of these.
                     setattr(connection, "_pcai_proxied", any(_one_header(hdrs, h) for h in _FORWARDING_HEADERS))
                     host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
@@ -1374,12 +1428,7 @@ class RelayServer:
             self._conn_ips.pop(conn, None)
             gone = self._auth_challenges.pop(conn, None)
             if gone:
-                # Remembered briefly so a refused AUTH can say "that challenge was a CLOSED socket's" (2026-10-18:
-                # ~3,000 "challenge does not match" an hour, and the log could not say whose or why).
-                past = self.__dict__.setdefault("_past_challenges", {})
-                if len(past) > 20000:
-                    past.clear()
-                past[gone] = time.time()
+                self._remember_challenge(gone, getattr(conn, "_pcai_ip", "") or raw_ip)
             self._auth_pubkeys.pop(conn, None)
             self.__dict__.get("_budgets", {}).pop(conn, None)
             self._relay_urls.pop(conn, None)
@@ -1430,9 +1479,10 @@ class RelayServer:
             bad = dropped or (remote and dur < 60) or (code is not None and code not in self._CLEAN_CLOSE)
             logger.log(
                 logging.INFO if bad else logging.DEBUG,
-                "[nostr-relay] conn closed ip=%s gate=%s dur=%.1fs sent=%d dropped=%d subs=%d code=%s%s",
+                "[nostr-relay] conn closed ip=%s gate=%s dur=%.1fs sent=%d dropped=%d subs=%d code=%s%s%s",
                 ip, getattr(conn, "_pcai_gate", "?"), dur, getattr(q, "sent", 0), dropped,
                 self.subs.count(conn), code, f" reason={reason!r}" if reason else "",
+                _confined_summary(conn),
             )
         except Exception:
             pass   # diagnostics must never break teardown
@@ -1572,6 +1622,7 @@ class RelayServer:
             # challenge sent at connect and try again — and an AUTH as a member lifts the confinement
             # (`_on_auth`). A stranger who authenticates is still a stranger.
             why = "auth-required: this relay serves PosterChan clients and members of this instance"
+            _note_confined_refusal(conn, typ, msg)
             if typ == "REQ" and len(msg) >= 2:
                 self._send(conn, ["CLOSED", msg[1], why])
             elif typ == "EVENT" and len(msg) >= 2 and isinstance(msg[1], dict):
@@ -1639,6 +1690,40 @@ class RelayServer:
         except Exception:
             return False
 
+    # A RECONNECTING CLIENT MAY ANSWER WITH THE CHALLENGE OF THE SOCKET IT JUST CLOSED (2026-10-18: ~3,000 refusals
+    # an hour, every one "the challenge of a socket closed 7s ago", one address holding ~98 keys -- each of those keys
+    # then had no authenticated socket at all). NIP-42's challenge exists to stop a captured AUTH event being replayed;
+    # a challenge THIS relay issued to the SAME address moments ago, under a fresh signature, gives a replayer nothing
+    # (the signed event only ever crossed that client's TLS). Accepted once per AUTH event, inside PAST_CHALLENGE_S,
+    # from that address only; another open socket's challenge and an invented one are still refused.
+    PAST_CHALLENGE_S = 120
+    _PAST_CHALLENGE_MAX = 20000
+
+    def _remember_challenge(self, challenge: str, ip: str) -> None:
+        past = self.__dict__.setdefault("_past_challenges", {})
+        if len(past) >= self._PAST_CHALLENGE_MAX:
+            cutoff = time.time() - self.PAST_CHALLENGE_S
+            for k in [k for k, v in past.items() if v[0] < cutoff]:
+                del past[k]
+            if len(past) >= self._PAST_CHALLENGE_MAX:
+                past.clear()
+        past[challenge] = (time.time(), ip or "", set())
+
+    def _closed_socket_challenge(self, conn, ev) -> bool:
+        past = self.__dict__.get("_past_challenges") or {}
+        rec = past.get(self._tag_value(ev, "challenge"))
+        if not rec:
+            return False
+        at, ip, used = rec
+        here = getattr(conn, "_pcai_ip", "") or ""
+        if not ip or ip != here or time.time() - at > self.PAST_CHALLENGE_S:
+            return False
+        eid = ev.get("id", "")
+        if not eid or eid in used or len(used) >= 1000:
+            return False
+        used.add(eid)
+        return True
+
     def _on_auth(self, conn, ev) -> None:
         eid = ev.get("id", "") if isinstance(ev, dict) else ""
         why = ""
@@ -1648,7 +1733,8 @@ class RelayServer:
             why = "invalid: AUTH event must be kind 22242"
         elif abs(int(time.time()) - int(ev.get("created_at", 0))) > 600:
             why = "invalid: AUTH event timestamp is stale"
-        elif self._tag_value(ev, "challenge") != self._auth_challenges.get(conn, ""):
+        elif (self._tag_value(ev, "challenge") != self._auth_challenges.get(conn, "")
+              and not self._closed_socket_challenge(conn, ev)):
             why = "invalid: AUTH challenge does not match"
         else:
             expected = self._relay_urls.get(conn, "")
@@ -1663,7 +1749,9 @@ class RelayServer:
                 c = self._tag_value(ev, "challenge")
                 past = self.__dict__.get("_past_challenges") or {}
                 if c in past:
-                    origin = " (the challenge of a socket closed %ds ago)" % int(time.time() - past[c])
+                    origin = " (the challenge of a socket closed %ds ago%s)" % (
+                        int(time.time() - past[c][0]),
+                        "" if past[c][1] == (getattr(conn, "_pcai_ip", "") or "") else ", from another address")
                 elif c and c in set(self._auth_challenges.values()):
                     origin = " (another OPEN socket's challenge)"
                 else:
@@ -1687,6 +1775,10 @@ class RelayServer:
         logger.info("[nostr-relay] AUTH ok for %s… (this socket may now write its NIP-78 docs)",
                     str(ev["pubkey"])[:12])
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
+        try:
+            setattr(conn, "_pcai_authed_n", len(self._auth_pubkeys[conn]))
+        except Exception:
+            pass
         self._send(conn, ["OK", eid, True, ""])
         if getattr(conn, "_pcai_signer_only", False) and ev["pubkey"] in self._instance_members():
             # A MEMBER, IN WHATEVER APP THEY LIKE. The switch keeps this relay from being a general
