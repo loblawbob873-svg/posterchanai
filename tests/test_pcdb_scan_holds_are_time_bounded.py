@@ -61,7 +61,7 @@ def test_a_querys_lock_hold_is_measured_and_its_shape_names_keys_not_values():
             st.store._get_cached = lambda s: (time.sleep(0.002), real(s))[1]
             st.store.query({"kinds": [1], "authors": [evs[0]["pubkey"]], "limit": 50})
             assert st.store.max_query_hold_ms >= 2
-            assert st.store.max_query_hold_shape == "authors,kinds"
+            assert st.store.max_query_hold_shape.startswith("authors,kinds match=") and "cand=" in st.store.max_query_hold_shape
             assert evs[0]["pubkey"] not in st.stats().get("max_query_hold_shape", "")
         finally:
             st.close()
