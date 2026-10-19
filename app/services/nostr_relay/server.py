@@ -1372,7 +1372,14 @@ class RelayServer:
             self._log_session(conn, ip, opened, q)
             self._outq.pop(conn, None)
             self._conn_ips.pop(conn, None)
-            self._auth_challenges.pop(conn, None)
+            gone = self._auth_challenges.pop(conn, None)
+            if gone:
+                # Remembered briefly so a refused AUTH can say "that challenge was a CLOSED socket's" (2026-10-18:
+                # ~3,000 "challenge does not match" an hour, and the log could not say whose or why).
+                past = self.__dict__.setdefault("_past_challenges", {})
+                if len(past) > 20000:
+                    past.clear()
+                past[gone] = time.time()
             self._auth_pubkeys.pop(conn, None)
             self.__dict__.get("_budgets", {}).pop(conn, None)
             self._relay_urls.pop(conn, None)
@@ -1651,9 +1658,21 @@ class RelayServer:
             # SAY WHICH URL WAS COMPARED TO WHICH. A refused AUTH is invisible from the server side
             # otherwise, and the client sees only "does not match" — which is how one stripped proxy
             # prefix read as a per-repository curse for a whole day.
-            logger.warning("[nostr-relay] AUTH refused (%s) signed-for=%r observed=%r",
-                        why, self._tag_value(ev, "relay") if isinstance(ev, dict) else "",
-                        self._relay_urls.get(conn, ""))
+            origin = ""
+            if why == "invalid: AUTH challenge does not match" and isinstance(ev, dict):
+                c = self._tag_value(ev, "challenge")
+                past = self.__dict__.get("_past_challenges") or {}
+                if c in past:
+                    origin = " (the challenge of a socket closed %ds ago)" % int(time.time() - past[c])
+                elif c and c in set(self._auth_challenges.values()):
+                    origin = " (another OPEN socket's challenge)"
+                else:
+                    origin = " (a challenge this relay never issued)"
+            logger.warning("[nostr-relay] AUTH refused (%s%s) signed-for=%r observed=%r pk=%s ip=%s gate=%s",
+                        why, origin, self._tag_value(ev, "relay") if isinstance(ev, dict) else "",
+                        self._relay_urls.get(conn, ""),
+                        str(ev.get("pubkey", ""))[:12] if isinstance(ev, dict) else "",
+                        getattr(conn, "_pcai_ip", "") or "?", getattr(conn, "_pcai_gate", "") or "?")
             self._send(conn, ["OK", eid, False, why])
             return
         # LOG THE SUCCESS, NOT ONLY THE FAILURE. NIP-78 (30078) — the drive index, notes, settings,

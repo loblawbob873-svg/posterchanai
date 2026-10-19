@@ -56,6 +56,23 @@ client caps/ai-access grants, **admin user create/delete/storage-quota/capabilit
 rebuild can't resurrect a deleted account. (Admin-created password users and email-verify are no-npub
 legacy → intentionally not synced; the relay store is npub-keyed.)
 
+### Restart snapshots (`doc_table.py`, 2026-10-18)
+
+A process holds every table in memory, and a restart used to re-read all of them through the relay -- the 190k-row
+blob index, the 165k-row fediverse ledger, the puppets: ~380,000 documents per process per deploy. At a clean stop
+each loaded table whose live stream is current writes an AES-GCM snapshot of its rows (`data/doctable/<table>.snap`,
+key derived from the operator key); the next start loads it and reads from the relay only the documents AND the
+operator's kind-5 deletions written since, in full pages (the live replay cannot be the delta: an unlimited REQ is
+capped at 500). Anything doubtful is the old full load -- no snapshot, unreadable or tampered, older than 3 days,
+another table/namespace/key, or a delta that could not be read to its end. Written only at a clean stop, from the
+app's shutdown hook (uvicorn re-raises SIGTERM after shutdown, so atexit never runs in the app) and from atexit in
+the worker (which turns SIGTERM into SystemExit). `save_snapshots()` logs `restart snapshots: N of M saved` with the
+reason for every table it did not save. `tests/test_doc_table_restart_snapshot.py` (real relay: changes and
+deletions made by another process while this one was down; tamper; expiry; the uvicorn exit shape).
+
+**Status 2026-10-18: not yet effective in production** -- the first stops saved nothing (every table declined); the
+reason is being read from the new log line.
+
 ## Key custody (the one irreducible local secret)
 Server-side AI/bots must read chats to generate replies, so true e2e is impossible — encryption is
 **at rest in the relay**, not e2e. Each user gets a **server-held storage keypair**; the operator key
