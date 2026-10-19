@@ -59,6 +59,21 @@ def test_the_desktop_takes_a_capture_a_popup_asked_for():
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_desktop_chooses_the_region_on_the_prompts_frozen_frame():
+    """The prompt's Select region hands over its staged frame; the desktop passes it to the capture
+    (which freezes the screen on it and crops it) and does not delete it first."""
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!window.PCOS && PCOS.isOn() && !!window.__wm && !!__wm.emit")
+        await b.js("__wm.emit({name:'tick',change:'run',payload:'pc:act:shot:region-frozen:%2Ftmp%2Fposterchan-shots-1000%2Fs.png'})")
+        await b.until("__shot.some(x=>x[0]==='take')")
+        assert await b.js("__shot.find(x=>x[0]==='take')[1]") == {"mode": "region", "frozen": "/tmp/posterchan-shots-1000/s.png"}
+        assert not await b.js("__shot.some(x=>x[0]==='discard')"), "the frozen frame was deleted before the region was chosen"
+
+    asyncio.run(desktop.with_browser("online", "", check, COMPOSITOR + BRIDGES))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_print_screen_opens_the_prompt_as_a_window_above_applications():
     async def check(b):
         await desktop.login(b)
@@ -94,7 +109,10 @@ def test_the_prompt_window_does_what_each_choice_says(choice):
             assert "Saved" in await b.js("document.querySelector('.shot-foot').textContent")
             assert closed >= 1, "the prompt window stayed open after saving"
         elif choice == "region":
-            assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in shot and "shot:region" in acts, (shot, acts)
+            # FREEZE FIRST: the keypress frame is HANDED to the desktop's region picker (it is chosen on
+            # and cut from that still picture), never deleted here (tests/test_screenshot_freeze_first.py).
+            assert "shot:region-frozen:%2Ftmp%2Fposterchan-shots-1000%2Fs.png" in acts, (shot, acts)
+            assert not any(x[0] == "discard" for x in shot), ("the frame the region is chosen on was deleted", shot)
         else:
             assert ["discard", "/tmp/posterchan-shots-1000/s.png"] in shot and closed >= 1, (shot, closed)
         assert not await b.js("localStorage.getItem('pc_shot_stage')"), "the staged capture was left in storage"
@@ -227,7 +245,7 @@ def test_with_no_delay_select_region_happens_at_once():
         got["acts"] = await b.js("__acts")
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
-    assert got["acts"] == ["shot:region"], got
+    assert got["acts"] == ["shot:region-frozen:%2Ftmp%2Fposterchan-shots-1000%2Fs.png"], got
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")

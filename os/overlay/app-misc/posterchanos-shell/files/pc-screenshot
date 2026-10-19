@@ -23,7 +23,9 @@ lock="${XDG_RUNTIME_DIR:-/tmp}/posterchan-screenshot-${UID}.lock"
 # A held Print key must never stack region selectors. `slurp` owns the pointer until a selection or
 # Escape, so a second copy cannot help and is exactly how ten invisible selectors accumulated.
 mkdir "$lock" 2>/dev/null || exit 0
-trap 'rmdir "$lock" 2>/dev/null || true' EXIT INT TERM
+frame=
+trap 'rmdir "$lock" 2>/dev/null || true; [ -z "$frame" ] || rm -f "$frame"' EXIT
+trap 'exit 130' INT TERM
 dir="${XDG_PICTURES_DIR:-${HOME}/Pictures}/Screenshots"
 mkdir -p "$dir" || exit 1
 file="$dir/PosterChan-$(date +%Y-%m-%d-%H%M%S-%N).png"
@@ -37,6 +39,62 @@ grim_capture() {
 	grim "$@"
 }
 
+# FREEZE FIRST, THEN CHOOSE ("take the screenshot then let the user choose the area ... It's hard to
+# take a selection when the screen is moving"). The whole layout is captured BEFORE slurp runs and the
+# rectangle is cut out of that frame -- the moment of the keypress, not of the mouse release, and no
+# second capture. When the desktop is running it does all of this itself and also lays the still
+# picture over every monitor while you drag (desktop/screenshot.js, shot-freeze.js); this path is the
+# one used with NO desktop, where nothing on this OS can draw a picture above every window, so the
+# rectangle is dragged over the live screen and cut from the frozen frame.
+#
+# The arithmetic: slurp answers in LOGICAL layout coordinates; grim's whole-layout picture is the
+# layout's bounding box at one scale, origin at the box's top-left (negative when a monitor sits left
+# of or above the primary). The layout comes from wlr-randr, the scale is MEASURED as picture size /
+# logical box, and if the two axes disagree the layout is not the one grim photographed -- then this
+# fails and the caller falls back to a live `grim -g`, which is at least the rectangle that was drawn.
+# python3 + Pillow (dev-python/pillow) and wlr-randr are in POSTERCHANOS_PACKAGES already.
+crop_frame() {
+	command -v python3 >/dev/null 2>&1 || return 1
+	command -v wlr-randr >/dev/null 2>&1 || return 1
+	wlr-randr --json 2>/dev/null | python3 -I -c '
+import json, re, sys
+from PIL import Image
+src, geo, dst = sys.argv[1:4]
+m = re.fullmatch(r"(-?\d+),(-?\d+) (\d+)x(\d+)", geo.strip())
+if not m:
+    sys.exit(1)
+gx, gy, gw, gh = (int(v) for v in m.groups())
+outs = []
+for head in json.load(sys.stdin):
+    if not head.get("enabled", True):
+        continue
+    mode = next((md for md in head.get("modes") or [] if md.get("current")), None)
+    if not mode:
+        continue
+    w, h = int(mode["width"]), int(mode["height"])
+    if str(head.get("transform") or "normal").endswith(("90", "270")):
+        w, h = h, w
+    s = float(head.get("scale") or 1.0)
+    pos = head.get("position") or {}
+    x, y = int(pos.get("x") or 0), int(pos.get("y") or 0)
+    outs.append((x, y, x + round(w / s), y + round(h / s)))
+if not outs:
+    sys.exit(1)
+bx0, by0 = min(o[0] for o in outs), min(o[1] for o in outs)
+bw, bh = max(o[2] for o in outs) - bx0, max(o[3] for o in outs) - by0
+img = Image.open(src)
+sx, sy = img.width / bw, img.height / bh
+if abs(sx - sy) > 0.02 * max(sx, sy):
+    sys.exit(1)
+clamp = lambda v, hi: max(0, min(hi, v))
+x0, y0 = clamp(round((gx - bx0) * sx), img.width), clamp(round((gy - by0) * sy), img.height)
+x1, y1 = clamp(round((gx + gw - bx0) * sx), img.width), clamp(round((gy + gh - by0) * sy), img.height)
+if x1 <= x0 or y1 <= y0:
+    sys.exit(1)
+img.crop((x0, y0, x1, y1)).save(dst, "PNG")
+' "$1" "$2" "$3" 2>/dev/null
+}
+
 if ! command -v grim >/dev/null 2>&1; then
 	command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'grim is not installed'
 	exit 1
@@ -48,9 +106,18 @@ case "$mode" in
 			command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'slurp is not installed'
 			exit 1
 		fi
+		frame="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/pc-screenshot-frame.XXXXXX")" || exit 1
+		if ! grim_capture -t png "$frame" || [ ! -s "$frame" ]; then
+			command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'The captured image was empty'
+			exit 1
+		fi
 		geometry="$(slurp)" || exit 0
 		[ -n "$geometry" ] || exit 0
-		grim_capture -g "$geometry" "$file"
+		if ! crop_frame "$frame" "$geometry" "$file"; then
+			rm -f "$file"
+			grim_capture -g "$geometry" "$file"
+		fi
+		rm -f "$frame"; frame=
 		;;
 	screen) grim_capture "$file" ;;
 	*) exit 2 ;;

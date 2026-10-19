@@ -12667,7 +12667,9 @@
                    because the popup that asked is closing. */
                 else if(kind === 'shot'){
                   const d = /^delay-(\d+)(?:-(region|screen))?$/.exec(val);
+                  const f = /^region-frozen:(.+)$/.exec(val);
                   if(d){ if(window.PCOSShell && PCOSShell.delayedShot) PCOSShell.delayedShot(Number(d[1]), d[2] || 'screen'); }
+                  else if(f){ if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot('region', { frozen: f[1] }); }
                   else if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(val === 'region' ? 'region' : 'screen');
                 }
                 else if(kind === 'markup') _markupShot(val);

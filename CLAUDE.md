@@ -1824,7 +1824,11 @@ would have handled it fine).
   real `script -qfc … bash` PTY, not `foot`. `Ctrl+F` opens the start menu's search. PrtSc / Shift+PrtSc
   screenshot the screen or an area via `grim`/`slurp`; **`clipboard.writeImage` does not take the
   Wayland selection**, and `readImage()` cannot prove it did (Chromium hands back its own cached
-  write), so the "copied" claim is verified with `wl-paste` or not made.
+  write), so the "copied" claim is verified with `wl-paste` or not made. **An AREA is chosen on a
+  FROZEN screen**: grim captures the whole layout first (or the Print Screen prompt's staged frame is
+  reused), `shot-freeze.js` lays it over every output, slurp drags over the still, and the rectangle
+  is cropped from that frame (`screenshot.js frozenCrop`: slurp is LOGICAL, grim's picture is the
+  layout box at one measured scale) — no second capture. `tests/test_screenshot_freeze_first.py`.
   Files has a **"This Computer"** tab; `hostfiles.js` is handed the app's own `_fxBarHTML` /
   `_fxColsHTML` / `_fxDetailsRow` / `_fxIcon` rather than inventing markup — it used to draw eleven
   class names of which the stylesheet defined *none*.

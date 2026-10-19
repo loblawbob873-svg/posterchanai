@@ -1550,15 +1550,20 @@
    * for — and if the tool is missing they never find out at all.
    *
    * The flyout closes FIRST and the capture waits a frame, or the picture is of the flyout. */
-  async function takeShot(mode){
+  async function takeShot(mode, opts){
     const sh = root.pcShot;
+    /* `frozen`: the Print Screen prompt's staged whole-screen frame. A region is then chosen ON that
+       still picture and cut out of it -- the moment of the keypress, not of the mouse release
+       ("take the screenshot then let the user choose the area"; desktop/screenshot.js). */
+    const frozen = String((opts && opts.frozen) || '');
+    const dropFrozen = () => { if(frozen && sh && typeof sh.discard === 'function'){ try{ const r = sh.discard(frozen); if(r && r.catch) r.catch(() => {}); }catch(_){ } } };
     if(!sh || typeof sh.take !== 'function'){ toast('screenshots are not available here'); return null; }
     /* A POPUP CANNOT TAKE A SCREENSHOT OF ANYTHING BUT ITS OWN DEATH. The tray's "Choose an area…" and
      * "Whole screen" run in the tray POPUP, and closePop() below closes that window (root.close()) —
      * so the await after it never resumed and the capture was never started: "selecting region does
      * nothing". The desktop takes it instead, through the same path as the keys. */
     if(IN_POPUP && root.pcPopup && typeof root.pcPopup.act === 'function'){
-      try{ root.pcPopup.act('shot:' + (mode === 'region' ? 'region' : 'screen')); }catch(_){ }
+      try{ root.pcPopup.act('shot:' + (mode === 'region' ? (frozen ? 'region-frozen:' + encodeURIComponent(frozen) : 'region') : 'screen')); }catch(_){ }
       return { handedOff: true };
     }
     /* CHOOSING AN AREA IS THE DEFAULT NOW (Print picks a rectangle, Shift+Print takes the screen),
@@ -1571,8 +1576,9 @@
       if(can && can.ok && !can.region){
         toast('Choosing an area needs slurp (gui-apps/slurp) — took the whole screen instead');
         mode = 'screen';
+        dropFrozen();
       }
-    }
+    }else dropFrozen();
     /* Which of the desktop's own windows was in front -- asked BEFORE the flyout closes, since the
      * capture (slurp's overlay) hands the keyboard to whatever application is on top afterwards.
      * See os.js frontSnapshot. */
@@ -1583,7 +1589,7 @@
     closePop();
     await new Promise(r => setTimeout(r, 180));
     let res = null;
-    try{ res = await sh.take({ mode: mode || 'screen' }); }
+    try{ res = await sh.take(mode === 'region' && frozen ? { mode: 'region', frozen } : { mode: mode || 'screen' }); }
     catch(e){ giveBack(); toast(String((e && e.message) || e)); return null; }
     giveBack();
     /* CANCELLED IS NOT FAILED. `slurp` exits nonzero when somebody presses Escape, and a toast
@@ -1733,6 +1739,14 @@
          capture: it outlives this window, which has to be gone before the picture is taken. */
       if(a === 'region' || a === 'screen'){
         const sec = shotDelay();
+        /* SELECT REGION, NO DELAY: the region is chosen on THIS frame -- the one taken when the key was
+           pressed -- frozen over the screen, so nothing moves under the mouse. It is handed over, not
+           dropped; the capture deletes it once it has been cut out of (or cancelled). */
+        if(a === 'region' && !sec){
+          try{ root.pcPopup.act('shot:region-frozen:' + encodeURIComponent(String(st.path))); }
+          catch(_){ drop(); try{ root.close(); }catch(__){ } }
+          return;
+        }
         drop();
         try{ root.pcPopup.act('shot:' + (sec ? 'delay-' + sec + '-' + a : a)); }catch(_){ try{ root.close(); }catch(_){ } }
         return;
@@ -1822,6 +1836,7 @@
           if(a === 'cancel'){ drop(); done(); resolve({ cancelled: true }); return; }
           if(a === 'region' || a === 'screen'){
             const sec = shotDelay();
+            if(a === 'region' && !sec){ done(); await new Promise(r => setTimeout(r, 180)); resolve(await takeShot('region', { frozen: st.path })); return; }
             drop(); done();
             if(sec){ resolve(delayedShot(sec, a)); return; }
             await new Promise(r => setTimeout(r, 180)); resolve(await takeShot(a)); return;

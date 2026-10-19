@@ -105,6 +105,10 @@ function parseGeometry(out) {
 async function capture(opts) {
   const o = opts || {};
   const mode = o.mode === 'region' || o.mode === 'area' ? o.mode : 'screen';
+  /* A REGION IS CHOSEN ON A STILL PICTURE when the caller can show one and crop one (main.js passes
+   * both) -- see captureFrozenRegion. Without them it is the live picker below, as it always was. */
+  if (mode === 'region' && Array.isArray(o.layout) && o.layout.length && typeof o.crop === 'function')
+    return captureFrozenRegion(o);
 
   let geometry = null;
   if (mode === 'region') {
@@ -241,4 +245,123 @@ async function clipboardHasImage() {
   } catch (_) { return false; }
 }
 
-module.exports = { available, capture, commit, discard, stageDir, clipboardHasImage, shotDir, shotName, parseGeometry, has };
+/* FREEZE FIRST, THEN CHOOSE. "Screen Shot on PosterChanOS -> take the screenshot then let the user
+ * choose the area ... It's hard to take a selection when the screen is moving."
+ *
+ * The region used to be picked with `slurp` over the LIVE screen and photographed afterwards with
+ * `grim -g`: with a video or an animation playing, the thing being framed moved under the mouse, and
+ * the picture was of the moment the button was RELEASED, not the moment the key was pressed. Now the
+ * whole screen (every output) is captured FIRST, that still picture is laid over each monitor
+ * (`o.showFrozen`, desktop/shot-freeze.js), slurp draws its rectangle over the still, and the
+ * rectangle is cut out of the picture already taken. There is no second capture -- a second capture
+ * would photograph the overlay, or the screen as it is now, which is the bug.
+ *
+ * `o.frozen` reuses a frame the Print Screen prompt already staged (the moment of the keypress).
+ *
+ * THE ARITHMETIC (frozenCrop). slurp answers in LOGICAL layout coordinates; grim's whole-layout
+ * picture is the layout's bounding box at ONE scale (the highest output's), with its origin at the
+ * box's top-left -- which can be negative (a monitor left of the primary). The scale is MEASURED as
+ * picture size / logical box size rather than read from the outputs, because what grim chose for a
+ * fractional scale is grim's business; if the two axes disagree, the layout we were handed is not the
+ * one grim photographed, and guessing would cut out the wrong part of somebody's screen -- so that
+ * case falls back to the live `grim -g` capture of the chosen rectangle, which is at least the
+ * rectangle they drew. */
+function pngSize(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const b = Buffer.alloc(24);
+    try { fs.readSync(fd, b, 0, 24, 0); } finally { fs.closeSync(fd); }
+    if (b.readUInt32BE(0) !== 0x89504e47 || b.toString('latin1', 12, 16) !== 'IHDR') return null;
+    const w = b.readUInt32BE(16), h = b.readUInt32BE(20);
+    return w > 0 && h > 0 ? { width: w, height: h } : null;
+  } catch (_) { return null; }
+}
+
+function layoutBox(layout) {
+  const outs = (Array.isArray(layout) ? layout : []).filter(r => r && Number(r.width) > 0 && Number(r.height) > 0);
+  if (!outs.length) return null;
+  const x0 = Math.min(...outs.map(r => Number(r.x) || 0)), y0 = Math.min(...outs.map(r => Number(r.y) || 0));
+  const x1 = Math.max(...outs.map(r => (Number(r.x) || 0) + Number(r.width)));
+  const y1 = Math.max(...outs.map(r => (Number(r.y) || 0) + Number(r.height)));
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/** slurp's logical "x,y wxh" -> the pixel rectangle inside grim's whole-layout picture, or null. */
+function frozenCrop(geometry, layout, img) {
+  const m = /^(-?\d+),(-?\d+) (\d+)x(\d+)$/.exec(String(geometry || '').trim());
+  const box = layoutBox(layout);
+  if (!m || !box || !img || !(img.width > 0) || !(img.height > 0)) return null;
+  const sx = img.width / box.width, sy = img.height / box.height;
+  if (Math.abs(sx - sy) > 0.02 * Math.max(sx, sy)) return null;
+  const gx = Number(m[1]), gy = Number(m[2]), gw = Number(m[3]), gh = Number(m[4]);
+  const clamp = (v, hi) => Math.max(0, Math.min(hi, v));
+  const x0 = clamp(Math.round((gx - box.x) * sx), img.width), y0 = clamp(Math.round((gy - box.y) * sy), img.height);
+  const x1 = clamp(Math.round((gx + gw - box.x) * sx), img.width), y1 = clamp(Math.round((gy + gh - box.y) * sy), img.height);
+  if (x1 <= x0 || y1 <= y0) return null;
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+async function captureFrozenRegion(o) {
+  const unlink = (f) => { try { fs.unlinkSync(f); } catch (_) { } };
+  /* 1. THE FRAME, before anything is drawn and before anything is chosen. */
+  let src = o.frozen ? _staged(o.frozen) : null;
+  if (!src) {
+    const sdir = stageDir();
+    try { fs.mkdirSync(sdir, { recursive: true }); }
+    catch (e) { return { ok: false, why: 'could not make ' + sdir + ': ' + ((e && e.message) || e) }; }
+    src = path.join(sdir, 'PosterChan-freeze-' + Date.now() + '-' + process.pid + '.png');
+    try { await run(GRIM, [src], { timeout: 20000 }); }
+    catch (e) {
+      unlink(src);
+      if (e.missing) return { ok: false, why: 'screenshots need grim (gui-apps/grim), which is not installed' };
+      return { ok: false, why: (e && e.message) || String(e) };
+    }
+  }
+  const img = pngSize(src);
+  if (!img) { unlink(src); return { ok: false, why: 'the screenshot came back empty' }; }
+
+  /* 2. THE STILL PICTURE OVER EVERY MONITOR, then the picker over it. The overlay is taken down
+   * whatever slurp says -- a cancel must leave nothing on the screen. An overlay that could not be
+   * shown is not a reason to refuse: the rectangle still comes out of the frozen frame. */
+  let hide = null, geometry = null, failed = null;
+  try { if (typeof o.showFrozen === 'function') hide = await o.showFrozen(src, o.layout); }
+  catch (_) { hide = null; }
+  try { geometry = parseGeometry(await run(SLURP, [], { timeout: 120000 })); }
+  catch (e) { failed = e; }
+  finally { if (typeof hide === 'function') { try { await hide(); } catch (_) { } } }
+  if (failed) {
+    unlink(src);
+    if (failed.missing) return { ok: false, why: 'selecting a region needs slurp (gui-apps/slurp), which is not installed' };
+    const why = String((failed && failed.stderr) || '').trim().split('\n').pop();
+    if (!why || /cancel/i.test(why)) return { ok: false, cancelled: true, why: '' };
+    return { ok: false, why: 'could not select a region: ' + why };
+  }
+  if (!geometry) { unlink(src); return { ok: false, cancelled: true, why: '' }; }
+
+  /* 3. CUT IT OUT of the frame already taken. */
+  const dir = o.stage ? stageDir() : shotDir();
+  const file = path.join(dir, shotName());
+  try { fs.mkdirSync(dir, { recursive: true }); }
+  catch (e) { unlink(src); return { ok: false, why: 'could not make ' + dir + ': ' + ((e && e.message) || e) }; }
+  const rect = frozenCrop(geometry, o.layout, img);
+  let frozen = false;
+  if (rect) {
+    try { await o.crop(src, rect, file); frozen = true; }
+    catch (_) { unlink(file); frozen = false; }
+  }
+  unlink(src);
+  if (!frozen) {
+    try { await run(GRIM, ['-g', geometry, file], { timeout: 20000 }); }
+    catch (e) {
+      if (e.missing) return { ok: false, why: 'screenshots need grim (gui-apps/grim), which is not installed' };
+      return { ok: false, why: (e && e.message) || String(e) };
+    }
+  }
+  let size = 0;
+  try { size = fs.statSync(file).size; } catch (_) { size = 0; }
+  if (!size) { unlink(file); return { ok: false, why: 'the screenshot came back empty' }; }
+  return { ok: true, path: file, bytes: size, copied: false, dir, staged: !!o.stage, frozen };
+}
+
+module.exports = { available, capture, commit, discard, stageDir, clipboardHasImage, shotDir, shotName, parseGeometry, has,
+                   frozenCrop, layoutBox, pngSize };

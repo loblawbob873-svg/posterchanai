@@ -4172,6 +4172,36 @@ ipcMain.handle('pc:office:export', _officeCall((id, token, fmt) => officeLocal()
 ipcMain.handle('pc:office:close', _officeCall((id, token) => ({ closed: officeLocal().close(String(id), String(token)) })));
 app.on('will-quit', () => { if (_officeLocal) _officeLocal.stop(); });
 ipcMain.handle('pc:shot:available', (e) => { fsGuard(e); return require('./screenshot.js').available(); });
+/* A REGION IS CHOSEN ON A STILL PICTURE (screenshot.js captureFrozenRegion, shot-freeze.js): the
+ * outputs' logical rectangles (what slurp answers in), the overlay that shows the frozen frame on each,
+ * and the crop -- Electron's own image code, so there is no extra program to install. No layout (no
+ * compositor to ask) means the live picker, exactly as before. `frozen` is the Print Screen prompt's
+ * staged frame, i.e. the moment of the keypress. */
+let _shotFreeze = null;
+const shotFreeze = () => (_shotFreeze || (_shotFreeze = require('./shot-freeze.js').createFreezeHost({
+  createWindow: opts => new BrowserWindow(opts), wm })));
+async function frozenRegionOpts(o){
+  let layout = [];
+  try{
+    layout = (await wm().outputs()).filter(x => x && x.active !== false && x.rect && x.rect.width > 0 && x.rect.height > 0)
+      .map(x => ({ name: String(x.name || ''), x: Number(x.rect.x) || 0, y: Number(x.rect.y) || 0,
+                   width: Number(x.rect.width), height: Number(x.rect.height) }));
+  }catch(_){ layout = []; }
+  if(!layout.length) return {};
+  return {
+    layout, frozen: o.frozen ? String(o.frozen) : '',
+    showFrozen: (src, lay) => shotFreeze().show(src, lay),
+    crop: async (src, rect, dest) => {
+      const { nativeImage } = require('electron');
+      const img = nativeImage.createFromPath(src);
+      if(img.isEmpty()) throw new Error('the frozen frame could not be read');
+      const part = img.crop({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      const png = part.toPNG();
+      if(!png || !png.length) throw new Error('the crop came back empty');
+      fs.writeFileSync(dest, png);
+    },
+  };
+}
 /* PRINT SCREEN'S PROMPT (osshell.js shotPrompt): the whole screen is captured to a private staging
  * file BEFORE the prompt is drawn, and handed back with a small preview; Save moves it into
  * ~/Pictures/Screenshots, Cancel or "Select region" deletes it. See screenshot.js commit/discard. */
@@ -4193,9 +4223,10 @@ ipcMain.handle('pc:shot:take', async (e, opts) => {
   const o = opts || {};
   /* `staged`: keep a picture the prompt already took (Save / Copy) instead of taking a new one --
    * a second capture now would be a picture of the prompt closing. */
+  const mode = String(o.mode || 'screen');
   const r = o.staged ? require('./screenshot.js').commit(o.staged)
-                     : await require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
-                                                                  geometry: o.geometry });
+                     : await require('./screenshot.js').capture(Object.assign({ mode, geometry: o.geometry },
+                                                                              mode === 'region' ? await frozenRegionOpts(o) : {}));
   if (!r.ok || o.copy === false) return r;
   /* THE CLIPBOARD, WITH ELECTRON'S OWN API RATHER THAN `wl-copy`.
    *
