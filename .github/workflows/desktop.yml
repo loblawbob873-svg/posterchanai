@@ -251,6 +251,15 @@ jobs:
           echo "::error::the desktop regression packages could not be installed (mirror unreachable) -- no test ran"
           exit 1
 
+      # A PINNED PYTHON FOR THE GATE'S VENV. It used the runner's `python3`, which became 3.14 on 2026-10-19 -- coincurve has
+      # no 3.14 wheel, its source build died ("Expected exactly one LICENSE file in cffi distribution, got 0"), and every
+      # Desktop run failed in 2.5 minutes with no test run. 3.12 has wheels for every requirement.
+      - name: Python for the regression gate
+        if: matrix.name == 'linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Verify required desktop regressions
         if: matrix.name == 'linux'
         timeout-minutes: 45
