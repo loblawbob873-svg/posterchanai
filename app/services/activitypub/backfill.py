@@ -37,6 +37,7 @@ ANCESTORS = 30              # posts climbed above an opened post, to reach its t
 REFRESH = 6 * 3600          # an account or thread is re-read at most this often
 _POSTS = ("Note", "Article", "Question", "Page")
 _MARK = "pcai:ap:backfilled:"
+_DONE = state._Mirror(_MARK)
 # PACING -- this reads other people's servers, and writes into our own relay.
 PACE = 10.0                 # seconds between BACKGROUND reads (discovery, catch-up, a follow) -- 30 s capped the
                             # whole re-read at 120 accounts an hour, below the 483 followed on server1 (2026-10-17)
@@ -337,8 +338,7 @@ async def catch_up(per_tick: int = 6, now: float | None = None) -> int:
     is what a missed delivery costs now -- a few hours' delay, never the post."""
     try:
         followed = await state.followed_actors(max_age=300)
-        from app.services import nostr_store
-        done = await nostr_store.list_docs(state._port(), _MARK, seckey=state._seckey(), strict=True, limit=100000)
+        done = await _DONE.read()       # what changed since the last tick (markers are only ever overwritten)
     except Exception:
         return 0                        # could not ask what is done: do nothing rather than repeat
     now = time.time() if now is None else now

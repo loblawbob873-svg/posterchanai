@@ -131,6 +131,9 @@ _FOLLOWERS_FULL_EVERY = 3600.0
 _FOLLOWERS_MAX = 5000
 
 
+_MIRRORS: list = []
+
+
 class _Mirror:
     """EVERY document under one prefix, kept current by reading what CHANGED.
 
@@ -147,6 +150,7 @@ class _Mirror:
         self.docs = None
         self.since = 0
         self.full = 0.0
+        _MIRRORS.append(self)
 
     async def read(self) -> dict:
         now = time.time()

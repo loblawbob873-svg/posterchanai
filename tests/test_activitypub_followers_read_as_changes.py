@@ -111,3 +111,27 @@ def test_a_failed_cross_member_delta_is_not_nobody(fake, monkeypatch):
     monkeypatch.setattr(nostr_store, "list_docs", down)
     with pytest.raises(ConnectionError):
         asyncio.run(state.nostr_users_with_followers(max_age=0))
+
+
+def test_backfill_catch_up_reads_its_markers_as_changes(fake, monkeypatch):
+    """`qbackfill-`: every catch-up tick re-read every backfill marker (one per followed account)."""
+    from app.services.activitypub import backfill
+    now = int(time.time())
+    for i in range(80):
+        a = "https://h%d.example/u" % i
+        _put(fake, state._FOLLOWING_PREFIX, "%s:%d" % ("c" * 64, i), {"actor": a}, now - 3600)
+        _put(fake, backfill._MARK, state._h(a), {"actor": a, "at": now}, now - 60)
+    seen = []
+
+    async def bf(actor, **kw):
+        seen.append(actor)
+        return {"n": 0}
+    monkeypatch.setattr(backfill, "backfill_actor", bf)
+    state.forget_followed_cache()
+    asyncio.run(backfill.catch_up())
+    fake.reads.clear()
+    for _ in range(5):
+        asyncio.run(backfill.catch_up())
+    marker_reads = [r for r in fake.reads]
+    assert marker_reads and all(k == "delta" for k, _ in marker_reads), marker_reads
+    assert seen == [], "every account was read a minute ago; nothing is due"

@@ -198,7 +198,6 @@ def _fedi_ledger_cache_is_per_test():
     st = sys.modules.get("app.services.activitypub.state")
     if st is not None and hasattr(st, "_FOLLOWERS"):
         st._FOLLOWERS.clear()                      # the per-member follower lists, likewise
-        for v in list(vars(st).values()):          # and the cross-member prefix mirrors
-            if isinstance(v, getattr(st, "_Mirror", ())):
-                v.reset()
+        for v in getattr(st, "_MIRRORS", ()):      # and every prefix mirror (state's, backfill's, ...)
+            v.reset()
     yield
