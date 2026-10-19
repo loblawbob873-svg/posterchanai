@@ -717,13 +717,28 @@ class ConcordMirror:
     def mirrors(self, author: str) -> bool:
         return author in self.registered_authors()
 
+    # WHAT WAS ALREADY DELIVERED IS NOT SENT AGAIN. A member's app re-publishes the same signed wrap (a retry whose OK
+    # was slow, a second device, the outbox replaying) and every copy used to go back out to every relay of the
+    # community. One accepted delivery is remembered per id; a FAILED one is not, so a retry still goes out.
+    _FORWARDED_MAX = 20000
+
     async def forward(self, ev: dict) -> bool:
         """Deliver a member's wrap to the community's relays. True when at least one accepted it."""
+        eid = ev.get("id", "")
+        done = self.__dict__.setdefault("_forwarded", collections.OrderedDict())
+        if eid and eid in done:
+            done.move_to_end(eid)
+            return True
         links = [self.links[u] for u in self._relays_for(ev.get("pubkey", "")) if u in self.links]
         if not links:
             return False
         results = await asyncio.gather(*(link.publish(ev) for link in links), return_exceptions=True)
-        return any(r is True for r in results)
+        ok = any(r is True for r in results)
+        if ok and eid:
+            done[eid] = True
+            while len(done) > self._FORWARDED_MAX:
+                done.popitem(last=False)
+        return ok
 
     async def forward_ephemeral(self, ev: dict) -> None:
         for u in self._relays_for(ev.get("pubkey", "")):

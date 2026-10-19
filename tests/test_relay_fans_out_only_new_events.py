@@ -83,3 +83,30 @@ def test_no_ingest_path_fans_out_on_add_events_answer():
                 if any(isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "fanout" for n in ast.walk(node)):
                     bad.append("%s:%d" % (f.name, node.lineno))
     assert not bad, "fan-out gated on add_event (True for duplicates): %s" % bad
+
+
+def test_the_concord_mirror_does_not_forward_a_delivered_wrap_twice():
+    """A member's app re-publishing a wrap the mirror already delivered must not send it to the community's relays
+    again; a forward that FAILED is retried."""
+    from app.services.nostr_relay.concord_mirror import ConcordMirror
+
+    class Link:
+        def __init__(self, ok):
+            self.ok, self.sent = ok, []
+
+        async def publish(self, ev):
+            self.sent.append(ev["id"])
+            return self.ok
+
+    m = ConcordMirror.__new__(ConcordMirror)
+    good, bad = Link(True), Link(False)
+    m.links = {"wss://a": good}
+    m._relays_for = lambda author: ["wss://a"]
+    wrap = {"id": "1" * 64, "pubkey": "2" * 64, "kind": 1059}
+    for _ in range(3):
+        assert asyncio.run(m.forward(wrap)) is True
+    assert good.sent == [wrap["id"]], "an already-delivered wrap was sent again: %d sends" % len(good.sent)
+    m.links = {"wss://a": bad}
+    other = dict(wrap, id="3" * 64)
+    asyncio.run(m.forward(other)); asyncio.run(m.forward(other))
+    assert bad.sent == [other["id"], other["id"]], "a failed forward must be retried"
