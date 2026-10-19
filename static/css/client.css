@@ -9649,6 +9649,14 @@ html.os-on #upload-badge.upbadge{z-index:333}
  * a real box on a desktop and still shares one line with them on a phone. */
 .fx-find{flex:1 1 180px;min-width:110px;max-width:340px;height:34px;padding:6px 10px;font-size:13px}
 @media (max-width:520px){ .fx-find{flex:1 1 100%;max-width:none;order:3;margin-top:6px} }
+/* Files → Storage admin's user search: the same box, on its own line across the top of the table, with
+ * a clear button beside it (the native WebKit ✕ is hidden so there is only ever one). Higher specificity
+ * than the phone rules above, which push the drive's box onto a line of its own below its siblings. */
+.badm-find{display:flex;align-items:center;gap:6px;flex:1 1 100%;min-width:0}
+.badm-find .fx-find{flex:1 1 auto;min-width:0;max-width:none;margin:0!important;order:0!important}
+.badm-find .fx-find::-webkit-search-cancel-button{-webkit-appearance:none;display:none}
+.badm-find .badm-find-clear{flex:0 0 auto;min-width:40px;min-height:40px;justify-content:center}
+.badm-find .badm-find-clear[hidden]{display:none!important}   /* the icon-only button rule (0,4,2 via :has) sets inline-flex */
 .fx-views{display:flex;gap:4px;flex:0 0 auto}
 .fx-sort-wrap{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap}
 .fx-sort{height:32px;max-width:132px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);

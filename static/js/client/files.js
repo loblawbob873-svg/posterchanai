@@ -68,6 +68,7 @@ window.PCFilesFactory = function(dep){
     return renderPublicFiles(pane);
   }
   // Admin tab: per-user storage overview. Tap a row → review that user's files; tap avatar/name → profile.
+  let _badmQ = '';   // the admin user search, kept across a drill-in and back
   async function renderBlossomAdmin(pane){
     if(!_S.IS_ADMIN){ pane.innerHTML='<div class="empty">Admins only.</div>'; return; }
     if(_S._filesAdminPk) return renderBlossomAdminUser(pane, _S._filesAdminPk);
@@ -87,9 +88,25 @@ window.PCFilesFactory = function(dep){
      * admin's question is comparative (who is using the space), and a comparison needs columns
      * that sort. Same visual family as the Files explorer; the drill-in below is unchanged. */
     _S._badmSort = _S._badmSort || { k:'size', d:-1 };
+    /* SEARCH AT THE TOP ("File Manager -> Admin -> Make users searchable at the top"). It filters the
+     * list this screen ALREADY fetched -- the usage report is one signed request, and asking for it
+     * again per keystroke would re-sign and re-download it for nothing, since typing does not change
+     * who uploaded what. The toolbar is drawn ONCE and only the table below it is redrawn, so the
+     * caret never leaves the box. It matches every name a row can be recognised by: the profile's
+     * name and display name, its NIP-05, the npub and the hex key. */
+    const _badmHay = u => { const p2=Store.profile(u.pubkey)||{};
+      return [p2.name, p2.display_name, p2.nip05, u.npub, u.pubkey].filter(Boolean).join('\n').toLowerCase(); };
+    pane.innerHTML=`<div class="fx-bar badm-bar"><div class="badm-find">
+        <input class="input fx-find" id="badm-find" type="search" autocomplete="off" spellcheck="false"
+               placeholder="🔍 Search users" aria-label="Search users" value="${enc(_badmQ)}">
+        <button type="button" class="btn btn-ghost small badm-find-clear" id="badm-find-clear" title="Clear search" aria-label="Clear search"${_badmQ?'':' hidden'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div></div><div id="badm-list"></div>`;
+    const list=$('#badm-list',pane), find=$('#badm-find',pane), clear=$('#badm-find-clear',pane);
     const draw = () => {
       const k=_S._badmSort.k, d=_S._badmSort.d;
-      const rows=[...users].sort((x,y)=>{
+      const q=_badmQ.trim().toLowerCase();
+      const shown = q ? users.filter(u=>_badmHay(u).includes(q)) : users;
+      const rows=[...shown].sort((x,y)=>{
         const vx = k==='name' ? (((Store.profile(x.pubkey)||{}).name)||x.npub).toLowerCase()
                               : (x[k]||0);
         const vy = k==='name' ? (((Store.profile(y.pubkey)||{}).name)||y.npub).toLowerCase()
@@ -97,7 +114,11 @@ window.PCFilesFactory = function(dep){
         return (vx<vy?-1:vx>vy?1:0)*d;
       });
       const arrow = c => _S._badmSort.k===c ? (_S._badmSort.d<0?' ▾':' ▴') : '';
-      pane.innerHTML=`<div class="muted small" style="padding:8px 6px 4px">${users.length} uploader${users.length===1?'':'s'} · ${_fmtBytes(total)} stored · tap a column to sort, a row to review files</div>
+      const summary = q
+        ? `${shown.length} of ${users.length} uploader${users.length===1?'':'s'} match`
+        : `${users.length} uploader${users.length===1?'':'s'} · ${_fmtBytes(total)} stored · tap a column to sort, a row to review files`;
+      list.innerHTML=`<div class="muted small badm-summary" style="padding:8px 6px 4px">${summary}</div>`
+        + (q && !shown.length ? `<div class="empty badm-none">No users match “${enc(_badmQ.trim())}”.</div>` : `
         <div style="overflow-x:auto"><table class="badm-tbl" style="width:100%;border-collapse:collapse">
           <thead><tr>
             <th data-s="name" style="text-align:left;cursor:pointer;padding:6px">User${arrow('name')}</th>
@@ -114,12 +135,16 @@ window.PCFilesFactory = function(dep){
               <td style="padding:6px;text-align:right"><b>${_fmtBytes(u.size)}</b></td>
               <td style="padding:6px;text-align:right"><span class="muted small">review ›</span></td>
             </tr>`; }).join('')}</tbody>
-        </table></div>`;
-      $$('th[data-s]',pane).forEach(th=> th.onclick=()=>{ const k2=th.dataset.s;
+        </table></div>`);
+      $$('th[data-s]',list).forEach(th=> th.onclick=()=>{ const k2=th.dataset.s;
         _S._badmSort = { k:k2, d: _S._badmSort.k===k2 ? -_S._badmSort.d : (k2==='name'?1:-1) }; draw(); });
-      $$('.badm-prof',pane).forEach(el=> el.onclick=(e)=>{ e.stopPropagation(); renderProfileView(el.dataset.pk); });
-      $$('.badm-row',pane).forEach(el=> el.onclick=()=>{ _S._filesAdminPk=el.dataset.pk; renderBlossom(); });
+      $$('.badm-prof',list).forEach(el=> el.onclick=(e)=>{ e.stopPropagation(); renderProfileView(el.dataset.pk); });
+      $$('.badm-row',list).forEach(el=> el.onclick=()=>{ _S._filesAdminPk=el.dataset.pk; renderBlossom(); });
     };
+    const setQ = v => { _badmQ = v; clear.hidden = !v; draw(); };
+    find.oninput = () => setQ(find.value);
+    find.onkeydown = e => { if(e.key==='Escape' && find.value){ e.preventDefault(); find.value=''; setQ(''); } };
+    clear.onclick = () => { find.value=''; setQ(''); find.focus(); };
     draw();
   }
   // Admin drill-in: a moderation grid of ONE user's public blobs from THIS node's built-in Blossom server
