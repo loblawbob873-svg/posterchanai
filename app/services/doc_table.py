@@ -358,7 +358,10 @@ class DocTable:
     def save_snapshot(self) -> bool:
         """Write this table's snapshot if it can vouch for it: loaded, and its live stream current. Clean stop only."""
         path = self._snapshot_path()
-        if not path or not self._loaded_at or not self._live_ok:
+        why = ("snapshots are off" if not path else "not loaded" if not self._loaded_at
+               else "live stream not current" if not self._live_ok else "")
+        self.snapshot_declined = why
+        if why:
             return False
         try:
             sk, pk = _operator()
@@ -715,8 +718,16 @@ class DocTable:
 
 
 def save_snapshots() -> int:
-    """Every loaded table's snapshot -- at a clean stop (registered with atexit; callable from a shutdown hook)."""
-    return sum(1 for t in list(DocTable._registry.values()) if t.save_snapshot())
+    """Every loaded table's snapshot -- at a clean stop (registered with atexit; callable from a shutdown hook). Says
+    what it did, including why a table was NOT saved: a silent decline is how the first production stop wrote nothing
+    and left nothing to read (2026-10-18)."""
+    tables = list(DocTable._registry.values())
+    saved = [t.name for t in tables if t.save_snapshot()]
+    declined = ["%s (%s)" % (t.name, getattr(t, "snapshot_declined", "") or "error") for t in tables
+                if t.name not in saved]
+    logger.info("[doctable] restart snapshots: %d of %d saved%s", len(saved), len(tables),
+                ("; not saved: " + ", ".join(declined)) if declined else "")
+    return len(saved)
 
 
 atexit.register(save_snapshots)
