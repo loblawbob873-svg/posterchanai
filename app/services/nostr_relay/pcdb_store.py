@@ -50,6 +50,7 @@ SCAN_ROWS = 65536       # rows copied out of the columns per lock hold
 KILL_BATCH = 512        # deaths (OP_DEAD markers) per lock hold
 DECODE_BATCH = 128      # records decoded per lock hold
 ID_BATCH = 256          # id lookups per lock hold (an anchor check is a posting lookup each)
+HOLD_BUDGET = 0.02      # seconds: no chunked pass holds the store lock longer than this, however cold its pages are
 WORDS_INLINE = 25       # deferred search words a search may index inline (~8 ms); more = "not ready"
 
 _DIRECT = ORIGINS["direct"]
@@ -295,6 +296,8 @@ class PcdbRelayStore(RelayStore):
                         "bridge_puppets": len(self.sidecar.bridge_puppet)})
         out["max_lock_hold_ms"] = round(self.lock_stats["max_hold_ms"], 2)
         out["max_lock_hold_site"] = self.lock_stats.get("max_hold_site", "")   # WHICH chunked path held it
+        out["max_query_hold_ms"] = round(getattr(self.store, "max_query_hold_ms", 0.0), 2)
+        out["max_query_hold_shape"] = getattr(self.store, "max_query_hold_shape", "")   # filter KEYS only, no values
         out.update(tuning_mod.status_extras(self.store, self._gov, self._maint, words_batch=self.words_batch))
         return out
 
@@ -366,16 +369,27 @@ class PcdbRelayStore(RelayStore):
         return n
 
     def _decode(self, seqs, fn, pace: bool = True) -> None:
-        """fn(seq, event, origin) for each still-live seq, DECODE_BATCH records per lock hold (paced: see below)."""
+        """fn(seq, event, origin) for each still-live seq, at most DECODE_BATCH records AND HOLD_BUDGET seconds per lock
+        hold (paced: see below).
+
+        THE BUDGET IS TIME, NOT ONLY A COUNT. A record in a cold segment is a disk read under the store lock; 128 of them
+        held it 267 ms on server1 (2026-10-19, max_lock_hold_site=_decode) -- every query and write waiting behind a
+        background scan. The hold now ends at HOLD_BUDGET however cold the pages are; the scan simply takes more holds."""
         st = self.store
         seqs = [int(s) for s in seqs]
-        for i in range(0, len(seqs), DECODE_BATCH):
+        i = 0
+        while i < len(seqs):
             batch = []
             with st._lock:
                 t0 = time.perf_counter()
-                for s in seqs[i:i + DECODE_BATCH]:
+                end = min(i + DECODE_BATCH, len(seqs))
+                while i < end:
+                    s = seqs[i]
+                    i += 1
                     if not st.dead[s] and st.seg[s] != DROPPED:
                         batch.append((s, st.get(s), st.origin[s]))
+                    if time.perf_counter() - t0 > HOLD_BUDGET:
+                        break
                 self._held(t0, "_decode")
             for s, ev, o in batch:       # the predicate (a language detector, a word matcher) runs unlocked
                 fn(s, ev, o)
@@ -388,12 +402,18 @@ class PcdbRelayStore(RelayStore):
         st = self.store
         out = []
         ids = list(ids)
-        for i in range(0, len(ids), ID_BATCH):
+        i = 0
+        while i < len(ids):
             with st._lock:
                 t0 = time.perf_counter()
-                for eid in ids[i:i + ID_BATCH]:
+                end = min(i + ID_BATCH, len(ids))
+                while i < end:                     # a cold index page is a disk read: bounded by time too (_decode)
+                    eid = ids[i]
+                    i += 1
                     s = st._seq_of(eid) if isinstance(eid, str) else None
                     out.append(s if (s is not None and not st.dead[s]) else None)
+                    if time.perf_counter() - t0 > HOLD_BUDGET:
+                        break
                 self._held(t0, "_live_seqs_of")
         return out
 

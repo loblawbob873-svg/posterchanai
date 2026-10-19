@@ -57,6 +57,7 @@ class Outbox:
         self._no_targets = 0   # events dequeued while EVERY upstream was paused (nothing sent)
         self._failed = 0
         self._gave_up = 0
+        self._streak: dict = {}   # relay -> events in a row it never accepted, retries included
         self._last_at = 0.0
 
     def start(self) -> None:
@@ -112,6 +113,8 @@ class Outbox:
                                 ev.get("id", "")[:12], len(accepted), len(targets),
                                 f" ({skipped} paused)" if skipped else "", self._q.qsize())
                     misses = set(targets) - accepted
+                    for r in accepted:
+                        self._streak.pop(r, None)
                     self._sent += 1
                     self._acks += len(accepted)
                     self._targets += len(targets)
@@ -149,6 +152,8 @@ class Outbox:
                 if self.min_interval > 0:
                     await asyncio.sleep(self.min_interval)
             remaining -= ok
+            for r in ok:
+                self._streak.pop(r, None)
             if ok:
                 logger.info("[nostr-relay] outbox retry %d/%d: %s recovered %d relay(s)",
                             attempt, self.retries, eid, len(ok))
@@ -157,6 +162,19 @@ class Outbox:
         self._gave_up += 1
         logger.warning("[nostr-relay] outbox: %s gave up on %d relay(s) after %d retries: %s",
                        eid, len(remaining), self.retries, ", ".join(sorted(remaining)))
+        # A RELAY THAT NEVER TAKES ANYTHING STOPS BEING ASKED. Measured 2026-10-19: five upstream relays gave up on
+        # every event for hours (frens.nostr1.com 892 times in 3 h) -- unreachable from here, or auth-only -- and were
+        # never paused, because a direct-fallback CONNECT that succeeds resets the connect breaker before it trips and
+        # their answers are not one of the worded refusals. After GIVE_UP_STREAK events in a row with no ack at all,
+        # writes to it pause on the refusal clock (6 h, reads unaffected); one ack anywhere resets the count.
+        for r in remaining:
+            n = self._streak.get(r, 0) + 1
+            self._streak[r] = n
+            if n >= self.GIVE_UP_STREAK:
+                _relay._note_relay_refusal(r, "accepted none of our last %d events" % n)
+                self._streak.pop(r, None)
+
+    GIVE_UP_STREAK = 20
 
     def stats(self) -> dict:
         """A snapshot for the status file → Server Stats. Counts only; no event ids, no relay URLs
