@@ -2616,13 +2616,17 @@ class RelayServer:
                     self._send(conn, ["NEG-ERR", sub_id,
                                       "auth-required: NIP-78 sync requires AUTH and matching authors"])
                     return
+        # The session cap is checked BEFORE the item set is built: building it is the expensive half (an exhaustive
+        # match over every followed author), and a socket over its cap used to pay for it and then be refused. A
+        # re-opened sub_id replaces its own session, so it never counts against the cap.
+        open_now = self._neg.get(conn, {})
+        if sub_id not in open_now and len(open_now) >= self.cfg.get("max_subs_per_conn", 20):
+            self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])
+            return
         try:
             flts = [filt] if isinstance(filt, dict) else []
             items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 50000))
             sessions = self._neg.setdefault(conn, {})
-            if len(sessions) >= self.cfg.get("max_subs_per_conn", 20):
-                self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])
-                return
             sessions[sub_id] = items
             resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
             self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
