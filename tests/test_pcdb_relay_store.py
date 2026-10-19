@@ -365,3 +365,15 @@ def test_the_relay_process_opens_its_store_before_its_settings_and_reads_them_fr
             st.close()
             thread._store_ref.pop("primary", None)
     _run(go)
+
+
+def test_the_longest_lock_hold_names_the_path_that_held_it():
+    """`max_lock_hold_ms` was a bare number (293 ms on server1 2026-10-18) with nothing saying which chunked path
+    held the store lock that long; the status now names it."""
+    import time as _t
+    from app.services.nostr_relay.pcdb_store import PcdbRelayStore
+    st = PcdbRelayStore.__new__(PcdbRelayStore)
+    st.lock_stats = {"max_hold_ms": 0.0, "max_hold_site": ""}
+    st._held(_t.perf_counter() - 0.05, "_kill_seqs")
+    st._held(_t.perf_counter() - 0.01, "_decode")          # shorter: does not replace the record
+    assert st.lock_stats["max_hold_site"] == "_kill_seqs" and st.lock_stats["max_hold_ms"] >= 50
