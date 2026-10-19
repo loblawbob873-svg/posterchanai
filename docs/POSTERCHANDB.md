@@ -127,8 +127,44 @@ Now (`disk.py`, `checkpoint.py`):
   queries answered identically. `tests/test_posterchandb_scales_past_ram.py` holds anonymous RAM flat as the store
   grows (186 → <16 B/event), a checkpoint after 2,000 events to < 4 MB (was 27 MB at 200k events), and opens and
   queries a store **inside an 88 MB memory cgroup** that is bigger than the cap (the old store is OOM-killed there).
+- **A lookup reads one page of keys** (fence pointers, `disk.search`, 2026-10-18). The first key of every 4 KB page of
+  a run's keys is kept in RAM (0.2% of the run), written beside it as `run-<name>.<k>.bin` -- the checkpoint's sweep
+  removes it with its run, a torn or foreign fence file is ignored, and a run written before fences existed computes
+  them once on first use. A binary search over the mapped keys was ~20 random page faults; it is now a search in RAM
+  plus one page. Single-key lookups and batches of up to 64 keys go through the fences; a bigger batch (a feed of
+  thousands of authors) keeps the one vectorised search. `tests/test_posterchandb_run_fences.py`.
+- **Index runs are mapped `MADV_RANDOM`.** Without it a page fault reads around the device's whole readahead window
+  (2 MB on an md RAID, 8 MB on its disks, 128 KB on NVMe). `tests/test_posterchandb_runs_are_random_access.py` reads
+  the kernel's own `VmFlags`. Columns stay on default readahead: they are scanned sequentially.
+- **Housekeeping's merges survive a quiet stop.** A clean stop checkpoints when log records OR merged/sealed runs are
+  unsaved (`Store._unsaved()`); it used to look at log records only, so an idle store (a PosterChanOS desktop's local
+  relay above all) threw its merges away at every stop and redid them at every start.
+  `tests/test_posterchandb_merges_survive_a_quiet_stop.py`.
+- **`since`/`until` cut a posting list before the union.** A poll naming many tags or authors "since a moment ago" (the
+  push service's `#p` of every subscriber; a negentropy sync of "my follows' last week") unioned and sorted each
+  key's whole history first -- `np.unique` was ~10% of the relay's CPU. A list of 256+ postings is filtered on the
+  `created` column first. `tests/test_posterchandb_since_before_union.py`.
 - **Migration** is automatic: the first start with this code imports the old `index.snap` into the new files
   (~65 s on poster.place's copy, once), checkpoints, and deletes `index.snap`.
+
+### Measured at 30M events (2026-10-18, `scripts/pcdb_scale_check.py`)
+
+A synthetic 30M-event store (10.5 GB on disk; `ScaleGen` kinds/tags/words) built on spinning disks (an md RAID of
+5,400 rpm WD drives -- the worst case), its runs merged the way housekeeping would (`compact`), opened COLD inside a
+memory cgroup at the owner's target ratio of 200 GB : 30 GB (1.6 GB for 10.5 GB) with no swap:
+
+| query (p50 / p99) | runs unmerged | merged | merged + fences |
+|---|---|---|---|
+| tag (`#t`, 50) | 639 ms / 4.8 s | 69 ms / 1.6 s | **22 ms** / 1.5 s |
+| 5 ids | 1,370 ms / 2.1 s | 402 ms / 1.2 s | **236 ms** / 0.57 s |
+| author (50) | 2,449 ms / 6.1 s | 843 ms / 4.4 s | **629 ms** / 4.3 s |
+| search | 838 ms / 1.3 s | 43 ms / 0.23 s | **40 ms** / 0.18 s |
+| timeline (120) | 7.8 ms / 1.3 s | 4.6 ms / 0.48 s | **4.6 ms** / 0.12 s |
+
+Opened in 0.0 s (checkpoint, nothing replayed); anonymous RAM ~90 MB, the rest of the cap is page cache. What remains
+is physics on a spinning disk: an author's 50 posts are 50 records scattered across a 10 GB log, ~10 ms each cold. On
+the NVMe production runs on, a cold record read is ~0.1 ms. The build itself (`build`) flushes every million events;
+unflushed, a build is a RAM test, not a store test.
 
 ## Read- and write-efficient: SSD writes (measured)
 

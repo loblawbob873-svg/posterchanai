@@ -264,6 +264,31 @@ node's Web-of-Trust **seed npubs**.
 
 ---
 
+### Upstream connections and CPU (2026-10-18)
+
+Measured with py-spy and `systemctl show -p CPUUsageNSec` on server1; each rule has a test that fails without it.
+
+- **One connection per upstream relay, reused** (`relay.py` `_borrow`/`_give_back`): every query used to open a TLS
+  connection -- ~1,200 outbound connections a minute, TLS ~17% of the relay's CPU. A query borrows an idle connection
+  to the same relay (same proxy route), CLOSEs its subscription after EOSE and hands it back; one idle per relay,
+  idle 90 s at most. A refused (`CLOSED`) or unanswered query does not keep its connection. Authenticated queries
+  are not pooled. `tests/test_upstream_queries_reuse_their_connection.py`.
+- **A paused relay is not dialled.** The circuit breaker's pauses (3 failures -> 10 min, doubling to 4 h) now hold for
+  the firehose streams and `relay.subscribe` too -- each dead upstream used to be redialled by several streams every
+  ~15 s -- and they **survive a restart** (`data/relay_breaker.json`), which used to cost ~400 failed handshakes in
+  the first two minutes. `tests/test_relay_firehose_backoff.py`, `tests/test_relay_breaker_survives_a_restart.py`.
+- **No compression to this machine's relay**: `relay.py` clients on loopback (push service, notification poller,
+  bots) negotiate no permessage-deflate.
+- **Metadata backfill asks only what is missing**: a member with a profile is asked only for relay lists; one that
+  comes back empty is asked less often (6 h, 1 d, 4 d, 7 d); each batch asks a rotating 8 of the upstreams; an answer
+  already held is not signature-checked. `tests/test_relay_metadata_backfill_asks_once.py`.
+- **ActivityPub delivery reads followers as changes** (`state.followers`): tombstones carry unfollows, so the
+  documents written since the last read are the whole change; a full read at least hourly.
+- **websockets 17**: a connection whose TLS handshake failed no longer raises in `connection_lost` (~130 tracebacks an
+  hour in the log). `tests/test_websockets_unfinished_connection_is_quiet.py`.
+
+Settled result: ~10-13% of one core (75% before 282), outbound connection churn ~6x lower.
+
 ## Storage (PosterChanDB)
 
 The relay stores into **PosterChanDB** (`nostr_relay/pcdb_store.py`, [POSTERCHANDB.md](POSTERCHANDB.md)):
