@@ -194,7 +194,7 @@ class PcdbRelayStore(RelayStore):
         self._words = None
         self._maint = None
         self._gov = None
-        self.lock_stats = {"max_hold_ms": 0.0}
+        self.lock_stats = {"max_hold_ms": 0.0, "max_hold_site": ""}
         self.words_batch = 25           # search words indexed per background step (Admin → Relay → Database)
         self.tuning = {}                # relay_tunables values applied by apply_tuning, re-applied on open
 
@@ -294,14 +294,16 @@ class PcdbRelayStore(RelayStore):
             out.update({"wot": len(self.sidecar.wot), "kv_keys": len(self.sidecar.kv),
                         "bridge_puppets": len(self.sidecar.bridge_puppet)})
         out["max_lock_hold_ms"] = round(self.lock_stats["max_hold_ms"], 2)
+        out["max_lock_hold_site"] = self.lock_stats.get("max_hold_site", "")   # WHICH chunked path held it
         out.update(tuning_mod.status_extras(self.store, self._gov, self._maint, words_batch=self.words_batch))
         return out
 
     # ------------------------------------------------------------ helpers: chunked access to the store
-    def _held(self, t0: float) -> None:
+    def _held(self, t0: float, site: str = "") -> None:
         ms = (time.perf_counter() - t0) * 1000.0
         if ms > self.lock_stats["max_hold_ms"]:
             self.lock_stats["max_hold_ms"] = ms
+            self.lock_stats["max_hold_site"] = site
 
     def _n(self) -> int:
         with self.store._lock:
@@ -317,7 +319,7 @@ class PcdbRelayStore(RelayStore):
             with st._lock:
                 t0 = time.perf_counter()
                 out = {c: getattr(st, c).view(_COLS[c])[lo:b].copy() for c in cols}
-                self._held(t0)
+                self._held(t0, "_chunks")
             yield lo, b, out
 
     def _author_ids(self, pubkeys) -> np.ndarray:
@@ -334,7 +336,7 @@ class PcdbRelayStore(RelayStore):
             with st._lock:
                 t0 = time.perf_counter()
                 parts.append(np.asarray(st.idx.get(_h(k)), dtype=np.uint32).copy())
-                self._held(t0)
+                self._held(t0, "_posting_seqs")
         parts = [p for p in parts if len(p)]
         return np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.uint32)
 
@@ -360,7 +362,7 @@ class PcdbRelayStore(RelayStore):
             with st._lock:
                 t0 = time.perf_counter()
                 n += st.kill(seqs[i:i + KILL_BATCH])
-                self._held(t0)
+                self._held(t0, "_kill_seqs")
         return n
 
     def _decode(self, seqs, fn, pace: bool = True) -> None:
@@ -374,7 +376,7 @@ class PcdbRelayStore(RelayStore):
                 for s in seqs[i:i + DECODE_BATCH]:
                     if not st.dead[s] and st.seg[s] != DROPPED:
                         batch.append((s, st.get(s), st.origin[s]))
-                self._held(t0)
+                self._held(t0, "_decode")
             for s, ev, o in batch:       # the predicate (a language detector, a word matcher) runs unlocked
                 fn(s, ev, o)
             if pace:
@@ -392,7 +394,7 @@ class PcdbRelayStore(RelayStore):
                 for eid in ids[i:i + ID_BATCH]:
                     s = st._seq_of(eid) if isinstance(eid, str) else None
                     out.append(s if (s is not None and not st.dead[s]) else None)
-                self._held(t0)
+                self._held(t0, "_live_seqs_of")
         return out
 
     def _on_writer(self, fn, *a):
@@ -592,7 +594,7 @@ class PcdbRelayStore(RelayStore):
                             if not st.dead[r] and st.seg[r] != DROPPED and st._id_hex(r) not in cand:
                                 anchored.add(eid)
                                 break
-                    self._held(t0)
+                    self._held(t0, "_delete_ids_sparing_anchors")
             if anchored:
                 ids = [x for x in ids if x not in anchored]
         self._kill_seqs([s for s in self._live_seqs_of(ids) if s is not None])
@@ -733,7 +735,7 @@ class PcdbRelayStore(RelayStore):
                         s = int(s)
                         if st.seg[s] != DROPPED and b"proxy" in bytes(st._rec(s)):
                             out.append(s)
-                    self._held(t0)
+                    self._held(t0, "_proxy_seqs")
         return out
 
     def _live_hits(self, hits: dict) -> list:
