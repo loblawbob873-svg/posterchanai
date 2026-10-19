@@ -1664,8 +1664,85 @@ class Store:
         the relay answers over the whole match. A filter with nothing selective unions whole kind posting lists
         here: callers that care about lock holds (nostr_relay/pcdb_store.py) scan the columns in chunks instead."""
         now = int(time.time()) if now is None else now
+        authors = flt.get("authors")
+        if isinstance(authors, list) and authors and not flt.get("ids") and not flt.get("search") \
+                and not isinstance(flt.get("_cursor"), list) \
+                and not any(isinstance(k, str) and k.startswith("#") and v for k, v in flt.items()):
+            return self._match_authors(flt, list(dict.fromkeys(authors)), now)
         with self._lock:
             return self._match_locked(flt, now, exhaustive=True).copy()
+
+    def _match_authors(self, flt: dict, authors: list, now: int) -> np.ndarray:
+        """match() for a filter whose only selective part is `authors` (+ kinds/since/until): the same answer as
+        _match_locked, built in SHORT holds of the store lock with the sorting done outside it.
+
+        A negentropy sync of "my follows' last week" (a PosterChanOS desktop, every few minutes; iris.to) names ~1000
+        authors. As one _match_locked it read every followed author's whole history, filtered it and sorted it under
+        `self._lock`, the store-wide lock -- one NEG-OPEN held every query and every write on the relay for as long as
+        that took (py-spy in `_union`, 2026-10-18; ~1 s for a follow list whose history is 1.4M events). Here:
+          1. the posting lists are read `_MATCH_KEYS_PER_HOLD` keys per hold, as owned copies;
+          2. every condition (dead, expired, since, until; kinds are in the keys) is checked against the columns
+             `_MATCH_ROWS_PER_HOLD` postings per hold -- a heavy author's history no longer rides in one hold either;
+          3. what survived is sorted with NO lock: those arrays belong to this call. Per-key lists are runs of
+             ascending seqs, so a stable sort merges them; an event has one author and one kind, so the lists are
+             disjoint, and the one-pass de-duplication after it is only a guard.
+        Seqs never change (compaction moves bytes, not seqs), so an answer read before a release stays valid after
+        it; the one thing that can happen to it meanwhile -- a kill -- is checked again at the end. An event stored
+        mid-match for an author already read is not included, exactly as if the match had run a moment earlier."""
+        kinds = flt.get("kinds")
+        if kinds:
+            kk = list(dict.fromkeys(int(k) for k in kinds))
+            keys = [_h("ak:%s:%d" % (a, k)) for a in authors for k in kk]
+        else:
+            keys = [_h("au:%s" % a) for a in authors]
+        since = int(flt["since"]) if flt.get("since") is not None else None
+        until = int(flt["until"]) if flt.get("until") is not None else None
+        kept = []
+        for i in range(0, len(keys), _MATCH_KEYS_PER_HOLD):
+            with self._lock:
+                got = self.idx.get_many(keys[i:i + _MATCH_KEYS_PER_HOLD])
+                if not got.flags.owndata:
+                    got = got.copy()            # one key's list is a view of an index run: keep a copy, not the run
+            for j in range(0, len(got), _MATCH_ROWS_PER_HOLD):
+                part = got[j:j + _MATCH_ROWS_PER_HOLD]
+                with self._lock:
+                    part = self._live_in_window(part, now, since, until)
+                if len(part):
+                    kept.append(part)
+        if not kept:
+            return np.zeros(0, dtype=np.uint32)
+        out = _union([_sorted(np.concatenate(kept))])
+        live = []
+        for j in range(0, len(out), _MATCH_ROWS_PER_HOLD):      # killed while the lock was away
+            part = out[j:j + _MATCH_ROWS_PER_HOLD]
+            with self._lock:
+                dead = self.dead.view(np.uint8)
+                keep = dead[part] == 0
+                del dead                    # no view of a column outlives the lock (see _grow)
+            live.append(part[keep])
+        return live[0] if len(live) == 1 else np.concatenate(live)
+
+    def _live_in_window(self, seqs: np.ndarray, now: int, since, until) -> np.ndarray:
+        """`seqs` that are live, unexpired at `now` and inside since/until -- _match_locked's final conditions, the
+        time window first (it is what drops most of a long history, so the other columns are read only for what
+        survives it). Under the lock."""
+        if since is not None or until is not None:
+            created = self.created.view(np.uint64)
+            c = created[seqs]
+            del created
+            m = np.ones(len(seqs), dtype=bool)
+            if since is not None:
+                m &= c >= since
+            if until is not None:
+                m &= c <= until
+            seqs = seqs[m]
+        dead = self.dead.view(np.uint8)
+        expires = self.expires.view(np.uint64)
+        keep = dead[seqs] == 0
+        exp = expires[seqs]
+        keep &= (exp == 0) | (exp > now)
+        del dead, expires           # no view of a column outlives the lock (see _grow)
+        return seqs[keep]
 
     def _match_locked(self, flt: dict, now: int, exhaustive: bool) -> np.ndarray:
         """The candidate seqs of one filter after every condition but the limit (dead/expired/since/until/cursor
@@ -1715,14 +1792,14 @@ class Store:
             if authors and kinds:
                 kk = list(dict.fromkeys(int(k) for k in kinds))
                 got = _window(self.idx.get_many([_h("ak:%s:%d" % (a, k)) for a in authors for k in kk]))
-                sets.append(got if alone else _union([got]))
+                sets.append(got if alone else _union([_sorted(got)]))
                 kinds_done = True
             elif authors:
                 # since/until first here too: a negentropy sync of "my follows' last week" (a PosterChanOS local relay,
                 # every few minutes) unioned and sorted every followed author's WHOLE history -- np.unique under
                 # NEG-OPEN was ~9% of the relay's CPU after the tag case was fixed (py-spy 2026-10-18).
                 got = _window(self.idx.get_many([_h("au:%s" % a) for a in authors]))
-                sets.append(got if alone else _union([got]))
+                sets.append(got if alone else _union([_sorted(got)]))
             for key, vals in flt.items():
                 if not (isinstance(key, str) and key.startswith("#") and vals):
                     continue
@@ -1792,6 +1869,8 @@ class Store:
 
 
 _SCAN_CHUNK = 65536
+_MATCH_KEYS_PER_HOLD = 256     # match() by authors: posting lists read per hold of the store lock
+_MATCH_ROWS_PER_HOLD = 131072  # ... and postings checked against the columns per hold
 _WINDOW_MIN = 256           # a posting list shorter than this is unioned as it is (the column read costs more)
 _DECODED_CACHE_BYTES = 48 * 1024 * 1024   # raw record bytes of decoded events kept for get()
 _RARE_KIND_POSTINGS = 50000   # at most this many events of the requested kinds: read their index, never walk the store
@@ -1807,6 +1886,13 @@ def _union(arrs) -> np.ndarray:
     if len(arrs) == 1 and (len(a) < 2 or bool(np.all(a[1:] >= a[:-1]))):
         return a if len(a) < 2 else a[np.concatenate(([True], a[1:] != a[:-1]))]
     return np.unique(a)
+
+
+def _sorted(a: np.ndarray) -> np.ndarray:
+    """Posting lists of DIFFERENT keys concatenated, sorted: the input is a series of ascending runs (each key's list
+    within each index run), which the stable sort (timsort for uint32) merges instead of sorting from scratch -- what
+    np.unique did for every author union. _union then de-duplicates in one pass (a no-op for disjoint lists)."""
+    return a if len(a) < 2 else np.sort(a, kind="stable")
 
 
 def _concat(arrs) -> np.ndarray:

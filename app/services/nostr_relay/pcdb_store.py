@@ -36,6 +36,7 @@ from app.services.posterchandb import tuning as tuning_mod
 from app.services.posterchandb.store import (DROPPED, ORIGINS, Store, _h, is_addressable,
                                              is_replaceable)
 
+from . import negentropy
 from . import store as pg
 from .store import RelayStore
 
@@ -973,7 +974,9 @@ class PcdbRelayStore(RelayStore):
         order = np.lexsort((words[:, 3], words[:, 2], words[:, 1], words[:, 0], c))
         c, idm = c[order].tolist(), idm[order]
         raw = idm.tobytes()
-        return [(c[i], raw[i * 32:i * 32 + 32]) for i in range(len(c))]
+        # IdItems: still a list, plus the ids as the one buffer they already are -- the negentropy session builds
+        # its fingerprint prefix sums from it instead of re-joining every id.
+        return negentropy.IdItems([(c[i], raw[i * 32:i * 32 + 32]) for i in range(len(c))], raw)
 
     def _count_sync(self) -> int:
         total = 0

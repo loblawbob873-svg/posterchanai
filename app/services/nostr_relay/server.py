@@ -2616,15 +2616,20 @@ class RelayServer:
                     self._send(conn, ["NEG-ERR", sub_id,
                                       "auth-required: NIP-78 sync requires AUTH and matching authors"])
                     return
+        # The session cap is checked BEFORE the item set is built: building it is the expensive half (an exhaustive
+        # match over every followed author), and a socket over its cap used to pay for it and then be refused. A
+        # re-opened sub_id replaces its own session, so it never counts against the cap.
+        open_now = self._neg.get(conn, {})
+        if sub_id not in open_now and len(open_now) >= self.cfg.get("max_subs_per_conn", 20):
+            self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])
+            return
         try:
             flts = [filt] if isinstance(filt, dict) else []
-            items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 50000))
+            items = negentropy.ItemSet(await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 50000)),
+                                       cooperative=True)
             sessions = self._neg.setdefault(conn, {})
-            if len(sessions) >= self.cfg.get("max_subs_per_conn", 20):
-                self._send(conn, ["NEG-ERR", sub_id, "rate-limited"])
-                return
             sessions[sub_id] = items
-            resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
+            resp = await _neg_reconcile(items, msg_hex)
             self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
         except Exception as e:
             logger.debug("[nostr-relay] NEG-OPEN %s fell back: %r", sub_id, e)
@@ -2637,7 +2642,7 @@ class RelayServer:
             self._send(conn, ["NEG-ERR", sub_id, "closed"])
             return
         try:
-            resp = negentropy.reconcile(items, bytes.fromhex(msg_hex))
+            resp = await _neg_reconcile(items, msg_hex)
             self._send(conn, ["NEG-MSG", sub_id, resp.hex()])
             if len(resp) <= 1:  # only the version byte → nothing left to reconcile
                 self._neg.get(conn, {}).pop(sub_id, None)
@@ -2645,6 +2650,17 @@ class RelayServer:
             logger.debug("[nostr-relay] NEG-MSG %s error: %r", sub_id, e)
             self._neg.get(conn, {}).pop(sub_id, None)
             self._send(conn, ["NEG-ERR", sub_id, "error"])
+
+
+async def _neg_reconcile(items, msg_hex: str) -> bytes:
+    """One negentropy round, OFF the event loop. A round is pure CPU in proportion to the set and to how much the two
+    sides differ (a 50k session ~20-50 ms even with prefix-sum fingerprints, a 200k one up to ~0.5 s), and on the loop
+    it stalled every other socket on the relay for that long -- PosterChanOS desktops NEG-sync every few minutes.
+    Ordering is kept by the caller: a connection's frames are dispatched one at a time and each awaits its round, so
+    a session's rounds never overlap or answer out of order, and the ItemSet's lazily built prefix sums are only
+    ever touched by one thread at a time. The set is `cooperative`, so the worker hands the GIL back to the loop
+    every few dozen ranges instead of holding it for whole 5 ms switch intervals."""
+    return await asyncio.to_thread(negentropy.reconcile, items, bytes.fromhex(msg_hex))
 
 
 _retention_cache: dict = {"key": None, "html": "", "at": 0.0}
