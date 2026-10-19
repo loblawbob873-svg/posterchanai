@@ -79,12 +79,13 @@ def test_print_screen_prompts_and_each_choice_does_what_it_says():
         await asyncio.sleep(.3)
         assert await b.js("__shot.slice(1)") == [["take", {"staged": "/tmp/posterchan-shots-1000/PosterChan-2026-09-28-120000.png", "copy": False}]]
 
-        # Select region throws the whole-screen shot away and runs the area picker.
+        # Select region chooses the area ON the frame taken at the keypress (2026-10-18: "hard to take a selection
+        # when the screen is moving") -- the staged shot is handed to the area picker, never thrown away.
         await _press(b)
         await _key(b, "r")
         await asyncio.sleep(.6)
         calls = await b.js("__shot.slice(1)")
-        assert calls[0][0] == "discard" and calls[1] == ["take", {"mode": "region"}], calls
+        assert calls == [["take", {"mode": "region", "frozen": "/tmp/posterchan-shots-1000/PosterChan-2026-09-28-120000.png"}]], calls
 
         # Full screen (F) likewise throws the staged shot away and captures the whole screen afresh --
         # with no delay set, straight away.

@@ -945,24 +945,35 @@ class PcdbRelayStore(RelayStore):
         return self._select(pred, ("expires", "kind", "created"))
 
     def _neg_items_sync(self, filters: list, cap: int) -> list:
+        """[(created_at, id bytes)] ascending by (created_at, id), each id once, at most `cap` per filter (its newest).
+
+        VECTORISED (2026-10-18): this was a Python loop -- a slice, a tuple and a dict entry per event, up to the 50k
+        cap -- then a Python sort; with the exhaustive match in front of it, one NEG-OPEN (a PosterChanOS desktop
+        syncing its follows, iris.to) was the relay's 70-130% CPU spikes. Now the seqs are merged and the ids read as
+        one array, ordered by one lexsort; Python only builds the final list."""
         now = int(time.time())
         st = self.store
-        seen: dict = {}
+        parts = []
         for flt in filters or []:
             seqs = self._match(dict(flt or {}), now)
             if not len(seqs):
                 continue
-            with st._lock:
-                c = st.created.view(np.uint64)[seqs].astype(np.int64)
             if cap and len(seqs) > cap:                # ORDER BY created_at DESC LIMIT cap
-                keep = np.argsort(-c, kind="stable")[:cap]
-                seqs, c = seqs[keep], c[keep]
-            for i in range(0, len(seqs), ID_BATCH * 16):
                 with st._lock:
-                    for s, ts in zip(seqs[i:i + ID_BATCH * 16], c[i:i + ID_BATCH * 16]):
-                        raw = bytes(st.ids[int(s) * 32:int(s) * 32 + 32])
-                        seen[raw] = (int(ts), raw)
-        return sorted(seen.values(), key=lambda x: (x[0], x[1]))
+                    c = st.created.view(np.uint64)[seqs].astype(np.int64)
+                seqs = seqs[np.argsort(-c, kind="stable")[:cap]]
+            parts.append(np.asarray(seqs, dtype=np.int64))
+        if not parts:
+            return []
+        seqs = np.unique(np.concatenate(parts)) if len(parts) > 1 else parts[0]
+        with st._lock:
+            c = st.created.view(np.uint64)[seqs].astype(np.int64)
+            idm = st.ids.view(np.uint8).reshape(-1, 32)[seqs]     # fancy indexing copies: safe after the lock
+        words = idm.view(">u8").reshape(-1, 4)        # the id's exact byte order, as four big-endian words
+        order = np.lexsort((words[:, 3], words[:, 2], words[:, 1], words[:, 0], c))
+        c, idm = c[order].tolist(), idm[order]
+        raw = idm.tobytes()
+        return [(c[i], raw[i * 32:i * 32 + 32]) for i in range(len(c))]
 
     def _count_sync(self) -> int:
         total = 0

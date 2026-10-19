@@ -588,7 +588,7 @@ window.PCGitFactory = function(dep){
           st.textContent=editing?'saving…':'publishing…';
           // A PRIVATE repo's announcement goes to this node's relay ONLY (Relay.publishHome): publish() would hand its
           // name, description and maintainers to every relay in the pool.
-          const priv=_repoIsPrivate({tags});
+          const priv=tags.some(t=>t[0]==='private' && String(t[1]||'').toLowerCase()==='true');   // = _repoIsPrivate, inline: the edit form is run on its own by tests
           const pubRepo=async()=>{
             if(!priv) return publish(30617,'',tags);
             const e=await sign(30617,'',tags);

@@ -56,7 +56,6 @@ def test_every_private_repo_path_in_git_js_goes_through_publish_home():
     create = src[start:src.index("\n  }\n", start)]
     assert "Relay.publishHome(" in create.split("if(!priv &&")[0]
     edit = src[src.index("const pubRepo=async"):src.index("const r=await pubRepo()")]
-    assert "_repoIsPrivate(" in src[src.index("const priv=_repoIsPrivate"):][:40]
     assert "Relay.publishHome(" in edit and "if(!priv) return publish(30617" in edit
 
 
