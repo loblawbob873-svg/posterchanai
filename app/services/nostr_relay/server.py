@@ -2311,7 +2311,8 @@ class RelayServer:
                 # here means a failing read pool turns the backup off while it still looks on.
                 logger.warning("[nostr-relay] private mirror skipped (has_event failed): %s", e)
                 _was_new = False
-        stored, _new = await self.store.add_event_new(ev, origin=_origin)
+        from .store import add_new as _add_new
+        stored, _new = await _add_new(self.store, ev, origin=_origin)
         if not stored:
             # add_event did NOT persist the event — a transient insert/commit error (logged in
             # _add_event_sync) or a replaceable superseded by a newer stored version. Report the truth so

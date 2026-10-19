@@ -207,6 +207,16 @@ assert not (set(_RETIRED_KINDS) & set(_PRUNABLE_KINDS)), \
     "a retired kind is deleted outright, so it must not ALSO be aged out as feed content"
 
 
+async def add_new(store, ev: dict, origin: str = "wot") -> tuple:
+    """(stored, new) from any store: the exact answer when it has `add_event_new`, otherwise add_event's (then a
+    stored event counts as new -- the old behaviour, for minimal stand-ins). Fan out on `new`, never on `stored`."""
+    f = getattr(store, "add_event_new", None)
+    if f is not None:
+        return await f(ev, origin=origin)
+    ok = await store.add_event(ev, origin=origin)
+    return ok, ok
+
+
 class RelayStore:
     def __init__(self, *, read_workers: int = 4, max_events: int = 0, retention_days: int = 30):
         # There is exactly ONE age window (retention_days) and it covers every origin, the fediverse

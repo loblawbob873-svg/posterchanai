@@ -20,6 +20,7 @@ from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word, is_machine_payload, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .repost_block import reposted_blocked
+from .store import add_new as _add_new
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,7 @@ async def _backfill_filter(store, server, upstream, base_filter: dict, *, direct
                 continue
             if getattr(server, "spam", None) is not None and server.spam.check(ev):   # new-post limits
                 continue
-            if (await store.add_event_new(ev, origin="wot"))[1]:   # fan out only what is NEW
+            if (await _add_new(store, ev, origin="wot"))[1]:   # fan out only what is NEW
                 stored += 1
                 server.subs.fanout(ev, server._send, server._can_serve_event)
         if oldest >= until:
@@ -378,7 +379,7 @@ async def refresh_member_lists(store, server, upstream, pubkey: str, *, direct: 
                 continue
             if await store.has_event(ev["id"]):
                 continue
-            if (await store.add_event_new(ev, origin="wot"))[1]:   # fan out only what is NEW
+            if (await _add_new(store, ev, origin="wot"))[1]:   # fan out only what is NEW
                 stored += 1
                 server.subs.fanout(ev, server._send, server._can_serve_event)
     except Exception as e:
@@ -428,7 +429,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue   # empty note — don't backfill spam as a thread ancestor
             if _content_blocked(ev, blocked, blocked_words, block_json):
                 continue
-            if (await store.add_event_new(ev, origin="ancestor"))[1]:   # fan out only what is NEW
+            if (await _add_new(store, ev, origin="ancestor"))[1]:   # fan out only what is NEW
                 fetched += 1
                 server.subs.fanout(ev, server._send, server._can_serve_event)
                 for t in ev.get("tags", []):

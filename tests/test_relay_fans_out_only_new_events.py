@@ -37,6 +37,8 @@ def test_a_republished_copy_is_not_sent_to_live_subscribers_again():
         try:
             from websockets.asyncio.client import connect
             e = ev(FRIEND_SK, content="posted once, echoed twice")
+            blasted = []                              # what would go to the upstream relays
+            inst.server.outbox_cb = lambda x: blasted.append(x["id"])
 
             async def go():
                 async with connect(inst.relay_url) as sub, connect(inst.relay_url) as pub:
@@ -64,13 +66,14 @@ def test_a_republished_copy_is_not_sent_to_live_subscribers_again():
                     return got
             got = asyncio.run(go())
             assert got == [e["id"]], "live subscribers got %d copies of one event" % len(got)
+            assert blasted == [e["id"]], "a duplicate was re-sent to the upstream relays %d times" % len(blasted)
         finally:
             inst.close()
 
 
 def test_no_ingest_path_fans_out_on_add_events_answer():
     """add_event says True for a duplicate; a fan-out gated on it re-broadcasts. Every fan-out must be gated on
-    add_event_new's `new` (or follow its own has_event check). Walks the relay package's AST."""
+    add_new/add_event_new's `new` (or follow its own has_event check). Walks the relay package's AST."""
     bad = []
     for f in sorted((ROOT / "app/services/nostr_relay").glob("*.py")):
         tree = ast.parse(f.read_text())
@@ -110,3 +113,40 @@ def test_the_concord_mirror_does_not_forward_a_delivered_wrap_twice():
     other = dict(wrap, id="3" * 64)
     asyncio.run(m.forward(other)); asyncio.run(m.forward(other))
     assert bad.sent == [other["id"], other["id"]], "a failed forward must be retried"
+
+
+def _shipped_firehose(store):
+    """The SHIPPED `_firehose_event` closure (thread.py), as tests/test_blocked_word_firehose runs it."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services.nostr.event import verify_event
+    from app.services.nostr_relay import thread
+    from app.services.nostr_relay.langfilter import blocked_language, blocked_word
+    from tests.test_json_spam_every_path import Member, _fn
+    cfg = {"blocked_words": set(), "blocked_langs": set(), "blocked_relays": [], "operator": [],
+           "block_bridged": False, "fetch_ancestors": False, "block_json": True}
+    srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock(), _can_serve_event=Mock(return_value=True))
+    env = {**vars(thread), "cfg": cfg, "_bl": set(), "_bw": set(), "store": store, "gate": Member(), "server": srv,
+           "verify_event": verify_event, "_FH_SEEN": set(), "_fh_mark": Mock(),
+           "blocked_language": blocked_language, "blocked_word": blocked_word}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[_fn("_firehose_event")], type_ignores=[])),
+                 thread.__file__, "exec"), env)
+    return env["_firehose_event"], srv
+
+
+def test_the_firehose_does_not_rebroadcast_an_event_the_store_already_held():
+    """2026-10-18: after a restart the upstream relays re-deliver the last hour; every copy was fanned out."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tests.test_json_spam_every_path import SK
+    from app.services.nostr.event import build_event
+    held = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True),
+                           add_event_new=AsyncMock(return_value=(True, False)))
+    fh, srv = _shipped_firehose(held)
+    asyncio.run(fh(build_event(SK, 1, "an hour old, re-delivered after a restart")))
+    assert srv.subs.fanout.call_count == 0, "a copy the store already held was fanned out to every live timeline"
+    fresh = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True),
+                            add_event_new=AsyncMock(return_value=(True, True)))
+    fh, srv = _shipped_firehose(fresh)
+    asyncio.run(fh(build_event(SK, 1, "brand new")))
+    srv.subs.fanout.assert_called_once()

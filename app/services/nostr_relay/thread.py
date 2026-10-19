@@ -1189,7 +1189,8 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         if _spam is not None and (_spam.check(ev) or _spam.check_gift(ev)):
             _fh_mark(eid)   # decided: not stored, do not ask again
             return
-        _ok, _new = await store.add_event_new(ev, origin="wot")
+        from .store import add_new as _add_new
+        _ok, _new = await _add_new(store, ev, origin="wot")
         if _ok:
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
         if _new:            # a copy already held is NOT news: re-broadcasting it flooded every timeline
