@@ -280,11 +280,14 @@ def test_equal_timestamps_come_back_higher_id_first(store):
     assert ids(got) == sorted(ids(evs), reverse=True)
 
 
-def test_limit_is_or_500_clamped_to_1_and_5000(store):
+def test_limit_defaults_to_500_is_clamped_to_5000_and_zero_means_none(store):
     for i in range(520):
         store.put(mk(created_at=10_000 + i))
     assert len(store.query({"kinds": [1]})) == 500
-    assert len(store.query({"kinds": [1], "limit": 0})) == 500           # `limit or 500`
+    # limit 0 is "no stored events" -- NIP-01's live-only subscription. The retired Postgres store's `limit or 500`
+    # answered it with 500 old events (2026-10-18; tests/test_relay_limit_zero_is_live_only.py).
+    assert len(store.query({"kinds": [1], "limit": 0})) == 0
+    assert len(store.query({"kinds": [1], "limit": None})) == 500         # absent/null is still the default
     assert len(store.query({"kinds": [1], "limit": 3})) == 3
     assert len(store.query({"kinds": [1], "limit": 99999})) == 520       # capped at 5000, only 520 exist
 
