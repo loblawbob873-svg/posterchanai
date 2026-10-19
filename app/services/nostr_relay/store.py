@@ -304,6 +304,12 @@ class RelayStore:
             return False
         return await self._w(self._add_event_sync, ev, origin)
 
+    async def add_event_new(self, ev: dict, origin: str = "wot") -> tuple:
+        """(stored, new). This base cannot tell a duplicate from a new row, so it says new whenever stored --
+        the old behaviour; PcdbRelayStore answers exactly. Fan out on `new`, never on `stored`."""
+        ok = await self.add_event(ev, origin)
+        return ok, ok
+
     async def delete_pubkeys(self, pubkeys: list, spare_preserved: bool = True) -> int:
         """Purge all events authored by these pubkeys. `spare_preserved=False` only for an admin's
         explicit decision (the blocklist, delete-author); see _delete_pubkeys_sync."""

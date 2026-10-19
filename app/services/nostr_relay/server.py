@@ -2311,7 +2311,7 @@ class RelayServer:
                 # here means a failing read pool turns the backup off while it still looks on.
                 logger.warning("[nostr-relay] private mirror skipped (has_event failed): %s", e)
                 _was_new = False
-        stored = await self.store.add_event(ev, origin=_origin)
+        stored, _new = await self.store.add_event_new(ev, origin=_origin)
         if not stored:
             # add_event did NOT persist the event — a transient insert/commit error (logged in
             # _add_event_sync) or a replaceable superseded by a newer stored version. Report the truth so
@@ -2331,7 +2331,11 @@ class RelayServer:
         if True:
             if _is_puppet and kind == 0:
                 self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
-            self.subs.fanout(ev, self._send, self._can_serve_event)
+            # Only a NEW event is news. A copy this relay already held (a client's retry, our outbox's post echoed
+            # back, a second app publishing the same event) was delivered when it first arrived; fanning it out
+            # again is what flooded timelines with stale events (2026-10-18, add_event_new).
+            if _new:
+                self.subs.fanout(ev, self._send, self._can_serve_event)
             # The private mirror is a different list with a different rule, so it is a separate
             # decision — an event is never on both paths.
             #
@@ -2347,7 +2351,7 @@ class RelayServer:
                     self.private_cb(ev)
                 except Exception as e:
                     logger.debug("[nostr-relay] private mirror enqueue failed: %s", e)
-            if self.outbox_cb and _broadcastable(ev, self.cfg) and not self._dm_for_puppet(ev):
+            if _new and self.outbox_cb and _broadcastable(ev, self.cfg) and not self._dm_for_puppet(ev):
                 # Blaster: re-broadcast inbound writes to the upstream relays — notes, profile
                 # updates, published articles, AND DMs (encrypted, so no content leaks; this is how
                 # they reach recipients when a user treats this as their only relay). EXCEPT private/

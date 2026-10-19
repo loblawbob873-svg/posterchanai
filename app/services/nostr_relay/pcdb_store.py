@@ -430,21 +430,30 @@ class PcdbRelayStore(RelayStore):
         return True
 
     def _put(self, ev: dict, origin: str) -> bool:
+        return self._put_full(ev, origin)[0]
+
+    def _put_full(self, ev: dict, origin: str) -> tuple:
+        """(saved, NEW): `saved` is RelayStore's answer (an id already held counts as saved -- ON CONFLICT DO
+        NOTHING); NEW is whether this call stored it. Only a NEW event may be fanned out to live subscriptions."""
         created = int(ev["created_at"])
         if created > int(time.time()) + 900:
             logger.info("[nostr-relay] refused kind=%s from %s…: created_at %ds in the FUTURE — "
                         "that device's clock is wrong", ev.get("kind"), str(ev.get("pubkey"))[:12],
                         created - int(time.time()))
-        return self._stored(ev, origin, self.store.put(ev, origin=origin))
+        result = self.store.put(ev, origin=origin)
+        return self._stored(ev, origin, result), result == "stored"
 
     def _add_event_sync(self, ev: dict, origin: str) -> bool:
+        return self._add_event_sync_full(ev, origin)[0]
+
+    def _add_event_sync_full(self, ev: dict, origin: str) -> tuple:
         if self._writes_closed:
-            return False
+            return False, False
         try:
-            return self._put(ev, origin)     # durable before "saved" is said: add_event's group sync
+            return self._put_full(ev, origin)     # durable before "saved" is said: add_event's group sync
         except Exception as e:      # noqa: BLE001 -- one malformed event costs only itself
             logger.warning("[nostr-relay] add_event %s failed: %s", str(ev.get("id", ""))[:12], e)
-            return False
+            return False, False
 
     # GROUP COMMIT. A direct write (a person publishing) is fsynced before the relay says "saved" -- and that fsync
     # ran on the ONE writer thread, per event, so the relay could take at most one direct write per fsync and every
@@ -460,6 +469,18 @@ class PcdbRelayStore(RelayStore):
         if ok and origin == "direct" and self._group_durable:
             return await self._durable()
         return ok
+
+    async def add_event_new(self, ev: dict, origin: str = "wot") -> tuple:
+        """add_event, plus whether the event is NEW to this store. A relay that fans out on add_event's answer
+        re-broadcasts every copy it already holds: measured 2026-10-18, 500 of 506 live events in 45 s were stored
+        before -- the firehose re-delivering the last hour after a restart, and our own outbox's posts echoing back
+        from the relays it sent them to -- so every client's timeline churned through stale events."""
+        if not self._admitted(ev):
+            return False, False
+        ok, new = await self._w(self._add_event_sync_full, ev, origin)
+        if ok and origin == "direct" and self._group_durable:
+            ok = await self._durable()
+        return ok, bool(ok and new)
 
     async def _durable(self) -> bool:
         """Resolve once a sync that STARTED after this call has finished (it then covers every write before it)."""

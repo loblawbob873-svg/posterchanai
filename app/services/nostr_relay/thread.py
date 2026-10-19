@@ -1189,8 +1189,10 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
         if _spam is not None and (_spam.check(ev) or _spam.check_gift(ev)):
             _fh_mark(eid)   # decided: not stored, do not ask again
             return
-        if await store.add_event(ev, origin="wot"):
+        _ok, _new = await store.add_event_new(ev, origin="wot")
+        if _ok:
             _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
+        if _new:            # a copy already held is NOT news: re-broadcasting it flooded every timeline
             server.subs.fanout(ev, server._send, server._can_serve_event)
             # Thread completion: a reply may e-tag parents we don't have. Backfill the ancestor
             # chain (bounded + deduped, parents may be outside the WoT → origin='ancestor') so
