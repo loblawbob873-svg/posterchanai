@@ -13,6 +13,7 @@ import time
 import uuid
 import asyncio
 import contextlib
+import contextvars
 import logging
 from urllib.parse import urlparse
 
@@ -645,9 +646,52 @@ async def _query_one(relay: str, filters: list, out: dict, timeout: float, direc
         return
 
 
+# WHO PAYS FOR THE UPSTREAM READS. py-spy on server1 (2026-10-18): ~18% of the relay process was json-decoding
+# upstream query answers, and nothing could say which feature asked for them. Tallied per caller (the first module
+# outside this one: one frame walk per query, not per frame) and printed every 5 minutes as `upstream cost:`.
+_UP_COST: dict = {}               # caller -> [queries, frames, bytes]
+_UP_COST_AT = [0.0]
+_UP_COST_EVERY = 300.0
+_UP_CALLER = contextvars.ContextVar("pc_upstream_caller", default="?")
+
+
+def _up_caller() -> str:
+    f = sys._getframe(2)
+    for _ in range(12):
+        if f is None:
+            break
+        mod = f.f_globals.get("__name__", "")
+        if mod and mod != __name__ and not mod.startswith("asyncio"):
+            return "%s.%s" % (mod.rsplit(".", 1)[-1], f.f_code.co_name)
+        f = f.f_back
+    return "?"
+
+
+def _up_note(frames: int, nbytes: int) -> None:
+    c = _UP_COST.setdefault(_UP_CALLER.get(), [0, 0, 0])
+    c[1] += frames
+    c[2] += nbytes
+
+
+def _up_report() -> None:
+    now = time.monotonic()
+    if not _UP_COST_AT[0]:
+        _UP_COST_AT[0] = now
+        return
+    if now - _UP_COST_AT[0] < _UP_COST_EVERY or not _UP_COST:
+        return
+    span = now - _UP_COST_AT[0]
+    top = sorted(_UP_COST.items(), key=lambda kv: -kv[1][2])[:6]
+    logger.info("[nostr] upstream cost (%.0fs): %s", span, "; ".join(
+        "%s q=%d frames=%d %.1fMB" % (k, q, fr, b / 1e6) for k, (q, fr, b) in top))
+    _UP_COST.clear()
+    _UP_COST_AT[0] = now
+
+
 async def _run_query(ws, relay: str, filters: list, out: dict, timeout: float, auth_seckey) -> bool:
     """One REQ on `ws` until EOSE (True) or the timeout (False); the subscription is CLOSEd either way."""
     sub_id = uuid.uuid4().hex[:16]
+    frames = nbytes = 0
     await ws.send(json.dumps(["REQ", sub_id] + filters))
     auth_id = None
     retried = False
@@ -661,6 +705,8 @@ async def _run_query(ws, relay: str, filters: list, out: dict, timeout: float, a
             raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         except asyncio.TimeoutError:
             break
+        frames += 1
+        nbytes += len(raw)
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -689,6 +735,7 @@ async def _run_query(ws, relay: str, filters: list, out: dict, timeout: float, a
         elif msg[0] == "EOSE" and len(msg) >= 2 and msg[1] == sub_id:
             done = True
             break
+    _up_note(frames, nbytes)
     try:
         await ws.send(json.dumps(["CLOSE", sub_id]))
     except Exception:
@@ -704,10 +751,17 @@ async def query(relays, filters: list, timeout: float = _DEFAULT_QUERY_TIMEOUT,
     if not relays:
         return []
     out: dict = {}
-    await asyncio.gather(
-        *[_query_one(r, filters, out, timeout, direct, auth_seckey) for r in relays],
-        return_exceptions=True,
-    )
+    caller = _up_caller()
+    _UP_COST.setdefault(caller, [0, 0, 0])[0] += 1
+    _up_report()
+    tok = _UP_CALLER.set(caller)          # the gathered tasks copy this context, so their frames count here
+    try:
+        await asyncio.gather(
+            *[_query_one(r, filters, out, timeout, direct, auth_seckey) for r in relays],
+            return_exceptions=True,
+        )
+    finally:
+        _UP_CALLER.reset(tok)
     return sorted(out.values(), key=lambda e: e.get("created_at", 0), reverse=True)
 
 

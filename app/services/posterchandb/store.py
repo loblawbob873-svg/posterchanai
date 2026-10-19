@@ -1368,6 +1368,7 @@ class Store:
         try:
             seqs = np.nonzero(self.seg.view(np.uint32) == sid)[0]
             moved = written = 0
+            moved_ids = set()          # ids of the LIVE records this pass moved out of the segment
             i = 0
             while i < len(seqs):
                 t0 = time.thread_time()
@@ -1379,6 +1380,7 @@ class Store:
                             continue
                         n = self.length[s]
                         rec = bytes(self._rec(s))
+                        moved_ids.add(rec[:32])
                         start = self._frame(bytes([OP_PUT, self.origin[s]]) + rec)
                         self.seg[s] = self._active
                         self.off[s] = start + 2
@@ -1396,6 +1398,13 @@ class Store:
             with self._lock:
                 carried = 0
                 for payload in self._markers_of(sid):
+                    # A marker naming a record this pass just MOVED needs no lookup: that record is live (so a
+                    # deletion of it is void) and now sits in a later segment with its tags re-emitted -- the two
+                    # branches below would both decline it. Most markers are such (a tag sits beside its record),
+                    # and the lookup is a disk search under the store lock: measured 2026-10-18, ~17% of the
+                    # relay's CPU, every query waiting behind it.
+                    if bytes(payload[1:33]) in moved_ids:
+                        continue
                     s = self._seq_of(bytes(payload[1:33]).hex())
                     if s is None:
                         continue
