@@ -1558,6 +1558,9 @@ class Store:
         with self._lock:
             return self._seq_of(eid)
 
+    max_query_hold_ms = 0.0
+    max_query_hold_shape = ""
+
     def query(self, flt: dict, now: int | None = None) -> list:
         # `limit: 0` IS "no stored events" (NIP-01: the initial query returns the newest `limit`) -- how clients open a
         # live-only subscription. `limit or 500` below read it as the DEFAULT, so every such REQ (other clients'
@@ -1572,7 +1575,16 @@ class Store:
                 pass
         # The work runs in a helper so every numpy view it makes dies BEFORE the lock is released (see _grow).
         with self._lock:
-            return self._query_locked(flt, now)
+            t0 = time.perf_counter()
+            try:
+                return self._query_locked(flt, now)
+            finally:
+                # How long a single QUERY held the store lock (decoding its answer can read cold segments). Reported
+                # beside the chunked paths' max in the relay status (pcdb_store.status: max_query_hold_ms).
+                ms = (time.perf_counter() - t0) * 1000.0
+                if ms > self.max_query_hold_ms:
+                    self.max_query_hold_ms = ms
+                    self.max_query_hold_shape = ",".join(sorted(str(k) for k in flt if k != "limit"))[:60]
 
     def _prefmax(self, n: int) -> np.ndarray:
         """max(created[0..i]) for every seq i < n, kept incrementally in its own column (append-only columns)."""

@@ -296,6 +296,8 @@ class PcdbRelayStore(RelayStore):
                         "bridge_puppets": len(self.sidecar.bridge_puppet)})
         out["max_lock_hold_ms"] = round(self.lock_stats["max_hold_ms"], 2)
         out["max_lock_hold_site"] = self.lock_stats.get("max_hold_site", "")   # WHICH chunked path held it
+        out["max_query_hold_ms"] = round(getattr(self.store, "max_query_hold_ms", 0.0), 2)
+        out["max_query_hold_shape"] = getattr(self.store, "max_query_hold_shape", "")   # filter KEYS only, no values
         out.update(tuning_mod.status_extras(self.store, self._gov, self._maint, words_batch=self.words_batch))
         return out
 

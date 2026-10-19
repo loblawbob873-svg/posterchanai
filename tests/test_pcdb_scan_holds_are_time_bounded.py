@@ -51,3 +51,17 @@ def test_id_lookups_are_bounded_by_time_and_lose_nothing():
             assert st.lock_stats["max_hold_ms"] < 60, "id lookups held the store lock %.0f ms" % st.lock_stats["max_hold_ms"]
         finally:
             st.close()
+
+
+def test_a_querys_lock_hold_is_measured_and_its_shape_names_keys_not_values():
+    with tempfile.TemporaryDirectory() as tmp:
+        st, evs = _store(tmp)
+        try:
+            real = st.store._get_cached
+            st.store._get_cached = lambda s: (time.sleep(0.002), real(s))[1]
+            st.store.query({"kinds": [1], "authors": [evs[0]["pubkey"]], "limit": 50})
+            assert st.store.max_query_hold_ms >= 2
+            assert st.store.max_query_hold_shape == "authors,kinds"
+            assert evs[0]["pubkey"] not in st.stats().get("max_query_hold_shape", "")
+        finally:
+            st.close()
