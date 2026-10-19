@@ -193,3 +193,56 @@ def test_a_remote_delete_acts_on_the_row_as_it_is_now_not_a_cached_one(world, mo
     monkeypatch.setattr(inbox, "_author_of", author_of)
     assert run(inbox._delete(URI, "https://mastodon.example/users/bob")) == "deleted"
     assert deleted == [new], "the Delete acted on a cached row: %s" % deleted
+
+
+def test_a_lookup_in_flight_across_a_forget_does_not_cache_the_forgotten_row(world, monkeypatch):
+    """A lookup reads the ledger, THEN caches its answer. A forget (an author's Delete, the daily prune) landing between
+    the two used to be undone by that put: the row it had just dropped was answered as delivered for the next ten
+    minutes. Likewise a "no" about a row recorded meanwhile was kept for two."""
+    _index_complete(world["mem"])
+    fedi_tables.forget_cached()
+    eid = "c" * 64
+    run(fedi_tables.arecord(platform="activitypub", instance_url="https://mastodon.example", note_id=URI,
+                            note_uri=URI, nostr_event_id=eid, nostr_pubkey="p" * 64))
+    real = DocTable.aget_many
+    hook = {"after_ledger_read": None}
+
+    async def racing(self, keys):
+        got = await real(self, keys)
+        if self.name == fedi_tables.LEDGER and hook["after_ledger_read"] is not None:
+            fn, hook["after_ledger_read"] = hook["after_ledger_read"], None
+            await fn()                      # lands after the lookup read the table, before it caches its answer
+        return got
+    monkeypatch.setattr(DocTable, "aget_many", racing)
+
+    hook["after_ledger_read"] = lambda: fedi_tables.aforget_uri(URI)
+    assert run(fedi_tables.adelivered_by_uri(URI)).nostr_event_id == eid       # it read the row before the forget
+    assert run(fedi_tables.adelivered_by_uri(URI)) is None, "the forgotten row was cached by a lookup from before"
+
+    other = "d" * 64
+    hook["after_ledger_read"] = lambda: fedi_tables.arecord(
+        platform="activitypub", instance_url="https://mastodon.example", note_id=URI + "/d", note_uri=URI + "/d",
+        nostr_event_id=other, nostr_pubkey="p" * 64)
+    assert run(fedi_tables.amirrored_among([other])) == set()                  # asked before the row was recorded
+    assert run(fedi_tables.amirrored_among([other])) == {other}, "a 'no' from before the record was cached"
+
+
+def test_a_fresh_table_registry_starts_with_nothing_remembered(world, monkeypatch):
+    """The deploy gate's required stage runs `pytest --noconftest`, so a conftest fixture clearing this cache never
+    ran there, and one test's cached row answered the next test's lookups -- "DID NOT RAISE Unavailable", a deleted
+    row still returned, a report missing its `e` tag. The cache belongs to the ledger table it was filled from: a
+    new registry (a fresh process, or a test's) is a new table and starts empty, whoever does or does not clear it."""
+    _index_complete(world["mem"])
+    run(fedi_tables.arecord(platform="activitypub", instance_url="https://mastodon.example", note_id=URI,
+                            note_uri=URI, nostr_event_id="e" * 64, nostr_pubkey="p" * 64))
+    assert run(fedi_tables.adelivered_by_uri(URI)) is not None                 # cached
+    assert run(fedi_tables.amirrored_among(["9" * 64])) == set()               # a "no", cached
+    from tests.doc_table_mem import mem_tables
+    mem = mem_tables(monkeypatch)                                              # the next test: a new, empty relay
+    _ledger_never_loads(monkeypatch)
+    with pytest.raises(Unavailable):
+        fedi_tables.delivered_by_uri(URI)
+    _index_complete(mem)
+    mem.put(fedi_tables.LEDGER, "k9", {"note_uri": URI + "/9", "nostr_event_id": "9" * 64})
+    mem.put(INDEX, "e:" + "9" * 64, {"keys": ["k9"]})
+    assert run(fedi_tables.amirrored_among(["9" * 64])) == {"9" * 64}, "a 'no' from the previous table answered"

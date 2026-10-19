@@ -389,8 +389,33 @@ def _blocking(coro):
 # (a delete is a forget/prune, which clears this), so a POSITIVE answer is safe to keep. A NEGATIVE one is kept only
 # where it is about something recorded long ago (a referenced event, `_NEG_TTL`) -- never for the inbox's dedup, where
 # "not yet" turns into "yes" a moment later. "Could not ask" raises and is never cached.
+#
+# A LOOKUP THAT STARTED BEFORE A FORGET MUST NOT CACHE AFTER IT. A lookup reads the relay, then puts its answer; a
+# forget/prune/record that lands in between clears the cache -- and the put that follows writes the answer from
+# BEFORE it back in, so a row this process just dropped is answered as delivered for the next ten minutes (and a "no"
+# about a row it just recorded hides it for two). Every clear bumps `_gen`; a lookup takes the generation before it
+# reads and its put is discarded when the generation moved meanwhile.
+#
+# THE CACHE BELONGS TO THE LEDGER TABLE INSTANCE IT WAS FILLED FROM. A registry reset (DocTable._registry replaced or
+# cleared: "a fresh process", which is what every test of these tables does) is a new table, and answers remembered
+# from the old one are dropped the first time the new one is used -- by the module itself, not by a conftest fixture
+# that the deploy gate's required stage (`pytest --noconftest`) never runs. Without it, one test's cached row answered
+# the next test's lookups there: a deleted row "still delivered", a lookup that must refuse answering from memory.
 _POS_TTL, _NEG_TTL, _CACHE_MAX = 600.0, 120.0, 50000
 _cache: dict = {}
+_gen = [0]
+_gen_lock = threading.Lock()
+_owner = [None]                          # the LEDGER DocTable instance `_cache` was filled from
+
+
+def _same_table() -> None:
+    t = DocTable(LEDGER)
+    if _owner[0] is not t:
+        with _gen_lock:
+            if _owner[0] is not t:
+                _owner[0] = t
+                _gen[0] += 1
+                _cache.clear()
 
 
 def _ck(key):
@@ -399,6 +424,7 @@ def _ck(key):
 
 
 def _cget(key):
+    _same_table()
     key = _ck(key)
     hit = _cache.get(key)
     if hit is None:
@@ -409,15 +435,22 @@ def _cget(key):
     return True, hit[1]
 
 
-def _cput(key, value, ttl: float) -> None:
+def _cput(key, value, ttl: float, gen: int) -> None:
+    """Keep `value` -- unless the cache was cleared (or a row recorded) since generation `gen` was taken."""
+    _same_table()
     key = _ck(key)
-    if len(_cache) >= _CACHE_MAX:
-        _cache.clear()
-    _cache[key] = (time.monotonic() + ttl, value)
+    with _gen_lock:
+        if gen != _gen[0]:
+            return
+        if len(_cache) >= _CACHE_MAX:
+            _cache.clear()
+        _cache[key] = (time.monotonic() + ttl, value)
 
 
 def forget_cached() -> None:
-    _cache.clear()
+    with _gen_lock:
+        _gen[0] += 1
+        _cache.clear()
 
 
 async def adelivered_by_uri(uri: str, *, fresh: bool = False) -> Row | None:
@@ -432,9 +465,10 @@ async def adelivered_by_uri(uri: str, *, fresh: bool = False) -> Row | None:
     ok, row = (False, None) if fresh else _cget(("uri", uri))
     if ok:
         return row
+    gen = _gen[0]
     row = _earliest(await _arows_by_uri(uri))
     if row is not None:
-        _cput(("uri", uri), row, _POS_TTL)          # positive only: a new note must be seen the moment it is recorded
+        _cput(("uri", uri), row, _POS_TTL, gen)          # positive only: a new note must be seen the moment it is recorded
     return row
 
 
@@ -449,8 +483,9 @@ async def adelivered_by_event(eid: str) -> Row | None:
     ok, row = _cget(("eid", eid))
     if ok:
         return row
+    gen = _gen[0]
     row = _earliest(await _arows_by_events([eid]))
-    _cput(("eid", eid), row, _POS_TTL if row is not None else _NEG_TTL)
+    _cput(("eid", eid), row, _POS_TTL if row is not None else _NEG_TTL, gen)
     return row
 
 
@@ -474,9 +509,10 @@ async def amirrored_among(event_ids) -> set:
         elif yes:
             out.add(e)
     if ask:
+        gen = _gen[0]
         found = {r.get("nostr_event_id") for _k, r in await _arows_by_events(ask)}
         for e in ask:
-            _cput(("mir", e), e in found, _POS_TTL if e in found else _NEG_TTL)
+            _cput(("mir", e), e in found, _POS_TTL if e in found else _NEG_TTL, gen)
         out |= found
     return out
 
@@ -497,8 +533,10 @@ async def arecord(*, platform: str, instance_url: str, note_id: str, nostr_event
     k = ledger_key(platform, instance_url, note_id)
     await _aindex_add(k, row)
     await DocTable(LEDGER).aput(k, row)
-    for key in (("uri", note_uri), ("eid", nostr_event_id), ("mir", nostr_event_id)):
-        _cache.pop(_ck(key), None)                      # this process's own "no" about it is over
+    with _gen_lock:
+        _gen[0] += 1                                    # a lookup in flight read the table before this row
+        for key in (("uri", note_uri), ("eid", nostr_event_id), ("mir", nostr_event_id)):
+            _cache.pop(_ck(key), None)                  # this process's own "no" about it is over
 
 
 def record(**kw) -> None:
@@ -515,7 +553,7 @@ def forget_uri(uri: str) -> int:
 async def _adrop(k: str, row: dict) -> None:
     await _aindex_drop(k, row)
     await DocTable(LEDGER).adelete(k)
-    _cache.clear()                                      # rare (a deletion, the daily prune): start clean
+    forget_cached()                                     # rare (a deletion, the daily prune): start clean
 
 
 async def aforget_uri(uri: str) -> int:

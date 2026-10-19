@@ -64,13 +64,29 @@ async def _run(url, port):
             pass
         await asyncio.sleep(.25)
     async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=None) as ws:
-        await asyncio.sleep(1.0)
-        await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
-                                  "params": {"expression": "probe()", "awaitPromise": True, "returnByValue": True}}))
-        while True:
-            m = json.loads(await ws.recv())
-            if m.get("id") == 1:
-                return json.loads(m["result"]["result"]["value"])
+        ids = iter(range(1, 10 ** 6))
+
+        async def evaluate(expression):
+            n = next(ids)
+            await ws.send(json.dumps({"id": n, "method": "Runtime.evaluate",
+                                      "params": {"expression": expression, "awaitPromise": True,
+                                                 "returnByValue": True}}))
+            while True:
+                m = json.loads(await ws.recv())
+                if m.get("id") == n:
+                    res = m.get("result") or {}
+                    if res.get("exceptionDetails") or "value" not in (res.get("result") or {}):
+                        raise AssertionError(("the page threw", expression, res))
+                    return res["result"]["value"]
+        # The tab is listed as soon as it NAVIGATES; `probe` exists only once the stylesheet in <head> has loaded and
+        # the script after it has run. A fixed one-second wait was "FLAKY UNDER LOAD" in the gate (KeyError: 'value':
+        # probe() was a ReferenceError on a slow machine). Wait for the page itself, with a deadline.
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 30
+        while not await evaluate("document.readyState==='complete' && typeof probe==='function'"):
+            assert loop.time() < end, "the page never finished loading"
+            await asyncio.sleep(.1)
+        return json.loads(await evaluate("probe()"))
 
 
 @pytest.mark.skipif(not Path(CHROME).exists(), reason="Chrome required")
