@@ -717,9 +717,11 @@ class InstanceSync:
         sid = "pn" + secrets.token_hex(4)
         q: asyncio.Queue = asyncio.Queue()
         self._subs[sid] = q
+        # The initiator's rounds are the same CPU as the relay's (prefix sums over the set, a range per difference),
+        # so they run off this loop too -- it is the loop serving the desktop's own sockets.
         ini = negentropy.Initiator(items)
         try:
-            await self._send(["NEG-OPEN", sid, flt, ini.initiate().hex()])
+            await self._send(["NEG-OPEN", sid, flt, (await asyncio.to_thread(ini.initiate)).hex()])
             deadline = time.monotonic() + timeout
             while True:
                 left = deadline - time.monotonic()
@@ -733,7 +735,7 @@ class InstanceSync:
                     raise _NegUnsupported(why)
                 if msg[0] != "NEG-MSG" or len(msg) < 3:
                     continue
-                nxt = ini.reconcile(bytes.fromhex(msg[2]))
+                nxt = await asyncio.to_thread(ini.reconcile, bytes.fromhex(msg[2]))
                 if nxt is None:
                     return {i.hex() for i in ini.need}
                 await self._send(["NEG-MSG", sid, nxt.hex()])

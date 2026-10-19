@@ -412,7 +412,7 @@ def test_both_entry_points_catch_what_reconcile_raises():
     for entry in ("_on_neg_open", "_on_neg_msg"):
         body = src[src.index(f"async def {entry}"):]
         body = body[:body.index("\n    async def ", 1) if "\n    async def " in body[1:] else len(body)]
-        assert "negentropy.reconcile" in body, f"{entry} no longer reconciles"
+        assert "_neg_reconcile(" in body or "negentropy.reconcile" in body, f"{entry} no longer reconciles"
         assert "except Exception" in body, \
             f"{entry} calls reconcile without catching — malformed input kills the connection"
         assert "NEG-ERR" in body, f"{entry} does not tell the client to fall back"

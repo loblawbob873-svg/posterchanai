@@ -53,5 +53,8 @@ def test_the_vectorised_items_equal_the_loop_exactly():
                 want = _reference(st, filters, cap)
                 assert got == want, (filters, cap, len(got), len(want))
                 assert all(isinstance(x[0], int) and isinstance(x[1], bytes) and len(x[1]) == 32 for x in got)
+                # The buffer negentropy builds its fingerprint prefix sums from IS these ids, in this order.
+                assert getattr(got, "raw", b"".join(i for _, i in got)) == b"".join(i for _, i in got)
+                assert not got or got.raw
         finally:
             st.close()
