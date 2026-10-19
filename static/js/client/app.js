@@ -406,6 +406,11 @@
   }
   function _standalone(){ return BUNDLED && !_instanceBase(); }
   let _instanceNotPcWarned = false;
+  async function _confirmInstanceNotPc(u, gapMs=(+window.__PC_INSTANCE_RECHECK_MS || 60000)){
+    if(await _probeInstance(u) !== 'not') return false;
+    await new Promise(r=>setTimeout(r, gapMs));
+    return u === _instanceBase() && await _probeInstance(u) === 'not';
+  }
   async function _warnInstanceNotPc(){
     if(_instanceNotPcWarned) return; _instanceNotPcWarned = true;
     const host = _instanceBase().replace(/^https?:\/\//, '');
@@ -3534,7 +3539,12 @@
     const t = ctl ? setTimeout(() => ctl.abort(), 30000) : 0;
     try{
       const r = await fetch(String(u).replace(/\/+$/, '') + '/client/config', { cache:'no-store', signal: ctl ? ctl.signal : undefined });
-      if(!r.ok) return 'not';
+      /* A SERVER THAT IS RESTARTING IS NOT "NOT A POSTERCHAN SERVER". Every non-2xx used to answer 'not', so a
+       * tablet that booted during a deploy (a 502 from the proxy, a 503 while the app loads) was told poster.place
+       * "is not a PosterChan server -- run without a server instead?", and one tap dropped its instance
+       * (2026-10-18: "somehow my instance got removed on tablet"). Only an ANSWER that is something else is
+       * 'not': a 404 (no such route -- a relay, another site) or a 2xx that is not our config. */
+      if(!r.ok) return (r.status === 404 || r.status === 405 || r.status === 410) ? 'not' : 'down';
       let c = null; try{ c = await r.json(); }catch(_){ return 'not'; }
       return _isPcConfig(c) ? 'ok' : 'not';
     }catch(_){ return 'down'; }
@@ -4421,7 +4431,9 @@
     /* A relay (or any other site) named as the instance: say so once, after the app has painted. Kept OUT of
      * the boot config chain on purpose -- that chain must stay the same three steps the offline/native-shell
      * tests run on their own (a relay's NIP-11 has no relay_url, so _cfgCache never stores it anyway). */
-    if(BUNDLED && _instanceBase()) setTimeout(()=>{ _probeInstance(_instanceBase()).then(v=>{ if(v === 'not') _warnInstanceNotPc(); }).catch(()=>{}); }, 1500);
+    /* ...and only when it says so TWICE, a minute apart: the offer drops the instance, so one odd answer (a captive
+     * portal, a proxy's error page served as 200) must never be enough to put it in front of somebody. */
+    if(BUNDLED && _instanceBase()) setTimeout(()=>{ _confirmInstanceNotPc(_instanceBase()).then(not=>{ if(not) _warnInstanceNotPc(); }).catch(()=>{}); }, 1500);
   }
   // Document/window/#feed listeners and background timers — bound ONCE PER PAGE LOAD, not per login.
   // startApp() runs again when a guest logs in WITHOUT a reload (see the hydrateUser note there), and

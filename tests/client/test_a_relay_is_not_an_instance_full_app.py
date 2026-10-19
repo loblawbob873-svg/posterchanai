@@ -64,5 +64,7 @@ def test_a_client_already_pointed_at_a_relay_is_told_and_offered_no_server():
         await b.until("/is set as your PosterChan server, but it is not one/.test(document.body.innerText)")
         got['text'] = await b.js("document.body.innerText")
 
-    asyncio.run(desktop.with_browser('online', '', check, "window.__bootRelayish=true;" + RELAYISH))
+    # The boot warning asks twice, a minute apart (test_a_restarting_server_is_not_dropped.py); 300 ms here.
+    asyncio.run(desktop.with_browser('online', '', check,
+                                     "window.__PC_INSTANCE_RECHECK_MS=300;window.__bootRelayish=true;" + RELAYISH))
     assert 'Relays belong under Relays' in got['text'], got['text'][-600:]
