@@ -113,3 +113,28 @@ class AMemberCanReadFromAnyClient(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfinedSocketsGetAFewSignIns(unittest.TestCase):
+    """2026-10-18: a non-PosterChan client signed in as ~99 non-member keys per connection, every ~30 s -- 99 Schnorr
+    verifications per dial, for nothing. After CONFINED_AUTH_MAX, an AUTH is refused before it is verified; a
+    member signing in early is unaffected."""
+
+    def test_the_ninth_sign_in_is_refused_unverified_and_a_member_still_gets_in(self):
+        member_pk = build_event(MEMBER_SK, 1, "", [])["pubkey"]
+        srv, conn = _server(member_pk), _Conn()
+        calls = []
+        real = S.verify_event
+        S.verify_event = lambda e: calls.append(1) or real(e)
+        try:
+            _auth(srv, conn, MEMBER_SK)
+            self.assertFalse(conn._pcai_signer_only, "a member signing in first must be lifted")
+            conn2 = _Conn()
+            for i in range(20):
+                _auth(srv, conn2, bytes([0x40 + i]) * 32)
+        finally:
+            S.verify_event = real
+        oks = [m for m in srv.sent if m[0] == "OK"]
+        refused = [m for m in oks if m[2] is False and str(m[3]).startswith("rate-limited")]
+        self.assertEqual(len(refused), 20 - S.RelayServer.CONFINED_AUTH_MAX)
+        self.assertEqual(len(calls), 1 + S.RelayServer.CONFINED_AUTH_MAX, "refused AUTHs must not be verified")

@@ -1724,9 +1724,24 @@ class RelayServer:
         used.add(eid)
         return True
 
+    # A CONFINED SOCKET GETS A FEW SIGN-INS, NOT A HUNDRED. Measured 2026-10-18: one Rust client (nostr-sdk) holding
+    # ~99 keys, none of them members, signed in as every one on every connection -- ~99 Schnorr verifications per
+    # dial, re-dialling every ~30 s, for nothing (a non-member's AUTH lifts no confinement). A member's other app
+    # signs in as one key, so the cap costs nobody anything; it is checked BEFORE the signature is verified.
+    CONFINED_AUTH_MAX = 8
+
     def _on_auth(self, conn, ev) -> None:
         eid = ev.get("id", "") if isinstance(ev, dict) else ""
         why = ""
+        if getattr(conn, "_pcai_signer_only", False):
+            n = getattr(conn, "_pcai_auth_tries", 0) + 1
+            try:
+                setattr(conn, "_pcai_auth_tries", n)
+            except Exception:
+                pass
+            if n > self.CONFINED_AUTH_MAX:
+                self._send(conn, ["OK", eid, False, "rate-limited: too many sign-ins on one connection"])
+                return
         if not isinstance(ev, dict) or not verify_event(ev):
             why = "invalid: bad AUTH event signature"
         elif ev.get("kind") != 22242:
