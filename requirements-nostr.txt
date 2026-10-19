@@ -54,7 +54,7 @@ openpyxl>=3.1.0
 python-pptx>=1.0.0
 Pillow>=12.3.0
 pillow-heif>=0.16.0
-numpy
+numpy>=2,<3   # PosterChanDB; same major as requirements.txt
 
 # TTS (cloud edge-tts — no local model), feeds, media fetch
 edge-tts>=6.1.10
