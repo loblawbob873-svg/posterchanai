@@ -334,9 +334,8 @@ services:
   # A `run`-created container is not managed by `down`, so it lingers holding the project network
   # open and down reports "Resource is still in use" — which is what this section exists to avoid.
   #
-  # They publish NO ports on purpose. x-common publishes the whole port map, and six copies of that
-  # would collide on every one; the roles are reached over the compose network by the app, and only
-  # the app needs to be reachable from the host.
+  # They publish NO ports on purpose: they live in the backend container's network namespace
+  # (network_mode below), and the backend publishes the whole port map for all of them.
   #
   # NOT a `bots` role: the bot manager must run WITH the app (Admin -> Bots drives it through an
   # in-process registry), which is why the app runs POSTERCHANAI_ROLE=app,bots above.
@@ -356,6 +355,12 @@ services:
         INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}"
     profiles: ["split"]
     restart: unless-stopped
+    # IN THE APP CONTAINER'S NETWORK NAMESPACE. The app, worker and bots reach the relay at ws://127.0.0.1:<port>
+    # and every piece of state lives on that relay, so a role with its own loopback could read nothing at all.
+    # Sharing the backend's namespace makes 127.0.0.1 one place, and the backend already publishes the port map
+    # (3052 included). PC_SPLIT_BACKEND must name the backend profile you bring up.
+    network_mode: "service:${PC_SPLIT_BACKEND:-cpu}"
+    depends_on: ["${PC_SPLIT_BACKEND:-cpu}"]
     volumes:
       - pc-data:/var/lib/posterchanai
       - pc-rag:/app/data
