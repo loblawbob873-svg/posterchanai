@@ -1584,7 +1584,9 @@ class Store:
                 ms = (time.perf_counter() - t0) * 1000.0
                 if ms > self.max_query_hold_ms:
                     self.max_query_hold_ms = ms
-                    self.max_query_hold_shape = ",".join(sorted(str(k) for k in flt if k != "limit"))[:60]
+                    m_ms, n = getattr(self, "_q_split", (0.0, 0))
+                    self.max_query_hold_shape = "%s match=%.0fms cand=%d" % (
+                        ",".join(sorted(str(k) for k in flt if k != "limit"))[:60], m_ms, n)
 
     def _prefmax(self, n: int) -> np.ndarray:
         """max(created[0..i]) for every seq i < n, kept incrementally in its own column (append-only columns)."""
@@ -1664,7 +1666,9 @@ class Store:
         created_at column and the in-RAM ids, so only the events actually returned are decoded."""
         now = int(time.time()) if now is None else now
         with self._lock:
+            _tm = time.perf_counter()
             cand = self._match_locked(flt, now, exhaustive=False)
+            self._q_split = ((time.perf_counter() - _tm) * 1000.0, len(cand))     # match ms, candidates (query())
             if not len(cand):
                 return []
             created = self.created.view(np.uint64)
