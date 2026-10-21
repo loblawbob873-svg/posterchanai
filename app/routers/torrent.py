@@ -269,6 +269,32 @@ async def nyaa_search(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/details")
+async def torrent_details(
+    src: str = Query(..., description="nyaa or tgx"),
+    id: str = Query(..., description="nyaa's /view/<id> number, or TGX's post key"),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """One torrent's page on its site: the uploader's description, the details panel and the file list.
+    The URL is built here from `src` + `id` (never taken from the client), fetched through the proxy."""
+    from app.services import torrent_details
+    from app.services.proxy_utils import require_proxy
+    from app.services.torrent_service import get_torrent_base_url
+    if src not in ("nyaa", "tgx"):
+        raise HTTPException(status_code=400, detail="src must be nyaa or tgx")
+    try:
+        proxy = require_proxy("Torrent details")
+        return await torrent_details.fetch_details(src, id.strip(), get_torrent_base_url(db), proxy)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPError as e:
+        logger.warning("[TORRENT] details fetch failed (%s): %s", src, type(e).__name__)
+        raise HTTPException(status_code=502, detail="Could not reach " + ("nyaa.si" if src == "nyaa" else "TorrentGalaxy") + " just now.")
+
+
 @router.get("/list")
 async def list_torrents(
     request: Request,

@@ -1,12 +1,14 @@
 """Torrents → Nyaa and TGX: browse, search, and Download straight into this node's client.
 
-Asked for as: a Nyaa tab showing nyaa.si's newest torrents with a search, and a TGX tab showing what
+Asked for as: a Nyaa tab with a search (it loads NOTHING until you search -- "To avoid rate limiting, do
+NOT load anything until you actually search"), and a TGX tab showing what
 the AI chat's `torrents` command shows (its categories) with a search -- each Download adding the
 torrent to the Downloads tab. Drives the SHIPPED bundle; only the node's /api/torrent answers are
 fixtures, and every request the page makes is recorded so the test checks what was ASKED, not only
 what was drawn:
 
-  * Nyaa opens on the newest uploads (a query-less /nyaa), a search asks for exactly that query;
+  * Nyaa opens asking for nothing (no /nyaa at all, an empty search neither), a search asks for exactly that;
+  * ℹ Details shows the site's description, details and file list under the row, asked for by id, once;
   * TGX opens on EVERY category (/catalog?category=all, sectioned), a category chip and a search each
     ask for their own list;
   * Download POSTs the row's magnet to /add, the row says it was added, and the view stays put;
@@ -32,7 +34,7 @@ FIXTURE = r'''
 window.__torReq=[];
 (()=>{const inner=window.fetch;
  const row=(t,i)=>({num:i+1,title:t,magnet:'magnet:?xt=urn:btih:'+(i+1).toString(16).padStart(40,'0')+'&dn='+encodeURIComponent(t),
-   size:(i+1)+'.2 GiB',seeders:40-i,leechers:i,url:''});
+   size:(i+1)+'.2 GiB',seeders:40-i,leechers:i,url:'https://nyaa.si/view/'+(1000+i)});
  const ok=j=>new Response(JSON.stringify(j),{status:200,headers:{'Content-Type':'application/json'}});
  window.fetch=async function(url,opts={}){
   const u=String(url);const at=u.indexOf('/api/torrent/');
@@ -40,6 +42,10 @@ window.__torReq=[];
   const p=new URL(u.slice(at),'http://x');const path=p.pathname.replace('/api/torrent','');
   __torReq.push({path,q:p.searchParams.get('q'),cat:p.searchParams.get('category'),method:(opts.method||'GET'),body:opts.body||''});
   if(path==='/list') return ok({torrents:[]});
+  if(path==='/details') return ok({title:'T',url:'https://nyaa.si/view/'+p.searchParams.get('id'),
+    info:[['Submitter','someone'],['File size','1.2 GiB']],
+    description:'Release notes <script>window.__xss=1</script>\nSubs: https://example.org/subs',
+    files:[['ep01.mkv','600 MiB'],['ep02.mkv','610 MiB']],file_count:2});
   if(path==='/add') return ok({ok:true,info_hash:'ab'.repeat(20)});
   if(path==='/nyaa'){
     const q=p.searchParams.get('q')||'';
@@ -78,14 +84,26 @@ def test_nyaa_and_tgx_tabs_browse_search_and_download():
         await b.js("__PC.switchView('torrents');true")
         await b.until("!!document.querySelector('.tor-tabs .ntab[data-tt=nyaa]')")
 
-        # --- Nyaa: newest first, then a search
+        # --- Nyaa: nothing until a search (an empty one included), then exactly that search
         await tab(b, 'nyaa')
-        got['nyaa_latest'] = await b.js(ITEMS)
-        got['nyaa_head'] = await b.js("document.getElementById('tb-head').textContent")
+        got['nyaa_idle'] = await b.js("document.querySelector('#tb-list .empty').textContent")
+        await search(b, '')
+        await asyncio.sleep(.4)
         got['nyaa_first_req'] = await b.js("__torReq.filter(r=>r.path==='/nyaa')")
         await search(b, 'frieren')
         await b.until("[...document.querySelectorAll('#tb-list .tb-name')].some(e=>e.textContent.includes('frieren'))")
         got['nyaa_search'] = await b.js(ITEMS)
+
+        # --- ℹ Details: under the row, asked for by id, escaped, and asked for only once
+        await b.js("document.querySelector('#tb-list .tb-item .tb-more').click();true")
+        await b.until("!!document.querySelector('#tb-list .tb-item .tb-details .tb-desc')")
+        got['details'] = await b.js("""(()=>{const d=document.querySelector('#tb-list .tb-item .tb-details');
+          return {text:d.textContent, link:(d.querySelector('.tb-desc a')||{}).href||'', files:d.querySelectorAll('.tb-files li').length,
+                  info:[...d.querySelectorAll('.tb-info dt')].map(x=>x.textContent), xss:!!window.__xss, script:!!d.querySelector('script')}})()""")
+        await b.js("document.querySelector('#tb-list .tb-item .tb-more').click();true")
+        got['details_hidden'] = await b.js("document.querySelector('#tb-list .tb-item .tb-details').classList.contains('hidden')")
+        await b.js("document.querySelector('#tb-list .tb-item .tb-more').click();true")
+        got['details_reqs'] = await b.js("__torReq.filter(r=>r.path==='/details').length")
 
         # --- Download adds to the client and stays on the tab
         await b.js("document.querySelector('#tb-list .tb-item .tb-get').click();true")
@@ -128,10 +146,14 @@ def test_nyaa_and_tgx_tabs_browse_search_and_download():
 
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
 
-    assert got['nyaa_first_req'][0]['q'] in (None, ''), got['nyaa_first_req']
-    assert got['nyaa_latest'][0].startswith('[Sub] Newest Show'), got
-    assert 'Newest' in got['nyaa_head'], got['nyaa_head']
+    assert got['nyaa_first_req'] == [], ('opening Nyaa (or an empty search) asked nyaa.si for something', got['nyaa_first_req'])
+    assert 'Search nyaa.si' in got['nyaa_idle'], got['nyaa_idle']
     assert got['nyaa_search'] == ['Q:frieren one', 'Q:frieren two'], got['nyaa_search']
+    d = got['details']
+    assert 'Release notes' in d['text'] and d['files'] == 2 and d['info'] == ['Submitter', 'File size'], d
+    assert d['link'] == 'https://example.org/subs', d
+    assert not d['xss'] and not d['script'] and '<script>' in d['text'], ('the description was not escaped', d)
+    assert got['details_hidden'] is True and got['details_reqs'] == 1, got
 
     assert got['add'] and got['add'][0]['m'] == 'POST', got['add']
     assert got['add'][0]['b'] == {'magnet': 'magnet:?xt=urn:btih:' + '1'.zfill(40) + '&dn=' + 'Q%3Afrieren%20one'}, got['add']
@@ -172,10 +194,17 @@ def test_the_browse_tabs_fit_a_phone():
         await b.until("!!document.querySelector('.tor-tabs .ntab[data-tt=nyaa]')")
         for name in ('nyaa', 'tgx'):
             await b.js(f"document.querySelector('.tor-tabs .ntab[data-tt={name}]').click();true")
+            if name == 'nyaa':      # Nyaa loads nothing until a search
+                await b.until("!!document.getElementById('tb-q')")
+                await b.js("(()=>{const i=document.getElementById('tb-q');i.value='show';"
+                           "document.getElementById('tb-form').requestSubmit();})();true")
             await b.until("!!document.querySelector('#tb-list .tb-item')")
+            if name == 'nyaa':      # …and its details panel fits the phone too
+                await b.js("document.querySelector('#tb-list .tb-item .tb-more').click();true")
+                await b.until("!!document.querySelector('#tb-list .tb-details .tb-desc')")
             await asyncio.sleep(.3)
             got[name] = await b.js(r'''(()=>{const vw=document.documentElement.clientWidth;
-              const over=[...document.querySelectorAll('.tb-bar, .tb-bar *, .tb-cats *, .tb-item, .tb-item *, .tor-tabs .ntab')]
+              const over=[...document.querySelectorAll('.tb-bar, .tb-bar *, .tb-cats *, .tb-item, .tb-item *:not(.tb-desc *):not(.tb-files *), .tb-desc, .tb-files, .tor-tabs .ntab')]
                 .filter(e=>e.getClientRects().length && e.getBoundingClientRect().right>vw+1).map(e=>e.className||e.tagName);
               const inWindow=!!document.querySelector('.osw #tb-list');
               return {vw, inWindow, over, pageScroll: document.documentElement.scrollWidth>vw+1}})()''')

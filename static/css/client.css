@@ -9143,6 +9143,17 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .tb-bar{display:flex;gap:8px;align-items:center;margin:2px 0 10px}
 .tb-bar .input{flex:1 1 auto;min-width:0;margin:0}
 .tb-bar .btn{flex:0 0 auto}
+/* Torrents → Nyaa/TGX → ℹ Details: the site's own description, panel and file list, inline under the row. */
+.tb-details{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.tb-info{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0 0 10px;font-size:13px}
+.tb-info dt{color:var(--muted);font-weight:600}
+.tb-info dd{margin:0;overflow-wrap:anywhere}
+.tb-desc{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.45;max-height:50vh;overflow:auto}
+.tb-files-h{margin:10px 0 4px;font-size:12px;font-weight:700;color:var(--muted)}
+.tb-files{list-style:none;margin:0;padding:0;font-size:12px;max-height:30vh;overflow:auto}
+.tb-files li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-top:1px solid var(--line)}
+.tb-files li span{overflow-wrap:anywhere;min-width:0}
+.tb-files li small{flex:none;color:var(--muted)}
 .tb-sec{margin:14px 2px 6px;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .tb-cats{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
 .tb-head{margin:0 2px 6px}

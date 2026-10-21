@@ -332,7 +332,9 @@ async def search_torrents(db: Session, query: str, limit: int = 15) -> list[Torr
                 title = (post.get("n") or "").strip() or infohash
                 magnet = _build_magnet(infohash, title)
                 pk = (post.get("pk") or "").strip()
-                detail_url = f"{base_url}/post-detail/{pk}/" if pk else ""
+                # The slug is REQUIRED: `/post-detail/<pk>/` alone is a 404 on TGX (any slug is accepted).
+                from app.services.torrent_details import tgx_slug
+                detail_url = f"{base_url}/post-detail/{pk}/{tgx_slug(title)}/" if pk else ""
                 results.append(TorrentResult(
                     title=title,
                     magnet=magnet,

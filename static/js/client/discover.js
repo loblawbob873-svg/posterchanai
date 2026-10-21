@@ -595,9 +595,31 @@ window.PCDiscoverFactory = function(dep){
    * opened on Movies alone read as "only showing top movies" beside it. */
   const _TGX_CATS = [['all','All'],['movies','Movies'],['tv','TV'],['music','Music'],['anime','Anime']];
   const _torBrowse = {
-    nyaa: { q:'', items:null, err:'', seq:0, added:Object.create(null) },
-    tgx:  { q:'', cat:'all', items:null, err:'', seq:0, added:Object.create(null) },
+    nyaa: { q:'', items:null, err:'', seq:0, added:Object.create(null), details:Object.create(null) },
+    tgx:  { q:'', cat:'all', items:null, err:'', seq:0, added:Object.create(null), details:Object.create(null) },
   };
+  /* NYAA WAITS FOR A SEARCH. Opening the tab used to fetch "newest on nyaa.si" every time, and nyaa
+   * rate-limits: browsing to the tab on the way to a search spent a request on a list nobody read. */
+  const _torIdle = src => src==='nyaa' && !_torBrowse[src].q;
+  /* The site's own page for a row, by id: nyaa's /view/<n>, TGX's /post-detail/<key>/. The server
+   * builds the URL from this id; it never takes one from here. */
+  function _torDetailId(src, t){
+    const u=String((t&&t.url)||'');
+    const m = src==='nyaa' ? /\/view\/(\d+)/.exec(u) : /\/post-detail\/([0-9a-f]+)\//i.exec(u);
+    return m ? m[1] : '';
+  }
+  const _torLinkify = txt => enc(txt).replace(/https?:\/\/[^\s<>"')\]]+/g,
+    u => `<a href="${u}" target="_blank" rel="noopener noreferrer nofollow">${u}</a>`);
+  function _torDetailsHtml(d){
+    if(!d) return '<div class="spinner"></div>';
+    if(d.err) return `<div class="muted small">${enc(d.err)}</div>`;
+    const info = (d.info||[]).length ? `<dl class="tb-info">${d.info.map(([k,v])=>`<dt>${enc(k)}</dt><dd>${enc(v)}</dd>`).join('')}</dl>` : '';
+    const desc = d.description ? `<div class="tb-desc">${_torLinkify(d.description)}</div>` : '<div class="muted small">No description.</div>';
+    const shown=(d.files||[]).slice(0,50), more=(d.file_count||0)-shown.length;
+    const files = shown.length ? `<div class="tb-files-h">${d.file_count} file${d.file_count===1?'':'s'}</div><ul class="tb-files">${
+      shown.map(([n,z])=>`<li><span>${enc(n)}</span><small>${enc(z||'')}</small></li>`).join('')}${more>0?`<li class="muted small">+ ${more} more</li>`:''}</ul>` : '';
+    return info + desc + files;
+  }
   function _torBrowseShell(src){
     const st=_torBrowse[src];
     const cats = src==='tgx' ? `<div class="tb-cats" role="tablist">${_TGX_CATS.map(([k,l])=>
@@ -622,7 +644,8 @@ window.PCDiscoverFactory = function(dep){
       <div class="tm-acts">
         <button class="btn ${added?'btn-ghost':'btn-neon'} small tb-get"${added?' disabled':''}>${added?'✓ Added':'<svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download'}</button>
         <button class="btn btn-ghost small tb-copy">⧉ Magnet</button>
-      </div></div>`;
+        ${_torDetailId(src,t) ? `<button class="btn btn-ghost small tb-more" aria-expanded="false">ℹ Details</button>` : ''}
+      </div><div class="tb-details hidden"></div></div>`;
   }
   function _torBrowsePaint(feed, src){
     const st=_torBrowse[src], list=$('#tb-list',feed), head=$('#tb-head',feed);
@@ -632,6 +655,8 @@ window.PCDiscoverFactory = function(dep){
                   : st.cat==='all' ? 'Top of every category on TorrentGalaxy'
                   : 'Top '+((_TGX_CATS.find(c=>c[0]===st.cat)||[])[1]||'')+' on TorrentGalaxy');
     if(head) head.textContent = st.items ? what : '';
+    if(_torIdle(src) && !st.items && !st.err){
+      list.innerHTML='<div class="empty">Search nyaa.si to see torrents — nothing is loaded until you do.</div>'; return; }
     if(st.err){ list.innerHTML=`<div class="empty">${enc(st.err)}</div>`; return; }
     if(!st.items){ list.innerHTML='<div class="spinner"></div>'; return; }
     // The overview is sectioned the way the command's is: a heading wherever the category changes.
@@ -643,6 +668,18 @@ window.PCDiscoverFactory = function(dep){
     $$('.tb-item',list).forEach(row=>{
       const t=st.items[+row.dataset.i]; if(!t) return;
       row.querySelector('.tb-copy').onclick=()=>copyValue(t.magnet, 'magnet copied', 'Magnet link:');
+      const more=row.querySelector('.tb-more'), box=row.querySelector('.tb-details');
+      if(more) more.onclick=async()=>{
+        const open = box.classList.toggle('hidden') === false;
+        more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'ℹ Hide details' : 'ℹ Details';
+        if(!open) return;
+        const id=_torDetailId(src,t);
+        box.innerHTML=_torDetailsHtml(st.details[id]);
+        if(st.details[id] && !st.details[id].err) return;
+        try{ st.details[id]=await _torApi('/details?src='+src+'&id='+encodeURIComponent(id)); }
+        catch(e){ st.details[id]={err: e.detail || ('Could not load the details from '+(src==='nyaa'?'nyaa.si':'TorrentGalaxy')+'.')}; }
+        if(box.isConnected && !box.classList.contains('hidden')) box.innerHTML=_torDetailsHtml(st.details[id]);
+      };
       const get=row.querySelector('.tb-get');
       get.onclick=async()=>{
         if(st.added[t.magnet]) return;
@@ -684,6 +721,7 @@ window.PCDiscoverFactory = function(dep){
       const v=(q.value||'').trim();
       if(v===st.q && st.items && !st.err) return;
       st.q=v;
+      if(_torIdle(src)){ st.seq++; st.items=null; st.err=''; _torBrowsePaint(feed, src); return; }   // an empty nyaa search loads nothing
       // Searching TGX leaves the category row; an empty search goes back to it.
       $$('.tb-cat',feed).forEach(b=> b.className='btn small '+(!st.q && st.cat===b.dataset.cat ? 'btn-neon' : 'btn-ghost')+' tb-cat');
       _torBrowseLoad(feed, src);
@@ -694,7 +732,7 @@ window.PCDiscoverFactory = function(dep){
       $$('.tb-cat',feed).forEach(x=> x.className='btn small '+(x===b ? 'btn-neon' : 'btn-ghost')+' tb-cat');
       _torBrowseLoad(feed, src);
     });
-    if(st.items || st.err) _torBrowsePaint(feed, src);
+    if(st.items || st.err || _torIdle(src)) _torBrowsePaint(feed, src);
     else _torBrowseLoad(feed, src);
   }
 
