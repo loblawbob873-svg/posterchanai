@@ -2104,6 +2104,20 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    sit beside it, so let it take the column: width is bound by max-width:100%, height follows the aspect.
    Multi-image rows and carousels keep the compact size. */
 .media-row img:only-child,.media-row video:only-child{--mh:720px;max-height:720px}
+/* ONE FRAME FOR A LONE PICTURE IN THE TIMELINE. Reported: "Social Timelines -> media preview sizes are not
+   consistent". Measured at 390px: a lone landscape photo drew 134px tall, a portrait one 675px (most of the
+   screen), a square 312px, and a 2+ photo post a fixed 200px strip -- heights swinging 5x from card to card.
+   A lone picture in a TIMELINE card now fills the column inside a frame clamped between 16:9 and 4:5 (height
+   56.25%-125% of the column, at most 520px on a wide screen; container units so it holds with or without
+   the size hint): photos fill it
+   (object-fit:cover, the trimmed part a tap away in the lightbox), videos letterbox on black and are never
+   cropped. Quotes, notifications and an opened post keep their own sizes.
+   tests/client/test_timeline_media_frame_full_app.py. */
+#tl-notes .media-row:not(.quoted .media-row){container-type:inline-size}
+#tl-notes .media-row:not(.quoted .media-row) img:only-child,
+#tl-notes .media-row:not(.quoted .media-row) video:only-child{
+  width:100%;max-width:100%;height:auto;min-height:56.25cqw;max-height:min(125cqw,520px);object-fit:cover}
+#tl-notes .media-row:not(.quoted .media-row) video:only-child{object-fit:contain;background:#000}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 /* height:auto is LOAD-BEARING. _dimAttrs puts width=/height= ATTRIBUTES on every media element to
