@@ -18,7 +18,7 @@ window.PCTimelineFactory = function(dep){
     composeTranslate, decorateProfiles, enc, feedNoteHtml, gifPicker, hydrate, hydrateLinkCards,
     hydratePolls, imetaTagsFor, invalidateCounts, isMutedView, isReply, makeCardPreview,
     mentionTags, needProfile, openEmojiPopover, openMenuPopover, openThread, publish, renderView,
-    requestBlossomAccess, subs, switchView, timelineFilter, tlHiddenSet, toast, updateOfflineBar,
+    requestBlossomAccess, saveClientPrefsNostr, subs, switchView, timelineFilter, tlHiddenSet, toast, updateOfflineBar,
     uploadBlob,
   } = dep;
 
@@ -967,15 +967,39 @@ window.PCTimelineFactory = function(dep){
           </div>
         </div>
       </div>`:_guestCardHtml())
-      +`<div class="tl-tabs" role="tablist">
-        ${(() => { const off = tlHiddenSet(); return [['home','Home'],['global','Nostrverse'],['trending','Trending']]
-          .filter(([t]) => !off.has(t) || S.VIEW === t)   // the tab you are ON always shows, or the row lies about where you are
-          .map(([t,l]) => `<button class="tltab${S.VIEW===t?' on':''}" data-tl="${t}" role="tab" aria-selected="${S.VIEW===t}">${l}</button>`).join(''); })()}
+      +(() => { const off = tlHiddenSet();
+        const tls = [['home','Home'],['global','Nostrverse'],['trending','Trending']]
+          .filter(([t]) => !off.has(t) || S.VIEW === t);   // the tab you are ON always shows, or the row lies about where you are
+        /* ON A PHONE THE ROW IS A PICKER + A REPLIES SWITCH, not three tabs. Both are rendered and CSS
+         * picks (`.tl-pick-on` in the APK at any width, the 820px query on the web), so a rotation or a
+         * window resize never needs a re-render. The switch IS the User Settings "Hide replies in
+         * timelines" preference, inverted (on = show) -- one value, two places to change it. Trending
+         * has no reply filter, so it gets no switch rather than one that does nothing. */
+        const showR = !ClientSettings.get('hideReplies', false);
+        return `<div class="tl-tabs${_tlNative() ? ' tl-pick-on' : ''}" role="tablist">
+        ${tls.map(([t,l]) => `<button class="tltab${S.VIEW===t?' on':''}" data-tl="${t}" role="tab" aria-selected="${S.VIEW===t}">${l}</button>`).join('')}
+        <label class="tl-pick" title="Choose a timeline"><select class="tl-select" id="tl-select" aria-label="Timeline">${
+          tls.map(([t,l]) => `<option value="${t}"${S.VIEW===t?' selected':''}>${l}</option>`).join('')
+        }</select><svg class="ic tl-pick-caret" aria-hidden="true"><use href="#i-chevron-down"></use></svg></label>
+        ${S.VIEW==='trending' ? '' : `<label class="tl-replies" title="Show or hide replies in this timeline"><span class="tl-replies-l">Replies</span><span class="switch"><input type="checkbox" id="tl-replies" aria-label="Show replies"${showR?' checked':''}><span class="slider"></span></span></label>`}
         ${S.VIEW==='trending' ? '' : `<button class="tltab-media${S._tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid"><svg class="ic x-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>`}
-      </div>`;
+      </div>`; })();
   }
+  function _tlNative(){ try{ return !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()); }catch(_){ return false; } }
   function _bindTimelineHeader(feed){
     $$('.tltab',feed).forEach(b=> b.onclick=()=>{ const v=b.dataset.tl; if(v!==S.VIEW) switchView(v); });
+    { const sel=$('#tl-select',feed); if(sel) sel.onchange=()=>{ const v=sel.value; if(v && v!==S.VIEW) switchView(v); }; }
+    // Same write as Settings → "Hide replies in timelines" (settings.js), so the two can never disagree
+    // and the choice syncs to the account's other devices. Only #tl-notes is redrawn: the header -- and
+    // a half-typed post in the composer above it -- stays put.
+    { const rs=$('#tl-replies',feed); if(rs) rs.onchange=()=>{
+        const hide = !rs.checked;
+        ClientSettings.set('hideReplies', hide);
+        try{ S._prefTouched.add('hideReplies'); }catch(_){}
+        saveClientPrefsNostr({ hideReplies: hide });
+        const hr=$('#set-hide-replies'); if(hr) hr.checked = hide;
+        _drawTimeline(false);
+      }; }
     // Guest card: Sign up goes STRAIGHT to the signup pane. Landing on the login form and having to
     // find "create an account" is the step that loses people who have no key yet.
     { const gs=$('#guest-signup',feed); if(gs) gs.onclick=()=>_leaveGuest('signup');
@@ -1293,13 +1317,17 @@ window.PCTimelineFactory = function(dep){
   // people from Notifications or Messages. Those are addressed to YOU: swallowing a bridged mention or
   // DM would read as the bridge being broken, and you would never know a reply had arrived.
   function _tlFilter(view){
-    const hideR = ClientSettings.get('hideReplies', false);
+    // hideReplies is read PER EVENT, not once here: this predicate is captured by the live
+    // subscription, so a copy taken at render would keep filtering by the old answer after the
+    // header's Replies switch flips it -- the list redraws right and the next live post does not.
+    // ClientSettings.get is a cached object read, so this costs nothing.
+    const hideR = () => ClientSettings.get('hideReplies', false);
     // NO "hide the fediverse" here any more. That switch (on by default) existed while the Pleroma
     // bridge mirrored whole remote timelines onto Nostr; with the native fediverse server those posts
     // are this node's own, so everybody -- a logged-out visitor on the main page included -- sees them.
     const follows = view==='home' ? (e=>S.FOLLOWS.has(e.pubkey)) : null;
     return ev => (!follows || follows(ev))
-              && !(hideR && isReply(ev));
+              && !(hideR() && isReply(ev));
   }
   function _drawTimeline(preserveScroll){
     if(S.VIEW!=='home' && S.VIEW!=='global') return;

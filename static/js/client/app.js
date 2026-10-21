@@ -7599,6 +7599,7 @@
        * 'CMP_BGS' before initialization"). Getters defer the read to first use, long after. */
       get CMP_BGS(){ return CMP_BGS; }, get Drafts(){ return Drafts; }, get InstEmoji(){ return InstEmoji; },
       get MusicOffline(){ return MusicOffline; }, get Scheduled(){ return Scheduled; }, get _BG_WORDS(){ return _BG_WORDS; },
+      get _prefTouched(){ return _prefTouched; },
     },
     $, $$, _FEED_MAX_CARDS,
     _LIVE_READ_PX, _NEG_MAX_FETCH, _NEG_WINDOW, _TL_KINDS, _TL_SUB_VIEWS, _bgCss, _blossomDenied,
@@ -7608,7 +7609,7 @@
     composeTranslate, decorateProfiles, enc, feedNoteHtml, gifPicker, hydrate, hydrateLinkCards,
     hydratePolls, imetaTagsFor, invalidateCounts, isMutedView, isReply, makeCardPreview,
     mentionTags, needProfile, openEmojiPopover, openMenuPopover, openThread, publish, renderView,
-    requestBlossomAccess, subs, switchView, timelineFilter, tlHiddenSet, toast, updateOfflineBar,
+    requestBlossomAccess, saveClientPrefsNostr, subs, switchView, timelineFilter, tlHiddenSet, toast, updateOfflineBar,
     uploadBlob,
   }; }
   function _timelineMod(){ return _lzGet('timeline.js', 'PCTimelineFactory', _timelineDeps); }
