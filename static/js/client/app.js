@@ -12772,6 +12772,8 @@
                                  * two panes say they are separate answers, and this is the line
                                  * that keeps that true. */
                                 foreground: !(typeof document!=='undefined' && document.hidden),
+                                // A chat set to "notify without sound" (Telegram's silent) uses the silent channel.
+                                silent: !!(opts && opts.silent),
                                 route:(opts&&opts.route)||'notifications' });
            if(r && r.catch) r.catch(()=>{}); }catch(_){}
       return null;      // no handle to give back: the tap is wired natively, to MainActivity

@@ -529,6 +529,23 @@ public class SmsPlugin extends Plugin {
         call.resolve(o);
     }
 
+    /**
+     * BLOCK / UNBLOCK A NUMBER on the phone's own blocked-numbers list (Blocklist -- the list Telecom and the
+     * telephony stack enforce, shared with the stock apps), for a Block chosen on ANY device (sms.js D_BLOCKS).
+     * Answers what the list says AFTERWARDS: `blocked` true/false, or null when it could not be asked (this app is
+     * not the default SMS app) -- never the intention.
+     */
+    @PluginMethod
+    public void setBlocked(PluginCall call) {
+        String number = call.getString("number", "");
+        boolean block = Boolean.TRUE.equals(call.getBoolean("block", Boolean.TRUE));
+        Boolean now = place.poster.app.phone.Blocklist.set(getContext(), number, block);
+        JSObject o = new JSObject();
+        o.put("blocked", now == null ? org.json.JSONObject.NULL : now);
+        o.put("available", place.poster.app.phone.Blocklist.available(getContext()));
+        call.resolve(o);
+    }
+
     @PluginMethod
     public void deleteThread(PluginCall call) {
         JSObject o = new JSObject();

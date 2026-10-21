@@ -63,6 +63,12 @@ const isPhone = () => opt.isPhone !== false;
 let canRead = opt.canRead === undefined ? isPhone() : opt.canRead === true;
 
 const PLUGIN = {
+  // The phone's blocked-numbers list (Blocklist.java via SmsPlugin.setBlocked). `opt.blockable === false` is a
+  // phone that is not the default SMS app: the list cannot be asked, answered as null.
+  async setBlocked({ number, block }){
+    calls.push(['setBlocked', number, block]);
+    return { blocked: opt.blockable === false ? null : !!block, available: opt.blockable !== false };
+  },
   async status(){
     calls.push(['status', isPhone(), canRead]);
     // AN OLDER APK HAS NO `canRead` AND NO `ensureRead`. Absent is "it never asked", and on those
@@ -529,6 +535,15 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'rescan'){ calls.push(['rescan', await S.rescan()]); }
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
+    else if(step.startsWith('block:')){ await S.setBlock(step.slice(6), true); }
+    /* `liveMsg:<address>:<text>` -- an incoming text arriving on the LIVE subscription now, the path that notifies. */
+    else if(step.startsWith('liveMsg:')){
+      const [, addr, ...rest] = step.split(':'), at = Date.now() + 1000, d = 'pcai:sms:' + createHash('sha256').update(step).digest('hex').slice(0, 24);
+      if(global.__smsLiveEvent) await global.__smsLiveEvent({ id:d, kind:30078, pubkey:(opt.me || 'me'), created_at:Math.floor(at/1000),
+        tags:[['d', d], ['l', 'pcai-sms']], content:'enc:' + JSON.stringify({ address:addr, body:rest.join(':'), date:at, incoming:true, name:'' }) });
+      await new Promise(r => setTimeout(r, 50));
+    }
+    else if(step.startsWith('unblock:')){ await S.setBlock(step.slice(8), false); }
     else if(step === 'allow'){ refusals = -1; }
     /* THE PROVIDER STOPS REFUSING. A refusal here is transient by nature — the same part that
        answered once may refuse the next read and back again — so a test about healing needs to be
@@ -730,6 +745,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   };
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe, archive, archiveProbe,
+    blocks: st.blocks || {},
     historyIncomplete:!!st.historyIncomplete,
     storage: global.localStorage._all,
     // What the phone reported about itself — see publishStatus in sms.js.

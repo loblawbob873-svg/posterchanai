@@ -515,6 +515,66 @@ def browser_skip_decision(root):
     return True, 'server-only deploy (%d file(s): %s)' % (len(paths), ', '.join(paths[:4]) + (' …' if len(paths) > 4 else ''))
 
 
+# PREFLIGHT: THE TESTS OF WHAT CHANGED, FIRST (2026-10-21, "improve testing so we can ship faster"). A deploy whose
+# change breaks a test used to find out after the required pass AND the full suite -- ~20 minutes -- every time:
+# three deploys in one afternoon each spent their 20 minutes to report one or two failures in a test that names
+# the very file that changed. Preflight runs just those files (sharded, with the same retry-alone rule for a test
+# that is only flaky under load) and stops the deploy in a minute or two when they fail; when they pass, the gate
+# carries on exactly as before. It narrows nothing: every test still runs in the full suite.
+_GENERIC_STEMS = frozenset({'app', 'client', 'main', 'index', '__init__', 'server', 'store', 'sw', 'utils', 'util',
+                            'models', 'schemas', 'database', 'auth', 'config', 'common', 'base', 'test', 'run',
+                            'manager', 'service', 'router', 'helpers', 'routes', 'events', 'session', 'settings'})
+PREFLIGHT_MAX_SHARE = 0.35          # past a third of the suite it is not a shortcut any more
+
+
+def affected_test_files(root, paths, files=None):
+    """Test files that mention a changed file (its name, or its module stem when the stem is specific enough),
+    plus every changed test file. Sorted; [] when nothing is affected."""
+    files = files if files is not None else discover_test_files(root)
+    keys = set()
+    changed_tests = set()
+    for path in paths or []:
+        name = Path(path).name
+        stem = Path(path).stem
+        if path in files:
+            changed_tests.add(path)
+            continue
+        if path.startswith('tests/'):
+            keys.add(name)                                  # a fixture/runtime a test loads by name
+            continue
+        keys.add(name)
+        if stem not in _GENERIC_STEMS and len(stem) >= 6:     # 'term' is in "terminal" and "determine"
+            keys.update({stem, stem.replace('-', '_'), stem.replace('_', '-')})
+    hit = set(changed_tests)
+    if keys:
+        import re as _re
+        pat = _re.compile('|'.join('(?<![A-Za-z0-9_])' + _re.escape(k) + '(?![A-Za-z0-9_])' for k in sorted(keys)))
+        for f in files:
+            try:
+                text = (Path(root) / f).read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            if pat.search(text):
+                hit.add(f)
+    return sorted(hit)
+
+
+def run_preflight(root, env, directory, jobs=None, skip_browser=False):
+    """(ran, ok, message). Runs only when the selection is a real shortcut (not empty, under PREFLIGHT_MAX_SHARE)."""
+    paths = deploy_changes(root)
+    if not paths:
+        return False, True, 'preflight: nothing changed to select by'
+    files = discover_test_files(root)
+    sel = set(affected_test_files(root, paths, files))
+    if not sel:
+        return False, True, 'preflight: no test names a changed file'
+    if len(sel) > PREFLIGHT_MAX_SHARE * len(files):
+        return False, True, 'preflight: %d of %d test files affected -- the full gate is the shortcut' % (len(sel), len(files))
+    print(f'[regressions] preflight: {len(sel)} test file(s) that name what changed, first')
+    ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser, select=lambda f: f in sel)
+    return True, ok, message
+
+
 def discover_test_files(root):
     tests = Path(root) / 'tests'
     return sorted(str(p.relative_to(root)) for p in tests.rglob('test_*.py')
@@ -721,6 +781,12 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
         skip_browser, why = browser_skip_decision(root) if full else (False, '')
         if full:
             print('[regressions] browser tests: ' + ('SKIPPED — ' if skip_browser else 'run — ') + why)
+            if os.environ.get('PC_GATE_NO_PREFLIGHT', '').strip() in ('', '0'):
+                ran, ok, message = run_preflight(root, env, directory, jobs=jobs, skip_browser=skip_browser)
+                print('[regressions] ' + message)
+                if ran and not ok:
+                    print('[regressions] ABORT: the tests of what changed fail -- stopped before the full run')
+                    return 1
         required = TESTS
         if skip_browser:
             browser = browser_test_files(root)
@@ -815,6 +881,25 @@ def run_suite(name, root=ROOT, jobs=0):
     return 1
 
 
+def run_changed(root=ROOT, jobs=0):
+    """`--changed`: the preflight on its own -- the tests that name what changed, sharded, retry-alone for flakes. The
+    quick answer before ./sync.sh (which runs it again first, then everything)."""
+    private_tmp = runpy.run_path(str(Path(__file__).with_name('private_tmp.py')))
+    with tempfile.TemporaryDirectory(prefix='pc-changed-') as directory, private_tmp['scoped']('pct-changed-') as scratch:
+        env = private_tmp['child_env'](dict(os.environ), scratch)
+        for drop in ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS'):
+            env.pop(drop, None)
+        paths = deploy_changes(root)
+        sel = affected_test_files(root, paths or [])
+        if not sel:
+            print('[regressions] --changed: no test names a changed file')
+            return 0
+        print(f'[regressions] --changed: {len(sel)} test file(s)')
+        ok, message = run_full_suite(root, env, directory, jobs=jobs, select=lambda f: f in set(sel))
+    print('[regressions] ' + message)
+    return 0 if ok else 1
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group()
@@ -825,10 +910,15 @@ if __name__ == '__main__':
     parser.add_argument('--jobs', type=int, default=0,
                         help='parallel shards for --full; fewer fits a box whose RAM is committed '
                              '(also PC_GATE_JOBS). 0 decides by CPU.')
+    parser.add_argument('--changed', action='store_true',
+                        help='run only the tests that name what changed (since origin/master + uncommitted), sharded: '
+                             'the preflight on its own, a quick check before ./sync.sh; no receipt')
     parser.add_argument('--suite', choices=sorted(SUITES),
                         help='run only this half of the full suite, sharded (./test.sh); no required list, no receipt')
     args = parser.parse_args()
     if args.suite:
         raise SystemExit(run_suite(args.suite, jobs=args.jobs))
+    if args.changed:
+        raise SystemExit(run_changed(jobs=args.jobs))
     raise SystemExit(verify_receipt(args.verify) if args.verify
                      else run_gate(receipt=args.receipt, full=args.full, jobs=args.jobs))

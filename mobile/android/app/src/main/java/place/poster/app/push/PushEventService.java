@@ -152,6 +152,12 @@ public final class PushEventService {
     }
 
     public static void show(Context ctx, String title, String body, String type, String tag, String route) {
+        show(ctx, title, body, type, tag, route, false);
+    }
+
+    /** `silent`: the person set this conversation to notify WITHOUT SOUND (e.g. a Telegram chat) -- the card still
+     *  arrives, on the existing silent messages channel (Android fixes a channel's sound when it is created). */
+    public static void show(Context ctx, String title, String body, String type, String tag, String route, boolean silent) {
         boolean isCall = "call".equals(type);
         ensureChannels(ctx);
 
@@ -162,7 +168,8 @@ public final class PushEventService {
                 isCall ? 1 : 2000 + Math.abs(String.valueOf(route).hashCode() % 100000), open, flags);
 
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? new Notification.Builder(ctx, isCall ? CH_CALLS : msgsChannel(ctx))
+                ? new Notification.Builder(ctx, isCall ? CH_CALLS
+                        : silent ? place.poster.app.ringtone.RingtoneRules.messagesChannel("off") : msgsChannel(ctx))
                 : new Notification.Builder(ctx);
         b.setContentTitle(title)
          .setContentText(body)

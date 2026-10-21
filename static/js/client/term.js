@@ -437,6 +437,14 @@
      * row, and a red "Could not refresh hosts; retrying…" over the shell cost a row of terminal to
      * say something about a menu. The long form rides in the tooltip. */
     let _stateT = null, _baseline = null;
+    /* A RETRY THAT SUCCEEDED SAYS SO. "hosts: retrying" was set on a failed refresh and NOTHING cleared it: one
+     * blip (a node restart during a deploy) left it up for the rest of the session while every refresh after it
+     * worked -- "says hosts: retrying despite working fine" (2026-10-21). A successful host read clears the two
+     * retry notes it can have put up, and only those. */
+    function _clearHostRetry(){
+      const s = $('#tty-state');
+      if(s && /^(hosts: retrying|offline · retrying)$/.test(s.textContent || '')) _state('');
+    }
     function _state(msg, cls, long){
       const s = $('#tty-state'); if(!s) return;
       if(_stateT){ clearTimeout(_stateT); _stateT = null; }
@@ -503,6 +511,7 @@
         if(!Array.isArray(d?.hosts)) throw new Error('invalid host list');
         hosts = _withLocal(d.hosts);
         _paintHosts();
+        _clearHostRetry();
       }catch(_){
         if(generation === _syncHostScope()) _state('hosts: retrying', 'warn', 'Could not refresh the SSH host list; retrying. Saved hosts are kept.');
       }finally{
@@ -562,6 +571,7 @@
           _state('no SSH', 'err', 'This node has no SSH library installed — run install.sh.');
           return false;
         }
+        _clearHostRetry();
         return true;
       }catch(_){
         /* A node that cannot be reached is not a machine without a shell. */

@@ -12517,3 +12517,10 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 
 /* A toast that is also the way in (dms.js: a new Concord invitation). #toast-root passes taps through; this one takes them. */
 .toast.toast-action{pointer-events:auto;cursor:pointer;color:inherit;font:inherit;font-size:17px;text-align:center}
+
+/* Telegram: the auto-delete choices (telegram.js chatMenu). */
+.tg-ttl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+.tg-ttl .btn{min-height:44px}
+
+/* Texts: a blocked conversation says so in the list (sms.js blockLine). */
+.sms-blocked{margin-top:2px;color:var(--red,#e5534b);font-size:12px}

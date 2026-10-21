@@ -29,6 +29,12 @@
   const L_TAG = 'pcai-sms';
   const D_MSG = 'pcai:sms:';
   const D_OUT = 'pcai:smsout:';
+  /* BLOCKED NUMBERS, FROM ANY DEVICE (2026-10-21: "make sure texts on web/desktop/OS can block people"). Only the
+   * phone can write Android's blocked-numbers list -- and it is the list the telephony stack enforces, for the stock
+   * apps too (Blocklist.java) -- so a laptop's Block is a REQUEST the phone applies. ONE encrypted document holds the
+   * account's list: per number {block, at} as asked, and {applied:{state, at}} as the phone measured it. Every device
+   * stops notifying for a blocked number at once; the conversation says whether the phone has applied it yet. */
+  const D_BLOCKS = 'pcai:smsblocks';
   /* ARCHIVED CONVERSATIONS -- one record per conversation, so two devices archiving two different
    * threads can never overwrite each other (a single "archived list" document would be a
    * read-modify-write of every archive on every tap). NIP-44 to the user's own key: the address is
@@ -325,7 +331,8 @@
     return (events || []).filter(ev => {
       const tags = Array.isArray(ev && ev.tags) ? ev.tags : [];
       const d = String(((tags.find(t => Array.isArray(t) && t[0] === 'd')) || [])[1] || '');
-      return d.startsWith(D_MSG) || d.startsWith(D_OUT) || d.startsWith(D_ARC);
+      // D_BLOCKS rides the same load so the phone sees a block made elsewhere (absorb handles it, then skips it).
+      return d.startsWith(D_MSG) || d.startsWith(D_OUT) || d.startsWith(D_ARC) || d === D_BLOCKS;
     });
   }
 
@@ -746,6 +753,7 @@
     if(!currentAccount()) return;
     for(const ev of list){
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
+      if(d === D_BLOCKS){ await absorbBlocks(ev); continue; }
       /* A background handset answers a desktop send by replacing its outbox request with a signed,
        * encrypted completion. That receipt is the only authoritative moment the desktop knows the
        * radio accepted it. Turn it into the ordinary sent bubble, durably, instead of leaving the
@@ -1297,6 +1305,7 @@
         const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
         // A reconnect catch-up query may populate the archive before the live socket resumes.
         // The notification ledger, not cache membership, decides whether this occurrence rang.
+        if(d === D_BLOCKS){ absorbBlocks(ev); return; }
         const fresh = d.startsWith(D_MSG) && !_announced.has(d);
         /* A send request from another device arrives HERE first -- drain on it, instead of a poll asking the
          * relay for the 200 newest documents every three seconds to find it. */
@@ -1348,11 +1357,73 @@
     return claim();
   }
 
+  S.blocks = S.blocks || {};      // key(number) -> {number, block, at, applied?:{state, at}}
+  const blockedKey = addr => { const k = key(addr); const b = k && S.blocks[k]; return !!(b && b.block); };
+  /* Newest `at` wins per number; an `applied` is kept only for the request it answers (its `at` >= the request's). */
+  function mergeBlocks(into, from){
+    for(const [k, v] of Object.entries(from || {})){
+      if(!v || typeof v !== 'object') continue;
+      const cur = into[k];
+      if(!cur || (v.at || 0) > (cur.at || 0)) into[k] = Object.assign({}, v);
+      else if((v.at || 0) === (cur.at || 0) && v.applied && (!cur.applied || (v.applied.at || 0) > (cur.applied.at || 0))) cur.applied = v.applied;
+    }
+    return into;
+  }
+  let _blocksChain = Promise.resolve();
+  function publishBlocks(){
+    _blocksChain = _blocksChain.then(async () => {
+      const owner = ME().pubkey; if(!owner) return;
+      const ct = await PC.nip44enc(owner, JSON.stringify({ v:1, numbers:S.blocks }));
+      await PC.publish(KIND, ct, [['d', D_BLOCKS], ['l', L_TAG]], {quiet:true, noQueue:true});
+    }).catch(() => {});
+    return _blocksChain;
+  }
+  /* The phone's half: apply every request it has not applied yet, then say what the list now says. */
+  let _applyingBlocks = false;
+  async function applyBlocksHere(){
+    if(_applyingBlocks) return; const P = plug('setBlocked'); if(!P) return;
+    _applyingBlocks = true; let changed = false;
+    try{
+      for(const [k, v] of Object.entries(S.blocks)){
+        if(!v || !v.number || (v.applied && (v.applied.at || 0) >= (v.at || 0))) continue;
+        let r = null; try{ r = await P.setBlocked({ number:v.number, block:!!v.block }); }catch(_){ r = null; }
+        const state = !r || r.blocked == null ? 'unknown' : (!!r.blocked === !!v.block ? (v.block ? 'blocked' : 'unblocked') : 'refused');
+        v.applied = { state, at:Math.max(Date.now(), v.at || 0) }; changed = true;
+      }
+    }finally{ _applyingBlocks = false; }
+    if(changed){ await publishBlocks(); if(textsOnScreen()) paint(); }
+  }
+  async function absorbBlocks(ev){
+    try{
+      const body = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content || ''));
+      mergeBlocks(S.blocks, body && body.numbers);
+      if(textsOnScreen()) paint();
+      const st = await phoneState(); if(st.telephony) applyBlocksHere();
+    }catch(_){ }
+  }
+  async function setBlock(addr, block){
+    const k = key(addr); if(!k) return;
+    S.blocks[k] = { number:String(addr), block:!!block, at:Date.now() };
+    if(textsOnScreen()) paint();
+    await publishBlocks();
+    const st = await phoneState().catch(() => ({}));
+    if(st && st.telephony) await applyBlocksHere();
+    const v = S.blocks[k], said = v && v.applied ? v.applied.state : '';
+    PC.toast(block ? (said === 'blocked' ? 'Blocked on your phone' : said === 'refused' || said === 'unknown'
+                        ? 'Saved — your phone could not block it (PosterChan must be the default SMS app)' : 'Blocked — your phone will apply it the next time it is on')
+                   : (said === 'unblocked' ? 'Unblocked' : 'Unblocked — your phone will apply it'));
+  }
+  function blockLine(t){
+    const v = S.blocks[key(t && t.address)]; if(!v || !v.block) return '';
+    const st = v.applied && (v.applied.at || 0) >= (v.at || 0) ? v.applied.state : 'pending';
+    return st === 'blocked' ? 'Blocked' : st === 'pending' ? 'Blocked — waiting for your phone' : 'Blocked here — your phone could not apply it';
+  }
   async function notifyNew(ev, owner){
     try{
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
       const m = S.msgs.get(d);
       if(!m || m.gone || !m.incoming || _announced.has(d)) return;
+      if(blockedKey(m.address)) return;   // blocked on any device: no notification, before the phone has even applied it
       if((m.date || 0) < S.since) return;
       if(owner !== ME().pubkey || (window.pcShell && pcShell.backgroundOwner === false)) return;
       // Reserve before asynchronous phone detection: concurrent duplicate relay deliveries may
@@ -3848,6 +3919,7 @@
               <!-- A PICTURE MESSAGE HAS NO WORDS, and an empty snippet reads as a conversation
                    that has gone quiet — the opposite of what happened. -->
               <div class="sms-snip muted">${enc(snippetOf(last))}</div>
+              ${blockLine(t) ? `<div class="sms-blocked">⊘ ${enc(blockLine(t))}</div>` : ''}
             </div></button>`;
         }).join('') || ('<div class="sms-empty muted" style="padding:24px;text-align:center">'
              + enc(S.emptyWhy || 'No messages here yet')
@@ -3976,9 +4048,14 @@
       const menu = () => {
         const t = S.threads.find(x => x.key === b.dataset.k);
         if(!t || !PC.openMenuPopover) return;
-        const arc = isArchived(t);
-        PC.openMenuPopover(b, [['archive', arc ? 'Unarchive' : 'Archive conversation', 'sms-arc-item']],
-          v => { if(v === 'archive') toggleArchive(t); });
+        const arc = isArchived(t), single = !/[;,]/.test(String(t.address || '')) && !!key(t.address), blocked = blockedKey(t.address);
+        const items = [['archive', arc ? 'Unarchive' : 'Archive conversation', 'sms-arc-item']];
+        if(single) items.push(blocked ? ['unblock', 'Unblock ' + (t.name || t.address)] : ['block', 'Block ' + (t.name || t.address), 'danger']);
+        PC.openMenuPopover(b, items, async v => {
+          if(v === 'archive') toggleArchive(t);
+          if(v === 'block'){ if(PC.uiConfirm && !(await PC.uiConfirm('Block ' + (t.name || t.address) + '? Their texts and calls are refused by your phone, and no device notifies you about them.', { ok:'Block', danger:true }))) return; setBlock(t.address, true); }
+          if(v === 'unblock') setBlock(t.address, false);
+        });
       };
       b.onclick = () => { if(held){ held = false; return; } S.open = b.dataset.k; paint(); };
       b.oncontextmenu = e => { e.preventDefault(); menu(); };
@@ -4450,6 +4527,7 @@
             ${savedContact?'':`<button class="btn small" id="sms-add-contact" aria-label="Add ${enc(t.address)} to contacts">Add contact</button>`}
             <button class="btn small" id="sms-call" aria-label="Call ${enc(who)}">Call</button>
             <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
+            ${!/[;,]/.test(String(t.address || '')) && key(t.address) ? `<button class="btn small${blockedKey(t.address) ? '' : ' danger'}" id="sms-block" aria-label="${blockedKey(t.address) ? 'Unblock' : 'Block'} ${enc(who)}">${blockedKey(t.address) ? 'Unblock' : 'Block'}</button>` : ''}
             <button class="btn small" id="sms-archive-thread" aria-label="${isArchived(t) ? 'Unarchive' : 'Archive'} this conversation" title="${isArchived(t) ? 'Unarchive' : 'Archive'}">${ICO('folder','b-ic')}<span class="sms-arc-lbl">${isArchived(t) ? 'Unarchive' : 'Archive'}</span></button>
           </div>
         </div>
@@ -4514,6 +4592,10 @@
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
+    { const bl = PC.$('#sms-block'); if(bl) bl.onclick = async () => {
+        if(blockedKey(t.address)) return setBlock(t.address, false);
+        if(PC.uiConfirm && !(await PC.uiConfirm('Block ' + who + '? Their texts and calls are refused by your phone, and no device notifies you about them.', { ok:'Block', danger:true }))) return;
+        setBlock(t.address, true); }; }
     { const a = PC.$('#sms-archive-thread'); if(a) a.onclick = async () => { a.disabled = true; await toggleArchive(t); a.disabled = false; }; }
     const addContact=PC.$('#sms-add-contact');if(addContact)addContact.onclick=()=>{
       window.__PC_CONTACT_ADD_PHONE=String(t.address||'');
@@ -5199,6 +5281,8 @@
   }
 
   window.PCSms = { openNotification, render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
+                   // Block / unblock a number from any device (D_BLOCKS); the phone applies it.
+                   setBlock, isBlocked: blockedKey,
                    openBlossom: address => { const to=String(address||'').trim();if(!to)return;S.open=convKey(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,

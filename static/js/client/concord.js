@@ -3232,7 +3232,8 @@
    * Off = no OS notification from Concord (mentions, repository activity); the in-app badges and the mention
    * ledger still record everything, so nothing is lost while it is off. */
   const NOTIFY_KEY=pk=>'pc.concord.notify.v1.'+pk;
-  function concordNotifyOn(){ const pk=accountPk(); if(!pk)return false; try{ return localStorage.getItem(NOTIFY_KEY(pk))!=='off'; }catch(_){ return true; } }
+  function concordNotifyOn(){ const pk=accountPk(); if(!pk)return true; try{   // no account to read a choice for: the default (on)
+    return localStorage.getItem(NOTIFY_KEY(pk))!=='off'; }catch(_){ return true; } }
   function setConcordNotify(on){ const pk=accountPk(); if(!pk)return; try{ localStorage.setItem(NOTIFY_KEY(pk),on?'on':'off'); }catch(_){} }
   function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
     if(!room||!roomIdentity(room)||!messages.length||!viewer.pubkey)return;

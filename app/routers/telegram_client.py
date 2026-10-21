@@ -210,6 +210,54 @@ async def reactions(chat_id: int, db: Session = Depends(get_db), user: User = De
         return _err(e)
 
 
+class BlockBody(BaseModel):
+    chat_id: int
+    blocked: bool
+
+
+class NotifyBody(BaseModel):
+    chat_id: int
+    mute: int | None = None        # seconds; -1 = until turned on again; 0 = unmute
+    silent: bool | None = None
+
+
+class TtlBody(BaseModel):
+    chat_id: int
+    period: int
+
+
+@router.get("/peer/{chat_id}")
+async def peer(chat_id: int, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, **(await manager().peer_settings(db, user, chat_id))}
+    except TGError as e:
+        return _err(e)
+
+
+@router.post("/block")
+async def block(req: BlockBody, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, **(await manager().set_blocked(db, user, req.chat_id, req.blocked))}
+    except TGError as e:
+        return _err(e)
+
+
+@router.post("/notify")
+async def notify_settings(req: NotifyBody, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, **(await manager().set_notify(db, user, req.chat_id, req.mute, req.silent))}
+    except TGError as e:
+        return _err(e)
+
+
+@router.post("/ttl")
+async def ttl(req: TtlBody, db: Session = Depends(get_db), user: User = Depends(member)):
+    try:
+        return {"ok": True, **(await manager().set_ttl(db, user, req.chat_id, req.period))}
+    except TGError as e:
+        return _err(e)
+
+
 @router.get("/search")
 async def search(q: str = "", db: Session = Depends(get_db), user: User = Depends(member)):
     try:

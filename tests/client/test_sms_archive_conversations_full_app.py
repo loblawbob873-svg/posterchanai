@@ -85,7 +85,8 @@ def test_archive_from_the_list_hides_it_everywhere_and_a_new_message_brings_it_b
         assert await b.js(ROWS) == ['dinner tonight?', 'see you then']
         await _open_row_menu(b, phone, 'see you then')
         menu = await b.js("[...document.querySelectorAll('.menu-pop button[data-m]')].map(b=>b.textContent)")
-        assert menu == ['Archive conversation'], menu
+        # Archive, and (a single number) Block -- texts/test_texts_block.py covers what Block does.
+        assert menu[0] == 'Archive conversation' and menu[1:] == ['Block +15550100'], menu
         pop = await b.js(BOX + "('.menu-pop')")
         assert pop['l'] >= 0 and pop['r'] <= pop['vw'] + .5 and pop['b'] <= pop['vh'] + .5, pop
         await b.js("document.querySelector('.menu-pop button[data-m]').click()")

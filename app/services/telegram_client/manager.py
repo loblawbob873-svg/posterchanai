@@ -18,6 +18,15 @@ MAX_UPLOAD = 1536 * 1024 * 1024      # Telegram's own limit for a non-premium ac
 PAGE = 50
 
 
+def _muted(ns) -> bool:
+    """A notify-settings object is muted only while its mute_until is in the FUTURE."""
+    mu = getattr(ns, "mute_until", None) if ns is not None else None
+    if not mu:
+        return False
+    t = mu.timestamp() if hasattr(mu, "timestamp") else float(mu)
+    return t > time.time()
+
+
 class TGError(Exception):
     """A refusal a person can act on — its text is shown as-is."""
 
@@ -463,8 +472,9 @@ class Manager:
                         "read_out": int(getattr(raw, "read_outbox_max_id", 0) or 0),
                         "read_in": int(getattr(raw, "read_inbox_max_id", 0) or 0),
                         "pinned": bool(getattr(d, "pinned", False)),
-                        "muted": bool(getattr(getattr(d, "dialog", None), "notify_settings", None)
-                                      and getattr(d.dialog.notify_settings, "mute_until", None)),
+                        # A mute that has ENDED is not a mute: Telegram keeps the past date there.
+                        "muted": _muted(getattr(getattr(d, "dialog", None), "notify_settings", None)),
+                        "silent": bool(getattr(getattr(getattr(d, "dialog", None), "notify_settings", None), "silent", False)),
                         "last": {"id": int(getattr(last, "id", 0) or 0) if last else 0,
                                  "text": (getattr(last, "message", "") or "")[:200] if last else "",
                                  "date": int(last.date.timestamp()) if last and getattr(last, "date", None) else 0,
@@ -633,6 +643,95 @@ class Manager:
             raise TGError("Telegram would not delete that message." if len(ids) == 1
                           else "Telegram would not delete those messages.")
         return n
+
+    # ---- per-chat controls: block, notifications, auto-delete (2026-10-21: "no way to block, mute notification
+    # sounds from user, set chat expiration"). Each is Telegram's own setting, so it follows the account to the
+    # official apps; a refusal (a group you do not administer) is said as one, never reported done.
+    TTL_PERIODS = (0, 86400, 604800, 2592000)          # off, 1 day, 1 week, 1 month -- what Telegram's own apps offer
+
+    async def peer_settings(self, db, user, chat_id: int) -> dict:
+        """What the chat menu shows: blocked (people only), muted until, silent, auto-delete period."""
+        c = await self._ready(db, user)
+        from telethon.tl.functions.account import GetNotifySettingsRequest
+        from telethon.tl.types import InputNotifyPeer
+        try:
+            ent = await c.get_input_entity(int(chat_id))
+            ns = await c(GetNotifySettingsRequest(peer=InputNotifyPeer(peer=ent)))
+            kind, blocked, ttl = "user", False, 0
+            full = None
+            try:
+                from telethon.tl.functions.users import GetFullUserRequest
+                full = await c(GetFullUserRequest(ent))
+                fu = getattr(full, "full_user", None)
+                blocked = bool(getattr(fu, "blocked", False)); ttl = int(getattr(fu, "ttl_period", 0) or 0)
+            except Exception:
+                kind = "chat"
+                try:
+                    from telethon.tl.functions.channels import GetFullChannelRequest
+                    full = await c(GetFullChannelRequest(ent))
+                except Exception:
+                    from telethon.tl.functions.messages import GetFullChatRequest
+                    full = await c(GetFullChatRequest(int(chat_id)))
+                ttl = int(getattr(getattr(full, "full_chat", None), "ttl_period", 0) or 0)
+        except TGError:
+            raise
+        except Exception as e:
+            raise TGError(_why(e))
+        mu = getattr(ns, "mute_until", None)
+        until = int(mu.timestamp()) if hasattr(mu, "timestamp") else int(mu or 0)
+        return {"kind": kind, "blocked": blocked, "muted": _muted(ns), "muted_until": until if _muted(ns) else 0,
+                "silent": bool(getattr(ns, "silent", False)), "ttl": ttl}
+
+    async def set_blocked(self, db, user, chat_id: int, blocked: bool) -> dict:
+        c = await self._ready(db, user)
+        from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
+        try:
+            ent = await c.get_input_entity(int(chat_id))
+            await c((BlockRequest if blocked else UnblockRequest)(id=ent))
+        except Exception as e:
+            raise TGError(_why(e))
+        return {"blocked": bool(blocked)}
+
+    async def set_notify(self, db, user, chat_id: int, mute: int | None = None, silent: bool | None = None) -> dict:
+        """`mute`: seconds from now, -1 = until turned back on, 0 = unmute, None = leave. `silent`: notify without
+        sound (True/False), None = leave."""
+        import datetime
+        c = await self._ready(db, user)
+        from telethon.tl.functions.account import UpdateNotifySettingsRequest
+        from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
+        kw = {}
+        if mute is not None:
+            m = int(mute)
+            if m < 0:
+                kw["mute_until"] = datetime.datetime(2038, 1, 1, tzinfo=datetime.timezone.utc)   # Telegram's "forever"
+            else:
+                kw["mute_until"] = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=min(m, 365 * 86400))
+        if silent is not None:
+            kw["silent"] = bool(silent)
+        if not kw:
+            raise TGError("Nothing to change.")
+        try:
+            ent = await c.get_input_entity(int(chat_id))
+            await c(UpdateNotifySettingsRequest(peer=InputNotifyPeer(peer=ent), settings=InputPeerNotifySettings(**kw)))
+        except Exception as e:
+            raise TGError(_why(e))
+        return await self.peer_settings(db, user, chat_id)
+
+    async def set_ttl(self, db, user, chat_id: int, period: int) -> dict:
+        period = int(period)
+        if period not in self.TTL_PERIODS:
+            raise TGError("Auto-delete can be off, 1 day, 1 week or 1 month.")
+        c = await self._ready(db, user)
+        from telethon.tl.functions.messages import SetHistoryTTLRequest
+        try:
+            ent = await c.get_input_entity(int(chat_id))
+            await c(SetHistoryTTLRequest(peer=ent, period=period))
+        except Exception as e:
+            msg = _why(e)
+            if "ADMIN" in str(e).upper() or "RIGHT" in str(e).upper():
+                msg = "Only an admin of this group can change its auto-delete timer."
+            raise TGError(msg)
+        return {"ttl": period}
 
     async def search(self, db, user, q: str, limit: int = 20) -> list:
         """People, groups and channels on Telegram — the ones you know first, then public ones."""

@@ -299,7 +299,7 @@ public class PushPlugin extends Plugin {
              * duplicate. See ClientNotified — the record only ever suppresses, never creates, and a
              * phone with no running client never writes one. */
             if ("dm".equals(type) || "pc-dm".equals(tag)) ClientNotified.dm(System.currentTimeMillis());
-            PushEventService.show(getContext(), title, body, type, tag, route);
+            PushEventService.show(getContext(), title, body, type, tag, route, call.getBoolean("silent", Boolean.FALSE));
             call.resolve();
         } catch (Throwable t) {
             call.reject("could not show a notification: " + t.getMessage());

@@ -26,7 +26,7 @@ public class SignerRelayService {
  Map<String,WebSocket>socks=new HashMap<>();String owner="a",lastError="";boolean stopping;
  byte[] sec(){return new byte[]{1};}String myPub(byte[] key){return owner;}
  SmsSweep.Report smsHistoryBatch;place.poster.app.sms.SmsArchiveDelivery smsHistoryDelivery;
- boolean smsHistoryBuilding,smsHistoryRetryScheduled;Object smsHistoryGeneration=new Object();
+ boolean smsHistoryBuilding,smsHistoryRetryScheduled;long smsHistoryRetryMs=10000L;Object smsHistoryGeneration=new Object();
  METHODS
  static void check(boolean b,String m){if(!b)throw new AssertionError(m);}
  static SignerRelayService start(){SignerRelayService s=new SignerRelayService();s.socks.put("relay",new WebSocket());return s;}
@@ -43,7 +43,7 @@ public class SignerRelayService {
   SmsArchive.cursor=0;SignerRelayService restored=start();restored.sweepSmsHistory();restored.pool.finish();check(restored.socks.get("relay").sent.equals(Arrays.asList("one","two","three")),"restart lost exact pending event ids");
   restored.owner="b";restored.acceptSmsHistoryAck("one",true);restored.flushSmsHistory();check(restored.smsHistoryBatch==null&&SmsArchive.cursor==0,"old account batch escaped ownership");
   SignerRelayService delayed=start();delayed.sweepSmsHistory();delayed.smsHistoryGeneration=new Object();delayed.owner="b";delayed.pool.finish();check(delayed.socks.get("relay").sent.isEmpty(),"stale signing callback published after account change");
-  SmsArchive.disk=null;SignerRelayService failed=start();failed.sweepSmsHistory();failed.pool.finish();check(failed.smsHistoryRetryScheduled,"transient build failure has no retry");
+  SmsArchive.disk=null;SignerRelayService failed=start();failed.sweepSmsHistory();failed.pool.finish();check(failed.smsHistoryRetryScheduled,"transient build failure has no retry");check(failed.smsHistoryRetryMs==20000L,"a refused retry does not back off (was every 10 s for ever)");
   SmsArchive.disk=new SmsSweep.Report();SignerRelayService empty=start();empty.sweepSmsHistory();empty.pool.finish();check(!empty.smsHistoryRetryScheduled,"empty completed history hotloops");
   SmsArchive.disk.error="provider unavailable";SignerRelayService denied=start();denied.sweepSmsHistory();denied.pool.finish();check(denied.smsHistoryRetryScheduled,"provider refusal lost its retry");
   SignerRelayService offline=new SignerRelayService();offline.sweepSmsHistory();check(offline.pool.jobs.isEmpty(),"offline sweep began");

@@ -68,7 +68,11 @@
     let r, j = null;
     try{
       try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(e){ if(e && e.offline) throw e; }
-      r = await (P.authFetch ? P.authFetch(path, opts || {}) : fetch(path, Object.assign({credentials:'include'}, opts || {})));
+      /* A NODE THAT DOES NOT ANSWER IS UNREACHABLE AFTER 15 s, not a screen that waits for ever. Started while the
+       * node was restarting, the Windows app sat on a black "CONNECTING…" until PosterChan was restarted
+       * (2026-10-21): the request never settled, so neither the error card nor the device copy was ever reached. */
+      const req = P.authFetch ? P.authFetch(path, opts || {}) : fetch(path, Object.assign({credentials:'include'}, opts || {}));
+      r = await Promise.race([req, new Promise((_, no) => setTimeout(() => { const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, 15000))]);
       try{ j = await r.json(); }catch(_){}
       if(!r.ok && r.status >= 500) throw new Error('HTTP ' + r.status);
     }catch(e){ if(unreachable(e)) return fromDevice(e); throw e; }
@@ -182,8 +186,11 @@
     // are the muted ones, which made every message there a bell recount (see __PC.bumpNotif).
     const d = st.dialogs.find(x => x.id === m.chat_id);
     if(!(d && d.muted)) ledgerAdd(m, who, body);
+    /* A MUTED chat raises no notification at all -- it used to stay out of the bell while the phone still rang for
+     * every message. A SILENT one (Telegram's "notify without sound") still arrives, without a sound. */
+    if(d && d.muted) return;
     try{ if(P.osNotify) P.osNotify('Telegram · ' + who, body, { tag:'tg-' + m.chat_id + '-' + m.id, notificationType:'dm',
-                                                               route:'tg:' + m.chat_id }); }catch(_){}
+                                                               route:'tg:' + m.chat_id, silent: !!(d && d.silent) }); }catch(_){}
   }
   /* TELEGRAM IN NOTIFICATIONS. An arrival used to be an OS card and nothing else, so on the desktop
    * the taskbar bell could not say what had come in, and once the card was gone there was no trace of
@@ -245,8 +252,21 @@
   }
 
   // ---- views ----------------------------------------------------------------------------------------
+  /* IT COMES BACK BY ITSELF. Retry was a button; a node restart (every deploy) left the screen on the error or the
+   * device copy until somebody pressed it, and the live socket was never even opened when boot started offline, so
+   * nothing else could notice the node was back. While Telegram is on screen: retry at 5 s, doubling to 60 s; at once
+   * when the device reports it is online again. */
+  let retryT = 0, retryMs = 5000;
+  function scheduleRetry(){
+    clearTimeout(retryT);
+    retryT = setTimeout(() => { if(inView() && !document.hidden) render(); else scheduleRetry(); }, retryMs);
+    retryMs = Math.min(retryMs * 2, 60000);
+  }
+  function retryNote(){ return `<p class="tg-muted small">Trying again automatically…</p>`; }
+  try{ window.addEventListener('online', () => { if(inView() && (st.offline || !st.status)){ retryMs = 5000; render(); } }); }catch(_){}
   async function render(){
     const feed = document.getElementById('feed'); if(!feed) return;
+    clearTimeout(retryT);
     try{ const t = document.getElementById('view-title'); if(t) t.textContent = 'Telegram'; }catch(_){}
     if(isPhone()){
       feed.innerHTML = `<div class="tg-app tg-empty"><div class="tg-card"><h3>Telegram lives on your phone</h3>
@@ -267,16 +287,18 @@
     st.offline = false;
     try{ st.status = await api('/api/tgc/status'); }
     catch(e){
-      root.innerHTML = `<div class="tg-card"><h3>Telegram is not available</h3><p>${esc(e.message)}</p>
-        <div class="tg-form"><button class="tg-btn tg-primary" data-act="retry">Retry</button></div></div>`;
-      root.querySelector('[data-act="retry"]').onclick = () => render();
+      root.innerHTML = `<div class="tg-card"><h3>Telegram is not available</h3><p>${esc(e.message)}</p>${retryNote()}
+        <div class="tg-form"><button class="tg-btn tg-primary" data-act="retry">Retry now</button></div></div>`;
+      root.querySelector('[data-act="retry"]').onclick = () => { retryMs = 5000; render(); };
+      scheduleRetry();
       return;
     }
     if(!inView()) return;
     if(!st.status.configured) return renderSetup();
     if(st.status.state !== 'ready') return renderLogin();
     // Kept on this device: nothing to connect to, and media tickets cannot be had.
-    if(!st.offline){ await ticket(); connect(); }
+    if(!st.offline){ await ticket(); connect(); retryMs = 5000; }
+    else scheduleRetry();   // showing the device copy: keep asking until the node answers
     return renderMain();
   }
 
@@ -350,9 +372,10 @@
       await post('/api/tgc/logout'); st.status = null; st.dialogs = []; st.msgs.clear(); st.open = null; render(); };
     try{ st.dialogs = (await api('/api/tgc/dialogs?limit=200')).dialogs || []; }
     catch(e){
-      root.querySelector('.tg-dialogs').innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>
-        <div class="tg-pad"><button class="tg-btn" data-act="retry">Retry</button></div>`;
-      root.querySelector('.tg-dialogs [data-act="retry"]').onclick = () => render();
+      root.querySelector('.tg-dialogs').innerHTML = `<div class="tg-err tg-pad">${esc(e.message)}</div>${retryNote()}
+        <div class="tg-pad"><button class="tg-btn" data-act="retry">Retry now</button></div>`;
+      root.querySelector('.tg-dialogs [data-act="retry"]').onclick = () => { retryMs = 5000; render(); };
+      scheduleRetry();
       return;
     }
     ledgerReconcile(st.dialogs);
@@ -456,7 +479,8 @@
     pane.innerHTML = `<header class="tg-chat-hd"><button class="tg-icon tg-back" data-act="back" aria-label="Back to chats">‹</button>
         <span class="tg-av" data-av="${d.id}"><b>${esc(initials(d.title))}</b></span><b class="tg-ctitle">${esc(d.title)}</b>
         ${canCall(d) ? `<span class="tg-callbtns"><button class="tg-icon" data-act="call" title="Voice call" aria-label="Voice call">📞</button>
-          <button class="tg-icon" data-act="vcall" title="Video call" aria-label="Video call">🎥</button></span>` : ''}</header>
+          <button class="tg-icon" data-act="vcall" title="Video call" aria-label="Video call">🎥</button></span>` : ''}
+        <button class="tg-icon tg-more" data-act="chat-menu" title="Chat settings" aria-label="Chat settings: mute, sound, auto-delete, block">⋯</button></header>
       <div class="tg-msgs" tabindex="0"></div>
       <div class="tg-replybar" hidden></div>
       <div class="tg-pending" hidden></div>
@@ -470,6 +494,7 @@
         <input type="file" class="tg-file" multiple hidden></footer>`;
     loadAvatars(pane);
     pane.querySelector('[data-act="back"]').onclick = () => { st.open = null; paintDialogs(); paintChat(); };
+    const menuBtn = pane.querySelector('[data-act="chat-menu"]'); if(menuBtn) menuBtn.onclick = () => chatMenu(menuBtn, d);
     pane.querySelectorAll('[data-act="call"],[data-act="vcall"]').forEach(b => b.onclick = () => {
       if(window.PCTgCall) window.PCTgCall.start(d.id, d.title, b.dataset.act === 'vcall'); });
     const ta = pane.querySelector('.tg-text');
@@ -542,6 +567,41 @@
   /* Calls are 1:1 with a PERSON: Telegram has no call to a group, a channel or a bot here, and the
    * node says whether its call engine is installed (status.calls). */
   function canCall(d){ return !!(st.status && st.status.calls && window.PCTgCall && d && d.kind === 'user' && d.id > 0); }
+  /* CHAT SETTINGS (2026-10-21: "no way to block, mute notification sounds from user, set chat expiration"). Each
+   * is Telegram's own setting -- it follows the account to the official apps -- read fresh when the menu opens. */
+  const TTL = [[0, 'Off'], [86400, '1 day'], [604800, '1 week'], [2592000, '1 month']];
+  async function chatMenu(anchor, d){
+    const P = PC(); let s;
+    try{ s = await api('/api/tgc/peer/' + d.id); }catch(e){ if(P.toast) P.toast(e.message); return; }
+    const rows = s.muted ? [['unmute', 'Unmute']]
+      : [['mute3600', 'Mute for 1 hour'], ['mute28800', 'Mute for 8 hours'], ['mute-1', 'Mute until I turn it on']];
+    rows.push(s.silent ? ['sound', 'Notify with sound'] : ['silent', 'Notify without sound']);
+    rows.push(['ttl', 'Auto-delete messages… (' + ((TTL.find(t => t[0] === s.ttl) || [0, s.ttl ? Math.round(s.ttl / 3600) + ' h' : 'Off'])[1]) + ')']);
+    if(s.kind === 'user') rows.push(s.blocked ? ['unblock', 'Unblock'] : ['block', 'Block ' + (d.title || 'this user'), 'danger']);
+    const apply = async (path, body, said) => {
+      try{ const r = await post(path, Object.assign({ chat_id:d.id }, body));
+        const dd = st.dialogs.find(x => x.id === d.id);
+        if(dd && 'muted' in r){ dd.muted = !!r.muted; dd.silent = !!r.silent; paintDialogs(); }
+        if(P.toast) P.toast(said); }
+      catch(e){ if(P.toast) P.toast(e.message); }
+    };
+    P.openMenuPopover(anchor, rows, async a => {
+      if(a === 'unmute') return apply('/api/tgc/notify', { mute:0 }, 'Unmuted');
+      if(a.startsWith('mute')) return apply('/api/tgc/notify', { mute:+a.slice(4) }, a === 'mute-1' ? 'Muted' : 'Muted for ' + (a === 'mute3600' ? '1 hour' : '8 hours'));
+      if(a === 'silent') return apply('/api/tgc/notify', { silent:true }, 'Notifications from this chat arrive without sound');
+      if(a === 'sound') return apply('/api/tgc/notify', { silent:false }, 'Notifications from this chat play a sound');
+      if(a === 'block'){ if(P.uiConfirm && !(await P.uiConfirm('Block ' + (d.title || 'this user') + '? They will not be able to message or call you on Telegram.', { ok:'Block', danger:true }))) return;
+        return apply('/api/tgc/block', { blocked:true }, 'Blocked'); }
+      if(a === 'unblock') return apply('/api/tgc/block', { blocked:false }, 'Unblocked');
+      if(a === 'ttl'){
+        P.modal(`<h3>Auto-delete messages</h3><p class="muted small">New messages in this chat are deleted for everyone after this long. Telegram applies it; in a group only an admin can change it.</p>
+          <div class="tg-ttl">${TTL.map(([v, l]) => `<button class="btn ${v === s.ttl ? 'btn-neon' : 'btn-ghost'}" data-ttl="${v}">${l}</button>`).join('')}</div>`, rootEl => {
+          rootEl.querySelectorAll('[data-ttl]').forEach(b => b.onclick = async () => { P.closeModal();
+            await apply('/api/tgc/ttl', { period:+b.dataset.ttl }, +b.dataset.ttl ? 'Auto-delete set to ' + b.textContent : 'Auto-delete off'); });
+        });
+      }
+    });
+  }
   async function openChat(id){
     st.open = id; st.reply = null; st.pending = [];
     paintDialogs(); paintChat();
