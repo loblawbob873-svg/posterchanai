@@ -480,7 +480,7 @@
         <span class="tg-av" data-av="${d.id}"><b>${esc(initials(d.title))}</b></span><b class="tg-ctitle">${esc(d.title)}</b>
         ${canCall(d) ? `<span class="tg-callbtns"><button class="tg-icon" data-act="call" title="Voice call" aria-label="Voice call">📞</button>
           <button class="tg-icon" data-act="vcall" title="Video call" aria-label="Video call">🎥</button></span>` : ''}
-        <button class="tg-icon tg-more" data-act="chat-menu" title="Chat settings" aria-label="Chat settings: mute, sound, auto-delete, block">⋯</button></header>
+        <button class="tg-icon tg-more" data-act="chat-menu" title="Chat settings" aria-label="Chat settings: mute, sound, auto-delete, block"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button></header>
       <div class="tg-msgs" tabindex="0"></div>
       <div class="tg-replybar" hidden></div>
       <div class="tg-pending" hidden></div>
