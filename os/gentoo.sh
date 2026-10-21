@@ -3668,6 +3668,60 @@ pc_best_kernel_version() {
 	return 1
 }
 
+# REMOVING OLD KERNELS WITHOUT BREAKING THE ONES IN USE. Usage: pc_prune_kernels <machine-id> <keep-version>...
+#
+# This was one line -- `ls /usr/lib/modules | grep -Evi "$KERNEL_VERSION" | xargs -r rm -r` -- and it
+# "screwed up the kernel modules" three ways, measured on server1 2026-10-20 (gentoo-kernel-bin-6.18.54
+# installed, its /lib/modules/6.18.54-gentoo-dist-bin GONE, the machine left on 6.18.8 with no package):
+#   * it deleted the RUNNING kernel's tree too, so the live system could not load a driver until reboot;
+#   * it rm'd trees Portage still owns: the package says installed, its files are gone, and the kernel
+#     it describes can no longer boot (and nothing reinstalls it until the next version);
+#   * a regex SUBSTRING test, case-insensitive: kept "6.18.54" for 6.18.5, and dots matched anything.
+# Now: exact names; the booted and the running kernel are always kept; a tree a package owns is removed by
+# UNMERGING that package (Portage's record stays true, installkernel cleans its /boot) -- except the newest
+# installed version of its package, which is the next boot's kernel; only trees nobody owns are rm'd; and
+# nothing at all happens unless a kept version really has a module tree. The ESP leftovers of each removed
+# version go with it, so the 2 GB EFI partition stops filling with dead kernels.
+# tests/test_gentoo_bootloader_entry.py (KernelPruning).
+pc_prune_kernels() {
+	local mid="$1"; shift
+	local mods=/usr/lib/modules keep v d owner cp newest have=0
+	keep=" $* $(uname -r 2>/dev/null) "
+	for v in "$@"; do [ -n "$v" ] && [ -d "$mods/$v" ] && have=1; done
+	if [ "$have" != 1 ]; then
+		echo -e "\033[1;33m  Not removing any kernel: the one being booted ($*) has no module tree here.\033[0m"
+		return 0
+	fi
+	for d in "$mods"/*/; do
+		[ -d "$d" ] || continue
+		v="$(basename "$d")"
+		case "$keep" in *" $v "*) continue ;; esac
+		owner=""
+		if command -v portageq >/dev/null 2>&1; then
+			owner="$(portageq owners / "/lib/modules/$v" "/usr/lib/modules/$v" 2>/dev/null | sed -n '1{/^[a-z0-9-]*\/[^[:space:]]*$/p}')"
+		fi
+		if [ -n "$owner" ]; then
+			cp="${owner%-[0-9]*}"
+			newest="$(portageq match / "$cp" 2>/dev/null | sort -V | tail -1)"
+			if [ "$owner" = "$newest" ]; then
+				echo -e "\033[1;33m  Keeping $v: it belongs to $owner, the newest installed kernel package.\033[0m"
+				continue
+			fi
+			echo -e "\033[1;33m  Removing old kernel package $owner ($v)\033[0m"
+			if ! emerge --unmerge --quiet "=$owner"; then
+				echo -e "\033[1;31m  Could not unmerge $owner; its modules were left in place.\033[0m"
+				continue
+			fi
+		else
+			echo -e "\033[1;33m  Removing module tree $v (no package owns it)\033[0m"
+			rm -rf -- "${mods:?}/$v"
+		fi
+		[ -n "$mid" ] && rm -rf -- "/boot/$mid/$v"
+		rm -f -- "/boot/vmlinuz-$v" "/boot/initramfs-$v.img" "/boot/System.map-$v" "/boot/config-$v"
+	done
+	return 0
+}
+
 # THE KERNEL IMAGE AN INSTALL COPIES MUST BE THE VERSION ITS INITRAMFS AND MODULES ARE FOR.
 #
 # The install used to copy $TARGET/boot/vmlinuz -- the kernel the LIVE MEDIUM booted -- into
@@ -5813,7 +5867,7 @@ bootloader() {
 		# THE VERSION IS READ FROM A DIRECTORY, SO A MISSING DIRECTORY IS AN EMPTY VERSION -- and
 		# every line below then builds a path with a hole in it. The loader entry names
 		# `/<machine-id>//linux`, `mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION` makes a directory
-		# with no version in it, and the module cleanup runs `grep -Evi` with no pattern at all.
+		# with no version in it, and the old module cleanup deleted every tree (pc_prune_kernels refuses).
 		# The entry gets written, the install says it finished, and the machine boots into
 		# emergency mode -- which is where this was found, and it says nothing about a kernel.
 		#
@@ -5860,10 +5914,9 @@ bootloader() {
 			fi
 		fi
 
-        echo -e "\033[1;33mDeleting old Kernel Modules\033[0m"
+        echo -e "\033[1;33mRemoving old kernels\033[0m"
         echo
-        cd /usr/lib/modules
-        ls /usr/lib/modules | grep -Evi "$KERNEL_VERSION" | xargs -r rm -r
+        pc_prune_kernels "$MACHINE_ID" "$KERNEL_VERSION"
 		# REBUILD THE INITRD THE LOADER ACTUALLY USES. `--regenerate-all` writes the conventional
 		# /boot/initramfs-$KERNEL_VERSION.img, but the entry below boots the Boot Loader Spec path
 		# /boot/$MACHINE_ID/$KERNEL_VERSION/initrd.  liveISOinstall() had already put a preliminary

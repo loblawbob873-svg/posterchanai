@@ -1386,10 +1386,13 @@ class TheInstalledMachineHasAKernelWhereTheBootloaderLOOKS(unittest.TestCase):
                         "the loader entry path is built before the version is checked")
 
     def test_the_module_cleanup_cannot_run_on_nothing(self):
-        """`ls | grep -Evi $KERNEL_VERSION | xargs rm -r` with an empty version passes NO pattern to
-        grep, which then reads the pipe as one."""
+        """The cleanup runs only after the empty-version guard, through pc_prune_kernels -- which
+        itself removes nothing unless a kept version has a module tree (run, not read, in
+        tests/test_gentoo_bootloader_entry.py KernelPruning)."""
         fn = self._fn("bootloader")
-        self.assertIn('grep -Evi "$KERNEL_VERSION" | xargs -r rm -r', fn)
+        self.assertIn('pc_prune_kernels "$MACHINE_ID" "$KERNEL_VERSION"', fn)
+        self.assertLess(fn.index('if [ -z "$KERNEL_VERSION" ]'), fn.index('pc_prune_kernels "$MACHINE_ID"'))
+        self.assertNotIn("grep -Evi", fn, "the regex-substring module deletion is back")
 
     def test_the_chroot_check_really_does_refuse_this_config(self):
         """The measurement the fix rests on, re-run against the real plugin when the box has one:

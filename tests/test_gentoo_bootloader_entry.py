@@ -86,6 +86,7 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
                 _fn(src, "_pc_record_plymouth_theme") + "\n\n" +
                 _fn(src, "_pc_select_plymouth_theme") + "\n\n" +
                 _fn(src, "alignKernelEntryToken") + "\n\n" +
+                _fn(src, "pc_prune_kernels") + "\n\n" +
                 _fn(src, "bootloader"))
         for a, b in (("/boot", "$R/boot"), ("/etc/disk", "$R/etc/disk"),
                      ("/etc/machine-id", "$R/etc/machine-id"), ("/etc/crypttab", "$R/etc/crypttab"),
@@ -202,3 +203,74 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PRUNE_STUBS = {
+    # the running kernel
+    "uname": '#!/bin/sh\necho 6.18.8-gentoo-dist\n',
+    # who owns which module tree, and which versions of a package are installed
+    "portageq": ('#!/bin/sh\n'
+                 'case "$1" in\n'
+                 '  owners) shift 2; for p in "$@"; do case "$p" in\n'
+                 '    */6.18.40-gentoo-dist-bin) echo sys-kernel/gentoo-kernel-bin-6.18.40; echo "\t$p"; exit 0;;\n'
+                 '    */6.18.54-gentoo-dist-bin) echo sys-kernel/gentoo-kernel-bin-6.18.54; echo "\t$p"; exit 0;;\n'
+                 '    */6.19.1-gentoo-dist-bin) echo sys-kernel/gentoo-kernel-bin-6.19.1; echo "\t$p"; exit 0;;\n'
+                 '  esac; done; exit 1;;\n'
+                 '  match) printf "sys-kernel/gentoo-kernel-bin-6.18.40\\nsys-kernel/gentoo-kernel-bin-6.18.54\\nsys-kernel/gentoo-kernel-bin-6.19.1\\n";;\n'
+                 'esac\n'),
+    # an unmerge removes the package's module tree, as Portage would
+    "emerge": ('#!/bin/sh\necho "$@" >> "$R/emerge.log"\n'
+               'for a; do case "$a" in =*) v=${a##*-bin-}; rm -rf "$R/usr/lib/modules/$v-gentoo-dist-bin";; esac; done\n'),
+}
+
+
+@unittest.skipIf(not os.path.exists(SH), "no os/gentoo.sh here")
+@unittest.skipIf(not shutil.which("bash"), "no bash")
+class KernelPruning(unittest.TestCase):
+    """"gentoo.sh bootloader causes issues with deleting the kernel modules": the cleanup rm'd every module
+    tree but the chosen one -- the RUNNING kernel's, and trees Portage owns (server1: gentoo-kernel-bin-6.18.54
+    installed, /lib/modules/6.18.54-gentoo-dist-bin gone). pc_prune_kernels, RUN against a fake root."""
+
+    def _run(self, keep, trees):
+        src = open(SH, encoding="utf-8").read()
+        body = _fn(src, "pc_prune_kernels").replace("/usr/lib/modules", "$R/usr/lib/modules").replace("/boot", "$R/boot")
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        root, stub = os.path.join(d, "r"), os.path.join(d, "stub")
+        for v in trees:
+            os.makedirs(os.path.join(root, "usr/lib/modules", v, "kernel"))
+            os.makedirs(os.path.join(root, "boot", MID, v))
+            open(os.path.join(root, "boot", MID, v, "linux"), "w").write("k")
+        os.makedirs(stub)
+        for name, text in PRUNE_STUBS.items():
+            open(os.path.join(stub, name), "w").write(text)
+            os.chmod(os.path.join(stub, name), 0o755)
+        script = os.path.join(d, "run.sh")
+        open(script, "w").write("#!/bin/bash\nR=\"$1\"\nexport R\n" + body + f"\npc_prune_kernels {MID} {keep}\n")
+        r = subprocess.run(["bash", script, root], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, PATH=stub + os.pathsep + os.environ["PATH"]))
+        left = sorted(os.listdir(os.path.join(root, "usr/lib/modules")))
+        esp = sorted(os.listdir(os.path.join(root, "boot", MID)))
+        log = open(os.path.join(root, "emerge.log")).read() if os.path.exists(os.path.join(root, "emerge.log")) else ""
+        return left, esp, log, r.stdout + r.stderr
+
+    TREES = ["6.18.5-gentoo-dist", "6.18.8-gentoo-dist", "6.18.40-gentoo-dist-bin",
+             "6.18.54-gentoo-dist-bin", "6.19.1-gentoo-dist-bin"]
+
+    def test_only_unused_kernels_go_and_owned_ones_go_through_portage(self):
+        left, esp, log, out = self._run("6.18.54-gentoo-dist-bin", self.TREES)
+        self.assertIn("6.18.54-gentoo-dist-bin", left, "the kernel being booted lost its modules\n" + out)
+        self.assertIn("6.18.8-gentoo-dist", left, "the RUNNING kernel lost its modules\n" + out)
+        self.assertIn("6.19.1-gentoo-dist-bin", left, "the newest installed kernel package was removed\n" + out)
+        self.assertNotIn("6.18.5-gentoo-dist", left, "an unused, unowned tree survived (substring of the kept one)\n" + out)
+        self.assertNotIn("6.18.40-gentoo-dist-bin", left, out)
+        self.assertEqual(log.split(), ["--unmerge", "--quiet", "=sys-kernel/gentoo-kernel-bin-6.18.40"],
+                         ("an owned tree must be removed by unmerging its package, and only that one", log))
+        self.assertEqual(esp, ["6.18.54-gentoo-dist-bin", "6.18.8-gentoo-dist", "6.19.1-gentoo-dist-bin"],
+                         ("the ESP keeps exactly the kernels that are kept", esp))
+
+    def test_nothing_is_removed_when_the_kept_kernel_has_no_modules(self):
+        left, esp, log, out = self._run("6.99.0-missing", self.TREES)
+        self.assertEqual(left, sorted(self.TREES), out)
+        self.assertEqual(log, "")
+        self.assertIn("Not removing any kernel", out)
