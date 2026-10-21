@@ -743,15 +743,15 @@ window.PCAiFactory = function(dep){
     // ---- things you do TO A FILE. Same sheet, but it asks for the file first (and any argument the
     // command needs) instead of a prompt. These were only reachable by attaching something and finding
     // the action bar, so nobody discovered them from an empty chat.
-    compress: { go:'Compress', cmd:'compress', ic:'compress', title:'Compress a file', file:true,
+    compress: { go:'Compress', cmd:'compress', ic:'compress', title:'Compress a file', file:true, multi:true,
       accept:'image/*,video/*,application/pdf',
-      blurb:'Shrink an image, video or PDF. Attach the file and I will do the rest.' },
+      blurb:'Shrink images, videos or PDFs. Attach them and I will do the rest.' },
     clip: { go:'Clip', cmd:'clip', ic:'scissors', title:'Clip a video', file:true, accept:'video/*',
       blurb:'Trim a section out of a video. Times look like 0:10 and 0:30.',
       extra:[['start','Start','0:10'],['end','End','0:30']], needExtra:true },
-    convert: { go:'Convert', cmd:'convert', ic:'refresh', title:'Convert a file', file:true,
+    convert: { go:'Convert', cmd:'convert', ic:'refresh', title:'Convert files', file:true, multi:true,
       accept:'image/*,application/pdf',
-      blurb:'Images become a PDF; a PDF becomes images. Attach it and I will pick the direction.' },
+      blurb:'Images become one PDF; a PDF becomes images. Pick one or several and I will pick the direction.' },
     extractaudio: { go:'Extract', cmd:'extractaudio', ic:'music', title:'Extract the audio', file:true,
       accept:'video/*', blurb:'Pull the soundtrack out of a video as an MP3.' },
     circlecrop: { go:'Crop', cmd:'circlecrop', ic:'circle-crop', title:'Circle-crop an image', file:true,
@@ -2528,9 +2528,20 @@ window.PCAiFactory = function(dep){
   // [label, mode, command]: mode 'fx' opens the Effects picker; 'run' sends the command immediately
   // (one-shot, e.g. compress/ocr); 'fill' prefills so you complete an argument (clip/convert/meme).
   // Commands match the upload allowlist in chat.py (note: it's `ocr`, not "readtext").
+  /* COMBINE leads when there is more than one file to combine: two or more PDFs merge into one (chat.py's
+   * merge intent answers the word `combine`), two or more images become one PDF (`convert pdf`). A PDF
+   * also gets Compress and Convert -- they only ever appeared for images and "other" files, so a PDF
+   * offered neither ("I wanted to compress a PDF"). Pure: tests/client/ai_attach_actions_runtime.mjs. */
   function _aiAttachActions(){
     const k=new Set(_ai.attach.map(a=>a.kind));
+    const count=kind=>_ai.attach.filter(a=>a.kind===kind).length;
+    const combine = count('pdf')>=2 && !k.has('image') ? [['📚 Combine PDFs','run','combine']]
+                  : count('image')>=2 && !k.has('pdf') ? [['📚 Combine into one PDF','run','convert pdf']] : [];
+    return combine.concat(_aiAttachActionsFor(k));
+  }
+  function _aiAttachActionsFor(k){
     if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme '],['🗣️ Talk','fill','talk '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];   // Translate: OCRs + translates the text (prefills — add a language or Enter for English). Bill: reads vendor/total/due, then confirms before writing to the budget. Talk prefills: it needs the line to say.
+    if(k.has('pdf') && !k.has('doc')) return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];   // compress/convert take PDFs (media_service), not Office documents
     if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];
     if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio']];   // matches Telegram's video keyboard (Convert is image↔PDF only — useless for video)
     return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
