@@ -180,3 +180,43 @@ def test_the_unborn_HEAD_convention_still_works(tmp_path, monkeypatch):
     subprocess.run(["git", "-C", str(wt), "commit", "-qm", "one"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(wt), "push", "-q", d, "main"], check=True, capture_output=True)
     assert ghs.adopt_head_if_unborn(OWNER, "fresh") == "refs/heads/main"
+
+
+# ── HEAD follows a state that changes ONLY HEAD — no push needed (follow_declared_heads) ──────────────
+# Before: adopt_head_if_unborn ran from post-receive alone, so a maintainer who switched the default
+# branch with a state event (and no new commits) left every clone on the old branch until somebody pushed.
+
+def test_a_head_only_state_moves_HEAD_without_a_push(repo, monkeypatch):
+    assert ghs.repo_head(OWNER, REPO) == "refs/heads/master"
+    relay = _Conn([state()])
+    use(relay, monkeypatch)   # adopt_head_if_unborn reads the maintainers through the node relay
+    r = ghs.follow_declared_heads(relay)
+    assert r["changed"] == 1 and r["checked"] == 1, r
+    assert ghs.repo_head(OWNER, REPO) == "refs/heads/develop"
+    assert r["since"] > 0
+
+
+def test_the_follower_is_incremental_and_touches_only_named_repos(repo, monkeypatch):
+    calls = []
+
+    class Counting:
+        def __init__(self, evs): self.evs = evs
+        def query(self, filters):
+            calls.append(filters)
+            f = filters[0]
+            return [e for e in self.evs if e["kind"] in f.get("kinds", [e["kind"]])
+                    and e["created_at"] >= f.get("since", 0)
+                    and (not f.get("authors") or e["pubkey"] in f["authors"])
+                    and (not f.get("#d") or any(t[0] == "d" and t[1] in f["#d"] for t in e["tags"]))]
+    use(Counting([state(created_at=1_000_000)]), monkeypatch)
+    first = ghs.follow_declared_heads(Counting([state(created_at=1_000_000)]))
+    assert first["since"] == 1_000_000 - 1
+    other = build_event(OWNER_SK, git_auth.STATE_KIND, "", tags=[["d", "someone-else"], ["HEAD", "ref: refs/heads/x"]], created_at=2_000_000)
+    second = ghs.follow_declared_heads(Counting([other]), since=first["since"])
+    assert second["checked"] == 0, "a state for a repo this node does not host made it re-read ours"
+
+
+def test_could_not_ask_changes_nothing_and_does_not_advance(repo, monkeypatch):
+    r = ghs.follow_declared_heads(FakeRelay([state()], down=True), since=123)
+    assert r["changed"] == 0 and r["since"] == 123 and "unavailable" in r.get("skipped", "")
+    assert ghs.repo_head(OWNER, REPO) == "refs/heads/master"

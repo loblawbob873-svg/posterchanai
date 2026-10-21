@@ -28,7 +28,12 @@ COMMENTS = r"""
     tags: [['E', ISSUE, '', _ow], ['K', '1621'], ['P', _ow], ['e', parent, '', pk], ['k', parent === ISSUE ? '1621' : '1111'], ['p', _ow]] });
   const _c1 = _c('1'.repeat(64), ISSUE, _alice, 'I can reproduce this on **Firefox** too.', 40);
   const _c2 = _c('2'.repeat(64), _c1.id, _ow, 'Thanks, looking at it now.', 20);
-  window.__events.push(_c1, _c2);
+  // Armada's attachment shape (the ngit issue "Change multiple reactions display", 2026-10-21): the bare URL on its
+  // own line plus an NIP-92 imeta. The first has NO extension -- only imeta says it is a picture.
+  const _shot = 'https://blossom.example/' + 'b'.repeat(64), _vid = 'https://cdn.example/clip.mp4', _page = 'https://example.com/docs';
+  const _c3 = _c('3'.repeat(64), ISSUE, _alice, 'Like this:\n' + _shot + '\n\nand ' + _vid + '\n\nsee ' + _page, 10);
+  _c3.tags.push(['imeta', 'url ' + _shot, 'm image/jpeg', 'x ' + 'b'.repeat(64)]);
+  window.__events.push(_c1, _c2, _c3);
 })()
 """.replace("ISSUE", json.dumps(ISSUE_ID))
 
@@ -44,7 +49,7 @@ def test_an_issue_opens_as_an_issue_page_with_its_comments(width):
         await b.js("window.__events = window.__events || []")
         js = setup(True).replace("  __PC.openThread(", COMMENTS.replace("(() => {", "").rsplit("})()", 1)[0] + "\n  __PC.openThread(")
         await b.js(js)
-        await b.until("document.querySelectorAll('.gi-page .gi-c').length >= 3")
+        await b.until("document.querySelectorAll('.gi-page .gi-c').length >= 4")
         got = await b.js("""(() => {
           const p = document.querySelector('.gi-page');
           return { crumb: p.querySelector('.gi-crumb').textContent.trim(),
@@ -56,12 +61,18 @@ def test_an_issue_opens_as_an_issue_page_with_its_comments(width):
                    re: [...p.querySelectorAll('.gi-re')].map(n => n.textContent),
                    social: document.querySelectorAll('#feed .thread-node, #feed .gi-page .acts').length,
                    compose: !!p.querySelector('.issue-status .issue-comment'),
+                   imgs: [...p.querySelectorAll('.gi-c-body img')].map(i => i.getAttribute('src')),
+                   vids: [...p.querySelectorAll('.gi-c-body video')].map(v => v.getAttribute('src')),
+                   links: [...p.querySelectorAll('.gi-c-body a:not(.gi-media)')].map(a => a.getAttribute('href')),
                    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
         })()""")
         assert got["crumb"].startswith("demo"), ("the page does not say which repo the issue belongs to", got)
         assert got["title"].startswith("Bug: cover picker"), ("the issue's title is not the heading", got)
-        assert "opened this" in got["meta"] and "2 comments" in got["meta"], got
-        assert got["boxes"] == 3, ("the description and both comments are not all shown", got)
+        assert "opened this" in got["meta"] and "3 comments" in got["meta"], got
+        assert got["boxes"] == 4, ("the description and the comments are not all shown", got)
+        assert got["imgs"] == ["https://blossom.example/" + "b" * 64], ("an attached screenshot is not shown as a picture", got)
+        assert got["vids"] == ["https://cdn.example/clip.mp4"], ("an attached video is not playable", got)
+        assert got["links"] == ["https://example.com/docs"], ("an ordinary link stopped being a link", got)
         assert got["body"] == "The live cover picker does nothing.", got
         assert got["bold"], ("comments are not rendered as Markdown", got)
         assert len(got["re"]) == 1, ("a comment answering another comment does not say so", got)

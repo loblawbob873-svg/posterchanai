@@ -1869,7 +1869,30 @@ window.PCGitFactory = function(dep){
         <span class="muted small">${ev.id===issue.id?'opened this '+(issue.kind===1617?'patch':'issue'):'commented'} ${timeAgo(ev.created_at)}</span>
         ${parent?`<span class="muted small gi-re">replying to ${enc(_giWho(parent.pubkey))}</span>`:''}
         ${ev.id!==issue.id || S.ME ? `<button type="button" class="btn btn-ghost small gi-reply" data-rid="${enc(ev.id)}" data-rpk="${enc(ev.pubkey)}">Reply</button>`:''}</div>
-      <div class="gi-c-body md">${mdToHtml(ev.content||'')||'<span class="muted">No description.</span>'}</div></div>`;
+      <div class="gi-c-body md">${_giBody(ev)||'<span class="muted">No description.</span>'}</div></div>`;
+  }
+  /* A BARE MEDIA URL IN AN ISSUE IS THE PICTURE, NOT A LINK TO IT. Armada, gitworkshop and ngit
+   * attach a screenshot as its URL on its own line plus an NIP-92 `imeta` tag — mdToHtml only knows
+   * `![](url)`, so every screenshot on an issue filed from another client arrived as a bare link and
+   * "no images loading" (the ngit issue "Change multiple reactions display"). The URL's type comes
+   * from its imeta `m` first (Blossom URLs often carry no extension), then the extension. Only
+   * http(s) links that mdToHtml itself produced are touched, and only the href it already vetted is
+   * reused, so nothing new can be injected. */
+  function _giBody(ev){
+    const html=mdToHtml(ev.content||''); if(!html) return html;
+    const types=new Map();
+    for(const t of (ev.tags||[])){ if(t[0]!=='imeta') continue;
+      const url=(t.find(v=>/^url /.test(v))||'').slice(4).trim(), m=(t.find(v=>/^m /.test(v))||'').slice(2).trim();
+      if(url) types.set(url, m); }
+    const kindOf=u=>{ const m=types.get(u)||'';
+      if(/^image\//.test(m) || (!m && /\.(png|jpe?g|gif|webp|avif|svg)(\?[^"]*)?$/i.test(u))) return 'img';
+      if(/^video\//.test(m) || (!m && /\.(mp4|webm|mov|m4v)(\?[^"]*)?$/i.test(u))) return 'video';
+      return ''; };
+    return html.replace(/<a href="(https?:\/\/[^"]+)" target="_blank" rel="noopener">\1<\/a>/g,(a,url)=>{
+      const k=kindOf(url.replace(/&amp;/g,'&'));
+      if(k==='img') return `<a class="gi-media" href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="" loading="lazy"></a>`;
+      if(k==='video') return `<video class="gi-media" src="${url}" controls preload="metadata" playsinline></video>`;
+      return a; });
   }
   function issuePageHtml(issue, replies, focusId){
     const addr=_issueRepoAddr(issue), repoName=_issueRepoName(addr);

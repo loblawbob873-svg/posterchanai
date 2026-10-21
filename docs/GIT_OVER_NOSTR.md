@@ -462,6 +462,13 @@ no-op'd, and the repo clones anonymously from `https://poster.place/git/<npub>/p
 
 ## Deferred
 
-PRs (1618/1619), Blossom pack offload, multi-host GRASP sync — later. Mirroring from a *non*-hosting
+PRs (1618/1619) are accepted (relay, `refs/nostr/<id>` push path, reaper). Still owed against the GRASP
+spec (grasp.git @ f35b4f9, compared 2026-10-21): rejecting announcements that do not name this service on
+the `/git` endpoint (GRASP-01 MUST — the shared relay accepts every 30617 today, so `supported_grasps`
+stays empty), identifiers outside `[a-z0-9._-]` / case-sensitive d-tags (an on-disk naming migration),
+purgatory, GRASP-06 `/prs/<npub>/<id>.git`, GRASP-02/03/05 sync, GRASP-08. Done 2026-10-21: events that
+tag an accepted issue/PR are accepted (`_tags_known_git_event`), HEAD follows a HEAD-only 30618 without a
+push (`follow_declared_heads`, git host thread), and a live PR's `refs/nostr` ref cannot be deleted by a
+stranger. Blossom pack offload, multi-host GRASP sync — later. Mirroring from a *non*-hosting
 node would need that node's npub added to the repo's 30617 `maintainers` (then NIP-98 alone
 authorizes it); not done, since the hosting node already has the key.

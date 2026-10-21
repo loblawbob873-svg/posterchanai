@@ -8077,8 +8077,10 @@
      * (and show it). Handled first, and the bare rule now stops at an entity. */
     s=s.replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g,(m,url)=>{
       const u=_mdUrl(url); return u?`<a href="${u}" target="_blank" rel="noopener">${url}</a>`:url; });
-    // bare URLs not already inside an href/src
-    s=s.replace(/(^|[^"\/>=])(https?:\/\/[^\s<&]+)/g,(m,pre,url)=>`${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+    /* bare URLs not already inside an href/src. A paragraph's lines are joined with <br>, so a URL on a
+     * line of its own follows a `>` -- which the inside-a-tag guard refused, leaving it unlinked text
+     * (every screenshot attached to an issue from Armada/gitworkshop, 2026-10-21). After <br> is text. */
+    s=s.replace(/(^|<br>|[^"\/>=])(https?:\/\/[^\s<&]+)/g,(m,pre,url)=>`${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
     return s;
   }
   // A GFM table's delimiter row: |---|:--:|---:| , with the outer pipes optional.

@@ -942,13 +942,24 @@ window.PCDiscoverFactory = function(dep){
      * once a live socket exists. renderProfileView and flushEvents already wait like this. */
     try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
     if(S.VIEW!=='search') return;
-    let [postEvs, addrEvs, profEvs] = await Promise.all([
+    /* GIT REPOS GET THEIR OWN READ. They used to share one `limit:240` with articles, streams and
+     * torrents — the newest 240 of four kinds — so on a busy relay almost no repository was ever in the
+     * set being filtered and "search doesn't find git repos" (2026-10-21). Now: this device's held
+     * announcements, the pool (newest 2000), NIP-50 where a relay indexes them, and the ngit index —
+     * where ngit, gitworkshop and Armada announce — so a repo hosted anywhere can be found by name. */
+    const repoRead=Promise.all([
+      Relay.query([{ kinds:[30617], limit:2000 }]).catch(()=>[]),
+      Relay.query([{ kinds:[30617], search:q, limit:50 }]).catch(()=>[]),
+      (Relay.queryFrom ? Relay.queryFrom(['wss://index.ngit.dev'], [{ kinds:[30617], limit:2000 }], { timeout:6000, purpose:'repo search' }) : Promise.resolve([])).catch(()=>[]),
+    ]).then(r=>{ let held=[]; try{ held=Store.byKind(30617)||[]; }catch(_){} return [...held, ...r.flat()]; });
+    let [postEvs, addrEvs, profEvs, repoEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
-      Relay.query([{ kinds:[30023,30311,2003,30617], limit:240 }]).catch(()=>[]),
+      Relay.query([{ kinds:[30023,30311,2003], limit:240 }]).catch(()=>[]),
       // Also ask the relay for matching PROFILES (NIP-50 kind-0 search) — otherwise "Profiles" only ever
       // shows what THIS device has already cached, so a profile you haven't seen (or lost on a cache
       // clear) never appears. Cached below so the local name/nip05 filter picks them up too.
       Relay.query([{ kinds:[0], search:q, limit:20 }]).catch(()=>[]),
+      repoRead,
     ]);
     /* THE SECOND SEARCH, DONE FOR YOU — this is "I have to search twice to see results".
      *
@@ -988,7 +999,16 @@ window.PCDiscoverFactory = function(dep){
     const arts =_dedupAddr(addrEvs.filter(e=>e.kind===30023 && _matchAddr(e,ql))).sort((a,b)=>artTime(b)-artTime(a)).slice(0,12);
     const strms=_dedupAddr(addrEvs.filter(e=>e.kind===30311 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const tors =addrEvs.filter(e=>e.kind===2003 && _matchAddr(e,ql)).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
-    const repos=_dedupAddr(addrEvs.filter(e=>e.kind===30617 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
+    const repoHit=e=>_matchAddr(e,ql)||(e.tags||[]).some(t=>t[0]==='t'&&String(t[1]||'').toLowerCase()===ql.replace(/^#/,''));
+    /* queryFrom does not check signatures and the ngit index is not our relay: every MATCH is
+     * verified before it is shown or stored (the matches, not all 2000 — a phone pays per event). */
+    const _vfy=e=>{ try{ return !NT().verifyEvent||NT().verifyEvent(e); }catch(_){ return false; } };
+    const repoList=(repoEvs||[]).filter(e=>e&&e.kind===30617&&repoHit(e)&&_vfy(e));
+    repoList.forEach(e=>{ try{ Store.saveEvent(e); needProfile(e.pubkey); }catch(_){} });
+    /* Best first: a name or identifier that IS the query, then one that starts with it, then the rest — newest within each. */
+    const repoRank=e=>{ const g=k=>String((e.tags.find(t=>t[0]===k)||[])[1]||'').toLowerCase(); const n=g('name'),d=g('d');
+      return n===ql||d===ql?0:n.startsWith(ql)||d.startsWith(ql)?1:n.includes(ql)||d.includes(ql)?2:3; };
+    const repos=_dedupAddr(repoList).sort((a,b)=>repoRank(a)-repoRank(b)||b.created_at-a.created_at).slice(0,24);
     const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
     let html='';
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img alt="" src="${enc(m.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'"><div><b>${emojiName(p.pubkey,m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }

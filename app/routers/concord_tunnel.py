@@ -36,6 +36,17 @@ async def tunnel_ticket(user: User = Depends(_member)):
     return {"ticket": concord_tunnel.issue(pk.lower()), "ttl": concord_tunnel.TICKET_TTL}
 
 
+@router.get("/default-invite")
+async def default_invite(user: User = Depends(_member)):
+    """The community this instance joins every member to (Admin -> Nostr Relay), or {invite: ''}.
+
+    MEMBERS ONLY: the invite carries the community's # secret, so it is never in the public client
+    config. The client joins it once per account and remembers it did, so leaving is respected."""
+    from app.services import settings_store
+    raw = str(settings_store.get("concord_default_invite", "") or "").strip()
+    return {"invite": raw if raw.startswith(("https://", "http://")) and "/invite/" in raw and "#" in raw else ""}
+
+
 @ws_router.websocket("/ws/concord-relay")
 async def concord_relay(websocket: WebSocket):
     target = websocket.query_params.get("u", "")

@@ -1939,6 +1939,22 @@ def main():
                     log.warning("[git-host] nostr-ref sweep failed: %s", e)
         threading.Thread(target=_reap_nostr, name="git-host-nostr-reaper", daemon=True).start()
 
+    # HEAD FOLLOWS THE SIGNED 30618 even when nothing is pushed (GRASP-01 MUST). One relay read per pass,
+    # incremental (`since`), so an idle node pays one empty query every few minutes.
+    if _CONFIG.get("head_follower", True):
+        def _follow_heads():
+            since = 0
+            while True:
+                time.sleep(int(_CONFIG.get("head_follow_seconds", 180)))
+                try:
+                    r = ghs.follow_declared_heads(since=since)
+                    since = r.get("since", since)
+                    if r.get("changed"):
+                        log.info("[git-host] HEAD follow: %s", r)
+                except Exception as e:                 # a follower must never take the server down
+                    log.warning("[git-host] HEAD follow failed: %s", e)
+        threading.Thread(target=_follow_heads, name="git-host-head-follower", daemon=True).start()
+
     log.info("[git-host] serving smart-HTTP on http://%s:%d (repos: %s)", bind, port, _root)
     try:
         httpd.serve_forever(poll_interval=1.0)

@@ -130,6 +130,7 @@
       <div class="cc-view-choice" role="radiogroup" aria-label="Channel type">
         <button type="button" role="radio" aria-checked="true" data-cc-view="chat"><b>#</b><span><strong>Text</strong><small>Messages, threads and calls</small></span></button>
         <button type="button" role="radio" aria-checked="false" data-cc-view="forum"><svg class="ic" aria-hidden="true"><use href="#i-chat"></use></svg><span><strong>Forum</strong><small>Titled posts with replies</small></span></button>
+        ${opts.git?'<button type="button" role="radio" aria-checked="false" data-cc-view="git"><svg class="ic" aria-hidden="true"><use href="#i-bug"></use></svg><span><strong>Git repository</strong><small>Its issues and pull requests, in a channel</small></span></button>':''}
       </div>${buttons(opts.ok||'Create channel')}`,{
       onOpen(ov){
         const radios=[...ov.querySelectorAll('[data-cc-view]')];
@@ -138,7 +139,10 @@
       },
       collect(ov){
         const name=clean(ov.querySelector('.uiprompt-in').value).replace(/^#/,'');
-        const view=(ov.querySelector('[data-cc-view][aria-checked="true"]')||{}).dataset?.ccView==='forum'?'forum':'chat';
+        const picked=(ov.querySelector('[data-cc-view][aria-checked="true"]')||{}).dataset?.ccView,view=picked==='forum'?'forum':'chat';
+        /* A repository channel (Armada's "Connect a git repository") is named after the repository
+         * when left blank, so the name is asked for after the repository is chosen. */
+        if(picked==='git'){if(bytes(name)>NAME_MAX_BYTES)return {error:'Channel names are limited to 64 bytes.'};return {name,view:'chat',git:true};}
         if(!name)return {error:'Name the channel.'};
         if(bytes(name)>NAME_MAX_BYTES)return {error:'Channel names are limited to 64 bytes.'};
         return {name,view};

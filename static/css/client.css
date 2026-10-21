@@ -12503,6 +12503,7 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .gi-c-hd .gi-name{min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gi-c-body{padding:12px 14px;overflow-wrap:anywhere;line-height:1.55}
 .gi-c-body pre{overflow-x:auto}
+.gi-c-body img,.gi-c-body video{max-width:100%;height:auto;border-radius:10px}.gi-c-body .gi-media{display:block;margin:8px 0;max-width:min(100%,640px)}.gi-c-body video.gi-media{max-height:70vh;background:#000}
 .gi-c.gi-hl{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan)}
 .gi-compose{margin-top:18px}
 @media (max-width:600px){ .gi-page{padding:10px 10px 20px} .gi-title{font-size:19px} .gi-c-hd .gi-re{flex-basis:100%;order:9} .gi-c-hd .gi-name{max-width:38%} }

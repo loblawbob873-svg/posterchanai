@@ -191,6 +191,12 @@ def _git_comment_root(ev: dict):
 
 
 
+# Kinds that may ride in on GRASP-01's "events that tag accepted git events" rule: deletion, repost,
+# reaction, generic repost, label. Deliberately NOT kind 1 — a note that quotes an issue is social
+# content and keeps the ordinary WoT gate.
+_GIT_TAGGING_KINDS = frozenset({5, 6, 7, 16, 1985})
+
+
 def _supported_grasps(raw) -> list:
     """GRASP-01's `supported_grasps`, normalised to the spec's `GRASP-XX` spelling.
 
@@ -1186,11 +1192,11 @@ class RelayServer:
             # be identified as a GRASP service at all — which is what we looked like until now.
             #
             # It is EMPTY BY DEFAULT and that is a statement, not an oversight. Claiming a GRASP is
-            # claiming every MUST in it, and GRASP-01 still has outstanding ones here: pushes to
-            # `refs/nostr/<event-id>` are refused, HEAD is chosen by convention rather than read
-            # from the signed 30618, the maintainer set is resolved one level rather than
-            # recursively, and we accept announcements that do not name this service (which is
-            # GRASP-05's MAY, and GRASP-05 in turn requires GRASP-02, which we do not implement).
+            # claiming every MUST in it, and GRASP-01 still has outstanding ones here (2026-10-21):
+            # we accept announcements that do not name this service (GRASP-05's MAY, which in turn
+            # requires GRASP-02, which we do not implement), and identifiers outside [a-z0-9._-] are
+            # not served. (refs/nostr pushes, HEAD from the signed 30618 — now also without a push —,
+            # recursive maintainers and events tagging accepted git events are all done.)
             # An advertised capability that is not there costs a client a failed push and a wrong
             # diagnosis; an absent one costs it a fallback. The operator flips the setting when the
             # node earns it.
@@ -1983,6 +1989,21 @@ class RelayServer:
             return False
         return bool(evs) and await self._collab_for_known_repo(evs[0])
 
+    async def _tags_known_git_event(self, ev, limit: int = 3) -> bool:
+        """GRASP-01 MUST: "accept other events that tag accepted git events". A status without the
+        (optional) `a` tag, a reaction, a label, a deletion — anything whose `e`/`E`/`q` tag names an
+        issue, patch or PR this relay holds for a known repo. At most `limit` lookups per event, each
+        a single-id indexed read, so a tag-stuffed event cannot turn into a scan."""
+        seen = set()
+        for t in ev.get("tags") or []:
+            if len(t) >= 2 and t[0] in ("e", "E", "q") and isinstance(t[1], str) and len(t[1]) == 64 and t[1] not in seen:
+                seen.add(t[1])
+                if await self._git_comment_for_known_repo(t[1]):
+                    return True
+                if len(seen) >= limit:
+                    break
+        return False
+
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
             return
@@ -2286,7 +2307,10 @@ class RelayServer:
             # PR kind whenever the repo has a GRASP server, i.e. the one path we refused was the only
             # one a stock client takes. They carry the same `a` tag as a patch, so they are scoped by
             # exactly the same repo lookup and open no new spam surface.
-            if _wot and not await self._collab_for_known_repo(ev):
+            # A STATUS may omit the `a` tag (NIP-34: "recommended", not required); its repo is then the
+            # one its `e` root belongs to.
+            if _wot and not (await self._collab_for_known_repo(ev)
+                             or (kind in (1630, 1631, 1632, 1633) and await self._tags_known_git_event(ev))):
                 self._refuse(conn, eid, ev, "blocked: git patch/issue references an unknown repo")
                 return
         elif kind == 1111 and (_groot := _git_comment_root(ev)) is not None:
@@ -2299,7 +2323,11 @@ class RelayServer:
                              or await self._git_comment_for_known_repo(_groot)):
                 self._refuse(conn, eid, ev, "blocked: comment on an unknown repo's issue")
                 return
-        elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
+        elif _wot and not self.gate.is_member(ev.get("pubkey", "")) and not (
+                kind in _GIT_TAGGING_KINDS and await self._tags_known_git_event(ev)):
+            # (A reaction, label, deletion or repost of an accepted issue/patch/PR is GRASP-01's
+            # "other events that tag accepted git events" — accepted from anyone. A deletion still only
+            # removes its own author's event; the store applies NIP-09 as for any other kind-5.)
             self._refuse(conn, eid, ev, "blocked: not in web of trust")
             return
         content = ev.get("content", "")

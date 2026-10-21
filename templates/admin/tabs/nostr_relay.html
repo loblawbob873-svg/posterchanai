@@ -475,6 +475,11 @@
                 <small>A member’s app registers each Concord community it has joined, and this relay keeps a copy of its encrypted messages (opaque gift wraps — this server cannot read them) and forwards members’ posts to the community’s own relays, so phones read only this relay. Connections go out through the proxy’s fallback listener (Tor, then direct) and nowhere else; with the proxy off, nothing is mirrored and the apps read the community relays themselves. Budgeted: 25,000 messages per community, 250,000 in all. On by default; takes effect after a relay restart.</small>
             </div>
             <div class="form-group">
+                <label for="concord_default_invite">Community every member joins</label>
+                <input type="text" id="concord_default_invite" name="concord_default_invite" class="form-control" autocomplete="off" spellcheck="false" placeholder="https://…/invite/naddr1…#…">
+                <small>A Concord / Armada invite link (with its <code>#</code> secret). Every member of this instance is joined to it the next time they open Communities — new accounts included. Someone who leaves it is not re-joined. Given only to signed-in members, never to visitors. Blank = no automatic community.</small>
+            </div>
+            <div class="form-group">
                 <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
                 <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
                 <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>

@@ -174,7 +174,7 @@ def pr_commit_tips(event) -> set:
     return out
 
 
-def decide_nostr_ref(ref: str, new_sha: str, pr_event) -> tuple:
+def decide_nostr_ref(ref: str, new_sha: str, pr_event, old_sha: str = "") -> tuple:
     """GRASP-01's OTHER push path: `refs/nostr/<event-id>`, the transport a pull request's code
     travels over. Pure function; returns (accepted, reason).
 
@@ -194,9 +194,14 @@ def decide_nostr_ref(ref: str, new_sha: str, pr_event) -> tuple:
         event first would deadlock against a client that pushes first. The 20-minute reaper is what
         makes that safe — an unclaimed ref is deleted, so the window is bounded rather than open.
 
-    Deletes are always allowed here: the namespace is disposable by design, and the reaper deletes
-    them anyway."""
+    A DELETE is allowed unless the ref is somebody's LIVE pull request: a stored PR event (1618/1619)
+    for that id names the ref's CURRENT tip (`old_sha`) — the reaper's own definition of "claimed". The namespace is an unauthenticated write, so without this anyone
+    could wipe another contributor's PR code out from under its event (GRASP is silent; this is
+    hardening, 2026-10-21). An unclaimed ref stays deletable — the reaper deletes those anyway."""
     if new_sha == ZERO_SHA:
+        if (pr_event is not None and int(pr_event.get("kind", 0)) in PR_KINDS
+                and _is_sha(str(old_sha).lower()) and str(old_sha).lower() in pr_commit_tips(pr_event)):
+            return False, "%s: refusing to delete the code of pull request %s" % (ref, str(pr_event.get("id", ""))[:12])
         return True, "%s deleted (refs/nostr is reapable)" % ref
     if pr_event is None:
         return True, "%s accepted provisionally (no PR event yet; reaper will sweep it)" % ref
@@ -331,7 +336,7 @@ def decide_push_ref(ref: str, old_sha: str, new_sha: str, maintainers,
     # "is not present in the signed 30618 state", which is why contribution did not work here at all.
     # Routed out FIRST and decided by `decide_nostr_ref`, so the 30618 crux underneath is untouched.
     if nostr_ref_event_id(ref):
-        return decide_nostr_ref(ref, new_sha, pr_event)
+        return decide_nostr_ref(ref, new_sha, pr_event, old_sha=old_sha)
 
     # (0) NIP-98 authenticated-maintainer bypass. A maintainer who signed a fresh NIP-98 header for
     # THIS receive-pack URL is trusted to push arbitrary refs; post-receive derives the 30618 from

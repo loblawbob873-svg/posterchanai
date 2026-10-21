@@ -252,3 +252,25 @@ def test_a_relay_that_dies_MID_SWEEP_still_keeps_every_ref(repo, monkeypatch):
     r = ghs.reap_nostr_refs(conn=_Dies(), grace=0)
     assert r["deleted"] == 0, r
     assert len(ghs.nostr_refs(OWNER, REPO)) == 2, "a mid-sweep failure deleted refs"
+
+
+# ── a live pull request's code cannot be deleted by a stranger (hardening, 2026-10-21) ────────────────
+# The namespace is an unauthenticated write; "deletes are always allowed" let anyone wipe somebody
+# else's PR code out from under its event, before the reaper would ever have had a say.
+
+def test_deleting_a_live_prs_ref_is_refused():
+    ok, why = git_auth.decide_nostr_ref(NREF, git_auth.ZERO_SHA, pr(tips=(SHA_A,)), old_sha=SHA_A)
+    assert not ok and "pull request" in why
+    # …and through the real entry point the pre-receive hook calls:
+    ok, why = git_auth.decide_push_ref(NREF, SHA_A, git_auth.ZERO_SHA, {OWNER}, [], pr_event=pr(tips=(SHA_A,)))
+    assert not ok and "pull request" in why
+
+
+def test_deleting_a_ref_its_pr_no_longer_names_is_allowed():
+    ok, _ = git_auth.decide_nostr_ref(NREF, git_auth.ZERO_SHA, pr(tips=(SHA_B,)), old_sha=SHA_A)
+    assert ok
+
+
+def test_deleting_an_unclaimed_ref_is_still_allowed():
+    ok, _ = git_auth.decide_nostr_ref(NREF, git_auth.ZERO_SHA, None)
+    assert ok

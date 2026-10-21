@@ -593,6 +593,49 @@ def nostr_refs(owner_hex: str, repo_id: str) -> dict:
     return out
 
 
+def follow_declared_heads(conn=None, *, since: int = 0) -> dict:
+    """GRASP-01 MUST: HEAD follows the signed 30618 — including a 30618 that changes ONLY HEAD.
+
+    `adopt_head_if_unborn` already reads the declared HEAD, but it ran from post-receive alone, so a
+    maintainer who switched the default branch without pushing (a state event, no new commits) left
+    every clone on the old one until somebody happened to push. This asks the relay ONCE per pass for
+    the states newer than the last pass (`since`) and re-reads HEAD only for hosted repos one of them
+    names (by d-tag: a maintainer's state carries its own pubkey, not the owner's). Returns
+    {"checked", "changed", "since"}; feed `since` back into the next call.
+
+    Could not ask = changed nothing and `since` does not move, so the next pass asks again."""
+    relay = conn if conn is not None else _env_relay()
+    if relay is None:
+        return {"checked": 0, "changed": 0, "since": since, "skipped": "no relay configured"}
+    from app.services import relay_reader
+    f = {"kinds": [30618], "limit": 500}
+    if since:
+        f["since"] = since
+    try:
+        states = relay.query([f]) or []
+    except relay_reader.Unavailable:
+        return {"checked": 0, "changed": 0, "since": since, "skipped": "relay unavailable"}
+    named = set()
+    newest = since
+    for ev in states:
+        d = next((t[1] for t in ev.get("tags") or [] if len(t) >= 2 and t[0] == "d"), "")
+        if d:
+            named.add(sanitize_repo_id(d))
+        newest = max(newest, int(ev.get("created_at") or 0))
+    checked = changed = 0
+    if named:
+        for r in list_repos():
+            if sanitize_repo_id(r["repo_id"]) not in named:
+                continue
+            checked += 1
+            before = repo_head(r["owner"], r["repo_id"])
+            after = adopt_head_if_unborn(r["owner"], r["repo_id"])
+            if after and after != before:
+                changed += 1
+    # A state stamped in the same second as the newest one seen could still arrive: overlap by 1s.
+    return {"checked": checked, "changed": changed, "since": max(since, newest - 1) if newest else since}
+
+
 def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
     """Delete every `refs/nostr/<event-id>` older than `grace` that no PR event claims.
 

@@ -26045,6 +26045,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
           name: def.name,
           isPrivate: false,
           view: channelViewOf(def.metadata),
+          git: channelGitRepositoryAttachments(def.metadata),
           voice: voiceKeys(community.root, id, community.rootEpoch),
           streams,
           current: streams[0]
@@ -26056,7 +26057,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const streams=held?[stream,...(held.heldKeys||[]).map(k=>({epoch:k.epoch,group:channelGroupKey(k.key,id,k.epoch)}))]:[];
       if(def.wasPublic||community.publicHistory?.has(def.channelIdHex))for(const root of community.heldRoots)streams.push({epoch:root.epoch,group:channelGroupKey(root.key,id,root.epoch)});
       if(!streams.length)continue;
-      out.push({id,idHex:def.channelIdHex,name:def.name,isPrivate:true,readOnly:!held,view:channelViewOf(def.metadata),
+      out.push({id,idHex:def.channelIdHex,name:def.name,isPrivate:true,readOnly:!held,view:channelViewOf(def.metadata),git:channelGitRepositoryAttachments(def.metadata),
         voice:held?voiceKeys(held.key,id,held.epoch):null,streams,current:stream});
     }
     for (const held of community.privateChannels) {
@@ -27002,7 +27003,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
        * holds which (Vector's Admin / Moderator). */
       roles: folded.roster.roles.map(r => ({ id: r.roleId, name: r.name, position: r.position, permissions: r.permissions.toString(), scope: r.scope && r.scope.kind || "server", channelId: r.scope && r.scope.kind === "channel" ? r.scope.channelId : null })),
       grants: Object.fromEntries(folded.roster.grants.filter(g => !folded.banned.has(g.member)).map(g => [g.member, [...g.roleIds]])),
-      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, view: ch.view || "chat", streamPubkeys: ch.streams.map((s) => s.group.pk) }))
+      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, view: ch.view || "chat", streamPubkeys: ch.streams.map((s) => s.group.pk), repositories: (ch.git || []).map(gitAttachmentWire) }))
     };
   }
   // CORD-06. Binary key material must never pass through TextDecoder: NIP-44's
@@ -27308,6 +27309,30 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   /* RENAME / DELETE A CHANNEL: a new edition of the channel entity (vsk 2), carrying every field the
    * prior body had (unknown ones included — `custom`, `voice`), so a rename never strips another
    * client's data. `deleted:true` is terminal (Vector). #general and the last live channel stay. */
+  /* ARMADA'S GIT ATTACHMENTS (`custom["armada.git"].repositories`, src/concord/lib/types.ts). Each
+   * entry is a half-open interval [attachedAt, detachedAt): detaching CLOSES the interval rather than
+   * deleting it, and re-attaching appends a new one, so activity from a detached period stays hidden
+   * in every client that reads the history. These mirror Armada's attachGitRepository /
+   * detachGitRepository exactly, and write the channel the way its attachRepository mutation does. */
+  function gitAttachmentWire(a) {
+    return { address: a.address.coordinate, relayHints: [...a.relayHints], attachedAt: a.attachedAt,
+             ...(a.detachedAt === void 0 ? {} : { detachedAt: a.detachedAt }) };
+  }
+  function withGitAttachments(body, attachments) {
+    const custom = isRecord2(body.custom) ? body.custom : {};
+    const extension = isRecord2(custom[ARMADA_GIT_CHANNEL_METADATA_KEY]) ? custom[ARMADA_GIT_CHANNEL_METADATA_KEY] : {};
+    const bounded = normalizeGitRepositoryAttachments(attachments)
+      .map((a) => ({ ...a, relayHints: a.relayHints.slice(0, MAX_CHANNEL_GIT_RELAY_HINTS) })).slice(0, MAX_CHANNEL_GIT_ATTACHMENTS);
+    return { ...body, custom: { ...custom, [ARMADA_GIT_CHANNEL_METADATA_KEY]: { ...extension, repositories: bounded.map(gitAttachmentWire) } } };
+  }
+  function gitAddressOrThrow(value) {
+    const address = parseGitRepositoryAddress(String(value || ""));
+    if (!address) throw new Error("repository address must be a 30617:<pubkey>:<identifier> coordinate");
+    return address;
+  }
+  function relayHintsOf(values) {
+    return (Array.isArray(values) ? values : []).filter((r) => typeof r === "string").slice(0, MAX_CHANNEL_GIT_RELAY_HINTS);
+  }
   async function createChannelEditWrap(bundle, controlWraps, channelId, changes, pubkey, signEvent) {
     requireActiveMembership(bundle);
     const me = String(pubkey || "").toLowerCase(), eid = String(channelId || "").toLowerCase();
@@ -27330,10 +27355,32 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if (live.length <= 1) throw new Error("a community keeps at least one channel");
       body.deleted = true;
     }
+    /* ATTACH / DETACH A GIT REPOSITORY. Built on the FOLDED attachments (normalized), not the raw
+     * prior body, so a malformed entry another client wrote can never be re-published. Attaching a
+     * repository that is already active is refused rather than opening a second interval. */
+    if (changes && (changes.attachRepository || changes.detachRepository)) {
+      const now = Math.floor(Date.now() / 1000);
+      let attachments = channelGitRepositoryAttachments(current.metadata || {});
+      if (changes.attachRepository) {
+        const address = gitAddressOrThrow(changes.attachRepository.address);
+        if (attachments.some((a) => a.address.coordinate === address.coordinate && a.detachedAt === void 0))
+          throw new Error("that repository is already attached to this channel");
+        attachments = [...attachments, { address, relayHints: normalizedRelays(relayHintsOf(changes.attachRepository.relayHints)), attachedAt: now }];
+      }
+      if (changes.detachRepository) {
+        const address = gitAddressOrThrow(changes.detachRepository);
+        if (!attachments.some((a) => a.address.coordinate === address.coordinate && a.detachedAt === void 0))
+          throw new Error("that repository is not attached to this channel");
+        attachments = attachments.map((a) => a.address.coordinate === address.coordinate && a.detachedAt === void 0
+          ? { ...a, detachedAt: Math.max(now, a.attachedAt) } : a);
+      }
+      Object.assign(body, withGitAttachments(body, attachments));
+    }
     const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, eid], [TAG_EVERSION, (head.version + 1n).toString()], [TAG_EPREV, bytesToHex2(head.hash)], ...authority];
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey: me, ms: Date.now(), tags });
     const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
-    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channel: body };
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channel: body,
+             repositories: channelGitRepositoryAttachments(body).map(gitAttachmentWire) };
   }
   /* TYPING (kind 23311, empty, in an EPHEMERAL 21059 wrap — relays forward and never store it). */
   async function createTypingWrap(bundle, controlWraps, channelId, pubkey, signEvent) {
@@ -27646,12 +27693,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     /* CORD-03 §2 `view` (what Armada's New Channel dialog writes for a Forum). "chat" is written as
      * an ABSENT field, exactly as Armada's withChannelView does, so equal state is equal bytes. */
     if (channel && channel.view === "forum") body.view = "forum";
+    let opened = body;
+    if (channel && channel.repository) {
+      const address = gitAddressOrThrow(channel.repository.address);
+      opened = withGitAttachments(body, [{ address, relayHints: normalizedRelays(relayHintsOf(channel.repository.relayHints)), attachedAt: Math.floor(Date.now() / 1000) }]);
+    }
     const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"], ...authority];
-    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey,
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(opened), pubkey,
                                ms: Date.now(), tags });
     const group = writableControlGroup(groups);
     const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
-    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name, view: body.view === "forum" ? "forum" : "chat" };
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name, view: body.view === "forum" ? "forum" : "chat",
+             repositories: channelGitRepositoryAttachments(opened).map(gitAttachmentWire) };
   }
   // First private access uses CORD-05 delivery, not a rekey blob (the new member
   // has no old key with which to authenticate a rotation commitment).
