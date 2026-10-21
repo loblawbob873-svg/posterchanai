@@ -1181,7 +1181,10 @@ window.PCTimelineFactory = function(dep){
         const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el));
           if(!bg) _tlBgFramed=false;   // same as the modal: ✕ drops the frame too
           _tlBgPreview(); _paperChip(bgsRow, bg, ()=>pick(none,null)); };
-        none.onclick=()=>pick(none,null);
+        /* ✕ IS "NO BACKGROUND, AND PUT THE PICKER AWAY". It only cleared the choice, so with nothing picked yet
+         * (✕ is already the selected swatch) a click changed nothing at all -- "if I click x, nothing happens.
+         * If users change mind, it should disappear." It clears and closes the row now. */
+        none.onclick=()=>{ pick(none,null); bgsRow.classList.add('hidden'); };
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
         // The only thing a card cannot be made from is NO WORDS (a bare link). Length and links are no
         // longer refusals: buildBgPost puts the hook on the card and everything else — the rest of the

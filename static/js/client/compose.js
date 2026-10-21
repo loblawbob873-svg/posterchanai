@@ -645,7 +645,8 @@ window.PCComposeFactory = function(dep){
           // ✕, matching the strip at the top of Social. This said "Aa", so the same control was labelled
           // two different ways depending on which composer you opened.
           const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='✕';
-          none.onclick=()=>select(null,none); strip.appendChild(none);
+          // ✕ clears the background AND closes the row (see timeline.js: with nothing picked it did nothing).
+          none.onclick=()=>{ select(null,none); strip.classList.add('hidden'); bgBtn.classList.remove('active'); }; strip.appendChild(none);
           // Length and links no longer disqualify a background: buildBgPost puts the hook on the card and
           // the rest — remaining text, source link — underneath, where a URL is still clickable. Only a
           // draft with NO words left has nothing to draw.
