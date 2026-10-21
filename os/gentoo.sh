@@ -2814,7 +2814,7 @@ PROFILE
 	else
 		echo -e "\033[1;33m  ! the USB scanner is not in this tree — \"Add USB device\" on This computer will refuse\033[0m"
 	fi
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-usb-grant update-posterchan ptop; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-eac-check pc-usb-grant update-posterchan ptop; do
 		# SYNCED OVERLAY FIRST. $PCOS_TREE is install-day state on the build host — preferring it
 		# hands the new machine whatever session helpers that host had when IT was installed. The
 		# same ordering shipped a two-week-old installer and a two-week-old wayfire.ini; these are

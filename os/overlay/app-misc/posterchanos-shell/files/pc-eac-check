@@ -1,0 +1,106 @@
+#!/bin/bash
+# pc-eac-check — does this machine meet what Easy Anti-Cheat Linux v2 (Fortnite and other Epic games) checks?
+#
+# Epic announced EAC Linux v2 on 2026-10-14. It loads no kernel module of its own; when a protected game starts
+# it checks how the machine booted. The requirements as published (they say the list will change):
+#   signed kernel and kernel modules (a key EPIC recognises -- not one you made), Secure Boot, TPM 2.0,
+#   measured boot, IOMMU on with passthrough off, kernel lockdown in INTEGRITY mode, kexec disabled at boot,
+#   and the BPF LSM loaded.
+# This asks each question from the running system and says what is missing and why. It changes nothing.
+#
+# What it CANNOT answer is whether Epic recognises the key that signed this kernel: that list is Epic's. It
+# prints the signers it can see so the answer can be looked up.
+#
+# Env for tests: PC_ROOT (a fake / for /sys and /proc), PC_MODINFO (the modinfo command).
+set -u
+R="${PC_ROOT:-}"
+MODINFO="${PC_MODINFO:-modinfo}"
+RED=$'\033[1;31m'; YEL=$'\033[1;33m'; GRN=$'\033[1;32m'; OFF=$'\033[0m'
+[ -t 1 ] || { RED=; YEL=; GRN=; OFF=; }
+FAIL=0
+ok()   { printf '%s  ok  %s %s\n' "$GRN" "$OFF" "$*"; }
+no()   { printf '%s  NO  %s %s\n' "$RED" "$OFF" "$*"; FAIL=$((FAIL + 1)); }
+huh()  { printf '%s  ??  %s %s\n' "$YEL" "$OFF" "$*"; FAIL=$((FAIL + 1)); }
+fix()  { printf '        %s\n' "$*"; }
+CMDLINE="$(cat "$R/proc/cmdline" 2>/dev/null)"
+has_arg() { case " $CMDLINE " in *" $1 "*) return 0;; esac; return 1; }
+
+echo "Easy Anti-Cheat Linux v2 — what this machine has"
+
+# Secure Boot: the efivar's 5th byte (the first 4 are attributes).
+sb="$R/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+if [ ! -d "$R/sys/firmware/efi" ]; then
+	no "Secure Boot — this machine did not boot through UEFI"; fix "Reinstall in UEFI mode; Secure Boot does not exist on a legacy BIOS boot."
+elif [ -r "$sb" ] && [ "$(od -An -t u1 -j4 -N1 "$sb" 2>/dev/null | tr -d ' ')" = "1" ]; then
+	ok "Secure Boot is on"
+else
+	no "Secure Boot is off"; fix "Turn it on in the firmware setup. The boot chain must then be signed (shim + a signed kernel)."
+fi
+
+# TPM 2.0
+v="$(cat "$R/sys/class/tpm/tpm0/tpm_version_major" 2>/dev/null)"
+if [ "$v" = "2" ]; then ok "TPM 2.0 present"
+elif [ -n "$v" ]; then no "TPM is version $v, not 2.0"
+else no "No TPM visible"; fix "Enable the TPM (fTPM / PTT on most boards) in the firmware setup."; fi
+
+# Measured boot: the firmware's event log of what it ran.
+log="$R/sys/kernel/security/tpm0/binary_bios_measurements"
+if [ -s "$log" ]; then ok "Measured boot (the firmware's TPM event log is there)"
+elif [ "$v" = "2" ]; then huh "Measured boot — no TPM event log visible (is securityfs mounted?)"
+else no "Measured boot — needs the TPM above"; fi
+
+# IOMMU on, and not in passthrough (an identity domain means a device can reach all memory unchecked).
+if [ -n "$(ls -A "$R/sys/class/iommu" 2>/dev/null)" ]; then
+	ident=0
+	for t in "$R"/sys/kernel/iommu_groups/*/type; do [ -r "$t" ] && [ "$(cat "$t")" = "identity" ] && ident=$((ident + 1)); done
+	if has_arg "iommu=pt" || has_arg "iommu.passthrough=1" || [ "$ident" -gt 0 ]; then
+		no "IOMMU is on but in passthrough ($ident identity group(s))"; fix "Remove iommu=pt / iommu.passthrough=1; add iommu.passthrough=0."
+	else ok "IOMMU on, passthrough off"; fi
+else
+	no "IOMMU is off"; fix "Enable VT-d / AMD-Vi in the firmware, and intel_iommu=on on Intel."
+fi
+
+# Lockdown: integrity, chosen at boot.
+lk="$(cat "$R/sys/kernel/security/lockdown" 2>/dev/null)"
+case "$lk" in
+	*"[integrity]"*) if has_arg "lockdown=integrity"; then ok "Kernel lockdown: integrity, set at boot"
+		else ok "Kernel lockdown: integrity (Epic asks for it to be set explicitly: lockdown=integrity)"; fi ;;
+	*"[confidentiality]"*) no "Kernel lockdown is confidentiality — Epic asks for integrity"; fix "Use lockdown=integrity." ;;
+	*"[none]"*) no "Kernel lockdown is off"; fix "Boot with lockdown=integrity. Note: it switches off hibernation and refuses unsigned modules." ;;
+	*) no "Kernel lockdown is not available in this kernel" ;;
+esac
+
+# kexec disabled
+kx="$(cat "$R/proc/sys/kernel/kexec_load_disabled" 2>/dev/null)"
+if [ "$kx" = "1" ]; then ok "kexec is disabled"
+else no "kexec is allowed"; fix "Set kernel.kexec_load_disabled=1 at boot (it cannot be turned back on until the next boot)."; fi
+
+# BPF LSM
+if grep -qw bpf "$R/sys/kernel/security/lsm" 2>/dev/null; then ok "BPF LSM loaded"
+else no "BPF LSM not loaded"; fix "Add bpf to lsm= on the kernel command line."; fi
+
+# Modules: every loaded one signed; and by whom.
+unsigned=(); declare -A signers=()
+# Signed = a signature is appended (sig_id). The SIGNER's name is separate: a PKCS#7 signature without
+# signer info, or a modinfo built without OpenSSL, reads blank while the module is signed -- so a blank
+# signer is "could not name it", never "unsigned". The kernel's own taint flag (below) is the authority.
+unnamed=0
+while read -r m _; do
+	if [ -z "$($MODINFO -F sig_id "$m" 2>/dev/null | head -n1)" ]; then unsigned+=("$m"); continue; fi
+	s="$($MODINFO -F signer "$m" 2>/dev/null | head -n1)"
+	if [ -n "$s" ]; then signers["$s"]=1; else unnamed=$((unnamed + 1)); fi
+done < <(cat "$R/proc/modules" 2>/dev/null)
+if [ "${#unsigned[@]}" -eq 0 ]; then ok "Every loaded module is signed"
+else no "Unsigned modules loaded: ${unsigned[*]}"; fix "Build them with USE=modules-sign (nvidia-drivers, virtualbox and other out-of-tree modules)."; fi
+taint="$(cat "$R/proc/sys/kernel/tainted" 2>/dev/null || echo 0)"
+[ $(( taint & 8192 )) -ne 0 ] && no "The kernel is tainted by an unsigned module (taint flag E)"
+if [ "${#signers[@]}" -gt 0 ]; then
+	echo "  Module signers seen: $(printf '%s; ' "${!signers[@]}")"
+fi
+[ "$unnamed" -gt 0 ] && echo "  $unnamed signed module(s) whose signer this modinfo cannot name."
+echo "  Whether Epic RECOGNISES those keys is Epic's list, not something this machine can answer. A key made on"
+echo "  this machine (a MOK you enrolled, a modules-sign key generated here) is not one they recognise."
+
+echo
+if [ "$FAIL" -eq 0 ]; then echo "${GRN}Everything this machine can check is in place.${OFF}"; exit 0; fi
+echo "${YEL}$FAIL thing(s) to change.${OFF}"; exit 1
