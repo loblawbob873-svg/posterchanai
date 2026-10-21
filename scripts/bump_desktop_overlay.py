@@ -173,7 +173,7 @@ def _audit_payload(blob):
             return True
 
         required = (
-            "www/static/css/concord.css", "www/static/js/client/concord.js", "www/static/js/client/concord-git.js",
+            "www/static/css/concord.css", "www/static/js/client/concord.js", "www/static/js/client/concord-git.js", "www/static/js/client/apptheme.js",
             "www/static/js/client/cord-reader.js", "www/static/js/client/cord-protocol.js",
             "www/static/js/client/code.js", "www/static/js/client/hostfiles.js",
             "www/static/js/client/preview.js",

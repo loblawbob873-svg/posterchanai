@@ -83,6 +83,7 @@ const SHELL = [
   '/static/js/client/monero-wallet.js',
   '/static/js/client/exodus.js',
   '/static/js/client/concord-git.js',
+  '/static/js/client/apptheme.js',
   '/static/js/client/concord.js',
   '/static/js/client/cord-protocol.js',
   '/static/js/client/cord-reader.js',

@@ -33,6 +33,72 @@ window.PCSettingsFactory = function(dep){
     userRelays, saveBlobAs, _sbSync,
   } = dep;
 
+  /* SETTINGS -> APPEARANCE (apptheme.js does the painting; this is only its editor). Your colours, a section's
+   * own colours, a wallpaper. A colour input cannot be empty, so each one carries a ✕ that clears it back to
+   * the theme's, and an unset one shows the theme's current value greyed. Live while dragging, saved on release. */
+  function _lookPaneHtml(){
+    const L=window.PCLook; if(!L) return '';
+    const t=L.get(), cs=getComputedStyle(document.documentElement);
+    const themeHex=n=>{ const v=String(cs.getPropertyValue(n)||'').trim(); if(/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
+      const m=v.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i); return m?('#'+m[1]+m[1]+m[2]+m[2]+m[3]+m[3]).toLowerCase():'#808080'; };
+    const pick=(key,label,val,def,sec)=>`<span class="look-col${val?'':' unset'}"><label>${label}<input type="color" data-look="${key}"${sec?` data-sec="${sec}"`:''} value="${val||def}"></label>`+
+      `<button type="button" class="look-clear" data-look-clear="${key}"${sec?` data-sec="${sec}"`:''} aria-label="Use the theme's ${label.toLowerCase()}" title="Use the theme's">✕</button></span>`;
+    const w=t.wall||{pos:'center center',size:'fill',dim:.35,url:''};
+    return `<div class="look">
+      <h4>Your colours <span class="muted small">— on top of the theme, everywhere in the app</span></h4>
+      <div class="look-row">${pick('accent','Accent',t.accent,themeHex('--neon'))}${pick('bg','Background',t.bg,themeHex('--bg'))}${pick('text','Text',t.text,themeHex('--text'))}</div>
+      <h4>Each section <span class="muted small">— its own colours; empty uses yours</span></h4>
+      <div class="look-secs">${L.SECTIONS.map(([id,name])=>{ const s=t.sec[id]||{};
+        return `<div class="look-sec"><b>${enc(name)}</b>${pick('accent','Accent',s.accent,t.accent||themeHex('--neon'),id)}${pick('bg','Background',s.bg,t.bg||themeHex('--bg'),id)}</div>`; }).join('')}</div>
+      <h4>Wallpaper</h4>
+      <div class="look-wall">
+        <div class="look-row"><label class="btn btn-ghost small look-file">Choose image<input type="file" accept="image/*" id="look-file" hidden></label>
+          <input class="input" id="look-url" type="url" placeholder="…or paste an image link (https://…)" value="${enc(w.url||'')}">
+          <button type="button" class="btn btn-ghost small" id="look-wall-off"${t.wall?'':' disabled'}>Remove</button></div>
+        <div class="look-pos" role="radiogroup" aria-label="Wallpaper position">${L.POSITIONS.map(([id,label])=>
+          `<button type="button" role="radio" class="look-pos-b${w.pos===id?' on':''}${id==='tile'?' tile':''}" data-pos="${id}" aria-checked="${w.pos===id}" title="${label}">${id==='tile'?'Tile':'<i></i>'}</button>`).join('')}</div>
+        <div class="look-row"><span class="muted small">Size</span>
+          <button type="button" class="look-chip${w.size!=='original'?' on':''}" data-size="fill">Fill the screen</button>
+          <button type="button" class="look-chip${w.size==='original'?' on':''}" data-size="original">Original size</button></div>
+        <label class="fld look-dim">Dim the picture <span class="muted small" id="look-dim-v">${Math.round((w.dim||0)*100)}%</span>
+          <input type="range" id="look-dim" min="0" max="90" step="5" value="${Math.round((w.dim||0)*100)}"></label>
+      </div>
+      <div class="look-row"><button type="button" class="btn btn-ghost" id="look-reset"${L.isCustom()?'':' disabled'}>Reset appearance</button>
+        <span class="muted small">Saved to your account — every device you sign in to looks the same.</span></div>
+    </div>`;
+  }
+  function _wireLook(host){
+    const L=window.PCLook, box=host.querySelector('#us-look'); if(!L||!box) return;
+    const redraw=()=>{ box.innerHTML=_lookPaneHtml(); bind(); };
+    const wall=patch=>{ const w=L.get().wall; if(!w) return; L.set({wall:{...w,...patch}}); redraw(); };
+    function setWall(url){ const w=L.get().wall||{pos:'center center',size:'fill',dim:.35};
+      const t=L.set({wall:{...w,url}}); if(!t.wall){ toast('That is not an image link this can use (https://…)'); } redraw(); }
+    function bind(){
+      box.querySelectorAll('input[type=color][data-look]').forEach(i=>{
+        const go=save=>{ const k=i.dataset.look, sec=i.dataset.sec; if(sec) L.setSection(sec,{[k]:i.value},{save}); else L.set({[k]:i.value},{save});
+          i.closest('.look-col').classList.remove('unset'); };
+        i.oninput=()=>go(false); i.onchange=()=>{ go(true); redraw(); };
+      });
+      box.querySelectorAll('[data-look-clear]').forEach(b=>b.onclick=()=>{ const k=b.dataset.lookClear, sec=b.dataset.sec;
+        if(sec) L.setSection(sec,{[k]:''}); else L.set({[k]:''}); redraw(); });
+      box.querySelectorAll('[data-pos]').forEach(b=>b.onclick=()=>wall({pos:b.dataset.pos}));
+      box.querySelectorAll('[data-size]').forEach(b=>b.onclick=()=>wall({size:b.dataset.size}));
+      const dim=box.querySelector('#look-dim'), dv=box.querySelector('#look-dim-v');
+      if(dim){ dim.oninput=()=>{ const w=L.get().wall; if(dv) dv.textContent=dim.value+'%'; if(w) L.set({wall:{...w,dim:dim.value/100}},{save:false}); };
+        dim.onchange=()=>{ const w=L.get().wall; if(w) L.set({wall:{...w,dim:dim.value/100}}); }; }
+      const url=box.querySelector('#look-url'); if(url) url.onchange=()=>{ const v=url.value.trim(); if(v) setWall(v); };
+      const off=box.querySelector('#look-wall-off'); if(off) off.onclick=()=>{ L.set({wall:null}); redraw(); };
+      const reset=box.querySelector('#look-reset'); if(reset) reset.onclick=()=>{ L.reset(); redraw(); };
+      const file=box.querySelector('#look-file'); if(file) file.onchange=async()=>{
+        const f=file.files&&file.files[0]; if(!f) return;
+        const up=window.__PC&&window.__PC.uploadBlob; if(!up){ toast('Uploading is not available here — paste an image link instead'); return; }
+        toast('Uploading the wallpaper…');
+        try{ setWall(await up(f)); toast('Wallpaper set'); }catch(e){ toast('Upload failed: '+((e&&e.message)||e)); }
+      };
+    }
+    bind();
+  }
+
   /* The apps this device signs for — visible, and revocable one at a time.
    *
    * Without this the pairings were invisible: nothing on screen said an app was connected, and the
@@ -636,7 +702,7 @@ window.PCSettingsFactory = function(dep){
     const _phoneTab = window.Capacitor ? [['phone','Phone']] : [];
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
-    const tabs=[['profile','Profile'],['timeline','Timeline'],['notifications','Notifications'],['ringtone','Sounds'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    const tabs=[['profile','Profile'],['appearance','Appearance'],['timeline','Timeline'],['notifications','Notifications'],['ringtone','Sounds'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !((_standalone() || _settingsServerDown) && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -663,10 +729,13 @@ window.PCSettingsFactory = function(dep){
         <button class="btn btn-ghost small" id="us-retry">Retry</button></div>`:''}
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="set-body">
-        <div class="us-pane active" data-pane="profile">
+        <div class="us-pane" data-pane="appearance">
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
+          <div id="us-look">${_lookPaneHtml()}</div>
+        </div>
+        <div class="us-pane active" data-pane="profile">
           <div class="muted small" id="us-build" style="margin:-2px 0 6px">Build <code>${enc(String(window.__PC_BUILD||'unknown'))}</code>${_standalone()||BUNDLED?' \u00b7 this app':' \u00b7 this server'}</div>
           <label class="fld">Language <span class="muted small">(English is the default; Arabic switches the layout right-to-left)</span>
             <select class="input" id="us-lang">${_langOptions()}</select>
@@ -921,6 +990,7 @@ window.PCSettingsFactory = function(dep){
     _placePushCard(host);
     _ringtonePane(host);
     { const rtry=$('.us-server-down #us-retry',host); if(rtry) rtry.onclick=renderUserSettings; }
+    _wireLook(host);
     $$('.us-tab',host).forEach(b=> b.onclick=()=>{
       $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
       $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));

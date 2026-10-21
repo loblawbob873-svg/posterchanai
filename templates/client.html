@@ -30,6 +30,9 @@
       if(w>=3500&&h>=1800)z=1.25;else if(w>1920)z=1;else if(w>=1400&&r>=1.2&&m)z=1;else if(w>1600)z=.77;else if(w>1366)z=.72;else z=.67;
       if(w)document.documentElement.style.setProperty('--screen-scale',String(z));}catch(e){}})();</script>
     <script>try{var d='{{ default_theme|default("cyberpunk") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    <!-- Settings -> Appearance (your colours, per-section colours, wallpaper) paints here, before the body, from its
+         saved copy -- the same no-flash rule as the theme line above. -->
+    <script src="/static/js/client/apptheme.js?v={{ ver }}"></script>
     <!-- Avatars/media: send no Referer (many image CDNs 403 a cross-origin referrer). The http:// →
          https:// upgrade is the Content-Security-Policy RESPONSE HEADER (render_client_shell), never a
          <meta> here: a CSP <meta> switches off Chrome's preload scanner, and the ~70 blocking scripts

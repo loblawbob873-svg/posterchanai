@@ -341,8 +341,8 @@ window.PCBlossomFactory = function(dep){
   const _STAMPED_PREFS=[['startupApps','startupAppsAt'],['searchBar','searchBarAt']];   // [value, its stamp]
   function _dropStale(local, remote){   // removes from `local` what `remote` holds a NEWER copy of; true if it did
     const r=remote||{}, at=v=>Number(v&&v.at)||0; let changed=false;
-    if('concordTheme' in local && r.concordTheme && typeof r.concordTheme==='object' && at(r.concordTheme)>at(local.concordTheme)){
-      delete local.concordTheme; changed=true; }
+    for(const k of ['concordTheme','appLook'])
+      if(k in local && r[k] && typeof r[k]==='object' && at(r[k])>at(local[k])){ delete local[k]; changed=true; }
     for(const [k,ka] of _STAMPED_PREFS)
       if((k in local || ka in local) && (Number(r[ka])||0)>(Number(local[ka])||0)){ delete local[k]; delete local[ka]; changed=true; }
     return changed;
@@ -533,6 +533,8 @@ window.PCBlossomFactory = function(dep){
       }
       // The Concord theme carries its own `at`, so concord.js decides which side is newer.
       if(pr.concordTheme && typeof pr.concordTheme==='object' && window.PCConcordTheme) window.PCConcordTheme.adopt(pr.concordTheme, owner);
+      // So does Settings -> Appearance (apptheme.js): this account's look, then the synced copy if newer.
+      if(window.PCLook){ window.PCLook.forOwner(owner); if(pr.appLook && typeof pr.appLook==='object') window.PCLook.adopt(pr.appLook, owner); }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));

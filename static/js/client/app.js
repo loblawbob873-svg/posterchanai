@@ -7190,6 +7190,7 @@
     /* Concord is an application workspace, not a prose-width timeline. Set this before paint so its
      * own sheet can remove the right rail and width cap without a one-frame layout jump. */
     document.body.classList.toggle('concord-view', v==='concord');
+    try{ window.PCLook && PCLook.section(v); }catch(_){}   // Settings -> Appearance: this section's own colours
     for(const el of [document.querySelector('.rightbar'),document.getElementById('rb-toggle')]){
       if(!el) continue;
       if(v==='concord') el.style.setProperty('display','none','important');
@@ -14375,6 +14376,8 @@
     // buddy.js: the desktop PosterChan's on/off and spot follow the account (pcai:client-prefs).
     // concord.js: the Concord theme follows the account (pcai:client-prefs `concordTheme`).
     saveConcordTheme: v => saveClientPrefsNostr({ concordTheme: v }),
+    // apptheme.js: Settings -> Appearance follows the account too (`appLook`, newer `at` wins).
+    saveAppLook: v => saveClientPrefsNostr({ appLook: v }),
     saveDesktopBuddy: v => { try{ _prefTouched.add('desktopBuddy'); }catch(_){} return saveClientPrefsNostr({ desktopBuddy: v }); },
     saveStartupApps: (v, at) => { try{ _prefTouched.add('startupApps'); }catch(_){}
       return saveClientPrefsNostr({ startupApps: v, startupAppsAt: Number(at) || Date.now() }); },

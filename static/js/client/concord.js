@@ -49,7 +49,9 @@
         root.setAttribute('data-cc-theme',t.theme);
         for(const n of painted)root.style.removeProperty(n);
         const v=t.bg?bgVars(t.bg):{};
-        if(t.accent){const c=rgb(t.accent);v['--cct-accent']=t.accent;v['--cct-accent-rgb']=c.join(',');v['--cct-on-accent']=lum(t.accent)>.36?'#05060b':'#ffffff';}
+        /* --cct-line too: it was the one colour a custom accent left alone, so every bordered tile and sheet kept
+         * the PRESET's line colour under the new accent (git issue "Concord Theme match": "one color that does not change"). */
+        if(t.accent){const c=rgb(t.accent);v['--cct-accent']=t.accent;v['--cct-accent-rgb']=c.join(',');v['--cct-on-accent']=lum(t.accent)>.36?'#05060b':'#ffffff';v['--cct-line']=`rgba(${c.join(',')},.28)`;}
         painted=Object.keys(v); for(const n of painted)root.style.setProperty(n,v[n]);
       }catch(_){}
       try{document.querySelectorAll('[data-cc-theme-pick]').forEach(b=>{const on=b.dataset.ccThemePick===t.theme;b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on));});}catch(_){}
@@ -75,6 +77,7 @@
         <div class="cc-theme-grid" role="radiogroup" aria-label="Theme">${tiles}</div>
         <div class="cc-theme-custom"><label>Accent colour<input type="color" id="cc-theme-accent" value="${cur.accent||'#00f0ff'}"></label><label>Background<input type="color" id="cc-theme-bg" value="${cur.bg||'#0e0c1f'}"></label>
         <button type="button" class="btn btn-ghost" id="cc-theme-reset">Reset to preset colours</button></div>
+        ${window.PCLook?'<p class="cc-theme-whole"><button type="button" class="btn btn-ghost" id="cc-theme-whole">Use these colours for the whole app</button> <span class="muted">Everything else (sections, wallpaper) is in Settings → Appearance.</span></p>':''}
         <p class="cc-theme-note" id="cc-theme-note">${cur.accent||cur.bg?'Custom colours are on.':'Using the preset’s own colours.'}</p>
         <div class="cc-join-actions"><button type="button" class="btn btn-neon" id="cc-theme-done">Done</button></div>`,box=>{
         const note=()=>{const n=box.querySelector('#cc-theme-note');if(n)n.textContent=cur.accent||cur.bg?'Custom colours are on.':'Using the preset’s own colours.';};
@@ -82,6 +85,12 @@
         for(const [id,key] of [['#cc-theme-accent','accent'],['#cc-theme-bg','bg']]){const i=box.querySelector(id);if(!i)continue;
           i.oninput=()=>{set({[key]:i.value},{save:false});note();}; i.onchange=()=>{set({[key]:i.value});note();};}
         const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{set({accent:'',bg:''});note();};
+        /* "It should change the app theme in every page" (git issue). The colours go to Settings -> Appearance and
+         * Concord switches to Match app theme, so the one look is kept in one place and Concord follows it. */
+        const whole=box.querySelector('#cc-theme-whole');if(whole)whole.onclick=()=>{
+          if(!cur.accent&&!cur.bg){const n=box.querySelector('#cc-theme-note');if(n)n.textContent='Pick an accent or background first.';return;}
+          window.PCLook.set({accent:cur.accent||window.PCLook.get().accent,bg:cur.bg||window.PCLook.get().bg});
+          set({theme:'app',accent:'',bg:''});const n=box.querySelector('#cc-theme-note');if(n)n.textContent='The whole app uses these colours now; Concord matches it.';};
         const done=box.querySelector('#cc-theme-done');if(done)done.onclick=()=>{try{p.closeModal&&p.closeModal();}catch(_){}};
       });
     }

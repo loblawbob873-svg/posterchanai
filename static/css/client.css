@@ -12548,3 +12548,30 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 
 /* Texts: a blocked conversation says so in the list (sms.js blockLine). */
 .sms-blocked{margin-top:2px;color:var(--red,#e5534b);font-size:12px}
+
+/* SETTINGS -> APPEARANCE (settings.js _lookPaneHtml; apptheme.js paints). Swatches wrap on a phone; the nine
+   position buttons are a 3x3 picture of where the image sits, Tile below them. */
+.look{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.look h4{margin:10px 0 0;font-size:14px}
+.look-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.look-col{display:inline-flex;align-items:center;gap:4px}
+.look-col label{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.look-col input[type=color]{width:34px;height:28px;padding:0;border:1px solid var(--line);border-radius:var(--r-sm);background:none;cursor:pointer}
+.look-col.unset input[type=color]{opacity:.45}
+.look-col.unset .look-clear{visibility:hidden}
+.look-clear{width:24px;height:24px;border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer;font-size:12px}
+.look-clear:hover{background:var(--hover);color:var(--text)}
+.look-secs{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 14px}
+.look-sec{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 0;border-bottom:1px solid var(--line)}
+.look-sec b{flex:1 0 100%;font-size:13px;font-weight:600}
+.look-wall .input{flex:1 1 220px;min-width:0}
+.look-pos{display:grid;grid-template-columns:repeat(3,44px);gap:6px}
+.look-pos-b{position:relative;height:34px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2);cursor:pointer;color:var(--muted)}
+.look-pos-b i{position:absolute;width:10px;height:10px;border-radius:2px;background:currentColor}
+.look-pos-b:nth-child(3n+1) i{left:5px}.look-pos-b:nth-child(3n+2) i{left:calc(50% - 5px)}.look-pos-b:nth-child(3n) i{right:5px}
+.look-pos-b:nth-child(-n+3) i{top:5px}.look-pos-b:nth-child(n+4):nth-child(-n+6) i{top:calc(50% - 5px)}.look-pos-b:nth-child(n+7):nth-child(-n+9) i{bottom:5px}
+.look-pos-b.tile{grid-column:1 / -1;font-size:12px}
+.look-pos-b.on{border-color:var(--neon);color:var(--neon);box-shadow:var(--glow)}
+.look-chip{padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:none;color:var(--text);cursor:pointer;font-size:13px}
+.look-chip.on{border-color:var(--neon);color:var(--neon)}
+.look-dim input{width:100%}
