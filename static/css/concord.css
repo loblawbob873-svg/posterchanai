@@ -773,3 +773,11 @@ body.ccg-projects-open::before{content:"";position:fixed;inset:0;z-index:79;back
 .cc-invite-card strong{padding:6px 12px;border-radius:calc(8px*var(--cct-round));background:var(--cct-accent);color:var(--cct-on-accent);font-size:12px}
 .cc-channel-list .cc-invite-card{margin:4px 0 10px}
 .cc-invite-count{margin-inline-start:5px;padding:0 6px;border-radius:999px;background:var(--cct-accent);color:var(--cct-on-accent);font-size:11px;font-weight:700}
+
+/* The community-notifications bell, switched off (concord.js concordNotifyOn). */
+.cc-head-btn.cc-notify-off{opacity:.6}
+/* The bell lives in the rooms drawer's footer; a phone -- which on the Concord home never shows that drawer -- gets
+   a copy in the header (concord.js #cc-notify-head). The desktop shows the footer, so the copy is hidden there. */
+@media(min-width:821px){.cc-notify-head{display:none!important}}
+/* The Concord HOME has no community and no channel: no message composer there ("Message #general" to nobody). */
+.cc-app.home-view .cc-compose,.cc-app.home-view .cc-reply,.cc-app.home-view .cc-typing{display:none!important}

@@ -597,8 +597,18 @@ window.PCMusicPlayerFactory = function(dep){
        * a SECOND — timeupdate fires ~4x — so the widget costs no new timer and cannot tick while
        * nothing plays, which is what put it here in the first place. */
       { const sec=Math.floor((S._audioEl&&S._audioEl.currentTime)||0);
-        if(sec!==this._msSec){ this._msSec=sec; this._media();
-          try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
+        if(sec!==this._msSec){ this._msSec=sec;
+          /* THE OS IS TOLD ABOUT CHANGES, NOT ABOUT SECONDS. MusicService hands Android the position with a speed and
+           * a timestamp (PlaybackStateCompat), so the lock screen / notification / car advance the bar on their own.
+           * Pushing every second rebuilt the media metadata (with its bitmap) and the notification 3,600 times an hour
+           * of playback, screen off included (2026-10-21 audit). Now: on a new track, play/pause, a duration that
+           * became known, a SEEK (the position off by more than 2 s from where it should be), and a 30 s resync. */
+          const a=S._audioEl, now=Date.now(), playing=!!(a&&!a.paused), pos=(a&&a.currentTime)||0,
+            sig=[this.cur&&(this.cur.id||this.cur.url||this.cur.name)||'', playing, Math.round((a&&isFinite(a.duration))?a.duration:0)].join('|'),
+            expect=(this._pushPos||0)+(this._pushPlaying?(now-(this._pushAt||0))/1000:0);
+          if(sig!==this._pushSig || Math.abs(pos-expect)>2 || now-(this._pushAt||0)>30000){
+            this._pushSig=sig; this._pushPos=pos; this._pushAt=now; this._pushPlaying=playing; this._media(); }
+          try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}   // the desktop widget's own clock
         } }
       if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');

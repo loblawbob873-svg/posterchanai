@@ -488,6 +488,7 @@
    * author or the repo owner). The first fetch of a repo is silent: history is not news. */
   function notifyFresh(room,fresh){
     const p=P(),mine=me();if(!p||!p.osNotify)return;
+    if(window.PCConcord&&PCConcord.notificationsOn&&!PCConcord.notificationsOn())return;   // the bell is off
     for(const ch of room.channels||[]){
       const acts=channelActivities(room,ch),ids=new Set(fresh.map(e=>e.id));
       for(const a of acts){

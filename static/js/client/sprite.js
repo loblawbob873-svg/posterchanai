@@ -22,6 +22,7 @@
   <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3.2l1.8 4.9 4.9 1.8-4.9 1.8L12 16.6l-1.8-4.9L5.3 9.9l4.9-1.8z"/><path d="M18.4 15.2l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M3.2 12h17.6"/><path d="M12 3.2c2.4 2.6 3.7 5.6 3.7 8.8S14.4 18.2 12 20.8c-2.4-2.6-3.7-5.6-3.7-8.8S9.6 5.8 12 3.2z"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 10-12 0c0 5.2-2 6.6-2 6.6h16S18 14.2 18 9z"/><path d="M13.7 19.2a2 2 0 01-3.4 0"/></symbol>
+  <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M18 9a6 6 0 10-12 0c0 5.2-2 6.6-2 6.6h16S18 14.2 18 9z"/><path d="M13.7 19.2a2 2 0 01-3.4 0"/><path d="M3 3l18 18"/></symbol>
   <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5.2" width="18" height="13.6" rx="2.6"/><path d="M3.7 7.4l7.2 5.1a2 2 0 002.2 0l7.2-5.1"/></symbol>
   <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 3.4h10a1 1 0 011 1v16.2l-6-4-6 4V4.4a1 1 0 011-1z"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.4 3.4h3l1.5 4-2 1.5a12.2 12.2 0 006.2 6.2l1.5-2 4 1.5v3a2 2 0 01-2.2 2A17.2 17.2 0 014.4 5.6a2 2 0 012-2.2z"/></symbol>

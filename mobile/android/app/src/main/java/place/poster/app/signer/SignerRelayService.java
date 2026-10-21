@@ -164,6 +164,9 @@ public class SignerRelayService extends Service {
     private SmsSweep.Report smsHistoryBatch;
     private place.poster.app.sms.SmsArchiveDelivery smsHistoryDelivery;
     private boolean smsHistoryBuilding, smsHistoryRetryScheduled;
+    /** Backoff for the archive re-send: 10 s, doubling to 10 min while relays will not acknowledge; reset by an accepted batch.
+     *  A flat 10 s retry kept a foreground service waking the radio six times a minute, for ever, while a relay refused. */
+    private long smsHistoryRetryMs = 10000L;
     private Object smsHistoryGeneration = new Object();
     private boolean stopping = false;
     private final SignerReplyQueue<ReplyAuthority> replies = new SignerReplyQueue<>();
@@ -889,10 +892,12 @@ public class SignerRelayService extends Service {
     private void scheduleSmsHistoryRetry() {
         if (smsHistoryRetryScheduled || stopping) return;
         smsHistoryRetryScheduled = true;
+        long delay = smsHistoryRetryMs;
+        smsHistoryRetryMs = Math.min(smsHistoryRetryMs * 2, 600000L);
         handler.postDelayed(() -> {
             smsHistoryRetryScheduled = false;
             if (!stopping) sweepSmsHistory();
-        }, 10000L);
+        }, delay);
     }
 
     private void acceptSmsHistoryAck(String id, boolean accepted) {
@@ -901,6 +906,7 @@ public class SignerRelayService extends Service {
         if (!smsHistoryDelivery.accept(id, accepted) || !smsHistoryDelivery.complete()) return;
         SmsSweep.Report completed = smsHistoryBatch;
         smsHistoryBatch = null; smsHistoryDelivery = null;
+        smsHistoryRetryMs = 10000L;   // relays are answering again: back to the quick pace
         SmsArchive.commit(this, completed);
         // Query once after every accepted batch, including rows that arrived during a short pass.
         handler.postDelayed(this::sweepSmsHistory, 4000L);

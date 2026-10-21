@@ -68,3 +68,38 @@ def test_the_sign_in_art_is_not_a_megabytes_png():
     assert "/static/signon-nostr-city.webp" in html and "signon-nostr-city.png" not in html
     art = ROOT / "static/signon-nostr-city.webp"
     assert art.exists() and art.stat().st_size < 400_000, "the sign-in art must stay small (was 2.5 MB)"
+
+
+def test_the_music_notification_is_told_about_changes_not_seconds():
+    mp = (JS / "musicplayer.js").read_text()
+    tick = mp[mp.index("const sec=Math.floor((S._audioEl&&S._audioEl.currentTime)||0);"):][:1600]
+    assert "this._media()" in tick.split("if(sig!==this._pushSig")[1][:400], "a change must still reach the OS"
+    assert "Math.abs(pos-expect)>2" in tick and "now-(this._pushAt||0)>30000" in tick, "seek + 30 s resync"
+    assert tick.count("this._media()") == 1, "the per-second path must not push unconditionally"
+    # Android interpolates the bar itself only because the service hands it a speed + timestamp.
+    svc = (ROOT / "mobile/android/app/src/main/java/place/poster/app/music/MusicService.java").read_text()
+    assert "playing ? 1f : 0f, SystemClock.elapsedRealtime()" in svc
+
+
+def test_on_mobile_data_thumbnails_are_asked_for_at_1_5x():
+    import json
+    script = r"""
+const fs=require('fs'),vm=require('vm');const src=fs.readFileSync(process.argv[1],'utf8');
+const a=src.indexOf('window.PCThumb = (function(){'),b=src.indexOf('})();',a)+5;const out={};
+for(const [k,conn] of [['wifi',{type:'wifi',effectiveType:'4g'}],['cell',{type:'cellular',effectiveType:'4g'}],['save',{type:'wifi',saveData:true}],['slow',{effectiveType:'3g'}],['none',null]]){
+  const window={devicePixelRatio:2.75,__PC_API_BASE__:'https://poster.place'};const ctx={window,location:{},navigator:conn?{connection:conn}:{}};
+  vm.runInNewContext(src.slice(a,b),ctx);out[k]=window.PCThumb.src('https://h.example/p.jpg',100);}
+console.log(JSON.stringify(out));"""
+    r = subprocess.run(["node", "-e", script, str(JS / "app.js")], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    o = json.loads(r.stdout)
+    assert "w=275&" in o["wifi"] and "w=275&" in o["none"], o
+    for k in ("cell", "save", "slow"):
+        assert "w=150&" in o[k], (k, o)
+
+
+def test_the_sms_archive_retry_backs_off():
+    j = (ROOT / "mobile/android/app/src/main/java/place/poster/app/signer/SignerRelayService.java").read_text()
+    retry = j[j.index("private void scheduleSmsHistoryRetry()"):][:500]
+    assert "Math.min(smsHistoryRetryMs * 2, 600000L)" in retry and "}, delay);" in retry
+    assert "smsHistoryRetryMs = 10000L;   // relays are answering again" in j

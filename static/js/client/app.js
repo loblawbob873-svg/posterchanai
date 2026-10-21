@@ -6726,6 +6726,10 @@
     return { scan, park, unpark, GIF };
   })();
   window.PCThumb = (function(){
+    function metered(){
+      try{ const c = navigator.connection; return !!(c && (c.saveData || c.type === 'cellular' || /(^|-)(2g|3g)$/.test(String(c.effectiveType || '')))); }
+      catch(_){ return false; }
+    }
     function base(){
       try{ return (typeof window.__PC_API_BASE__ !== 'undefined') ? (window.__PC_API_BASE__ || '') : (location.origin || ''); }
       catch(_){ return ''; }
@@ -6736,7 +6740,10 @@
        * 1-2 MB animations drawn in a 360px card, decoded at full size on every frame -- and the server now
        * turns one into an animated WebP at the drawn width (thumb_service.resize). SVG stays as it is. */
       if(!b || !/^https?:\/\//i.test(u) || /\.svg(?:[?#]|$)/i.test(u) || u.indexOf('/client/thumb?') >= 0) return u;
-      const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+      /* ON MOBILE DATA A PICTURE IS ASKED FOR AT 1.5x, NOT THE SCREEN'S 2.75x. The connection says so itself
+       * (Network Information: save-data on, a cellular link, or a 2g/3g effective type -- Android's WebView reports
+       * all three); 1.5x is ~3.4x fewer pixels per thumbnail and still sharp at card size. Wi-Fi is unchanged. */
+      const dpr = Math.min(metered() ? 1.5 : 3, Math.max(1, window.devicePixelRatio || 1));
       return b + '/client/thumb?w=' + Math.round((css || 64) * dpr) + '&u=' + encodeURIComponent(u);
     }
     function err(img, fallback){
@@ -6745,7 +6752,7 @@
       if(fallback){ img.onerror = null; img.src = fallback; }
       return false;
     }
-    return { src, err };
+    return { src, err, metered };
   })();
   function _tipMarks(n, p){
     try{
