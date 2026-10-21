@@ -189,6 +189,12 @@
     <string name="tel_vm_call">Call voicemail</string>
     <string name="tel_view_contact">Open contact</string>
     <string name="tel_add_contact">Add to contacts</string>
+    <string name="pc_block">Block number</string>
+    <string name="pc_unblock">Unblock number</string>
+    <string name="pc_blocked_done">Blocked — calls and texts from this number won\'t reach this phone</string>
+    <string name="pc_unblocked_done">Unblocked</string>
+    <string name="pc_block_refused">Android did not change the blocked list — nothing was changed</string>
+    <string name="pc_block_unknown">This phone would not say whether the number is blocked</string>
     <string name="tel_no_contacts_permission">PosterChan has not been allowed to read your contacts yet.</string>
     <string name="tel_missed">Missed</string>
     <string name="tel_delete_entry">Remove from recents</string>

@@ -8,11 +8,18 @@ package place.poster.app.sms;
  * because it is the one that loses nothing; an archived conversation offers Unarchive in its place.
  */
 public final class ThreadMenu {
-    public static final int ARCHIVE = 0, UNARCHIVE = 1, DELETE = 2;
+    public static final int ARCHIVE = 0, UNARCHIVE = 1, DELETE = 2, BLOCK = 3, UNBLOCK = 4;
 
     private ThreadMenu() { }
 
     public static int[] actions(boolean archived) {
-        return new int[]{archived ? UNARCHIVE : ARCHIVE, DELETE};
+        return actions(archived, null);
+    }
+
+    /** Block/Unblock sit between Archive and Delete when the phone's blocked-numbers list can be asked
+     * about this conversation's sender (`blocked` non-null -- never for a group, see Blocklist). */
+    public static int[] actions(boolean archived, Boolean blocked) {
+        if (blocked == null) return new int[]{archived ? UNARCHIVE : ARCHIVE, DELETE};
+        return new int[]{archived ? UNARCHIVE : ARCHIVE, blocked ? UNBLOCK : BLOCK, DELETE};
     }
 }

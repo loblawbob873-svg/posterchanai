@@ -464,14 +464,28 @@ public class ThreadListActivity extends PcActivity {
         } catch (Throwable ignored) { }
     }
 
+    /** Block / unblock the sender through the phone's own list (see phone/Blocklist) and say what the list
+     * says AFTERWARDS -- a write the provider quietly refused is reported as refused, not as done. */
+    private void setBlocked(SmsStore.Thread t, boolean block) {
+        int o = place.poster.app.phone.Blocklist.outcome(block,
+                place.poster.app.phone.Blocklist.set(this, t.address, block));
+        say(getString(o == place.poster.app.phone.Blocklist.BLOCKED ? R.string.pc_blocked_done
+                : o == place.poster.app.phone.Blocklist.UNBLOCKED ? R.string.pc_unblocked_done
+                : o == place.poster.app.phone.Blocklist.REFUSED ? R.string.pc_block_refused
+                : R.string.pc_block_unknown));
+    }
+
     /** Long press: Archive (or Unarchive) first -- it loses nothing -- then Delete. See ThreadMenu. */
     private void threadMenu(final SmsStore.Thread t) {
         final boolean isArchived = SmsArchived.load(this).hidden(t.address, t.date);
-        final int[] acts = ThreadMenu.actions(isArchived);
+        final int[] acts = ThreadMenu.actions(isArchived,
+                place.poster.app.phone.Blocklist.isBlocked(this, t.address));
         String[] labels = new String[acts.length];
         for (int i = 0; i < acts.length; i++) {
             labels[i] = getString(acts[i] == ThreadMenu.ARCHIVE ? R.string.sms_archive
-                    : acts[i] == ThreadMenu.UNARCHIVE ? R.string.sms_unarchive : R.string.sms_delete);
+                    : acts[i] == ThreadMenu.UNARCHIVE ? R.string.sms_unarchive
+                    : acts[i] == ThreadMenu.BLOCK ? R.string.pc_block
+                    : acts[i] == ThreadMenu.UNBLOCK ? R.string.pc_unblock : R.string.sms_delete);
         }
         try {
             new AlertDialog.Builder(this)
@@ -480,6 +494,8 @@ public class ThreadListActivity extends PcActivity {
                     @Override public void onClick(android.content.DialogInterface d, int w) {
                         if (w < 0 || w >= acts.length) return;
                         if (acts[w] == ThreadMenu.DELETE) confirmDeleteThread(t);
+                        else if (acts[w] == ThreadMenu.BLOCK || acts[w] == ThreadMenu.UNBLOCK)
+                            setBlocked(t, acts[w] == ThreadMenu.BLOCK);
                         else archive(t, acts[w] == ThreadMenu.ARCHIVE);
                     }
                 })

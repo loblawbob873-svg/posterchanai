@@ -625,11 +625,23 @@ public class DialerActivity extends PcActivity {
         reload();
     }
 
+    /** Block / unblock through the phone's own list, and say what the list says AFTERWARDS. */
+    private void setBlocked(String number, boolean block) {
+        int o = Blocklist.outcome(block, Blocklist.set(this, number, block));
+        try {
+            android.widget.Toast.makeText(this, getString(o == Blocklist.BLOCKED ? R.string.pc_blocked_done
+                    : o == Blocklist.UNBLOCKED ? R.string.pc_unblocked_done
+                    : o == Blocklist.REFUSED ? R.string.pc_block_refused : R.string.pc_block_unknown),
+                    android.widget.Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) { }
+    }
+
     private void rowMenu(final Row r) {
         if (r == null) return;
         final List<String> labels = new ArrayList<String>();
         // WHAT the menu offers is RowMenu's decision (pure, tested); this only draws it.
-        final List<Integer> acts = RowMenu.actions(r.contactId >= 0, r.entry != null, r.number);
+        final List<Integer> acts = RowMenu.actions(r.contactId >= 0, r.entry != null, r.number,
+                Blocklist.isBlocked(this, r.number));
         for (int a : acts) {
             switch (a) {
                 case RowMenu.CALL: labels.add(getString(R.string.tel_call)); break;
@@ -637,6 +649,8 @@ public class DialerActivity extends PcActivity {
                 case RowMenu.COPY: labels.add(getString(R.string.tel_copy_number)); break;
                 case RowMenu.VIEW_CONTACT: labels.add(getString(R.string.tel_view_contact)); break;
                 case RowMenu.ADD_CONTACT: labels.add(getString(R.string.tel_add_contact)); break;
+                case RowMenu.BLOCK: labels.add(getString(R.string.pc_block)); break;
+                case RowMenu.UNBLOCK: labels.add(getString(R.string.pc_unblock)); break;
                 default: labels.add(getString(R.string.tel_delete_entry)); break;
             }
         }
@@ -666,6 +680,10 @@ public class DialerActivity extends PcActivity {
                                     break;
                                 case RowMenu.ADD_CONTACT:
                                     addPosterContact(r.number);
+                                    break;
+                                case RowMenu.BLOCK:
+                                case RowMenu.UNBLOCK:
+                                    setBlocked(r.number, acts.get(w) == RowMenu.BLOCK);
                                     break;
                             }
                         }
