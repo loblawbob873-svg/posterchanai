@@ -9,7 +9,7 @@
 window.PCNotifViewFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge, S._dmUnread
   const {
-    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _tgUnread, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, seenMarkNotif, timeAgo, zapAmount, zapSender,
@@ -133,6 +133,21 @@ window.PCNotifViewFactory = function(dep){
       return `<div class="notif mention cc-mention-notif" data-route="${enc(route)}"><span class="ic">@</span><div><div class="notif-hd"><b>${r.n} mention${r.n===1?'':'s'}</b> in ${where} — open Communities</div></div></div>`;
     }).join('');
   }
+  // TELEGRAM, one row per chat with something unread (telegram.js's ledger, counted by the bell): who,
+  // how many, and the newest message's first line -- the same words the OS card already showed. The
+  // row opens that chat, and the entry clears when the chat is opened.
+  function _tgNotifHtml(){
+    let rows = [];
+    try{ rows = (typeof _tgUnread === 'function' ? _tgUnread() : []) || []; }catch(_){ rows = []; }
+    return rows.map(r => `<div class="notif mention tg-notif" data-route="tg:${enc(String(r.chat))}"><span class="ic">✈</span><div><div class="notif-hd"><b>Telegram · ${enc(r.title)}</b> — ${r.n} new message${r.n===1?'':'s'}</div>${r.text ? `<div class="notif-said">${enc(r.text)}</div>` : ''}</div></div>`).join('');
+  }
+  /* EVERY ROW THE BELL COUNTS THAT IS NOT A NOSTR EVENT, for every host that lists notifications.
+   * The desktop's taskbar panel listed notifItems() + email only, so an update, a Concord mention or a
+   * Telegram message lit its bell with a number and nothing under it ("you see notification bell with
+   * 1 but no description"). One builder, so the screen and the panel cannot disagree again. */
+  function _notifExtrasHtml(updId){
+    return _updNotifHtml(updId || 'upd-notif') + _dmNotifHtml() + _concordNotifHtml() + _tgNotifHtml();
+  }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
   // because both can be on screen at once (the rail is visible while viewing Notifications).
@@ -190,7 +205,7 @@ window.PCNotifViewFactory = function(dep){
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = _updNotifHtml('upd-notif') + _dmNotifHtml() + _concordNotifHtml();
+    const upd = _notifExtrasHtml('upd-notif');
     // Nothing visible changed AND the list is still on screen → leave the DOM alone. #feed is shared
     // and blanked when a view is entered, so the tab strip's presence is what proves our rows are
     // still there; without that check the guard would skip the first render after coming back.
@@ -411,7 +426,7 @@ window.PCNotifViewFactory = function(dep){
 
 
   return {
-    _notifCtxHtml, _notifCtxId, _notifFreshEntry, _notifMatch, _updNotifHtml, markNotifsRead,
+    _notifCtxHtml, _notifCtxId, _notifExtrasHtml, _notifFreshEntry, _notifMatch, _updNotifHtml, markNotifsRead,
     notifGrouped, notifHtml, notifMenu, renderNotifications, renderNotificationsSoon,
   };
 };

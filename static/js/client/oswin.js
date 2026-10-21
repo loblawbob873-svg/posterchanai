@@ -254,6 +254,7 @@
      * navigated Social window before the compositor snapshot catches up. */
     const o = Object.assign({}, opts || {});
     const arg = view==='texts' ? String(o.arg||'').trim()
+      : view==='tg' && /^-?\d{1,20}$/.test(String(o.arg||'')) ? String(o.arg)
       : view==='doc:search' ? String(o.arg||'').trim().slice(0, SEARCH_ARG)
       : POST_TOOLS.includes(view) && /^[0-9a-f]{64}$/i.test(String(o.arg||'')) ? String(o.arg).toLowerCase() : '';
     if(arg && (arg.length>(view==='doc:search' ? SEARCH_ARG : 80) || /[\x00-\x1f\x7f]/.test(arg)))return null;
@@ -277,7 +278,7 @@
      * functioning on my laptop now"). The window's view is carried by ?pcwin=, and a deep link by
      * routePath, so nothing needs the desktop's path. */
     const url = shellPath() + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
-      + (arg ? (view==='texts' ? '&pcsms=' : view==='doc:search' ? '&pcq=' : '&pcpost=') + encodeURIComponent(arg) : '');
+      + (arg ? (view==='texts' ? '&pcsms=' : view==='tg' ? '&pctg=' : view==='doc:search' ? '&pcq=' : '&pcpost=') + encodeURIComponent(arg) : '');
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
      * window manager now, which is the entire point of this change. */
@@ -327,6 +328,8 @@
              the ordinary view switch rather than being trusted. */
           else if(arg && v==='texts' && root.PCOpenNotificationRoute)
             root.PCOpenNotificationRoute('texts:'+encodeURIComponent(arg));
+          else if(arg && v==='tg' && /^-?\d{1,20}$/.test(arg) && root.PCOpenNotificationRoute)
+            root.PCOpenNotificationRoute('tg:'+arg);
           else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
             root.__PC.openDMWith(arg);
           /* A POST handed to a tool (🎞️ Meme Builder / 🎬 Effect on a post) that already has its own

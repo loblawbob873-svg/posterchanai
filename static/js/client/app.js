@@ -2361,6 +2361,16 @@
     }
   }
   _captureSmsWindowLanding();
+  // …and a Telegram window opened for one chat (`?pcwin=tg&pctg=<chat id>`, from a notification).
+  function _captureTgWindowLanding(){
+    if(!_inWin() || PCOSWin.viewOf()!=='tg')return;
+    const uri=new URL(location.href),chat=uri.searchParams.get('pctg');
+    if(chat!==null){
+      uri.searchParams.delete('pctg');history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
+      if(/^-?\d{1,20}$/.test(chat)) window.__PC_TG_OPEN_CHAT=Number(chat);
+    }
+  }
+  _captureTgWindowLanding();
   /* …and a TOOL window opened for a post (`?pcwin=meme&pcpost=<id>`, see oswin.js POST_TOOLS). */
   let _pendingPostTool = '';
   function _capturePostToolLanding(){
@@ -11831,6 +11841,7 @@
   function _notifsMod(){ return _lzGet('notifs.js', 'PCNotifsFactory', _notifsDeps); }
   function _notifsLoad(){ return _lzLoad('notifs.js', 'PCNotifsFactory', _notifsDeps); }
   function _concordMentions(){ return _lzRun(_notifsMod, _notifsLoad, '_concordMentions', arguments); }
+  function _tgUnread(){ return _lzRun(_notifsMod, _notifsLoad, '_tgUnread', arguments); }
   function _notifTs(){ return _lzRun(_notifsMod, _notifsLoad, '_notifTs', arguments); }
   function _quoteHit(){ return _lzRun(_notifsMod, _notifsLoad, '_quoteHit', arguments); }
   function _quotesMe(){ return _lzRun(_notifsMod, _notifsLoad, '_quotesMe', arguments); }
@@ -11974,7 +11985,7 @@
       get _updApplying(){ return _updApplying; },
       get _updBadge(){ return _updBadge; }, set _updBadge(v){ _updBadge = v; },
     },
-    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _tgUnread, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, seenMarkNotif, timeAgo, zapAmount, zapSender,
@@ -11987,6 +11998,7 @@
   function _notifFreshEntry(){ return _lzRun(_notifviewMod, _notifviewLoad, '_notifFreshEntry', arguments); }
   function _notifMatch(){ return _lzRun(_notifviewMod, _notifviewLoad, '_notifMatch', arguments); }
   function _updNotifHtml(){ return _lzRun(_notifviewMod, _notifviewLoad, '_updNotifHtml', arguments); }
+  function _notifExtrasHtml(){ return _lzRun(_notifviewMod, _notifviewLoad, '_notifExtrasHtml', arguments); }
   function markNotifsRead(){ return _lzRun(_notifviewMod, _notifviewLoad, 'markNotifsRead', arguments); }
   function notifGrouped(){ return _lzRun(_notifviewMod, _notifviewLoad, 'notifGrouped', arguments); }
   function notifHtml(){ return _lzRun(_notifviewMod, _notifviewLoad, 'notifHtml', arguments); }
@@ -12626,6 +12638,20 @@
     }
     if(value==='calendar'){switchView('calendar');return true;}
     if(value.startsWith('post:')){openThread(value.slice(5));return true;}
+    // tg:<chat id> -- a Telegram notification opens THAT chat (ids of groups/channels are negative).
+    if(value.startsWith('tg:')){
+      const chat=value.slice(3);
+      if(!/^-?\d{1,20}$/.test(chat))return false;
+      try{
+        if(window.PCOSWin && PCOSWin.enabled() && !PCOSWin.isWindow()){
+          PCOSWin.open('tg','Telegram',{arg:chat});
+          return true;
+        }
+      }catch(_){}
+      switchView('tg');
+      _withModule('telegram.js','PCTelegram',mod=>mod.openNotification&&mod.openNotification({chat:Number(chat)}));
+      return true;
+    }
     if(value.startsWith('concord:')){
       const bits=value.slice(8).split(':').map(x=>{try{return decodeURIComponent(x);}catch(_){return '';}});
       if(bits.length<3||!bits[0])return false;
@@ -14667,6 +14693,14 @@
      * sidebar bell, the mobile bar and the rail heading are painted from. */
     notifUnread: () => { try{ return notifUnread(); }catch(_){ return 0; } },
     notifHtml,
+    /* The rows the bell counts that are not Nostr events (an update, Concord mentions, Telegram), for the
+     * taskbar panel -- built by the SAME function the Notifications view uses. */
+    notifExtrasHtml: () => { try{ return _notifExtrasHtml('upd-notif-os'); }catch(_){ return ''; } },
+    /* concord.js and telegram.js repaint the bell through this after writing their ledgers. It was
+     * called by concord.js for a long time and never existed, so a mention recorded in this window
+     * only reached the bell on the next unrelated repaint. */
+    bumpNotif: () => { try{ bumpNotif(); }catch(_){} },
+    applyUpdate: () => applyUpdate(),
     notifsRead: () => { try{ markNotifsRead(); }catch(_){} },
     reactTo: (id, pk, btn) => pickEmoji(id, pk, btn),
     mailUnread: () => { try{ return _mailUnread(); }catch(_){ return 0; } },

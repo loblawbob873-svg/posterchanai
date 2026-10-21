@@ -17,7 +17,7 @@ const seenNotif = { last: 0 };
 const window = { PCdmUnreadSince: () => 13 };
 let list = [];
 const notifList = () => list, _notifTs = e => e.created_at, _aheadRead = () => new Set(),
-      _arrivedUnread = () => false, _concordMentions = () => [];
+      _arrivedUnread = () => false, _concordMentions = () => [], _tgUnread = () => [];
 eval(bellFn + '\nglobalThis.__bell = notifUnread;');
 
 if (__bell() !== 0) fail('13 unread DMs lit the bell with ' + __bell() + ' -- DMs badge Messages only');

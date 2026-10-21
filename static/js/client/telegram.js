@@ -130,7 +130,7 @@
     if(inView() && st.open === id) paintMessages(true);
   }
   async function catchUpAll(){
-    try{ const d = (await api('/api/tgc/dialogs?limit=200')).dialogs; if(Array.isArray(d)){ st.dialogs = d; if(inView()) paintDialogs(); } }catch(_){}
+    try{ const d = (await api('/api/tgc/dialogs?limit=200')).dialogs; if(Array.isArray(d)){ st.dialogs = d; ledgerReconcile(d); if(inView()) paintDialogs(); } }catch(_){}
     if(st.open != null && st.msgs.has(st.open)) await catchUp(st.open);
     // Other held chats are stale too: drop them, so opening one fetches it fresh.
     for(const k of [...st.msgs.keys()]) if(k !== st.open) st.msgs.delete(k);
@@ -164,21 +164,65 @@
       if(ev.outbox){ noteReadOut(ev.chat_id, ev.max_id || 0); }
       // Read on another device (the phone): Telegram says how many are STILL unread — take its number.
       else if(d && typeof ev.unread === 'number'){ d.unread = st.open === ev.chat_id && inView() ? 0 : ev.unread; }
+      if(!ev.outbox && ev.unread === 0) ledgerClear(ev.chat_id);   // read there: no longer new here
       if(inView()){ paintDialogs(); if(ev.outbox && st.open === ev.chat_id) paintMessages(false); }
       return;
     }
     if(ev.type === 'deleted'){ for(const [cid, list] of st.msgs){ const n = list.filter(x => !ev.ids.includes(x.id));
       if(n.length !== list.length){ st.msgs.set(cid, n); if(inView() && st.open === cid) paintMessages(false); } } }
   }
+  function preview(m){
+    return m.text || (m.media ? ({photo:'📷 Photo', video:'🎬 Video', voice:'🎤 Voice message', video_note:'⏺ Video message',
+                                  sticker:'Sticker', gif:'GIF', audio:'🎵 Audio'}[m.media.kind] || '📎 ' + (m.media.name || 'File')) : '');
+  }
   function notify(m, chat){
     const P = PC(), who = (chat && chat.title) || m.sender || 'Telegram';
-    const body = m.text || (m.media ? ({photo:'📷 Photo', video:'🎬 Video', voice:'🎤 Voice message', video_note:'⏺ Video message',
-                                          sticker:'Sticker', gif:'GIF', audio:'🎵 Audio'}[m.media.kind] || '📎 ' + (m.media.name || 'File')) : '');
+    const body = preview(m);
+    ledgerAdd(m, who, body);
     try{ if(P.osNotify) P.osNotify('Telegram · ' + who, body, { tag:'tg-' + m.chat_id + '-' + m.id, notificationType:'dm',
-                                                               onClick:() => { openChatFromNotification(m.chat_id); } }); }catch(_){}
+                                                               route:'tg:' + m.chat_id }); }catch(_){}
+  }
+  /* TELEGRAM IN NOTIFICATIONS. An arrival used to be an OS card and nothing else, so on the desktop
+   * the taskbar bell could not say what had come in, and once the card was gone there was no trace of
+   * it. The LEDGER is what the bell counts and what Notifications lists ("Telegram · Alice — 2 new"),
+   * one row per chat, shared by every window of this app through localStorage (notifs.js reads the
+   * same key without loading this module), per account like Concord's mention ledger. A row leaves
+   * when that chat is opened here, or when Telegram says it has been read (a dialog with no unread). */
+  const TG_LEDGER = 'pc.tg.unread.v1.';
+  function accountPk(){ try{ const v = PC().viewer && PC().viewer(); return String((v && v.pubkey) || ''); }catch(_){ return ''; } }
+  function ledger(pk = accountPk()){
+    if(!pk) return {};
+    try{ const v = JSON.parse(localStorage.getItem(TG_LEDGER + pk) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+    catch(_){ return {}; }
+  }
+  function saveLedger(l, pk = accountPk()){
+    if(!pk) return;
+    try{ localStorage.setItem(TG_LEDGER + pk, JSON.stringify(l)); }catch(_){}
+    try{ const P = PC(); if(P.bumpNotif) P.bumpNotif(); }catch(_){}
+  }
+  function ledgerAdd(m, who, body){
+    const l = ledger(), k = String(m.chat_id);
+    const row = l[k] || { chat:m.chat_id, title:'', ids:[], at:0, text:'' };
+    if((row.ids || []).includes(m.id)) return;
+    row.ids = [...(row.ids || []), m.id].slice(-50);
+    row.title = String(who || row.title || 'Telegram').slice(0, 80);
+    row.text = String(body || '').slice(0, 140);
+    row.at = (Number(m.date) || 0) * 1000 || Date.now();
+    l[k] = row; saveLedger(l);
+  }
+  function ledgerClear(chatId){
+    const l = ledger(), k = String(chatId);
+    if(l[k]){ delete l[k]; saveLedger(l); }
+  }
+  // Read on the phone's Telegram (or anywhere else): the dialog list says unread 0, so the row goes.
+  function ledgerReconcile(dialogs){
+    const l = ledger(); let changed = false;
+    for(const d of dialogs || []) if(d && l[String(d.id)] && !(d.unread > 0)){ delete l[String(d.id)]; changed = true; }
+    if(changed) saveLedger(l);
   }
   function openChatFromNotification(chatId){
     const P = PC(); st.open = chatId;
+    try{ if(inView()){ openChat(chatId); return; } }catch(_){}
     try{ if(P.switchView) P.switchView('tg'); }catch(_){}
   }
   const inView = () => { try{ return PC().VIEW === 'tg' && root && root.isConnected; }catch(_){ return false; } };
@@ -308,6 +352,9 @@
       root.querySelector('.tg-dialogs [data-act="retry"]').onclick = () => render();
       return;
     }
+    ledgerReconcile(st.dialogs);
+    // A window opened for one chat by a notification (app.js _captureTgWindowLanding).
+    if(window.__PC_TG_OPEN_CHAT != null){ st.open = window.__PC_TG_OPEN_CHAT; delete window.__PC_TG_OPEN_CHAT; }
     if(!inView()) return;
     paintOffline();
     paintDialogs();
@@ -504,6 +551,7 @@
       catchUp(id);
     }
     const d = st.dialogs.find(x => x.id === id); if(d){ d.unread = 0; paintDialogs(); }
+    ledgerClear(id);
     markRead();
   }
   function markRead(){
@@ -806,7 +854,8 @@
     if(!isPhone()) setTimeout(background, 0);
     return !isPhone();
   }
-  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _askForm:askForm, _setForm:f => { form = f; } };
+  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _askForm:askForm, _setForm:f => { form = f; },
+                 openNotification:o => openChatFromNotification(Number(o && o.chat)) };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;
 })();

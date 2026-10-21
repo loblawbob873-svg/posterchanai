@@ -11319,6 +11319,11 @@
            <b>${enc(String(mail))}</b><span>unread email</span></button>` : '';
     let rows = '';
     try{ rows = items.map(e => `<div class="os-noti-row">${PC().notifHtml(e)}</div>`).join(''); }catch(_){}
+    /* …and every other row the bell counts (an update, Concord mentions, Telegram), ABOVE the posts like
+       the Notifications view puts them. Without these the bell read 1 over "Nothing new." */
+    let extras = '';
+    try{ extras = (PC().notifExtrasHtml && PC().notifExtrasHtml()) || ''; }catch(_){}
+    rows = extras + rows;
     panel.innerHTML =
       `<div class="os-noti-head"><b>Notifications</b>
          <span class="os-noti-hb">
@@ -11343,6 +11348,11 @@
       if(inPopup){ send('view:mail'); return; }
       hideNoti(); openApp('mail');
     };
+    { const un = $('#upd-notif-os', panel);
+      if(un) un.onclick = () => {
+        if(inPopup){ send('view:notifications'); return; }
+        hideNoti(); try{ if(PC().applyUpdate) PC().applyUpdate(); }catch(_){}
+      }; }
     mailAck = mail;                              // looking at the centre counts as looking
     $('#os-noti-all', panel).onclick = () => {
       if(inPopup){ send('view:notifications'); return; }
@@ -11368,8 +11378,8 @@
         /* THE POST OPENS IN THE DESKTOP, NOT IN THE MENU. Calling openThread here would render a
            thread inside a 380px popup that closes on blur — the shell is where a post is read. */
         if(inPopup){
-          if(n.dataset.route==='calendar') send('view:calendar');
-          else if(n.dataset.route) send('view:notifications');
+          // The row's own destination (a Telegram chat, a Concord channel, Calendar), performed by the shell.
+          if(n.dataset.route) send('route:' + _actEncode(n.dataset.route));
           else if(profile) send('profile:' + profile);
           else if(n.dataset.open) send('thread:' + n.dataset.open);
           else shut();
@@ -12683,6 +12693,7 @@
                 }
                 else if(kind === 'desk-remove') removeNative(val);
                 else if(kind === 'profile') PC().openProfile(val);
+                else if(kind === 'route'){ if(window.PCOpenNotificationRoute) window.PCOpenNotificationRoute(val); }
                 else if(kind === 'thread') PC().openThread(val);
                 else if(kind === 'reply'){
                   const at = rest.indexOf(':');

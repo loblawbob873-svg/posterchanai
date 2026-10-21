@@ -140,8 +140,10 @@ def test_the_popup_never_navigates_itself():
     body = _fn("  function buildNotiPanel(inPopup){")
     row = _fn("n.onclick = (ev) => {", body).split("=", 1)[1]
     reply = _fn("b.onclick = (ev) => {", body).split("=", 1)[1]
+    act_encode = _fn("  function _actEncode(arg){")
     script = r'''
 const assert=require('node:assert/strict');
+ACT_ENCODE
 let actions=[],local=[],hidden=0,closed=0;
 const send=x=>actions.push(x),shut=()=>closed++,hideNoti=()=>hidden++;
 const window={PCOpenNotificationRoute:x=>local.push(['route',x])};
@@ -150,8 +152,11 @@ const PC=()=>({openThread:x=>local.push(['thread',x]),openProfile:x=>local.push(
 const event={target:{closest:()=>false},stopPropagation(){}};
 for(const inPopup of [true,false]){
  for(const [dataset,action,kind,value] of [
-   [{route:'calendar'},'view:calendar','route','calendar'],
-   [{route:'notifications'},'view:notifications','route','notifications'],
+   // A row with a destination hands the SHELL that destination (a Telegram chat, a Concord channel,
+   // Calendar) -- it used to send only 'view:notifications', so the row could not say which chat.
+   [{route:'calendar'},'route:calendar','route','calendar'],
+   [{route:'notifications'},'route:notifications','route','notifications'],
+   [{route:'tg:-1001234'},'route:tg%3A-1001234','route','tg:-1001234'],
    [{prof:'author'},'profile:author','profile','author'],
    [{open:'post'},'thread:post','thread','post']]){
   actions=[];local=[];hidden=0;const n={dataset};const click=ROW;click(event);
@@ -163,7 +168,7 @@ for(const inPopup of [true,false]){
  if(inPopup){assert.deepEqual(actions,['reply:post:author']);assert.deepEqual(local,[]);assert.equal(hidden,0);}
  else{assert.deepEqual(actions,[]);assert.deepEqual(local,[['compose',{reply:id,replyPk:pk}]]);assert.equal(hidden,1);}
 }
-'''.replace('ROW', row).replace('REPLY', reply)
+'''.replace('ACT_ENCODE', act_encode).replace('ROW', row).replace('REPLY', reply)
     result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stderr
 
