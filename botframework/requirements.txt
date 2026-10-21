@@ -21,7 +21,7 @@ psycopg2-binary>=2.9.0
 edge-tts>=6.1.0
 
 # Image processing (for GIF conversion, image manipulation)
-Pillow>=10.0.0
+Pillow>=13.0.0
 
 # HTML parsing (for news command)
 beautifulsoup4>=4.12.0

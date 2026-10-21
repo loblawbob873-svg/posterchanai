@@ -18,7 +18,7 @@ python-multipart==0.0.32
 
 # Media cache/GPU checks import the real media service and its encrypted store.
 cryptography==50.0.1
-Pillow==12.3.0
+Pillow==13.0.0
 
 # PosterChanDB (relay store) and its search tokenizer tests, the terminal font check, and the music command
 # tests import these; without them the required list fails at collection (Desktop CI, 2026-10-10).

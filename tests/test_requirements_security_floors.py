@@ -15,6 +15,7 @@ Not here on purpose: transformers is held <5 because ACE-Step cannot load on 5 (
 python-jose/ecdsa/diskcache have no fixed release.
 """
 import re
+import subprocess
 from pathlib import Path
 
 from packaging.version import Version
@@ -48,7 +49,7 @@ def _specs(path):
 
 
 def _floor(spec):
-    m = re.search(r">=\s*([0-9][^,;\s]*)", spec)
+    m = re.search(r"(?:>=|==)\s*([0-9][^,;\s]*)", spec)
     return Version(m.group(1)) if m else None
 
 
@@ -64,4 +65,28 @@ def test_every_floor_is_at_or_above_the_fixed_release():
             floors = [_floor(s) for s in got]
             if any(f is None or f < Version(FLOORS[name]) for f in floors):
                 problems.append(f"{path}: {name} {got} — needs >={FLOORS[name]}")
+    assert not problems, "\n".join(problems)
+
+
+def test_no_requirements_file_anywhere_holds_a_package_below_its_floor():
+    """EVERY requirements file, exact pins included. The first version of this test read only the two
+    app files, and Desktop CI went red on the very commit that raised them: its gate environment
+    (scripts/deploy-regression-requirements.txt) still pinned Pillow==12.3.0, which cannot be
+    installed together with the app's Pillow>=13.0.0 that it pulls in by `-r`. A file that names a
+    package must name it at or above the floor, or not at all."""
+    # TRACKED files only: the working tree also holds venvs, node_modules and gigabytes of data.
+    out = subprocess.run(["git", "-C", str(ROOT), "ls-files", "*requirements*.txt"],
+                         capture_output=True, text=True, check=True).stdout
+    files = [ROOT / line for line in out.splitlines() if line]
+    assert len(files) >= 5, files
+    problems = []
+    for path in files:
+        rel = path.relative_to(ROOT)
+        for name, got in _specs(rel).items():
+            if name not in FLOORS:
+                continue
+            for spec in got:
+                f = _floor(spec)
+                if f is None or f < Version(FLOORS[name]):
+                    problems.append(f"{rel}: {name} {spec!r} — needs >={FLOORS[name]}")
     assert not problems, "\n".join(problems)
