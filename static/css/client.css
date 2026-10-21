@@ -1344,11 +1344,11 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
   background:transparent;color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;line-height:1;transition:.15s}
 .tltab-media:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 .tltab-media.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
-/* ===== Phone timeline header: a picker + a Replies switch instead of three tabs =====
+/* ===== Phone timeline header: a picker + a Replies chip instead of three tabs =====
    Both forms are always in the markup; this decides which shows. `.tl-pick-on` = the Android app at ANY
    width (a tablet too), the media query = a phone-width browser. The picker is a real <select>, so a
    tap opens Android's own chooser — no popover to position, nothing to dismiss, works with TalkBack. */
-.tl-pick,.tl-replies{display:none}
+.tl-tabs .tl-pick,.tl-tabs .tl-replies{display:none}
 .tl-pick{position:relative;align-items:center;min-width:0}
 .tl-select{appearance:none;-webkit-appearance:none;border:0;background:transparent;color:var(--text);
   font-family:inherit;font-size:19px;font-weight:700;letter-spacing:.2px;line-height:1.2;
@@ -1358,13 +1358,21 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
 .tl-select option{background:var(--bg);color:var(--text);font-size:16px;font-weight:600}
 .tl-pick-caret{position:absolute;inset-inline-end:6px;top:50%;transform:translateY(-50%);width:18px;height:18px;
   color:var(--neon);pointer-events:none}
-.tl-replies{align-items:center;gap:8px;margin-inline-start:auto;padding:4px 2px;cursor:pointer;
-  color:var(--muted);font-size:14px;font-weight:600;white-space:nowrap;user-select:none}
+.tl-replies{align-items:center;gap:0;margin-inline-start:auto;min-height:36px;padding:6px 14px;border:1px solid var(--line);
+  border-radius:999px;background:var(--panel);color:var(--muted);font-family:inherit;font-size:13px;font-weight:600;
+  line-height:1.2;white-space:nowrap;cursor:pointer;transition:.15s}
+.tl-replies:hover{color:var(--text);border-color:var(--neon)}
+.tl-replies .tl-replies-ic{width:15px;height:15px;margin-inline-end:5px}
+.tl-replies.on{background:rgba(var(--accent-rgb),.16);color:var(--text);border-color:rgba(var(--accent-rgb),.55)}
+.tl-replies:focus-visible{outline:2px solid var(--neon);outline-offset:2px}
 .tl-pick-on .tltab{display:none}
 .tl-pick-on .tl-pick,.tl-pick-on .tl-replies{display:flex}
 .tl-pick-on{align-items:center;gap:6px}
 .tl-pick-on .tl-replies~.tltab-media{margin-inline-start:4px}
+/* Centred instead of stretched, the ▦ button fell to 31px tall -- under the 32px phone tap floor. */
+.tl-pick-on .tltab-media{min-height:36px;min-width:36px}
 @media(max-width:820px){
+  .tl-tabs .tltab-media{min-height:36px;min-width:36px}
   .tl-tabs .tltab{display:none}
   .tl-tabs .tl-pick,.tl-tabs .tl-replies{display:flex}
   .tl-tabs{align-items:center;gap:6px}

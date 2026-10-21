@@ -970,20 +970,33 @@ window.PCTimelineFactory = function(dep){
       +(() => { const off = tlHiddenSet();
         const tls = [['home','Home'],['global','Nostrverse'],['trending','Trending']]
           .filter(([t]) => !off.has(t) || S.VIEW === t);   // the tab you are ON always shows, or the row lies about where you are
-        /* ON A PHONE THE ROW IS A PICKER + A REPLIES SWITCH, not three tabs. Both are rendered and CSS
+        /* ON A PHONE THE ROW IS A PICKER + A REPLIES CHIP, not three tabs. Both are rendered and CSS
          * picks (`.tl-pick-on` in the APK at any width, the 820px query on the web), so a rotation or a
-         * window resize never needs a re-render. The switch IS the User Settings "Hide replies in
-         * timelines" preference, inverted (on = show) -- one value, two places to change it. Trending
-         * has no reply filter, so it gets no switch rather than one that does nothing. */
+         * window resize never needs a re-render. The chip IS the User Settings "Hide replies in
+         * timelines" preference, inverted (pressed = shown) -- one value, two places to change it. A
+         * CHIP, not a switch: a settings-page switch in a feed header reads as a setting rather than as
+         * what you are looking at, and its on/off is easy to misread -- the chip's words say the state
+         * ("[tick] Replies" / "Replies hidden"), and Trending's own filters are chips. Trending has no reply
+         * filter, so it gets no chip rather than one that does nothing. */
         const showR = !ClientSettings.get('hideReplies', false);
         return `<div class="tl-tabs${_tlNative() ? ' tl-pick-on' : ''}" role="tablist">
         ${tls.map(([t,l]) => `<button class="tltab${S.VIEW===t?' on':''}" data-tl="${t}" role="tab" aria-selected="${S.VIEW===t}">${l}</button>`).join('')}
         <label class="tl-pick" title="Choose a timeline"><select class="tl-select" id="tl-select" aria-label="Timeline">${
           tls.map(([t,l]) => `<option value="${t}"${S.VIEW===t?' selected':''}>${l}</option>`).join('')
         }</select><svg class="ic tl-pick-caret" aria-hidden="true"><use href="#i-chevron-down"></use></svg></label>
-        ${S.VIEW==='trending' ? '' : `<label class="tl-replies" title="Show or hide replies in this timeline"><span class="tl-replies-l">Replies</span><span class="switch"><input type="checkbox" id="tl-replies" aria-label="Show replies"${showR?' checked':''}><span class="slider"></span></span></label>`}
+        ${S.VIEW==='trending' ? '' : _tlRepliesChip(showR)}
         ${S.VIEW==='trending' ? '' : `<button class="tltab-media${S._tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid"><svg class="ic x-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>`}
       </div>`; })();
+  }
+  const _TL_REPLIES_TITLE = show => show ? 'Replies are shown — tap to hide them' : 'Replies are hidden — tap to show them';
+  function _tlRepliesChip(show){
+    return `<button type="button" class="tl-replies${show?' on':''}" id="tl-replies" aria-pressed="${show}" title="${_TL_REPLIES_TITLE(show)}">${_TL_REPLIES_LABEL(show)}</button>`;
+  }
+  // The tick is the sprite's icon: the UI font has no ✓ glyph, and it drew as an empty box.
+  const _TL_REPLIES_LABEL = show => show ? '<svg class="ic tl-replies-ic" aria-hidden="true"><use href="#i-check"></use></svg>Replies' : 'Replies hidden';
+  function _tlPaintRepliesChip(b, show){
+    b.classList.toggle('on', show); b.setAttribute('aria-pressed', String(show));
+    b.title = _TL_REPLIES_TITLE(show); b.innerHTML = _TL_REPLIES_LABEL(show);
   }
   function _tlNative(){ try{ return !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()); }catch(_){ return false; } }
   function _bindTimelineHeader(feed){
@@ -992,12 +1005,13 @@ window.PCTimelineFactory = function(dep){
     // Same write as Settings → "Hide replies in timelines" (settings.js), so the two can never disagree
     // and the choice syncs to the account's other devices. Only #tl-notes is redrawn: the header -- and
     // a half-typed post in the composer above it -- stays put.
-    { const rs=$('#tl-replies',feed); if(rs) rs.onchange=()=>{
-        const hide = !rs.checked;
+    { const rs=$('#tl-replies',feed); if(rs) rs.onclick=()=>{
+        const hide = ClientSettings.get('hideReplies', false) ? false : true;   // the press flips what is stored
         ClientSettings.set('hideReplies', hide);
         try{ S._prefTouched.add('hideReplies'); }catch(_){}
         saveClientPrefsNostr({ hideReplies: hide });
         const hr=$('#set-hide-replies'); if(hr) hr.checked = hide;
+        _tlPaintRepliesChip(rs, !hide);
         _drawTimeline(false);
       }; }
     // Guest card: Sign up goes STRAIGHT to the signup pane. Landing on the login form and having to

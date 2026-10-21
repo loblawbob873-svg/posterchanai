@@ -1,4 +1,4 @@
-"""On a phone (and in the Android app) the timeline header is a PICKER + a REPLIES SWITCH.
+"""On a phone (and in the Android app) the timeline header is a PICKER + a REPLIES CHIP.
 
 Asked for: "a Timeline switcher at the top that serves as a dropdown with the different timelines.
 Somewhere near that, add a slider that lets you show/hide replies. Show replies is default. Should
@@ -8,7 +8,8 @@ The real client at 390px over a fixture relay serving posts AND replies:
 
   * the three tabs are gone; a dropdown naming the current timeline is shown, and choosing another
     timeline in it switches to that timeline;
-  * the Replies switch is ON by default and replies are on screen; turning it off takes every reply
+  * the Replies chip is PRESSED (a tick + "Replies") by default and replies are on screen; pressing it ("Replies
+    hidden") takes every reply
     off the feed (the composer above it is untouched), stores `hideReplies` and publishes it to the
     account's `pcai:client-prefs`; turning it on brings them back;
   * User Settings -> "Hide replies in timelines" drives the same switch (it starts OFF after that);
@@ -38,7 +39,7 @@ window.__tlState=()=>{const f=document.querySelector('#feed');const vis=el=>!!el
   return {view:__PC.VIEW,tabsShown:[...f.querySelectorAll('.tltab')].filter(vis).length,
     pickShown:vis(f.querySelector('.tl-pick')),pickValue:sel&&sel.value,
     options:sel?[...sel.options].map(o=>o.value):[],
-    switchShown:vis(f.querySelector('.tl-replies')),switchOn:sw?sw.checked:null,
+    switchShown:vis(f.querySelector('.tl-replies')),switchOn:sw?sw.getAttribute('aria-pressed')==='true':null,chip:sw?sw.textContent.trim():'',tick:!!(sw&&sw.querySelector('use[href="#i-check"]')),
     replies:(txt.match(/fixture REPLY number/g)||[]).length,posts:(txt.match(/fixture timeline post number/g)||[]).length,
     hide:ClientSettings.get('hideReplies',false)};};
 '''
@@ -71,13 +72,13 @@ def test_phone_header_is_a_picker_and_a_replies_switch():
         await b.until("__PC.VIEW==='global' && window.__tlState().replies>0")
         # Type into the composer first: hiding replies must not wipe it.
         await b.js("(()=>{const t=document.getElementById('tl-cmp-ta');t.value='half typed';t.dispatchEvent(new Event('input'));window.__ta=t;})()")
-        await b.js("(()=>{const s=document.getElementById('tl-replies');s.checked=false;s.dispatchEvent(new Event('change'));})()")
+        await b.js("document.getElementById('tl-replies').click()")
         await asyncio.sleep(.6)
         out["off"] = await st(b)
         out["composer"] = await b.js("document.getElementById('tl-cmp-ta')===window.__ta && window.__ta.value")
         await b.until("window.__published.some(e=>(e.tags||[]).some(t=>t[0]==='d'&&t[1]==='pcai:client-prefs'))")
         out["published"] = await b.js("window.__published")
-        await b.js("(()=>{const s=document.getElementById('tl-replies');s.checked=true;s.dispatchEvent(new Event('change'));})()")
+        await b.js("document.getElementById('tl-replies').click()")
         await asyncio.sleep(.6)
         out["on"] = await st(b)
         return out
@@ -85,11 +86,12 @@ def test_phone_header_is_a_picker_and_a_replies_switch():
     a = s["start"]
     assert a["tabsShown"] == 0 and a["pickShown"], ("the phone header still shows tabs, not the picker", a)
     assert a["pickValue"] == "global" and set(a["options"]) >= {"home", "global"}, a
-    assert a["switchShown"] and a["switchOn"] is True and a["replies"] > 0, (
+    assert a["switchShown"] and a["switchOn"] is True and a["chip"] == "Replies" and a["tick"] and a["replies"] > 0, (
         "replies must be shown by default, with the switch on", a)
     assert s["home"]["view"] == "home" and s["home"]["pickValue"] == "home", ("the picker did not switch", s["home"])
     off = s["off"]
     assert off["replies"] == 0 and off["posts"] > 0 and off["hide"] is True, ("turning Replies off left replies", off)
+    assert off["switchOn"] is False and off["chip"] == "Replies hidden", ("the chip does not say replies are hidden", off)
     assert s["composer"] == "half typed", "hiding replies rebuilt the composer and lost the text"
     assert (sb._prefs_of(s["published"]) or {}).get("hideReplies") is True, "the choice was not saved to the account"
     on = s["on"]
