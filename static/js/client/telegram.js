@@ -529,7 +529,10 @@
     pane.addEventListener('drop', e => { if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length){ e.preventDefault(); takeFiles(e.dataTransfer.files); ta.focus(); } });
     pane.querySelector('[data-act="camera"]').onclick = openCamera;
     const list = pane.querySelector('.tg-msgs');
-    list.addEventListener('scroll', () => { if(list.scrollTop < 60) loadOlder(); });
+    // A desktop window being PARKED resets this list's offset to 0 for a frame (os.js INNER_SCROLLERS
+    // puts it back); that is not the reader reaching the top, so it must not page in older messages --
+    // which then anchored the list up there ("clicking on another window ... scrolls up").
+    list.addEventListener('scroll', () => { if(list.dataset.osParking === '1') return; if(list.scrollTop < 60) loadOlder(); });
     paintMessages(true); paintPending(); paintReply();
   }
 

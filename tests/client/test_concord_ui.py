@@ -325,7 +325,7 @@ def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
     assert "pos&&pos.bottom?el.scrollHeight" in APP
     os_js = (ROOT / 'static/js/client/os.js').read_text()
     assert "w.innerChatScroll={}" in os_js
-    assert "['cc-messages','.cc-messages']" in os_js
+    assert "'cc-messages':'.cc-messages'" in os_js
     assert "el.scrollTop=pos.bottom?el.scrollHeight" in os_js
     assert "el.dataset.osParking='1'" in os_js
     assert 'scroller.dataset.osParking' in CONCORD

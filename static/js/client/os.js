@@ -89,6 +89,8 @@
   }
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
   let seq = 0, zTop = 10, on = false, startOpen = false;
+  const INNER_SCROLLERS = { 'ai-msgs':'#ai-msgs', 'dm-msgs':'#dm-msgs', 'sms-msgs':'#sms-msgs',
+                            'cc-messages':'.cc-messages', 'tg-msgs':'.tg-msgs' };   // see restoreScroll
   /* One physical Super release can arrive twice on PosterChanOS: Sway emits `pc:start`, focuses the
    * shell, and Chromium then receives the release as Meta keyup. Treat them as one signal or Start
    * opens and closes in the same blink. Kept outside enter() because the DOM listener is too. */
@@ -1480,8 +1482,7 @@
        feed.scrollTop to remember them. Capture both the offset and bottom-pin before layout changes
        in the parked slot can fire a misleading scroll event. */
     w.innerChatScroll={};
-    for(const [key,selector] of [['ai-msgs','#ai-msgs'],['dm-msgs','#dm-msgs'],
-                                 ['sms-msgs','#sms-msgs'],['cc-messages','.cc-messages']]){
+    for(const [key,selector] of Object.entries(INNER_SCROLLERS)){
       const el=realFeed.querySelector(selector); if(!el)continue;
       w.innerChatScroll[key]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80};
       el.dataset.osParking='1';
@@ -1516,7 +1517,7 @@
        treating that synthetic reset as a user decision. */
     const parkInner=()=>{
       for(const [key,pos] of Object.entries(w.innerChatScroll||{})){
-        const el=slot.querySelector(key==='cc-messages'?'.cc-messages':'#'+key); if(!el)continue;
+        const el=INNER_SCROLLERS[key]&&slot.querySelector(INNER_SCROLLERS[key]); if(!el)continue;
         el.scrollTop=pos.bottom?el.scrollHeight:Number(pos.top)||0;
         setTimeout(()=>{ if(el.dataset)delete el.dataset.osParking; },80);
       }
@@ -1605,6 +1606,12 @@
     if(w && w.parked) w.scrollTop = slot.scrollTop || 0;
   }
 
+  /* THE CHAT LISTS THAT SCROLL ON THEIR OWN inside a window's content. Moving content between #feed and a
+   * parked slot resets every scroll box inside it, so each of these is measured before the move and put back
+   * after -- at the bottom if the reader was at the newest message. ONE table for parking and restoring: the
+   * restore used to rebuild the selector from the key ('#'+key), which is why a list whose selector is a
+   * class could not be added, and Telegram's .tg-msgs was missing -- "clicking on another window causes the
+   * chat message window to scroll up". tests/client/test_os_window_keeps_chat_scroll_full_app.py. */
   function restoreScroll(w){
     // The slot's own offset wins while it is parked: it is the one that has been kept up to date.
     const want = (w && w.parked && w.slot ? w.slot.scrollTop : 0) || (w && w.scrollTop) || 0;
@@ -1618,7 +1625,7 @@
       }
       let pending=false;
       for(const [key,pos] of Object.entries(inner)){
-        const el=realFeed.querySelector(key==='cc-messages'?'.cc-messages':'#'+key);
+        const el=INNER_SCROLLERS[key]&&realFeed.querySelector(INNER_SCROLLERS[key]);
         if(!el){pending=true;continue;}
         el.scrollTop=pos.bottom?el.scrollHeight:Number(pos.top)||0;
       }

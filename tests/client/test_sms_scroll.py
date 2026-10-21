@@ -26,7 +26,7 @@ def test_texts_repaint_and_desktop_parking_use_the_same_scroll_contract():
     assert "putScroll(list, saved)" in SMS
     assert "if(list.dataset.osParking === '1') return" in SMS
     assert "restoreHydratedScroll(l, before)" in SMS
-    assert "['sms-msgs','#sms-msgs']" in OS
+    assert "'sms-msgs':'#sms-msgs'" in OS
 
 
 def test_stale_attachment_hydration_cannot_move_a_repainted_conversation():
