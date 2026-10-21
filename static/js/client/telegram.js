@@ -178,7 +178,10 @@
   function notify(m, chat){
     const P = PC(), who = (chat && chat.title) || m.sender || 'Telegram';
     const body = preview(m);
-    ledgerAdd(m, who, body);
+    // A MUTED chat never lights the bell: muted is the person saying "not this one" -- and the busiest groups
+    // are the muted ones, which made every message there a bell recount (see __PC.bumpNotif).
+    const d = st.dialogs.find(x => x.id === m.chat_id);
+    if(!(d && d.muted)) ledgerAdd(m, who, body);
     try{ if(P.osNotify) P.osNotify('Telegram · ' + who, body, { tag:'tg-' + m.chat_id + '-' + m.id, notificationType:'dm',
                                                                route:'tg:' + m.chat_id }); }catch(_){}
   }

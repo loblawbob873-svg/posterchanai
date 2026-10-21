@@ -14348,6 +14348,7 @@
     _deviceCaches.set(name, c);
     return c;
   }
+  let _bumpT = 0;   // see __PC.bumpNotif
   window.__PC = {
     deviceCache,
     openBech32, openMailto,   // links handed in by another Android app (phoneshell.js consumeLaunchView)
@@ -14712,7 +14713,11 @@
     /* concord.js and telegram.js repaint the bell through this after writing their ledgers. It was
      * called by concord.js for a long time and never existed, so a mention recorded in this window
      * only reached the bell on the next unrelated repaint. */
-    bumpNotif: () => { try{ bumpNotif(); }catch(_){} },
+    /* COALESCED. Every bump recounts the whole notification store, repaints the badges and the desktop bell
+       and asks the rail's computed style -- and Telegram bumps once per incoming message: a busy group made
+       that continuous main-thread work ("windows app perf is terrible now, moving windows lag, typing lag").
+       A burst is one recount, at most every 250 ms; the badge is never more than that behind. */
+    bumpNotif: () => { if(_bumpT) return; _bumpT = setTimeout(() => { _bumpT = 0; try{ bumpNotif(); }catch(_){} }, 250); },
     applyUpdate: () => applyUpdate(),
     notifsRead: () => { try{ markNotifsRead(); }catch(_){} },
     reactTo: (id, pk, btn) => pickEmoji(id, pk, btn),

@@ -93,3 +93,47 @@ def test_every_row_the_bell_counts_is_in_the_panel():
     assert got["unread"] == 1, got
     assert got["panel"]["cc"] == 1 and "Lounge Chat" in got["panel"]["text"], (
         "the bell counts a Concord mention the panel never lists", got["panel"])
+
+
+MUTED = r"""
+(()=>{const f0=window.fetch;window.fetch=function(u,o){const s=String(u);
+  if(s.includes('/api/tgc/dialogs'))return Promise.resolve(new Response(JSON.stringify({ok:true,dialogs:[
+    {id:42,title:'Alice',kind:'user',unread:0,muted:false,last:{text:'hi',date:1700000003,out:false}},
+    {id:77,title:'Night City Crew',kind:'group',unread:0,muted:true,last:{text:'yo',date:1699999999,out:false}}]}),{status:200,headers:{'Content-Type':'application/json'}}));
+  return f0(u,o);};})();
+"""
+
+BURST = r"""(n,chat)=>{const s=__tgSockets[__tgSockets.length-1];for(let i=0;i<n;i++)s.onmessage({data:JSON.stringify({type:'message',
+  chat:{id:chat,title:chat===77?'Night City Crew':'Alice'},message:{id:500+i,chat_id:chat,out:false,date:Math.floor(Date.now()/1000),text:'m'+i,sender:'V',media:null}})});}"""
+
+
+@needs_chrome
+def test_a_busy_or_muted_telegram_chat_does_not_load_the_desktop():
+    """"windows app perf is terrible now, moving windows lag, typing lag" (2026-10-21). Every Telegram arrival
+    recounted the whole notification store (bumpNotif) and rebuilt the taskbar's markup (osToast -> drawBar) --
+    several times a second in a busy group, muted ones included."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.querySelector('#os-bell')")
+        await wait(b, "__tgSockets.length>=1", 20)
+        await b.js("__PC.switchView('tg')")      # loads the dialog list, which says who is muted
+        await wait(b, "window.PCTelegram && PCTelegram._state.dialogs.length===2", 15)
+        await b.js("__PC.switchView('notes')")
+        await asyncio.sleep(1)
+        # count full taskbar rebuilds and notification recounts during a burst
+        await b.js("""(()=>{window.__rebuilt=0;const bar=document.querySelector('#os-bell').closest('[id],[class]').parentElement;
+          new MutationObserver(rs=>{for(const r of rs)if(r.target===bar&&r.addedNodes.length)window.__rebuilt++;}).observe(bar,{childList:true});
+          const all=Store.all.bind(Store);window.__scans=0;Store.all=(...a)=>{window.__scans++;return all(...a);};})()""")
+        await b.js("(" + BURST + ")(12,77)")    # a muted group
+        await b.js("(" + BURST + ")(12,42)")    # a chat that is not muted
+        await asyncio.sleep(1.5)
+        got["ledger"] = await b.js("Object.keys(JSON.parse(localStorage.getItem('pc.tg.unread.v1.'+__PC.me().pubkey)||'{}'))")
+        got["rebuilt"] = await b.js("window.__rebuilt")
+        got["scans"] = await b.js("window.__scans")
+
+    asyncio.run(desktop.with_browser("online", "", check, tg.FAKE.replace("state:'none'", "state:'ready'") + MUTED))
+    assert got["ledger"] == ["42"], ("a muted chat lit the bell (or the other one did not)", got)
+    assert got["rebuilt"] == 0, ("each arriving message rebuilt the whole taskbar", got)
+    assert got["scans"] <= 8, ("24 messages recounted the notification store per message", got)

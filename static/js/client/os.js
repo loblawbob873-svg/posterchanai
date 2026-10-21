@@ -11884,7 +11884,7 @@
   function osToast(html, pic, onClick, notificationType){
     if(!on || (PC().notificationAllowed && !PC().notificationAllowed(notificationType))) return;
     ding();
-    if(_nativeToast(html, pic, onClick)){ drawBar(); return; }
+    if(_nativeToast(html, pic, onClick)){ notifChanged(); return; }
     if(!toastHost || !toastHost.isConnected){
       toastHost = document.createElement('div');
       toastHost.className = 'os-toasts';
@@ -11900,7 +11900,11 @@
     t.onclick = () => { t.remove(); if(onClick){ try{ onClick(); return; }catch(_){} } toggleNoti(true); };
     toastHost.appendChild(t);
     setTimeout(() => t.remove(), 7000);       // a desktop toast can afford to linger past the app's 5s
-    drawBar();                                 // refresh the tray count
+    /* The BELL, in place -- not drawBar(), which rebuilds the whole taskbar's markup: it ran once per
+       arriving toast, so a busy Telegram group rebuilt the taskbar several times a second (measured as the
+       top cost while a window was dragged with messages arriving). notifChanged is the in-place repaint,
+       debounced: a burst of toasts is ONE recount of the bell. */
+    notifChanged();                            // refresh the tray count
   }
 
   // Email has no live arrival event in the client — the unread number is updated by the mail poll —
