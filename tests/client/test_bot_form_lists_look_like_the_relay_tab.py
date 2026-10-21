@@ -46,7 +46,8 @@ async def _run(width):
             "<script>window.__errors=[];onerror=m=>__errors.push(String(m));"
             "window.pcAlert=()=>{};window.pcConfirm=async()=>true;</script>"
             "<script>" + js.replace("</script>", "<\\/script>") + "</script>")
-    with tempfile.TemporaryDirectory(prefix="pc-botlists-") as profile:
+    # ignore_cleanup_errors: Chrome's helper processes can still be writing Default/ after the main one exits.
+    with tempfile.TemporaryDirectory(prefix="pc-botlists-", ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen(["/opt/google/chrome/chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
                                  "--remote-debugging-port=0", "--user-data-dir=" + profile, "about:blank"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
