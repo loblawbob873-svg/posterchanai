@@ -11,7 +11,7 @@ The app has no global CORS middleware, so Blossom's required CORS headers are se
 import asyncio
 import logging
 import re
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -202,17 +202,9 @@ async def _read_head(db: Session, blob, n: int = 16) -> bytes:
 
 
 def _disposition(disp: str, name: str) -> str:
-    """A Content-Disposition value that survives a non-ASCII filename.
-
-    Header values are encoded latin-1 by the ASGI layer, so putting `写真.png` straight in the header
-    raises UnicodeEncodeError and turns a download into a 500. RFC 6266/5987 is the way out: an
-    ASCII-only `filename=` for old clients plus a percent-encoded `filename*=` that every current
-    browser prefers."""
-    ascii_name = name.encode("ascii", "ignore").decode("ascii").strip() or "download"
-    out = f'{disp}; filename="{ascii_name}"'
-    if ascii_name != name:
-        out += "; filename*=UTF-8''" + quote(name, safe="")
-    return out
+    """See app/services/content_disposition.py -- one builder for every download."""
+    from app.services.content_disposition import content_disposition
+    return content_disposition(disp, name)
 
 
 def _upload_filename(request: Request) -> str:

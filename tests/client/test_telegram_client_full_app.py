@@ -584,3 +584,38 @@ def test_a_message_can_be_deleted_for_everyone_or_only_for_me_and_a_refusal_keep
     assert got['after_all'] == [1, 2] and got['after_me'] == [1], got
     assert got['after_refused'] == [1], ('a message Telegram refused to delete left the list', got)
     assert 'would not delete' in got['toasts'], got['toasts']
+
+
+MEDIA = r"""
+(()=>{const f1 = window.fetch;
+  window.fetch = function(url, opts){ const u = String(url);
+    if(u.includes('/api/tgc/media/')){ (window.__tgMedia = window.__tgMedia || []).push(u);
+      return Promise.resolve(new Response('PK-DOCX', {status:200, headers:{'Content-Type':'application/pdf'}})); }
+    return f1(url, opts); };})();
+"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_file_in_the_android_app_is_saved_to_the_phone():
+    """In the APK an <a download> saves nothing and throws nothing -- a sent .docx simply "would not
+    open". There the chip fetches the file and hands it to saveBlobAs; a browser keeps the link."""
+    got = {}
+
+    async def check(b):
+        await _open(b)
+        await b.until("document.querySelectorAll('.tg-dialog').length===2")
+        # The app as the APK: the client's own native check answers yes, and the save is recorded.
+        await b.js("window.__saved=[]; __PC.isNativeApp=()=>true;"
+                   "__PC.saveBlobAs=async(blob,name)=>{__saved.push({name, text: await blob.text()}); return 'saved:x';};")
+        await b.js("document.querySelector('.tg-dialog[data-chat=\"42\"]').click()")
+        await b.until("!!document.querySelector('.tg-file-chip')")
+        got['default'] = await b.js("(()=>{const e=new MouseEvent('click',{bubbles:true,cancelable:true});"
+                                    "document.querySelector('.tg-file-chip').dispatchEvent(e);return e.defaultPrevented;})()")
+        await b.until("__saved.length===1")
+        got['saved'] = await b.js("__saved")
+        got['media'] = await b.js("window.__tgMedia||[]")
+
+    asyncio.run(desktop.with_browser("online", "", check, FAKE.replace("state:'none'", "state:'ready'") + MEDIA))
+    assert got['default'] is True, "the APK followed the dead <a download> link"
+    assert got['saved'] == [{"name": "notes.pdf", "text": "PK-DOCX"}], got
+    assert any("/api/tgc/media/42/3?thumb=0&t=TICKET" in u for u in got['media']), got['media']

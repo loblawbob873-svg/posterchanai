@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.utils import redirect_guard
+from app.services.content_disposition import content_disposition
 from app.auth import get_admin_user as _auth_get_admin_user
 from app.database import get_db
 from app.services import emoji_service, settings_store, tor_service, user_table
@@ -4889,7 +4890,7 @@ async def client_file(npub: str, conv: str, name: str, request: Request, db: Ses
             ct = "image/jpeg"
         except Exception:
             pass
-    disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else f'attachment; filename="{name}"'
+    disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else content_disposition("attachment", name)
     return Response(content=data, media_type=ct,
                     headers={"Content-Disposition": disp, "Cache-Control": "private, max-age=86400"})
 

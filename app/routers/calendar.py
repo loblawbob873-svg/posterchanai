@@ -21,6 +21,7 @@ from app.database import get_db
 from app.services.user_table import UserRow as User
 from app.services import user_settings_table
 from app.services import caldav_store, caldav_subscribe
+from app.services.content_disposition import content_disposition
 
 # Radicale is imported LAZILY, inside the handlers. `app.services.caldav.auth` and `.storage` import
 # radicale at module level, and a node that has this code but not the library (sync.sh ships code,
@@ -402,7 +403,7 @@ async def export_ics(cal: str = Query(...), current_user: User = Depends(get_cur
     name = (cals.get(cal) or {}).get("displayname") or cal
     body = caldav_store.wrap_ics([i.get("ics", "") for i in items], name)
     return PlainTextResponse(body, media_type="text/calendar; charset=utf-8", headers={
-        "Content-Disposition": f'attachment; filename="{_slug(name)}.ics"'})
+        "Content-Disposition": content_disposition("attachment", f"{_slug(name)}.ics", "calendar")})
 
 
 @router.post("/import")

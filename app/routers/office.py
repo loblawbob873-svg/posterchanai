@@ -32,6 +32,7 @@ from app.services import instance_membership
 from app.auth import NATIVE_APP_ORIGINS
 
 import logging
+from app.services.content_disposition import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,7 @@ async def session_export(file_id: str, fmt: str, access_token: str = Query(...))
                 raise RuntimeError("the converter returned an empty document")
             name = re.sub(r"\.[^.]+$", "", meta["name"]) or "document"
             return Response(response.content, media_type=_EXPORT[fmt], headers={
-                "Content-Disposition": f'attachment; filename="{_safe_name(name)}.{fmt}"'})
+                "Content-Disposition": content_disposition("attachment", f"{_safe_name(name)}.{fmt}", "document")})
         except Exception as exc:
             last = exc
     raise HTTPException(503, f"could not convert this document: {last}")

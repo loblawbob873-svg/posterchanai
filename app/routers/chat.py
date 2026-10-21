@@ -32,6 +32,7 @@ from app.services.email_service import EmailService
 from app.services.search_service import SearchService, is_safe_url
 from app.services.proxy_image_cache import get as proxy_cache_get
 from app.services.intent_service import IntentService
+from app.services.content_disposition import content_disposition
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -909,7 +910,7 @@ async def serve_file(
             raise HTTPException(status_code=404, detail="File not found")
         from mimetypes import guess_type as _gt
         ct = _gt("x." + _enc.group(2))[0] or "application/octet-stream"
-        disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else f'attachment; filename="{filename}"'
+        disp = "inline" if ct.startswith(("image/", "video/", "audio/")) else content_disposition("attachment", filename)
         return Response(content=data, media_type=ct, headers={"Content-Disposition": disp})
 
     from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base, ascii_safe_header_filename
@@ -927,7 +928,7 @@ async def serve_file(
             # Serve media INLINE so the web UI plays/shows it in chat (like geni); FileResponse
             # supports HTTP Range so <video> can seek. Other files stay attachments (download).
             _inline = _ct.startswith(("image/", "video/", "audio/"))
-            _disp = "inline" if _inline else f'attachment; filename="{_local_path.name}"'
+            _disp = "inline" if _inline else content_disposition("attachment", _local_path.name)
             return FileResponse(str(_local_path), media_type=_ct,
                                 headers={"Content-Disposition": _disp})
     except Exception:

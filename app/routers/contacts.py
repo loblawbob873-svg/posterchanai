@@ -27,6 +27,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.services.user_table import UserRow as User
 from app.services import caldav_store
+from app.services.content_disposition import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ async def export_vcf(book: str = Query(...), current_user: User = Depends(get_cu
     name = (books.get(book) or {}).get("displayname") or book
     body = caldav_store.wrap_vcards([i.get("ics", "") for i in items])
     return PlainTextResponse(body, media_type="text/vcard; charset=utf-8", headers={
-        "Content-Disposition": f'attachment; filename="{_slug(name)}.vcf"'})
+        "Content-Disposition": content_disposition("attachment", f"{_slug(name)}.vcf", "contacts")})
 
 
 @router.post("/import")

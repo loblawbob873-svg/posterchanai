@@ -32,6 +32,7 @@ async def member(user=Depends(get_current_user)):
 # asks for a random ticket that only opens Telegram media, for that one account, for a few hours.
 import secrets as _secrets
 import time as _time
+from app.services.content_disposition import content_disposition
 
 _TICKETS: dict = {}
 _TICKET_TTL = 6 * 3600
@@ -233,10 +234,9 @@ async def media(chat_id: int, msg_id: int, thumb: int = 0, db: Session = Depends
         data, mime, name = await manager().media(db, user, chat_id, msg_id, bool(thumb))
     except TGError as e:
         raise HTTPException(404, str(e))
-    safe = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")[:120] or "file"
     # Somebody's attachment, served from OUR origin: never let the browser render it as a page.
     return Response(data, media_type=mime if not mime.startswith(("text/html", "application/xhtml")) else "text/plain",
-                    headers={"Content-Disposition": f'inline; filename="{safe}"',
+                    headers={"Content-Disposition": content_disposition("inline", (name or "")[:120], "file"),
                              "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
 
 

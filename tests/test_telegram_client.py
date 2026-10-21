@@ -876,3 +876,24 @@ def test_the_router_deletes_and_reports_a_refusal_as_a_sentence(api):
     tgs[1].protected.add(3)
     r = c.post("/api/tgc/delete", json={"chat_id": 42, "ids": [3]})
     assert r.status_code == 400 and "would not delete" in r.json()["error"], r.text
+
+
+def test_an_attachment_with_a_non_ascii_name_opens(api, monkeypatch):
+    """Reported: a .docx sent over Telegram answered `Internal server error: 'latin-1' codec can't
+    encode characters in position 18-20` -- the name went straight into Content-Disposition, which the
+    ASGI layer encodes latin-1. It must open, and keep its real name for the browser."""
+    from urllib.parse import unquote
+    c, R, who, tgs = api
+    mgr = R.manager()
+    name = "Отчёт за май — итог.docx"
+
+    async def media(db, user, chat_id, msg_id, thumb=False):
+        return b"PK\x03\x04docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", name
+    monkeypatch.setattr(mgr, "media", media)
+    t = c.get("/api/tgc/ticket").json()["t"]
+    m = c.get(f"/api/tgc/media/42/7?t={t}")
+    assert m.status_code == 200, m.text
+    assert m.content == b"PK\x03\x04docx"
+    cd = m.headers["content-disposition"]
+    assert cd.startswith('inline; filename="') and ".docx" in cd.split(";")[1], cd
+    assert unquote(cd.split("filename*=UTF-8''")[1]) == name, cd

@@ -551,6 +551,20 @@
           <button class="tg-mini" data-reply="${m.id}" aria-label="Reply">↩</button>
           <button class="tg-mini" data-del="${m.id}" aria-label="Delete" title="Delete">🗑</button></span></div>`;
     }).join('') || '<div class="tg-muted tg-pad">No messages yet.</div>';
+    /* In the APK an <a download> saves NOTHING (the WebView has no DownloadListener) and throws
+       nothing, so a sent .docx looked like it would not open. There the chip fetches the file and
+       hands it to saveBlobAs (MediaSave → the phone's Download folder). A browser and the desktop
+       app keep the plain link. */
+    if(PC().isNativeApp && PC().isNativeApp() && PC().saveBlobAs){
+      box.querySelectorAll('.tg-file-chip').forEach(a => a.onclick = async e => {
+        e.preventDefault();
+        try{
+          const r = await fetch(a.href, {credentials:'include'});
+          if(!r.ok) throw new Error('HTTP ' + r.status);
+          await PC().saveBlobAs(await r.blob(), a.getAttribute('download') || 'file');
+        }catch(err){ const P = PC(); if(P.toast) P.toast('Could not save the file: ' + ((err && err.message) || err)); }
+      });
+    }
     box.querySelectorAll('[data-react]').forEach(b => b.onclick = () => react(Number(b.dataset.react), b.dataset.emoji));
     box.querySelectorAll('[data-react-pick]').forEach(b => b.onclick = e => { e.stopPropagation(); pickReaction(b, Number(b.dataset.reactPick)); });
     /* Copy through the app's own helper: navigator.clipboard alone works in a browser and in neither

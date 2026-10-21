@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 
 from app.database import get_db
+from app.services.content_disposition import content_disposition
 from app.auth import get_current_user
 from app.services import instance_membership
 from app.services.user_table import UserRow as User
@@ -172,7 +173,7 @@ async def download_attachment(
         content=attachment.data,
         media_type=attachment.content_type,
         headers={
-            "Content-Disposition": f'{disposition}; filename="{safe_filename}"'
+            "Content-Disposition": content_disposition(disposition, safe_filename, "attachment")
         }
     )
 
@@ -288,7 +289,7 @@ async def serve_saved_attachment(
         media_type=content_type,
         filename=safe_filename,
         headers={
-            "Content-Disposition": f'{disposition}; filename="{safe_filename}"'
+            "Content-Disposition": content_disposition(disposition, safe_filename, "attachment")
         }
     )
 
@@ -777,7 +778,7 @@ async def mail_download(account_hint: str, folder: str, uid: str, idx: int,
     name = sanitize_filename(ref.get("name") or "attachment")
     disp = "inline" if any(t in mime for t in ("image/", "application/pdf", "text/")) else "attachment"
     return Response(content=data, media_type=mime,
-                    headers={"Content-Disposition": f'{disp}; filename="{name}"'})
+                    headers={"Content-Disposition": content_disposition(disp, name, "attachment")})
 
 
 @router.post("/draft")
