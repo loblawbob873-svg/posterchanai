@@ -1364,7 +1364,10 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
 .tl-pick-on .tl-pick,.tl-pick-on .tl-replies{display:flex}
 .tl-pick-on{align-items:center;gap:6px}
 .tl-pick-on .tl-replies~.tltab-media{margin-inline-start:4px}
+/* Centred instead of stretched, the ▦ button fell to 31px tall -- under the 32px phone tap floor. */
+.tl-pick-on .tltab-media{min-height:36px;min-width:36px}
 @media(max-width:820px){
+  .tl-tabs .tltab-media{min-height:36px;min-width:36px}
   .tl-tabs .tltab{display:none}
   .tl-tabs .tl-pick,.tl-tabs .tl-replies{display:flex}
   .tl-tabs{align-items:center;gap:6px}
