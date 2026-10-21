@@ -597,6 +597,10 @@ def test_linkified_invites_stay_inside_concord_instead_of_opening_classic_ui():
     assert "e.preventDefault();e.stopPropagation();openInviteLink(a.href)" in CONCORD
     assert "openInvite:openInviteLink" in CONCORD
     assert "autoJoin" not in CONCORD, "a flag that silently enrols somebody must not come back"
+    # (The instance's own community -- Admin -> Nostr Relay, members only, joinInstanceCommunity -- is a different
+    # thing: an operator's setting, never a link somebody else put in front of you. A LINK still only previews.)
+    link = CONCORD[CONCORD.index("function openInviteLink(raw){"):][:600]
+    assert "acceptInvite" not in link and "joinInstanceCommunity" not in link
 
 
 def test_direct_invite_route_opens_concord_with_the_fragment_intact():
@@ -686,7 +690,7 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
     assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
     assert 'mentionBox' not in CONCORD
-    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);' in CONCORD and 'sweepExpiredChat' in CONCORD
+    assert 'refreshActiveChannel(p)' in CONCORD and 'refreshRoomMetadata(p);refreshActiveChannel(p);' in CONCORD[CONCORD.index('function startLiveSync(p){'):][:900] and 'sweepExpiredChat' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
 

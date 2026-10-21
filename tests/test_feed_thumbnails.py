@@ -35,16 +35,58 @@ def test_the_ladder():
     assert [thumb_service.snap(x) for x in (1, 48, 49, 132, 600, 866, 5000, "x")] == [48, 48, 96, 160, 720, 1080, 1080, 320]
 
 
-def test_a_big_picture_is_resized_and_small_or_animated_ones_are_not():
+def test_a_big_picture_is_resized_and_a_small_one_is_not():
     out = thumb_service.resize(_png(1500, 1500), 160)
     im = Image.open(io.BytesIO(out))
     assert im.format == "WEBP" and im.size == (160, 160)
     assert thumb_service.resize(_png(100, 80), 160) is None, "an already-small picture is its own thumbnail"
-    g = io.BytesIO()
-    frames = [Image.new("RGB", (800, 800), c) for c in ((255, 0, 0), (0, 255, 0))]
-    frames[0].save(g, "GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
-    assert thumb_service.resize(g.getvalue(), 160) is None, "an animation must stay an animation"
     assert thumb_service.resize(b"not an image", 160) is None
+
+
+def _gif(w, h, n, noise=True):
+    """A GIF shaped like real feed GIFs: smooth, dithered content (GIF's 256-colour palette dithers it, which is why
+    such GIFs are huge and their WebP small) -- or, with noise=False, flat colour WebP cannot beat."""
+    frames = []
+    for i in range(n):
+        if noise:
+            frames.append(Image.linear_gradient("L").resize((w, h)).rotate(i * 7).convert("RGB"))
+        else:
+            frames.append(Image.new("RGB", (w, h), (i * 40 % 255, 80, 160)))
+    g = io.BytesIO()
+    frames[0].save(g, "GIF", save_all=True, append_images=frames[1:], duration=[80 + 10 * i for i in range(n)], loop=0)
+    return g.getvalue()
+
+
+def test_an_animation_becomes_a_smaller_animation_with_its_timing():
+    """2026-10-21: GIFs were the single biggest bytes on a phone's feed, 1-2 MB decoded at full size every frame
+    while scrolling. An animation is now an animated WebP at the drawn width -- still an animation, same frames,
+    same per-frame durations, still looping."""
+    src = _gif(800, 600, 6)
+    out = thumb_service.resize(src, 320)
+    assert out is not None, "a big animated GIF was served at full size"
+    im = Image.open(io.BytesIO(out))
+    assert im.format == "WEBP" and im.is_animated and im.n_frames == 6, "it must stay an animation"
+    assert im.size == (320, 240)
+    durs = []
+    for i in range(im.n_frames):
+        im.seek(i); im.load(); durs.append(im.info.get("duration"))   # WebP fills a frame's info once it is decoded
+    assert durs == [80 + 10 * i for i in range(6)], durs
+    assert len(out) < len(src)
+
+
+def test_a_gif_no_wider_than_asked_is_still_re_encoded_when_that_saves_bytes():
+    """The measured case: a 315px, 46-frame feed GIF was 1.99 MB; its same-size WebP 303 KB."""
+    src = _gif(300, 200, 8)
+    out = thumb_service.resize(src, 640)
+    assert out is not None and Image.open(io.BytesIO(out)).size == (300, 200), "never upscaled, still re-encoded"
+    assert len(out) < 0.8 * len(src)
+
+
+def test_an_animation_webp_cannot_shrink_or_that_is_too_big_is_served_as_it_is(monkeypatch):
+    flat = _gif(64, 64, 2, noise=False)
+    assert thumb_service.resize(flat, 640) is None, "a WebP that does not save 20% is not worth serving"
+    monkeypatch.setattr(thumb_service, "ANIM_MAX_FRAMES", 3)
+    assert thumb_service.resize(_gif(800, 600, 6), 320) is None, "past the frame bound the original is served"
 
 
 def test_the_route(monkeypatch, tmp_path):
@@ -135,7 +177,8 @@ def test_the_shipped_helper_picks_thumbnails_only_where_they_exist():
     assert o["pwa"]["av"] == want and o["apk"]["av"] == want
     assert o["standalone"]["av"] == "https://blossom.primal.net/x.png", "no instance: the original"
     for k in ("pwa", "apk"):
-        assert o[k]["gif"] == "https://h.example/a.gif" and o[k]["data"].startswith("data:")
+        assert o[k]["gif"].startswith("https://poster.place/client/thumb?"), "a GIF goes through the resizer too"
+        assert o[k]["data"].startswith("data:")
         assert o[k]["again"].count("/client/thumb?") == 1, "a thumbnail URL is never wrapped twice"
     assert o["first"] is True and o["after1"] == "https://h.example/p.jpg", "a failed thumbnail loads the original"
     assert o["second"] is False and o["after2"] == "/logo.png", "a failed original falls back as before"

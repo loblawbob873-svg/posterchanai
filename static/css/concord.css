@@ -766,3 +766,10 @@ body.ccg-projects-open::before{content:"";position:fixed;inset:0;z-index:79;back
   .ccg-who b{max-width:120px}
   .ccg-x{width:44px;height:44px;flex-basis:44px}
 }
+
+/* A pending invitation is a card on the Concord home and above the channel list (concord.js inviteCardHtml). */
+.cc-invite-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;margin:0 0 12px;padding:10px 12px;border:1px solid rgba(var(--cct-accent-rgb),.45);border-radius:calc(12px*var(--cct-round));background:rgba(var(--cct-accent-rgb),.1);color:var(--cct-strong);font:inherit;text-align:start;cursor:pointer}
+.cc-invite-card>span:first-child{font-size:20px}.cc-invite-card b,.cc-invite-card small{display:block}.cc-invite-card small{margin-top:2px;color:var(--cct-muted);font-size:12px}
+.cc-invite-card strong{padding:6px 12px;border-radius:calc(8px*var(--cct-round));background:var(--cct-accent);color:var(--cct-on-accent);font-size:12px}
+.cc-channel-list .cc-invite-card{margin:4px 0 10px}
+.cc-invite-count{margin-inline-start:5px;padding:0 6px;border-radius:999px;background:var(--cct-accent);color:var(--cct-on-accent);font-size:11px;font-weight:700}

@@ -1298,6 +1298,9 @@
         // A reconnect catch-up query may populate the archive before the live socket resumes.
         // The notification ledger, not cache membership, decides whether this occurrence rang.
         const fresh = d.startsWith(D_MSG) && !_announced.has(d);
+        /* A send request from another device arrives HERE first -- drain on it, instead of a poll asking the
+         * relay for the 200 newest documents every three seconds to find it. */
+        if(d.startsWith(D_OUT)) phoneState().then(st => { if(st.telephony && ME().pubkey === owner) drainOutbox(); }).catch(() => {});
         await absorbResilient([ev]);
         if(ME().pubkey !== owner) return;
         /* ONE REPAINT PER BURST, NOT PER EVENT — and on this screen a burst is the ordinary case.
@@ -5167,9 +5170,15 @@
      * then remained deaf until the user backgrounded it. Poll only while visible, and only on a
      * device with telephony; this costs nothing on web/desktop and gives a newly queued MMS a
      * bounded pickup time. drainOutbox() coalesces slow queries and sends. */
+    /* THE OUTBOX IS DRIVEN BY THE LIVE SUBSCRIPTION NOW (a pcai:smsout: document drains it, see watch()), so
+     * this loop's only every-tick job is the cheap one: watch() installs/retires the subscription as the
+     * account changes. The relay query + two native SMS-database reads it used to make EVERY 3 SECONDS on
+     * every screen (~1,200 queries and ~2,400 database reads an hour, measured in the 2026-10-21 audit)
+     * remain only as a once-a-minute safety net for a subscription that missed one, while visible. */
+    let outboxTick = 0;
     const outboxPoll = setInterval(async () => {
       watch(); // Credentials can arrive after module startup; also retire a previous account's filter.
-      if(document.visibilityState !== 'visible') return;
+      if(document.visibilityState !== 'visible' || (++outboxTick % 20)) return;
       const st = await phoneState();
       if(st.telephony) drainOutbox();
     }, 3000);

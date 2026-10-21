@@ -2998,7 +2998,10 @@
         document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
       }catch(_){}
     }
-    updateUserCount(); let _ucT=0; setInterval(()=>{ if(document.hidden) return; if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
+    /* 15s only where the online counter is ON SCREEN (the desktop sidebar). On a phone it is not drawn, and the poll
+       is then only the presence heartbeat -- 60s keeps a phone counted (the server's window is 150s) at a quarter of
+       the wake-ups and requests. Data saver: 60s everywhere, as before. */
+    updateUserCount(); let _ucT=0; setInterval(()=>{ if(document.hidden) return; const uc=$('#user-count'); if((NO_IMAGES || !uc || !uc.offsetParent) && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
     // Ask the browser for PERSISTENT storage so our caches (SW media cache + IndexedDB) aren't evicted
     // under pressure — that's what lets a large offline media cache actually stick around. Best-effort;
@@ -6729,7 +6732,10 @@
     }
     function src(u, css){
       u = String(u || ''); const b = base();
-      if(!b || !/^https?:\/\//i.test(u) || /\.(gif|svg)(?:[?#]|$)/i.test(u) || u.indexOf('/client/thumb?') >= 0) return u;
+      /* GIFs GO THROUGH THE RESIZER TOO (2026-10-21). They were the single biggest bytes on a phone's feed --
+       * 1-2 MB animations drawn in a 360px card, decoded at full size on every frame -- and the server now
+       * turns one into an animated WebP at the drawn width (thumb_service.resize). SVG stays as it is. */
+      if(!b || !/^https?:\/\//i.test(u) || /\.svg(?:[?#]|$)/i.test(u) || u.indexOf('/client/thumb?') >= 0) return u;
       const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
       return b + '/client/thumb?w=' + Math.round((css || 64) * dpr) + '&u=' + encodeURIComponent(u);
     }

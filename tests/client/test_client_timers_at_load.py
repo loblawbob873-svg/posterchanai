@@ -34,7 +34,8 @@ ALLOWED = {
     ("notes.js", "interval", 300000): "flushes notes typed offline, every 5 minutes",
     ("os.js", "timeout", 15000): "Startup Apps offline fallback -- armed only inside the PosterChanOS shell (window.pcShell); "
                                  "the probe's fake page answers yes to that check",
-    ("sms.js", "interval", 3000): "Texts: polls the native SMS bridge while the app is open",
+    ("sms.js", "interval", 3000): "Texts: re-checks the live outbox subscription each tick (no network); the relay "
+                                  "query + native SMS reads are a once-a-minute safety net (every 20th tick), visible only",
     ("sync.js", "interval", 5000): "Folder Sync's scheduler tick",
     ("telegram.js", "timeout", 4000): "first background Telegram check, a few seconds after boot",
     ("vault.js", "interval", 300000): "password vault auto-lock check",

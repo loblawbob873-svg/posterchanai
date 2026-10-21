@@ -46,36 +46,36 @@ def test_members_join_the_instance_community_once(width):
         await b.call("Emulation.setDeviceMetricsOverride", dict(width=width, height=860, deviceScaleFactor=1, mobile=width < 600))
         await desktop.login(b)
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}; __PC.switchView('concord'); true")
-        await b.until("!!window.PCConcord && !!PCConcord.__autoJoin")
+        await b.until("!!window.PCConcord && !!PCConcord.__instanceJoin")
         await b.js(FIX % ('"' + URL1 + '"'))
         assert await b.js(ROOMS) == [], "fixture: a new account starts with no communities"
 
         # A brand-new account: joined, and the room is opened because nothing else was.
-        await b.js("PCConcord.__autoJoin(__hydrate)")
+        await b.js("PCConcord.__instanceJoin(__hydrate)")
         await b.until(ROOMS + ".includes('PosterChan')")
         await b.until("/PosterChan/.test(document.querySelector('.cc-channels header')?.textContent||'')")
         over = await b.js("document.scrollingElement.scrollWidth-innerWidth")
         assert over <= 1, f"the joined community scrolls sideways by {over}px"
 
         # Running again changes nothing (no duplicate room).
-        await b.js("PCConcord.__autoJoin(__hydrate)")
+        await b.js("PCConcord.__instanceJoin(__hydrate)")
         await asyncio.sleep(.3)
         assert await b.js(ROOMS) == ["PosterChan"]
 
         # The member LEAVES (their list no longer has it): the next session must not re-join them.
         await b.js("localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,'[]'); true")
-        await b.js("PCConcord.__autoJoin(__hydrate)")
+        await b.js("PCConcord.__instanceJoin(__hydrate)")
         await asyncio.sleep(.5)
         assert await b.js(ROOMS) == [], "a member who left the instance community was joined to it again"
 
         # The operator names a DIFFERENT community: joined once more.
         await b.js("window.__invite=%s; true" % ('"' + URL2 + '"'))
-        await b.js("PCConcord.__autoJoin(__hydrate)")
+        await b.js("PCConcord.__instanceJoin(__hydrate)")
         await b.until(ROOMS + ".includes('PosterChan 2')")
 
         # Blank setting: nothing happens.
         await b.js("localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,'[]');window.__invite=''; true")
-        await b.js("localStorage.removeItem('pc.concord.autojoin.v1.'+__PC.me().pubkey); PCConcord.__autoJoin(__hydrate)")
+        await b.js("localStorage.removeItem('pc.concord.autojoin.v1.'+__PC.me().pubkey); PCConcord.__instanceJoin(__hydrate)")
         await asyncio.sleep(.5)
         assert await b.js(ROOMS) == []
 

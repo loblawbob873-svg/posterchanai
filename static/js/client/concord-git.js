@@ -697,11 +697,19 @@
     const door=relayDoor();let r=null;
     try{r=await door.publishTo(relays,ev,{timeout:8000,max:8,detailed:true});}catch(e){r={ok:false,msg:(e&&e.message)||'failed'};}
     if(r&&r.ok){outbox.delete(ev.id);return {ok:true};}
-    if(!r||r.uncertain||/timeout|closed|connect|socket/i.test(String(r.msg||''))){outbox.set(ev.id,{ev,coord});return {ok:false,queued:true,msg:'not confirmed'};}
+    if(!r||r.uncertain||/timeout|closed|connect|socket/i.test(String(r.msg||''))){outbox.set(ev.id,{ev,coord});armOutbox();return {ok:false,queued:true,msg:'not confirmed'};}
     const s=repoState.get(coord);if(s){s.events.delete(ev.id);saveCache(coord,s);}
     return {ok:false,msg:String(r.msg||'rejected')};
   }
-  setInterval(()=>{if(!outbox.size||document.hidden)return;for(const {ev,coord} of [...outbox.values()])void sendHeld(ev,coord,relaysFor(coord,[]));},30000);
+  /* Armed on first use (an event whose delivery is not yet confirmed), never at load: a module that starts a long
+   * timer by being loaded costs every page that loads it (tests/client/test_client_timers_at_load.py). Stops itself
+   * once nothing is waiting. */
+  let outboxTimer=null;
+  function armOutbox(){
+    if(outboxTimer)return;
+    outboxTimer=setInterval(()=>{if(!outbox.size){clearInterval(outboxTimer);outboxTimer=null;return;}if(document.hidden)return;
+      for(const {ev,coord} of [...outbox.values()])void sendHeld(ev,coord,relaysFor(coord,[]));},30000);
+  }
 
   async function mediaTags(text){
     try{const tags=await P().imetaTagsFor(text);return (tags||[]).filter(t=>t[0]==='imeta');}catch(_){return [];}

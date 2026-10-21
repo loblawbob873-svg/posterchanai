@@ -3390,6 +3390,25 @@
     return merged;
   }
 
+  /* AN INVITATION YOU CAN SEE. "New Concord invitation — open Concord to review it" led to a Concord that said
+   * nothing about it (2026-10-21): the review lived only behind the header's "Invites" button, which a phone
+   * folds into the ⋯ menu. The count of pending invitations is kept here, refreshed when one arrives (dms.js
+   * fires pc-concord-direct-invites) and on every render, and drawn as a card on the Concord home AND above the
+   * channel list, plus a number on Invites. Reading the count never touches the network (api.pending is the
+   * parked list). */
+  let pendingInviteCount=0,inviteCountBusy=false;
+  async function refreshInviteCount(){
+    if(inviteCountBusy)return;inviteCountBusy=true;
+    try{const p=PC();if(!p||!p.cordDirectContext||!p.cordDirectModule)return;const context=p.cordDirectContext();if(!context||!context.pubkey)return;
+      const api=await p.cordDirectModule(),n=(api.pending(context)||[]).length;
+      if(n!==pendingInviteCount){pendingInviteCount=n;backgroundRender();}}
+    catch(_){}finally{inviteCountBusy=false;}
+  }
+  try{window.addEventListener('pc-concord-direct-invites',()=>{void refreshInviteCount();});}catch(_){}
+  function inviteCardHtml(p){
+    const n=pendingInviteCount;if(!n)return '';
+    return `<button type="button" class="cc-invite-card" data-cc-review-invites><span aria-hidden="true">✉</span><span><b>${n===1?'You have an invitation':'You have '+n+' invitations'}</b><small>Review before joining — no community is contacted until you accept</small></span><strong>Review</strong></button>`;
+  }
   async function showDirectInvitations(){
     const p=PC(),context=p.cordDirectContext(),api=await p.cordDirectModule();
     if(!context.isCurrent())return;
@@ -4530,19 +4549,19 @@
    * remembered, so leaving the community is final, and a changed invite is offered once more. The join is
    * the ordinary one -- saved, recorded in the Armada membership vault, announced in the guestbook -- and
    * only opens the room when nothing else is open. Every failure is silent and retried next session. */
-  const AUTOJOIN_KEY=pk=>'pc.concord.autojoin.v1.'+pk;
-  let autoJoinBusy=false,autoJoinSession='';
-  async function autoJoinDefault(p,hydrate=hydrateInvite){
-    const pk=accountPk();if(!pk||autoJoinBusy||autoJoinSession===pk)return;
-    if(typeof window.__PC_API_BASE__==='string'&&!window.__PC_API_BASE__)return;   // relays-only build: no instance
-    autoJoinBusy=true;autoJoinSession=pk;
+  const INSTANCE_JOIN_KEY=pk=>'pc.concord.autojoin.v1.'+pk;
+  let instanceJoinBusy=false,instanceJoinSession='';
+  async function joinInstanceCommunity(p,hydrate=hydrateInvite){
+    const pk=accountPk();if(!pk||instanceJoinBusy||instanceJoinSession===pk)return;
+    if(typeof window.__PC_API_BASE__==='string'?!window.__PC_API_BASE__:!(typeof location!=='undefined'&&/^https?:$/.test(location.protocol)))return;   // no instance to ask
+    instanceJoinBusy=true;instanceJoinSession=pk;
     try{
       const r=await fetch('/client/concord/default-invite',{credentials:'include',cache:'no-store'});if(!r.ok)return;
       const url=String((await r.json()).invite||'').trim();if(!url||!inviteParts(url))return;
-      let done='';try{done=localStorage.getItem(AUTOJOIN_KEY(pk))||'';}catch(_){}
+      let done='';try{done=localStorage.getItem(INSTANCE_JOIN_KEY(pk))||'';}catch(_){}
       if(done===url||accountPk()!==pk)return;
       const room=await hydrate(p,url);if(accountPk()!==pk)return;
-      const mark=()=>{try{localStorage.setItem(AUTOJOIN_KEY(pk),url);}catch(_){}};
+      const mark=()=>{try{localStorage.setItem(INSTANCE_JOIN_KEY(pk),url);}catch(_){}};
       if(saved().some(x=>sameRoom(x,room))||wasLocallyLeft(pk,room)){mark();return;}
       if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});
       const a=saved();a.push(room);save(a);mark();
@@ -4550,8 +4569,8 @@
       await persistArmadaMembership(p,room);
       void publishGuestbook(p,room,'join');
       render();
-    }catch(e){autoJoinSession='';try{console.warn('Concord auto-join pending',e);}catch(_){}}
-    finally{autoJoinBusy=false;}
+    }catch(_){instanceJoinSession='';}   // could not ask / could not read: silent, tried again next session
+    finally{instanceJoinBusy=false;}
   }
   /* EVERY ROOM IN ONE WRITE, BECAUSE 13302 IS REPLACEABLE AND EACH WRITE IS A READ-MODIFY-WRITE.
    *
@@ -5591,7 +5610,7 @@
    * in Firefox (2026-10-16, measured per window over a minute). A window that is not Communities leaves it to the
    * desktop page (whose badge it is) and to the Communities window. */
   function sweepHere(){ try{ const W=window.PCOSWin; return !(W&&W.isWindow&&W.isWindow()&&W.viewOf&&W.viewOf()!=='concord'); }catch(_){ return true; } }
-  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
+  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||(window.Relay&&Relay.asleep&&Relay.asleep()))return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
@@ -5918,7 +5937,15 @@
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function stopLiveSync(){ stopVoiceWatch(); stopRekeyLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
-  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);startRoomsLive(p);sweepOtherRooms(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
+  /* THE LIVE LOOP RESTS. It was started on the first visit to Communities and never stopped (stopLiveSync has no caller),
+   * so every 4 s for the life of the page -- in the background too, since the APK's foreground service keeps the WebView's
+   * timers running -- it refreshed metadata, swept every room's relays, re-deduplicated every room and swept IndexedDB
+   * (2026-10-21 audit). Now: nothing while the relay pool sleeps (Relay.sleep() after 20 s in the background), and every
+   * 5th tick (20 s, the badge sweep's own rate) while Communities is not the screen being looked at. */
+  let liveTick=0;
+  const liveResting=()=>{ try{ return !!(window.Relay&&Relay.asleep&&Relay.asleep()); }catch(_){ return false; } };
+  const liveOffScreen=()=>document.hidden||!document.body.classList.contains('concord-view');
+  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{if(liveResting())return;if(liveOffScreen()&&(++liveTick%5))return;refreshRoomMetadata(p);refreshActiveChannel(p);startRoomsLive(p);sweepOtherRooms(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
   /* ONE SIGNED LISTING PER ROOM PER ACCOUNT, RE-SENT — NEVER RE-SIGNED.
    *
    * The Discover listing is a public kind-1 `${name}\n\n${url}` with the same two `t` tags every
@@ -6130,7 +6157,7 @@
        repository's issues, comments, status changes and CI between its messages. */
     const _gitChannel=current&&state.community!=null&&window.PCConcordGit?channelsOf(current).find(c=>c.name===(state.channel||'general')):null,
       _gitHere=!!(_gitChannel&&PCConcordGit.channelHasGit(_gitChannel));
-    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
+    return `${state.community==null?`<div class="cc-discover">${inviteCardHtml(p)}<div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -6184,7 +6211,8 @@
       }
       if(acct&&pendingHandoff)acceptHandoff(pendingHandoff); }
     void warmRoomIcons();
-    void autoJoinDefault(p);
+    void joinInstanceCommunity(p);
+    void refreshInviteCount();
     const rooms=saved();
     const viewer=p.viewer?p.viewer():{};
     let autoOpen=-1;
@@ -6297,10 +6325,10 @@
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities" data-cc-sig="${p.enc(railSig(rooms))}"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${railHtml(p,rooms)}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
       <aside class="cc-channels">${roomBannerUrl(current)?`<div class="cc-banner"><img src="${p.enc(roomBannerUrl(current))}" alt=""></div>`:''}<header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}${canAddChannel(p,current)?'<button class="cc-head-btn" id="cc-add-channel" title="New channel" aria-label="New channel">+</button>':''}</header>
-        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
+        <div class="cc-channel-list">${inviteCardHtml(p)}${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-theme" title="Concord theme" aria-label="Concord theme"><svg class="ic"><use href="#i-palette"></use></svg></button><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
-      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="More" aria-label="More room actions"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button></header>
+      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="More" aria-label="More room actions"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-icon-status" id="cc-community-icon-status" role="status" aria-live="polite" hidden></div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
@@ -6417,7 +6445,7 @@
     let tries=0;
     const reveal=()=>{
       if(state.community!==index||state.channel!==(channels.some(c=>c.name===requested)?requested:state.channel))return;
-      const row=[...document.querySelectorAll('.cc-message[data-message-id],.ccg-row[data-message-id]')]
+      const row=[...document.querySelectorAll('.cc-message[data-message-id]'),...document.querySelectorAll('.ccg-row[data-message-id]')]
         .find(el=>el.dataset&&el.dataset.messageId===id);
       if(window.PCConcordGit&&PCConcordGit.openTicket(id,rooms[index]))return;
       if(row){const st=readScroll(scrollKey());st.pinned=false;row.scrollIntoView({block:'center'});row.classList.add('cc-message-target');setTimeout(()=>{if(row.isConnected)row.classList.remove('cc-message-target');},2400);return;}
@@ -6887,6 +6915,7 @@
      * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
      * except that it is reached by a deliberate press. */
     const directInbox=$('#cc-direct-inbox');if(directInbox)directInbox.onclick=()=>showDirectInvitations().catch(e=>p.toast(e.message||String(e)));
+    $$('[data-cc-review-invites]').forEach(b=>b.onclick=()=>showDirectInvitations().catch(e=>p.toast(e.message||String(e))));
     const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(saved()[state.community]);   // the room open NOW — `current` is the header renderer's, not in scope here
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
     const acceptInvite=async(raw,room,direct=false)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
@@ -7533,7 +7562,7 @@
                                     if(v&&v.controls)roomControls.set(v.controls[0],v.controls[1]);
                                     return state; };
   window.PCConcord.__testInvite=v=>{ pendingInvite=v||null; render(); };
-  window.PCConcord.__autoJoin=(hydrate)=>{ autoJoinSession=''; return autoJoinDefault(PC(),hydrate); };   // the instance community, with a fixture invite reader   // an invitation on screen without fetching one
+  window.PCConcord.__instanceJoin=(hydrate)=>{ instanceJoinSession=''; return joinInstanceCommunity(PC(),hydrate); };   // the instance community, with a fixture invite reader   // an invitation on screen without fetching one
   window.PCConcord.__voiceWatch=()=>({key:voiceWatch.key,room:voiceWatch.room,listening:voiceWatch.key?Date.now()-voiceWatch.since:0,channels:[...voiceWatch.rows].map(([id,rows])=>[id,rows.size]),active:voiceActive});   // what the channel list believes about calls
   window.PCConcord.__testMessages=id=>testMessages(id);
   /* The third door: the LIVE repaint exactly as an arriving message performs it. A scroll test that

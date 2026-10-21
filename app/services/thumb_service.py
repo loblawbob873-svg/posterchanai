@@ -52,6 +52,42 @@ def _path(url: str, w: int) -> str:
     return os.path.join(_ROOT, k[:2], k + ".webp")
 
 
+# An animation is resized only within these bounds (a 2 MB GIF drawn in a 360px card is the case worth it; a
+# 900-frame screen recording is not worth the CPU) -- past them the original is served, as before.
+ANIM_MAX_FRAMES = 240
+ANIM_MAX_WORK = 120_000_000          # frames x source pixels decoded
+
+
+def _resize_animation(im, w: int, size: int):
+    """Animated WebP of animation `im` at most `w` wide, frame timing and loop kept; None to serve it as is.
+
+    The single biggest bytes on a phone's feed were GIFs -- 1-2 MB animations drawn in a 360px card, and
+    decoded at full size for every frame, on the raster threads, while scrolling (2026-10-21, measured on an
+    emulated Pixel 5). A WebP animation at the drawn width is typically a fraction of the bytes and of the
+    decode. A GIF NO WIDER THAN ASKED IS STILL RE-ENCODED: GIF compresses so badly that a 315px, 46-frame feed
+    GIF was 1.99 MB and its same-size WebP 303 KB (15%, 0.21 s once) -- so the width is min(w, own width) and
+    the WebP is kept only when it is under 80% of the original's bytes. Bounded by ANIM_MAX_FRAMES /
+    ANIM_MAX_WORK; anything that fails is served as the original."""
+    from PIL import Image, ImageSequence
+    n = getattr(im, "n_frames", 1)
+    if n > ANIM_MAX_FRAMES or n * im.width * im.height > ANIM_MAX_WORK:
+        return None
+    w = min(int(w), im.width)
+    h = max(1, round(im.height * w / im.width))
+    frames, durations = [], []
+    for fr in ImageSequence.Iterator(im):
+        durations.append(int(fr.info.get("duration", im.info.get("duration", 100)) or 100))
+        f = fr.convert("RGBA")
+        frames.append(f if (w, h) == f.size else f.resize((w, h), Image.BILINEAR))
+    if len(frames) < 2:
+        return None
+    out = io.BytesIO()
+    frames[0].save(out, "WEBP", save_all=True, append_images=frames[1:], duration=durations,
+                   loop=int(im.info.get("loop", 0) or 0), quality=70, method=2, minimize_size=False)
+    data = out.getvalue()
+    return data if len(data) < size * 0.8 else None
+
+
 def resize(data: bytes, w: int):
     """WebP bytes of `data` scaled to width `w`, or None when it should be served as it is."""
     from PIL import Image, ImageOps
@@ -59,7 +95,7 @@ def resize(data: bytes, w: int):
     try:
         im = Image.open(io.BytesIO(data))
         if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
-            return None                                   # an animation stays an animation
+            return _resize_animation(im, w, len(data))    # an animation stays an animation -- as an animated WebP
         if im.width <= w:
             return None                                   # already small: the original is the thumbnail
         im.draft("RGB", (w, max(1, round(im.height * w / im.width))))   # JPEG: decode at a fraction of full size

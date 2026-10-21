@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v2210';
+const CACHE = 'pc-nostr-v2211';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -429,7 +429,13 @@ async function cacheFirstMedia(req){
     // ONLY cache a trusted 200 (same-origin / CORS). An opaque cross-origin response has status 0 — we
     // can't tell success from an error page, so caching it risks poisoning the avatar permanently. Skip
     // it; the browser's HTTP cache still handles repeat loads of the same avatar URL.
-    const cacheable = cache && res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
+    /* A THUMBNAIL THAT WAS NOT MADE YET REDIRECTS TO THE ORIGINAL (no-store), and fetch() follows it to a
+     * 200 -- stored here, the FULL-SIZE picture lived on under the thumbnail's address, cache-first, for
+     * ever: every picture first seen before its thumbnail existed stayed full size on that phone (2026-10-21
+     * audit; the APK's data and decode cost). A redirected /client/thumb answer is shown, never kept; the
+     * next view gets the real thumbnail. */
+    const thumbFallback = res.redirected && /\/client\/thumb\?/.test(req.url);
+    const cacheable = cache && !thumbFallback && res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
     if (cacheable) { await cache.put(req, res.clone()); trimCache(cache, MEDIA_MAX, 'media'); }
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;

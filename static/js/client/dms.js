@@ -802,7 +802,14 @@ window.PCDmsFactory = function(dep){
       const api=await cordDirectModule(),added=await api.park(wrap,context);
       if(added && context.isCurrent()){
         window.dispatchEvent(new CustomEvent('pc-concord-direct-invites'));
-        if(live)toast('New Concord invitation — open Concord to review it');
+        /* The message is the way in: tapping it opens Concord on the invitation (it used to say "open Concord"
+         * and Concord then showed nothing about it). */
+        if(live){
+          const t=document.createElement('button');t.type='button';t.className='toast toast-action';
+          t.textContent='New Concord invitation — tap to review';
+          t.onclick=()=>{t.remove();try{switchView('concord');}catch(_){}setTimeout(()=>{try{window.PCConcord&&PCConcord.showDirectInvitations&&PCConcord.showDirectInvitations();}catch(_){}},300);};
+          const root=document.getElementById('toast-root');if(root){root.appendChild(t);setTimeout(()=>t.remove(),8000);}else toast('New Concord invitation — open Concord to review it');
+        }
       }
       return true;
     }finally{_cordDirectBusy.delete(key);}

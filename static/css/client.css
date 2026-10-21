@@ -12514,3 +12514,6 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .cc-icon-current{width:56px;height:56px;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center;
   background:var(--panel,rgba(255,255,255,.06));border:1px solid var(--line,rgba(255,255,255,.12));margin:4px 0 8px;font-weight:700}
 .cc-icon-current img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* A toast that is also the way in (dms.js: a new Concord invitation). #toast-root passes taps through; this one takes them. */
+.toast.toast-action{pointer-events:auto;cursor:pointer;color:inherit;font:inherit;font-size:17px;text-align:center}

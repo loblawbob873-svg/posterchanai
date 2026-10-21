@@ -115,7 +115,7 @@
         for (const [id, s] of this.pool._subs){
           // NIP-42 authorization belongs to one connection, not the relay URL's lifetime.
           if(s.authTried)s.authTried.delete(this.url);
-          if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...s.filters]); s.sent.add(this.url); if(s.pageAsked){s.pageAsked.add(this.url);s.pageEosed.delete(this.url);} }
+          if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...this.pool._resumeFilters(s)]); s.sent.add(this.url); if(s.pageAsked){s.pageAsked.add(this.url);s.pageEosed.delete(this.url);} }
         }
         this.pool._connReady(this);
         this._startHeartbeat();
@@ -573,7 +573,7 @@
         const ev = this._normTags(m[2]); if (!ev || (!sub.pageIds && sub.seen.has(ev.id))) return;
         if (conn.trusted){
           this._recordPage(sub,conn.url,ev);
-          if(!sub.seen.has(ev.id)){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }
+          if(!sub.seen.has(ev.id)){ this._seenAdd(sub, ev.id); this._markNewest(sub, ev); sub.onEvent(ev); }
         } else {
           if(sub.pageIds) sub.pagePending++;
           this._vq.push({ ev, sub, url:conn.url }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40);
@@ -737,7 +737,7 @@
           if(b.sub.pageIds && !verified) b.sub.pageInvalid=true;
           if(verified && !b.sub.pageClosed){
             this._recordPage(b.sub,b.url,b.ev);
-            if(b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ this._seenAdd(b.sub,b.ev.id); b.sub.onEvent(b.ev); }
+            if(b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ this._seenAdd(b.sub,b.ev.id); this._markNewest(b.sub,b.ev); b.sub.onEvent(b.ev); }
           }
         }
       } catch(e){
@@ -754,6 +754,28 @@
     // without limit (one entry per event ever delivered) → a slow memory leak in the always-open PWA/APK.
     // A Set keeps insertion order, so on overflow we evict the oldest ids. The 5000 cap dwarfs any relay's
     // in-flight/dedup window, so dedup for recent events stays correct — only long-gone ids are dropped.
+    /* RESUME ASKS FOR WHAT IS NEW, NOT FOR THE BACKLOG AGAIN. A live subscription is re-sent on every reconnect,
+     * and re-sent UNCHANGED it re-delivered its whole backlog each time: the notifications (limit 150) and up to
+     * the relay's cap of gift-wrapped DMs, every return to the app after Relay.sleep() -- hundreds of KB to ~1 MB of
+     * events the client already holds and drops as `seen` (2026-10-21 audit). Each live sub remembers the newest
+     * created_at it ACCEPTED (after verification on an untrusted socket; capped at now+60s so a forged future
+     * stamp cannot skip anything) and a re-arm asks from there minus a margin: 1 hour, or 3 days for a filter that
+     * includes gift wraps / seals, whose created_at NIP-59 backdates by up to 2 days. A filter with `until` or
+     * `ids` is sent as it was. Nothing is lost that the margin covers, and `seen` still drops the overlap. */
+    _markNewest(sub, ev){
+      if(!sub || !sub.live) return;
+      const t = Math.min(Number(ev && ev.created_at) || 0, Math.floor(Date.now() / 1000) + 60);
+      if(t > (sub.newest || 0)) sub.newest = t;
+    },
+    _resumeFilters(s){
+      if(!s.live || !s.newest) return s.filters;
+      return s.filters.map(f => {
+        if(!f || f.until != null || f.ids) return f;
+        const wraps = (f.kinds || []).some(k => k === 1059 || k === 1060 || k === 13);
+        const since = s.newest - (wraps ? 3 * 86400 : 3600);
+        return since > (f.since || 0) ? Object.assign({}, f, { since }) : f;
+      });
+    },
     _seenAdd(sub, id){
       sub.seen.add(id);
       if (sub.seen.size > 5000){ const it = sub.seen.values(); for (let n = sub.seen.size - 5000; n > 0; n--){ sub.seen.delete(it.next().value); } }
