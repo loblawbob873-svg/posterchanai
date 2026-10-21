@@ -59,10 +59,11 @@ def test_forum_channel_create_post_reply(width):
         await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
         await b.until("!!document.querySelector('#cc-add-channel')")
 
-        # 1. The New channel dialog offers the CORD-03 views: Text and Forum.
+        # 1. The New channel dialog offers the CORD-03 views, Text and Forum, plus Armada's repository channel
+        #    (a Text channel created with a git repository attached -- concord-git.js).
         await click(b, '#cc-add-channel')
         await b.until("document.querySelector('.uiconfirm-msg')?.textContent==='Name the new channel'")
-        assert await b.js("[...document.querySelectorAll('[data-cc-view]')].map(x=>x.dataset.ccView).join()") == 'chat,forum'
+        assert await b.js("[...document.querySelectorAll('[data-cc-view]')].map(x=>x.dataset.ccView).join()") == 'chat,forum,git'
         await click(b, '[data-cc-view="forum"]')
         assert await b.js("document.querySelector('[data-cc-view=\"forum\"]').getAttribute('aria-checked')") == 'true'
         await type_into(b, '.uiprompt-in', 'ideas')

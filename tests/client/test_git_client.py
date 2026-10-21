@@ -376,15 +376,15 @@ class StarTests(unittest.TestCase):
 
     def test_stars_refresh_on_every_entry_not_once_per_page(self):
         """"i starred a repo on ngit again and still does not appear" — the star was on the relay
-        and the view kept answering from the set it loaded at first open. The first load may block;
-        every later entry must refresh behind the cached paint and repaint on arrival."""
+        and the view kept answering from the set it loaded at first open. Every entry refreshes the
+        stars and repaints when they land — and (Vyram, 2026-10-21, "Reduce Load Time on Git") NO
+        entry waits for them before drawing: Starred shows a spinner until they arrive instead."""
         at = self.git.index("async function renderRepos()")
-        seg = self.git[at:self.git.index("const repos=_dedupAddr(evs)", at)]
-        self.assertIn("if(_stars===null) await _loadStars();", seg)
-        self.assertIn("else _loadStars().then(", seg,
-                      "a page that loaded stars once never sees a star made elsewhere")
-        after = seg.split("else _loadStars().then(")[1][:120]
-        self.assertIn("paint()", after, "the refresh arrives and nothing redraws")
+        seg = self.git[at:self.git.index("\n  }\n", at)]
+        self.assertIn("const stars=_loadStars()", seg, "stars are not re-read on entry")
+        self.assertIn(".then(()=>update())", seg.split("const stars=_loadStars()")[1][:80],
+                      "the refresh arrives and nothing redraws")
+        self.assertNotIn("await _loadStars()", seg, "the page waits for the stars before it draws")
 
     def test_the_relay_syncs_the_bookmark_kinds_in(self):
         import os

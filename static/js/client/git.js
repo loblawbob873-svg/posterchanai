@@ -284,8 +284,18 @@ window.PCGitFactory = function(dep){
     // swallow j/k/arrows before they reach us — the reason they worked in Firefox but not the app.
     document.addEventListener('keydown', _gitKeydown, true);
   }
+  /* THE GIT PAGE PAINTS WHAT THIS DEVICE HOLDS, THEN YOURS, THEN EVERYONE'S (Vyram, 2026-10-21: "The git
+   * takes a long time to load … make mine load first then display everything & then ask it to load again
+   * starred & others while you're already in the menu"). It used to wait for the 5000-announcement read,
+   * the own-repos read AND the stars before drawing anything: a spinner for as long as the slowest of
+   * three. Now: the Store's announcements paint at once (CLAUDE.md: if the client already holds what the
+   * view is about, paint that before the first network await); your own repos are asked for on their own
+   * and land first; everyone's and the stars follow. Each answer UPDATES the page in place (the list is
+   * re-filtered, the scope bar, search text and focus stay), and a short answer can only add. A page
+   * entered again supersedes the old one's late answers (`_repoSeq`). */
+  let _repoSeq=0;
   async function renderRepos(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed'), seq=++_repoSeq, live=()=>seq===_repoSeq&&S.VIEW==='repos';
     _kbSel=-1; _gitKbBind();   // reset keyboard selection on (re)entry; bind the vim-style handler once
     // 80 was fine for a grid you scroll. Once it is a SEARCHABLE list the cap becomes a correctness
     // problem: searching a truncated set reports "no match" for a repo that is really on the relay.
@@ -304,35 +314,23 @@ window.PCGitFactory = function(dep){
      * empty and was painted as if it were the relay's whole answer. So: wait for a live socket, and
      * merge what this device already holds (every announcement it has seen is in the Store), so a
      * short answer can only ADD to the list, never replace it. */
-    try{ await Relay.ready(); }catch(_){}
-    let evs=[], reached=false;
-    try{
-      const [all, own]=await Promise.all([
-        Relay.query([{ kinds:[30617], limit:5000 }]).catch(()=>[]),
-        _me ? Relay.query([{ kinds:[30617], authors:[_me], limit:500 }], 10000).catch(()=>[]) : [],
-      ]);
-      reached=!!((all && (all.length || all.complete)) || (own && own.length));
-      evs=[...(all||[]), ...(own||[])];
-    }catch(_){}
-    try{ evs=[...(Store.byKind(30617)||[]), ...evs]; }catch(_){}
-    /* Stars are re-read on EVERY entry, not latched for the page: a star made in another app (the
-     * ngit website) or on another device landed on the relay and this view kept answering from the
-     * set it loaded at first open — "i starred a repo on ngit again and still does not appear".
-     * The first load still blocks (a Starred chip that flashes empty is worse); after that the
-     * refresh happens on entry and repaints only if something changed. */
-    if(_stars===null) await _loadStars();
-    else _loadStars().then(()=>{ try{ if(S.VIEW==='repos') paint(); }catch(_){} });
-    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
-    if(S.VIEW!=='repos') return;
-    const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
-    _repoEvents = new Map(repos.map(e=>[e.id,e]));
-    const mine=repos.filter(_repoIsMine);
+    let evs=[], reached=false, settled=false, repos=[], mine=[];
+    try{ evs=[...(Store.byKind(30617)||[])]; }catch(_){}
+    const compute=()=>{
+      repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
+      _repoEvents = new Map(repos.map(e=>[e.id,e]));
+      mine=repos.filter(_repoIsMine);
+    };
+    const absorb=more=>{ (more||[]).forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); evs=[...evs, ...(more||[])]; };
     /* THE SCOPE BAR IS ALWAYS THERE for a signed-in person. It used to be drawn only when at least
      * one of YOUR repos had loaded, so a slow or partial load (568 of 1,657 repos, the query for your
      * own repos not back yet) took Mine, Starred AND All repos off the page — "I want the bar always
      * showed". A scope with nothing in it now says so instead of the bar disappearing. Opening on an
      * empty Mine is still avoided: that is a choice of default, not of what may be offered. */
-    if(!mine.length && _repoScope==='mine' && !_repoScopeChosen) _repoScope='all';
+    let built=false, q=null, paint=()=>{};
+    const build=()=>{
+    built=true;
+    if(!mine.length && _repoScope==='mine' && !_repoScopeChosen && settled) _repoScope='all';
     if(_repoScope==='starred' && (!_stars || !_stars.size) && !_repoScopeChosen) _repoScope = mine.length?'mine':'all';
     const scoped=()=>_repoScope==='mine'?mine:(_repoScope==='starred'?repos.filter(_starred):repos);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
@@ -367,20 +365,22 @@ window.PCGitFactory = function(dep){
       });
       $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ ev.stopPropagation(); const e=_repoEvents.get(c.dataset.id)||Store.get(c.dataset.id); if(e) openRepo(e); else toast('this repository is no longer available — refresh Git'); });
     };
-    const q=$('#repo-q',feed);
+    q=$('#repo-q',feed);
     // ONE renderer for both the scope chips and the search box: they filter the same list, and two
     // renderers would let a scope switch quietly drop the active search (or vice versa).
     // EVERY space-separated term must match, so "posterchan ai" narrows rather than widens.
     // Re-rendering the grid (instead of hiding cards) keeps the empty state honest.
-    const paint=()=>{
+    paint=()=>{
+      if(!live()) return;
       const base=scoped();
       const terms=((q&&q.value)||'').toLowerCase().split(/\s+/).filter(Boolean);
       const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
       $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
         : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
+           : !settled ? '<div class="spinner"></div>'
            : _repoScope==='mine' ? `<div class="empty">None of your repos have loaded${repos.length?' yet':''}. ${_gitHostBase()?'Create one ↑, or ':''}try “All repos”.</div>`
            : (!reached && !repos.length) ? `<div class="empty">Could not reach the relays for the repo list. <button class="btn small" id="repo-retry">Try again</button></div>`
-           : _repoScope==='starred' ? `<div class="empty">No starred repos yet — tap the star on any repo to keep it here.</div>`
+           : _repoScope==='starred' ? (_stars===null ? '<div class="spinner"></div>' : `<div class="empty">No starred repos yet — tap the star on any repo to keep it here.</div>`)
            : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
@@ -397,6 +397,36 @@ window.PCGitFactory = function(dep){
       q.oninput=paint;
       q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; paint(); } };
     }
+    };
+    /* An update re-filters in place; the search box appears the first time there is more than one repo. */
+    const update=()=>{
+      if(!live()) return;
+      compute();
+      if(!built || (!q && repos.length>1)) { const keep=q&&q.value; build(); if(keep&&q) q.value=keep; }
+      // Nothing of yours once everything has answered: open on All repos, as before (unless picked).
+      if(settled && !mine.length && _repoScope==='mine' && !_repoScopeChosen){
+        _repoScope='all'; $$('.repo-sc',feed).forEach(x=>x.classList.toggle('on', x.dataset.scope==='all')); }
+      paint();
+    };
+    compute();
+    if(repos.length) build(); else feed.innerHTML='<div class="spinner"></div>';
+    try{ await Relay.ready(); }catch(_){}
+    if(!live()) return;
+    /* Stars are re-read on EVERY entry, not latched for the page: a star made in another app (the
+     * ngit website) or on another device landed on the relay and this view kept answering from the
+     * set it loaded at first open — "i starred a repo on ngit again and still does not appear".
+     * Never awaited: Starred shows a spinner until they land, everything else is not held back. */
+    const stars=_loadStars().catch(()=>{}).then(()=>update());
+    const own=_me ? Relay.query([{ kinds:[30617], authors:[_me], limit:500 }], 10000).catch(()=>[]) : Promise.resolve([]);
+    const all=Relay.query([{ kinds:[30617], limit:5000 }]).catch(()=>[]);
+    own.then(o=>{ if(!live()) return; absorb(o); if(o&&o.length) reached=true; update(); });
+    const [a,o]=await Promise.all([all, own]);
+    if(!live()) return;
+    absorb(a);
+    reached = reached || !!((a && (a.length || a.complete)) || (o && o.length));
+    settled=true;
+    update();
+    await stars;
   }
   // The GRASP git host base for creating a repo from THIS node: the operator's public_base if set, else
   // (on a git-PROXY node — e.g. the one serving /client — that has no local base) this client's own

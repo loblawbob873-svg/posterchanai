@@ -19,6 +19,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PTOP = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell", "files", "ptop")
 
 
+def _term_env(**extra):
+    """The caller's environment with the TERMINAL pinned. ptop rightly drops to 256 colours inside GNU screen
+    (STY) or a screen TERM, and a gate run from an SSH session in `screen -xRR` -- how sync.sh is run on
+    server1 -- inherited STY and failed "no truecolor" against a correct ptop."""
+    env = {k: v for k, v in os.environ.items() if k not in ("STY", "TMUX", "NO_COLOR")}
+    env.setdefault("TERM", "xterm-256color")
+    if env["TERM"].startswith("screen"):
+        env["TERM"] = "xterm-256color"
+    env.update(extra)
+    return env
+
+
 def _load(proc=None, sysfs=None):
     if proc:
         os.environ["PTOP_PROC"] = proc
@@ -99,7 +111,7 @@ def test_every_number_is_the_difference_of_two_samples(tmp_path, monkeypatch):
 
 
 def test_the_screen_shows_every_core_interface_and_disk_of_this_machine():
-    env = dict(os.environ, COLORTERM="truecolor", LANG="C.UTF-8")
+    env = _term_env(COLORTERM="truecolor", LANG="C.UTF-8")
     out = subprocess.run([sys.executable, PTOP, "--once", "--interval", "0.3", "--size", "160x60"],
                          capture_output=True, text=True, env=env, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
@@ -118,7 +130,7 @@ def test_the_screen_shows_every_core_interface_and_disk_of_this_machine():
 def test_ascii_mode_draws_no_unicode_and_needs_no_colour():
     out = subprocess.run([sys.executable, PTOP, "--once", "--ascii", "--colors", "none", "--interval", "0.3",
                           "--size", "100x40"], capture_output=True, text=True, timeout=60,
-                         env=dict(os.environ, LANG="C"))
+                         env=_term_env(LANG="C"))
     assert out.returncode == 0, out.stderr[-2000:]
     assert all(ord(c) < 128 for c in out.stdout), "non-ASCII output in --ascii mode"
     assert "\x1b[" not in out.stdout
@@ -206,7 +218,7 @@ def test_filesystems_are_the_real_ones_once_each(tmp_path, monkeypatch):
 
 
 def test_the_screen_lists_this_machines_filesystems_and_no_tmpfs():
-    env = dict(os.environ, COLORTERM="truecolor", LANG="C.UTF-8")
+    env = _term_env(COLORTERM="truecolor", LANG="C.UTF-8")
     out = subprocess.run([sys.executable, PTOP, "--once", "--interval", "0.3", "--size", "160x70"],
                          capture_output=True, text=True, env=env, timeout=60)
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
@@ -259,7 +271,7 @@ def test_slash_searches_processes_interactively():
     pid, fd = pty.fork()
     if pid == 0:
         os.execvpe(sys.executable, [sys.executable, PTOP, "--interval", "0.5"],
-                   dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", LANG="C.UTF-8"))
+                   _term_env(TERM="xterm-256color", COLORTERM="truecolor", LANG="C.UTF-8"))
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
 
     def screen(seconds):
@@ -369,7 +381,7 @@ def test_the_raid_panel_says_degraded_and_shows_the_rebuild(tmp_path, monkeypatc
 
 
 def test_the_header_names_the_os_kernel_and_counts():
-    env = dict(os.environ, COLORTERM="truecolor", LANG="C.UTF-8")
+    env = _term_env(COLORTERM="truecolor", LANG="C.UTF-8")
     out = subprocess.run([sys.executable, PTOP, "--once", "--interval", "0.3", "--size", "160x60"],
                          capture_output=True, text=True, env=env, timeout=60)
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out.stdout)
