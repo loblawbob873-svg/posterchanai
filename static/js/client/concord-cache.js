@@ -9,6 +9,22 @@
   const DB='posterchan-concord-v1', STORE='envelopes', ICONS='icons', DELIVERIES='deliveries', VERSION=5, MAX_PENDING=64, MAX_PENDING_BYTES=4*1024*1024,
     MAX_PER_STREAM=5000, MAX_EVENT_BYTES=65536, MAX_TOTAL_BYTES=32*1024*1024,
     MAX_ICON_BYTES=5*1024*1024, MAX_ICON_TOTAL_BYTES=20*1024*1024, MAX_ICONS=64;
+  /* KEEP-HISTORY POLICY PER STREAM (concord.js cacheKeepFor): `keepDays` 0 = the community keeps its
+   * history FOREVER, N = for N days, `plane:'control'` = a control/guestbook stream (never trimmed: CORD-08
+   * §1). A stream with a policy is exempt from BOTH count trims below -- the 5,000-per-stream cap and the
+   * 32 MB oldest-first sweep, which used to take the control plane first because it is the oldest -- and
+   * only ages out when its community chose N days. Recorded per STREAM, not per row, because rows already
+   * held are never rewritten (see put) and a per-row flag would miss everything cached before. Expiry
+   * (CORD-08) is unaffected: expired rows are dropped by sweepExpired whatever the policy. */
+  const POLICY_KEY='pc.concord.keep.v1', KEPT_WARN_BYTES=512*1024*1024;
+  let policies=null, sweptAt=0, writtenSince=0;
+  function policyMap(){ if(policies)return policies; try{const v=JSON.parse(root.localStorage.getItem(POLICY_KEY)||'{}');policies=v&&typeof v==='object'&&!Array.isArray(v)?v:{};}catch(_){policies={};} return policies; }
+  function setPolicy(stream,policy){
+    const m=policyMap(),v=policy.plane==='control'?'control':(Number.isSafeInteger(policy.keepDays)&&policy.keepDays>=0?policy.keepDays:undefined);
+    if(v===undefined||m[stream]===v)return; m[stream]=v;
+    try{root.localStorage.setItem(POLICY_KEY,JSON.stringify(m));}catch(_){}
+  }
+  const policyOf=stream=>{const v=policyMap()[stream];return v===undefined?null:v;};
   let dbPromise=null;
   function request(req){return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error('IndexedDB request failed'));});}
   function done(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error||new Error('IndexedDB transaction failed'));});}
@@ -106,10 +122,12 @@
       return moved;})().catch(()=>0);
     return migrating;
   }
-  async function put(stream,events,{limit=MAX_PER_STREAM}={}){
+  async function put(stream,events,{limit=MAX_PER_STREAM,keepDays,plane}={}){
     stream=String(stream||''); if(!stream||stream.length>2048)return 0;
+    setPolicy(stream,{keepDays,plane});
     const clean=[],seen=new Set();
-    const incoming=Array.isArray(events)?events.slice(-MAX_PER_STREAM):[];
+    // A stream whose community keeps its history is not cut to the per-stream cap on the way in either.
+    const incoming=Array.isArray(events)?(policyOf(stream)===null?events.slice(-MAX_PER_STREAM):events):[];
     for(const ev of incoming){const safe=envelope(ev),id=safe&&eventId(safe.event);if(!id||seen.has(id))continue;seen.add(id);clean.push({key:stream+'\u0000'+id,stream,id,created:eventTime(safe.event),event:safe.event,size:safe.size});}
     /* AN ENVELOPE ALREADY HELD IS NOT WRITTEN AGAIN. A signed event never changes, and several refresh paths
      * hand this the room's WHOLE history every time -- each of those rows used to be put() again, every
@@ -132,12 +150,32 @@
         else writes.push(row);
       }
       if(writes.length||dead.length){const tx=db.transaction(STORE,'readwrite'),completion=done(tx),w=tx.objectStore(STORE);for(const key of dead)w.delete(key);for(const row of writes)w.put(row);await completion;}
+      for(const row of writes)writtenSince+=Number(row.size)||0;
     }
-    const rows=await all(stream),extra=Math.max(0,rows.length-Math.max(1,Number(limit)||MAX_PER_STREAM));
-    if(extra){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of rows.slice(0,extra))s.delete(row.key);await completion;}
+    const policy=policyOf(stream);
+    if(policy===null){   // no Keep-history policy: the old per-stream cap
+      const rows=await all(stream),extra=Math.max(0,rows.length-Math.max(1,Number(limit)||MAX_PER_STREAM));
+      if(extra){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of rows.slice(0,extra))s.delete(row.key);await completion;}
+    }else if(typeof policy==='number'&&policy>0){   // the community keeps N days: older rows of THIS stream go
+      const cut=Math.floor(Date.now()/1000)-policy*86400,rows=await all(stream),old=rows.filter(r=>r.created<cut);
+      if(old.length){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of old)s.delete(row.key);await completion;}
+    }
     /* A malicious room can advertise many stream ids, so a per-stream limit is not a quota limit.
-     * Bound the database as a whole by serialized envelope bytes, evicting oldest first. */
-    {const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),[allRows]=await Promise.all([request(read.objectStore(STORE).getAll()),readDone]);let bytes=allRows.reduce((n,r)=>n+(Number(r.size)||new TextEncoder().encode(JSON.stringify(r.event||{})).byteLength),0);allRows.sort((a,b)=>a.created-b.created||a.key.localeCompare(b.key));const victims=[];for(const row of allRows){if(bytes<=MAX_TOTAL_BYTES)break;victims.push(row.key);bytes-=Number(row.size)||new TextEncoder().encode(JSON.stringify(row.event||{})).byteLength;}if(victims.length){const tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const key of victims)s.delete(key);await completion;}}
+     * Bound the database as a whole by serialized envelope bytes, evicting oldest first -- among streams
+     * with NO policy only. It reads the whole store, so it runs at most once a minute (history kept
+     * forever makes the store large, and this ran on every write) -- or as soon as 4 MB has been written since
+     * the last one, so a burst cannot run past the cap between sweeps. Kept bytes past KEPT_WARN_BYTES are
+     * REPORTED (`pc-concord-storage`), never evicted: the community said keep. */
+    if(Date.now()-sweptAt>60000||writtenSince>4*1024*1024){ sweptAt=Date.now(); writtenSince=0;
+      const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),[allRows]=await Promise.all([request(read.objectStore(STORE).getAll()),readDone]);
+      const sz=r=>Number(r.size)||new TextEncoder().encode(JSON.stringify(r.event||{})).byteLength;
+      const free=allRows.filter(r=>policyOf(r.stream)===null),kept=allRows.length-free.length;
+      let bytes=free.reduce((n,r)=>n+sz(r),0),keptBytes=allRows.reduce((n,r)=>n+(policyOf(r.stream)===null?0:sz(r)),0);
+      free.sort((a,b)=>a.created-b.created||a.key.localeCompare(b.key));
+      const victims=[];for(const row of free){if(bytes<=MAX_TOTAL_BYTES)break;victims.push(row.key);bytes-=sz(row);}
+      if(victims.length){const tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const key of victims)s.delete(key);await completion;}
+      if(keptBytes>KEPT_WARN_BYTES){try{root.dispatchEvent(new CustomEvent('pc-concord-storage',{detail:{keptBytes,kept}}));}catch(_){}}
+    }
     return clean.length;
   }
   // Only authenticated inner-rumor deadlines supplied by the reader are authority here.
@@ -187,7 +225,7 @@
    * running it again after a failure that happened before any of it committed changes nothing. */
   function stale(e){return !!e&&(e.name==='InvalidStateError'||/connection is clos|database.*closed/i.test(String(e.message||'')));}
   function healing(fn){return async function(){try{return await fn.apply(this,arguments);}catch(e){if(!stale(e))throw e;dbPromise=null;return fn.apply(this,arguments);}};}
-  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;migrating=null;},migrate};
+  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries:healing(getDeliveries),putDelivery:healing(putDelivery),completeDelivery:healing(completeDelivery),MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,KEPT_WARN_BYTES,policyOf,_resetPolicies(){policies=null;sweptAt=0;writtenSince=0;},MAX_ICON_BYTES,expireEvents:healing(expireEvents),sweepExpired:healing(sweepExpired),put:healing(put),get:healing(get),page:healing(page),drop:healing(drop),putIcon:healing(putIcon),getIcon:healing(getIcon),allIcons:healing(allIcons),dropIcon:healing(dropIcon),dropRoom:healing(dropRoom),_reset(){dbPromise=null;migrating=null;},migrate};
   /* THE MOVE STARTS AT BOOT, NOT WHEN CONCORD IS OPENED. It used to run only from Concord's own reads and writes,
    * so a machine where nobody opened Communities kept its whole old cache in IndexedDB indefinitely (the TV and the
    * laptop, 2026-10-13). On a desktop with a local relay it now starts once that relay answers, and only then. */

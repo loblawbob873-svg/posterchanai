@@ -489,7 +489,18 @@
   function mergeEnvelopes(...groups){const byId=new Map();for(const ev of groups.flat())if(ev&&ev.id)byId.set(ev.id,ev);return [...byId.values()];}
   async function cachedEnvelopes(key){try{return window.PCConcordCache?await window.PCConcordCache.get(key):[];}catch(e){console.warn('Concord cache read failed',e);return [];}}
   async function cachedEnvelopePage(key,limit=300){try{if(!window.PCConcordCache)return[];if(window.PCConcordCache.page){const got=await window.PCConcordCache.page(key,{limit});return got&&Array.isArray(got.events)?got.events:[];}return await window.PCConcordCache.get(key);}catch(e){console.warn('Concord cache read failed',e);return[];}}
-  async function cacheEnvelopes(key,events){try{if(window.PCConcordCache&&events&&events.length)await window.PCConcordCache.put(key,events);}catch(e){console.warn('Concord cache write failed',e);}}
+  /* The community's Keep-history policy rides every write, read off the saved room (never a fresh fold per
+   * write). The control plane is never trimmed whatever it says (CORD-08 §1: control/guestbook never expire). */
+  function cacheKeepFor(key){
+    try{const [loadKey,stream]=JSON.parse(key);if(stream==='control'||String(stream).startsWith('guestbook:'))return {plane:'control'};
+      const room=saved().find(r=>(r.communityId||r.naddr)===loadKey);return {keepDays:room?retentionDays(room.history_retention):null};}catch(_){return {};}
+  }
+  /* Kept history is never trimmed to make room, so when it gets large the person is TOLD, once a session,
+   * instead (concord-cache.js KEPT_WARN_BYTES). */
+  let keptWarned=false;
+  try{window.addEventListener('pc-concord-storage',e=>{if(keptWarned)return;keptWarned=true;const mb=Math.round(((e.detail&&e.detail.keptBytes)||0)/1048576);
+    try{const p=PC();if(p&&p.toast)p.toast('Communities that keep their history are using '+mb+' MB on this device. A community’s Keep history setting can shorten it.');}catch(_){}});}catch(_){}
+  async function cacheEnvelopes(key,events){try{if(window.PCConcordCache&&events&&events.length)await window.PCConcordCache.put(key,events,cacheKeepFor(key));}catch(e){console.warn('Concord cache write failed',e);}}
   async function queryEnvelopeHistory(p,relays,authors,cached=[],queryOptions={}){
     let all=mergeEnvelopes(cached),until=null;
     for(let page=0;page<6&&(page===0||all.length<5000);page++){
@@ -1953,6 +1964,23 @@
     try{const wraps=roomControls.get(room.communityId||room.naddr);if(wraps)return window.PosterCordReader.inspectControl(room.cord.bundle,wraps).message_expiration||0;}catch(_){}
     return Number.isSafeInteger(room?.message_expiration)&&room.message_expiration>0?room.message_expiration:0;
   }
+  /* KEEP HISTORY -- a PER-COMMUNITY policy for how long PosterChan keeps this community's messages on a
+   * member's device. CORD-02 §6 reserves top-level metadata for the protocol, so it lives in `custom` under
+   * a prefixed key and other clients carry it through untouched. 0 / absent / malformed = FOREVER (the
+   * keeping direction). It is a local-cache policy ONLY: it never adds `expiration` tags and never sends a
+   * deletion (CORD-08's timer is the protocol's tool for that, and still wins over it: an expired message is
+   * purged whatever this says). docs/CONCORD_RETENTION.md. */
+  const RETENTION_KEY='posterchan/history_retention';
+  function retentionDays(v){const n=Number(v);return Number.isSafeInteger(n)&&n>0&&n<=36500?n:0;}
+  function communityRetention(room){
+    try{const wraps=roomControls.get(room.communityId||room.naddr);if(wraps&&room.cord?.bundle)return retentionDays((window.PosterCordReader.inspectControl(room.cord.bundle,wraps).custom||{})[RETENTION_KEY]);}catch(_){}
+    return retentionDays(room?.history_retention);
+  }
+  function retentionSettingsHtml(p,room){
+    const days=communityRetention(room),options=[[0,'Forever'],[365,'1 year'],[90,'90 days'],[30,'30 days']];
+    if(days&&!options.some(([v])=>v===days))options.push([days,days+' days (current)']);
+    return '<label class="cc-label" for="cc-history-retention">Keep history</label><select class="input" id="cc-history-retention"'+(communityPermission(p,room,'metadataManagers')?'':' disabled')+'>'+options.map(([value,label])=>'<option value="'+value+'"'+(value===days?' selected':'')+'>'+p.enc(label)+'</option>').join('')+'</select><p class="cc-member-help">How long members’ PosterChan apps keep this community’s messages on their devices. Forever never clears them. Disappearing messages, when on, still removes a message when it expires.</p>';
+  }
   function timerSettingsHtml(p,room){
     const timer=communityTimer(room),options=[[0,'Off'],[86400,'1 day'],[604800,'1 week'],[2592000,'30 days'],[7776000,'90 days']];
     if(timer&&!options.some(([value])=>value===timer))options.push([timer,timer+' seconds (current)']);
@@ -2165,7 +2193,7 @@
   async function saveCommunitySettings(p,room,values){
     const owner=p.viewer?.().pubkey,identity=roomIdentity(room),loadKey=room.communityId||room.naddr;
     const stillHere=()=>p.viewer?.().pubkey===owner&&saved().some(r=>roomIdentity(r)===identity);
-    let timerChanged=false,noticesFailed=0,timer=communityTimer(room);
+    let timerChanged=false,noticesFailed=0,timer=communityTimer(room),keep=communityRetention(room);
     if(!room.local){
       const reader=window.PosterCordReader,bundle=room.cord?.bundle,relays=roomRelays(bundle);
       if(!reader?.createMetadataWrap||!bundle)throw new Error('community profile is not ready');
@@ -2219,6 +2247,7 @@
       if(!scope.membershipCurrent())throw new Error('Concord membership changed during profile update');   // published already: only a real membership change is an error here
       wraps=[...(wraps||[]),made.wrap];roomControls.set(loadKey,wraps);
       const after=reader.inspectControl(bundle,wraps);timer=after.message_expiration||0;timerChanged=timer!==(before.message_expiration||0);
+      keep=retentionDays((after.custom||{})[RETENTION_KEY]);
       if(values.bannerRef||values.banner===null)await applyRoomBanner(room,after,loadKey);
       /* THE ICON TOO, from what was just folded -- "setting concord community icon again says saved but does not
        * show in community list". The room kept only the box's blob: URL, which room storage strips (it dies with
@@ -2239,10 +2268,13 @@
           }catch(error){if(!noticeScope.current())throw error;noticesFailed++;}
         }
       }
-    }else if(Object.prototype.hasOwnProperty.call(values,'message_expiration'))timer=Number(values.message_expiration)||0;
+    }else{
+      if(Object.prototype.hasOwnProperty.call(values,'message_expiration'))timer=Number(values.message_expiration)||0;
+      if(values.customPatch&&Object.prototype.hasOwnProperty.call(values.customPatch,RETENTION_KEY))keep=retentionDays(values.customPatch[RETENTION_KEY]);
+    }
     if(!stillHere())throw new Error('community changed before saving settings');
     const rooms=saved(),index=rooms.findIndex(r=>roomIdentity(r)===identity);
-    rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer};
+    rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer,history_retention:keep};
     if(values.iconRef){
       rooms[index].icon=room.icon??rooms[index].icon;
       if(room.iconPointer)rooms[index].iconPointer=room.iconPointer;else delete rooms[index].iconPointer;
@@ -4712,7 +4744,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);if(info.relaysAuthoritative)relays.splice(0,relays.length,...roomRelays(bundle));room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});void applyRoomBanner(room,info,loadKey,seed).then(changed=>{if(!changed)return;persistRoom();if(typeof document!=='undefined'&&document.body.classList.contains('concord-view'))backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,readOnly:!!c.readOnly,view:c.view==='forum'?'forum':'chat',streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(info.deletedChannels?.length)room.deletedChannels=[...new Set([...(room.deletedChannels||[]),...info.deletedChannels])];if(channels.length)room.channels=channels.filter(c=>!room.deletedChannels?.includes(c.id));else if(room.deletedChannels?.length)room.channels=(room.channels||[]).filter(c=>!room.deletedChannels.includes(c.id));for(const channel of room.channels||[]){markRemoteStore(channelStoreId(room,channel.name));if(reader.inspectPinList?.(bundle,admitted,channel.id)?.entries?.length)void window.PCConcord?.reconcilePins?.(p,room,channel.id)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));}persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);if(info.relaysAuthoritative)relays.splice(0,relays.length,...roomRelays(bundle));room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.history_retention=retentionDays(info.custom&&info.custom[RETENTION_KEY]);room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});void applyRoomBanner(room,info,loadKey,seed).then(changed=>{if(!changed)return;persistRoom();if(typeof document!=='undefined'&&document.body.classList.contains('concord-view'))backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,readOnly:!!c.readOnly,view:c.view==='forum'?'forum':'chat',streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(info.deletedChannels?.length)room.deletedChannels=[...new Set([...(room.deletedChannels||[]),...info.deletedChannels])];if(channels.length)room.channels=channels.filter(c=>!room.deletedChannels?.includes(c.id));else if(room.deletedChannels?.length)room.channels=(room.channels||[]).filter(c=>!room.deletedChannels.includes(c.id));for(const channel of room.channels||[]){markRemoteStore(channelStoreId(room,channel.name));if(reader.inspectPinList?.(bundle,admitted,channel.id)?.entries?.length)void window.PCConcord?.reconcilePins?.(p,room,channel.id)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));}persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -6277,7 +6309,7 @@
     if(current){
       const conversation=p.$('.cc-conversation');
       if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div>${canBanAny?'<button type="button" class="btn btn-ghost small cc-ban-npub">Ban by npub…</button>':''}</aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions">${canBanAny?'<button type="button" class="btn btn-ghost cc-ban-npub">Ban by npub…</button>':''}<button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><div class="cc-icon-current" id="cc-icon-current" title="Current icon">${roomIcon(p,current,state.community)}</div><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p>${memberPks.length>8?`<input class="input cc-member-search" type="search" autocomplete="off" placeholder="Search members" aria-label="Search members" value="${p.enc(memberQuery)}">`:''}<div class="cc-member-list">${memberRows}</div><div class="cc-join-actions">${canBanAny?'<button type="button" class="btn btn-ghost cc-ban-npub">Ban by npub…</button>':''}<button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title"><div class="cc-join-card"><div class="cc-sheet-head"><button type="button" class="cc-sheet-back" id="cc-settings-back" aria-label="Back to the community" title="Back">‹</button><h2 id="cc-settings-title">Community settings</h2><button type="button" class="cc-sheet-close" id="cc-settings-close" aria-label="Close community settings" title="Close (Esc)"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><div class="cc-icon-current" id="cc-icon-current" title="Current icon">${roomIcon(p,current,state.community)}</div><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-settings-icon">Upload image…</button><div class="cc-icon-status" id="cc-settings-icon-status" role="status" aria-live="polite" hidden></div>${window.PCCordSpaces&&current&&!current.local&&current.cord?PCCordSpaces.bannerSettingsHtml(roomBannerUrl(current),communityPermission(p,current,'metadataManagers')):''}${timerSettingsHtml(p,current)}${retentionSettingsHtml(p,current)}<div class="cc-label">#${p.enc(state.channel||'general')} visibility</div><div class="cc-visibility-line" id="cc-channel-visibility" role="note"><b>${channelPrivate?'Private — invited members only':'Public — all community members'}</b><span>Chosen when a channel is created; a private channel is a new channel, made with + (New channel).</span></div>${current&&current.cord&&current.cord.bundle&&!current.local&&!current.cord.bundle.dissolved&&current.cord.bundle.owner===(p.viewer?p.viewer().pubkey:'')?'<button type="button" class="btn btn-ghost danger cc-dissolve" id="cc-dissolve">Dissolve community…</button>':''}<div class="cc-join-actions"><div class="cc-dialog-error cc-settings-error" id="cc-settings-error" role="alert"${settingsError?'':' hidden'}>${p.enc(settingsError)}</div><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save"${settingsSaving?' disabled aria-busy="true"':''}>${settingsSaving?'Saving…':'Save changes'}</button></div></div></div>`);
       /* SEARCH THE KNOWN MEMBERS ("will be useful for large rooms"). By name, NIP-05 or key. The query
        * is the module's, so the repaint every arriving message causes keeps it and the filtered list;
        * the box that had focus gets it back (render() re-creates it). */
@@ -6715,6 +6747,7 @@
     const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=leaveByHeader;
     const leaveRoom=$('#cc-leave-room');if(leaveRoom)leaveRoom.onclick=leaveByHeader;
     const timerSelect=$('#cc-message-expiration');if(timerSelect)timerSelect.onchange=()=>{timerSelect.dataset.edited='1';};
+    const keepSelect=$('#cc-history-retention');if(keepSelect)keepSelect.onchange=()=>{keepSelect.dataset.edited='1';};
     const settingsSave=$('#cc-settings-save');if(settingsSave)settingsSave.onclick=async()=>{
       if(settingsSaving)return;
       const room=saved()[state.community];if(!room)return;
@@ -6726,6 +6759,8 @@
       if(descBox&&descBox.value!==descBox.defaultValue)values.description=String(descBox.value||'').trim();
       if(iconBox&&iconBox.value!==iconBox.defaultValue)values.icon=normalizeIcon(iconBox.value);
       if(timerSelect?.dataset.edited==='1')values.message_expiration=Number(timerSelect.value);
+      // Forever is the absence of the key (null removes it from `custom`), so the default costs nothing on the wire.
+      if(keepSelect?.dataset.edited==='1')values.customPatch={[RETENTION_KEY]:retentionDays(keepSelect.value)||null};
       Object.assign(values,stagedBanner(room));
       /* Every write below goes to the LIVE sheet ($ at the time), never the button this handler was bound
        * to: render() can rebuild the sheet while the relays answer, and a write to the detached copy is

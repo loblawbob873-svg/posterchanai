@@ -26970,6 +26970,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const { community, groups, folded, channels } = control(bundle, wraps);
     return {
       message_expiration: messageExpirationSeconds(folded.metadata?.message_expiration),
+      // CORD-02 §6 client-extensible object, as folded (opaque to the protocol; {} when absent or malformed).
+      custom: folded.metadata?.custom && typeof folded.metadata.custom === "object" && !Array.isArray(folded.metadata.custom) ? { ...folded.metadata.custom } : {},
       name: folded.metadata?.name || community.name,
       description: folded.metadata?.description || "",
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
@@ -27560,6 +27562,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(utf8Len(description)>DESCRIPTION_MAX_BYTES)throw new Error("community description is too long");
     const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
     if (metadata && Object.prototype.hasOwnProperty.call(metadata, "message_expiration")) body.message_expiration = messageExpirationSeconds(metadata.message_expiration);
+    /* CORD-02 §6: a client's own settings live inside `custom`, under a prefixed key ("posterchan/…"),
+     * because top-level fields are reserved for the protocol -- and an editor MUST round-trip the keys it
+     * does not understand. So a `customPatch` MERGES into the prior object (null removes one key) and
+     * never replaces it: another client's `rules` or `vector/…` keys survive a PosterChan save. */
+    if (metadata && metadata.customPatch && typeof metadata.customPatch === "object" && !Array.isArray(metadata.customPatch)) {
+      const prior = body.custom && typeof body.custom === "object" && !Array.isArray(body.custom) ? body.custom : {};
+      const next = { ...prior };
+      for (const [k, v] of Object.entries(metadata.customPatch)) { if (v === null) delete next[k]; else next[k] = v; }
+      if (Object.keys(next).length) body.custom = next; else delete body.custom;
+    }
     /* `icon` is CORD-02's encrypted ImageRef (what Armada and Vector display); `picture` is the
      * older PosterChan plain URL / emoji. They are exclusive: a stale `picture` would outrank a new
      * encrypted icon in our own fold, and a stale `icon` would keep showing in Vector. */
