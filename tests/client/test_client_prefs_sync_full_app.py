@@ -344,6 +344,7 @@ READ.update({
     "bchTip": "ClientSettings.get('bchLastAmt')",
     "rightPanel": "!PCRightPanel.hidden()",
     "concordTheme": "(()=>{const t=PCConcordTheme.get();return {theme:t.theme,accent:t.accent,bg:t.bg,at:t.at};})()",
+    "appLook": "PCLook.get()",
 })
 # `experience` is not adopted into ClientSettings on another device -- the restore's caller reads it off
 # the document to decide the first-login splash (asserted visibly below instead).
@@ -393,6 +394,8 @@ async def set_every_pref(b):
                "ClientSettings.set('startupAppsAt',at);__PC.saveStartupApps(list,at);})()")
     # The Concord theme: the picker's own call.
     await b.js("PCConcordTheme.forOwner(__PC.me().pubkey);PCConcordTheme.set({theme:'oled',accent:'#ff8800'})")
+    # Settings -> Appearance: its own module API (what the pane's inputs call).
+    await b.js("PCLook.set({accent:'#11aa77',sec:{music:{bg:'#202040'}},wall:{url:'https://cdn.example/w.jpg',pos:'tile',size:'fill',dim:.4}})")
     # The two remembered tip amounts: a stranger's profile → the Monero and Bitcoin Cash tip sheets.
     await b.js("__PC.openProfile(window.__strangerPk)")
     await wait(b, "!!document.getElementById('prof-xmr') && !!document.getElementById('prof-bch')", 30, "the profile's tip buttons")
