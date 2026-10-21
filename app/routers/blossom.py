@@ -249,6 +249,80 @@ async def blossom_preflight(rest: str = ""):
     return Response(status_code=204, headers=_CORS)
 
 
+# CHUNKED UPLOAD (app/services/chunked_upload.py): a file larger than one request may carry -- Cloudflare refuses a body
+# over 100 MB in front of poster.place -- arrives as <= 64 MB parts and is joined here. The SAME authorization as a
+# PUT /upload (a kind-24242 `upload` event), bound to the WHOLE file's sha256 (X-Upload-Sha256 on each part, the body
+# of /finish), so a token minted for one file cannot write parts of another; permission is checked before any byte.
+async def _chunk_auth(request: Request, db: Session, sha256: str):
+    try:
+        pubkey = await asyncio.to_thread(blossom_service.verify_auth, request.headers.get("authorization", ""),
+                                         "upload", sha256 or None)
+    except ValueError as e:
+        return None, _err(401, str(e))
+    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
+        return None, _err(403, "not authorized to upload (needs the can_blossom privilege)")
+    return pubkey, None
+
+
+@router.put("/upload/part/{upload_id}/{index}")
+async def upload_part(upload_id: str, index: int, request: Request, db: Session = Depends(get_db)):
+    from app.services import chunked_upload
+    if not blossom_service.is_enabled(db):
+        return _err(404, "Blossom server disabled")
+    pubkey, refused = await _chunk_auth(request, db, (request.headers.get("x-upload-sha256") or "").lower())
+    if refused:
+        return refused
+    await asyncio.to_thread(chunked_upload.sweep)
+    try:
+        n = await chunked_upload.put_part(pubkey, upload_id, index, request.stream())
+    except chunked_upload.UploadError as e:
+        return _err(400, str(e))
+    return JSONResponse({"ok": True, "bytes": n}, headers=_CORS)
+
+
+@router.post("/upload/finish/{upload_id}")
+async def upload_finish(upload_id: str, request: Request, db: Session = Depends(get_db)):
+    from app.services import chunked_upload
+    if not blossom_service.is_enabled(db):
+        return _err(404, "Blossom server disabled")
+    try:
+        body = await request.json()
+    except Exception:
+        return _err(400, "bad request")
+    sha = str(body.get("sha256") or "").lower()
+    pubkey, refused = await _chunk_auth(request, db, sha)
+    if refused:
+        return refused
+    cfg = blossom_service._cfg(db)
+    mime = str(body.get("type") or "application/octet-stream")[:100]
+    try:
+        size = int(body.get("size") or 0)
+        parts = int(body.get("parts") or 0)
+    except (TypeError, ValueError):
+        return _err(400, "bad request")
+    try:
+        over, used, limit = blossom_service.quota_exceeded(db, pubkey, size)
+        if over:
+            return _err(413, f"storage quota reached ({used // (1024**3)} of {limit // (1024**3)} GB used)")
+        path = await asyncio.to_thread(chunked_upload.join, pubkey, upload_id, parts, size, sha,
+                                       cfg["max_upload_mb"] * 1024 * 1024)
+        await blossom_service.save_blob_file(db, pubkey, path, mime, filename=_upload_filename(request),
+                                             keep=request.headers.get("x-keep", "") in ("1", "true", "yes"))
+        blob = await blossom_service.blob_index.aget(sha)
+        if blob is None:
+            return _err(500, "storage error")
+        return JSONResponse(blossom_service.descriptor(blob, _base_url(request, db)), headers=_CORS)
+    except chunked_upload.UploadError as e:
+        return _err(400, str(e))
+    except Unavailable as e:
+        return _unavailable(e)
+    except Exception as e:
+        logger.error("[blossom] chunked upload failed: %s", e, exc_info=True)
+        return _err(500, "storage error")
+    finally:
+        chunked_upload.discard(pubkey, upload_id)
+
+
 @router.put("/upload")
 async def upload(request: Request, db: Session = Depends(get_db)):
     if not blossom_service.is_enabled(db):

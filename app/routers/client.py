@@ -314,7 +314,7 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # Folder sync needs the per-blob ceiling to skip-and-report an oversized file rather than
         # push it and take a 413 after spending the upload. It is an admin setting, so it is
         # published rather than assumed client-side.
-        "blossom_max_upload_mb": int(_setting(db, "blossom_max_upload_mb", "100") or 100),
+        "blossom_max_upload_mb": int(_setting(db, "blossom_max_upload_mb", "2048") or 2048),
         # VM hosting: when THIS node is a VM host, say so, so Virtual Machines lists it with no setup.
         # Who may USE it is decided by the host on every request — this grants nothing.
         "vmhost": _vmhost_card(request, db),
@@ -2067,6 +2067,50 @@ async def _fetch_media_guarded(url: str, own: set, *, timeout: float = 30.0, max
                 raise HTTPException(status_code=502, detail="could not fetch the layer image")
             return resp.content, (resp.headers.get("content-type", "") or "image/jpeg")
     raise HTTPException(status_code=502, detail="too many redirects fetching the layer image")
+
+
+async def _fetch_media_to_file(url: str, own: set, path: str, cap: int, *, timeout: float = 60.0, max_redirects: int = 3):
+    """_fetch_media_guarded's twin for LARGE sources: the same SSRF guard on every redirect hop, but the body is
+    STREAMED to `path` and the size cap is enforced while it arrives, so a 1.5 GB phone video never sits in memory
+    (Meme Builder as a video editor, 2026-10-21). Returns the bytes written. HTTPException 413 past `cap`."""
+    import httpx
+    from urllib.parse import urlparse, urljoin
+    from app.services.rss_service import looks_fetchable, is_safe_host
+
+    u = (url or "").strip()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8.0), follow_redirects=False) as c:
+        for _hop in range(max_redirects + 1):
+            if urlparse(u).scheme not in ("http", "https"):
+                raise HTTPException(status_code=400, detail="bad media url")
+            host = (urlparse(u).hostname or "").lower()
+            if host not in own:
+                if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
+                    raise HTTPException(status_code=400, detail="refused media source")
+            try:
+                async with c.stream("GET", u, headers={"User-Agent": _MEDIA_UA}) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location") or ""
+                        if not loc:
+                            raise HTTPException(status_code=502, detail="could not fetch the layer media")
+                        u = urljoin(u, loc)
+                        continue
+                    if resp.status_code >= 400:
+                        raise HTTPException(status_code=502, detail="could not fetch the layer media")
+                    if int(resp.headers.get("content-length") or 0) > cap:
+                        raise HTTPException(status_code=413, detail="too large")
+                    n = 0
+                    with open(path, "wb") as fh:
+                        async for chunk in resp.aiter_bytes(1024 * 1024):
+                            n += len(chunk)
+                            if n > cap:
+                                raise HTTPException(status_code=413, detail="too large")
+                            fh.write(chunk)
+                    return n
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=502, detail="could not fetch the layer media")
+    raise HTTPException(status_code=502, detail="too many redirects fetching the layer media")
 
 
 def _probe_duration(data: bytes, ext: str) -> float:
@@ -6434,7 +6478,14 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     # Busy-overflow LB: if this node's render queue is full, run the whole project on a peer node and
     # stream its MP4 back — so several memes render across the fleet at once (the ffmpeg analogue of the
     # chat/image node LB). Loop-guarded by the x-pcai-meme-fwd header.
-    _fwd = await _meme_lb_forward(request, "render",
+    # A LONG PROJECT RENDERS HERE. The forward buffers the peer's whole answer in memory and waits 300 s for it --
+    # fine for a meme, wrong for a 20-minute edit. Short projects keep the fleet round-robin.
+    try:
+        _secs = max([float(l.get("start") or 0) + float(l.get("dur") or 0) for l in ((data.edit or {}).get("layers") or [])
+                     if isinstance(l, dict)] + [float((data.edit or {}).get("duration") or 0)])
+    except (TypeError, ValueError):
+        _secs = 0.0
+    _fwd = None if _secs > 120 else await _meme_lb_forward(request, "render",
                                   {"pubkey": data.pubkey, "auth": data.auth, "edit": data.edit})
     if _fwd is not None:
         # Count it HERE, on the node the user actually asked. The bump below is in the local-render
@@ -6481,7 +6532,9 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     # Our own media hosts are exempt from the SSRF guard, and have to be — see _own_media_hosts.
     own = _own_media_hosts(db)
 
-    tmpdir = tempfile.mkdtemp(prefix="pcmemesrc-")
+    from app.services import work_dir
+    tmpdir = work_dir.mkdtemp("pcmemesrc-")   # the data disk: /tmp is RAM, and a source can be GBs
+    streaming = [False]   # True once a FileResponse owns tmpdir (it cleans it after sending)
     sources: dict = {}
     _meme_rendering.add(pk)   # released in the finally below — paired so a failure can never wedge the user out
     try:
@@ -6490,9 +6543,21 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             # do its own follow_redirects=False GET, which is the bug that was fixed there: a 302 passes
             # raise_for_status(), so a Blossom host that redirects to a CDN wrote a ZERO-BYTE layer file
             # and the render silently came out missing that layer. One code path, one fix.
+            # STREAMED TO DISK, cap enforced while it arrives -- see _fetch_media_to_file. KEEP the source's
+            # extension on the temp file. The renderer decides how to decode a layer partly by extension -- a
+            # VP9-alpha .webm effect layer MUST be decoded with libvpx-vp9 or its alpha is dropped and the
+            # overlay renders INVISIBLE (the "effect layer is audio-only" bug). A hash-only filename hid that.
+            _base = u.split("?", 1)[0].split("#", 1)[0]
+            _ext = os.path.splitext(_base)[1].lower()
+            if len(_ext) > 6 or not _ext[1:].isalnum():
+                _ext = ""
+            p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24] + _ext)
             try:
-                content, _ct = await _fetch_media_guarded(u, own)
+                await _fetch_media_to_file(u, own, p, meme_builder_service.MAX_SOURCE_BYTES)
             except HTTPException as e:
+                if e.status_code == 413:
+                    raise HTTPException(status_code=400, detail="a layer source is too large (%d GB limit): %s"
+                                        % (meme_builder_service.MAX_SOURCE_BYTES // (1024 ** 3), u[:200]))
                 # Keep the URL in the message — with several layers, "refused source" alone doesn't say
                 # WHICH one the user has to remove. 200 chars, not 80: a fedi media URL is ~100 and the
                 # old cut landed mid-hash, so the reported URL 404'd when pasted back for diagnosis.
@@ -6501,21 +6566,6 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
                 # project whose layers all look fine. Naming it points at the ↺ that clears it.
                 what = " (the erase on a layer — ↺ Undo the erase clears it)" if u in masks else ""
                 raise HTTPException(status_code=e.status_code, detail=f"{e.detail}{what}: {u[:200]}")
-            # 80 MB per source: a phone-shot clip fits, a film does not. Renders share the box with
-            # chat and image gen, so this is a real resource bound, not a formality.
-            if len(content) > 80 * 1024 * 1024:
-                raise HTTPException(status_code=400, detail="a layer source is too large (80 MB limit)")
-            # KEEP the source's extension on the temp file. The renderer decides how to decode a layer
-            # partly by extension — a VP9-alpha .webm effect layer MUST be decoded with libvpx-vp9 or its
-            # alpha is dropped and the overlay renders INVISIBLE (the "effect layer is audio-only" bug).
-            # A hash-only filename hid that from the renderer.
-            _base = u.split("?", 1)[0].split("#", 1)[0]
-            _ext = os.path.splitext(_base)[1].lower()
-            if len(_ext) > 6 or not _ext[1:].isalnum():
-                _ext = ""
-            p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24] + _ext)
-            with open(p, "wb") as fh:
-                fh.write(content)
             sources[u] = p
         try:
             # Blocking ffmpeg → a thread, or it stalls the whole event loop (every other request on this
@@ -6523,16 +6573,21 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             # _MEME_MAX_CONCURRENT renders run at once — the rest wait here instead of all piling onto the
             # CPU together. Bounded, so a wedged render can't leave this request hanging indefinitely.
             async with _meme_slot():
-                out, ctype = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
-                # Same auto-compress the effects get: a Meme Builder timeline over a phone-camera
-                # layer renders tens of MB, and this MP4 goes straight into a post/upload.
-                # ONLY for the MP4: compress_effect_outputs is a video re-encode, so handing it a GIF or a
-                # PNG would either mangle the export or turn it into an MP4 the client then labels .gif.
-                if ctype == "video/mp4":
-                    from app.services import media_service as _ms
-                    out = (await asyncio.to_thread(_ms.compress_effect_outputs,
-                                                   [{"filename": "meme.mp4", "data": out,
-                                                     "content_type": "video/mp4"}]))[0]["data"]
+                # The MP4 is rendered TO A FILE and streamed back from it: a long edit is hundreds of MB.
+                out_file = os.path.join(tmpdir, "render-out.mp4")
+                out, ctype = await asyncio.to_thread(meme_builder_service.render, data.edit, sources, out_file)
+                if isinstance(out, str):
+                    # Same auto-compress the effects get, for what fits it: a short timeline over a phone-camera
+                    # layer renders tens of MB and goes straight into a post. A long edit is encoded once, at the
+                    # render's own quality, and never pulled into memory for a second pass.
+                    size = os.path.getsize(out)
+                    if size <= 80 * 1024 * 1024:
+                        from app.services import media_service as _ms
+                        with open(out, "rb") as fh:
+                            raw = fh.read()
+                        out = (await asyncio.to_thread(_ms.compress_effect_outputs,
+                                                       [{"filename": "meme.mp4", "data": raw,
+                                                         "content_type": "video/mp4"}]))[0]["data"]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except RuntimeError as e:
@@ -6551,16 +6606,22 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             pass
         _ext = {"image/gif": "gif", "image/png": "png", "image/jpeg": "jpg",
                 "image/webp": "webp"}.get(ctype, "mp4")
+        def _clean():
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        if isinstance(out, str):
+            # STREAMED FROM DISK; the temp directory goes once the response has been sent.
+            from starlette.background import BackgroundTask
+            from fastapi.responses import FileResponse
+            streaming[0] = True
+            return FileResponse(out, media_type=ctype, filename=f"meme.{_ext}", background=BackgroundTask(_clean))
         return Response(content=out, media_type=ctype,
                         headers={"Content-Disposition": f'attachment; filename="meme.{_ext}"'})
     finally:
         _meme_rendering.discard(pk)
-        try:
-            for f in os.listdir(tmpdir):
-                os.unlink(os.path.join(tmpdir, f))
-            os.rmdir(tmpdir)
-        except Exception:
-            pass
+        if not streaming[0]:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None) -> bool:

@@ -50,6 +50,11 @@
    * the instance would too, so it is said rather than retried there. */
   async function _renderLocal(edit, signal){
     if(!(await _memeLocal())) return null;
+    /* A LONG EDIT RENDERS ON THE INSTANCE when there is one: this path reads every source into this window's memory
+     * and hands the bytes over IPC, which is right for a meme and would take a desktop window down for a 20-minute
+     * edit over gigabytes of video. Offline there is no other renderer, so it still tries here. */
+    const secs = Math.max(+edit.duration || 0, ...(edit.layers || []).map(l => (+l.start || 0) + (+l.dur || 0)));
+    if(secs > 120 && navigator.onLine !== false) return null;
     const keys = new Set();
     for(const l of edit.layers){
       if(l.src && l.type !== 'text' && !_isLocalSrc(l.src)) keys.add(l.src);
@@ -72,6 +77,10 @@
     return new Blob([r.bytes], { type: r.mime || 'application/octet-stream' });
   }
   // The instance's render, as before.
+  /* THE TIMELINE IS A VIDEO EDITOR'S, NOT A MEME'S: 30 minutes (meme_builder_service.MAX_DURATION). It was 120 s in four
+   * places; one constant now, kept equal to the server's by tests/client/test_meme_long_video.py. A voice note recorded
+   * in the builder stays capped at 2 minutes -- that is a recording limit, not the timeline's. */
+  const MAX_DUR = 1800;
   async function _renderRemote(edit, signal, what){
     const auth=await selfProof();
     const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -1056,10 +1065,11 @@
   // A LADDER rather than a multiplier, so the label is always a round number you can aim back at.
   // Below 1x matters now: the lane is a fixed px/second, so 1x is a SCALE, not "the whole project".
   // Without these a long build could not be seen end to end at all — you could only scroll it.
-  const _ZOOMS = [0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12];
-  const ZOOM_MIN = 0.05, ZOOM_MAX = 12;
+  // Down to 0.003x: a 30-minute edit (MAX_DUR) on a phone's ~300 px lane at 44 px/s needs ~0.004x to be seen whole.
+  const _ZOOMS = [0.005, 0.01, 0.025, 0.05, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12];
+  const ZOOM_MIN = 0.003, ZOOM_MAX = 12;
   const _zoom = () => clamp(P.zoom == null ? 1 : P.zoom, ZOOM_MIN, ZOOM_MAX);
-  const _zoomLbl = (z) => (+(+z).toFixed(2)) + '\u00d7';
+  const _zoomLbl = (z) => (+(+z).toPrecision(2)) + '\u00d7';
   function setZoom(z){
     const prev = _zoom();
     P.zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
@@ -1158,16 +1168,22 @@
     // second is a fixed width (--mb-pps), so how far apart two labels sit depends only on how far apart
     // their times are — and a ruler that re-spaces itself when a clip is trimmed is the same jitter the
     // fixed scale exists to remove. ~55px is the room a "12.5s" label needs.
-    const z = Math.max(1, _zoom());
-    const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30].find(s => s * z * TL_PPS_MIN >= 55) || 60;
-    const ticks = [];
-    for(let t = 0; t <= total + 0.001; t += step){
+    // The REAL zoom, below 1x too: a long edit zoomed out to fit drew a label every 2 s, hundreds of them on
+    // top of each other. Minutes past a minute, as "1:30", because "90s" in a 30-minute edit is arithmetic.
+    const z = _zoom();
+    const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600].find(s => s * z * TL_PPS_MIN >= 55) || 900;
+    const lblOf = (t) => t >= 60 ? Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0') : (t % 1 ? t.toFixed(1) : t) + 's';
+    const at = [];
+    for(let t = 0; t <= total + 0.001; t += step) at.push(t);
+    const ticks = at.map((t, i) => {
       const pct = t/total*100;
       // The last label has to hang to the LEFT of its line or it is cut off by the edge of the timeline
-      // (which on a phone is a scroll edge, so it is simply never readable).
-      const lbl = pct > 98 ? ' class="mb-tickr"' : '';
-      ticks.push(`<i class="mb-tick" style="left:${pct.toFixed(3)}%"><b${lbl}>${t % 1 ? t.toFixed(1) : t}s</b></i>`);
-    }
+      // (which on a phone is a scroll edge, so it is simply never readable). Hanging left, it lands on the
+      // label before it -- so that tick keeps its line and gives up its label.
+      const hangs = pct > 98, cedes = i === at.length - 2 && at[i + 1] / total * 100 > 98;
+      const lbl = hangs ? ' class="mb-tickr"' : '';
+      return `<i class="mb-tick" style="left:${pct.toFixed(3)}%">${cedes ? '' : `<b${lbl}>${lblOf(t)}</b>`}</i>`;
+    });
     return `<div class="mb-track mb-rrow">
       <div class="mb-trackname mb-rname"></div>
       <div class="mb-lane mb-rlane" id="mb-rlane" title="Tap or drag to move the playhead">${ticks.join('')}</div>
@@ -2432,8 +2448,8 @@
         if(Math.abs(ev.clientX-sx) > 3) moved=true;
         const d=(ev.clientX-sx)*perPx;
         if(side==='l'){ const ns=clamp(ost+d, 0, ost+odur-0.2); l.dur=+(odur+(ost-ns)).toFixed(2); l.start=+ns.toFixed(2); }
-        else if(side==='r'){ l.dur=+clamp(odur+d, 0.2, 120).toFixed(2); }
-        else { l.start=+clamp(ost+d, 0, 120).toFixed(2); }
+        else if(side==='r'){ l.dur=+clamp(odur+d, 0.2, MAX_DUR).toFixed(2); }
+        else { l.start=+clamp(ost+d, 0, MAX_DUR).toFixed(2); }
         // Same clamp as trackEl — without it, stretching a music bar past the end of the meme blows the
         // lane out mid-drag (it only snapped back on drop, when the row is re-rendered).
         let dl=l.start/total*100, dw=Math.max(3, l.dur/total*100);
@@ -4734,7 +4750,7 @@
     root.querySelectorAll('.mb-ab').forEach(b=>b.addEventListener('click',()=>{
       alignLayer(l, b.dataset.h==='' ? null : +b.dataset.h, b.dataset.v==='' ? null : +b.dataset.v);
     }));
-    num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
+    num('mb-f-start','start',0,MAX_DUR); num('mb-f-dur','dur',0.1,MAX_DUR); num('mb-f-trim','trim',0,MAX_DUR);
     if(l.type==='video') bindTrim(root, l);
     on('mb-prev-clip','click',()=>previewLayer(l));   // play just this clip, not the whole meme
     on('mb-prev-fx','click',()=>previewLayer(l));      // same for an effect layer
@@ -4960,7 +4976,7 @@
       const prev=_speedOf(l);
       l.speed=clamp(v,0.25,4);
       const now=_speedOf(l);
-      if(now!==prev && +l.dur>0) l.dur=+Math.max(0.1, Math.min(120, l.dur*prev/now)).toFixed(2);
+      if(now!==prev && +l.dur>0) l.dur=+Math.max(0.1, Math.min(MAX_DUR, l.dur*prev/now)).toFixed(2);
       save();
       const sv=root.querySelector('#mb-spd-val'); if(sv) sv.textContent=_speedOf(l)+'×';
       const sn=root.querySelector('#mb-spd-slot'); if(sn) sn.textContent=_slotNote(l);

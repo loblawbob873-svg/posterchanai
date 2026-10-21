@@ -20,20 +20,33 @@ import subprocess
 import tempfile
 from typing import Optional
 
-from app.services import media_service
+from app.services import media_service, work_dir
 
 logger = logging.getLogger(__name__)
 
-# Bounds. A meme is a short social clip, not a film — and this runs on the same shared GPU box as chat,
-# so an unbounded edit list is a denial-of-service on every other feature.
+# Bounds. This runs on the same shared GPU box as chat, so an unbounded edit list is a denial-of-service on every
+# other feature.
 MAX_LAYERS = 24
-MAX_DURATION = 120.0
+# A REAL VIDEO EDITOR, NOT A CLIP TOOL (2026-10-21: "we want it to be a real video editor"). 120 s and 80 MB per source
+# made it a meme-length tool. Sources now stream to disk and the result streams back from disk (render(out_file=)),
+# so memory stays flat however long the timeline is; the render timeout scales with the length (render_timeout).
+MAX_DURATION = 1800.0
+MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024        # per layer source, streamed to a temp file -- never held in memory
 MAX_DIM = 2160
 # Per-encoder-attempt wall clock. Was 600s, which meant a wedged ffmpeg held the user's single render slot
 # for TEN MINUTES with no output and no way to start another — the "it says a render is already running but
 # nothing is" symptom. A real render of a short meme is seconds; anything past this is stuck, so fail fast,
 # free the slot, and tell the user what to change.
 _RENDER_TIMEOUT_S = 150
+
+
+def render_timeout(duration: float) -> int:
+    """Seconds a render of `duration` seconds may take: the old 150 s floor for a short meme, plus 4 s per second of
+    timeline (a CPU-only node at the slow end of the encoder ladder renders 1080p at roughly real time)."""
+    try:
+        return int(_RENDER_TIMEOUT_S + 4 * max(0.0, float(duration)))
+    except (TypeError, ValueError):
+        return _RENDER_TIMEOUT_S
 # VAAPI quality. NOT the same scale as x264's -crf: measured on a real 20s render, qp 20 produced 3.14 MB
 # against libx264 -crf 20's 1.31 MB — 2.4x, and a meme is uploaded once then downloaded by everyone who
 # sees it. qp 26 lands at 1.35 MB, within 2.5% of the CPU encoder's size, so the GPU path costs no extra
@@ -596,7 +609,7 @@ def _encode_still(png_path: str, fmt: str, quality: int) -> bytes:
         return buf.getvalue()
 
 
-def render(edit: dict, sources: dict) -> tuple:
+def render(edit: dict, sources: dict, out_file: str | None = None) -> tuple:
     """Render the edit list. `sources` maps a layer's `src` key -> local file path (the caller resolves
     and fetches URLs/Blossom hashes, so this stays a pure renderer with no network of its own).
 
@@ -608,6 +621,9 @@ def render(edit: dict, sources: dict) -> tuple:
       "jpeg" / "webp" — the same one frame, encoded lossy at `edit["quality"]` (1-100, default 90)
     `edit["out_w"]` / `edit["out_h"]` resample the finished picture to that size (see export_size).
     GIF and PNG carry no audio at all, so a sound-only difference is invisible in them by design.
+
+    `out_file`: write the MP4 THERE and return (out_file, content_type) instead of bytes -- the long-video path,
+    where the result must never be read into memory. Stills and GIFs (small by construction) always return bytes.
 
     Raises ValueError on an edit list we refuse, RuntimeError if ffmpeg fails.
     """
@@ -652,7 +668,7 @@ def render(edit: dict, sources: dict) -> tuple:
         mp4, _ = render({**edit, "fmt": "mp4"}, sources)
         return _mp4_to_gif(mp4, out_w, out_h), "image/gif"
 
-    tmp = tempfile.mkdtemp(prefix="pcmeme-")
+    tmp = work_dir.mkdtemp("pcmeme-")   # the data disk, not /tmp (RAM): a 30-minute render is GBs of output
     try:
         # -filter_complex_threads 1 is the fix for the renders that WEDGED: a stuck job was sitting on 232
         # threads blocked in futex_do_wait with a 48-byte output and ~1% CPU — ffmpeg's multi-threaded filter
@@ -1082,12 +1098,22 @@ def render(edit: dict, sources: dict) -> tuple:
                 full += ["-crf", "20", "-preset", "veryfast"]
             full.append(out)
             try:
-                p = subprocess.run(full, capture_output=True, timeout=_RENDER_TIMEOUT_S)
+                # stderr goes to a FILE: captured in memory, a long render's progress lines grow without bound.
+                with open(os.path.join(tmp, "ffmpeg.log"), "wb") as errf:
+                    p = subprocess.run(full, stdout=subprocess.DEVNULL, stderr=errf, timeout=render_timeout(duration))
+                with open(os.path.join(tmp, "ffmpeg.log"), "rb") as errf:
+                    errf.seek(0, 2); errf.seek(max(0, errf.tell() - 4000)); p.stderr = errf.read()
             except subprocess.TimeoutExpired:
                 # subprocess.run KILLS the child on timeout, so a wedged ffmpeg can't linger past this.
-                raise RuntimeError(f"render timed out after {_RENDER_TIMEOUT_S}s — try fewer layers, a "
+                raise RuntimeError(f"render timed out after {render_timeout(duration)}s — try fewer layers, a "
                                    f"shorter clip, or turn off per-frame effects (pulse/zoom/shake/spin)")
             if p.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
+                if out_file:
+                    import shutil
+                    shutil.move(out, out_file)
+                    logger.info("[meme] rendered %dx%d %.1fs, %d layers, %s -> %s (to disk)", w, h, duration,
+                                len(layers), enc, media_service._human_size(os.path.getsize(out_file)))
+                    return out_file, "video/mp4"
                 with open(out, "rb") as fh:
                     data = fh.read()
                 logger.info("[meme] rendered %dx%d %.1fs, %d layers, %s -> %s",

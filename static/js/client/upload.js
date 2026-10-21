@@ -382,6 +382,46 @@ window.PCUploadFactory = function(dep){
     }
     throw new Error('no media server would store it (' + tried.join('; ') + ')');
   }
+  /* A FILE BIGGER THAN ONE REQUEST MAY CARRY goes to our own server in parts (app/services/chunked_upload.py).
+   * Cloudflare, in front of poster.place, refuses any request body over 100 MB -- so a phone video for the Meme
+   * Builder could not be uploaded from outside the LAN at all. Each part carries the same Blossom authorization
+   * as a whole-file PUT (bound to the whole file's hash) and is retried on its own; the server joins them, checks
+   * the size and hash, and answers with the usual blob descriptor. null = this server predates part uploads:
+   * the caller sends the file whole, as before. */
+  const CHUNK_OVER = 90*1024*1024, CHUNK_SIZE = 64*1024*1024;
+  async function _putChunked(file, server, hdr, hash, opts){
+    const id=[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const parts=Math.ceil(file.size/CHUNK_SIZE), base={ Authorization:hdr.Authorization, 'X-Upload-Sha256':hash };
+    const progress = typeof (opts&&opts.onProgress)==='function' ? opts.onProgress : null;
+    const sendPart = (i, blob) => new Promise((resolve, reject) => {
+      const x=new XMLHttpRequest();
+      x.open('PUT', server+'/upload/part/'+id+'/'+i);
+      for(const k in base) x.setRequestHeader(k, base[k]);
+      if(progress) x.upload.onprogress = e => { try{ progress({ loaded: i*CHUNK_SIZE + e.loaded, total: file.size }); }catch(_){} };
+      x.onload = () => resolve(x);
+      x.onerror = () => reject(new Error(`couldn't reach ${server}`));
+      x.send(blob);
+    });
+    for(let i=0;i<parts;i++){
+      const blob=file.slice(i*CHUNK_SIZE, Math.min(file.size,(i+1)*CHUNK_SIZE));
+      for(let tries=0;;tries++){
+        let x=null, err=null;
+        try{ x=await sendPart(i, blob); }catch(e){ err=e; }
+        if(x && x.status>=200 && x.status<300) break;
+        if(x && i===0 && (x.status===404 || x.status===405)) return null;      // an older server: send it whole
+        if(x && x.status>=400 && x.status<500) throw new Error(x.getResponseHeader('x-reason') || x.responseText || ('upload failed: HTTP '+x.status));
+        if(tries>=3) throw err || new Error('upload failed: HTTP '+(x&&x.status));
+        await new Promise(r=>setTimeout(r, 1500*(tries+1)));                // a dropped part: send that part again
+      }
+    }
+    const fin={ Authorization:hdr.Authorization, 'Content-Type':'application/json' };
+    for(const k of ['X-Filename','X-Keep']) if(hdr[k]) fin[k]=hdr[k];
+    const res=await fetch(server+'/upload/finish/'+id, { method:'POST', headers:fin,
+      body:JSON.stringify({ parts, size:file.size, sha256:hash, type:file.type||'application/octet-stream' }) });
+    if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
+    if(progress) try{ progress({ loaded:file.size, total:file.size }); }catch(_){}
+    return await res.json();
+  }
   async function uploadBlob(file, opts){
     if(opts && opts.ciphertext) return _uploadCiphertext(file, opts);
     // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
@@ -432,8 +472,8 @@ window.PCUploadFactory = function(dep){
     // Stream the File itself (body:file), never a pre-read ArrayBuffer — the browser sends it in
     // chunks, so a multi-GB ISO is never resident. With opts.onProgress we use XHR, the only reliable
     // way to report upload progress; otherwise fetch.
-    let d;
-    if(opts && typeof opts.onProgress === 'function'){
+    let d = (file.size > CHUNK_OVER && server === _blossomBuiltin().url) ? await _putChunked(file, server, hdr, hash, opts) : null;
+    if(!d && opts && typeof opts.onProgress === 'function'){
       d = await new Promise((resolve, reject) => {
         const x = new XMLHttpRequest();
         x.open('PUT', server+'/upload');
@@ -446,7 +486,7 @@ window.PCUploadFactory = function(dep){
         x.onerror = () => reject(new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`));
         x.send(file);
       });
-    } else {
+    } else if(!d){
       let res;
       try {
         res=await fetch(server+'/upload',{ method:'PUT', headers:hdr, body:file });

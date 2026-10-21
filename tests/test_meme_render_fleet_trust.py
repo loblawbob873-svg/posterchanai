@@ -120,7 +120,7 @@ def fleet(monkeypatch):
         if ON_PEER.get():
             raise HTTPException(503, "Instance profile verification is temporarily unavailable")
 
-    def render(edit, sources):
+    def render(edit, sources, out_file=None):
         return ((b"GIF89a-rendered-on-" + (b"peer" if ON_PEER.get() else b"origin")), "image/gif")
 
     monkeypatch.setattr(instance_membership, "require_pubkey", membership)

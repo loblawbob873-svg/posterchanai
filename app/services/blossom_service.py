@@ -86,7 +86,9 @@ def _cfg(db: Session) -> dict:
         "enabled": g("blossom_enabled", "false").lower() == "true",
         "public_url": g("blossom_public_url", "").rstrip("/"),
         "ttl_days": gi("blossom_blob_ttl_days", 0),
-        "max_upload_mb": gi("blossom_max_upload_mb", 100),
+        # 2 GB by default (was 100 MB): the Meme Builder is a video editor now, and a big file arrives in parts
+        # (chunked_upload) past the CDN's own body limit. An admin can still set any smaller cap.
+        "max_upload_mb": gi("blossom_max_upload_mb", 2048),
         "user_quota_gb": gi("blossom_user_quota_gb", 0),   # 0 = unlimited (see usage_for_pubkey)
         "backend": backend,
         "blob_dir": g("blossom_storage_path", "") or _DEFAULT_BLOB_DIR,
@@ -760,7 +762,8 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     return _descriptor_fields(blob)
 
 
-async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict:
+async def save_blob_file(db: Session, pubkey: str, path: str, mime: str, filename: str = "",
+                         keep: bool = False) -> dict:
     """Like save_blob, but for a large file on disk (e.g. a recorded stream in tmpfs): hash and
     upload by STREAMING from the path so a multi-GB blob never sits fully in RAM. Dedup by sha256.
     Does not seed the RAM byte-cache (too big) and does not auto-mirror (would re-read the file).
@@ -773,7 +776,7 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
     if existing:
         # These bytes already exist, but THIS user may not have referenced them before — without this
         # their upload would 200 and the file would never show up in their own drive.
-        blob = await blob_index.aupdate(sha256, lambda row: _merge_reference(row, pubkey, "", None, False,
+        blob = await blob_index.aupdate(sha256, lambda row: _merge_reference(row, pubkey, filename, None, keep,
                                                                              retime=False))
         _meta_put(_meta_from_row(blob))
         return _descriptor_fields(blob)
@@ -805,7 +808,7 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
     now = int(time.time())
     fresh = blob_index.new_row(pubkey=pubkey, size=size, mime=mime, created_at=now, expires_at=None,
                                storage=storage, path=stored_path)
-    blob = await blob_index.aupdate(sha256, lambda row: _create_or_merge(row, fresh, pubkey, "", None, False,
+    blob = await blob_index.aupdate(sha256, lambda row: _create_or_merge(row, fresh, pubkey, filename, None, keep,
                                                                          retime=False))
     _meta_put(_meta_from_row(blob))
     return _descriptor_fields(blob)
