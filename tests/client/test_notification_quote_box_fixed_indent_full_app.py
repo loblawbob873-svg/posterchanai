@@ -38,7 +38,7 @@ SEED = r'''(()=>{
   ev.push(sign(sk(2),100,{kind:1,content:'a reply to your post',tags:[['e',p1.id,'','root'],['p',mePk]]}));
   react(p2,[3],200);                   // one actor: a single avatar
   react(p3,[4,5,6],300);               // three actors: a 3-avatar stack
-  react(p4,[7,8,9,10,11,12],400);      // six actors: stack + "and N others"
+  react(p4,[7,8,9,10,11,12],400);      // six actors: a row of six faces
   ev.push(sign(sk(5),500,{kind:6,content:'',tags:[['e',p5.id],['p',mePk]]}));   // a repost
   window.__events=ev;
   document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(me);
@@ -89,7 +89,7 @@ async def run(width, shot=None):
                 await b.until("""(()=>{const rows=[...document.querySelectorAll('#feed .notif[data-open]')];
                   return rows.length>=5 && rows.every(r=>r.querySelector('.notif-ctx .quoted'))
                     && rows.some(r=>r.querySelectorAll('.notif-av').length===3)
-                    && rows.some(r=>/and \\d+ others/.test(r.textContent));})()""")
+                    && rows.some(r=>r.querySelectorAll('.notif-rxrow .notif-av').length===6);})()""")
                 await b.js('document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>r(true))))')
                 rows = await b.js(MEASURE)
                 if shot:

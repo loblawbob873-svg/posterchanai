@@ -3203,6 +3203,30 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* The ⋯ is a BUTTON, not the row's kind icon. `.notif .ic` (26px wide, 20px) and `.notif.like .ic` & co. (the kind's
    colour) matched its svg too, so every notification carried a stretched hamburger tinted pink/green/amber by kind. */
 .notif .notif-more svg.ic{width:18px;height:18px;font-size:inherit;color:inherit;text-align:initial;opacity:1}
+/* SEVERAL PEOPLE ON ONE POST (notifview.js _notifGroupHtml, Amethyst's layout): a row per reaction -- the reaction
+   in the icon column, then the faces of everyone who used it, wrapping. The rows span the icon + avatar + text
+   columns; the quoted post and the time keep the one indent every other notification uses. */
+/* No icon or avatar of its own sits in columns 1-2, so `auto` would collapse them and pull the quoted post left of
+   every other row's: give them the widths the other rows' icon (26px) and avatar (34px) have. */
+.notif.notif-grid.notif-rxg{grid-template-columns:26px 34px minmax(0,1fr)}
+.notif.notif-grid.notif-rxg:has(> .notif-more){grid-template-columns:26px 34px minmax(0,1fr) auto}
+.rightbar .notif.notif-grid.notif-rxg{grid-template-columns:26px 24px minmax(0,1fr)}
+.rightbar .notif.notif-grid.notif-rxg:has(> .notif-more){grid-template-columns:26px 24px minmax(0,1fr) auto}
+.notif-grid > .notif-main > .notif-rx{grid-column:1 / 4;grid-row:1;display:flex;flex-direction:column;gap:6px;margin-bottom:4px}
+.notif-rxrow{display:grid;grid-template-columns:26px minmax(0,1fr);column-gap:12px;align-items:start}
+.notif-rxic{font-size:20px;line-height:30px;text-align:center;overflow:hidden}
+.notif-rxic .emoji-inline{width:22px;height:22px;vertical-align:middle;object-fit:contain}
+.notif-rxrow.like .notif-rxic{color:var(--neon)} .notif-rxrow.rt .notif-rxic{color:var(--green)} .notif-rxrow.zap .notif-rxic{color:var(--amber)}
+.notif-rxfaces{display:flex;flex-wrap:wrap;gap:4px}
+.notif-rxface{position:relative;display:inline-flex}
+.notif .notif-rxface .notif-av{width:30px;height:30px;cursor:pointer}
+.notif-rxface b{position:absolute;inset-inline:0;bottom:-3px;text-align:center;font-size:10px;font-weight:800;line-height:1;color:var(--amber);
+  text-shadow:0 0 2px var(--bg),0 0 2px var(--bg),0 0 3px var(--bg);pointer-events:none}
+.notif-rxmore{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 6px;border-radius:15px;
+  background:var(--hover);color:var(--muted);font-size:12px;font-weight:700}
+.rightbar .notif .notif-rxface .notif-av{width:24px;height:24px}
+.rightbar .notif-rxic{line-height:24px;font-size:16px}
+.rightbar .notif-rxmore{height:24px;min-width:24px}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
 .upd-notif{cursor:pointer;background:rgba(var(--accent-rgb),.08);border-inline-start:3px solid var(--cyan)}
 .upd-notif:hover{background:rgba(var(--accent-rgb),.14)}

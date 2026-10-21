@@ -118,7 +118,7 @@ window.PCRailFactory = function(dep){
                    +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button>`;
       body.appendChild(bar);
     });
-    all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
+    all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.kind===9735?(zapSender(x)||x.pubkey):x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     decorateProfiles();
   }
 

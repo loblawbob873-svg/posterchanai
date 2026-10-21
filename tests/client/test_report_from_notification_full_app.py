@@ -132,7 +132,7 @@ def test_a_reaction_or_a_repost_reports_the_person_never_your_own_post():
         await b.js("document.body.click()")
         await asyncio.sleep(.2)
         # The grouped repost row (two people): one entry per person.
-        rt = await b.js("""(()=>{const r=document.querySelector('#feed .notif.rt');r.querySelector('.notif-more').click();return true})()""")
+        rt = await b.js("""(()=>{const r=document.querySelector('#feed .notif-rxrow.rt').closest('.notif');r.querySelector('.notif-more').click();return true})()""")
         assert rt
         await b.until("document.querySelectorAll('.menu-pop [data-m]').length===2")
         got = sorted(await b.js("[...document.querySelectorAll('.menu-pop [data-m]')].map(x=>x.dataset.m)"))

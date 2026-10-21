@@ -224,7 +224,7 @@ window.PCNotifViewFactory = function(dep){
     if(_notifScrollTop){ _notifScrollTop=false; feed.scrollTop=0; }
     { const un=$('#upd-notif',feed); if(un && !S._updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
-    list.forEach(e=>{ if(e.type==='reminder')return; if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
+    list.forEach(e=>{ if(e.type==='reminder')return; if(e.type==='group') e.events.forEach(x=>needProfile(_notifActor(x))); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     _markIfRead();
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
@@ -270,19 +270,22 @@ window.PCNotifViewFactory = function(dep){
       renderNotifications();
     };
   }
-  // Collapse reactions/reposts on the SAME post into one row ("X and N others reacted"); everything
-  // else stays an individual notification.
+  // Collapse reactions, reposts and zaps on the SAME post into one card (Amethyst's layout, notifHtml); everything
+  // else stays an individual notification. A zap with no post (a profile zap) has no `e`, keys on its own id and
+  // stays a row of its own.
+  const _GROUPED = new Set([6, 7, 9735]);
   function notifGrouped(list){
     const groups=new Map(); const out=[];
     for(const e of list){
-      if(e.kind===7||e.kind===6){
+      if(_GROUPED.has(e.kind)){
         const tgt=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||e.id;
-        const key=e.kind+':'+tgt;
-        let g=groups.get(key);
-        if(!g){ g={type:'group', kind:e.kind, tgt, events:[], created_at:e.created_at}; groups.set(key,g); out.push(g); }
+        let g=groups.get(tgt);
+        if(!g){ g={type:'group', kind:e.kind, tgt, events:[], created_at:e.created_at}; groups.set(tgt,g); out.push(g); }
         g.events.push(e); if(e.created_at>g.created_at) g.created_at=e.created_at;
       } else out.push(e);
     }
+    // A "group" of one is that one notification, drawn and sorted exactly as it always was.
+    for(let i=0;i<out.length;i++) if(out[i].type==='group' && out[i].events.length===1) out[i]=out[i].events[0];
     // Sort by the SAME key notifList() used — _notifTs, not raw created_at. This re-sort ran after it and
     // silently undid the whole pinning system: a kind-3's created_at is the follower's last contact-list
     // SAVE, so all ~31 followers who re-saved today floated straight back to the top of Notifications,
@@ -339,35 +342,7 @@ window.PCNotifViewFactory = function(dep){
   }
   function notifHtml(e){
     if(e.type==='reminder')return `<div class="notif reminder-notif" data-route="${e.route==='calendar'?'calendar':'notifications'}"><div class="notif-body"><b>${e.route==='calendar'?'Calendar reminder':'Reminder'}</b><div class="notif-said">${enc(e.content)}</div><span class="muted small">${enc(new Date(e.created_at*1000).toLocaleString())}</span></div></div>`;
-    if(e.type==='group'){
-      const first=e.events[0];
-      // Group by PERSON, not by event: one user reacting twice (two emojis on the same post) was
-      // counted as two actors and rendered "Alice and 1 other" — where the other one was Alice.
-      const seen=new Set(), actors=[];
-      for(const ev of e.events){ if(!seen.has(ev.pubkey)){ seen.add(ev.pubkey); actors.push(ev.pubkey); } }
-      const rawName=(pk)=>{ const q=profOf(pk); return q.name||q.display_name||'someone'; };
-      const linkName=(pk)=>`<span class="name" data-prof="${pk}">${emojiName(pk, rawName(pk))}</span>`;
-      const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
-      // Name everyone up to three; only collapse from the fourth on. Naming just one and saying
-      // "and 1 other" hid a name to save no space — this way "and 1 other" can never appear, and
-      // whoever is collapsed is still named in the tooltip.
-      const named=actors.length<=3?actors:actors.slice(0,2), rest=actors.length-named.length;
-      const parts=named.map(linkName);
-      let who = rest>0 ? parts.join(', ')
-              : parts.length>1 ? parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1]
-              : parts[0];
-      if(rest>0){
-        const restNames=actors.slice(named.length).map(pk=>rawName(pk)).join(', ');
-        who += ` <span class="muted" title="${enc(restNames)}">and ${rest} other${rest>1?'s':''}</span>`;
-      }
-      // Stack up to three avatars so the row shows at a glance that several people acted.
-      const avs = actors.slice(0,3).map(pk=>
-        `<img alt="" class="notif-av" data-pk="${pk}" src="${enc(profOf(pk).picture||S.LOGO)}" title="${enc(rawName(pk))}" onerror="this.src='${S.LOGO}'">`).join('');
-      const avWrap = actors.length>1 ? `<span class="notif-avs">${avs}</span>` : avs;
-      // .notif-grid (client.css): the header sits beside the avatars, but the quoted post and the time
-      // start UNDER the avatar column -- in the text column they moved right with every stacked face.
-      return `<div class="notif notif-grid ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div class="notif-main"><div class="notif-hd"><b>${who}</b> ${verb}</div>${_notifCtx(first)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div>${_notifMoreBtn('', actors)}</div>`;
-    }
+    if(e.type==='group') return _notifGroupHtml(e);
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||S.LOGO;
     // What to open on click: for a reply/mention (kind-1) or a chat reply (kind-42) open the
@@ -398,6 +373,43 @@ window.PCNotifViewFactory = function(dep){
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
     return `<div class="notif notif-grid ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img alt="" class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${S.LOGO}'"><div class="notif-main"><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small notif-ts">${timeAgo(_notifTs(e))}</div></div>${_notifMoreBtn(_NOTIF_POST_KINDS.has(e.kind)?e.id:'', [fromPk])}</div>`;
+  }
+  /* SEVERAL PEOPLE ON ONE POST, AS AMETHYST DRAWS IT (issue "Change multiple reactions display", 2026-10-21).
+   * It was one sentence -- "Alice, Bob and 3 others reacted ♥ to your post" -- that named the FIRST reaction's
+   * emoji for everyone, so the four who laughed were said to have hearted, and the names were the wall of text
+   * in the report. Now a row per reaction: ⚡ (each face carries its sats), ↻, then every emoji by how many
+   * used it, each followed by the faces of the people who did. A face opens that profile; the card opens the
+   * post. One person reacting twice is in both rows; within a row, once. */
+  const _RX_FACES = 12;
+  function _notifActor(x){ return x.kind===9735 ? (zapSender(x)||x.pubkey) : x.pubkey; }
+  function _notifGroupHtml(g){
+    const rows=new Map();
+    const row=(key, ic, cls, order)=>{ let r=rows.get(key); if(!r){ r={ic, cls, order, who:new Map()}; rows.set(key,r); } return r; };
+    for(const ev of g.events){
+      const pk=_notifActor(ev);
+      let r;
+      if(ev.kind===9735) r=row('z', '⚡', 'zap', 0);
+      else if(ev.kind===6) r=row('r', '↻', 'rt', 1);
+      else {
+        const c=String(ev.content||'').trim(), em=/^:[^:\s]+:$/.test(c) ? ((ev.tags||[]).find(t=>t[0]==='emoji'&&':'+t[1]+':'===c)||[])[2]||'' : '';
+        r=row('7:'+(c===''||c==='+'?'+':c)+(em?'|'+em:''), reactDisp(ev), 'like', 2);
+      }
+      const had=r.who.get(pk)||0;
+      r.who.set(pk, had + (ev.kind===9735 ? (zapAmount(ev)||0) : 0));
+    }
+    const name=(pk)=>{ const q=profOf(pk); return q.name||q.display_name||'someone'; };
+    const list=[...rows.values()].sort((a,b)=>a.order-b.order || b.who.size-a.who.size);
+    const html=list.map(r=>{
+      const pks=[...r.who.keys()], shown=pks.slice(0,_RX_FACES), more=pks.length-shown.length;
+      const faces=shown.map(pk=>{
+        const sats=r.who.get(pk);
+        return `<span class="notif-rxface"><img alt="" class="notif-av" data-pk="${pk}" src="${enc(profOf(pk).picture||S.LOGO)}" title="${enc(name(pk))}" loading="lazy" onerror="this.src='${S.LOGO}'">${r.cls==='zap'&&sats?`<b>${enc(fmtSats(sats))}</b>`:''}</span>`;
+      }).join('');
+      const label=pks.map(name).join(', ');
+      return `<div class="notif-rxrow ${r.cls}" role="group" aria-label="${enc(label)}"><span class="notif-rxic">${r.ic}</span><span class="notif-rxfaces">${faces}${more>0?`<span class="notif-rxmore" title="${enc(pks.slice(_RX_FACES).map(name).join(', '))}">+${more}</span>`:''}</span></div>`;
+    }).join('');
+    const actors=[...new Set(g.events.map(_notifActor))];
+    return `<div class="notif notif-grid notif-rxg" data-open="${enc(g.tgt)}"><div class="notif-main"><div class="notif-rx">${html}</div>${_notifCtx(g.events[0])}<div class="muted small notif-ts">${timeAgo(_notifTs(g))}</div></div>${_notifMoreBtn('', actors)}</div>`;
   }
   /* ⋯ ON A NOTIFICATION: REPORT what the notification is about (menus.js openReport, the ONE report
    * sheet). What a person means differs by kind, so the menu offers exactly that:
