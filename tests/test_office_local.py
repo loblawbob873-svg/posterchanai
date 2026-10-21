@@ -162,7 +162,7 @@ def test_a_document_opens_saves_and_converts_on_the_machine_and_code_stops_after
 
 async def _load_in_chrome(origin):
     from tests.client.test_effects_full_app import Browser
-    with tempfile.TemporaryDirectory(prefix="pc-office-chrome-") as profile:
+    with tempfile.TemporaryDirectory(prefix="pc-office-chrome-", ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0",
                                  "--user-data-dir=" + profile, "about:blank"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

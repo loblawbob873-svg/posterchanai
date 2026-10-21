@@ -58,7 +58,7 @@ def bundle():
     global BUNDLE_ROOT
     # Keep generated www/resources private to this module. Full-suite checks also assemble
     # Desktop, so sharing ROOT/desktop/www can delete files underneath another browser.
-    with tempfile.TemporaryDirectory(prefix='pc-offline-bundle-') as directory:
+    with tempfile.TemporaryDirectory(prefix='pc-offline-bundle-', ignore_cleanup_errors=True) as directory:
         source=Path(directory)
         for name in ('static','templates','scripts'):(source/name).symlink_to(ROOT/name,target_is_directory=True)
         (source/'desktop').mkdir()
@@ -134,7 +134,7 @@ async def wait_browser_target(proc, port, log, timeout=15, request_timeout=2):
 async def with_browser(mode,route,check,extra_init="",pre_init=""):
     server=ThreadingHTTPServer(('127.0.0.1',0),BundleHandler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-offline-desktop-') as profile, tempfile.TemporaryFile(mode='w+b') as chrome_log:
+    with tempfile.TemporaryDirectory(prefix='pc-offline-desktop-', ignore_cleanup_errors=True) as profile, tempfile.TemporaryFile(mode='w+b') as chrome_log:
         proc=subprocess.Popen(['/opt/google/chrome/chrome','--headless=new','--no-sandbox','--disable-gpu','--window-size=1440,1000','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],stdout=chrome_log,stderr=chrome_log)
         try:
             port=await wait_browser_port(proc,Path(profile,'DevToolsActivePort'),chrome_log)

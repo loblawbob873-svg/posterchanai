@@ -156,7 +156,7 @@ try{const s=JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}');
 async def _open(width, height, mobile, route, media, check):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-meme-draw-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-meme-draw-', ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', '--disable-gpu',
                                  f'--window-size={width},{height}', '--remote-debugging-port=0',
                                  '--user-data-dir=' + profile, 'about:blank'],

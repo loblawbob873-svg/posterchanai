@@ -108,7 +108,7 @@ async def mouse(b, kind, x, y, button='none', buttons=0):
 async def main(query=''):
     server = ThreadingHTTPServer(('127.0.0.1', 0), PageHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-vmc-grab-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-vmc-grab-', ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen(['/opt/google/chrome/chrome', '--headless=new', '--no-sandbox', '--disable-gpu',
                                  '--window-size=1000,700', '--remote-debugging-port=0', '--user-data-dir=' + profile,
                                  'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -201,7 +201,7 @@ async def reach(query):
     far left/up; return the extreme framebuffer positions the VM received."""
     server = ThreadingHTTPServer(('127.0.0.1', 0), PageHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-vmc-reach-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-vmc-reach-', ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen(['/opt/google/chrome/chrome', '--headless=new', '--no-sandbox', '--disable-gpu',
                                  '--window-size=1000,700', '--remote-debugging-port=0', '--user-data-dir=' + profile,
                                  'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

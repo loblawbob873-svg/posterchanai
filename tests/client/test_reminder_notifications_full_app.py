@@ -22,7 +22,7 @@ window.fetch=async(url,opts)=>String(url).includes('/api/auth/reminder-notificat
 async def run(width):
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-reminder-history-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-reminder-history-', ignore_cleanup_errors=True) as profile:
         proc=subprocess.Popen(['/opt/google/chrome/chrome','--headless=new','--no-sandbox','--disable-gpu','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             for _ in range(100):

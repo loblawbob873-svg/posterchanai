@@ -33,7 +33,7 @@ async def _run():
             "<script>window.__errors=[];onerror=m=>__errors.push(String(m));" 
             "window.pcAlert=()=>{};window.pcConfirm=async()=>true;</script>"
             "<script>" + js.replace("</script>", "<\\/script>") + "</script>")
-    with tempfile.TemporaryDirectory(prefix="pc-botform-") as profile:
+    with tempfile.TemporaryDirectory(prefix="pc-botform-", ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen(["/opt/google/chrome/chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
                                  "--remote-debugging-port=0", "--user-data-dir=" + profile, "about:blank"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

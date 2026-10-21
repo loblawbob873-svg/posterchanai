@@ -35,7 +35,7 @@ def test_the_boot_card_offers_opening_offline_with_tor_kept_on():
     page = html.replace("<head>", "<head>" + STUB, 1) if "<head>" in html else STUB + html
 
     async def run():
-        with tempfile.TemporaryDirectory(prefix="pc-tor-boot-") as profile:
+        with tempfile.TemporaryDirectory(prefix="pc-tor-boot-", ignore_cleanup_errors=True) as profile:
             proc = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0",
                                      "--user-data-dir=" + profile, "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:

@@ -88,7 +88,7 @@ async def run_cycle():
     full.ROOT = APP_ROOT
     server = ThreadingHTTPServer(("127.0.0.1", 0), full.Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix="pc-social-offline-") as profile:
+    with tempfile.TemporaryDirectory(prefix="pc-social-offline-", ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen(
             ["/opt/google/chrome/chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
              "--window-size=1440,1000", "--remote-debugging-port=0", "--user-data-dir=" + profile,

@@ -105,7 +105,7 @@ async def scenario():
     server = ThreadingHTTPServer(('127.0.0.1', 0), desktop.BundleHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     sockets = []
-    with tempfile.TemporaryDirectory(prefix='pc-follow-verdict-') as profile, tempfile.TemporaryFile(mode='w+b') as log:
+    with tempfile.TemporaryDirectory(prefix='pc-follow-verdict-', ignore_cleanup_errors=True) as profile, tempfile.TemporaryFile(mode='w+b') as log:
         proc = subprocess.Popen(['/opt/google/chrome/chrome', '--headless=new', '--no-sandbox', '--disable-gpu',
                                  '--window-size=1440,1000', '--remote-debugging-port=0', '--user-data-dir=' + profile,
                                  'about:blank'], stdout=log, stderr=log)

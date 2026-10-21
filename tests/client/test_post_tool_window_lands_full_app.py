@@ -38,7 +38,7 @@ async def _tool_window(view):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     got = {}
-    with tempfile.TemporaryDirectory(prefix='pc-tool-window-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-tool-window-', ignore_cleanup_errors=True) as profile:
         proc = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', '--disable-gpu', '--window-size=1280,900',
                                  '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

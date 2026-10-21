@@ -127,7 +127,7 @@ async def scenario(width, check):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = os.environ.get('PC_CHECK_PORT')
-    with tempfile.TemporaryDirectory(prefix='pc-notif-thread-') as profile:
+    with tempfile.TemporaryDirectory(prefix='pc-notif-thread-', ignore_cleanup_errors=True) as profile:
         args = [CHROME, '--headless=new', '--no-sandbox', '--disable-gpu',
                 '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank']
         proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

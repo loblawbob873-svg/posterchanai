@@ -81,7 +81,7 @@ class ChatPopoutFluid(unittest.TestCase):
     def render(self, *, width, height=800, chat_only=True, msgs=1):
         body = "".join('<div class="scm-msg">line %d</div>' % i for i in range(msgs))
         page_src = PAGE % {"extra": "popout-chat" if chat_only else "", "msgs": body}
-        with tempfile.TemporaryDirectory(prefix="pc-chatpop-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="pc-chatpop-", ignore_cleanup_errors=True) as tmp:
             shutil.copy(CSS, os.path.join(tmp, "client.css"))
             page = os.path.join(tmp, "s.html")
             with open(page, "w", encoding="utf-8") as fh:
