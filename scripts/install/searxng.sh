@@ -53,6 +53,42 @@ _searxng_find_venv() {
     echo "$SCRIPT_DIR/venv-unified"   # nothing found: report the conventional path in the error
 }
 
+# The files the branding step below writes INTO the checkout. They are ours to overwrite and are
+# written again after every update, so they never count as a local change worth keeping.
+SEARXNG_BRANDED=(searx/static/themes/simple/img/searxng.png searx/static/themes/simple/img/favicon.png
+                 searx/static/themes/simple/img/192.png searx/static/themes/simple/img/512.png)
+
+# UPDATE A CHECKOUT THAT `git pull` CAN NEVER UPDATE. It used to be `git pull --ff-only` with its error
+# thrown away, and that could not succeed even once: the clone is --depth 1 (no shared history for a
+# fast-forward to be computed from) and the branding below edits four TRACKED files. Every
+# "update" since the first install printed "(kept the checkout as-is)" and then reported SearXNG up
+# — measured 2026-10-21 on both nodes, still on the 2026-08-12 commit, 50 upstream commits behind.
+# So: fetch the upstream tip at depth 1 and move to it, unless somebody edited something OTHER than
+# the branded images — then keep their checkout and say so loudly rather than discard their work.
+_searxng_update_checkout() {
+    local src="$1" old new dirty
+    old="$(git -C "$src" rev-parse --short HEAD 2>/dev/null)"
+    if ! git -C "$src" fetch -q --depth 1 "$SEARXNG_REPO" HEAD 2>/dev/null; then
+        print_warning "Could not reach $SEARXNG_REPO — SearXNG stays at $old" 2>/dev/null \
+            || echo "WARNING: could not reach $SEARXNG_REPO — SearXNG stays at $old"
+        return 0
+    fi
+    new="$(git -C "$src" rev-parse --short FETCH_HEAD)"
+    if [ "$(git -C "$src" rev-parse HEAD)" = "$(git -C "$src" rev-parse FETCH_HEAD)" ]; then
+        echo "  SearXNG is current ($old)"; return 0
+    fi
+    dirty="$(git -C "$src" status --porcelain --untracked-files=no -- . \
+             $(printf ":(exclude)%s " "${SEARXNG_BRANDED[@]}"))"
+    if [ -n "$dirty" ]; then
+        print_warning "SearXNG NOT updated ($old, upstream $new): $src has local edits:" 2>/dev/null \
+            || echo "WARNING: SearXNG NOT updated ($old, upstream $new): $src has local edits:"
+        echo "$dirty" | sed 's/^/    /'
+        return 0
+    fi
+    git -C "$src" reset -q --hard FETCH_HEAD || { echo "WARNING: SearXNG update failed; stays at $old"; return 0; }
+    echo "  SearXNG updated $old -> $new"
+}
+
 setup_searxng() {
     print_banner 2>/dev/null || true
     echo -e "${BOLD:-}🔎 Installing this node's own SearXNG (private metasearch)${NC:-}"
@@ -101,7 +137,7 @@ setup_searxng() {
             || { print_error "git clone failed" 2>/dev/null || echo "ERROR: git clone failed"; return 1; }
     else
         print_step "Updating SearXNG in $src_dir ..." 2>/dev/null || echo "Updating SearXNG in $src_dir ..."
-        git -C "$src_dir" pull --ff-only 2>/dev/null || echo "  (kept the checkout as-is)"
+        _searxng_update_checkout "$src_dir"
     fi
 
     # --- into the venv ------------------------------------------------------------------------

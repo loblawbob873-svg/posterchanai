@@ -126,7 +126,7 @@ if [ "$1" = "--voice" ]; then
 fi
 
 # Add-on: run this node's own SearXNG (private metasearch) — what the AI's web search, the news
-# digests, the bots and the Web Search screen all query. Needs docker/podman.
+# digests, the bots and the Web Search screen all query. Runs natively in the app venv (no docker).
 if [ "$1" = "--searxng" ]; then
     setup_searxng
     exit $?
