@@ -4111,8 +4111,17 @@
       restoreClientPrefsNostr().then(pr => { _migrateSocialSet(pr); _maybeExperienceSplash(pr); }).catch(()=>{});   // restore Nostr-synced client prefs, then -- on a definite answer -- the first-login choice
       seedRelaysFromNip65();  // the user's OWN published relay list joins this device's — additive, never a replacement
       setTimeout(()=>{ try{ Drafts.pull(); }catch(_){} }, 1200);   // local drafts already painted; sync off the critical path
+      /* THE NOSTRVERSE IS REDRAWN IN PLACE, NOT RESET. These land seconds after the feed has painted from
+       * cache -- on a phone, while the person is already scrolling -- and renderView(true) on a timeline
+       * is a RESET: the older pages they had scrolled into were dropped and every card rebuilt under their
+       * thumb (measured at Pixel 5 speed: one 265 ms stall per start). The Nostrverse does not depend on
+       * follows; mutes and pins only change what is drawn, which the reconciling redraw handles while
+       * keeping the cards, the loaded pages and the reading place. Home's CONTENT is the follow list, so
+       * Home (and the other views) still re-render. */
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+        .then(()=>{ if(GUEST) return;
+          if(VIEW==='global'){ try{ _drawTimeline(true); }catch(_){} }
+          else if(['home','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling();
       hydrateReminderNotifications();
       // Folder sync: attach the watchers for any folder this device maps. Deliberately NOT a timer —
@@ -6685,11 +6694,15 @@
     const SEL = '#tl-notes>.note:not([data-pw]),#tl-notes>.reply-pair:not([data-pw])';
     let io = null, scanT = 0;
     const parkable = src => /^https?:/i.test(src || '');
-    function park(card){
+    /* `h` is the card's height as the observer MEASURED it (entry.boundingClientRect). Reading
+       card.offsetHeight here forced a fresh layout for every card in the batch, each one right after the
+       previous card's writes -- measured at Pixel 5 speed (6x CPU) as the largest single cost of
+       scrolling the Nostrverse, 144 ms of the profile in 60-70 ms callbacks. The entry already holds it. */
+    function park(card, h){
       if(card.dataset.parked) return;
       const imgs = [...card.querySelectorAll('img')].filter(i => parkable(i.getAttribute('src')) && i.complete && i.naturalWidth > 0 && i.dataset.dim !== 'guess');   // only DECODED pictures hold memory; one still sizing itself must keep learning its size
       if(!imgs.length) return;
-      const h = card.offsetHeight; if(!h) return;
+      h = Math.round(h || 0); if(!h) return;
       card.style.height = h + 'px'; card.dataset.parked = '1';
       for(const i of imgs){ i.dataset.parkedSrc = i.getAttribute('src'); i.src = GIF; }
     }
@@ -6702,7 +6715,7 @@
       scanT = 0;
       if(typeof IntersectionObserver === 'undefined') return;
       const root = document.getElementById('feed');
-      if(!io || io.root !== root){ if(io) io.disconnect(); io = new IntersectionObserver(es => { for(const e of es){ if(e.isIntersecting) unpark(e.target); else park(e.target); } }, { root, rootMargin: '300% 0px' }); }
+      if(!io || io.root !== root){ if(io) io.disconnect(); io = new IntersectionObserver(es => { for(const e of es){ if(e.isIntersecting) unpark(e.target); else park(e.target, e.boundingClientRect.height); } }, { root, rootMargin: '300% 0px' }); }
       for(const c of document.querySelectorAll(SEL)){ c.dataset.pw = '1'; io.observe(c); }
     }
     function soon(){ if(!scanT) scanT = setTimeout(scan, 400); }
