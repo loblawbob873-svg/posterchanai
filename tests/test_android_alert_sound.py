@@ -33,7 +33,9 @@ def test_the_switch_picks_the_alert_channel_and_a_notification_goes_to_notificat
 def test_notifications_are_posted_to_the_channel_the_switch_chose():
     # Both the builder and the readiness check ask the switch; the old constant is gone, so nothing can post to
     # the plain channel while the person has the alert turned on.
-    assert "new Notification.Builder(ctx, isCall ? CH_CALLS : msgsChannel(ctx))" in PUSH
+    # A muted Telegram chat (silent=true) posts to the quiet channel instead; every other message to the switch's.
+    assert ("new Notification.Builder(ctx, isCall ? CH_CALLS\n"
+            "                        : silent ? place.poster.app.ringtone.RingtoneRules.messagesChannel(\"off\") : msgsChannel(ctx))") in PUSH
     assert "getNotificationChannel(call ? CH_CALLS : msgsChannel(ctx))" in PUSH
     assert "CH_MSGS)" not in PUSH and "CH_MSGS =" not in PUSH
     # The alert channel exists and carries the bundled sound as a NOTIFICATION sound.

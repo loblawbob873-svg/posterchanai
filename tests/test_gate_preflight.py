@@ -37,6 +37,21 @@ def test_selection_is_by_name_and_specific_stem_never_by_substring(tmp_path):
     assert pick([]) == []
 
 
+def test_a_client_change_always_brings_the_whole_client_guards(tmp_path):
+    # Deploy #6: the cache-version and cold-load-budget guards never name the file they police, so a concord.js
+    # change found them failing only in the full suite, 50 minutes in.
+    files = _tree(tmp_path, {
+        "tests/test_a_client_change_bumps_the_cache.py": "HEAD vs sw.js",
+        "tests/test_client_boot_payload_budget.py": "cold load bytes",
+        "tests/test_server_only.py": "unrelated",
+    })
+    pick = lambda paths: G["affected_test_files"](str(tmp_path), paths, files)
+    guards = ["tests/test_a_client_change_bumps_the_cache.py", "tests/test_client_boot_payload_budget.py"]
+    assert pick(["static/js/client/concord.js"]) == guards
+    assert pick(["templates/client.html"]) == guards
+    assert pick(["app/services/chunked_upload.py"]) == [], "a server-only change does not need them"
+
+
 def test_preflight_runs_only_when_it_is_a_shortcut(monkeypatch, tmp_path):
     ran = []
     monkeypatch.setitem(G["run_preflight"].__globals__, "run_full_suite",

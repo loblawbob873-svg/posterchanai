@@ -53,8 +53,10 @@ def test_concord_hands_the_attachments_through_and_draws_the_rows():
 def test_the_new_script_ships_everywhere_concord_does():
     html = (ROOT / "templates/client.html").read_text(encoding="utf-8")
     sw = (ROOT / "static/js/client/sw.js").read_text(encoding="utf-8")
-    a, b = html.index("concord-git.js"), html.index("/static/js/client/concord.js")
-    assert a < b, "concord-git.js must load before concord.js (concord.js binds to it at render)"
+    # Loaded by concord.js on its first paint (loadConcordGit), not on the app's cold load.
+    assert "concord-git.js" not in html, "concord-git.js is on the cold load again (boot payload budget)"
+    concord = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
+    assert "if(!window.PCConcordGit)loadConcordGit();" in concord
     assert "'/static/js/client/concord-git.js'," in sw
     assert "concord-git.js" in (ROOT / "scripts/bump_desktop_overlay.py").read_text(encoding="utf-8")
 

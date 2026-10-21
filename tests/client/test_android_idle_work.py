@@ -45,7 +45,7 @@ def test_the_concord_loops_rest_while_the_relays_sleep_and_off_screen():
     assert "if(liveOffScreen()&&(++liveTick%5))return;" in start
     assert "Relay.asleep()" in c[c.index("const liveResting="):][:200]
     sweep = c[c.index("const sweepTimer=setInterval("):][:300]
-    assert "document.hidden" in sweep and "Relay.asleep()" in sweep, "the badge sweep must not run hidden or asleep"
+    assert "document.hidden" in sweep and "liveResting()" in sweep, "the badge sweep must not run hidden or asleep"
 
 
 def test_the_online_heartbeat_slows_where_the_counter_is_not_drawn():

@@ -525,6 +525,11 @@ _GENERIC_STEMS = frozenset({'app', 'client', 'main', 'index', '__init__', 'serve
                             'models', 'schemas', 'database', 'auth', 'config', 'common', 'base', 'test', 'run',
                             'manager', 'service', 'router', 'helpers', 'routes', 'events', 'session', 'settings'})
 PREFLIGHT_MAX_SHARE = 0.35          # past a third of the suite it is not a shortcut any more
+# Guards over the WHOLE client that never name the file they police, so name-matching cannot select them: a cache
+# version every client change must bump, the cold-load byte budget. Run with any client change (deploy #6 found
+# both only in the full suite, 50 minutes in).
+_CLIENT_GUARDS = ('tests/test_a_client_change_bumps_the_cache.py', 'tests/test_client_boot_payload_budget.py')
+_CLIENT_PREFIXES = ('static/', 'templates/')
 
 
 def affected_test_files(root, paths, files=None):
@@ -546,6 +551,8 @@ def affected_test_files(root, paths, files=None):
         if stem not in _GENERIC_STEMS and len(stem) >= 6:     # 'term' is in "terminal" and "determine"
             keys.update({stem, stem.replace('-', '_'), stem.replace('_', '-')})
     hit = set(changed_tests)
+    if any(str(p).startswith(_CLIENT_PREFIXES) for p in paths or []):
+        hit.update(g for g in _CLIENT_GUARDS if g in files)
     if keys:
         import re as _re
         pat = _re.compile('|'.join('(?<![A-Za-z0-9_])' + _re.escape(k) + '(?![A-Za-z0-9_])' for k in sorted(keys)))

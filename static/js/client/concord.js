@@ -218,6 +218,17 @@
       set(t,k,v){t[k]=v;return true;}});
     WRAPPED.set(R,w);return w;
   }
+  /* concord-git.js ARRIVES WITH THE FIRST CONCORD PAINT, not with the app: 88 KB nobody who never opens Communities
+   * needs on a cold load (tests/test_client_boot_payload_budget.py). Every use of PCConcordGit here is guarded, so
+   * the first paint simply has no git rows and the repaint on load adds them. Same ?v= as this file, so the
+   * service worker's precache answers it offline. */
+  let concordGitLoad=null;
+  function loadConcordGit(){
+    if(concordGitLoad||window.PCConcordGit)return;
+    const me=document.querySelector('script[src*="/static/js/client/concord.js"]'),src=me&&me.getAttribute('src')||'';
+    const s=document.createElement('script');s.src='/static/js/client/concord-git.js'+(src.indexOf('?')>=0?src.slice(src.indexOf('?')):'');
+    concordGitLoad=s;s.onload=()=>backgroundRender();s.onerror=()=>{concordGitLoad=null;s.remove();};document.head.appendChild(s);
+  }
   Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return cordRelay(window.Relay);}});
   function homeRelayUrl(p){try{return normalizeRelay(p&&p.homeRelay&&p.homeRelay())||'';}catch(_){return '';}}
   function relaysAreHome(p,relays){const h=homeRelayUrl(p);return !!h&&(relays||[]).some(u=>normalizeRelay(u)===h);}
@@ -5618,7 +5629,7 @@
    * in Firefox (2026-10-16, measured per window over a minute). A window that is not Communities leaves it to the
    * desktop page (whose badge it is) and to the Communities window. */
   function sweepHere(){ try{ const W=window.PCOSWin; return !(W&&W.isWindow&&W.isWindow()&&W.viewOf&&W.viewOf()!=='concord'); }catch(_){ return true; } }
-  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||(window.Relay&&Relay.asleep&&Relay.asleep()))return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
+  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||liveResting())return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
@@ -5951,7 +5962,7 @@
    * (2026-10-21 audit). Now: nothing while the relay pool sleeps (Relay.sleep() after 20 s in the background), and every
    * 5th tick (20 s, the badge sweep's own rate) while Communities is not the screen being looked at. */
   let liveTick=0;
-  const liveResting=()=>{ try{ return !!(window.Relay&&Relay.asleep&&Relay.asleep()); }catch(_){ return false; } };
+  const liveResting=()=>{ try{ const Relay=(window.PCConcordRelay||window.Relay); return !!(Relay&&Relay.asleep&&Relay.asleep()); }catch(_){ return false; } };
   const liveOffScreen=()=>document.hidden||!document.body.classList.contains('concord-view');
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{if(liveResting())return;if(liveOffScreen()&&(++liveTick%5))return;refreshRoomMetadata(p);refreshActiveChannel(p);startRoomsLive(p);sweepOtherRooms(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
   /* ONE SIGNED LISTING PER ROOM PER ACCOUNT, RE-SENT — NEVER RE-SIGNED.
@@ -6260,6 +6271,7 @@
     const narrow=!!(window.matchMedia&&window.matchMedia('(max-width:820px)').matches);
     if(current&&conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen))markRead(current,state.channel||'general');
     const currentChannel=current?visibleChannels.find(c=>c.name===(state.channel||'general')):null;
+    if(!window.PCConcordGit)loadConcordGit();
     if(window.PCConcordGit){
       if(!render.gitBound){render.gitBound=true;PCConcordGit.bindHost({repaint:()=>backgroundRender(),room:()=>saved()[state.community]||null,
         viewing:(room,name)=>viewingChannel(room,name),route:(room,name,id)=>notificationRoute(room,name,{id}),
