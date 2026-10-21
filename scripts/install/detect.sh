@@ -97,6 +97,28 @@ detect_oneapi_path() {
     echo "$ONEAPI_PATH"
 }
 
+# The newest oneAPI DPC++ compiler at or above a minimum version ("2025.2"), as "<version> <dir>" with
+# <dir> = .../compiler/<version>, or nothing. llama-cpp-python 0.3.28 needs 2025.2+ (work_group_static.hpp,
+# and 2025.0's SYCL codegen emits EMPTY generations on the Arc); detect_oneapi_path above prefers 2025.0,
+# which is right only for the old 0.3.22 fallback. PC_ONEAPI_BASE overrides /opt/intel/oneapi (tests).
+detect_oneapi_compiler_min() {
+    local min="${1:-2025.2}" base best="" bestdir="" d v
+    for base in "${PC_ONEAPI_BASE:-/opt/intel/oneapi}" "$HOME/intel/oneapi"; do
+        [ -d "$base/compiler" ] || continue
+        for d in "$base"/compiler/*/; do
+            v=$(basename "$d")
+            [[ "$v" =~ ^[0-9]{4}\.[0-9]+$ ]] || continue          # skips "latest" (a symlink to one of these)
+            [ -x "$d/bin/icpx" ] && [ -f "$d/env/vars.sh" ] || continue
+            [ "$(printf '%s\n%s\n' "$min" "$v" | sort -V | head -1)" = "$min" ] || continue
+            if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$v" | sort -V | tail -1)" = "$v" ]; then
+                best="$v"; bestdir="${d%/}"
+            fi
+        done
+    done
+    if [ -n "$best" ]; then echo "$best $bestdir"; fi
+    return 0      # install.sh runs under set -e: "found nothing" is an answer, not a failure
+}
+
 # Detect Intel oneAPI root directory
 detect_oneapi_root() {
     if [ -d /opt/intel/oneapi/2025.0 ]; then

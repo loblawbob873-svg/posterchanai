@@ -119,30 +119,62 @@ setup_llama_cpp_intel() {
     # This is the primary backend for GGUF models on Intel Arc
     # IMPORTANT: Must use icx/icpx compilers from oneAPI for SYCL support
     # Use full paths to compilers to ensure they're found during pip build
-    echo "  Building llama-cpp-python 0.3.22 with SYCL backend for Intel Arc..."
-    echo "  Using Intel compilers (icx/icpx) for SYCL support..."
-    echo "  This compiles with GPU support - may take 5-10 minutes..."
-    # PIN 0.3.22: >=0.3.23 needs oneAPI 2025.1+ headers (work_group_static.hpp) which break the
-    # 2025.0 / ipex 2.5.10 stack, AND eagerly JIT kernels that abort on older IGC. 0.3.22 + IGC
-    # 2.35.5 is the proven-working Arc combo (runs 9B and the 14B). See docs/IPEX-LLM-SETUP.md.
-    #
-    # UPGRADE PATH (verified 2026-06 on the unified stack): with oneAPI **2025.2**, build **0.3.28**
-    # instead — 2025.2 ships work_group_static.hpp (no stub needed) AND fixes a 2025.0 SYCL codegen
-    # bug that made the Arc emit EMPTY generations for thinking-mode/code prompts (the tools/opencode
-    # path especially). If a 2025.2 icx/icpx is available, prefer 0.3.28 built with it, no patches.
-    # The 0.3.22/2025.0 build below stays as the conservative fallback for older oneAPI.
-    CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$ONEAPI_ROOT/bin/icx -DCMAKE_CXX_COMPILER=$ONEAPI_ROOT/bin/icpx" \
-        pip install llama-cpp-python==0.3.22 --force-reinstall --no-cache-dir -q || {
-        print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."
-        pip install llama-cpp-python==0.3.22 -q
-    }
+    # WHICH llama-cpp-python, built with WHICH compiler. 0.3.28 built with oneAPI 2025.2+ is what production
+    # runs (server1) and what the Docker image builds (0.3.28 on the 2025.3.2 base): 2025.2 ships
+    # work_group_static.hpp and fixes a 2025.0 SYCL codegen bug that made the Arc emit EMPTY generations.
+    # 0.3.22 is ONLY the fallback for a box whose newest oneAPI is older than 2025.2. This used to build
+    # 0.3.22 unconditionally with --force-reinstall, so re-running the installer after an OS update
+    # DOWNGRADED a working 0.3.28 (docs/INTEL_GENTOO.md).
+    local LLAMA_VER CC_FOUND CC_VER CC_DIR PIP_BIN RUN_LD
+    PIP_BIN=$(command -v pip)
+    # Checked the way the service runs it (run-intel.sh): llama.cpp rides torch's oneAPI in the venv.
+    RUN_LD="$(python -c 'import sys; print(sys.prefix)' 2>/dev/null || true)/lib:/usr/lib64"
+    CC_FOUND=$(detect_oneapi_compiler_min 2025.2)
+    if [ -n "$CC_FOUND" ]; then LLAMA_VER=0.3.28; read -r CC_VER CC_DIR <<< "$CC_FOUND"; else LLAMA_VER=0.3.22; fi
+    # Already there, at this version, WITH the GPU: nothing to rebuild (and nothing to risk).
+    if LD_LIBRARY_PATH="$RUN_LD" ONEAPI_DEVICE_SELECTOR=level_zero:gpu \
+         python -c "import llama_cpp,sys; sys.exit(0 if llama_cpp.__version__=='$LLAMA_VER' and llama_cpp.llama_supports_gpu_offload() else 1)" >/dev/null 2>&1; then
+        print_success "llama-cpp-python $LLAMA_VER with SYCL is already installed — not rebuilding"
+    elif [ "$LLAMA_VER" = "0.3.28" ]; then
+        echo "  Building llama-cpp-python 0.3.28 with SYCL, oneAPI $CC_VER compilers (5-10 minutes)..."
+        # In a CLEAN environment (env -i) with only the 2025.2+ compiler, MKL and TBB environments: the older
+        # oneAPI this function sourced above must not leak into this build -- a subshell would inherit it.
+        # TBB is required (CMake: "TBB not found for MKL_SYCL_THREADING"); MKL/TBB of the same release when
+        # present, else `latest`. Proxy settings pass through for pip's download.
+        local CC_BASE; CC_BASE=$(dirname "$(dirname "$CC_DIR")")
+        (
+            env -i HOME="$HOME" PATH="/usr/local/bin:/usr/bin:/bin" TMPDIR="${TMPDIR:-/tmp}" \
+                ${http_proxy:+http_proxy="$http_proxy"} ${https_proxy:+https_proxy="$https_proxy"} \
+                ${no_proxy:+no_proxy="$no_proxy"} CC_DIR="$CC_DIR" CC_BASE="$CC_BASE" CC_VER="$CC_VER" PIP_BIN="$PIP_BIN" \
+                bash -c '
+                    source "$CC_DIR/env/vars.sh" >/dev/null 2>&1
+                    for lib in mkl tbb; do
+                        for cand in "$CC_BASE/$lib/$CC_VER" "$CC_BASE/$lib/latest"; do
+                            if [ -f "$cand/env/vars.sh" ]; then source "$cand/env/vars.sh" >/dev/null 2>&1; break; fi
+                        done
+                    done
+                    CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$CC_DIR/bin/icx -DCMAKE_CXX_COMPILER=$CC_DIR/bin/icpx" \
+                        "$PIP_BIN" install llama-cpp-python==0.3.28 --force-reinstall --no-cache-dir --no-deps -q'
+        ) || print_warning "SYCL build of llama-cpp-python 0.3.28 failed — the installed one was left as it was"
+    else
+        echo "  Building llama-cpp-python 0.3.22 with SYCL backend for Intel Arc (no oneAPI 2025.2+ found)..."
+        echo "  This compiles with GPU support - may take 5-10 minutes..."
+        # PIN 0.3.22 for an older oneAPI: >=0.3.23 needs 2025.1+ headers (work_group_static.hpp), AND
+        # eagerly JITs kernels that abort on older IGC. See docs/IPEX-LLM-SETUP.md.
+        CMAKE_ARGS="-DGGML_SYCL=ON -DCMAKE_C_COMPILER=$ONEAPI_ROOT/bin/icx -DCMAKE_CXX_COMPILER=$ONEAPI_ROOT/bin/icpx" \
+            pip install llama-cpp-python==0.3.22 --force-reinstall --no-cache-dir -q || {
+            print_warning "SYCL build failed, installing pre-built (may be CPU-only)..."
+            pip install llama-cpp-python==0.3.22 -q
+        }
+    fi
     # The Arc also needs IGC 2.35.5 system-wide (distro IGC is too old, and it's in NO repo).
     # Shared idempotent helper offers to run scripts/install-igc.sh (also called from the image path).
     ensure_igc_235
 
     # Verify SYCL support (need LD_LIBRARY_PATH for runtime libs like libsvml.so)
-    export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-}"
-    if python -c "import llama_cpp; print('GPU offload:', llama_cpp.llama_supports_gpu_offload())" 2>/dev/null | grep -q "True"; then
+    if [ "$LLAMA_VER" = "0.3.28" ]; then export LD_LIBRARY_PATH="$RUN_LD:${LD_LIBRARY_PATH:-}"
+    else export LD_LIBRARY_PATH="$ONEAPI_ROOT/lib:${LD_LIBRARY_PATH:-}"; fi
+    if ONEAPI_DEVICE_SELECTOR=level_zero:gpu python -c "import llama_cpp; print('GPU offload:', llama_cpp.llama_supports_gpu_offload())" 2>/dev/null | grep -q "True"; then
         print_success "llama-cpp-python installed with GPU (SYCL) support"
     else
         print_warning "llama-cpp-python may be CPU-only - check SYCL compilation"

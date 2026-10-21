@@ -104,8 +104,8 @@ rembg>=2.0.50
 # torch==2.5.1+cxx11.abi
 # intel-extension-for-pytorch==2.5.10+xpu
 # ipex-llm[xpu]==2.3.0b20251110
-# llama-cpp-python==0.3.22  (SYCL build: CMAKE_ARGS="-DGGML_SYCL=on -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx")
-#   NOTE: >=0.3.23 needs oneAPI 2025.1+ (work_group_static.hpp); can't upgrade without breaking IPEX 2.5.10.
+# llama-cpp-python==0.3.28  (Intel: built by install.sh / the Dockerfile with oneAPI 2025.2+ icx/icpx, SYCL on;
+#   0.3.22 only when the newest oneAPI on the box is older than 2025.2 -- scripts/install/llama_cpp.sh)
 # transformers>=4.37.0
 # numpy<2  # REQUIRED: IPEX/PyTorch compiled with numpy 1.x, will break with numpy 2.x
 #
