@@ -162,3 +162,40 @@ def test_the_finished_render_s_buttons(media):
         await b.js("document.getElementById('mb-again').click(); 1")
         await b.until(f"{LAYERS}.length==={n + 1}")
     asyncio.run(_open(1280, 800, False, '', media, check))
+
+
+@pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome required')
+def test_the_add_sheet_sticker_layout_and_a_file_from_this_device(media):
+    """＋ Add: Sticker → an emoji becomes its own layer; Ready-made layout → the layout's layers are added (and ↶
+    takes them away again); From this device → the picked picture is uploaded and lands as a layer."""
+    async def check(b):
+        await b.js("PCMeme.reset(); window.__fileInputs=[]; const __c=HTMLInputElement.prototype.click;"
+                   "HTMLInputElement.prototype.click=function(){if(this.type==='file'){__fileInputs.push(this);return;}return __c.call(this);}; 1")
+        assert await b.js(f"PCMeme.addMedia({json.dumps(_MEDIA[0].base + '/photo.png')},'image/png')")
+        await b.until(f"{LAYERS}.length===1 && !!document.getElementById('mb-add-media')")
+
+        async def add(item):
+            await b.js("document.getElementById('mb-add-media').click(); 1")
+            await b.until(f"!!document.getElementById({item!r})")
+            await b.js(f"document.getElementById({item!r}).click(); 1")
+
+        await add('mba-sticker')
+        await b.until("!!document.querySelector('.emoji-pop .ep-grid button[data-e]')")
+        await b.js("document.querySelector('.emoji-pop .ep-grid button[data-e]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true})); 1")
+        await b.until(f"{LAYERS}.length===2")
+
+        await add('mba-tpl')
+        await b.until("!!document.querySelector('.mb-tplrow:not([disabled])')")
+        await b.js("document.querySelector('.mb-tplrow:not([disabled])').click(); 1")
+        await b.until(f"{LAYERS}.length>2")
+        await b.js("document.getElementById('mb-undo').click(); 1")
+        await b.until(f"{LAYERS}.length===2")
+
+        await add('mbm-local')
+        await b.until("__fileInputs.length===1")
+        png = await b.js("(async()=>{const r=await fetch(" + json.dumps(_MEDIA[0].base + '/photo.png') + ");return Array.from(new Uint8Array(await r.arrayBuffer()))})()")
+        await b.js("(()=>{const i=__fileInputs[0];const dt=new DataTransfer();dt.items.add(new File([new Uint8Array(" + json.dumps(png) + ")],'mine.png',{type:'image/png'}));"
+                   "i.files=dt.files;i.dispatchEvent(new Event('change'));})(); 1")
+        await b.until(f"{LAYERS}.length===3")
+        assert not await b.js("window.__errors||[]")
+    asyncio.run(_open(1280, 800, False, '', media, check))
