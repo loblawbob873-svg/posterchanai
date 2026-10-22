@@ -760,6 +760,15 @@
     return `<button class="cc-attachment-open" type="button"${box?' data-cc-sized':''} aria-label="Open ${label}"${box}><img src="${url}" alt="${label}"></button>`; }
   const scrollStates=new Map();
   let liveTimer=null,liveBusy=false,metadataBusy=false,metadataCursor=0;
+  /* A LIVE PASS THAT NEVER ENDS MUST NOT END LIVE SYNC (2026-10-22, Windows app: "not syncing latest room data",
+   * new messages missing while open, only a restart brought them). refreshActiveChannel is the tick that both re-arms
+   * the channel's live subscription and polls it, and it ran only while `liveBusy` was false -- so ONE await that never
+   * settled (an IndexedDB write, a worker decrypt: neither has a timeout) stopped every later tick for the life of the
+   * page. A pass now carries a token and the step it is on; one stuck past LIVE_STUCK_MS is reported with that step and
+   * replaced, and a stuck pass that resumes later cannot clear a newer pass's flag. PCConcord.liveDiag() reads it. */
+  const LIVE_STUCK_MS=90000;
+  let liveRun={token:0,step:'',at:0,stepAt:0};
+  const liveDiag={stuck:[],passes:0,lastOk:0};
   let liveWarned='';   // the last live-sync failure reported — see refreshActiveChannel
   let resumeRequested=false;
   let actionDismissOff=null;
@@ -5907,7 +5916,15 @@
   if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||liveResting())return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
+    if(liveBusy&&Date.now()-liveRun.at>LIVE_STUCK_MS){
+      const row={step:liveRun.step,forMs:Date.now()-liveRun.at,inStepMs:Date.now()-liveRun.stepAt,at:new Date().toISOString()};
+      liveDiag.stuck.push(row);if(liveDiag.stuck.length>20)liveDiag.stuck.shift();
+      console.warn('Concord live sync stuck at '+(row.step||'start')+' for '+Math.round(row.forMs/1000)+' s -- starting a fresh pass',row);
+      liveBusy=false;
+    }
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
+    const token=++liveRun.token,step=name=>{ if(liveRun.token===token){ liveRun.step=name; liveRun.stepAt=Date.now(); } };
+    liveRun.at=Date.now();step('start');liveDiag.passes++;
     try{
       const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),
         bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
@@ -5921,6 +5938,7 @@
       const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),
         since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),
         reach={},
+        _q=step('query'),
         wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],
           {timeout:6000,max:8,plane:cordPlaneContext(p,bundle,controlWraps,room),signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000,report:reach});
       /* The live tick is what runs for a channel opened after hydration prefetched past it, so it
@@ -5928,12 +5946,15 @@
        * rate-limited off every relay records `skipped`, which is exactly the honest answer. */
       noteChannelReach(storeId,reach,relays);
       if(!stillOwned())return;
+      step('cache');
       await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);
       if(!stillOwned())return;
       // A completed old-room refresh can fill its own history, but cannot replace the current live stream.
       const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
       if(roomIdentity(active)===identity&&activeChannel&&activeChannel.id===channel.id)startChatLive(p,active,activeChannel);
+      step('absorb');
       await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps||[],storeId);
+      if(liveRun.token===token)liveDiag.lastOk=Date.now();
     }catch(e){
       /* SAY IT ONCE PER CHANNEL, NOT EVERY FOUR SECONDS.
        *
@@ -5948,7 +5969,7 @@
       const _why=String((e&&e.message)||e);
       const _seen=roomIdentity(saved()[state.community])+'\n'+(state.channel||'general')+'\n'+_why;
       if(liveWarned!==_seen){ liveWarned=_seen; console.warn('Concord live sync failed',e); }
-    }finally{liveBusy=false;}
+    }finally{ if(liveRun.token===token){ liveBusy=false; liveRun.step=''; } }
   }
   // CORD06 subscriptions are owned by an account AND an exact membership snapshot.
   // Decryption and persistence may outlive navigation; neither may cross that boundary.
@@ -8031,7 +8052,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p)};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
