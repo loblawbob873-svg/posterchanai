@@ -288,6 +288,37 @@
     for(const f of filters)for(const a of f.authors)if(!held.has(a))return '';
     return h;
   }
+  /* A COLD DEVICE ASKS THIS NODE WHAT IT ALREADY MIRRORS (2026-10-22, Firefox over Tor: "no rooms are loading",
+   * "we can't have it this shitty for users"). mirrorState lived only in the browser that registered each room, and a
+   * device with none -- new, cleared, or Tor Browser, which forgets every session -- could not register either: the
+   * stream authors come from control events it had not read yet. So every read tunnelled to every relay a room lists,
+   * and over Tor many of those tunnels died. The node holds the registrations (concord_mirror.member_state); one
+   * members-only request seeds them, stamped NOW because the node said NOW that it holds them. A device's own record
+   * is never replaced, and a failure changes nothing (the old path). Once per account per page. */
+  const mirrorSeeds=new Map();
+  function seedMirrorFromNode(p){
+    const pk=accountPk();if(!pk||!p||!p.authFetch||!homeRelayUrl(p))return Promise.resolve(false);
+    if(mirrorSeeds.has(pk))return mirrorSeeds.get(pk);
+    const job=(async()=>{
+      let r=null,t=null;
+      try{ r=await Promise.race([p.authFetch('/client/concord/mirror-state'),new Promise((_,no)=>{t=setTimeout(()=>no(new Error('timeout')),4000);})]); }
+      catch(_){ return false; }finally{ clearTimeout(t); }
+      let j=null;try{j=r&&r.ok?await r.json():null;}catch(_){j=null;}
+      if(!j||!j.groups||typeof j.groups!=='object'||accountPk()!==pk)return false;
+      const st=mirrorState(pk),now=Date.now();let added=0;
+      for(const [group,g] of Object.entries(j.groups)){
+        if(!/^[0-9a-f]{64}$/.test(group)||!g||!Array.isArray(g.authors)||!g.authors.length)continue;
+        const mine=st.groups[group];if(mine&&now-Number(mine.at||0)<MIRROR_TRUST_MS)continue;
+        st.groups[group]={relays:[],authors:g.authors.filter(a=>/^[0-9a-f]{64}$/.test(String(a))).slice(0,MIRROR_MAX_AUTHORS),at:now,seeded:true,
+          ...(Array.isArray(g.direct)?{direct:g.direct.map(normalizeRelay).filter(Boolean)}:{})};
+        added++;
+      }
+      if(added)saveMirrorState(pk,st);
+      return added>0;
+    })().catch(()=>false);
+    mirrorSeeds.set(pk,job);
+    return job;
+  }
   async function mirrorGroup(communityId){
     const id=String(communityId||'');if(!id||!(globalThis.crypto&&crypto.subtle))return '';
     const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('pc-concord-mirror:'+id));
@@ -5239,6 +5270,7 @@
       try{
       /* Ask this node to hold the community BEFORE reading it (bounded: a node that does not answer costs
        * six seconds once, then the room reads its own relays as it always did). */
+      await seedMirrorFromNode(p);   // bounded (4 s), once per account: a cold device reads this node's copy first
       if(typeof ensureMirror==='function')await Promise.race([ensureMirror(p,room,bundle,controlWraps),new Promise(r=>setTimeout(r,6000))]);
       if(!currentOwner())return;
       const controlRead=await queryControlUntilAsked(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
@@ -5776,6 +5808,7 @@
     return null;
   }
   function startRoomsLive(p){
+    void seedMirrorFromNode(p);
     try{
       const R=(window.PCConcordRelay||window.Relay),reader=window.PosterCordReader;
       if(!p||!R||!R.subscribeFrom||!reader)return;
@@ -8052,7 +8085,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p)};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,seedMirrorFromNode,mirrorStateFor:pk=>mirrorState(pk),homeServes:(p,relays,filters)=>homeServes(p,relays,filters),liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p)};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

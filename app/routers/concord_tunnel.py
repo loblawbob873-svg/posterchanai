@@ -37,6 +37,29 @@ async def tunnel_ticket(user: User = Depends(_member)):
     return {"ticket": concord_tunnel.issue(pk.lower()), "ttl": concord_tunnel.TICKET_TTL}
 
 
+@router.get("/mirror-state")
+async def mirror_state(user: User = Depends(_member)):
+    """{groups: {group: {authors, direct, at}}}: the Concord communities this node mirrors for THIS account
+    (concord_mirror.member_state). A device with no record of its own (new, cleared, Tor Browser) reads them
+    from this node's copy at once instead of tunnelling to every relay. Only the caller's own registrations."""
+    from app.services.nostr.nostr_service import to_pubkey_hex
+    from app.services import relay_reader
+    from app.services.nostr_relay import aggregates
+    pk = ""
+    try:
+        pk = (to_pubkey_hex(getattr(user, "nostr_npub", "") or "") or "").lower()
+    except Exception:
+        pk = ""
+    if len(pk) != 64:
+        return {"groups": {}}
+    try:
+        got = await asyncio.to_thread(aggregates.ask, "concord-mirror-state", {"member": pk}, timeout=5.0)
+    except relay_reader.Unavailable:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"groups": {}, "error": "the relay could not be asked"}, status_code=503)
+    return {"groups": (got or {}).get("groups") or {}}
+
+
 @router.get("/default-invite")
 async def default_invite(user: User = Depends(_member)):
     """The community this instance joins every member to (Admin -> Nostr Relay), or {invite: ''}.

@@ -730,6 +730,30 @@ class ConcordMirror:
                             "(or cannot reach them) — read them directly")
         return ""
 
+    def member_state(self, member: str) -> dict:
+        """{group: {authors, direct, at}} for one member's live registrations -- what that member's registration
+        replies said, asked again by a device that has none (members-only: routers/concord_tunnel.py).
+
+        A COLD DEVICE READS THIS NODE'S COPY AT ONCE (2026-10-22, Firefox over Tor: "no rooms are loading", every
+        room tunnelling to every relay it lists). Which rooms this node mirrors lived only in the browser that had
+        registered them, so a new device, a cleared cache, or Tor Browser (which forgets every session) knew of
+        none and tunnelled everywhere until its own registrations came back. `direct` is None for a registration
+        recorded before it was kept (the client then treats it as it did before). Called from the stats thread:
+        reads a snapshot and never blocks the loop."""
+        out = {}
+        try:
+            mine = dict(self.regs.get(member) or {})
+        except RuntimeError:                       # resized mid-copy by the loop: the next ask sees it
+            return {}
+        now = time.time()
+        for group, reg in mine.items():
+            if not isinstance(reg, dict) or reg.get("hosted") or now - float(reg.get("at", 0)) > TTL_SECONDS:
+                continue
+            skipped = reg.get("skipped")
+            out[group] = {"authors": list(reg.get("authors") or []), "at": int(reg.get("at", 0)),
+                          "direct": None if skipped is None else list(skipped) + self.unreadable(reg.get("relays") or [])}
+        return out
+
     def unreadable(self, relays) -> list:
         """The relays among `relays` this node does not read: one that refused the mirror, or none is held for."""
         out = []
@@ -853,7 +877,7 @@ class ConcordMirror:
         if self.total() >= MAX_EVENTS_TOTAL:
             return False, "blocked: this node's Concord mirror is full"
         self.regs.setdefault(member, {})[group] = {"relays": relays, "authors": authors, "at": int(now),
-                                                   **({"hosted": True} if hosted else {})}
+                                                   "skipped": skipped, **({"hosted": True} if hosted else {})}
         if hosted:
             self.hosted_ever.update(authors)
         self._dirty()

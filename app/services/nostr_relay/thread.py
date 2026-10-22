@@ -1039,6 +1039,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     # switch off or no proxy it refuses registrations and the Concord directory, it never answers "empty".
     from .concord_mirror import ConcordMirror
     server.mirror = ConcordMirror(store, server, cfg)
+    store.concord_mirror = server.mirror        # aggregates.compute 'concord-mirror-state' reads it
     asyncio.create_task(_safe(server.mirror.start()))
 
     # WoT build on startup ONLY when there is NO cached snapshot (first run / cleared cache). If the

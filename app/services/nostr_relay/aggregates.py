@@ -317,6 +317,12 @@ def compute(store, what: str, args: dict, now: int | None = None) -> dict:
         if not re.fullmatch(r"[0-9a-f]{64}", pk):
             raise ValueError("bad pubkey")
         out = trace(store, src, pk)
+    elif what == "concord-mirror-state":
+        member = str(args.get("member") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", member):
+            raise ValueError("bad member")
+        mirror = getattr(store, "concord_mirror", None)
+        out = {"groups": mirror.member_state(member) if mirror else {}}
     elif what == "wot-tiers":
         pks = [str(p).lower() for p in (args.get("pubkeys") or [])][:2000]
         out = wot_tiers(store, pks)
