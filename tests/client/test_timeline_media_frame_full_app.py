@@ -53,13 +53,14 @@ MEASURE = r'''(()=>{const out={};for(const n of document.querySelectorAll('#tl-n
 
 
 
-async def _measure(width):
+async def _measure(width, os_mode=False):
     res = {}
 
     async def check(b):
-        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width < 821})
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 1080 if os_mode else 900, "deviceScaleFactor": 1, "mobile": width < 821})
         await desktop.login(b)
-        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        if not os_mode:
+            await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
         await b.js("__PC.switchView('global')")
         await b.until("document.querySelectorAll('#tl-notes .note').length>=6")
         await asyncio.sleep(2)
@@ -81,3 +82,17 @@ def test_a_lone_picture_gets_one_frame_whatever_its_shape(width):
     heights = [h for (_w, h, *_r) in singles.values()]
     assert max(heights) / min(heights) <= 2.3, ("lone pictures still swing in height", singles)
     assert got["two"]["carousel"] and got["five"]["carousel"]["h"] == got["two"]["carousel"]["h"], got
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_lone_picture_is_not_gigantic_in_a_desktop_window():
+    """2026-10-22, "on Desktop/OS, in social, images are gigantic! probably videos too": in a desktop window the column
+    is the window (1322px on screen at 1920), and the frame above took 100% of it with min-height 56.25% of it --
+    1322x744 for every lone picture, landscape or portrait. The test above left the desktop (PCOS.exit) and never saw
+    it. The frame is capped at 840px (CSS px; the window's zoom makes it smaller on screen) and keeps 16:9..4:5."""
+    got = asyncio.run(_measure(1920, os_mode=True))
+    col = got["landscape"]["col"]
+    singles = {k: got[k]["imgs"][0] for k in ("landscape", "portrait", "square", "card")}
+    for name, (w, h, *_rest) in singles.items():
+        assert w <= 0.6 * col, (name, "a lone picture spans the whole desktop window", w, col)
+        assert 0.55 * w - 2 <= h <= 1.26 * w + 2, (name, "outside 16:9..4:5", w, h)

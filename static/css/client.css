@@ -2116,7 +2116,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 #tl-notes .media-row:not(.quoted .media-row){container-type:inline-size}
 #tl-notes .media-row:not(.quoted .media-row) img:only-child,
 #tl-notes .media-row:not(.quoted .media-row) video:only-child{
-  width:100%;max-width:100%;height:auto;min-height:56.25cqw;max-height:min(125cqw,520px);object-fit:cover}
+  width:min(100%,840px);max-width:100%;height:auto;
+  /* The frame is at most 840px wide (the web column at 1280 is 826) and its height is measured from THE FRAME, never the column: in a desktop window
+     the column is the window (1322px measured), every lone picture or video was drawn 1322x744 -- min-height
+     (56.25% of the column) outranks max-height in CSS, so the 520px cap never applied. The width is SET, not
+     max-width'ed: a max-width on an image re-derives its width from its own shape (461px measured) ("on Desktop/OS, in
+     social, images are gigantic", 2026-10-22). */
+  min-height:calc(min(100cqw,840px)*.5625);max-height:min(calc(min(100cqw,840px)*1.25),520px);object-fit:cover}
 #tl-notes .media-row:not(.quoted .media-row) video:only-child{object-fit:contain;background:#000}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
