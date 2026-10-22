@@ -38,7 +38,7 @@ const DISCOVERY_RELAYS=['wss://discovery.example'];
 const Relay={query:async()=>{const rows=remote.slice();Object.defineProperty(rows,'complete',{value:complete});return rows;},queryFrom:async()=>[],publish:async e=>{publishes.push(e);if(publishOK)remote=[e];return {ok:publishOK,msg:'Relay unavailable'};}};
 const sign=async(kind,content,tags,created_at=Math.floor(Date.now()/1000))=>{signCalls++;if(signMode==='reject')throw new Error('Signer refused');const event=NostrTools.finalizeEvent({kind,content,tags:signMode==='change'?[['payto','lightning','wrong@test.test']]:tags,created_at},key);if(holdSign)await new Promise(r=>releaseSign=r);return event;};
 let profile={name:'Alice'};const profOf=()=>profile,xmrOf=p=>p.monero_address||'',bchOf=()=>'',ethOf=()=>'',xmrForNote=()=>'';
-const qrSrc=()=>'',copyValue=()=>{},toast=s=>toastMessage=s,uiConfirm=async()=>{confirmCalls++;return true;};
+let copied='';const qrSrc=()=>'',copyValue=v=>{copied=String(v);},toast=s=>toastMessage=s,uiConfirm=async()=>{confirmCalls++;return true;};
 const ClientSettings={get:(_k,d)=>d},xmrPresets=()=>[0.00001];
 window.PCMoneroWallet={tip:async opts=>{lastTip=opts;return true;}};
 const _lightningAmountSheet=(_p,go)=>go(21);let lastResolved='',switchDuringLnurl=false,switchDuringInvoice=false;
@@ -64,7 +64,7 @@ const settle=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setTimeout(r,5)
 
 
 @pytest.mark.parametrize('width',[380,1280])
-@pytest.mark.parametrize('case',['hydrate','save','clear','publish_failure','offline','account_switch','conflict','chooser','monero_tip','lightning_choice','invalid_monero','signer_refusal','signer_changed_targets','chooser_account_switch','cold_outbox','lazy_module','legacy_card','pinned_card','stored_note','bch_prefixed','lightning_account_switch','invoice_account_switch','bch_account_switch','concord_targets'])
+@pytest.mark.parametrize('case',['editor_buttons','hydrate','save','clear','publish_failure','offline','account_switch','conflict','chooser','monero_tip','lightning_choice','invalid_monero','signer_refusal','signer_changed_targets','chooser_account_switch','cold_outbox','lazy_module','legacy_card','pinned_card','stored_note','bch_prefixed','lightning_account_switch','invoice_account_switch','bch_account_switch','concord_targets'])
 def test_payment_targets_in_browser(chrome,width,case):
     target=chrome.command('Target.createTarget',{'url':'about:blank'})['targetId']
     chrome.session=chrome.command('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
@@ -137,8 +137,21 @@ def test_payment_targets_in_browser(chrome,width,case):
         elif case=='chooser':
             chrome.evaluate('showPaymentTargets(owner);settle()')
             assert chrome.evaluate("$$('[data-pay-target]').length")==2
+            # Refresh asks again: a target published since appears.
+            chrome.evaluate("remote=[signed([['payto','monero',xmr],['payto','newnetwork','alice'],['payto','lightning','alice@ln.test']],104)]")
+            chrome.click('#pt-refresh');chrome.evaluate('settle()')
+            assert chrome.evaluate("$$('[data-pay-target]').length")==3
             chrome.click('[data-pay-target="1"]');chrome.evaluate('settle()')
             assert chrome.evaluate("$('.modal a').getAttribute('href')")=='payto://newnetwork/alice'
+            chrome.click('#pt-copy');assert chrome.evaluate('copied')=='alice'
+        elif case=='editor_buttons':
+            # Add target adds an empty row to fill in; Reload targets (confirmed) drops unsaved rows.
+            chrome.click('#pt-add');assert chrome.evaluate("$$('.pt-edit-row').length")==3
+            chrome.evaluate("$$('.pt-address')[2].value='unsaved'")
+            chrome.click('#pt-reload');chrome.evaluate('settle()')
+            assert chrome.evaluate('confirmCalls')==1
+            assert chrome.evaluate("$$('.pt-edit-row').length")==2
+            assert 'unsaved' not in chrome.evaluate("$$('.pt-address').map(e=>e.value).join()")
         elif case in ('legacy_card','pinned_card','stored_note'):
             chrome.evaluate("profile.monero_address='8'+'b'.repeat(94)")
             if case=='stored_note':
