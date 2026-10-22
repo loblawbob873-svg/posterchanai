@@ -422,6 +422,29 @@ window.PCUploadFactory = function(dep){
     if(progress) try{ progress({ loaded:file.size, total:file.size }); }catch(_){}
     return await res.json();
   }
+  /* LISTING YOUR FILES CARRIES YOUR SIGNATURE. This node's Blossom no longer lists anyone's drive to a stranger
+   * (app/routers/blossom.py list_blobs, 2026-10-21): BUD-02's `list` authorization, signed by the owner (or an admin),
+   * is required. Every listing the app makes -- Files, the media picker, Folder Sync, Music, Go Live -- asks here.
+   * One signature serves for hours: with a remote signer (Amber, NIP-46) each one is a prompt on a phone, and Files
+   * lists on every open. Any Blossom server already accepts this header (an upload sends it), so a user's own
+   * server is asked the same way. Resolves {} when nobody is signed in, so a caller still makes its request. */
+  const _listAuth = new Map();      // pubkey -> {header, exp} | {pending}
+  async function blossomListAuth(){
+    const pk = S.ME && S.ME.pubkey; if(!pk) return {};
+    const now = Math.floor(Date.now()/1000), hit = _listAuth.get(pk);
+    if(hit && hit.header && hit.exp - now > 600) return { Authorization: hit.header };
+    if(hit && hit.pending) return hit.pending;
+    const pending = (async () => {
+      const exp = now + 6*3600;
+      const ev = await sign(24242, 'List my files', [['t','list'],['expiration',String(exp)]]);
+      const header = 'Nostr ' + btoa(JSON.stringify(ev));
+      _listAuth.set(pk, { header, exp });
+      return { Authorization: header };
+    })();
+    _listAuth.set(pk, { pending });
+    try{ return await pending; }
+    catch(e){ _listAuth.delete(pk); return {}; }   // no signature: the request goes unsigned and the server says why
+  }
   async function uploadBlob(file, opts){
     if(opts && opts.ciphertext) return _uploadCiphertext(file, opts);
     // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
@@ -1028,7 +1051,7 @@ window.PCUploadFactory = function(dep){
         const deadline=setTimeout(()=>stop.abort(),25000);
         try{
           const r=await fetch(server+'/list/'+S.ME.pubkey+'?limit='+BP_LIST_LIMIT,
-                              {cache:'no-store',signal:stop.signal});
+                              {cache:'no-store',signal:stop.signal,headers:await blossomListAuth()});
           if(!r.ok)return [];
           const body=await r.json();
           const rows=Array.isArray(body)?body:(Array.isArray(body&&body.blobs)?body.blobs:[]);
@@ -1253,6 +1276,6 @@ window.PCUploadFactory = function(dep){
     blossomPicker, compressImage, compressVideo, copyUrl, downloadBlobFile, downloadName,
     extOfBlob, fetchMediaBlob, fileFromBytes, fileLabel, fileNameFor, gifPicker, imetaTagsFor,
     mimeForName, renderPics, requestBlossomAccess, requestStreamAccess, saveBlobAs, saveToDevice, saveEncrypted,
-    saveMedia, sha256hex, sniffExt, stripImageMetadata, thumbUrl, uploadBlob,
+    saveMedia, sha256hex, sniffExt, stripImageMetadata, thumbUrl, uploadBlob, blossomListAuth,
   };
 };

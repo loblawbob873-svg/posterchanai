@@ -1102,7 +1102,7 @@ window.PCStreamsFactory = function(dep){
     // server without `/list` is not a network problem), or is UNREACHABLE (no answer at all).
     const answers=await Promise.all(sources.map(async src=>{
       try{
-        const r=await _fetchTimeout(src+'/list/'+S.ME.pubkey, {}, 20000);
+        const r=await _fetchTimeout(src+'/list/'+S.ME.pubkey, {headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{})}, 20000);
         if(!r.ok) return {src, status:r.status};
         const j=await r.json();
         return Array.isArray(j) ? {src, list:j.map(b=>Object.assign({_src:src}, b))} : {src, status:r.status};

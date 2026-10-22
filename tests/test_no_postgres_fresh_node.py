@@ -58,6 +58,12 @@ def _proof(purpose):
     return base64.b64encode(json.dumps(ev).encode()).decode()
 
 
+def _blossom_list_auth():
+    """BUD-02 listing is the owner's to ask for (app/routers/blossom.py list_blobs)."""
+    ev = build_event(USER_SK, 24242, "list", tags=[["t", "list"], ["expiration", str(int(time.time()) + 600)]])
+    return "Nostr " + base64.b64encode(json.dumps(ev).encode()).decode()
+
+
 def _blossom_auth(sha):
     ev = build_event(USER_SK, 24242, "upload", tags=[["t", "upload"], ["x", sha],
                                                       ["expiration", str(int(time.time()) + 300)]])
@@ -104,7 +110,7 @@ def test_a_fresh_node_with_no_postgres_serves_a_new_user(node):
             up = await _ask(c, "PUT", "/blossom/upload", content=blob,
                              headers={"Authorization": _blossom_auth(sha), "Content-Type": "text/plain"})
             assert up.status_code in (200, 201), up.text
-            ls = await _ask(c, "GET", "/blossom/list/" + USER_PK)
+            ls = await _ask(c, "GET", "/blossom/list/" + USER_PK, headers={"Authorization": _blossom_list_auth()})
             assert ls.status_code == 200, ls.text
             assert sha in [b.get("sha256") for b in ls.json()]
             # a setting, round trip

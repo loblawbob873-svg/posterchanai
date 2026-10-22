@@ -259,7 +259,8 @@ def test_the_routes_answer_503_when_the_index_cannot_be_asked(idx_own, cfg):  # 
     put(A, owners=(A,))
     idx_own.close()
     reset_process_state()
-    with mock.patch.object(blossom_service, "is_enabled", lambda db: True):
+    with mock.patch.object(blossom_service, "is_enabled", lambda db: True), \
+         mock.patch.object(blossom_service, "verify_auth", lambda h, a, s=None: A):   # the owner asking
         got = asyncio.run(R._serve_blob(A, _request(), _NoSQL()))
         assert got.status_code == 503, "a blob that may well be there was answered %d" % got.status_code
         assert got.headers.get("retry-after")

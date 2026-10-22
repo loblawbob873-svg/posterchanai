@@ -719,7 +719,7 @@ window.PCMusicLibFactory = function(dep){
   // player kept trying deleted tracks. null = never fetched → behave as before rather than hide everything.
   async function _refreshBlobHave(){
     if(!S.ME) return S._blobHave;
-    try{ const r=await fetch(mediaServer()+'/list/'+S.ME.pubkey);
+    try{ const r=await fetch(mediaServer()+'/list/'+S.ME.pubkey,{headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{})});
       if(r.ok){ const l=await r.json(); if(Array.isArray(l)){
         S._blobHave=new Set(l.map(b=>b.sha256));
         // Sizes come from the same answer — a second pass to total them would be a second /list.

@@ -434,6 +434,16 @@ async def upload_requirements(request: Request, db: Session = Depends(get_db)):
     return Response(status_code=200, headers=_CORS)
 
 
+async def _is_node_admin(db: Session, pubkey_hex: str) -> bool:
+    """An admin of this node, by the account their key belongs to. "Could not ask" is not an admin."""
+    try:
+        from app.services import user_table
+        u = await user_table.aby_npub(db, nostr_service.npub_of(pubkey_hex))
+        return bool(u is not None and u.is_admin)
+    except Exception:
+        return False
+
+
 @router.get("/list/{pubkey}")
 async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db),
                      since: int | None = None, until: int | None = None,
@@ -454,6 +464,18 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
     pk_hex = nostr_service.to_pubkey_hex(pubkey)
     if not pk_hex:
         return _err(400, "invalid pubkey")
+    # NOBODY BROWSES ANYBODY ELSE'S DRIVE (2026-10-21: "disable external users from being able to browse a user's
+    # blossom files"). This listing was public -- any visitor could enumerate every file a member ever uploaded,
+    # and a sha256 is all it takes to fetch one. BUD-02 lets a server require authorization here, so it does: a
+    # kind-24242 `list` event signed by the OWNER (what PosterChan's own clients send, upload.js blossomListAuth),
+    # or by an admin of this node (Files' admin drill-in). Fetching one blob by its hash stays public -- every
+    # picture in every post is that request.
+    try:
+        signer = await asyncio.to_thread(blossom_service.verify_auth, request.headers.get("authorization", ""), "list")
+    except ValueError as e:
+        return _err(401, f"listing these files needs the owner's authorization ({e})")
+    if signer.lower() != pk_hex.lower() and not await _is_node_admin(db, signer):
+        return _err(403, "only the owner can list these files")
     base = _base_url(request, db)
     try:
         blobs = blossom_service.list_for_pubkey(db, pk_hex)

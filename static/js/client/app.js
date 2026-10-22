@@ -11135,6 +11135,7 @@
   function renderOfficeHome(){ return _lzRun(_filesMod, _filesLoad, 'renderOfficeHome', arguments, true); }
   function saveBlobDoc(){ return _lzRun(_filesMod, _filesLoad, 'saveBlobDoc', arguments); }
   function saveCopyTo(){ return _lzRun(_filesMod, _filesLoad, 'saveCopyTo', arguments); }
+  function blossomListAuth(){ return _lzRun(_uploadMod, _uploadLoad, 'blossomListAuth', arguments); }
   function uploadEncFile(){ return _lzRun(_filesMod, _filesLoad, 'uploadEncFile', arguments); }
 
   /* ---------- The encrypted drive index: moved to static/js/client/filesindex.js (its own <script> tag) ----------
@@ -14510,6 +14511,7 @@
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */
     saveBlobDoc,
+    blossomListAuth,   // upload.js: the signed `list` authorization this node's Blossom requires to list a drive
     saveCopyTo,   // files.js: Save as -- a name and a place (a drive folder, a synced folder, this computer)
     /* HOW TO REOPEN WHAT THIS WINDOW IS SHOWING, as a path — the desktop's monitor handoff needs it.
      *

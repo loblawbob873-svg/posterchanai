@@ -176,6 +176,7 @@ def test_after_a_restart_whole_table_reads_are_503_with_retry_after_at_once(node
         req = Request({"type": "http", "method": "GET", "path": "/list/" + "c" * 64, "query_string": b"",
                        "headers": [], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 3051), "scheme": "http"})
         monkeypatch.setattr(blossom_service, "is_enabled", lambda db: True)
+        monkeypatch.setattr(blossom_service, "verify_auth", lambda h, a, s=None: "c" * 64)   # the owner asking
         got = _in_thread(lambda: run(R.list_blobs("c" * 64, req, db=None)))
         assert got.status_code == 503 and got.headers.get("retry-after")
     finally:

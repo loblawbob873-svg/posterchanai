@@ -2066,7 +2066,7 @@
   async function listBlobs(){
     const server = PC.mediaServer && PC.mediaServer();
     if(!server) throw new Error('no Blossom server configured');
-    const r = await fetch(server + '/list/' + PC.ME.pubkey);
+    const r = await fetch(server + '/list/' + PC.ME.pubkey, { headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{}) });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     return await r.json();
   }

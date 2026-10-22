@@ -169,7 +169,7 @@ window.PCFilesFactory = function(dep){
     const g=$('#badm-grid',pane);
     if(!server){ g.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
     let list=null;
-    try{ const r=await fetch(server+'/list/'+pk); if(r.ok) list=await r.json(); }catch(_){}
+    try{ const r=await fetch(server+'/list/'+pk,{headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{})}); if(r.ok) list=await r.json(); }catch(_){}   // an admin's own signature (the server checks they are one)
     if(!list){ g.innerHTML='<div class="empty">Couldn’t load this user’s files.</div>'; return; }
     if(!list.length){ g.innerHTML='<div class="empty">No files.</div>'; return; }
     g.innerHTML = list.map(b=>{
@@ -765,7 +765,7 @@ window.PCFilesFactory = function(dep){
        * make this report every file in the index as missing. */
       let list = null;
       try{
-        const r = await fetch(mediaServer() + '/list/' + _S.ME.pubkey, { cache:'no-store' });
+        const r = await fetch(mediaServer() + '/list/' + _S.ME.pubkey, { cache:'no-store', headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{}) });
         if(r.ok) list = await r.json();
       }catch(_){ }
       if(!Array.isArray(list)){ toast('could not read your drive from the server — nothing was changed'); return; }
@@ -2545,7 +2545,7 @@ window.PCFilesFactory = function(dep){
       const ctl=typeof AbortController!=='undefined'?new AbortController():null;
       const t=ctl?setTimeout(()=>ctl.abort(),12000):null;
       try{
-        const r=await fetch(String(server).replace(/\/$/,'')+'/list/'+pk, Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+        const r=await fetch(String(server).replace(/\/$/,'')+'/list/'+pk, Object.assign({cache:'no-store',headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{})},ctl?{signal:ctl.signal}:{}));
         if(!r.ok) throw new Error('HTTP '+r.status);
         const list=await r.json(); if(!Array.isArray(list)) throw new Error('invalid response');
         memo.at=Date.now(); return list;

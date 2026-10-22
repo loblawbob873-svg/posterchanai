@@ -33,7 +33,8 @@ def _call(**params):
         with mock.patch.object(blossom_router.blossom_service, "is_enabled", return_value=True), \
              mock.patch.object(blossom_router.blossom_service, "list_for_pubkey", return_value=list(BLOBS)), \
              mock.patch.object(blossom_router.blossom_service, "names_for_pubkey", return_value={}), \
-             mock.patch.object(blossom_router, "_base_url", return_value="https://m.example/blossom"):
+             mock.patch.object(blossom_router, "_base_url", return_value="https://m.example/blossom"), \
+             mock.patch.object(blossom_router.blossom_service, "verify_auth", return_value="f" * 64):   # the owner asking
             return await blossom_router.list_blobs("f" * 64, mock.Mock(), db=mock.Mock(), **params)
     resp = asyncio.run(go())
     return json.loads(bytes(resp.body).decode())
@@ -88,7 +89,8 @@ class TheCutIsAppliedBeforeTheExpensiveHalf(unittest.TestCase):
                  mock.patch.object(blossom_router.blossom_service, "list_for_pubkey", return_value=list(BLOBS)), \
                  mock.patch.object(blossom_router.blossom_service, "names_for_pubkey", return_value={}), \
                  mock.patch.object(blossom_router.blossom_service, "descriptor", side_effect=counting), \
-                 mock.patch.object(blossom_router, "_base_url", return_value="https://m.example/blossom"):
+                 mock.patch.object(blossom_router, "_base_url", return_value="https://m.example/blossom"), \
+                 mock.patch.object(blossom_router.blossom_service, "verify_auth", return_value="f" * 64):
                 await blossom_router.list_blobs("f" * 64, mock.Mock(), db=mock.Mock(), limit=3)
         asyncio.run(go())
         self.assertEqual(len(calls), 3, "the listing was fully rendered and then thrown away")

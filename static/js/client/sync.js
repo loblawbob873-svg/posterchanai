@@ -2696,7 +2696,7 @@
       const server = (PC.mediaServer && PC.mediaServer()) || '';
       const me = PC.me && PC.me();
       if(!server || !me || !me.pubkey) return null;
-      const r = await _bounded(fetch(server + '/list/' + me.pubkey, { cache: 'no-store' }),
+      const r = await _bounded(fetch(server + '/list/' + me.pubkey, { cache: 'no-store', headers:(window.__PC&&__PC.blossomListAuth?await __PC.blossomListAuth():{}) }),
                                'store listing', 30000);
       /* A CEILING ON WHAT IS PARSED. An account with a long drive history lists a very large number
        * of blobs, and `r.json()` on a phone builds every one of them as an object before anything
