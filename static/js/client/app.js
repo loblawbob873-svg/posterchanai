@@ -14700,6 +14700,17 @@
     askOsNotify: async () => {
       try{
         if(window.pcHost&&pcHost.notify){ await pcHost.notify({title:'PosterChan',body:'Notifications are on.',route:'notifications',tag:'pc-test'});return 'granted'; }
+        /* THE APK ASKS ANDROID, through the plugin that posts its notifications (PushPlugin declares POST_NOTIFICATIONS
+         * as `notifications`). Android's WebView has no Notifications API at all, so this answered 'unsupported' and
+         * the Communities bell could never be switched on in the app ("notifications unavailable here"). Below Android
+         * 13 there is no runtime permission and Capacitor answers 'granted'. */
+        const P=_capPlugin('PosterChanPush','notify');
+        if(P&&P.requestPermissions){
+          let st=P.checkPermissions?await P.checkPermissions():null;
+          if(!st||st.notifications!=='granted')st=await P.requestPermissions({permissions:['notifications']});
+          const r=st&&st.notifications;
+          return r==='granted'?'granted':(r==='denied'?'denied':'unsupported');
+        }
         if(!window.Notification) return 'unsupported';
         if(Notification.permission==='granted') return 'granted';
         const r=await Notification.requestPermission();

@@ -105,6 +105,9 @@ def test_forum_channel_create_post_reply(width):
         # 4. Open "Bugs", reply, and the reply lands in THAT thread.
         await click(b, '.cc-forum-post[data-cc-thread="' + roots['Bugs']['id'] + '"]')
         await wait_for(b, "document.querySelector('.cc-forum-subject')?.textContent==='Bugs'")
+        # The bar above an open post names the POST and the way back -- not "Thread" and a raw key.
+        assert await b.js("document.querySelector('.cc-thread-bar .cc-thread-what b').textContent") == 'Bugs'
+        assert await b.js("document.querySelector('#cc-thread-back').textContent.includes('All posts')")
         assert await b.js("getComputedStyle(document.querySelector('.cc-compose')).display") != 'none'
         await type_into(b, '#cc-input', 'The login page is slow')
         await click(b, '#cc-send')

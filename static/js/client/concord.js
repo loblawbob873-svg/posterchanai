@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=25'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=26'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>cordDeps(window.__PC);
   /* CONCORD THEMES. How Concord looks to ME (per account, never per community): a preset name plus an
@@ -1495,6 +1495,68 @@
     return out;
   }
   function npubOf(pk){ try{ return window.NostrTools.nip19.npubEncode(String(pk).toLowerCase()); }catch(_){ return ''; } }
+  /* EDITING A MESSAGE KEEPS ITS MENTIONS, AND CAN ADD THEM ("username completion/tagging functionality missing from
+   * concord edit modal", 2026-10-21). The edit box was a bare textarea: no @-picker, and what it sent was the raw text,
+   * so `@Alice` typed in an edit tagged nobody -- and the message's existing mentions were shown as `@npub1…`. This is
+   * the composer's picker for any textarea (same rows, same tap-on-release, arrows/Tab/Enter on a keyboard), plus the
+   * composer's own wire rules on the way out (wireMentionText + typedMentionRecipients). */
+  function mentionBox(p,box,room){
+    const viewer=p.viewer?p.viewer():{},recipients=new Map();let choices=[],index=0;
+    const list=document.createElement('div');list.className='cc-mentions cc-box-mentions';list.setAttribute('role','listbox');
+    list.setAttribute('aria-label','Mention a member');list.hidden=true;box.parentElement.insertBefore(list,box.nextSibling);
+    const token=()=>String(box.value||'').slice(0,box.selectionStart).match(/(?:^|\s)@([\w.-]*)$/);
+    const paint=()=>{
+      if(!choices.length){list.hidden=true;list.innerHTML='';return;}
+      list.hidden=false;
+      list.innerHTML=choices.map((c,i)=>{const pr=p.profOf?p.profOf(c.pk)||{}:{};
+        return '<button type="button" role="option" class="cc-mention-opt'+(i===index?' on':'')+'" aria-selected="'+(i===index)+'" data-cc-mention="'+i+'">'
+          +'<img src="'+p.enc(pr.picture||p.LOGO||'')+'" alt=""><span>@'+p.enc(c.name)+'</span></button>';}).join('');
+    };
+    const draw=()=>{
+      const m=token();if(!m){choices=[];paint();return;}
+      const q=m[1].toLowerCase();
+      choices=roomParticipants(room,viewer.pubkey).map(pk=>{const pr=p.profOf?p.profOf(pk)||{}:{},name=String(pr.display_name||pr.name||String(pk).slice(0,12));
+        return {pk,name,aliases:mentionAliases(pr,pk,name)};}).filter(x=>!q||[...x.aliases].some(a=>a.includes(q))).slice(0,8);
+      index=0;paint();
+    };
+    const accept=i=>{
+      const m=token(),c=choices[i];if(!m||!c)return false;
+      const handle=c.name.replace(/\s+/g,'_'),end=box.selectionStart,start=end-m[1].length-1;
+      recipients.set(handle.toLowerCase(),c.pk);box.setRangeText('@'+handle+' ',start,end,'end');
+      choices=[];paint();box.focus();return true;
+    };
+    let sx=0,sy=0,moved=false;
+    list.addEventListener('pointerdown',ev=>{if(!ev.target.closest||!ev.target.closest('[data-cc-mention]'))return;sx=ev.clientX;sy=ev.clientY;moved=false;ev.preventDefault();});
+    list.addEventListener('pointermove',ev=>{if(Math.abs(ev.clientX-sx)>8||Math.abs(ev.clientY-sy)>8)moved=true;});
+    list.addEventListener('pointerup',ev=>{const row=ev.target.closest&&ev.target.closest('[data-cc-mention]');if(!row||moved)return;ev.preventDefault();accept(Number(row.dataset.ccMention)||0);});
+    box.addEventListener('input',draw);
+    box.addEventListener('keydown',e=>{
+      if(!choices.length)return;
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();e.stopImmediatePropagation();index=(index+(e.key==='ArrowDown'?1:-1)+choices.length)%choices.length;paint();return;}
+      if(e.key==='Tab'||(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();e.stopImmediatePropagation();accept(index);return;}
+      if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();choices=[];paint();}
+    },true);
+    return {
+      /* `@npub1…` (the wire form) as the `@Name` a person types, each one remembered so it goes back out the same. */
+      readable(text){
+        return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
+          let pk='';try{const d=window.NostrTools.nip19.decode(np);pk=d.type==='npub'?d.data:'';}catch(_){}
+          if(!pk)return whole;
+          const pr=p.profOf?p.profOf(pk)||{}:{},handle=String(pr.display_name||pr.name||String(pk).slice(0,12)).replace(/\s+/g,'_');
+          recipients.set(handle.toLowerCase(),pk);return pre+'@'+handle;});
+      },
+      /* {text, tags}: the wire text and a `p` tag per person mentioned, exactly as a new message is sent. */
+      wire(text){
+        const lower=String(text||'').toLowerCase(),tagged=new Set(),pairs=[];
+        for(const [handle,pk] of recipients)if(lower.includes('@'+handle)){tagged.add(pk);pairs.push([handle,pk]);}
+        for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){
+          tagged.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};
+          for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))pairs.push([alias,pk]);
+        }
+        return {text:wireMentionText(text,pairs,npubOf),tags:[...tagged].map(pk=>['p',pk])};
+      },
+    };
+  }
   /* `@npub1…` → `nostr:npub1…` before linkify, which renders a profile link reading `@Name`. Left as
    * `@npub1…` it rendered `@@Name` (linkify keeps the character before the entity). */
   function readableMentions(text){ return String(text||'').replace(/(^|\s)@((?:npub1)[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,'$1nostr:$2'); }
@@ -1554,7 +1616,16 @@
     /* Migration fallback for the release that stored one timestamp for the whole community. */
     return Math.max(synced,Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0));
   }
-  function markRead(room,name){ if(room&&room.naddr&&accountPk())localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
+  /* READ UP TO THE NEWEST MESSAGE SEEN, not up to this device's clock. A message is unread while its `at` (the SENDER's
+   * clock) is newer than the mark, so a phone whose clock ran behind a sender's kept the dot on a channel it had just
+   * opened ("i open room but you still see that dot", 2026-10-21) -- and a git row timed by its relay the same. */
+  function markRead(room,name){
+    if(!(room&&room.naddr&&accountPk()))return;
+    let newest=Date.now();
+    try{ for(const m of testMessages(channelStoreId(room,name))||[])newest=Math.max(newest,Number(m.at)||0); }catch(_){}
+    try{ const c=channelsOf(room).find(x=>x.name===(name||'general'));if(c&&window.PCConcordGit&&PCConcordGit.channelHasGit(c))newest=Math.max(newest,Number(PCConcordGit.latestAt(room,c))||0); }catch(_){}
+    localStorage.setItem(channelReadKey(room,name),String(newest));
+  }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))||gitUnread(room,c)); }
   function gitUnread(room,c){ try{ return !!(window.PCConcordGit&&PCConcordGit.channelHasGit(c)&&PCConcordGit.latestAt(room,c)>seenAt(room,c.name)); }catch(_){ return false; } }
   /* THE SIDEBAR BADGE. Communities has its own nav row now, so it needs its own count — as a tab
@@ -6187,6 +6258,20 @@
    * threads: a post is a titled kind-9 root, its comments are the thread, and opening one is the
    * ordinary thread view (state.thread), where the composer replies to it. */
   function currentChannelOf(room){return room&&(room.channels||[]).find(c=>c&&c.name===(state.channel||'general'))||null;}
+  /* THE BAR ABOVE AN OPEN THREAD says where you are and how to get back. It read "← Back | Thread | 1b84c5567b12…" --
+   * a raw key where a forum post's TITLE belongs, in a floating bordered box unlike every other header ("the thread
+   * bar looks out of place and bad", 2026-10-21). A forum post now shows "‹ All posts" and its title; a chat thread
+   * "‹ #channel", "Thread" and who started it, by the name this client knows for them. */
+  function threadBarHtml(p,room,messages){
+    const root=messages.find(x=>messageId(x)===state.thread)||{},name=state.channel||'general';
+    const ch=room?channelsOf(room).find(c=>c.name===name):null,forum=!!(ch&&ch.view==='forum');
+    const title=forum&&window.PCCordSpaces?String(window.PCCordSpaces.subjectOf(root)||''):'';
+    let who='';try{const pr=root.pubkey&&p.profOf?p.profOf(root.pubkey)||{}:{};who=String(pr.display_name||pr.name||'');}catch(_){}
+    if(!who&&root.by&&!/^[0-9a-f]{8,}/i.test(String(root.by)))who=String(root.by);
+    return '<div class="cc-thread-bar'+(forum?' is-forum':'')+'"><button id="cc-thread-back" aria-label="'+(forum?'Back to all posts':'Back to #'+p.enc(name))+'">'
+      +'<span aria-hidden="true">\u2039</span><span>'+(forum?'All posts':'#'+p.enc(name))+'</span></button>'
+      +'<div class="cc-thread-what"><b>'+p.enc(forum?(title||'Post'):'Thread')+'</b>'+(!forum&&who?'<small>started by '+p.enc(who)+'</small>':'')+'</div></div>';
+  }
   function forumFeedHtml(p,messages,current){
     const S=window.PCCordSpaces,ch=currentChannelOf(current);
     if(!S||state.community==null||state.thread||!ch||S.channelView(ch)!=='forum')return '';
@@ -6229,7 +6314,7 @@
        repository's issues, comments, status changes and CI between its messages. */
     const _gitChannel=current&&state.community!=null&&window.PCConcordGit?channelsOf(current).find(c=>c.name===(state.channel||'general')):null,
       _gitHere=!!(_gitChannel&&PCConcordGit.channelHasGit(_gitChannel));
-    return `${state.community==null?`<div class="cc-discover">${inviteCardHtml(p)}<div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list"><!--cc-list-->${(()=>{
+    return `${state.community==null?`<div class="cc-discover">${inviteCardHtml(p)}<div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?threadBarHtml(p,current,messages):''}<div class="cc-message-list"><!--cc-list-->${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -7347,11 +7432,11 @@
       }); };
     $$('[data-cc-edit]').forEach(b=>b.onclick=()=>{ closeMessageActions();const room=saved()[state.community],channel=state.channel,storeId=channelStoreId(room,channel),found=testMessages(storeId).find(x=>messageId(x)===b.dataset.ccEdit),viewer=p.viewer?p.viewer():{}; if(!found||!canEditMessage(found,viewer,room)||!p.modal)return;
       p.modal(`<h3>Edit message</h3><textarea class="input cc-edit-text" rows="4" maxlength="65536"></textarea><div class="cc-join-actions"><button class="btn btn-ghost" data-cc-edit-cancel>Cancel</button><button class="btn btn-neon" data-cc-edit-save>Save</button></div>`,root=>{
-        const box=root.querySelector('.cc-edit-text'),save=root.querySelector('[data-cc-edit-save]');box.value=String(found.text||'');setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);},20);
+        const box=root.querySelector('.cc-edit-text'),save=root.querySelector('[data-cc-edit-save]'),mentions=mentionBox(p,box,room);box.value=mentions.readable(found.text);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);},20);
         root.querySelector('[data-cc-edit-cancel]').onclick=()=>p.closeModal();
         box.onkeydown=e=>{if((e.key==='Enter')&&(e.ctrlKey||e.metaKey)){e.preventDefault();save.click();}};
-        save.onclick=async()=>{ const text=String(box.value||'').trim(); if(!text){p.toast('an edit cannot be empty — delete the message instead');return;} if(text===String(found.text||'').trim()){p.closeModal();return;} save.disabled=true;
-          try{ await publishCordMessage(p,room,channel,text,[['e',messageId(found)]],3302);
+        save.onclick=async()=>{ const typed=String(box.value||'').trim(); if(!typed){p.toast('an edit cannot be empty — delete the message instead');return;} const out=mentions.wire(typed),text=out.text; if(text===String(found.text||'').trim()){p.closeModal();return;} save.disabled=true;
+          try{ await publishCordMessage(p,room,channel,text,[['e',messageId(found)],...out.tags],3302);
             const rows=testMessages(storeId),row=rows.find(x=>messageId(x)===messageId(found));
             if(row){ if(typeof row.originalText!=='string')row.originalText=row.text; row.text=text; row.tags=[...(row.tags||[]).filter(t=>t[0]!=='edited'),['edited',String(Math.floor(Date.now()/1000))]]; saveTestMessages(storeId,rows); }
             p.closeModal(); preserveChatScroll(()=>render());

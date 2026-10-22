@@ -78,7 +78,9 @@ def test_answering_clears_the_pending_invite_before_it_repaints():
     """Both answers repaint. An answer that leaves `pendingInvite` set draws the card again over
     its own result — the invitation you just declined, back on screen."""
     for handler in ("cc-invite-accept", "cc-invite-decline"):
-        fn = SRC.split("$('#%s'); if(" % handler, 1)[1].split("};", 1)[0]
+        # The whole handler: up to its catch (Accept) or its toast (Decline), not the first `};` -- a helper
+        # defined inside it ends with one.
+        fn = SRC.split("$('#%s'); if(" % handler, 1)[1].split("catch(e)", 1)[0].split("p.toast(inv?.directId", 1)[0]
         assert "pendingInvite=null" in fn, fn
 
 

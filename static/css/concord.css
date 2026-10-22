@@ -815,3 +815,16 @@ body.ccg-projects-open::before{content:"";position:fixed;inset:0;z-index:79;back
    of 9px text. Title and Review only there; the full sentence stays on the main screen and in the sheet. */
 .cc-channel-list .cc-invite-card small{display:none}
 .cc-channel-list .cc-invite-card b{font-size:12.5px;line-height:1.3}
+
+/* The open-thread bar (concord.js threadBarHtml): a header strip, not a floating box. Full width under the room
+   header, the same surface as the conversation, a hairline below; the back control is a link-like button. */
+body.concord-view .cc-messages>.cc-thread-bar{margin:0 0 10px!important;padding:8px 6px!important;border:0!important;border-bottom:1px solid rgba(var(--cct-tint-rgb),.1)!important;border-radius:0!important;background:var(--cct-main)!important;gap:8px!important}
+body.concord-view .cc-messages>.cc-thread-bar button{flex:0 0 auto!important;gap:6px!important;padding:6px 8px!important;border:0!important;border-radius:calc(8px*var(--cct-round))!important;color:var(--cct-accent)!important;font-weight:600!important}
+body.concord-view .cc-messages>.cc-thread-bar button:hover,body.concord-view .cc-messages>.cc-thread-bar button:focus-visible{background:rgba(var(--cct-tint-rgb),.07)!important}
+body.concord-view .cc-messages>.cc-thread-bar button span:first-child{font-size:20px!important;line-height:1!important}
+body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what{min-width:0!important;display:flex!important;flex-direction:column!important;padding-inline-start:8px!important;border-inline-start:1px solid rgba(var(--cct-tint-rgb),.12)!important}
+body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what b{color:var(--cct-strong)!important;font-size:14.5px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--cct-muted)!important;font-size:12px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+/* The @-picker under a textarea that is not the composer (the edit box): below it, inside the sheet. */
+.cc-box-mentions{margin:6px 0 0!important}
+.cc-box-mentions[hidden]{display:none!important}
