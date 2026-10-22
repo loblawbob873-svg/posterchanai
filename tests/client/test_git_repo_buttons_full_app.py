@@ -41,6 +41,8 @@ window.fetch = (u, o) => {
   const q = new URL(s, location.href), route = q.pathname.split('/client/git/')[1];
   const json = o => Promise.resolve(new Response(JSON.stringify(o), {status:200, headers:{'Content-Type':'application/json'}}));
   if (route === 'edit') { __edits.push(JSON.parse(o.body)); return json({ok:true, short:'feed123'}); }
+  if (route === 'create') { const req=JSON.parse(o.body); window.__created=req;
+    return json({ok:true, clone:req.url, announce_tags_30617:[['d','new-app'],['name',req.name||'new-app'],['clone',req.url]]}); }
   if (route === 'refs') return json({ok:true, default:'main', branches:[{name:'main'},{name:'dev'}], tags:[]});
   if (route === 'tree') return json({ok:true, entries:[{name:'README.md', path:'README.md', type:'blob', size:6}]});
   if (route === 'paths') return json({ok:true, paths:['README.md']});
@@ -139,6 +141,42 @@ def test_every_repo_button_does_its_job():
         # Back to the repo list.
         await b.js("document.querySelector('#repo-back').click(); 1")
         await b.until("!document.querySelector('#repo-back') && (!!document.querySelector('#repo-new') || !!document.querySelector('#repo-create'))")
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    asyncio.run(desktop.with_browser("online", "", check, GIT))
+
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_create_a_repo_then_open_it_and_cancel_a_new_issue():
+    """Git → Create repo: Cancel makes nothing; Create provisions it on the host, announces it (kind 30617), shows
+    the first-push quick start, and "Open repo" opens it. In the repo, New issue → Cancel publishes nothing."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("window.__publishOK=true; window.__sent=[]; const __s=WebSocket.prototype.send;"
+                   "WebSocket.prototype.send=function(r){try{const m=JSON.parse(r);if(m[0]==='EVENT')__sent.push(m[1]);}catch(_){}return __s.call(this,r)}; 1")
+        await b.js("__PC.switchView('repos'); 1")
+        await b.until("!!document.querySelector('#repo-create')")
+        await b.js("document.querySelector('#repo-create').click(); 1")
+        await b.until("!!document.querySelector('#cr-cancel')")
+        await b.js("document.querySelector('#cr-cancel').click(); 1")
+        await b.until("!document.querySelector('#cr-cancel')")
+        assert await b.js("window.__created===undefined"), "Cancel created a repo"
+        await b.js("document.querySelector('#repo-create').click(); 1")
+        await b.until("!!document.querySelector('#cr-go')")
+        await b.js("(()=>{document.querySelector('#cr-d').value='new-app';document.querySelector('#cr-name').value='New App';"
+                   "document.querySelector('#cr-go').click();})(); 1")
+        await b.until("!!document.querySelector('#qs-open')")
+        created = await b.js("__created")
+        assert created["url"].endswith("/new-app.git") and created["name"] == "New App" and created["auth"].startswith("Nostr "), created
+        assert await b.js("__sent.some(e=>e.kind===30617&&e.tags.some(t=>t[0]==='d'&&t[1]==='new-app'))"), "the repo was not announced"
+        await b.js("document.querySelector('#qs-open').click(); 1")
+        await b.until("!!document.querySelector('#repo-back') && !!document.querySelector('#rv-newissue')")
+        await b.js("document.querySelector('#rv-newissue').click(); 1")
+        await b.until("!!document.querySelector('#ri-cancel')")
+        await b.js("document.querySelector('#ri-subj').value='never sent'; document.querySelector('#ri-cancel').click(); 1")
+        await b.until("!document.querySelector('#ri-cancel')")
+        assert not await b.js("__sent.some(e=>e.kind===1621)"), "Cancel published an issue"
         assert not await b.js("__errors"), await b.js("__errors")
 
     asyncio.run(desktop.with_browser("online", "", check, GIT))
