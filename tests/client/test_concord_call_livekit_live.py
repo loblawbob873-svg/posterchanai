@@ -1,4 +1,5 @@
-"""A real Concord call through OUR broker and OUR LiveKit: two browsers press Join and hear each other.
+"""A real Concord call through OUR broker and OUR LiveKit: two browsers press Join, hear each other, mute and
+unmute, see each other's camera, and one SEES the other's shared screen.
 
 Asked 2026-10-22: "Why is the call server armada.buzz? ... do all the buttons in there work?" -- and the honest
 answer was that no Concord call had ever been placed end to end (docs/testing/concord-compatibility.md: "No live
@@ -90,6 +91,16 @@ window.__start=async(cfg)=>{
   window.__errors=[];addEventListener('error',e=>__errors.push(String(e.message)));addEventListener('unhandledrejection',e=>__errors.push(String(e.reason&&e.reason.message||e.reason)));
   await PCCordCall.open(ctx);return true;
 };
+// THE SCREEN PICKER is the one thing a headless browser cannot drive, so "the screen" is a canvas with a moving
+// stripe: a REAL video track, published, encrypted and routed exactly as a captured screen is.
+navigator.mediaDevices.getDisplayMedia=async()=>{const c=document.createElement('canvas');c.width=1280;c.height=720;
+  const g=c.getContext('2d');let x=0;setInterval(()=>{g.fillStyle='#102030';g.fillRect(0,0,1280,720);g.fillStyle='#ffd400';
+    g.fillRect(x,200,300,300);x=(x+40)%980;},50);return c.captureStream(20);};
+// What a person would SEE of a shared screen: a frame that is not blank, at a size you can read.
+window.__screenSeen=async()=>{const v=document.querySelector('.pc-cord-call [data-call=media] video[data-screen]');
+  if(!v||!v.videoWidth)return null;const c=document.createElement('canvas');c.width=64;c.height=36;const g=c.getContext('2d');
+  g.drawImage(v,0,0,64,36);const d=g.getImageData(0,0,64,36).data;let yellow=0;for(let i=0;i<d.length;i+=4)if(d[i]>180&&d[i+1]>150&&d[i+2]<90)yellow++;
+  const r=v.getBoundingClientRect();return {w:v.videoWidth,h:v.videoHeight,shownH:Math.round(r.height),yellow};};
 // What a person would HEAR: the loudest moment across `ms` of every attached remote <audio>.
 window.__loudness=async(ms)=>{const els=[...document.querySelectorAll('.pc-cord-call [data-call=media] audio')];
   if(!els.length)return -1;const ac=new AudioContext();await ac.resume();let peak=0;
@@ -240,6 +251,38 @@ def test_two_people_hear_each_other_through_our_broker_and_livekit(tmp_path):
                 for name, t in (("alice", alice), ("bob", bob)):
                     loud = await t.js("__loudness(4000)")
                     assert loud > 0.01, f"{name} hears nothing from the other side (peak RMS {loud})"
+                # Mute: Bob stops hearing Alice; Unmute brings her back.
+                await alice.js("document.querySelector('.pc-cord-call [data-call=mute]').click()")
+                await alice.until("document.querySelector('.pc-cord-call [data-call=mute]').textContent==='Unmute'", what="alice to be muted")
+                await asyncio.sleep(1.5)
+                quiet = await bob.js("__loudness(2500)")
+                assert quiet < 0.005, f"bob still hears alice after she muted (peak RMS {quiet})"
+                await alice.js("document.querySelector('.pc-cord-call [data-call=mute]').click()")
+                await alice.until("document.querySelector('.pc-cord-call [data-call=mute]').textContent==='Mute'", what="alice to be unmuted")
+                await bob.until("(async()=>await __loudness(1500)>0.01)()", timeout=20, what="bob to hear alice again after she unmuted")
+                # Camera: Bob gets Alice's camera as a video that is not a screen.
+                await alice.js("document.querySelector('.pc-cord-call [data-call=video]').click()")
+                await bob.until("(()=>{const v=document.querySelector('.pc-cord-call [data-call=media] video:not([data-screen]):not([hidden])');return !!(v&&v.videoWidth>0)})()",
+                                timeout=45, what="bob to see alice's camera")
+                await alice.js("document.querySelector('.pc-cord-call [data-call=video]').click()")
+                await bob.until("!document.querySelector('.pc-cord-call [data-call=media] video:not([data-screen]):not([hidden])')", timeout=30,
+                                what="alice's camera to go when she turned it off (no frozen last frame)")
+                # Screen share: Alice presses Share screen; Bob SEES it (not a black box), large enough to read.
+                await alice.js("document.querySelector('.pc-cord-call [data-call=screen]').click()")
+                await alice.until("document.querySelector('.pc-cord-call [data-call=screen]').textContent==='Stop sharing'",
+                                  what="alice's button to say she is sharing")
+                await bob.until("(async()=>{const s=await __screenSeen();return !!(s&&s.yellow>3)})()", timeout=45,
+                                what="bob to see alice's shared screen")
+                seen = await bob.js("__screenSeen()")
+                assert seen["w"] >= 640, ("the shared screen arrived at a size nobody can read", seen)
+                assert seen["shownH"] > 230, ("the shared screen is drawn camera-sized in the panel", seen)
+                await alice.js("document.querySelector('.pc-cord-call [data-call=screen]').click()")
+                await alice.until("document.querySelector('.pc-cord-call [data-call=screen]').textContent==='Share screen'",
+                                  what="alice's button to say sharing stopped")
+                await bob.until("!document.querySelector('.pc-cord-call [data-call=media] video[data-screen]')", timeout=30,
+                                what="bob's view of the screen to go when alice stopped sharing")
+                assert await bob.js("document.querySelector('.pc-cord-call').getBoundingClientRect().width") <= 440, \
+                    "the panel stayed screen-sized after the share ended"
                 # Leave: the panel's own ✕, and the other side sees the track go.
                 await alice.js("document.querySelector('.pc-cord-call [data-call=close]').click()")
                 await bob.until("document.querySelectorAll('.pc-cord-call [data-call=media] audio').length===0",

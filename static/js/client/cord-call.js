@@ -48,7 +48,16 @@
       // detach it again without trusting participant-supplied display names.
       for(const [track,entry] of tracks){
         const verified=present.some(p=>p.identity===entry.identity&&p.verified&&p.broker===joined?.broker);
-        if(verified&&!entry.attached){const element=track.attach();element.style.cssText='width:100%;max-height:220px';element.autoplay=true;button('media').append(element);entry.attached=true;entry.element=element;}
+        if(verified&&!entry.attached){const element=track.attach();element.autoplay=true;
+          /* A SHARED SCREEN IS FOR READING. It got the camera's 220px, which turns a screen of text into a smear
+           * ("I started a screen share, how do others see it?", 2026-10-22): give it the panel's width and most of
+           * the window's height, and a click goes full screen. */
+          if(entry.screen){element.dataset.screen='1';element.title='Click for full screen';
+            element.style.cssText='width:100%;max-height:70vh;object-fit:contain;background:#000;cursor:zoom-in';
+            element.onclick=()=>{try{(document.fullscreenElement?document.exitFullscreen():element.requestFullscreen())?.catch?.(()=>{});}catch(_){}};
+            panel.style.width='min(960px,calc(100vw - 24px))';}
+          else element.style.cssText='width:100%;max-height:220px';
+          button('media').append(element);entry.attached=true;entry.element=element;}
         else if(!verified&&entry.attached){drop(track,entry);}
       }
 
@@ -56,7 +65,9 @@
     /* OUR element, removed by us. By the time TrackUnsubscribed fires LiveKit has already detached the track, so
      * track.detach() returns nothing and the <audio>/<video> it had filled stayed in the panel, empty -- one black
      * frame per person who ever left (tests/client/test_concord_call_livekit_live.py, the leave step). */
-    function drop(track,entry){try{track.detach().forEach(e=>e.remove());}catch(_){}if(entry&&entry.element){entry.element.remove();entry.element=null;}if(entry)entry.attached=false;}
+    function drop(track,entry){try{track.detach().forEach(e=>e.remove());}catch(_){}if(entry&&entry.element){entry.element.remove();entry.element=null;}if(entry)entry.attached=false;
+      // The panel widened for a shared screen; with none left on show it goes back to a call panel's size.
+      if(!panel.querySelector('[data-call=media] [data-screen]'))panel.style.width='min(400px,calc(100vw - 24px))';}
     async function announce(verb){
       if(!joined||!valid()||context.material().room!==joined.voiceRoom)return;
       await context.presence(verb,joined.identity,joined.broker);
@@ -120,12 +131,19 @@
         room.on(L.RoomEvent.ParticipantDisconnected,people);
         room.on(L.RoomEvent.LocalTrackUnpublished,()=>{if(valid()&&room===thisRoom)button('screen').textContent=thisRoom.localParticipant.isScreenShareEnabled?'Stop sharing':'Share screen';});
         room.on(L.RoomEvent.Disconnected,()=>{if(room===thisRoom){void disconnect(false);if(!closed)status('Call disconnected');}});
-        room.on(L.RoomEvent.TrackSubscribed,async(track,_publication,p)=>{
+        room.on(L.RoomEvent.TrackSubscribed,async(track,publication,p)=>{
           try{await keyProvider.install(p.identity);if(!valid()||room!==thisRoom)return;
-            tracks.set(track,{identity:p.identity,attached:false});people();
+            tracks.set(track,{identity:p.identity,attached:false,screen:String((publication&&publication.source)||track.source||'')==='screen_share'});people();
           }catch(e){status(e.message);}
         });
         room.on(L.RoomEvent.TrackUnsubscribed,track=>{drop(track,tracks.get(track));tracks.delete(track);people();});
+        /* CAMERA OFF IS A MUTE, NOT AN UNPUBLISH. LiveKit keeps the track subscribed and only flags it muted, so the
+         * other side's <video> stayed in the panel holding the last frame of somebody who had switched their camera
+         * OFF (tests/client/test_concord_call_livekit_live.py, the camera step). Hide it while muted. */
+        const showMuted=(publication,on)=>{const entry=publication&&publication.track&&tracks.get(publication.track);
+          if(entry&&entry.element&&publication.kind==='video')entry.element.hidden=!on;};
+        room.on(L.RoomEvent.TrackMuted,publication=>showMuted(publication,false));
+        room.on(L.RoomEvent.TrackUnmuted,publication=>showMuted(publication,true));
         room.on(L.RoomEvent.EncryptionError,e=>{status('Call encryption failed: '+e.message);void close();});
         await keyProvider.install(grant.identity);await room.setE2EEEnabled(true);checkAttempt();
         await room.connect(grant.url,grant.token);checkAttempt();
