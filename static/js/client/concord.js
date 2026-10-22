@@ -178,7 +178,7 @@
        * check, 2026-10-22). Read as final it switched the tunnel off for five minutes, i.e. Concord dialled every
        * outside relay DIRECTLY from the member's own address, which is the one thing the tunnel exists to stop.
        * So: make the session, ask again, and only a session the node REFUSES (no account here) turns it off. */
-      if(r.status===401){const raw=window.__PC;let session=false;
+      if(r.status===401){const raw=PC();let session=false;
         try{if(raw&&raw.ensureAiSession){await raw.ensureAiSession();session=true;}}catch(_){session=false;}
         if(session)r=await ask();}
       if(r.ok){const j=await r.json();TUNNEL.ticket=String(j&&j.ticket||'');TUNNEL.off=!TUNNEL.ticket;TUNNEL.until=Date.now()+Math.max(60,Number(j&&j.ttl||0)*0.8)*1000;}
@@ -224,11 +224,20 @@
   }
   const WRAPPED=new WeakMap();
   function viaOpts(o){const via=cordVia(window.__PC);return via?{...(o||{}),via}:o;}
+  /* A READ OR A SEND WAITS FOR THE FIRST TICKET (at most 5s) rather than dialling the tunnel with none: a dial with an
+   * empty ticket is refused every time (403), so on every page load the first Concord reads were guaranteed failures
+   * that only the retry rescued (poster.place's post-deploy sign-in check, 2026-10-22). Subscriptions still dial at
+   * once -- they hand back a handle synchronously -- and re-dial with the ticket once it lands. */
+  function ticketWait(){
+    if(TUNNEL.ticket||TUNNEL.off||!tunnelBase(PC()))return null;
+    return Promise.race([refreshTunnel(),new Promise(r=>setTimeout(r,5000))]).catch(()=>{});
+  }
+  const afterTicket=go=>{const w=ticketWait();return w?w.then(go):go();};
   function cordDeps(raw){
     if(!raw||typeof raw!=='object')return raw;let w=WRAPPED.get(raw);if(w)return w;
     const over={
-      relayQueryFrom:(relays,filters,o)=>raw.relayQueryFrom(relays,filters,viaOpts(o)),
-      relayPublishTo:(relays,ev,o)=>{const vo=viaOpts(o);return sendOr(raw.relayPublishTo(relays,ev,vo),vo,()=>raw.relayPublishTo(relays,ev,o));},
+      relayQueryFrom:(relays,filters,o)=>afterTicket(()=>raw.relayQueryFrom(relays,filters,viaOpts(o))),
+      relayPublishTo:(relays,ev,o)=>afterTicket(()=>{const vo=viaOpts(o);return sendOr(raw.relayPublishTo(relays,ev,vo),vo,()=>raw.relayPublishTo(relays,ev,o));}),
       relayPublishRoom:(relays,ev,auth=null)=>{const via=cordVia(raw);
         return sendOr(raw.relayPublishRoom(relays,ev,auth,via),via,()=>raw.relayPublishRoom(relays,ev,auth,null));},
       publishNip29Authed:(relay,template)=>{const via=cordVia(raw);const go=raw.publishNip29Authed(relay,template,via);
@@ -240,8 +249,8 @@
   function cordRelay(R){
     if(!R||typeof R!=='object')return R;let w=WRAPPED.get(R);if(w)return w;
     const over={
-      queryFrom:(u,f,o)=>R.queryFrom(u,f,viaOpts(o)),
-      publishTo:(u,ev,o)=>{const vo=viaOpts(o);return sendOr(R.publishTo(u,ev,vo),vo,()=>R.publishTo(u,ev,o));},
+      queryFrom:(u,f,o)=>afterTicket(()=>R.queryFrom(u,f,viaOpts(o))),
+      publishTo:(u,ev,o)=>afterTicket(()=>{const vo=viaOpts(o);return sendOr(R.publishTo(u,ev,vo),vo,()=>R.publishTo(u,ev,o));}),
       subscribeFrom:(u,f,o)=>R.subscribeFrom(u,f,viaOpts(o)),
       publishAuthed:(u,ev,sign,o)=>{const vo=viaOpts(o);return sendOr(R.publishAuthed(u,ev,sign,vo),vo,()=>R.publishAuthed(u,ev,sign,o),true);},
     };

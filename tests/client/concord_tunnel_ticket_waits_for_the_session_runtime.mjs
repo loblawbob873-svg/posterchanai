@@ -11,7 +11,8 @@ async function run(answers, ensure){
   const asked=[];let ensured=0;
   const ctx={Date,Math,Number,String,setTimeout:()=>0,clearTimeout:()=>{},
     fetch:async url=>{asked.push(url);const a=answers.shift();return {ok:a.status===200,status:a.status,json:async()=>a.body};},
-    window:{__PC:{ensureAiSession:async()=>{ensured++;if(!ensure)throw new Error('refused');return {};}}}};
+    window:{}};
+  const deps={ensureAiSession:async()=>{ensured++;if(!ensure)throw new Error('refused');return {};}};ctx.PC=()=>deps;
   vm.createContext(ctx);vm.runInContext(code+';this.refreshTunnel=refreshTunnel;this.TUNNEL=TUNNEL;',ctx);
   await ctx.refreshTunnel();
   return {T:ctx.TUNNEL,asked:asked.length,ensured};
