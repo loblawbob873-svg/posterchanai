@@ -103,3 +103,64 @@ def test_relays_import_from_the_extension_and_from_a_nip05():
         await b.until(f"{RELAY_INPUTS}.some(v=>/bob\\.example/.test(v))")
         assert await b.js(f"{RELAY_INPUTS}.some(v=>/ext\\.example/.test(v))"), 'the NIP-05 import dropped the extension relay'
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+SERVER = r'''
+window.__api=[];window.__sentAll=[];
+const __sx=WebSocket.prototype.send;
+// The shared fixture relay ignores `until`, so a client paging back through its history (Delete all my posts
+// does) is handed the same newest event for ever. A real relay honours it; these REQs are answered here.
+WebSocket.prototype.send=function(r){let m=null;try{m=JSON.parse(r);}catch(_){}
+  if(Array.isArray(m)&&m[0]==='EVENT')__sentAll.push(m[1]);
+  if(Array.isArray(m)&&m[0]==='REQ'&&m.slice(2).some(f=>f&&f.until!=null)){
+    setTimeout(()=>{for(const ev of window.__events||[]){if(m.slice(2).some(f=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.authors||f.authors.includes(ev.pubkey))
+      &&(f.until==null||ev.created_at<=f.until)&&(f.since==null||ev.created_at>=f.since)))this.fire('message',['EVENT',m[1],ev]);}
+      this.fire('message',['EOSE',m[1]]);},15);
+    return;}
+  return __sx.call(this,r)};
+const __sf=window.fetch;
+window.fetch=(u,o)=>{const s=String(u),m=String((o&&o.method)||'GET').toUpperCase(),json=v=>Promise.resolve(new Response(JSON.stringify(v),{status:200,headers:{'Content-Type':'application/json'}}));
+  if(s.includes('/api/auth/api-keys')){__api.push(m+' api-keys');return json(m==='POST'?{key:'pcak_fixture_123'}:[{id:1,name:'laptop',prefix:'pcak_fix'}]);}
+  if(s.includes('/client/sync-posts')){__api.push('sync-posts');return json({ok:true,started:true,private:false});}
+  return __sf(u,o);};
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_api_key_mail_row_sync_and_delete_all_posts():
+    """Settings: "Create key" makes an API key and shows it ONCE; "Add mail account" adds an empty account row;
+    "Sync my data to this relay" asks the server to pull your data back; "Delete all my posts" (confirmed)
+    publishes the deletions of what you wrote."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("window.__publishOK=true; __PC.publish(1,'a post to delete later',[]); 1")
+        await b.until("__sentAll.some(e=>e.kind===1)")
+        await b.js("__PC.switchView('settings'); 1")
+        await b.until("!!document.querySelector('#us-key-new')")
+        await open_tab_holding(b, "#us-key-new")
+        await b.js("document.querySelector('#us-key-name').value='laptop'; document.querySelector('#us-key-new').click(); 1")
+        await b.until("!!document.querySelector('.uiprompt-in') && document.querySelector('.uiprompt-in').value==='pcak_fixture_123'")
+        await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
+        await b.until("__api.filter(x=>x==='GET api-keys').length>=1 && /laptop/.test(document.querySelector('#us-key-list').textContent)")
+
+        await open_tab_holding(b, "#us-mail-add")
+        rows = await b.js("document.querySelectorAll('#us-mail-list .us-mail').length")
+        await b.js("document.querySelector('#us-mail-add').click(); 1")
+        await b.until(f"document.querySelectorAll('#us-mail-list .us-mail').length==={rows + 1}")
+
+        await b.js("__PC.switchView('settings'); 1")
+        await b.until("!!document.querySelector('#set-sync-posts')")
+        await b.js("document.querySelector('#set-sync-posts').click(); 1")
+        await b.until("__api.includes('sync-posts')")
+        # The fixture relay acknowledges without keeping; give it the post, as a real relay holds it.
+        await b.js("window.__events=(window.__events||[]).concat(__published.filter(e=>e.kind===1)); 1")
+        await b.js("document.querySelector('#set-del-notes').click(); 1")
+        await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
+        await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
+        # Second question, with the count it found: "Found 1 … Permanently request their deletion now?"
+        await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]') && /Found 1 /.test(document.querySelector('.uiconfirm-msg').textContent)")
+        await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
+        mine = await b.js("__sentAll.find(e=>e.kind===1).id")
+        await b.until(f"__sentAll.some(e=>e.kind===5&&e.tags.some(t=>t[0]==='e'&&t[1]==={mine!r}))", )
+        assert not await b.js("__errors"), await b.js("__errors")
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE + SERVER))
