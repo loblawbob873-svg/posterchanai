@@ -130,8 +130,16 @@ def render_config(cfg: dict, api_key: str, api_secret: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def installed() -> bool:
+    """A real binary: the Docker image leaves a 0-byte placeholder when its download failed."""
+    try:
+        return _BIN.is_file() and _BIN.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def wanted(cfg: dict) -> bool:
-    return enabled(cfg) and _BIN.exists() and bool(public_ip(cfg))
+    return enabled(cfg) and installed() and bool(public_ip(cfg))
 
 
 def available() -> bool:
@@ -227,7 +235,7 @@ def start_livekit_server() -> None:
     with _lock:
         if _monitor_thread is not None and _monitor_thread.is_alive():
             return
-        if not _BIN.exists():
+        if not installed():
             logger.info("[livekit] livekit-server not installed (%s) -- Concord calls use other brokers "
                         "(install with install.sh --livekit)", _BIN)
             return

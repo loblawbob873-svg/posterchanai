@@ -163,3 +163,25 @@ def test_the_installer_pins_and_checks_the_binary():
     assert 'LIVEKIT_VERSION_PINNED="v' in text and "sha256sum" in text and "checksum mismatch" in text
     for arch in ("AMD64", "ARM64", "ARMV7"):
         assert len(text.split(f'LIVEKIT_SHA256_{arch}="', 1)[1].split('"', 1)[0]) == 64
+
+
+def test_the_docker_image_and_the_installer_pin_the_same_livekit():
+    sh = (ROOT / "scripts/install/livekit.sh").read_text()
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    ver = sh.split('LIVEKIT_VERSION_PINNED="v', 1)[1].split('"', 1)[0]
+    assert f"ARG LIVEKIT_VERSION={ver}" in dockerfile
+    for arch in ("AMD64", "ARM64", "ARMV7"):
+        want = sh.split(f'LIVEKIT_SHA256_{arch}="', 1)[1].split('"', 1)[0]
+        assert f"ARG LIVEKIT_SHA256_{arch}={want}" in dockerfile, arch
+    assert "COPY --from=streamdl /livekit-server /app/livekit/livekit-server" in dockerfile
+    assert "setup_livekit_server" in (ROOT / "scripts/install/update.sh").read_text(), "an upgrade must bring LiveKit"
+
+
+def test_an_empty_placeholder_binary_is_not_installed(tmp_path, monkeypatch):
+    fake = tmp_path / "livekit-server"
+    fake.write_bytes(b"")
+    monkeypatch.setattr(livekit_service, "_BIN", fake)
+    assert not livekit_service.installed()
+    assert not livekit_service.wanted({"livekit_enabled": "true", "turn_public_ip": "203.0.113.7"})
+    fake.write_bytes(b"\x7fELF")
+    assert livekit_service.installed()

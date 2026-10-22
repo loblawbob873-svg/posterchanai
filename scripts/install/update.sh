@@ -102,6 +102,11 @@ run_updates() {
     # instance; the node falls back to whatever Admin → Tools says).
     setup_searxng || print_warning "SearXNG setup skipped — Admin → Tools → SearXNG URL still decides where this node searches"
 
+    # 1e) The LiveKit SFU for Concord calls -- part of the normal install, so an UPGRADE brings it to nodes installed
+    # before it existed. Idempotent (skips when the pinned version is present), checksummed, non-fatal: without it
+    # this node's broker simply says it hosts no calls and clients use another.
+    setup_livekit_server || print_warning "LiveKit not installed; Concord calls use other brokers until ./install.sh --livekit"
+
     # 2) Telegram Bot API server (rebuild to the latest upstream).
     if command -v telegram-bot-api >/dev/null 2>&1; then
         echo ""

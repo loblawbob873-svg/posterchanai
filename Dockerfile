@@ -70,6 +70,24 @@ RUN apk add --no-cache curl tar && { \
       echo "$MTXSHA  /tmp/m.tgz" | sha256sum -c - && \
       tar -xzf /tmp/m.tgz -C /tmp mediamtx && install -m 0755 /tmp/mediamtx /mediamtx ; \
     } || { echo "WARN: mediamtx download failed — streaming disabled in this image (install.sh --stream to add it)"; : > /mediamtx ; }
+# LiveKit SFU for Concord calls (app/services/livekit_service.py). Same rules as MediaMTX: pinned, checksummed,
+# best-effort -- a 0-byte placeholder means "not installed" and the broker says this node hosts no calls.
+# Keep in step with scripts/install/livekit.sh.
+ARG LIVEKIT_VERSION=1.13.9
+ARG LIVEKIT_SHA256_AMD64=0b7fa208b662d09cfdeae8c06cf4c481aead0556086558b48250501e2e2d6e20
+ARG LIVEKIT_SHA256_ARM64=c5e4e5a6d6cf0a449651aa3178532ecc7a2bf2502538396ebe6e51ff13424056
+ARG LIVEKIT_SHA256_ARMV7=ef570f4898e8dc83ac303414fc0992afe3ac271cc9ceb57ed6baebb4fdee9f0a
+RUN { \
+      case "${TARGETARCH:-amd64}" in \
+        amd64) LKARCH=amd64; LKSHA="$LIVEKIT_SHA256_AMD64" ;; \
+        arm64) LKARCH=arm64; LKSHA="$LIVEKIT_SHA256_ARM64" ;; \
+        arm) LKARCH=armv7; LKSHA="$LIVEKIT_SHA256_ARMV7" ;; \
+        *) echo "unsupported LiveKit architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+      esac && \
+      curl -fsSL "https://github.com/livekit/livekit/releases/download/v${LIVEKIT_VERSION}/livekit_${LIVEKIT_VERSION}_linux_${LKARCH}.tar.gz" -o /tmp/lk.tgz && \
+      echo "$LKSHA  /tmp/lk.tgz" | sha256sum -c - && \
+      tar -xzf /tmp/lk.tgz -C /tmp livekit-server && install -m 0755 /tmp/livekit-server /livekit-server ; \
+    } || { echo "WARN: livekit download failed -- Concord calls use other brokers (install.sh --livekit to add it)"; : > /livekit-server ; }
 
 FROM ${BASE_IMAGE} AS app
 ARG GPU
@@ -372,6 +390,7 @@ COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn
 # Built-in MediaMTX media server (downloaded in the streamdl stage). The app supervises it
 # (stream_service.py) when POSTERCHANAI_STREAM=1; it's a no-op otherwise.
 COPY --from=streamdl /mediamtx /app/streamserver/mediamtx
+COPY --from=streamdl /livekit-server /app/livekit/livekit-server
 
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
 # (the keyfile). Durable app/relay state is the relay's PosterChanDB store (POSTERCHANDB_DIR below) —
