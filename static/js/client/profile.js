@@ -869,7 +869,7 @@ window.PCProfileFactory = function(dep){
         </div>
         ${kinds||orig?`<div class="tr-chips">${kinds}${orig}${(st.top_tags||[]).map(t=>`<span class="tr-chip">#${enc(t)}</span>`).join('')}</div>`:''}
       </div>
-      <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— the public relays did not answer</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot==null?'trust list unknown':fol.in_wot+' in your trust list'}</span>`}</div>
+      <div class="tr-sec"><div class="tr-h">Followers ${fol.found==null?'<span class="muted small">— this relay could not be asked</span>':`<span class="muted small">${fol.found} found · ${fol.in_wot==null?'trust list unknown':fol.in_wot+' in your trust list'}</span>`}</div>
         ${folList?`<div class="tr-selbar"><button class="btn btn-ghost small" id="tr-all">Select all</button><button class="btn btn-ghost small" id="tr-none">None</button></div><div class="people-list tr-fols">${folList}</div>`:''}
       </div>
       <div class="tr-actions">

@@ -6,7 +6,7 @@ rule let a key in. The rebuild now records each member's tier and how many accou
 vouched for it (`wot.WOT_TIERS_KEY`), and this module turns that plus a live follower lookup into the
 admin's profile ⋯ → "Trace on this relay" panel.
 
-`gather()` collects FACTS (the relay's own counts + tier record, asked of the relay process; the upstream follower
+`gather()` collects FACTS (the relay's own counts + tier record, asked of the relay process; the follower
 lists); `explain()` is
 a pure function from facts to the sentences on screen, so the wording is testable without a relay.
 Nothing here writes anything.
@@ -57,10 +57,16 @@ def _tiers_for(pks: list) -> dict:
     return aggregates.ask("wot-tiers", {"pubkeys": list(pks)}, timeout=20.0) or {}
 
 
-async def _followers(pk: str, relays: list) -> list:
-    """Authors whose LATEST contact list (kind 3) on the upstream relays follows `pk`."""
-    from app.services.nostr import relay as _relay
-    evs = await _relay.query(relays, [{"kinds": [3], "#p": [pk], "limit": _FOLLOWER_LIMIT}])
+def _followers(pk: str) -> list:
+    """BLOCKING: authors whose contact list (kind 3) on THIS relay follows `pk`.
+
+    THIS RELAY, NOT THE PUBLIC ONES (2026-10-22: "Trace is not working ... the public relays did not answer" / "can't
+    we just use our local relay?"). The question is why an account is HERE, and admission is our web of trust, whose
+    members' contact lists this relay stores. Eight public relays took 12-24 s to stream 500 full contact lists each
+    (hundreds of MB of JSON per Trace) and every Trace timed out; this relay answers in ~0.3 s. Raises
+    relay_reader.Unavailable when it cannot be asked -- "could not ask", never "no followers"."""
+    from app.services import relay_reader
+    evs = relay_reader.query([{"kinds": [3], "#p": [pk], "limit": _FOLLOWER_LIMIT}])
     latest = {}
     for e in evs or []:
         a = e.get("pubkey")
@@ -82,7 +88,7 @@ def _rank(tiers: dict, pks: list) -> list:
     return sorted(pks, key=key)
 
 
-async def gather(pk: str, relays: list, *, hops: int = 2) -> dict:
+async def gather(pk: str, *, hops: int = 2) -> dict:
     """Every fact the panel shows. Upstream failures leave `followers` as None ("could not ask"),
     never [] ("nobody follows it")."""
     rows = await asyncio.to_thread(_relay_rows, pk)
@@ -90,7 +96,7 @@ async def gather(pk: str, relays: list, *, hops: int = 2) -> dict:
     tiers = {}
     tiers_unknown = False
     try:
-        followers = await asyncio.wait_for(_followers(pk, relays), 20)
+        followers = await asyncio.to_thread(_followers, pk)
         try:
             tiers = await asyncio.to_thread(_tiers_for, followers)
         except Exception:
@@ -106,7 +112,7 @@ async def gather(pk: str, relays: list, *, hops: int = 2) -> dict:
             chain.append({"pubkey": best, "tier": tiers[best]})
             if tiers[best] is None or tiers[best][0] <= 1:
                 break
-            up = await asyncio.wait_for(_followers(best, relays), 20)
+            up = await asyncio.to_thread(_followers, best)
             up_t = await asyncio.to_thread(_tiers_for, up)
             tiers.update(up_t)
             cur = _rank(up_t, up)
@@ -206,11 +212,11 @@ def explain(facts: dict, *, blocked: bool = False, member: dict | None = None, l
     followers = facts.get("followers")
     tiers = facts.get("tiers") or {}
     if followers is None:
-        signals.append({"level": "info", "text": "Could not ask the public relays who follows it."})
+        signals.append({"level": "info", "text": "Could not ask this relay who follows it."})
     elif facts.get("tiers_unknown"):
         signals.append({"level": "info", "text": "Could not ask this relay which of its followers are in the web of trust."})
     elif not followers:
-        signals.append({"level": "warn", "text": "No follower found on the public relays."})
+        signals.append({"level": "warn", "text": "No follower of it is known to this relay."})
 
     shown = []
     if followers:

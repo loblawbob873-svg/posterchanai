@@ -4413,10 +4413,8 @@ async def relay_trace(data: RelaySyncReq, db: Session = Depends(get_db)):
     if not await _verify_admin_auth(db, data.auth, target, "relay-trace"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import instance_membership, relay_blocklist, relay_trace as _trace
-    ups = (nostr_service.relay.normalize_relays(settings_store.get("nostr_relay_upstream_relays", ""))
-           or list(nostr_service.DEFAULT_RELAYS))[:8]
     try:
-        facts = await _trace.gather(target, ups)
+        facts = await _trace.gather(target)
     except Exception as e:
         logger.warning("[client] relay trace failed: %s", e)
         return JSONResponse({"ok": False, "error": "could not read the relay"}, status_code=503)

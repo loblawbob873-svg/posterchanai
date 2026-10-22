@@ -93,7 +93,7 @@ def test_hidden_payload_notes_make_it_bad_and_say_so():
 def test_could_not_ask_is_never_reported_as_no_followers():
     asked = " ".join(s["text"] for s in relay_trace.explain(_facts(followers=[]))["signals"])
     unasked = relay_trace.explain(_facts(followers=None))
-    assert "No follower found" in asked
+    assert "No follower of it is known to this relay" in asked
     assert "Could not ask" in " ".join(s["text"] for s in unasked["signals"]) and unasked["followers"]["found"] is None
 
 
