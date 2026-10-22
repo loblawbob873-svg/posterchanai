@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import runpy
+import shlex
 import signal
 import subprocess
 import sys
@@ -429,6 +430,81 @@ DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / '
 HANG_DUMP_S = 600
 
 
+# ---------------------------------------------------------------- remote shards: idle cores on another box
+# "we need to deploy faster" (2026-10-22): the full suite is ~150 serial minutes and server1, which also serves,
+# runs 4 shards at lowest priority. A second box's idle cores take part of it. MACHINE-LOCAL, never in the repo:
+# ~/.config/posterchanai/gate-remote holds `user@host [jobs]` (or PC_GATE_REMOTE). That account must be a test-only
+# user with no access to a live checkout -- tests write the settings of the checkout they run from, which is why
+# test_git_proxy.py once took /git/ down on a live node. Every doubt resolves to running here: no config, an
+# unreachable host, a sync that fails, or a shard that does not finish. A remote failure is re-run here (the retry-
+# alone pass below), and what the remote SKIPPED is run here too -- so the remote can save time, never verdicts.
+GATE_REMOTE_FILE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'posterchanai' / 'gate-remote'
+REMOTE_TREE = 'tree'                     # in the remote account's home; venv-unified there is its own venv
+# Files that need what the remote venv deliberately lacks (torch/XPU, the ACE-Step and searxng checkouts).
+_LOCAL_ONLY = re.compile(r"^\s*(?:import|from)\s+(?:torch|torchaudio|torchvision|acestep|searx)\b", re.M)
+_SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=30']
+
+
+def remote_target():
+    """(user@host, jobs) when a remote is configured and answers, else None."""
+    raw = (os.environ.get('PC_GATE_REMOTE') or '').strip()
+    if not raw:
+        try:
+            raw = GATE_REMOTE_FILE.read_text().strip().splitlines()[0].strip()
+        except (OSError, IndexError):
+            return None
+    if not raw or raw.lower() in ('off', 'none', '0'):
+        return None
+    parts = raw.split()
+    host, jobs = parts[0], (int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 6)
+    try:
+        ok = subprocess.run([*_SSH, host, f'test -x {REMOTE_TREE}/venv-unified/bin/python'],
+                            capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    if not ok:
+        print(f'[regressions] remote shards: {host} did not answer -- running everything here')
+        return None
+    return host, max(1, min(16, jobs))
+
+
+def remote_sync(root, host):
+    """The working tree as it is NOW (tracked + untracked, not ignored) onto the remote; files gone here are
+    removed there, so a deleted module cannot make an import pass remotely that fails here. True on success."""
+    listed = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+                            cwd=str(root), capture_output=True)
+    if listed.returncode != 0:
+        return False
+    names = [n for n in listed.stdout.decode('utf-8', 'surrogateescape').split('\0') if n]
+    present = '\0'.join(n for n in names if (Path(root) / n).exists()).encode('utf-8', 'surrogateescape')
+    try:
+        sent = subprocess.run(['rsync', '-a', '-e', ' '.join(_SSH), '--from0', '--files-from=-', './',
+                               f'{host}:{REMOTE_TREE}/'], cwd=str(root), input=present, capture_output=True,
+                              timeout=600)
+        if sent.returncode != 0:
+            print('[regressions] remote shards: sync failed: ' + sent.stderr.decode(errors='replace')[-300:])
+            return False
+        prune = ("import os,sys\nkeep=set(sys.stdin.buffer.read().decode('utf-8','surrogateescape').split('\\0'))\n"
+                 "os.chdir(os.path.expanduser('~/" + REMOTE_TREE + "'))\n"
+                 "for d,dirs,files in os.walk('.'):\n"
+                 " dirs[:]=[x for x in dirs if x not in ('venv-unified','__pycache__','.pytest_cache','node_modules')]\n"
+                 " for f in files:\n"
+                 "  n=os.path.join(d,f)[2:]\n"
+                 "  if n not in keep: os.unlink(n)\n")
+        pruned = subprocess.run([*_SSH, host, 'python3 -c ' + shlex.quote(prune)], input=present,
+                                capture_output=True, timeout=300)
+        return pruned.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def local_only(root, name):
+    try:
+        return bool(_LOCAL_ONLY.search((Path(root) / name).read_text(errors='replace')))
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------- server-only deploys skip browser tests
 # A deploy that changes nothing a browser loads cannot be caught by a browser test, and those tests are about
 # half the gate's time. "Server-only" is decided from the DIFF (what production runs = origin/master, plus
@@ -664,7 +740,20 @@ def run_full_suite(root, env, directory, jobs=None, skip_browser=False, select=N
         # Postgres with large shared buffers, measured here: six shards killed twice before the
         # first shard finished) the honest answer is fewer shards and a longer wait, never no gate.
         jobs = _env_jobs() or runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
-    shards = plan_shards(files, jobs, durations, root)
+    remote = remote_target() if os.environ.get('PC_GATE_MANAGED_PROCESSES') != '1' else None
+    if remote and not remote_sync(root, remote[0]):
+        remote = None
+    if remote:
+        here_only = [f for f in files if local_only(root, f)]
+        planned = plan_shards([f for f in files if f not in here_only], jobs + remote[1], durations, root)
+        far, near = planned[:remote[1]], planned[remote[1]:] or [[]]
+        for i, name in enumerate(here_only):
+            near[i % len(near)].append(name)
+        shards = [sorted(s) for s in near if s] + [sorted(s) for s in far]
+        remote = (remote[0], len(shards) - len(far))      # (host, index of the first remote shard)
+        print(f'[regressions] remote shards: {len(far)} on {remote[0]}, {len(shards) - len(far)} here')
+    else:
+        shards = plan_shards(files, jobs, durations, root)
     checkall = runpy.run_path(str(Path(__file__).with_name('checkall.py')))
     captured = checkall['_captured']
     # One suite at a time per checkout (shared with ./test.sh): two would fight over the same CPU,
@@ -672,24 +761,43 @@ def run_full_suite(root, env, directory, jobs=None, skip_browser=False, select=N
     # A gate started FROM a gate shard (this file's own tests) runs under the lock its parent holds.
     note = (' (%d browser test file(s) skipped: server-only deploy)' % skipped) if skipped else ''
     if os.environ.get('PC_GATE_MANAGED_PROCESSES') == '1':
-        ok, message = _run_shards(root, env, directory, files, shards, durations, captured)
+        ok, message = _run_shards(root, env, directory, files, shards, durations, captured, remote)
         return ok, message + note
     try:
         with checkall['_runner_lock']():
-            ok, message = _run_shards(root, env, directory, files, shards, durations, captured)
+            ok, message = _run_shards(root, env, directory, files, shards, durations, captured, remote)
             return ok, message + note
     except checkall['RunnerBusy'] as busy:
         return False, str(busy)
 
 
-def _run_shards(root, env, directory, files, shards, durations, captured):
+def _run_shards(root, env, directory, files, shards, durations, captured, remote=None):
     print(f'[regressions] full suite: {len(files)} files in {len(shards)} parallel shards')
     started = time.monotonic()
     # The required pass disables plugin autoload for a minimal environment; the full suite needs the
     # plugins the repo's tests use (anyio runs every `@pytest.mark.anyio` test — without it each one
     # fails with "async def functions are not natively supported").
     env = {k: v for k, v in env.items() if k != 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'}
+    run_id = Path(directory).name
+
+    def run_remote(index):
+        host = remote[0]
+        report = Path(directory) / f'full-{index}.xml'
+        far = f'gate/{run_id}/full-{index}.xml'
+        inner = ('mkdir -p gate/' + shlex.quote(run_id) + ' && cd ' + REMOTE_TREE + ' && PATH=$HOME/.local/bin:$PATH '
+                 'PC_GATE_MANAGED_PROCESSES=1 exec nice -n 19 ionice -c 3 timeout 3600 venv-unified/bin/python -m pytest '
+                 f'-q -p no:cacheprovider -o addopts= -o faulthandler_timeout={HANG_DUMP_S} --junitxml=$HOME/{far} '
+                 + ' '.join(shlex.quote(f) for f in shards[index]))
+        code, output = captured([*_SSH, host, inner], root, env, 3700, Path(directory) / f'full-{index}.log')
+        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', f'{host}:{far}', str(report)], capture_output=True, timeout=120)
+        return index, code, output, report
+
     def run(index):
+        if remote and index >= remote[1]:
+            return run_remote(index)
+        return run_here(index)
+
+    def run_here(index):
         report = Path(directory) / f'full-{index}.xml'
         # A hung test used to surface only as "shard did not complete (exit 124)" an hour later, naming
         # nothing. faulthandler (built into pytest) dumps every thread's traceback — test name included —
@@ -704,6 +812,38 @@ def _run_shards(root, env, directory, files, shards, durations, captured):
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(shards)) as pool:
         for index, code, output, report in pool.map(run, range(len(shards))):
             results.append((index, code, output, report))
+    if remote:
+        # What did not come back from the remote runs HERE: a shard that did not finish (its files, whole), and every
+        # case the remote skipped (a skip there may be a tool or file it lacks -- here is the box that deploys).
+        redo, again_skipped = [], []
+        for i, (index, code, output, report) in enumerate(results):
+            if index < remote[1]:
+                continue
+            try:
+                parsed = list(ET.parse(report).getroot().iter('testcase'))
+            except (OSError, ET.ParseError):
+                parsed = []
+            if not parsed or code not in (0, 1):
+                print(f'[regressions] remote shard {index} did not finish (exit {code}) -- its files run here')
+                redo.extend(shards[index])
+                results[i] = None
+            else:
+                again_skipped += [_node_id(c, root) for c in parsed if c.find('skipped') is not None]
+        results = [r for r in results if r is not None]
+        if again_skipped:
+            print(f'[regressions] remote skipped {len(again_skipped)} case(s) -- running them here')
+        extra = plan_shards(redo, max(1, remote[1]), durations, root) if redo else []
+        if again_skipped:
+            extra.append(again_skipped)
+        if extra:
+            first = len(shards)
+            shards.extend(extra)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(extra)) as pool:
+                results.extend(pool.map(run_here, range(first, len(shards))))
+        try:
+            subprocess.run([*_SSH, remote[0], 'rm -rf gate/' + shlex.quote(run_id)], capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     bad, cases, times, why = [], 0, {}, {}
     for index, code, output, report in results:
         try:
