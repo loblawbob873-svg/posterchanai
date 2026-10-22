@@ -284,3 +284,27 @@ def test_an_owner_lists_the_backups_on_a_community_made_here_before_them():
         await asyncio.sleep(3)
         assert await b.js('new Set(__homeWrites.filter(e=>e.kind===1059).map(e=>e.id)).size') == n
     asyncio.run(desktop.with_browser('online', '', check, init()))
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_find_your_community_has_a_search_that_filters_the_list():
+    """"Find your community needs a search bar" (2026-10-22): typing narrows the public list as you type, a query
+    nothing matches says so, and clearing it brings every community back."""
+    async def check(b):
+        await open_concord(b)
+        await b.js(INVITES)
+        await b.js('PCConcord.render()')
+        await wait_for(b, "document.querySelectorAll('.cc-public-room').length===3 && !!document.querySelector('#cc-public-q')", 30)
+        shown = "[...document.querySelectorAll('.cc-public-room')].filter(r=>r.offsetParent!==null).map(r=>r.querySelector('b').textContent)"
+        await b.js("(()=>{const q=document.querySelector('#cc-public-q');q.focus();q.value='room 1';q.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        await wait_for(b, f"{shown}.length===1")
+        assert await b.js(shown) == ["Directory room 1"]
+        await b.js("(()=>{const q=document.querySelector('#cc-public-q');q.value='no such place';q.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        await wait_for(b, f"{shown}.length===0 && !document.querySelector('.cc-public-nomatch').hidden")
+        await b.js("(()=>{const q=document.querySelector('#cc-public-q');q.value='';q.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        await wait_for(b, f"{shown}.length===3 && document.querySelector('.cc-public-nomatch').hidden")
+        # A repaint (a listing arriving mid-search) keeps the filter.
+        await b.js("(()=>{const q=document.querySelector('#cc-public-q');q.value='room 2';q.dispatchEvent(new Event('input',{bubbles:true}));q.blur();})()")
+        await b.js('PCConcord.render()')
+        await wait_for(b, f"{shown}.length===1 && document.querySelector('#cc-public-q').value==='room 2'")
+    asyncio.run(desktop.with_browser('online', '', check, init(__dirMode='serve', __dirHold=True)))

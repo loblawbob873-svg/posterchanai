@@ -849,3 +849,7 @@ body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--
 .cc-node-block-note span{flex:1 1 220px!important;min-width:0!important}
 /* Editing in the chat bar (2026-10-22): the bar says so in the accent, so an edit is never mistaken for a new message. */
 .cc-reply.cc-editing{border-inline-start:3px solid var(--cct-accent)!important}.cc-reply.cc-editing span{white-space:normal!important}
+
+/* Find your community: the search over the public list. */
+.cc-public .cc-public-q{display:block;width:100%;box-sizing:border-box;margin:8px 0 10px}
+.cc-public .cc-public-nomatch{margin:6px 2px}
