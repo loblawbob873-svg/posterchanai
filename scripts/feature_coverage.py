@@ -39,15 +39,7 @@ EXTRA = {
 # when a listed screen GAINS a test (take it off) and when an unlisted one has none (write one, or list it with a
 # reason). Shrink this list; never grow it to make a deploy pass.
 KNOWN_GAPS = {
-    "analytics": "My Analytics -- no browser test drives the charts yet",
-    "articles": "long-form articles -- covered by unit tests of the card renderer only",
-    "blackjack": "Nostr game -- no browser test plays it yet",
-    "chess": "Nostr game -- no browser test plays it yet",
-    "hangman": "Nostr game -- no browser test plays it yet",
-    "holdem": "Nostr game -- no browser test plays it yet",
-    "ttt": "Nostr game -- no browser test plays it yet",
     "texts": "Android SMS screen -- native; covered by the Android emulator checks in CI, not the gate",
-    "xdc": "mini apps view -- the webxdc runtime is unit-tested; the screen itself is not driven yet",
 }
 
 

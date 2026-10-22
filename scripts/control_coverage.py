@@ -22,6 +22,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # AI is out of scope for now (the owner, 2026-10-22: "not AI at this time").
 EXCLUDED_MODULES = {"ai.js"}
+# ...and AI features that live inside other screens (summaries, overviews, the AI bill scanner).
+AI_IDS = {"ws-ov-again", "ws-ov-go", "ws-ov-note", "ws-ov-share", "ws-r-sum", "ws-sum-note", "ws-sum-share",
+          "news-sum-share", "sum-close", "sum-post", "bg-ai", "bg-cam", "bg-pick"}
 _BUTTON = re.compile(r'<button[^>]*\bid="([a-zA-Z][\w-]*)"')
 
 
@@ -33,7 +36,8 @@ def buttons() -> dict:
         if name in EXCLUDED_MODULES:
             continue
         for i in _BUTTON.findall(Path(f).read_text(errors="replace")):
-            out[i].add(name)
+            if i not in AI_IDS:
+                out[i].add(name)
     return dict(out)
 
 

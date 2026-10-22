@@ -956,11 +956,14 @@
   // ---------------------------------------------------------------- the entry
 
   let _saveT = null, _pendingCommit = null;
+  /* Returns the save, so a caller that repaints can wait for it (2026-10-22, found by the vault's browser test: Back
+   * drew the list BEFORE the async save had put a new login into the library, so a person who had just created their
+   * first password saw "No passwords yet" under a count of 1). */
   function flushEdit(){
-    if(!(_dirty && _pendingCommit)) return;
+    if(!(_dirty && _pendingCommit)) return Promise.resolve();
     const fn = _pendingCommit;
     clearTimeout(_saveT); _pendingCommit = null;
-    fn();
+    return Promise.resolve(fn());
   }
 
   function openItem(it, isNew){
@@ -1074,8 +1077,10 @@
     folderIn.onchange = tagIn.onchange = touch;
     title.onblur = pass.onblur = flushEdit;
 
-    $('.pv-back',host).onclick = () => { flushEdit(); _sel=null; _stopTick();
-      document.querySelector('.pv-wrap').classList.remove('pv-open'); _paint(); };
+    $('.pv-back',host).onclick = async () => { _sel=null; _stopTick();
+      document.querySelector('.pv-wrap').classList.remove('pv-open');
+      try{ await flushEdit(); }catch(_){ }     // the save says its own failure (.pv-state); the list still repaints
+      _paint(); };
     $('.pv-del',host).onclick = async () => {
       if(!await uiConfirm(`Delete “${it.title||'this entry'}”? This can’t be undone.`, {ok:'Delete', danger:true})) return;
       await remove(it, 'item'); _sel=null; _stopTick(); _paint();
