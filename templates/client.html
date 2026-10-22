@@ -613,12 +613,6 @@
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>
 <script src="/static/js/client/git.js?v={{ ver }}"></script>
-<script src="/static/js/client/chess.js?v={{ ver }}"></script>
-<script src="/static/js/client/ttt.js?v={{ ver }}"></script>
-<script src="/static/js/client/hangman.js?v={{ ver }}"></script>
-<script src="/static/js/client/connect4.js?v={{ ver }}"></script>
-<script src="/static/js/client/blackjack.js?v={{ ver }}"></script>
-<script src="/static/js/client/holdem.js?v={{ ver }}"></script>
 <!-- nostr-tools is a separate <script> in <head>, and a deploy can serve every OTHER file and still
      not serve that one (a reverse proxy with no rule for /static/vendor, a CDN that rewrites script
      tags, a wrong MIME type under nosniff). The client then looks broken in a way that names nothing:

@@ -7412,6 +7412,12 @@
     if(renderModuleView('exodus','exodus.js','PCExodus','render')) return;
     if(VIEW==='xdc' && renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
+    // Fetched on first open, not on every cold load (tests/test_client_boot_payload_budget.py). Each one
+    // registers itself in PCGames once window.__PC exists; nothing else reads them.
+    if (_GAME_FILES[VIEW]){
+      const [file, global] = _GAME_FILES[VIEW];
+      if(renderModuleView(VIEW, file, global, 'render')) return;
+    }
     if (VIEW==='office') return renderOfficeHome();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='music') return renderMusicApp();
@@ -12902,6 +12908,9 @@
       return mod;
     });
   }
+  // view -> [file, global] for the game modules renderView loads on first open.
+  const _GAME_FILES = { chess:['chess.js','PCChess'], ttt:['ttt.js','PCTtt'], hangman:['hangman.js','PCHangman'],
+    connect4:['connect4.js','PCConnect4'], blackjack:['blackjack.js','PCBlackjack'], holdem:['holdem.js','PCHoldem'] };
   const _withPhoneShell = fn => _withModule('phoneshell.js', 'PCPhone', fn);
   const _withSms = fn => _withModule('sms.js', 'PCSms', fn);
   const _withNotes = fn => _withModule('notes.js', 'PCNotes', fn);

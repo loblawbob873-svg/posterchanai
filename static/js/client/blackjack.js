@@ -249,6 +249,7 @@
       toast('cleared 🧹'); _load();
     }
 
+    window.PCBlackjack = { render };
     (window.PCGames = window.PCGames || {}).blackjack = render;
   }
   init();

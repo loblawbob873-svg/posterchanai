@@ -165,6 +165,7 @@
       setTimeout(()=>{ if(PC.VIEW==='ttt') render(); }, 4500);   // give the bot time to validate + DM back
     }
 
+    window.PCTtt = { render };
     (window.PCGames = window.PCGames || {}).ttt = render;
   }
   init();

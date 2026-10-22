@@ -178,6 +178,7 @@
       setTimeout(()=>{ if(PC.VIEW==='connect4') render(); }, 4500);
     }
 
+    window.PCConnect4 = { render };
     (window.PCGames = window.PCGames || {}).connect4 = render;
   }
   init();

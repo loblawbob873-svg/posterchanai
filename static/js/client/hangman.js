@@ -162,6 +162,7 @@
       setTimeout(()=>{ if(PC.VIEW==='hangman') render(); }, 4500);
     }
 
+    window.PCHangman = { render };
     (window.PCGames = window.PCGames || {}).hangman = render;
   }
   init();

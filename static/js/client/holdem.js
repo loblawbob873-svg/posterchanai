@@ -264,6 +264,7 @@
       [2500, 5000, 8000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, d));
     }
 
+    window.PCHoldem = { render };
     (window.PCGames = window.PCGames || {}).holdem = render;
   }
   init();
