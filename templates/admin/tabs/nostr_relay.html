@@ -469,6 +469,19 @@
                 <small>Drops a note (kind 1) whose <strong>entire</strong> content is a JSON object <code>{…}</code> or array <code>[…]</code> — the shape spammers use to flood the timeline. A human note that merely mentions JSON is unaffected (it doesn’t parse whole), and this touches kind-1 notes ONLY, so profiles, contacts, app data, DVM jobs and reposts (whose content legitimately is JSON) are never rejected. On by default.</small>
             </div>
             <div class="form-group">
+                <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
+                <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
+                <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
+            </div>
+            <div class="form-group">
+                <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
+                <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
+                <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>
+            </div>
+        </fieldset>
+    <fieldset>
+            <legend>Concord (communities)</legend>
+            <div class="form-group">
                 <label for="nostr_relay_concord_mirror">
                     <input type="checkbox" id="nostr_relay_concord_mirror" name="nostr_relay_concord_mirror"> Hold members’ Concord communities on this relay
                 </label>
@@ -478,16 +491,6 @@
                 <label for="concord_default_invite">Community every member joins</label>
                 <input type="text" id="concord_default_invite" name="concord_default_invite" class="form-control" autocomplete="off" spellcheck="false" placeholder="https://…/invite/naddr1…#…">
                 <small>A Concord / Armada invite link (with its <code>#</code> secret). Every member of this instance is joined to it the next time they open Communities — new accounts included. Someone who leaves it is not re-joined. Given only to signed-in members, never to visitors. Blank = no automatic community.</small>
-            </div>
-            <div class="form-group">
-                <label for="nostr_relay_blocked_relays">Blocked bridges / relays (by domain)</label>
-                <textarea id="nostr_relay_blocked_relays" name="nostr_relay_blocked_relays" rows="3" placeholder="mostr.pub&#10;brid.gy&#10;momostr.pink"></textarea>
-                <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
-            </div>
-            <div class="form-group">
-                <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
-                <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
-                <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>
             </div>
         </fieldset>
     <fieldset>
