@@ -44,6 +44,28 @@ IGNORED_CONSOLE = (
     "ResizeObserver loop",
 )
 
+
+def counts(kind: str, text: str, host: str, signed_in: bool) -> bool:
+    """Whether one console line is the page being broken.
+
+    Two kinds of line are not, and both showed up on the first live run (2026-10-22):
+      * a NETWORK error about a host that is not this instance -- a relay somebody lists that no longer resolves is
+        the wider network, not this site;
+      * the boot's own "who am I?" probe, `/api/auth/me` answering 401 BEFORE the app session exists -- that is how a
+        signed-out page finds out it is signed out.
+    Everything else counts, including any of our own requests failing after sign-in."""
+    if any(s in text for s in IGNORED_CONSOLE):
+        return False
+    if kind.startswith("browser:network"):
+        import re
+        hosts = re.findall(r"(?:wss?|https?)://([^/'\s?#]+)", text)
+        # The relay.js line names the page's own script URL too; the FIRST address is the one that failed.
+        if hosts and hosts[0].split(":")[0] != host.split(":")[0]:
+            return False
+        if not signed_in and "/api/auth/me" in text and "401" in text:
+            return False
+    return True
+
 SHIM = r"""
 (()=>{const NT=window.__NT;if(!NT||!window.__LJ_SK)return;
  const sk=Uint8Array.from(window.__LJ_SK.match(/../g),h=>parseInt(h,16)),pk=NT.getPublicKey(sk);
@@ -66,8 +88,9 @@ def _free_port() -> int:
 class Page:
     """The one tab, over the DevTools protocol: evaluate, and collect what the console said."""
 
-    def __init__(self, ws):
+    def __init__(self, ws, host=""):
         self.ws, self.n, self.errors, self.pending = ws, 0, [], {}
+        self.host, self.signed_in = host, False
 
     async def pump(self):
         async for raw in self.ws:
@@ -87,7 +110,7 @@ class Page:
                 self._note("browser:" + str(e.get("source")), str(e.get("text", ""))[:300] + " " + str(e.get("url", ""))[:160])
 
     def _note(self, kind, text):
-        if not any(s in text for s in IGNORED_CONSOLE):
+        if counts(kind, text, self.host, self.signed_in):
             self.errors.append((round(time.monotonic(), 1), kind, text[:400]))
 
     async def call(self, method, params=None, timeout=30):
@@ -137,7 +160,8 @@ async def journey(base: str, sk_hex: str) -> list:
         if not target:
             return [("login", SKIP, 0, "Chrome did not start")]
         async with websockets.connect(target["webSocketDebuggerUrl"], max_size=None) as ws:
-            page = Page(ws)
+            from urllib.parse import urlparse
+            page = Page(ws, urlparse(base).netloc)
             pump = asyncio.create_task(page.pump())
             for m in ("Runtime.enable", "Log.enable", "Page.enable"):
                 await page.call(m)
@@ -153,9 +177,18 @@ async def journey(base: str, sk_hex: str) -> list:
                 return results
             await page.js("(()=>{const b=document.querySelector('#btn-nip07'); if(b) b.click(); return 1})()")
             t = await page.until("!!(window.__PC && __PC.me && __PC.me() && __PC.me().pubkey)", 45)
-            results.append(("login", PASS if t is not None else FAIL, 45 if t is None else t, "" if t is not None else "the NIP-07 sign-in never completed"))
             if t is None:
+                results.append(("login", FAIL, 45, "the NIP-07 sign-in never completed"))
                 return results
+            # Signed in means the SERVER knows us too: every app feature (Mail, Concord's tunnel, AI) rides that
+            # session, and the page knowing its key says nothing about it.
+            s = await page.until("(async()=>{try{if(window.__PC&&__PC.ensureAiSession)await __PC.ensureAiSession();}catch(_){}"
+                                 "const r=await fetch('/api/auth/me',{credentials:'include'});return r.ok})()", 45)
+            if s is None:
+                results.append(("login", FAIL, 45, "signed in on the page, but the server never gave this account a session"))
+                return results
+            page.signed_in = True
+            results.append(("login", PASS, round(t + s, 1), ""))
 
             # -- feed -----------------------------------------------------------------------------------------
             t = await page.until("document.querySelectorAll('#feed .note').length>0", 45)

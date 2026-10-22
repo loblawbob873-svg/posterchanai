@@ -54,3 +54,23 @@ def test_sync_fails_the_deploy_only_on_a_real_failure():
 
 def test_the_key_never_lives_in_the_repo():
     assert ".config" in str(clj.KEY_FILE) and str(ROOT) not in str(clj.KEY_FILE)
+
+
+def test_which_console_lines_mean_the_page_is_broken():
+    """The first live run failed on two lines that are not this site being broken (a third-party relay that does not
+    resolve, and the boot's own signed-out probe) -- and those filters must not swallow our own failures."""
+    from scripts.verify_live_signin import counts
+    host = "poster.place"
+    third = ("browser:network: WebSocket connection to 'wss://relay.0xchat.com/' failed: net::ERR_NAME_NOT_RESOLVED "
+             "https://poster.place/static/js/client/relay.js?v=1")
+    assert not counts("browser:network", third, host, True)
+    probe = "Failed to load resource: the server responded with a status of 401 (Unauthorized) https://poster.place/api/auth/me"
+    assert not counts("browser:network", probe, host, False), "the signed-out probe before sign-in"
+    assert counts("browser:network", probe, host, True), "a 401 on our own session AFTER sign-in is a real failure"
+    ticket = "Failed to load resource: the server responded with a status of 401 (Unauthorized) https://poster.place/client/concord/tunnel-ticket"
+    assert counts("browser:network", ticket, host, True)
+    ours = ("WebSocket connection to 'wss://poster.place/ws/concord-relay?u=wss%3A%2F%2Frelay.dreamith.to&t=' failed: "
+            "Unexpected response code: 403 https://poster.place/static/js/client/relay.js?v=1")
+    assert counts("browser:network", ours, host, True), "our own tunnel refusing is ours, whatever relay it was for"
+    assert counts("console.error", "TypeError: x is undefined", host, True)
+    assert not counts("console.error", "ResizeObserver loop limit exceeded", host, True)
