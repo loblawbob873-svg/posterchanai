@@ -118,3 +118,47 @@ def test_resize_canvas_size_and_export_dialogs(media):
         await b.until("!document.getElementById('ex-cancel')")
         assert await b.js(f"JSON.stringify({PROJ})") == before, "a cancelled dialog changed the project"
     asyncio.run(_open(1280, 800, False, '', media, check))
+
+
+@pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome required')
+def test_the_finished_render_s_buttons(media):
+    """After Render: Download saves the file; "Upload & copy link" uploads it and shows the link; "Use as a layer"
+    puts the render back on the timeline; "Post to Nostr" opens the composer with the link; and, when the media
+    came off a post, "Reply" publishes a reply to THAT post carrying the link."""
+    async def check(b):
+        await b.js("PCMeme.reset(); window.__publishOK=true; window.__sentR=[]; const __s=WebSocket.prototype.send;"
+                   "WebSocket.prototype.send=function(r){try{const m=JSON.parse(r);if(m[0]==='EVENT')__sentR.push(m[1]);}catch(_){}return __s.call(this,r)}; 1")
+        post = {"id": "e" * 64, "pk": "f" * 64}
+        assert await b.js(f"PCMeme.addMedia({json.dumps(_MEDIA[0].base + '/photo.png')},'image/png',{json.dumps(post)})")
+        await b.until("(()=>{const i=document.querySelector('.mb-item img');return !!(i&&i.naturalWidth)})()")
+        await b.js("(()=>{const s=document.getElementById('mb-fmt');s.value='png';s.dispatchEvent(new Event('change',{bubbles:true}))})()")
+        await b.until("!!document.getElementById('mb-render')")
+        await b.js("document.getElementById('mb-render').click(); 1")
+        for _ in range(4):                                   # a render takes a moment
+            try:
+                await b.until("!!document.getElementById('mb-dl')")
+                break
+            except AssertionError:
+                pass
+
+        await b.js("document.getElementById('mb-dl').click(); 1")
+        await b.until("/saved|shared/.test(document.getElementById('mb-dl').textContent)")
+        await b.js("document.getElementById('mb-copy').click(); 1")
+        await b.until("!!document.querySelector('#mb-reslink a')")
+        link = await b.js("document.querySelector('#mb-reslink a').getAttribute('href')")
+        await b.until("!!document.getElementById('mb-reply')")
+        await b.js("document.getElementById('mb-reply').click(); 1")
+        await b.until("__sentR.some(e=>e.kind===1&&e.tags.some(t=>t[0]==='e'&&t[1]==='" + post["id"] + "'))")
+        reply = await b.js("__sentR.find(e=>e.kind===1)")
+        assert reply["content"].startswith("http"), reply
+        await b.js("document.getElementById('mb-post').click(); 1")
+        await b.until("!!document.querySelector('#cmp-send')")
+        text = await b.js("document.querySelector('#cmp-send').closest('.modal, .modal-card, [role=dialog], body').querySelector('textarea').value")
+        assert text.startswith("http"), text
+        assert link.startswith("http")
+        # Last, because it redraws the builder (the result panel goes with it).
+        await b.js("__PC.closeModal(); 1")
+        n = await b.js(f"{LAYERS}.length")
+        await b.js("document.getElementById('mb-again').click(); 1")
+        await b.until(f"{LAYERS}.length==={n + 1}")
+    asyncio.run(_open(1280, 800, False, '', media, check))
