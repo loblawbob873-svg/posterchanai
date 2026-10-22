@@ -171,7 +171,16 @@
     if(!o)return '';try{const u=new URL(o);return (u.protocol==='http:'?'ws:':'wss:')+'//'+u.host+'/ws/concord-relay';}catch(_){return '';}}
   function refreshTunnel(){
     if(TUNNEL.busy)return TUNNEL.busy;
-    TUNNEL.busy=(async()=>{try{const r=await fetch('/client/concord/tunnel-ticket',{credentials:'include',cache:'no-store'});
+    TUNNEL.busy=(async()=>{try{const ask=()=>fetch('/client/concord/tunnel-ticket',{credentials:'include',cache:'no-store'});
+      let r=await ask();
+      /* A 401 HERE IS USUALLY "NOT YET", NOT "NO". Concord starts with the page, and the app session is minted a
+       * moment later -- so the first ask regularly lands before it (seen on poster.place's post-deploy sign-in
+       * check, 2026-10-22). Read as final it switched the tunnel off for five minutes, i.e. Concord dialled every
+       * outside relay DIRECTLY from the member's own address, which is the one thing the tunnel exists to stop.
+       * So: make the session, ask again, and only a session the node REFUSES (no account here) turns it off. */
+      if(r.status===401){const raw=window.__PC;let session=false;
+        try{if(raw&&raw.ensureAiSession){await raw.ensureAiSession();session=true;}}catch(_){session=false;}
+        if(session)r=await ask();}
       if(r.ok){const j=await r.json();TUNNEL.ticket=String(j&&j.ticket||'');TUNNEL.off=!TUNNEL.ticket;TUNNEL.until=Date.now()+Math.max(60,Number(j&&j.ttl||0)*0.8)*1000;}
       else if(r.status===401||r.status===403){TUNNEL.ticket='';TUNNEL.off=true;TUNNEL.until=Date.now()+300000;}
     }catch(_){}finally{TUNNEL.busy=null;}
