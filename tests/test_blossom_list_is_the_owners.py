@@ -86,3 +86,9 @@ def test_the_signature_is_reused_not_asked_for_on_every_open():
     src = (ROOT / "static/js/client/upload.js").read_text()
     body = src[src.index("async function blossomListAuth(){"):][:1200]
     assert "hit.exp - now > 600" in body and "hit.pending" in body and "['t','list']" in body
+
+
+def test_the_client_signature_cache_behaves():
+    import subprocess
+    r = subprocess.run(["node", "tests/client/blossom_list_auth_runtime.mjs"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and r.stdout.strip().endswith("OK"), r.stdout + r.stderr

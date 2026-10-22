@@ -27,3 +27,18 @@ def test_it_is_members_only():
     sig = inspect.signature(R.blocked_among)
     dep = sig.parameters["user"].default
     assert getattr(dep, "dependency", None) is R._member
+
+
+def test_over_http_a_stranger_is_refused_and_a_member_is_answered(monkeypatch):
+    """The real route and its real dependency: no session is no answer (who is blocked is moderation state)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    app = FastAPI()
+    app.include_router(R.router)
+    c = TestClient(app)
+    r = c.post("/client/concord/blocked-among", json={"pubkeys": [BAD]})
+    assert r.status_code in (401, 403), r.status_code
+    monkeypatch.setattr(relay_blocklist, "is_blocked", lambda pk: pk == BAD)
+    app.dependency_overrides[R._member] = lambda: object()
+    r = c.post("/client/concord/blocked-among", json={"pubkeys": [BAD, GOOD]})
+    assert r.status_code == 200 and r.json() == {"blocked": [BAD]}
