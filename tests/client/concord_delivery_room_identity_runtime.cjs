@@ -6,7 +6,8 @@ const fs = require('fs'), vm = require('vm'), assert = require('assert/strict'),
 const src = fs.readFileSync(path.join(__dirname, '../../static/js/client/concord.js'), 'utf8');
 const grab = (name) => { const i = src.indexOf('  function ' + name + '('); assert.ok(i > 0, name); let d = 0, j = src.indexOf('{', i);
   for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}' && --d === 0) break; } return src.slice(i, j + 1); };
-const code = ['roomIdentity', 'communityKey', 'roomInviteKeys', 'sameRoom', 'deliveryAllowed'].map(grab).join('\n') + (src.includes('  function deliveryRoom(') ? '\n' + grab('deliveryRoom') : '');
+// bundleIdOf: sameRoom asks it whether two rows' bundles name different communities (2026-10-22).
+const code = ['roomIdentity', 'communityKey', ...(src.includes('  function bundleIdOf(') ? ['bundleIdOf'] : []), 'roomInviteKeys', 'sameRoom', 'deliveryAllowed'].map(grab).join('\n') + (src.includes('  function deliveryRoom(') ? '\n' + grab('deliveryRoom') : '');
 let rooms = [];
 const URL = 'https://poster.place/invite/naddr1abc#secret';
 const ctx = { saved: () => rooms, deliveryOwner: () => 'me', inviteKey: r => (r && r.url ? String(r.url) : ''), String, window: {} };
