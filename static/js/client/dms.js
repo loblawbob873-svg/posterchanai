@@ -827,8 +827,15 @@ window.PCDmsFactory = function(dep){
     _cordDirectClose=()=>{Relay.close(pool);if(external)external();};
     const delivery=await dmInboxRelays(context.pubkey);
     if(!context.isCurrent())return;
-    if(delivery.relays.length && Relay.subscribeFrom)external=Relay.subscribeFrom(delivery.relays,filters,{...handlers,live:true,max:8});
+    /* WHERE AN ARMADA USER SENDS YOUR INVITATION (CORD-05 §6): your kind-10050 DM relays, else your NIP-65 read
+     * relays, else the four STOCK relays. An account here that never opened Messages has published neither list,
+     * so an invite from Armada went to the stock relays -- which this inbox never read: "No pending invitations"
+     * for a direct invite Armada had just confirmed as sent (2026-10-22). The scan follows the same rule. */
+    const watch=delivery.relays.length?delivery.relays:CORD_STOCK_RELAYS;
+    if(watch.length && Relay.subscribeFrom)external=Relay.subscribeFrom(watch,filters,{...handlers,live:true,max:8});
   }
+  // CORD-05's stock relays (Armada src/concord/lib/stockRelays.ts, the invite-link relay dictionary 1..4).
+  const CORD_STOCK_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to'];
 
   async function ingestWrap(ev, live){
     if(!S.signer || !S.signer.nip17unwrap) return false;

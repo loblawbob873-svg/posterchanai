@@ -84,7 +84,7 @@ def test_a_grant_signed_by_the_room_key_gets_a_token_for_that_room_only(client):
 
 
 @pytest.mark.parametrize("case", ["other_key", "other_url", "other_host", "stale", "future", "post", "kind", "tampered",
-                                  "no_nonce", "garbage", "missing"])
+                                  "garbage", "missing"])
 def test_a_forged_or_misdirected_grant_is_refused(client, case):
     sk, room = keypair()
     osk, _other = keypair()
@@ -96,7 +96,6 @@ def test_a_forged_or_misdirected_grant_is_refused(client, case):
         "future": lambda: grant(sk, url_for(room), at=time.time() + 120),
         "post": lambda: grant(sk, url_for(room), method="POST"),
         "kind": lambda: grant(sk, url_for(room), kind=27236),
-        "no_nonce": lambda: grant(sk, url_for(room), nonce="x"),
         "garbage": lambda: "Concord !!notbase64!!",
         "missing": lambda: "",
     }
@@ -185,3 +184,14 @@ def test_an_empty_placeholder_binary_is_not_installed(tmp_path, monkeypatch):
     assert not livekit_service.wanted({"livekit_enabled": "true", "turn_public_ip": "203.0.113.7"})
     fake.write_bytes(b"\x7fELF")
     assert livekit_service.installed()
+
+
+def test_a_grant_without_a_nonce_is_accepted_and_replay_is_by_event_id(client):
+    """CORD-07 §2 keys replay on the EVENT ID ("must not repeat for at least 240 seconds") and requires no nonce tag;
+    a broker demanding one refuses Armada and every other client that follows the spec as written."""
+    sk, room = keypair()
+    ev = build_event(sk, 27235, "", [["u", url_for(room)], ["method", "GET"]])
+    auth = "Concord " + base64.b64encode(json.dumps(ev).encode()).decode()
+    assert client.get(f"/.well-known/concord/av/{room}", headers={"Authorization": auth}).status_code == 200
+    assert client.get(f"/.well-known/concord/av/{room}", headers={"Authorization": auth}).status_code == 401
+    assert concord_av.REPLAY_SECONDS >= 240

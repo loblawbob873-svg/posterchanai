@@ -9,11 +9,11 @@ LiveKit token for that room alone. The media itself is end-to-end encrypted per 
   GET /.well-known/concord/av           -> 204 when this node runs a call SFU (anything else: "not a broker")
   GET /.well-known/concord/av/<room>    -> {token, identity, url}, with
       Authorization: Concord <base64(JSON grant)>
-      grant = kind 27235, pubkey == <room>, tags u=<this URL>, method=GET, nonce; created_at within 60s.
+      grant = kind 27235, pubkey == <room>, tags u=<this URL>, method=GET; created_at within 60s; an id used once.
 
 Every rule below is one a forged or replayed grant would otherwise pass: the signer must BE the room (else any key
 joins any room), `u` must be THIS host's URL for THIS room (else a grant made for another broker is replayed here),
-a nonce works once and a grant is only fresh for a minute. Callers come from other origins (Armada, the APK), with
+an event id works once (for 300s, CORD-07 asks 240) and a grant is only fresh for a minute. Callers come from other origins (Armada, the APK), with
 credentials omitted, so CORS is open and nothing here reads a cookie.
 """
 from __future__ import annotations
@@ -44,6 +44,9 @@ router = APIRouter()
 
 GRANT_KIND = 27235
 FRESH_SECONDS = 60
+# CORD-07 §2: "event ids MUST NOT repeat for at least 240 seconds". Replay is keyed on the EVENT ID -- the spec
+# requires no nonce tag, and Armada's client need not send one; demanding it refused every other client.
+REPLAY_SECONDS = 300
 TOKEN_TTL = 600
 MAX_GRANT_BYTES = 4096
 _ROOM = re.compile(r"^[0-9a-f]{64}$")
@@ -52,7 +55,7 @@ _CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GE
          "Cache-Control": "no-store"}
 
 _lock = threading.Lock()
-_nonces: "OrderedDict[str, float]" = OrderedDict()   # nonce -> expiry; bounded
+_nonces: "OrderedDict[str, float]" = OrderedDict()   # spent grant event id -> expiry; bounded
 _MAX_NONCES = 50_000
 _hits: dict[str, deque] = {}
 RATE_PER_MINUTE = 30
@@ -65,7 +68,7 @@ def _seen(nonce: str, now: float) -> bool:
             _nonces.popitem(last=False)
         if nonce in _nonces:
             return True
-        _nonces[nonce] = now + 2 * FRESH_SECONDS
+        _nonces[nonce] = now + REPLAY_SECONDS
         while len(_nonces) > _MAX_NONCES:
             _nonces.popitem(last=False)
         return False
@@ -131,12 +134,9 @@ def check_grant(auth: str, room: str, expected_url: str, now: float) -> str:
         return "grant is for another address"
     if (one("method") or "").upper() != "GET":
         return "grant is for another method"
-    nonce = one("nonce")
-    if not nonce or not re.fullmatch(r"[0-9A-Za-z_-]{8,128}", nonce):
-        return "grant has no nonce"
     if not verify_event(ev):
         return "grant signature is invalid"
-    if _seen(nonce, now):
+    if _seen(str(ev.get("id")), now):
         return "grant was already used"
     return ""
 

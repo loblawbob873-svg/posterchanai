@@ -87,3 +87,28 @@ const dmInboxRelays=async()=>{if(stage==='discovery')allowed=false;return{relays
 const Relay={publishTo:async()=>{published++;return{ok:true};}};
 ''' + SEND + '''
 (async()=>{await assert.rejects(()=>sendCordDirectInvite({},'recipient',{isCurrent:()=>allowed}));assert.equal(published,0);})().catch(e=>{console.error(e);process.exitCode=1});''')
+
+
+STOCK = next(line.strip() for line in APP.splitlines() if line.strip().startswith('const CORD_STOCK_RELAYS='))
+
+
+@pytest.mark.parametrize('has_inbox', [False, True])
+def test_an_account_with_no_inbox_list_reads_invites_where_armada_sends_them(has_inbox):
+    """CORD-05 §6: Armada delivers a direct invite to the recipient's kind-10050 relays, else NIP-65 read relays,
+    else the four STOCK relays. An account that never opened Messages has neither list, so its invite went to the
+    stock relays, which this inbox never read -- "No pending invitations" for an invite Armada had confirmed sent
+    (2026-10-22). With no list, the inbox now watches exactly those relays; with one, it watches that list only."""
+    run('''const assert=require('node:assert/strict');
+let active=true,subscribed=[];
+const context={pubkey:'a'.repeat(64),isCurrent:()=>active},cordDirectContext=()=>context;
+let _cordDirectClose=null,_cordDirectOwner='';
+''' + state_shim(INBOX) + '''
+const _ingestCordDirectWrap=async()=>true;
+const dmInboxRelays=async()=>({relays:%s,answered:true});
+const Relay={subscribe:()=> 'pool-sub',close:()=>{},subscribeFrom:(relays,filters,handlers)=>{subscribed.push(relays);return()=>{};}};
+''' % ("['wss://inbox.invalid']" if has_inbox else '[]') + STOCK + '\n' + INBOX + '''
+(async()=>{await _startCordDirectInbox();
+assert.equal(subscribed.length,1);
+assert.deepEqual(subscribed[0],%s);
+})().catch(e=>{console.error(e);process.exitCode=1});''' % ("['wss://inbox.invalid']" if has_inbox else
+    "['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to']"))
