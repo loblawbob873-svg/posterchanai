@@ -188,8 +188,10 @@
      * announces). Sent through the tunnel, those dial the node from itself -- which resolves to a LAN address and is
      * refused (403) -- so the PosterChan repository's 93 issues never loaded: "clicking bugs in the posterchan room
      * does nothing" (2026-10-21). The tunnel hides a member from OTHER people's relays; this domain is ours. */
-    let ownHost='';try{ownHost=home?new URL(home).hostname.toLowerCase():'';}catch(_){}
-    const ours=n=>{if(!ownHost)return false;try{const h=new URL(n).hostname.toLowerCase();return h===ownHost||h.endsWith('.'+ownHost);}catch(_){return false;}};
+    /* Same name AND port: on one machine a different port is a different relay (a test node, a second service). */
+    let own=null;try{own=home?new URL(home):null;}catch(_){}
+    const ours=n=>{if(!own)return false;try{const u=new URL(n),h=u.hostname.toLowerCase(),o=own.hostname.toLowerCase();
+      return u.port===own.port&&(h===o||h.endsWith('.'+o));}catch(_){return false;}};
     return u=>{const n=normalizeRelay(u);if(!n||n===home||ours(n))return u;return base+'?u='+encodeURIComponent(u)+'&t='+encodeURIComponent(TUNNEL.ticket);};
   }
   /* The two doors Concord reaches relays through -- the app's dependency object (PC()) and (window.PCConcordRelay||window.Relay) -- are
@@ -1723,8 +1725,10 @@
     localStorage.setItem(channelReadKey(room,name),String(newest));
     /* ...and read on every device. Only the desktop render path published the synced mark (gated on viewingChannel),
      * so a room read on the phone cleared its dot there and nowhere else ("concord read room activity not syncing
-     * across devices", 2026-10-21). Same value as the local cursor; noteChannelRead never moves a mark backwards. */
-    try{ const p=PC(); if(p)noteChannelRead(p,room,name||'general',newest); }catch(_){}
+     * across devices", 2026-10-21). Same value as the local cursor; noteChannelRead never moves a mark backwards.
+     * AFTER this render: markRead runs before notifyMentions in render(), and a synced mark written first made a
+     * mention that had just arrived read before it was ever announced. */
+    setTimeout(()=>{ try{ const p=PC(); if(p)noteChannelRead(p,room,name||'general',newest); }catch(_){} },0);
   }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))||gitUnread(room,c)); }
   function gitUnread(room,c){ try{ return !!(window.PCConcordGit&&PCConcordGit.channelHasGit(c)&&PCConcordGit.latestAt(room,c)>seenAt(room,c.name)); }catch(_){ return false; } }

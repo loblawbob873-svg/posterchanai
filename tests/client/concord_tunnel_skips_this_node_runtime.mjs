@@ -17,6 +17,6 @@ const via=ctx.cordVia({homeRelay:()=>'wss://poster.place/relay'});
 assert.ok(via,'the tunnel must be on for this instance');
 for(const own of ['wss://poster.place/relay','wss://relay.poster.place','wss://poster.place/git','wss://relay.poster.place/'])
   assert.equal(via(own),own,own+' is this node and must be dialled directly');
-for(const other of ['wss://relay.damus.io','wss://notposter.place','wss://poster.place.evil.example','wss://jskitty.com/nostr'])
+for(const other of ['wss://poster.place:8443/relay','wss://relay.damus.io','wss://notposter.place','wss://poster.place.evil.example','wss://jskitty.com/nostr'])
   assert.ok(via(other).startsWith('wss://poster.place/ws/concord-relay?u='),other+' must still go through the tunnel');
 console.log('OK');
