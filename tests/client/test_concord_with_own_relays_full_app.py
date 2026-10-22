@@ -74,7 +74,10 @@ def test_a_community_created_with_own_relays_on_still_lives_on_this_node():
         await b.js("document.querySelector('#cc-create-go').click()")
         await base.wait_for(b, "(JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]')).some(r=>r.name==='Made here')", 45)
         room = await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)).find(r=>r.name==='Made here')")
-        assert room['cord']['bundle']['relays'] == [HOME], room['cord']['bundle']['relays']
+        # This node's relay first (where its members read and write), then the backups its server copies it to
+        # (2026-10-21 "add the backups to the invite") -- never the member's own relay list.
+        assert room['cord']['bundle']['relays'] == [HOME, 'wss://jskitty.com/nostr', 'wss://nostr.computingcache.com',
+                                                     'wss://relay.dreamith.to'], room['cord']['bundle']['relays']
         assert await b.js('__homeWrites.filter(e=>e.kind===1059).length') >= 3
     asyncio.run(desktop.with_browser('online', '', check, own_relays(__dirRelayUp=True, __upRelays=base.CORD_RELAYS)))
 
