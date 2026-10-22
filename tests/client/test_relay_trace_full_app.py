@@ -83,6 +83,11 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
             steps:r.querySelectorAll('.tr-step').length, badges:[...r.querySelectorAll('.tr-step .tr-badge')].map(x=>x.textContent),
             followers:r.querySelectorAll('.tr-fol').length, stats:r.querySelector('.tr-grid').innerText,
             chips:r.querySelector('.tr-chips').innerText, block:!!r.querySelector('#tr-block')}})()""")
+        # Select all / None act on the followers only; the account itself stays selected.
+        await b.js("document.querySelector('#tr-all').click(); true")
+        got["all"] = await b.js("document.querySelector('#tr-block').textContent")
+        await b.js("document.querySelector('#tr-none').click(); true")
+        got["none"] = await b.js("document.querySelector('#tr-block').textContent")
         # Bulk block: the account is pre-selected; tick two followers; one signed request names all three.
         await b.js("""(()=>{const r=document.querySelector('.relay-trace');
             [...r.querySelectorAll('.tr-fols [data-pick]')].slice(0,2).forEach(c=>{c.checked=true;c.dispatchEvent(new Event('change'))});return 1})()""")
@@ -93,6 +98,9 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
         await b.js("document.querySelector('.uiconfirm [data-uc=\"1\"]').click(); true")
         await b.until("window.__blockMany.length===1 && document.querySelectorAll('.relay-trace .tr-blocked').length===3")
         got["bulk"] = await b.js("window.__blockMany[0]")
+        # Mute from the panel: the button says what pressing it again would do.
+        await b.js("window.__publishOK=true; document.querySelector('#tr-mute').click(); true")
+        await b.until("/Unmute/.test(document.querySelector('#tr-mute').textContent)")
         # The panel at phone width: nothing sticks out sideways.
         await b.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
         await asyncio.sleep(.4)
@@ -116,6 +124,7 @@ def test_an_admin_traces_an_account_from_its_profile_menu():
     assert got["overflow"] == 0, got
     assert got["label"] == "🔎 Trace", got["label"]
     assert "Block 3 selected" in got["btn"], got["btn"]
+    assert "Block 4 selected" in got["all"] and got["none"] == "🚫 Block 1 selected", got
     assert got["confirm_text"].startswith("Block 3 accounts on this relay?"), got["confirm_text"]
     bulk = got["bulk"]
     assert set(bulk["targets"]) == {SPAM, VOUCHER, SEEDED}, bulk["targets"]
