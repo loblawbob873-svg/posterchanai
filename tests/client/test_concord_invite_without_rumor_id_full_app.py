@@ -58,9 +58,9 @@ def test_an_invitation_without_a_rumor_id_is_listed_and_opens():
                 await b.js("__PC.switchMessagesTab('concord')")
                 await R.wait(b, "!!document.querySelector('#cc-direct-inbox')", 40, 'Concord with its Invites control')
                 await b.js("document.querySelector('#cc-direct-inbox').click()")
-                await R.wait(b, "[...document.querySelectorAll('button')].some(x=>x.textContent==='Review invitation')",
-                             20, "Invites lists the invitation ('Review invitation')")
-                await b.js("[...document.querySelectorAll('button')].find(x=>x.textContent==='Review invitation').click()")
+                await R.wait(b, "!!document.querySelector('#cc-direct-list .cc-direct-card [data-cc-direct-view]')",
+                             20, "Invites lists the invitation, named")
+                await b.js("document.querySelector('#cc-direct-list [data-cc-direct-view]').click()")
                 await R.wait(b, "document.body.innerText.includes('Direct fixture')", 20,
                              'the invitation opens on the community it names')
                 bad = [t for t in await d.toasts() if 'invalid' in t.lower() or 'rumor' in t.lower()]

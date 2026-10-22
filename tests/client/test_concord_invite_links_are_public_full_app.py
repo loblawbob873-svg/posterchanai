@@ -121,10 +121,11 @@ def test_an_invite_already_minted_with_localhost_still_opens_and_is_shared_publi
         got['url'] = url
         # Pasting it: the preview must find the community (the host is ignored, the path is read).
         await b.js("PCConcord.openInvite(%s)" % json.dumps(url))
-        got['preview'] = await wait(b, "document.querySelector('#cc-join') && document.querySelector('#cc-join').textContent.includes('Old localhost room')", 30)
-        got['join'] = await b.js("(document.querySelector('#cc-join')||{}).textContent||''")
+        # The invitation opens on its OWN sheet (never inside the paste-a-link dialog).
+        got['preview'] = await wait(b, "!!document.querySelector('#cc-invite-sheet:not(.hidden) #cc-invite-preview') && document.querySelector('#cc-invite-preview').textContent.includes('Old localhost room') && document.querySelector('#cc-join').classList.contains('hidden')", 30)
+        got['join'] = await b.js("(document.querySelector('#cc-invite-sheet')||{}).textContent||''")
         # Copying that room's link later hands out a host the recipient can reach.
-        await b.js("document.querySelector('#cc-join-cancel')&&document.querySelector('#cc-join-cancel').click()")
+        await b.js("document.querySelector('#cc-invite-close')&&document.querySelector('#cc-invite-close').click()")
         await b.js("__PC.switchView('concord')")
         await b.until("!!document.querySelector('[data-cc-server]')")
         await b.js("document.querySelector('[data-cc-server]').click()")

@@ -484,10 +484,6 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
 
 /* AN INVITATION, BEFORE IT IS ANSWERED. Sits inside the existing join card, so it inherits the
    dialog's frame rather than inventing a second one. */
-.cc-invite-card{margin-top:14px!important;padding-top:14px!important;border-top:1px solid rgba(var(--cct-tint-rgb),.1)!important;text-align:center!important}
-.cc-invite-card h3{margin:10px 0 6px!important;color:var(--cct-title)!important;font-size:19px!important}
-.cc-invite-card .cc-invite-note{margin:0 0 14px!important;color:var(--cct-fg-3)!important;font-size:12px!important;line-height:1.5!important}
-.cc-invite-card .cc-join-actions{justify-content:center!important}
 .cc-join-actions.hidden{display:none!important}
 /* Management actions must remain reachable in a narrow community dialog. */
 #cc-settings-dialog .cc-join-actions{flex-wrap:wrap!important}
@@ -781,3 +777,41 @@ body.ccg-projects-open::before{content:"";position:fixed;inset:0;z-index:79;back
 @media(min-width:821px){.cc-notify-head{display:none!important}}
 /* The Concord HOME has no community and no channel: no message composer there ("Message #general" to nobody). */
 .cc-app.home-view .cc-compose,.cc-app.home-view .cc-reply,.cc-app.home-view .cc-typing{display:none!important}
+
+/* AN INVITATION, ON ITS OWN SHEET (concord.js invitePreviewHtml). Fixed to the VIEWPORT -- the join dialogs are
+   absolute inside .cc-app, which on a phone is wider than the screen, and that put the card's right half off it.
+   It never shares a class with the "You have an invitation" banner (.cc-invite-card, a three-column grid): it did,
+   and the review was laid out as that banner -- name, mark and buttons squeezed into columns. */
+.cc-invite-sheet{position:fixed!important;inset:0!important;z-index:1200!important;padding:16px!important;overflow:auto!important}
+.cc-invite-review{position:relative!important;box-sizing:border-box!important;width:min(440px,100%)!important;max-height:100%!important;overflow:auto!important;padding:24px 22px 20px!important;text-align:start!important}
+.cc-invite-close{position:absolute!important;top:10px!important;inset-inline-end:10px!important;width:34px!important;height:34px!important;border:0!important;border-radius:50%!important;background:transparent!important;color:var(--cct-muted)!important;font-size:22px!important;line-height:1!important;cursor:pointer!important}
+.cc-invite-close:hover,.cc-invite-close:focus-visible{background:rgba(var(--cct-tint-rgb),.08)!important;color:var(--cct-text)!important}
+.cc-invite-kicker{margin:0 40px 10px 0!important;color:var(--cct-muted)!important;font-size:12px!important;font-weight:700!important;letter-spacing:.06em!important;text-transform:uppercase!important}
+.cc-invite-head{display:flex!important;align-items:center!important;gap:14px!important;min-width:0!important}
+.cc-invite-review .cc-invite-head .concord-mark{flex:0 0 56px!important;width:56px!important;height:56px!important;margin:0!important;font-size:26px!important}
+.cc-invite-head h2{flex:1 1 auto!important;min-width:0!important;margin:0!important;color:var(--cct-title)!important;font-size:22px!important;line-height:1.25!important;overflow-wrap:anywhere!important}
+.cc-invite-by{display:flex!important;align-items:center!important;gap:9px!important;margin:16px 0 0!important;color:var(--cct-fg-2)!important;font-size:14px!important;min-width:0!important}
+.cc-invite-by span:last-child{min-width:0!important;overflow-wrap:anywhere!important}
+.cc-invite-by b{color:var(--cct-strong)!important}
+.cc-invite-av{flex:0 0 28px!important;width:28px!important;height:28px!important;border-radius:50%!important;object-fit:cover!important;display:grid!important;place-items:center!important;background:var(--cct-chip)!important;color:var(--cct-text)!important;font-size:13px!important;font-weight:700!important}
+.cc-invite-desc{margin:14px 0 0!important;color:var(--cct-text)!important;font-size:14px!important;line-height:1.5!important;overflow-wrap:anywhere!important}
+.cc-invite-meta{margin:8px 0 0!important;color:var(--cct-muted)!important;font-size:13px!important}
+.cc-invite-review .cc-invite-note{margin:16px 0 0!important;padding:10px 12px!important;border-radius:calc(10px*var(--cct-round))!important;background:rgba(var(--cct-tint-rgb),.05)!important;color:var(--cct-fg-3)!important;font-size:12.5px!important;line-height:1.5!important}
+.cc-invite-actions{display:flex!important;flex-direction:row-reverse!important;gap:10px!important;margin-top:18px!important}
+.cc-invite-actions .btn{flex:1 1 0!important;min-height:44px!important}
+@media(max-width:520px){.cc-invite-sheet{place-items:end center!important;padding:0!important}
+  .cc-invite-review{width:100%!important;border-radius:calc(18px*var(--cct-round)) calc(18px*var(--cct-round)) 0 0!important;padding-bottom:calc(18px + env(safe-area-inset-bottom))!important}
+  .cc-invite-actions{flex-direction:column!important}}
+/* The invitations list: one card per invitation, named. */
+.cc-direct-list{display:grid!important;gap:10px!important;margin-top:12px!important}
+.cc-direct-card{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:10px!important;padding:12px!important;border:1px solid rgba(var(--cct-tint-rgb),.12)!important;border-radius:calc(12px*var(--cct-round))!important;background:var(--cct-raised)!important;min-width:0!important}
+.cc-direct-main{flex:1 1 220px!important;display:flex!important;align-items:center!important;gap:11px!important;min-width:0!important;padding:0!important;border:0!important;background:none!important;color:inherit!important;text-align:start!important;cursor:pointer!important}
+.cc-direct-card .concord-mark{flex:0 0 40px!important;width:40px!important;height:40px!important;margin:0!important;display:grid!important;place-items:center!important;border-radius:calc(11px*var(--cct-round))!important;background:var(--cct-accent)!important;color:var(--cct-on-accent)!important;font-weight:900!important}
+.cc-direct-text{min-width:0!important}.cc-direct-text b,.cc-direct-main>b{display:block!important;color:var(--cct-strong)!important;overflow-wrap:anywhere!important}
+.cc-direct-text small,.cc-direct-main small{display:block!important;margin-top:2px!important;color:var(--cct-muted)!important;font-size:12px!important;overflow-wrap:anywhere!important}
+.cc-direct-btns{display:flex!important;gap:8px!important;margin-inline-start:auto!important}
+.cc-direct-btns .btn{min-height:38px!important}
+/* In the channel column (~170px) the banner is a NOTICE, not a paragraph: its explanation wrapped into five lines
+   of 9px text. Title and Review only there; the full sentence stays on the main screen and in the sheet. */
+.cc-channel-list .cc-invite-card small{display:none}
+.cc-channel-list .cc-invite-card b{font-size:12.5px;line-height:1.3}

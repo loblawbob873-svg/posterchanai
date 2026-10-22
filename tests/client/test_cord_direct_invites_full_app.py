@@ -44,11 +44,18 @@ __PC.switchView('concord');
 })()''')
         await browser.until("!!window.PCConcord&&!!document.querySelector('#cc-direct-inbox')")
         await click(browser,'#cc-direct-inbox')
-        await browser.until("document.querySelectorAll('#cc-direct-list button').length===1")
-        await click(browser,'#cc-direct-list button')
-        await browser.until("!!document.querySelector('#cc-invite-preview')")
+        # Each invitation is a NAMED card (not a column of identical "Review invitation" buttons).
+        await browser.until("document.querySelectorAll('#cc-direct-list .cc-direct-card').length===1")
+        assert 'Private <fixture>' in await browser.js("document.querySelector('#cc-direct-list .cc-direct-card').textContent")
+        await click(browser,'#cc-direct-list [data-cc-direct-view]')
+        await browser.until("!!document.querySelector('#cc-invite-sheet:not(.hidden) #cc-invite-preview')")
         assert 'Private <fixture>' in await browser.js("document.querySelector('#cc-invite-preview').textContent")
-        assert not await browser.js("!!document.querySelector('#cc-invite-preview img')")
+        # Its own sheet: no paste-a-link box, and the join dialog stays shut.
+        assert await browser.js("!document.querySelector('#cc-invite-sheet #cc-invite-url') && document.querySelector('#cc-join').classList.contains('hidden')")
+        # Nothing is fetched from the community before you accept (its icon would tell its host who was invited).
+        assert not await browser.js("!!document.querySelector('#cc-invite-preview img[src*=\"never-fetch\"]')")
+        # It fits the screen it is on.
+        assert await browser.js("(()=>{const r=document.querySelector('#cc-invite-preview').getBoundingClientRect();return r.left>=-1&&r.right<=innerWidth+1})()")
         assert await browser.js("__directQueries.length===0")
         assert await browser.js("localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)===__directBefore")
         await click(browser,'#cc-invite-decline')
@@ -67,3 +74,46 @@ __PC.switchView('concord');
         assert await browser.js("localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)===__directBefore")
     init="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online','',check,extra_init=init))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width', [1280, 390])
+def test_the_invitation_list_answers_in_place_and_not_now_keeps_it(width):
+    """Decline from the list removes it; "Not now" on the sheet leaves it pending; Accept from the list joins."""
+    async def check(browser):
+        await browser.call('Emulation.setDeviceMetricsOverride',dict(width=width,height=850,deviceScaleFactor=1,mobile=width<600))
+        await desktop.login(browser)
+        await browser.js('''(async()=>{
+const p=__PC,api=await p.cordDirectModule(),ctx=p.cordDirectContext(),owner=ctx.pubkey;
+window.__ids=[];
+for(const [i,name] of [[1,'First community'],[2,'Second community']]){
+  const salt=String(i).repeat(64);
+  const input=new Uint8Array([...new TextEncoder().encode('concord/community'),...owner.match(/../g).map(h=>parseInt(h,16)),...salt.match(/../g).map(h=>parseInt(h,16))]);
+  const id=[...new Uint8Array(await crypto.subtle.digest('SHA-256',input))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  __ids.push(id);
+  const made=await api.create({community_id:id,owner,owner_salt:salt,community_root:'33'.repeat(32),root_epoch:1,channels:[],relays:['wss://never-connect.invalid'],name},ctx.pubkey,ctx);
+  await api.park(made.wrap,ctx);
+}
+p.relayQueryFrom=()=>Promise.resolve([]);
+__PC.switchView('concord');})()''')
+        await browser.until("!!window.PCConcord&&!!document.querySelector('#cc-direct-inbox')")
+        await click(browser,'#cc-direct-inbox')
+        await browser.until("document.querySelectorAll('#cc-direct-list .cc-direct-card').length===2")
+        # Decline the first one, right there in the list.
+        await browser.js("[...document.querySelectorAll('.cc-direct-card')].find(c=>c.textContent.includes('First community')).querySelector('[data-cc-direct-decline]').click()")
+        await browser.until("document.querySelectorAll('#cc-direct-list .cc-direct-card').length===1")
+        assert await browser.js("PCCordDirectInvites.pending(__PC.cordDirectContext()).length===1")
+        # Open the second, then "Not now": the sheet closes and the invitation is still waiting.
+        await browser.js("document.querySelector('[data-cc-direct-view]').click()")
+        await browser.until("!!document.querySelector('#cc-invite-sheet:not(.hidden) #cc-invite-close')")
+        await browser.js("document.querySelector('#cc-invite-close').click()")
+        await browser.until("document.querySelector('#cc-invite-sheet').classList.contains('hidden')")
+        assert await browser.js("PCCordDirectInvites.pending(__PC.cordDirectContext()).length===1")
+        # Accept it from the list: it joins, and the sheet does not stay up.
+        await click(browser,'#cc-direct-inbox')
+        await browser.until("!!document.querySelector('[data-cc-direct-accept]')")
+        await browser.js("document.querySelector('[data-cc-direct-accept]').click()")
+        await browser.until("(JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]')).some(r=>r&&r.communityId===__ids[1])")
+        await browser.until("document.querySelector('#cc-invite-sheet').classList.contains('hidden')")
+        assert await browser.js("PCCordDirectInvites.pending(__PC.cordDirectContext()).length===0")
+    asyncio.run(desktop.with_browser('online','',check))
