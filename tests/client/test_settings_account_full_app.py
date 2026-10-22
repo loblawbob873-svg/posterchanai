@@ -74,9 +74,11 @@ def test_account_relays_wallet_and_logout():
         await b.js("__PC.switchView('settings'); 1")
         await b.until("!!document.querySelector('#set-logout')")
         await b.js("document.querySelector('#set-logout').click(); 1")
-        await b.until("/Log out of this device/.test(document.body.innerText) && !!document.querySelector('.uiconfirm-btns')")
-        await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
-        await b.until("document.body.classList.contains('guest')")
+        # The dialog's own message and its OK button -- "Log out" also appears on the page behind it.
+        await b.until("[...document.querySelectorAll('.uiconfirm')].some(d=>/Log out of this device/.test(d.textContent)&&d.querySelector('[data-uc=\"1\"]'))")
+        await b.js("[...document.querySelectorAll('.uiconfirm')].find(d=>/Log out of this device/.test(d.textContent)).querySelector('[data-uc=\"1\"]').click(); 1")
+        # Logging out reloads the page: mid-navigation there is no <body> yet.
+        await b.until("!!document.body && document.body.classList.contains('guest')")
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
 
 
