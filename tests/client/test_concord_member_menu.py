@@ -7,7 +7,8 @@ CSS = (ROOT / "static/css/concord.css").read_text(encoding="utf-8")
 
 
 def test_member_rows_do_not_expose_destructive_buttons_permanently():
-    rows = JS.split("const memberRows=", 1)[1].split("notifyMentions", 1)[0]
+    # A row is drawn by memberRow (Admins and Members are grouped since 2026-10-21); memberRows assembles them.
+    rows = JS.split("const memberRow=pk=>{", 1)[1].split("notifyMentions", 1)[0]
     assert 'data-cc-member=' in rows
     assert 'data-cc-ban=' not in rows
     assert 'class="cc-member"' in rows

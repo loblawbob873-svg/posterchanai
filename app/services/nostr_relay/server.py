@@ -2403,7 +2403,14 @@ class RelayServer:
             self._refuse(conn, eid, ev, "error: not stored, retry")
             return
         _m = getattr(self, "mirror", None)
-        if kind == 1059 and _m is not None and _m.mirrors(ev.get("pubkey", "")):
+        if kind == 1059 and _m is not None and getattr(_m, "is_hosted", None) and _m.is_hosted(ev.get("pubkey", "")):
+            # A wrap of a community HOSTED here: this relay is its home, so stored is delivered -- OK at once, and the
+            # copy to the community's backup relays (concord_mirror BACKUP_RELAYS) goes out behind it. A backup that
+            # is down must never make a member's post look failed; the backfill fills it in when it is back.
+            self._send(conn, ["OK", eid, True, ""])
+            if _m.mirrors(ev.get("pubkey", "")):
+                asyncio.create_task(self._mirror_forward_quietly(ev))
+        elif kind == 1059 and _m is not None and _m.mirrors(ev.get("pubkey", "")):
             # A wrap on a MIRRORED Concord stream: its community lives on other relays, and the member
             # wrote it here only. The OK waits for the forward, so "accepted" means "people elsewhere
             # will see it"; false (stored here regardless) tells the client to deliver it itself.
@@ -2443,6 +2450,12 @@ class RelayServer:
                     self.outbox_cb(ev)
                 except Exception as e:
                     logger.debug("[nostr-relay] outbox enqueue failed: %s", e)
+
+    async def _mirror_forward_quietly(self, ev) -> None:
+        try:
+            await self.mirror.forward(ev)
+        except Exception:
+            pass
 
     async def _mirror_ok(self, conn, eid, ev) -> None:
         try:

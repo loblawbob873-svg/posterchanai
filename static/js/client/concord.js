@@ -292,8 +292,31 @@
   /* Ask this node to mirror a joined EXTERNAL community, once a day at most (and never for one created
    * here). Resolves true when every stream it named is mirrored. Never throws: a refusal leaves the room
    * reading its own relays, which is exactly what it did before. */
+  /* A COMMUNITY HOSTED HERE IS REPLICATED, NOT MIRRORED (2026-10-21: "make sure posterchan room federates"). Its only
+   * relay is this node's, so it lived nowhere else. Once a day a member's app asks the node to copy its streams to
+   * the node's backup relays (concord_mirror BACKUP_RELAYS) -- the same signed member-only registration, naming only
+   * stream pubkeys; the copying is the server's, and this app still talks to its home relay alone. */
+  function ensureReplica(p,room,bundle,wraps){
+    const pk=accountPk();
+    if(!pk||!bundle||bundle.dissolved||!homeRelayUrl(p))return Promise.resolve(false);
+    const key=pk+'\nreplica\n'+String(bundle.community_id||'');if(mirrorBusy.has(key))return mirrorBusy.get(key);
+    const job=(async()=>{
+      const group=await mirrorGroup(bundle.community_id);if(!group)return false;
+      const want=mirrorAuthorsOf(bundle,wraps);if(!want.length)return false;
+      const st=mirrorState(pk),prior=st.groups[group],now=Date.now();
+      if(prior&&prior.replica&&now-Number(prior.at||0)<MIRROR_FRESH_MS&&want.every(a=>(prior.authors||[]).includes(a)))return true;
+      const refused=mirrorRefused.get(key);if(refused&&now-refused<MIRROR_REFUSED_MS)return false;
+      let res=null;try{res=await sendMirrorRequest(p,{op:'replicate',group,authors:want});}catch(_){res=null;}
+      if(accountPk()!==pk)return false;
+      if(!res||!res.ok){mirrorRefused.set(key,Date.now());return false;}
+      const next=mirrorState(pk);next.groups[group]={relays:[],authors:want,at:Date.now(),replica:true};saveMirrorState(pk,next);mirrorRefused.delete(key);
+      return true;
+    })().catch(()=>false).finally(()=>{mirrorBusy.delete(key);});
+    mirrorBusy.set(key,job);return job;
+  }
   function ensureMirror(p,room,bundle,wraps){
     const pk=accountPk(),relays=bundle?roomRelays(bundle):[];
+    if(pk&&bundle&&!bundle.dissolved&&homeRelayUrl(p)&&relaysAreHome(p,relays))return ensureReplica(p,room,bundle,wraps);
     if(!pk||!bundle||bundle.dissolved||!homeRelayUrl(p)||relaysAreHome(p,relays))return Promise.resolve(false);
     const key=pk+'\n'+String(bundle.community_id||'');if(mirrorBusy.has(key))return mirrorBusy.get(key);
     const job=(async()=>{
@@ -1372,8 +1395,10 @@
   async function refreshNodeBlocks(room){
     const p=PC();
     if(NODE_BLOCKS.busy||!room||room.local||!tunnelBase(p))return;
-    const now=Date.now(),me=String(deliveryOwner(p)||'').toLowerCase(),pks=new Set();
-    try{ for(const pk of roomParticipants(room,''))pks.add(pk); for(const m of activeMessages(room)||[])if(m&&m.pubkey)pks.add(m.pubkey); }catch(_){}
+    const viewer=String(deliveryOwner(p)||''),now=Date.now(),me=viewer.toLowerCase(),pks=new Set();
+    /* As the signed-in account, never '': roomParticipants' viewer is whose roster cache this is, and '' read as an
+     * account switch -- it emptied the cache, and a just-recorded kick with it. */
+    try{ for(const pk of roomParticipants(room,viewer))pks.add(pk); for(const m of activeMessages(room)||[])if(m&&m.pubkey)pks.add(m.pubkey); }catch(_){}
     const ask=[...pks].map(x=>String(x).toLowerCase()).filter(pk=>pk!==me&&/^[0-9a-f]{64}$/.test(pk)&&now-(NODE_BLOCKS.askedAt.get(pk)||0)>600000);
     if(!ask.length)return;
     NODE_BLOCKS.busy=true;
@@ -6658,9 +6683,9 @@
       return j<0?p.enc(part):p.enc(part.slice(0,j))+'<mark>'+p.enc(part.slice(j,j+q.length))+'</mark>'+p.enc(part.slice(j+q.length));};
     p.modal('<h3>Search '+p.enc(roomName(room,state.community))+'</h3><input class="input" id="cc-search-q" type="search" placeholder="Search messages" autocomplete="off" enterkeyhint="search">'
       +'<p class="muted small cc-search-note">Searches the messages this device has loaded. They are end-to-end encrypted, so no server can search them.</p><div id="cc-search-results" class="cc-search-results" role="list"></div>',root=>{
-      const input=root.querySelector('#cc-search-q'),list=root.querySelector('#cc-search-results');let timer=0,last=[];
+      const qbox=root.querySelector('#cc-search-q'),list=root.querySelector('#cc-search-results');let timer=0,last=[];
       const run=()=>{
-        const q=String(input.value||'').trim();
+        const q=String(qbox.value||'').trim();
         if(q.length<2){list.innerHTML='';last=[];return;}
         last=searchRoom(saved()[state.community],q);
         if(!last.length){list.innerHTML='<p class="muted">No messages found.</p>';return;}
@@ -6670,8 +6695,8 @@
             +'<b>'+p.enc(who)+'</b><span class="cc-search-text">'+snippet(r.m.text,q)+'</span></button>';}).join('')
           +(last.length===100?'<p class="muted small">Showing the newest 100.</p>':'');
       };
-      input.oninput=()=>{clearTimeout(timer);timer=setTimeout(run,120);};
-      input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(timer);run();}};
+      qbox.oninput=()=>{clearTimeout(timer);timer=setTimeout(run,120);};
+      qbox.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(timer);run();}};
       list.onclick=e=>{
         const hit=e.target.closest&&e.target.closest('[data-cc-search-hit]');if(!hit)return;
         const r=last[Number(hit.dataset.ccSearchHit)];if(!r)return;
@@ -6680,7 +6705,7 @@
         state.thread=root&&root!==messageId(r.m)?root:null;
         openNotification({community:roomIdentity(saved()[state.community]),channel:r.channel,message:messageId(r.m)});
       };
-      setTimeout(()=>{try{input.focus();}catch(_){}},30);
+      setTimeout(()=>{try{qbox.focus();}catch(_){}},30);
     });
   }
   function openNotification(target){
@@ -6751,7 +6776,7 @@
       dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
     ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const pending=room.inviteListPending||''; delete room.inviteListPending; const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(shareableInviteUrl(p,room.url)); p.toast(pending?'public community created — invite link copied; '+pending:'public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const pending=room.inviteListPending||''; delete room.inviteListPending; const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); /* made here = lives here alone: ask the node to replicate it at once, not at the next Concord start */ try{const cw=roomControls.get(room.communityId||room.naddr)||((room.cord&&room.cord.events)||[]).filter(e=>e&&e.kind===1059);void ensureMirror(p,room,room.cord.bundle,cw);}catch(_){} p.copyValue(shareableInviteUrl(p,room.url)); p.toast(pending?'public community created — invite link copied; '+pending:'public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     /* From the device: the picked file becomes a blob: URL in the same box, and saving turns it into
      * the encrypted ImageRef (sealImageRef) — one path for a typed URL and an upload. */
@@ -6967,6 +6992,28 @@
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
+    /* ROLES (Vector's Admin / Moderator): reuse the community's server role of that name, creating it
+     * first if nobody has (vsk 1), then write the member's grant (vsk 3). A role with staff control
+     * bits delivers the control key to the member inside the grant, which needs binary NIP-44 — the
+     * local key signer has it, a remote signer is told so. */
+    const setMemberRole=async(target,preset)=>{
+      const room=saved()[state.community],r=window.PosterCordReader,bundle=room?.cord?.bundle,me=viewer.pubkey;
+      if(!bundle||!r?.createRoleWrap)return p.toast('Community roles are not ready.');
+      try{
+        const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);let wraps=roomControls.get(loadKey)||[];
+        const publish=async made=>{const scope=cordPlaneContext(p,bundle,wraps,room);if(!scope.current())throw new Error('Concord membership changed while signing');const res=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));if(!res?.ok)throw new Error('the community relays did not accept it');wraps=[...wraps,made.wrap];roomControls.set(loadKey,wraps);};
+        let info=r.inspectControl(bundle,wraps);const staff=info.roles.filter(x=>x.scope==='server'&&(x.name==='Admin'||x.name==='Moderator')).map(x=>x.id);
+        let roleId='';
+        if(preset){ const name=preset==='admin'?'Admin':'Moderator',have=info.roles.filter(x=>x.scope==='server'&&x.name===name).sort((a,b)=>a.position-b.position)[0];
+          if(have)roleId=have.id; else { const made=await r.createRoleWrap(bundle,wraps,preset,me,p.signTemplate); await publish(made); roleId=made.roleId; } }
+        info=r.inspectControl(bundle,wraps);
+        const ids=[...(info.grants[target]||[]).filter(id=>!staff.includes(id)),...(roleId?[roleId]:[])];
+        const made=await r.createRoleGrantWrap(bundle,wraps,target,ids,me,p.signTemplate,p.cordRekeyEncrypt);
+        await publish(made); render();
+        p.toast(preset?'Role granted.':'Role removed.');
+      }catch(e){ p.toast('The role was not changed: '+(e&&e.message||e)); }
+    };
+    const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     /* AUTOMATIC IN AN ADMIN'S OWN COMMUNITY (2026-10-21: "yes make bans automatic for admin-owned communities"). When
      * the person looking is this community's OWNER and an admin of this node, anyone here who is blocked on the node is
      * banned without a button: the community ban, with the key rotation that keeps them out of every app. Each person
@@ -6992,28 +7039,6 @@
         if(!ok)return; b.disabled=true;
         for(const pk of pks){ try{ if(isOwner)await banMember(pk); else await publishModeration(saved()[state.community],pk,'ban'); }catch(e){ p.toast('could not ban: '+((e&&e.message)||e)); break; } }
         b.disabled=false; render(); }; }
-    /* ROLES (Vector's Admin / Moderator): reuse the community's server role of that name, creating it
-     * first if nobody has (vsk 1), then write the member's grant (vsk 3). A role with staff control
-     * bits delivers the control key to the member inside the grant, which needs binary NIP-44 — the
-     * local key signer has it, a remote signer is told so. */
-    const setMemberRole=async(target,preset)=>{
-      const room=saved()[state.community],r=window.PosterCordReader,bundle=room?.cord?.bundle,me=viewer.pubkey;
-      if(!bundle||!r?.createRoleWrap)return p.toast('Community roles are not ready.');
-      try{
-        const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);let wraps=roomControls.get(loadKey)||[];
-        const publish=async made=>{const scope=cordPlaneContext(p,bundle,wraps,room);if(!scope.current())throw new Error('Concord membership changed while signing');const res=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));if(!res?.ok)throw new Error('the community relays did not accept it');wraps=[...wraps,made.wrap];roomControls.set(loadKey,wraps);};
-        let info=r.inspectControl(bundle,wraps);const staff=info.roles.filter(x=>x.scope==='server'&&(x.name==='Admin'||x.name==='Moderator')).map(x=>x.id);
-        let roleId='';
-        if(preset){ const name=preset==='admin'?'Admin':'Moderator',have=info.roles.filter(x=>x.scope==='server'&&x.name===name).sort((a,b)=>a.position-b.position)[0];
-          if(have)roleId=have.id; else { const made=await r.createRoleWrap(bundle,wraps,preset,me,p.signTemplate); await publish(made); roleId=made.roleId; } }
-        info=r.inspectControl(bundle,wraps);
-        const ids=[...(info.grants[target]||[]).filter(id=>!staff.includes(id)),...(roleId?[roleId]:[])];
-        const made=await r.createRoleGrantWrap(bundle,wraps,target,ids,me,p.signTemplate,p.cordRekeyEncrypt);
-        await publish(made); render();
-        p.toast(preset?'Role granted.':'Role removed.');
-      }catch(e){ p.toast('The role was not changed: '+(e&&e.message||e)); }
-    };
-    const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     /* THE MENU IS PLACED IN SCREEN PIXELS AND WRITTEN IN THE PAGE'S. A PosterChanOS desk runs the client at a UI
      * scale (body{zoom:1.25} on a 4K screen): getBoundingClientRect/innerWidth are screen pixels, but a fixed
      * element's left/top are scaled by the zoom -- so the member list's right edge (x 1249) became left 1495 in a

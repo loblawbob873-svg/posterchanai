@@ -128,7 +128,13 @@ def test_a_community_created_on_an_instance_lists_only_this_nodes_relay():
         # its genesis is on this node's relay; nothing of it was handed to another relay
         wraps = await b.js('__homeWrites.filter(e=>e.kind===1059).length')
         assert wraps >= 3, wraps
-        assert await b.js('__registrations.length') == 0, 'a community made here was registered for mirroring'
+        # Not MIRRORED (its home is here) -- REPLICATED: the node is asked to copy it to its backup relays
+        # (concord_mirror `op: replicate`, 2026-10-21 "make sure posterchan room federates"), naming stream keys only.
+        await wait_for(b, "__registrations.some(r=>r.op==='replicate')", 45)
+        regs = await b.js('__registrations')
+        assert not [r for r in regs if r.get('op') == 'mirror'], ('a community made here was registered for mirroring', regs)
+        rep = next(r for r in regs if r.get('op') == 'replicate')
+        assert rep.get('authors') and all(len(a) == 64 for a in rep['authors']) and 'relays' not in rep, rep
         # The public CORD relays were UP (they still carry the account's membership vault, the invite
         # registry and the directory listing) -- and not one of the community's own wraps reached them.
         elsewhere = await b.js('[...__upWrites.map(x=>x.ev),...__dirWrites].filter(e=>e.kind===1059).length')

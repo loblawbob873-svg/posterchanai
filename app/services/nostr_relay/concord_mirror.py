@@ -97,6 +97,16 @@ KV_KEY = "concord_mirror_v1"
 PARTIAL_SUB_PREFIX = "pcmp"
 READ_DIRECTLY = "read directly:"
 REGISTER_SETTLE_SECONDS = 2.5
+# FEDERATION OF COMMUNITIES HOSTED HERE (2026-10-21: "make sure posterchan room federates"). A community created on
+# this node lists ONE relay -- this one -- so it lived nowhere else: lose this relay and it is gone, for us and for
+# every other app. A member's client asks for it to be REPLICATED (`op: replicate`, the same signed member-only
+# registration, naming only its stream pubkeys); this node then copies every wrap of those streams to these relays
+# and reads back anything posted there. Opaque copies -- the node holds no key and decrypts nothing -- and the
+# client still talks to this relay alone, so a phone does no extra work. Chosen from the CORD relays this mirror
+# already syncs both ways (asia.vectorapp.io gates kind-1059 reads behind an AUTH, so it is not one).
+BACKUP_RELAYS = ("wss://jskitty.com/nostr", "wss://nostr.computingcache.com", "wss://relay.dreamith.to")
+BACKFILL_PAGE = 500
+BACKFILL_PACE = 0.05        # seconds between pushed wraps: ~20/s per backup, so a long history is no burst
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -206,6 +216,8 @@ class _Link:
         self.task = None
         self.stopped = False
         self.pending: dict = {}      # event id -> Future[bool] (an OK we are waiting for)
+        self.held: set = set()       # wrap ids this upstream showed us on this connection (bounded: one history walk)
+        self.backfilled = 0
 
     def start(self) -> None:
         self.task = asyncio.create_task(self._run())
@@ -261,6 +273,7 @@ class _Link:
             backoff = min(backoff * 2, 300.0)
 
     async def _session(self, ws) -> None:
+        self.held = set()          # what THIS connection's history walk shows: a backup that lost data is refilled
         authors = sorted(self.authors)
         chunks = [authors[i:i + AUTHOR_CHUNK] for i in range(0, len(authors), AUTHOR_CHUNK)][:MAX_CHUNKS]
         now = int(time.time())
@@ -292,6 +305,8 @@ class _Link:
                 if not todo:
                     hist["sid"] = None
                     self.synced = not self.refused
+                    if self.synced:
+                        self.mirror._schedule_backfill(self)
                     return
                 hist.update(chunk=todo.pop(0), until=None, pages=0)
             else:
@@ -325,6 +340,8 @@ class _Link:
                 continue
             typ = msg[0]
             if typ == "EVENT" and len(msg) >= 3 and (msg[1] in live or msg[1] == hist["sid"]):
+                if isinstance(msg[2], dict) and isinstance(msg[2].get("id"), str) and len(self.held) < 300_000:
+                    self.held.add(msg[2]["id"])
                 await self.mirror._ingest(msg[2], self)
                 if msg[1] == hist["sid"] and isinstance(msg[2], dict):
                     try:
@@ -375,7 +392,8 @@ class _Link:
 
     def status(self) -> dict:
         return {"relay": self.url, "streams": len(self.authors), "connected": self.connected,
-                "synced": self.synced, "refused": self.refused, "error": self.last_error}
+                "synced": self.synced, "refused": self.refused, "error": self.last_error,
+                **({"backfilled": self.backfilled} if self.backfilled else {})}
 
 
 class _Directory:
@@ -491,6 +509,9 @@ class ConcordMirror:
         self._sweep_task = None
         self._reconcile_lock = asyncio.Lock()
         self._last_named: set = set()  # every stream registered at the last reconcile (so a stopped one is noticed)
+        # Streams of communities HOSTED here, ever: their wraps are this node's originals, never mirror copies, so they
+        # are never deleted when a registration lapses, never counted against a budget, never refused on a read.
+        self.hosted_ever: set = set()
 
     # -- configuration --------------------------------------------------------------------------------
     def enabled(self) -> bool:
@@ -522,6 +543,7 @@ class ConcordMirror:
             data = json.loads(raw) if raw else {}
             self.regs = {m: dict(g) for m, g in (data.get("regs") or {}).items() if isinstance(g, dict)}
             self.counts = {a: int(n) for a, n in (data.get("counts") or {}).items()}
+            self.hosted_ever = {str(a) for a in (data.get("hosted") or []) if _HEX64.match(str(a))}
         except Exception as e:
             logger.warning("[concord-mirror] could not read the saved registrations (%s) — starting empty", e)
         self._loaded = True
@@ -554,6 +576,13 @@ class ConcordMirror:
             for group, reg in groups.items():
                 if now - float(reg.get("at", 0)) <= TTL_SECONDS:
                     yield member, group, reg
+
+    def hosted_authors(self) -> set:
+        """Streams of communities hosted HERE that members asked to be replicated (and still refresh)."""
+        return {a for _m, _g, reg in self._active() if reg.get("hosted") for a in reg.get("authors", ())}
+
+    def is_hosted(self, author: str) -> bool:
+        return author in self.hosted_ever
 
     def registered_authors(self) -> set:
         return {a for _m, _g, reg in self._active() for a in reg.get("authors", ())}
@@ -605,7 +634,7 @@ class ConcordMirror:
                 t.add_done_callback(self._stopping.discard)
             # Streams nobody registers any more: their copies go, and so does their count.
             named = self.registered_authors()
-            dropped = [a for a in (set(self.counts) | self._last_named) if a not in named]
+            dropped = [a for a in (set(self.counts) | self._last_named) if a not in named and a not in self.hosted_ever]
             self._last_named = set(named)
             if dropped:
                 try:
@@ -628,7 +657,8 @@ class ConcordMirror:
         if not self._loaded:
             return
         try:
-            await self.store.kv_set(KV_KEY, json.dumps({"regs": self.regs, "counts": self.counts}))
+            await self.store.kv_set(KV_KEY, json.dumps({"regs": self.regs, "counts": self.counts,
+                                                        "hosted": sorted(self.hosted_ever)}))
         except Exception as e:
             logger.warning("[concord-mirror] could not save the registrations: %s", e)
 
@@ -690,6 +720,8 @@ class ConcordMirror:
                 if not named:
                     return ""
             for a in authors:
+                if a in self.hosted_ever:
+                    continue        # this relay IS the community's home: what it holds is the answer
                 if a in named and not self.author_ready(a, partial):
                     return ("unavailable: this node is still catching up with this community's relays "
                             "(or cannot reach them) — read them directly")
@@ -779,7 +811,9 @@ class ConcordMirror:
                 await self._reconcile()
             return True, "left: this community is no longer mirrored for you"
         authors = sorted({str(a).lower() for a in (body.get("authors") or []) if _HEX64.match(str(a).lower())})
-        relays_in = [normalize_relay(r) for r in (body.get("relays") or [])]
+        hosted = body.get("op") == "replicate"
+        relays_in = [normalize_relay(r) for r in ((self.cfg.get("concord_backup_relays") or BACKUP_RELAYS) if hosted
+                                                  else (body.get("relays") or []))]
         relays_in = list(dict.fromkeys(r for r in relays_in if r))
         if not authors:
             return False, "invalid: no stream pubkeys"
@@ -809,15 +843,73 @@ class ConcordMirror:
             return False, "blocked: this node already mirrors from as many relays as it can"
         if self.total() >= MAX_EVENTS_TOTAL:
             return False, "blocked: this node's Concord mirror is full"
-        self.regs.setdefault(member, {})[group] = {"relays": relays, "authors": authors, "at": int(now)}
+        self.regs.setdefault(member, {})[group] = {"relays": relays, "authors": authors, "at": int(now),
+                                                   **({"hosted": True} if hosted else {})}
+        if hosted:
+            self.hosted_ever.update(authors)
         self._dirty()
         await self._reconcile()
-        logger.info("[concord-mirror] %s… mirrors %s…: %d stream(s) from %s%s", member[:8], group[:8], len(authors),
+        logger.info("[concord-mirror] %s… %s %s…: %d stream(s) %s %s%s", member[:8], "replicates" if hosted else "mirrors",
+                    group[:8], len(authors), "to" if hosted else "from",
                     ", ".join(relays), (" (not mirrored: " + "; ".join(reasons) + ")") if reasons else "")
+        if hosted:
+            return True, f"replicating: {len(authors)} stream(s) to {len(relays)} relay(s)"
         await self._settle(relays, REGISTER_SETTLE_SECONDS)
         direct = skipped + self.unreadable(relays)
         return True, (f"mirroring: {len(authors)} stream(s) from {len(relays)} relay(s)"
                       + (f"; {READ_DIRECTLY} " + " ".join(direct) if direct else ""))
+
+    # -- hosted -> backups -------------------------------------------------------------------------------
+    def _schedule_backfill(self, link: _Link) -> None:
+        if not (self.hosted_authors() & link.authors):
+            return
+        t = asyncio.create_task(self._backfill(link))
+        self._stopping.add(t)
+        t.add_done_callback(self._stopping.discard)
+
+    async def _backfill(self, link: _Link) -> int:
+        """Copy every wrap of the hosted streams this backup does not hold, oldest first, at a steady pace.
+
+        Run each time the link finishes reading the backup's history -- that walk is what tells us what it holds
+        (`link.held`), so a backup that lost data, or one added later, is filled again. Stops when the link stops."""
+        authors = sorted(self.hosted_authors() & link.authors)
+        if not authors:
+            return 0
+        # Newest first, a page at a time, `until` = the oldest timestamp seen (INCLUSIVE, so wraps sharing that second
+        # are not skipped); ids already collected are dropped, and a page that adds nothing new is the end.
+        missing, seen, until = [], set(), None
+        while True:
+            flt = {"kinds": [WRAP_KIND], "authors": authors, "limit": BACKFILL_PAGE}
+            if until is not None:
+                flt["until"] = until
+            try:
+                page = await self.store.query([flt])
+            except Exception as e:
+                logger.debug("[concord-mirror] backfill read failed: %s", e)
+                return 0
+            fresh = [ev for ev in page if isinstance(ev, dict) and ev.get("id") not in seen]
+            if not fresh:
+                break
+            for ev in fresh:
+                seen.add(ev["id"])
+                if ev["id"] not in link.held:
+                    missing.append(ev)
+            if len(page) < BACKFILL_PAGE:
+                break
+            until = min(int(ev.get("created_at", 0)) for ev in page)
+        missing.sort(key=lambda ev: int(ev.get("created_at", 0)))
+        sent = 0
+        for ev in missing:
+            if link.stopped or not link.connected:
+                break
+            if await link.publish(ev):
+                link.held.add(ev["id"])
+                sent += 1
+                link.backfilled += 1
+            await asyncio.sleep(BACKFILL_PACE)
+        if sent:
+            logger.info("[concord-mirror] %s: copied %d hosted wrap(s) it did not hold", link.url, sent)
+        return sent
 
     # -- upstream -> store ------------------------------------------------------------------------------
     def _seen_add(self, eid: str) -> None:
@@ -852,7 +944,8 @@ class ConcordMirror:
             if server is not None:
                 server.subs.fanout(ev, server._send, server._can_serve_event)
             return True
-        if self._author_full(author):
+        hosted = author in self.hosted_ever
+        if not hosted and self._author_full(author):
             return False
         try:
             if await self.store.has_event(eid):
@@ -865,8 +958,9 @@ class ConcordMirror:
         if not stored:
             return False
         self._seen_add(eid)
-        self.counts[author] = self.counts.get(author, 0) + 1
-        self._dirty()
+        if not hosted:
+            self.counts[author] = self.counts.get(author, 0) + 1
+            self._dirty()
         if server is not None:
             server.subs.fanout(ev, server._send, server._can_serve_event)
         return True
