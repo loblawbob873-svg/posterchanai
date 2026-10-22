@@ -22,9 +22,14 @@ import checkall  # noqa: E402
 
 
 def test_a_serving_node_runs_fewer_browsers(monkeypatch):
-    """THE FIX. On a box that is serving, the fan-out is capped low."""
+    """THE FIX. On a box that is serving, the fan-out is capped low -- 4, and only because every job runs at the
+    lowest CPU and IO priority (2026-10-22): the measured stall was test processes competing at the app's priority.
+    Raising the cap without that is the original bug; so is losing that while keeping the cap."""
     monkeypatch.setattr(checkall, "_serving_live_traffic", lambda: True)
-    assert checkall._default_jobs() <= 2
+    monkeypatch.setattr(checkall.os, "cpu_count", lambda: 64)
+    assert checkall._default_jobs() <= 4
+    src = (ROOT / "scripts/checkall.py").read_text(encoding="utf-8")
+    assert "os.nice(19)" in src and '"ionice", "-c", "3"' in src, "the jobs no longer run at lowest priority"
 
 
 def test_a_quiet_machine_still_uses_the_cores_it_has(monkeypatch):
