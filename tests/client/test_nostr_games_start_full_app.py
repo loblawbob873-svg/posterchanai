@@ -74,26 +74,29 @@ def test_with_no_bot_the_screen_says_how_to_get_one(view, key, button, tag):
     asyncio.run(desktop.with_browser('online', '', check, RECORD))
 
 
-TABLES = [("blackjack", "blackjack_bot_npub", "bj", "blackjack"), ("holdem", "holdem_bot_npub", "hm", "holdem")]
+# view, config key, (invite box, its results, Deal button), hashtag of the table note
+TABLES = [("blackjack", "blackjack_bot_npub", ("#bj-inv", "#bj-inv-res", "#bj-deal"), "blackjack"),
+          ("holdem", "holdem_bot_npub", ("#hm-inv", "#hm-inv-res", "#hm-deal"), "holdem")]
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize("view,key,pre,hashtag", TABLES, ids=[t[0] for t in TABLES])
-def test_seating_a_friend_and_dealing_tags_them_in_the_table_note(view, key, pre, hashtag):
+@pytest.mark.parametrize("view,key,ids,hashtag", TABLES, ids=[t[0] for t in TABLES])
+def test_seating_a_friend_and_dealing_tags_them_in_the_table_note(view, key, ids, hashtag):
     """Seat somebody by npub, press "Deal table": one public note that tags the bot AND the friend."""
     async def check(b):
         await desktop.login(b)
         bot = await b.js("NostrTools.getPublicKey(new Uint8Array(32).fill(9))")
         friend = await b.js("NostrTools.getPublicKey(new Uint8Array(32).fill(5))")
         await b.js(f"__PC.CFG[{json.dumps(key)}]=NostrTools.nip19.npubEncode({json.dumps(bot)}); __PC.switchView({json.dumps(view)}); 1")
-        await b.until(f"!!document.querySelector('#{pre}-inv')")
-        assert await b.js(f"getComputedStyle(document.querySelector('#{pre}-deal')).display") == "none", "Deal shown with nobody seated"
-        await b.js(f"(()=>{{const i=document.querySelector('#{pre}-inv');i.value=NostrTools.nip19.npubEncode({json.dumps(friend)});"
+        inv, res, deal = ids
+        await b.until(f"!!document.querySelector('{inv}')")
+        assert await b.js(f"getComputedStyle(document.querySelector('{deal}')).display") == "none", "Deal shown with nobody seated"
+        await b.js(f"(()=>{{const i=document.querySelector('{inv}');i.value=NostrTools.nip19.npubEncode({json.dumps(friend)});"
                    "i.dispatchEvent(new Event('input',{bubbles:true}));})(); 1")
-        await b.until(f"!!document.querySelector('#{pre}-inv-res [data-add]')")
-        await b.js(f"document.querySelector('#{pre}-inv-res [data-add]').click(); 1")
-        await b.until(f"getComputedStyle(document.querySelector('#{pre}-deal')).display!=='none'")
-        await b.js(f"document.querySelector('#{pre}-deal').click(); 1")
+        await b.until(f"!!document.querySelector('{res} [data-add]')")
+        await b.js(f"document.querySelector('{res} [data-add]').click(); 1")
+        await b.until(f"getComputedStyle(document.querySelector('{deal}')).display!=='none'")
+        await b.js(f"document.querySelector('{deal}').click(); 1")
         sent = (f"__sentEvents.find(e=>e.kind===1&&(e.tags||[]).some(t=>t[0]==='t'&&t[1]==={json.dumps(hashtag)}))")
         await b.until(f"!!{sent}")
         ps = await b.js(f"{sent}.tags.filter(t=>t[0]==='p').map(t=>t[1])")
