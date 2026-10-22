@@ -1500,7 +1500,7 @@
    * so `@Alice` typed in an edit tagged nobody -- and the message's existing mentions were shown as `@npub1…`. This is
    * the composer's picker for any textarea (same rows, same tap-on-release, arrows/Tab/Enter on a keyboard), plus the
    * composer's own wire rules on the way out (wireMentionText + typedMentionRecipients). */
-  function mentionBox(p,box,room){
+  function textareaMentions(p,box,room){
     const viewer=p.viewer?p.viewer():{},recipients=new Map();let choices=[],index=0;
     const list=document.createElement('div');list.className='cc-mentions cc-box-mentions';list.setAttribute('role','listbox');
     list.setAttribute('aria-label','Mention a member');list.hidden=true;box.parentElement.insertBefore(list,box.nextSibling);
@@ -7432,7 +7432,7 @@
       }); };
     $$('[data-cc-edit]').forEach(b=>b.onclick=()=>{ closeMessageActions();const room=saved()[state.community],channel=state.channel,storeId=channelStoreId(room,channel),found=testMessages(storeId).find(x=>messageId(x)===b.dataset.ccEdit),viewer=p.viewer?p.viewer():{}; if(!found||!canEditMessage(found,viewer,room)||!p.modal)return;
       p.modal(`<h3>Edit message</h3><textarea class="input cc-edit-text" rows="4" maxlength="65536"></textarea><div class="cc-join-actions"><button class="btn btn-ghost" data-cc-edit-cancel>Cancel</button><button class="btn btn-neon" data-cc-edit-save>Save</button></div>`,root=>{
-        const box=root.querySelector('.cc-edit-text'),save=root.querySelector('[data-cc-edit-save]'),mentions=mentionBox(p,box,room);box.value=mentions.readable(found.text);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);},20);
+        const box=root.querySelector('.cc-edit-text'),save=root.querySelector('[data-cc-edit-save]'),mentions=textareaMentions(p,box,room);box.value=mentions.readable(found.text);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);},20);
         root.querySelector('[data-cc-edit-cancel]').onclick=()=>p.closeModal();
         box.onkeydown=e=>{if((e.key==='Enter')&&(e.ctrlKey||e.metaKey)){e.preventDefault();save.click();}};
         save.onclick=async()=>{ const typed=String(box.value||'').trim(); if(!typed){p.toast('an edit cannot be empty — delete the message instead');return;} const out=mentions.wire(typed),text=out.text; if(text===String(found.text||'').trim()){p.closeModal();return;} save.disabled=true;
