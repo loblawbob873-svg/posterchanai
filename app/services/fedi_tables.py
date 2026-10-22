@@ -183,10 +183,6 @@ def _by_pubkeys(rows, pks) -> dict:
     return {pk: _prow(r) for pk, r in out.items()}
 
 
-def puppets_by_pubkeys(pks) -> dict:
-    """{pubkey: row} for the puppets among `pks`."""
-    return _by_pubkeys(tm.view(PUPPETS), pks)
-
 
 async def apuppets_by_pubkeys(pks) -> dict:
     return _by_pubkeys(await tm.aview(PUPPETS), pks)
@@ -489,9 +485,6 @@ async def adelivered_by_event(eid: str) -> Row | None:
     return row
 
 
-def delivered_by_event(eid: str) -> Row | None:
-    return _blocking(adelivered_by_event(eid)) if eid else None
-
 
 async def adelivered(platform: str, instance_url: str, note_id: str) -> bool:
     t = DocTable(LEDGER)
@@ -516,9 +509,6 @@ async def amirrored_among(event_ids) -> set:
         out |= found
     return out
 
-
-def mirrored_among(event_ids) -> set:
-    return _blocking(amirrored_among(list(event_ids)))
 
 
 async def arecord(*, platform: str, instance_url: str, note_id: str, nostr_event_id: str,

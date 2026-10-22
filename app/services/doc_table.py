@@ -215,9 +215,6 @@ def _norm(row: dict) -> dict:
 MARKERS = "_migrated"
 
 
-def is_marker(m) -> bool:
-    return isinstance(m, dict) and (m.get("ok") is True or m.get("verified") is True)
-
 
 def reset_state() -> None:
     """Tests: a fresh process (nothing is held outside the table registry any more)."""

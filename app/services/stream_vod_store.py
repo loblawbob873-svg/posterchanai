@@ -62,6 +62,3 @@ async def aadd(*, user_id, pubkey, token, sha256, mime, size, duration_s, title,
     return row
 
 
-def start_background_migration() -> None:
-    """Kept for old callers: there is nothing to copy at runtime (relay-only)."""
-    return None

@@ -20,7 +20,6 @@ store's query code reads them unchanged.
 """
 from __future__ import annotations
 
-import bisect
 import mmap
 import os
 
@@ -391,14 +390,6 @@ class RunSink:
                 except OSError:
                     pass
 
-
-def remove_run(dirpath: str, name: str, k: int) -> None:
-    for p in run_files(dirpath, name, k) + [_fence_path(dirpath, name, k)]:
-        for q in (p, p + ".tmp"):
-            try:
-                os.remove(q)
-            except OSError:
-                pass
 
 
 def write_run(run, dtypes, dirpath: str, name: str) -> Run:
@@ -974,10 +965,6 @@ class StrRuns(Leveled):
         j = str_lower(run, hi, -1, i) if hi is not None else len(run[2])
         return i, j
 
-
-def bisect_pairs(pairs, pre: str):
-    """Index of the first (value, seq) >= (pre, -1) in a Python list sorted the same way."""
-    return bisect.bisect_left(pairs, (pre, -1))
 
 
 # ------------------------------------------------------------------------------------------------ giving RAM back

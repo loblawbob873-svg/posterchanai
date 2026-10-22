@@ -68,10 +68,6 @@ def blob_from_row(sha: str, row: dict | None):
 
 
 # ------------------------------------------------------------------ the store of record
-async def amigrated() -> bool:
-    """Always True: the relay is the only store (kept for callers that still ask)."""
-    return True
-
 
 def migrated() -> bool:
     return True
@@ -211,8 +207,4 @@ def new_row(*, pubkey, size, mime, created_at, expires_at, storage, path, privat
 
 
 # ------------------------------------------------------------------ loading (a background thread, never the loop)
-def start_background(migrate=None) -> None:
-    """Load the index on a thread of its own (DocTable.start_background_load: it loads and keeps reloading there --
-    never on the request loop). `migrate` is accepted for old callers and ignored. Idempotent."""
-    table().start_background_load()
 

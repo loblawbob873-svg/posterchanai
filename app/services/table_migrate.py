@@ -70,9 +70,6 @@ def require(name: str) -> None:
     return None
 
 
-async def arequire(name: str) -> None:
-    return None
-
 
 def view(name: str) -> list:
     """[(key, row)] of the WHOLE table without copying the rows (callers read, never mutate them). Sync code off
@@ -89,9 +86,6 @@ def row(name: str, k) -> dict | None:
 async def aview(name: str) -> list:
     return await DocTable(name).aview()
 
-
-async def arow(name: str, k) -> dict | None:
-    return await DocTable(name).aget(k)
 
 
 # ------------------------------------------------------------------------------------ ids

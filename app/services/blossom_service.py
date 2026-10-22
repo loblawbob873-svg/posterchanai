@@ -1529,19 +1529,6 @@ def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False)
     return blobs
 
 
-async def add_owner(db: Session, sha256: str, pubkey_hex: str, name: str = "") -> None:
-    """Record `pubkey_hex` as referencing `sha256`. Idempotent; never raises into the upload path.
-
-    `name` is the uploader's original filename (optional). A re-upload only ever FILLS IN a missing
-    name — it never renames a file the user already has."""
-    if not sha256 or not pubkey_hex:
-        return
-    try:
-        await blob_index.aupdate(sha256, lambda row: row if row is not None and _add_owner_to(row, pubkey_hex, name)
-                                 else None)
-    except Exception as e:
-        logger.warning("[blossom] could not record owner %s/%s: %s", sha256[:12], pubkey_hex[:12], e)
-
 
 async def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
     """Give `sha256` a TTL of `days` from now, so the existing cleanup sweep reclaims it later.

@@ -270,9 +270,6 @@ def by_username(db, username):
     return _by(db, "username", username)
 
 
-async def aby_email(db, email):
-    return await _aby(db, "email", email)
-
 
 def by_email(db, email):
     return _by(db, "email", email)
@@ -291,16 +288,10 @@ async def aby_google_sub(db, sub):
     return await _aby(db, "google_sub", sub)
 
 
-def by_google_sub(db, sub):
-    return _by(db, "google_sub", sub)
-
 
 async def aby_telegram_key(db, key):
     return await _aby(db, "telegram_key", key)
 
-
-def by_telegram_key(db, key):
-    return _by(db, "telegram_key", key)
 
 
 async def aby_telegram_chat(db, chat_id, *, enabled_only: bool = True):
@@ -308,10 +299,6 @@ async def aby_telegram_chat(db, chat_id, *, enabled_only: bool = True):
     u = await _aby(db, "telegram_chat_id", str(chat_id) if chat_id is not None else None)
     return u if u is not None and (u.telegram_enabled or not enabled_only) else None
 
-
-def by_telegram_chat(db, chat_id, *, enabled_only: bool = True):
-    u = _by(db, "telegram_chat_id", str(chat_id) if chat_id is not None else None)
-    return u if u is not None and (u.telegram_enabled or not enabled_only) else None
 
 
 # ---- whole-table reads
@@ -358,9 +345,6 @@ def operator(db):
 async def aany_admin(db) -> bool:
     return bool(await aadmins(db))
 
-
-def any_admin(db) -> bool:
-    return bool(admins(db))
 
 
 async def afree_username(db, base: str, *, limit: int = 1000, width: int = 50) -> str:

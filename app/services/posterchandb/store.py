@@ -62,9 +62,6 @@ def is_addressable(kind: int) -> bool:
     return 30000 <= kind < 40000
 
 
-def is_ephemeral(kind: int) -> bool:
-    return 20000 <= kind < 30000
-
 
 def _dtag(ev: dict) -> str:
     for t in ev.get("tags") or []:
@@ -128,10 +125,6 @@ def _grow(op, *args):
             time.sleep(0.0005)
     return op(*args)
 
-
-def _merge_runs(ka, sa, pa, kb, sb, pb, dead=None):
-    """Merge two CSR posting runs in RAM (disk.merge_postings_mem); `dead` is a per-seq array (nonzero = dead)."""
-    return disk.merge_postings_mem(ka, sa, pa, kb, sb, pb, None if dead is None else (lambda p: dead[p] == 0))
 
 
 class _Postings(disk.Leveled):

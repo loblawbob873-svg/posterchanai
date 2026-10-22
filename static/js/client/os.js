@@ -3249,18 +3249,6 @@
   }
   function _aiNote(id){ try{ return NostrTools.nip19.noteEncode(id); }catch(_){ return id; } }
   function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} if(w) _aiFeedClear(w); }
-  /* WHERE "Open in AI" GOES. In a popped-out window (PosterChanOS: Social, Notes, Files… are each
-   * their own toplevel) the AI screen must open on the DESKTOP, in its own window -- asked here, it
-   * would repaint the very window the person asked about. No desktop to ask: this page, as before. */
-  function _aiTarget(){
-    try{
-      if(window.PCOSWin && PCOSWin.isWindow()){
-        const d=PCOSWin.desktop(), P=d && d.__PC;
-        if(P && typeof P.askWindowContext==='function') return P;
-      }
-    }catch(_){ }
-    return PC();
-  }
   /* ✨ FOR A POPPED-OUT WINDOW. "AI features built into the PosterChan windows on the web UI are
    * missing on PosterChanOS": the ✨ lives in the in-page `.osw` title bar, and on PosterChanOS the
    * windows are real toplevels whose title bar is oswin.js's own. This is the SAME panel
@@ -6920,10 +6908,6 @@
       // A builder already open IN THIS PAGE does not re-render on focus and gets no `storage` event of its own.
       try{ if(window.PCMeme && PCMeme.drainInbox) setTimeout(() => PCMeme.drainInbox(), 300); }catch(_){}
     }catch(e){ PC().toast && PC().toast('could not open it to mark up: ' + ((e && e.message) || e)); }
-  }
-  function _waitFor(get, ms){
-    return new Promise(res => { const t0 = Date.now(); (function poll(){ let v = null; try{ v = get(); }catch(_){ }
-      if(v || Date.now() - t0 > (ms || 8000)) return res(v); setTimeout(poll, 100); })(); });
   }
   function _popupTell(fn, ...args){
     try{

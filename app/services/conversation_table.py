@@ -141,10 +141,6 @@ async def aget_or_create(db, user_id, title: str) -> Conv:
     return conv if conv is not None else await acreate(db, user_id, title)
 
 
-def get_or_create(db, user_id, title: str) -> Conv:
-    conv = find_by_title(db, user_id, title)
-    return conv if conv is not None else create(db, user_id, title)
-
 
 async def asave(db, conv: Conv) -> None:
     """Store a changed title / updated_at."""

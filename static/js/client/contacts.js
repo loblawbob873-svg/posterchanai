@@ -1009,7 +1009,6 @@
       }catch(_){ }
       return e;
     }
-    const capPlatform = () => (deviceEnv().android ? 'android' : 'web');
     let _native;                    // undefined = not asked, false = this build has none, true = has
     async function probeNative(){
       // Known absent — do not ask on every open. But on the packaged app ASK AGAIN: the bridge can

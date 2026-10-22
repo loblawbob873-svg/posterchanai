@@ -14,7 +14,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -128,16 +128,6 @@ class WalletConfig:
         if not self.spend_ledger_path or self.spend_ledger_path == ":memory:":
             raise WalletError("Wallet spending ledger must use durable storage")
 
-
-def _xmr_env(name: str, default: str) -> int:
-    try:
-        value = Decimal(os.getenv(name, default))
-        if not value.is_finite() or value <= 0 or value.as_tuple().exponent < -12:
-            raise WalletError(f"Invalid {name}")
-        atomic = int((value * ATOMIC_UNITS).to_integral_exact(rounding=ROUND_DOWN))
-    except (InvalidOperation, OverflowError, ValueError):
-        raise WalletError(f"Invalid {name}")
-    return atomic
 
 
 def cap_to_atomic(value: str) -> int:
