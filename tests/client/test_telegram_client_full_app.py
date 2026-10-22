@@ -49,6 +49,10 @@ window.fetch = function(url, opts){
     {id:-1000000000777, title:'Bob Fans', kind:'group', known:false, username:'', members:40}]});
   if(path.startsWith('/send-file')){
     const fd = body, f = fd.get('file');
+    if(f.name === __tg.refuse) return __j({ok:false, error:'Telegram refused this file'}, 400);
+    if(f.name === __tg.hold && !__tg.released) return new Promise(r => { __tg.release = () => { __tg.released = true; r(); }; })
+      .then(() => { __tg.files.push({chat:fd.get('chat_id'), name:f.name, size:f.size, caption:fd.get('caption'), mode:fd.get('mode')});
+        return __j({ok:true, message:{id:100+__tg.files.length, chat_id:42, out:true, date:1700000100, text:'', sender:'', media:{kind:'file', name:f.name, size:f.size}}}).then(x => x); });
     __tg.files.push({chat:fd.get('chat_id'), name:f.name, size:f.size, caption:fd.get('caption'), mode:fd.get('mode')});
     return __j({ok:true, message:{id:100+__tg.files.length, chat_id:42, out:true, date:1700000100, text:fd.get('caption')||'', sender:'', media:{kind:'file', name:f.name, size:f.size}}});
   }
@@ -119,6 +123,28 @@ def test_sign_in_chat_attach_and_live_notifications_on_a_computer():
         assert files[0]["size"] == 4 and files[0]["chat"] == "42"
         assert [f["caption"] for f in files] == ["", "both files"], "the caption belongs on the last file only"
         assert await b.js("document.querySelectorAll('.tg-pending .tg-chip').length") == 0
+        # --- a slow upload says so, and a file already sent is never sent twice (2026-10-22: "telegram attachment:
+        # telegram did not answer" -- the send took ~20 s, the app gave up at 15 s, every retry sent it again) ---------
+        await b.js("""(()=>{__tg.hold='slow.png';__tg.refuse='bad.bin';const dt=new DataTransfer();
+            dt.items.add(new File([new Uint8Array([1,2])],'slow.png',{type:'image/png'}));
+            dt.items.add(new File(['x'],'fine.txt',{type:'text/plain'}));
+            dt.items.add(new File(['y'],'bad.bin',{type:'application/octet-stream'}));
+            const i=document.querySelector('.tg-file');i.files=dt.files;i.dispatchEvent(new Event('change'));})()""")
+        await b.js("document.querySelector('.tg-send').click()")
+        await b.until("!!__tg.release")
+        chip = await b.js("(()=>{const c=document.querySelector('.tg-pending .tg-chip');return {text:c.textContent,drop:!!c.querySelector('[data-drop]')}})()")
+        assert 'sending' in chip['text'] and not chip['drop'], chip
+        await b.js("__tg.release()")
+        await b.until("__tg.files.some(f=>f.name==='fine.txt') && !document.querySelector('.tg-send').disabled")
+        left = await b.js("[...document.querySelectorAll('.tg-pending .tg-chip')].map(c=>c.textContent.trim().split(' ')[0])")
+        assert left == ['bad.bin'], left
+        sent_before = await b.js("__tg.files.length")
+        __tg_clear = "__tg.refuse='';document.querySelector('.tg-send').click()"
+        await b.js(__tg_clear)
+        await b.until("__tg.files.some(f=>f.name==='bad.bin')")
+        names = await b.js("__tg.files.map(f=>f.name)")
+        assert names.count('slow.png') == 1 and names.count('fine.txt') == 1, names
+        assert await b.js("__tg.files.length") == sent_before + 1
         # --- text, by Enter --------------------------------------------------------------------------------
         await b.js("(()=>{const t=document.querySelector('.tg-text');t.value='hello';"
                    "t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))})()")

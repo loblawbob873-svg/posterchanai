@@ -56,6 +56,17 @@
   const keep = () => { const P = PC(); return P.deviceCache ? P.deviceCache('pc-tg-v1') : null; };
   const KEPT = /^\/api\/tgc\/(status|dialogs\?limit=200|messages\/-?\d+\?limit=50)$/;
   const unreachable = e => !!(e && (e.offline || e.name === 'TypeError' || /^HTTP 5\d\d$/.test(e.message || '')));
+  /* HOW LONG BEFORE "TELEGRAM DID NOT ANSWER". The 15 s limit is for READS -- a screen that would otherwise wait for
+   * ever on a node that is restarting. A SEND is different: an attachment goes device -> node -> Telegram, and giving up
+   * on it does not stop it (2026-10-22: "trying to send telegram attachment: telegram did not answer" -- the node's log
+   * showed each send-file answered 200 after ~20 s, so the photo went, the app said it had not, and each retry sent it
+   * again). Sends wait long enough to finish; an upload, ten minutes. */
+  function patience(path, opts){
+    const method = String((opts && opts.method) || 'GET').toUpperCase();
+    if(method === 'GET') return 15000;
+    if(/^\/api\/tgc\/send-file\b/.test(path) || (opts && typeof FormData !== 'undefined' && opts.body instanceof FormData)) return 600000;
+    return 60000;
+  }
   async function api(path, opts){
     const P = PC();
     const read = !(opts && opts.method && String(opts.method).toUpperCase() !== 'GET') && KEPT.test(path);
@@ -72,7 +83,9 @@
        * node was restarting, the Windows app sat on a black "CONNECTING…" until PosterChan was restarted
        * (2026-10-21): the request never settled, so neither the error card nor the device copy was ever reached. */
       const req = P.authFetch ? P.authFetch(path, opts || {}) : fetch(path, Object.assign({credentials:'include'}, opts || {}));
-      r = await Promise.race([req, new Promise((_, no) => setTimeout(() => { const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, 15000))]);
+      let timer = null;
+      r = await Promise.race([req, new Promise((_, no) => { timer = setTimeout(() => { const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, patience(path, opts)); })])
+        .finally(() => clearTimeout(timer));
       try{ j = await r.json(); }catch(_){}
       if(!r.ok && r.status >= 500) throw new Error('HTTP ' + r.status);
     }catch(e){ if(unreachable(e)) return fromDevice(e); throw e; }
@@ -821,8 +834,8 @@
   function paintPending(){
     const box = root && root.querySelector('.tg-pending'); if(!box) return;
     box.hidden = !st.pending.length;
-    box.innerHTML = st.pending.map((p, i) => `<span class="tg-chip">${esc(p.name)} <small>${esc(size(p.file.size))}</small>
-      <button class="tg-mini" data-drop="${i}" aria-label="Remove ${esc(p.name)}">✕</button></span>`).join('');
+    box.innerHTML = st.pending.map((p, i) => `<span class="tg-chip${p.sending ? ' tg-sending' : ''}">${esc(p.name)} <small>${p.sending ? 'sending…' : esc(size(p.file.size))}</small>
+      ${p.sending ? '' : `<button class="tg-mini" data-drop="${i}" aria-label="Remove ${esc(p.name)}">✕</button>`}</span>`).join('');
     box.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { st.pending.splice(Number(b.dataset.drop), 1); paintPending(); });
   }
 
@@ -834,10 +847,15 @@
     st.busy = true; const btn = root.querySelector('.tg-send'); if(btn) btn.disabled = true;
     try{
       if(files.length){
+        /* Each file says it is sending, and leaves the queue the moment it is SENT: a later file failing used to leave
+         * the earlier ones queued, and pressing Send again sent them a second time. */
         for(let i = 0; i < files.length; i++){
           const fd = new FormData(); fd.append('chat_id', String(chat)); fd.append('file', files[i].file, files[i].name);
           fd.append('mode', files[i].mode || 'auto'); fd.append('caption', i === files.length - 1 ? text : ''); fd.append('reply_to', String(reply));
-          const r = await api('/api/tgc/send-file', { method:'POST', body:fd }); addMine(r.message);
+          files[i].sending = true; paintPending();
+          try{ const r = await api('/api/tgc/send-file', { method:'POST', body:fd }); addMine(r.message); }
+          finally{ files[i].sending = false; }
+          st.pending = st.pending.filter(p => p !== files[i]); paintPending();
         }
       } else addMine((await post('/api/tgc/send', { chat_id:chat, text, reply_to:reply })).message);
       ta.value = ''; ta.style.height = 'auto'; st.pending = []; st.reply = null; paintPending(); paintReply();
@@ -920,7 +938,7 @@
     if(!isPhone()) setTimeout(background, 0);
     return !isPhone();
   }
-  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _askForm:askForm, _setForm:f => { form = f; },
+  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _patience:patience, _askForm:askForm, _setForm:f => { form = f; },
                  openNotification:o => openChatFromNotification(Number(o && o.chat)) };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;

@@ -110,7 +110,7 @@ def test_the_client_honours_mute_and_silent_and_retries():
     notify = js[js.index("  function notify(m, chat){"):][:1200]
     assert "if(d && d.muted) return;" in notify, "a muted chat must not ring"
     assert "silent: !!(d && d.silent)" in notify
-    assert "setTimeout(() => { const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, 15000)" in js
+    assert "const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, patience(path, opts));" in js
     assert js.count("scheduleRetry();") >= 3, "the error card, the chat list and the device copy all retry"
     app = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text()
     assert "silent: !!(opts && opts.silent)," in app

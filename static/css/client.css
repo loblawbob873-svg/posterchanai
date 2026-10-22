@@ -12153,6 +12153,7 @@ video.tg-round{width:220px;height:220px;object-fit:cover;border-radius:50%}
 .tg-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border:1px solid rgba(var(--accent-rgb),.45);
   border-radius:8px;background:rgba(var(--accent-rgb),.08)}
 .tg-chip small{color:var(--muted)}
+.tg-chip.tg-sending small{color:var(--accent)}
 .tg-composer{display:flex;align-items:flex-end;gap:6px;padding:8px 10px;border-top:1px solid rgba(var(--accent-rgb),.3);
   background:color-mix(in srgb,var(--panel2) 85%,transparent);position:relative;z-index:1}
 .tg-text{resize:none;min-height:40px;max-height:160px;line-height:1.35}
