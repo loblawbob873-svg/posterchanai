@@ -160,3 +160,28 @@ def test_the_move_dialog_fits_a_phone():
     f = got['fit']
     assert f['left'] and f['right'] and not f['over'], f
     assert f['goVisible'] and f['goH'] >= 32, f
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_cancel_moves_nothing_and_a_failed_load_offers_retry():
+    """Move → Cancel closes the dialog without a /move; and when the library list cannot be read, the screen says
+    why and Retry reads it again (and draws it once it answers)."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("__PC.switchView('media-center');true")
+        await _open_library(b, 'Movies')
+        await b.js("document.querySelector('.mc-tile[data-item=film1] .mc-move').click();true")
+        await b.until("!!document.getElementById('mc-mv-cancel')")
+        await b.js("document.getElementById('mc-mv-cancel').click();true")
+        await b.until("!document.querySelector('.mc-mv-modal')")
+        assert not await b.js("__mcReq.some(r=>/\\/move$/.test(r.path))"), "Cancel moved a title"
+
+        # The server stops answering the library list: the error, with Retry; then it answers again.
+        await b.js("""(()=>{const f=window.fetch;window.__mcDown=true;window.fetch=(u,o)=>{
+            if(window.__mcDown&&/\\/api\\/media-center(\\?|$)/.test(String(u)))return Promise.resolve(new Response(JSON.stringify({detail:'media server offline'}),{status:503,headers:{'Content-Type':'application/json'}}));
+            return f(u,o);};})();__PC.switchView('home');__PC.switchView('media-center');true""")
+        await b.until("!!document.getElementById('mc-retry')")
+        await b.js("window.__mcDown=false;document.getElementById('mc-retry').click();true")
+        await b.until("!document.getElementById('mc-retry') && !!document.querySelector('.mc-library-open')")
+
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
