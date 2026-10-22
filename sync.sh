@@ -134,6 +134,13 @@ if [ -r "$_STAMP" ]; then
         echo "[sync] local services last restarted at ${_s:0:8}"
     fi
 fi
+# Were the LAST deploy's apps published? (scripts/watch_app_builds.py, started detached at the end of every deploy.)
+# Said, never fatal: the mirror's builds are not this machine's to fix in a deploy, but a release that silently
+# stopped (Desktop apps failed every run for a day of 2026-10-22 while every deploy reported green) must be seen.
+if command -v gh >/dev/null 2>&1; then
+    venv-unified/bin/python scripts/watch_app_builds.py --last 2>&1 | sed 's/^/[sync] previous deploy: /'
+    [ "${PIPESTATUS[0]}" = "0" ] || echo "[sync] WARN: the previous deploy's APK/desktop apps were NOT all published (above)"
+fi
 if ! venv-unified/bin/python scripts/deploy_regression_gate.py --verify "$_regression_receipt"; then
     echo "[sync] ABORT: source changed after testing; nothing was pushed"
     exit 1
@@ -538,6 +545,16 @@ echo "[sync] production verified"
 # somebody signed in. A failure (1) fails this deploy loudly; "could not run" (2: no key on this machine, no Chrome)
 # is said and does not -- the key is machine-local and most installs will not have one.
 # ---------------------------------------------------------------------------------------------
+# THE APPS. The github push above starts the APK and desktop builds; they finish ~40 min after this script does, so
+# a detached watcher follows them and records the verdict the next deploy prints first. `tail` the log to watch.
+if command -v gh >/dev/null 2>&1; then
+    mkdir -p "$HOME/.cache/posterchanai"
+    nohup venv-unified/bin/python scripts/watch_app_builds.py "$_EXPECT" \
+        > "$HOME/.cache/posterchanai/app-builds.log" 2>&1 < /dev/null &
+    echo "[sync] following the APK/desktop builds for ${_EXPECT:0:8} in the background: ~/.cache/posterchanai/app-builds.log"
+else
+    echo "[sync] gh not installed -- the APK/desktop builds of ${_EXPECT:0:8} are NOT being followed"
+fi
 echo "[sync] signing in to $_LIVE_URL as the live-check identity"
 venv-unified/bin/python scripts/verify_live_signin.py "$_LIVE_URL" 2>&1 | sed 's/^/[sync]   /'
 _JOURNEY_RC=${PIPESTATUS[0]}
