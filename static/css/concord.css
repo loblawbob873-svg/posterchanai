@@ -843,3 +843,6 @@ body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--
 .cc-member-group:first-child{margin-top:2px!important}
 .cc-member-group span{margin-inline-start:4px!important;font-weight:600!important;opacity:.8!important}
 .cc-member-group.hidden{display:none!important}
+/* Owners/moderators: the people here this node has blocked (concord.js nodeBlockNoteHtml). */
+.cc-node-block-note{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px 12px!important;margin:6px 10px!important;padding:9px 12px!important;border:1px solid rgba(var(--cct-warn-rgb),.45)!important;border-radius:calc(10px*var(--cct-round))!important;background:rgba(var(--cct-warn-rgb),.08)!important;color:var(--cct-text)!important;font-size:13px!important;line-height:1.4!important}
+.cc-node-block-note span{flex:1 1 220px!important;min-width:0!important}

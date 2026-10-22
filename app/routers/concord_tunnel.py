@@ -7,6 +7,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, WebSocket
+from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.services.user_table import UserRow as User
@@ -45,6 +46,29 @@ async def default_invite(user: User = Depends(_member)):
     from app.services import settings_store
     raw = str(settings_store.get("concord_default_invite", "") or "").strip()
     return {"invite": raw if raw.startswith(("https://", "http://")) and "/invite/" in raw and "#" in raw else ""}
+
+
+class _AmongReq(BaseModel):
+    pubkeys: list[str] = []
+
+
+@router.post("/blocked-among")
+async def blocked_among(data: _AmongReq, user: User = Depends(_member)):
+    """Which of THESE authors are blocked on this node's relay -- MEMBERS ONLY, and never the whole list.
+
+    A relay block could not reach Concord (2026-10-21: "if we block a user at the relay level, we need to make sure
+    that they can't write to our concord rooms"): rooms live on outside relays and every message is a gift wrap
+    signed by a throwaway key, so no relay can tell who wrote it. The members' own clients can, after decrypting --
+    so a client asks about the authors it is already showing, hides the blocked ones, and offers a community's
+    owner/moderators the cryptographic ban. Who is blocked stays moderation state: a member learns it only about
+    people who are in front of them anyway, 500 at a time."""
+    from app.services import relay_blocklist
+    want = []
+    for pk in (data.pubkeys or [])[:500]:
+        pk = str(pk or "").strip().lower()
+        if len(pk) == 64 and all(c in "0123456789abcdef" for c in pk):
+            want.append(pk)
+    return {"blocked": [pk for pk in dict.fromkeys(want) if relay_blocklist.is_blocked(pk)]}
 
 
 @ws_router.websocket("/ws/concord-relay")

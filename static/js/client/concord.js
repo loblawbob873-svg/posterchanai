@@ -1355,7 +1355,38 @@
    * the complete history; the conversation paints a bounded newest window, matching the 300-row
    * cache page used during cold launch. */
   const MAX_PAINTED_MESSAGES=300;
-  function paintedMessages(room){const all=activeMessages(room).filter(m=>!m.delivery||m.delivery==='sent'||m.pubkey===deliveryOwner(PC()));return all.length>MAX_PAINTED_MESSAGES?all.slice(-MAX_PAINTED_MESSAGES):all;}
+  /* A PERSON BLOCKED ON THIS NODE'S RELAY IS NOT HEARD IN ITS COMMUNITIES (2026-10-21: "if we block a user at the relay
+   * level, we need to make sure that they can't write to our concord rooms, basically prevent abuse"). The relay
+   * cannot stop it: rooms live on outside relays and every message is a gift wrap under a throwaway key, so no relay
+   * knows who wrote it. This client does, after decrypting -- it asks the node about the authors it is showing
+   * (members-only /client/concord/blocked-among, never the whole list), and their messages, replies and mentions are
+   * not drawn for anyone using PosterChan. A community's owner and moderators are offered the cryptographic ban,
+   * which is what keeps them out of the room for every other client too. */
+  const NODE_BLOCKS={blocked:new Set(),askedAt:new Map(),busy:false};
+  function nodeBlocked(pk){ return !!pk&&NODE_BLOCKS.blocked.has(String(pk).toLowerCase()); }
+  async function refreshNodeBlocks(room){
+    const p=PC();
+    if(NODE_BLOCKS.busy||!room||room.local||!tunnelBase(p))return;
+    const now=Date.now(),me=String(deliveryOwner(p)||'').toLowerCase(),pks=new Set();
+    try{ for(const pk of roomParticipants(room,''))pks.add(pk); for(const m of activeMessages(room)||[])if(m&&m.pubkey)pks.add(m.pubkey); }catch(_){}
+    const ask=[...pks].map(x=>String(x).toLowerCase()).filter(pk=>pk!==me&&/^[0-9a-f]{64}$/.test(pk)&&now-(NODE_BLOCKS.askedAt.get(pk)||0)>600000);
+    if(!ask.length)return;
+    NODE_BLOCKS.busy=true;
+    try{
+      let changed=false;
+      for(let i=0;i<ask.length;i+=500){
+        const part=ask.slice(i,i+500);
+        const r=await fetch('/client/concord/blocked-among',{method:'POST',credentials:'include',cache:'no-store',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({pubkeys:part})});
+        if(!r.ok)break;   // not a member, no instance, an older server: nothing is hidden on a guess
+        const got=new Set(((await r.json())||{}).blocked||[]);
+        for(const pk of part){ NODE_BLOCKS.askedAt.set(pk,now); const b=got.has(pk);
+          if(b!==NODE_BLOCKS.blocked.has(pk)){ changed=true; if(b)NODE_BLOCKS.blocked.add(pk); else NODE_BLOCKS.blocked.delete(pk); } }
+      }
+      if(changed)backgroundRender();
+    }catch(_){}finally{NODE_BLOCKS.busy=false;}
+  }
+  function paintedMessages(room){const all=activeMessages(room).filter(m=>(!m.delivery||m.delivery==='sent'||m.pubkey===deliveryOwner(PC()))&&!nodeBlocked(m.pubkey));return all.length>MAX_PAINTED_MESSAGES?all.slice(-MAX_PAINTED_MESSAGES):all;}
   /* CORD control/chat stream pubkeys identify shared transport groups, not people.
    * The invite's community-bound owner and authenticated message authors are known participants;
    * a stream read does not provide a complete membership roster. Never offer group keys as
@@ -6426,6 +6457,7 @@
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const channelReadOnly=!!currentChannel?.readOnly||!!(current?.deletedChannels?.length&&!currentChannel)||!!current?.cord?.bundle?.dissolved;
     const messages=current&&(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
+    if(current)void refreshNodeBlocks(current);   // who here is blocked on this node (asked once per author per 10 min)
     const ownerPk=String((current&&current.cord&&current.cord.bundle&&(current.cord.bundle.owner||current.cord.bundle.creator_npub))||''),
       isOwner=!!ownerPk&&ownerPk===viewer.pubkey,banned=new Set(current&&current.banned||[]),
       /* MAY THIS VIEWER MODERATE? The room's control stream says so (`inspectControl.moderators`
@@ -6442,7 +6474,7 @@
     /* ADMINS, THEN MEMBERS (Armada's member list): the owner and everyone holding a community role first, each labelled
      * with the role, then everyone else. Roles are read from the control stream once per paint, not once per member. */
     const roleMap=memberRolesMap(current),ranked=pk=>pk===ownerPk||(roleMap.get(pk)||[]).length>0;
-    const roleLabel=pk=>pk===ownerPk?'Owner':((roleMap.get(pk)||[]).join(', ')||'Member');
+    const roleLabel=pk=>(pk===ownerPk?'Owner':((roleMap.get(pk)||[]).join(', ')||'Member'))+(nodeBlocked(pk)?' · blocked on this server':'');
     const memberRow=pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${p.enc(roleLabel(pk))}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${p.enc(roleLabel(pk))}</small></span></button>`;};
     const admins=memberPks.filter(ranked).sort((a,b)=>(b===ownerPk)-(a===ownerPk)),regulars=memberPks.filter(pk=>!ranked(pk));
     const memberRows=(admins.length?`<div class="cc-member-group" role="heading" aria-level="3">Admins <span>${admins.length}</span></div>`+admins.map(memberRow).join(''):'')
@@ -6497,7 +6529,7 @@
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-theme" title="Concord theme" aria-label="Concord theme"><svg class="ic"><use href="#i-palette"></use></svg></button><button class="cc-head-btn${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify" title="Notification settings: ${concordNotifyOn()?'community notifications on — tap to turn off':'community notifications off — tap to turn on'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-search" title="Search this community" aria-label="Search this community"><svg class="ic"><use href="#i-search"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn cc-notify-head${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify-head" title="Community notifications ${concordNotifyOn()?'on':'off'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button><button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="Room menu" aria-label="Room menu"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button></header>
-        <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
+        ${nodeBlockNoteHtml(p,current,memberPks,canBanAny)}<div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value=""><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div><div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div></div></div><div class="cc-join cc-invite-sheet${pendingInvite?'':' hidden'}" id="cc-invite-sheet">${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-icon-status" id="cc-community-icon-status" role="status" aria-live="polite" hidden></div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     /* THE SAME SCREEN IS NOT DRAWN TWICE. "Communities: keeps flashing every few seconds" -- measured on
@@ -6607,7 +6639,7 @@
     for(const c of channelsOf(room)){
       let rows=[];try{rows=testMessages(channelStoreId(room,c.name))||[];}catch(_){}
       for(const m of rows){
-        if(!m||m.failed||(m.kind&&m.kind!==9&&m.kind!==1111&&m.kind!==1))continue;
+        if(!m||m.failed||nodeBlocked(m.pubkey)||(m.kind&&m.kind!==9&&m.kind!==1111&&m.kind!==1))continue;
         const text=String(m.text||'');if(!text.toLowerCase().includes(q))continue;
         out.push({channel:c.name,m,rows});
       }
@@ -6930,6 +6962,12 @@
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
+    { const b=$('#cc-ban-node-blocked'); if(b)b.onclick=async()=>{
+        const pks=String(b.dataset.pks||'').split(',').filter(x=>/^[0-9a-f]{64}$/.test(x)); if(!pks.length)return;
+        const ok=p.uiConfirm?await p.uiConfirm('Ban '+pks.length+(pks.length===1?' person':' people')+' blocked on this server from this community? The community keys are rotated so they cannot read or post here.',{ok:'Ban'}):true;
+        if(!ok)return; b.disabled=true;
+        for(const pk of pks){ try{ if(isOwner)await banMember(pk); else await publishModeration(saved()[state.community],pk,'ban'); }catch(e){ p.toast('could not ban: '+((e&&e.message)||e)); break; } }
+        b.disabled=false; render(); }; }
     /* ROLES (Vector's Admin / Moderator): reuse the community's server role of that name, creating it
      * first if nobody has (vsk 1), then write the member's grant (vsk 3). A role with staff control
      * bits delivers the control key to the member inside the grant, which needs binary NIP-44 — the
@@ -7373,6 +7411,15 @@
     const res=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!res||!res.ok)throw new Error('the community relays did not accept it');
     roomControls.set(loadKey,[...wraps,made.wrap]);
     return !pinned;
+  }
+  /* For whoever may ban: the people here this node has blocked, and the ban that removes them from the community itself
+   * (a rotation they cannot follow, for every client -- hiding them is only PosterChan's half). */
+  function nodeBlockNoteHtml(p,room,memberPks,canBan){
+    if(!room||!canBan)return '';
+    const here=(memberPks||[]).filter(nodeBlocked);if(!here.length)return '';
+    return '<div class="cc-node-block-note" role="status"><span><b>'+here.length+' '+(here.length===1?'person':'people')+' here '+(here.length===1?'is':'are')
+      +' blocked on this server.</b> Their messages are hidden for everyone using PosterChan. Ban them to remove them from this community for every app.</span>'
+      +'<button type="button" class="btn btn-ghost small" id="cc-ban-node-blocked" data-pks="'+p.enc(here.join(','))+'">Ban '+(here.length===1?'them':'all '+here.length)+'</button></div>';
   }
   function memberRolesMap(room){
     const out=new Map();
