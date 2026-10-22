@@ -46,15 +46,20 @@ def test_synced_select_all_uses_real_subtree_paths_and_announces_toggle():
     assert "fileItems.every(it => _syncSel.has(it.path))" in synced
     assert "(_syncPath?_syncPath+'/':'')+it.name" not in synced
     assert 'aria-pressed="${_ssAll?' in synced
-    assert "Deselect all" in synced
+    assert "syncAllLabel(_ssAll, fileItems.length)" in synced
+    label = APP[APP.index("function syncAllLabel("):APP.index("function paintSyncBar(")]
+    assert "Deselect all" in label and "Select all" in label
 
 
 def test_selecting_last_synced_checkbox_refreshes_select_all_state():
     click = APP[APP.index("$$('.syncbox', grid)"):
                 APP.index("/* selmode follows", APP.index("$$('.syncbox', grid)"))]
-    assert "fileItems.every(it => _syncSel.has(it.path))" in click
-    assert "a2.setAttribute('aria-pressed'" in click
-    assert "a2.textContent" in click
+    assert "paintSyncBar(grid, fileItems)" in click
+    paint = APP[APP.index("function paintSyncBar("):]
+    paint = paint[:paint.index("\n  }\n")]
+    assert "fileItems.every(it => _syncSel.has(it.path))" in paint
+    assert "a.setAttribute('aria-pressed'" in paint and "syncAllLabel(every" in paint
+    assert "classList.toggle('has-sel'" in paint, "the bar must show its verbs when a checkbox makes a selection"
 
 
 def test_details_view_has_a_real_date_column_and_cell():
@@ -92,3 +97,19 @@ def test_clicking_a_computer_file_result_opens_it():
     runtime = Path(__file__).with_name('unified_search_open_runtime.mjs')
     r = subprocess.run(['node', str(runtime)], capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_the_synced_select_bar_is_one_row_and_only_what_can_be_pressed():
+    """2026-10-22, mobile: "Select all, select none, move to buttons and delete on every device, looks ugly and
+    unaligned, wastes space" -- five controls, two disabled, wrapping over three lines on a phone."""
+    css = (Path(__file__).resolve().parents[2] / "static/css/client.css").read_text()
+    assert ".sync-selbar{display:flex;align-items:center;gap:6px;flex-wrap:nowrap" in css
+    assert ".sync-selbar .ssb-sel{display:none}" in css and ".sync-selbar.has-sel .ssb-sel{display:inline-flex}" in css
+    phone = css[css.index("@media (max-width:640px){\n  .sync-selbar"):]
+    phone = phone[:phone.index("\n}")]
+    assert ".sync-selbar .ssb-l{display:none}" in phone and "width:40px" in phone
+    bar = APP[APP.index("const selbar = (canEdit && !_inTrash)"):APP.index("const trashbar")]
+    for verb in ('id="ss-move"', 'id="ss-del"', 'id="ss-none"'):
+        tag = bar[bar.rindex("<button", 0, bar.index(verb)):bar.index(">", bar.index(verb))]
+        assert "ssb-sel" in tag and "aria-label=" in tag, verb      # hidden until a selection; named when icon-only
+    assert "\\u2610" not in bar and "\\u2611" not in bar and "style=" not in bar

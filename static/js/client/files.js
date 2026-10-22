@@ -31,6 +31,20 @@ window.PCFilesFactory = function(dep){
     renderProfileView, requestBlossomAccess, saveBlobAs, saveEncrypted, sha256hex, sign,
     switchView, thumbUrl, toast, trackUrl, uiConfirm, uiPrompt, uploadBlob, uploadMusicTrack,
   } = dep;
+  /* The synced view's selection bar, painted in place (see `selbar`): the count, what is enabled, and Select all's
+   * own label -- one place, so a checkbox and a row press cannot leave it saying two different things. */
+  function syncAllLabel(every, n){
+    return `<svg class="ic" aria-hidden="true"><use href="#${every ? 'i-close' : 'i-check'}"></use></svg><span class="ssb-l2">${every ? 'Deselect all' : 'Select all'}</span>${n ? ' <span class="ssb-n">' + n + '</span>' : ''}`;
+  }
+  function paintSyncBar(grid, fileItems){
+    const n = _syncSel.size, bar = $('.sync-selbar', grid);
+    if(bar) bar.classList.toggle('has-sel', n > 0);
+    const c = $('#ss-count', grid); if(c) c.textContent = n ? n + ' selected' : '';
+    for(const id of ['#ss-del', '#ss-move', '#ss-none']){ const b = $(id, grid); if(b) b.disabled = !n; }
+    const a = $('#ss-all', grid);
+    if(a){ const every = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
+      a.setAttribute('aria-pressed', every ? 'true' : 'false'); a.innerHTML = syncAllLabel(every, fileItems.length); }
+  }
   async function renderBlossom(){
     const feed=$('#feed');
     /* AND REPAINT WHEN THE DRIVE ACTUALLY ARRIVES.
@@ -1911,12 +1925,17 @@ window.PCFilesFactory = function(dep){
     /* NO SELECT-AND-DELETE-EVERYWHERE BAR IN THE TRASH. Its one action publishes a deletion, and
      * every file here is already deleted — pressing it would tell the other devices to delete files
      * they have already deleted, which is how a wave of stale tombstones starts. */
-    const selbar = (canEdit && !_inTrash) ? `<div class="sync-selbar">
-        <button class="btn btn-ghost small" id="ss-all" aria-pressed="${_ssAll?'true':'false'}">${_ssAll?'\u2611 Deselect all':'\u2610 Select all'}${fileItems.length?' ('+fileItems.length+')':''}</button>
-        <button class="btn btn-ghost small" id="ss-none"${_syncSel.size?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>
-        <span class="muted small" id="ss-count" style="margin:0 4px">${_syncSel.size?_syncSel.size+' selected':'none selected'}</span>
-        <button class="btn btn-ghost small" id="ss-move"${_syncSel.size ? '' : ' disabled'} aria-haspopup="menu"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Move to…</button>
-        <button class="btn btn-neon small" id="ss-del"${_syncSel.size ? '' : ' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete on every device</button>
+    /* ONE ROW, AND ONLY WHAT CAN BE PRESSED (2026-10-22, mobile: "Select all, select none, move to buttons and delete
+     * on every device, looks ugly and unaligned, wastes space"). It always showed five controls, two of them disabled,
+     * wrapping over two or three lines on a phone. With nothing selected it is ONE button; with a selection it is a
+     * clear (✕), the count, and the verbs -- icon-only on a phone (labels stay as aria-label/title), labelled on wider
+     * screens. Every control stays in the DOM and `has-sel` shows them, so a checkbox press repaints nothing. */
+    const selbar = (canEdit && !_inTrash) ? `<div class="sync-selbar${_syncSel.size?' has-sel':''}">
+        <button class="btn btn-ghost small ssb-sel" id="ss-none"${_syncSel.size?'':' disabled'} aria-label="Clear selection" title="Clear selection"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <span class="ssb-count ssb-sel" id="ss-count">${_syncSel.size?_syncSel.size+' selected':''}</span>
+        <button class="btn btn-ghost small ssb-all" id="ss-all" title="Select every file here" aria-pressed="${_ssAll?'true':'false'}">${syncAllLabel(_ssAll, fileItems.length)}</button>
+        <button class="btn btn-ghost small ssb-sel" id="ss-move"${_syncSel.size ? '' : ' disabled'} aria-haspopup="menu" aria-label="Move to…" title="Move to…"><svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg><span class="ssb-l">Move to…</span></button>
+        <button class="btn btn-ghost small ssb-sel ssb-danger" id="ss-del"${_syncSel.size ? '' : ' disabled'} aria-label="Delete on every device" title="Delete on every device"><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg><span class="ssb-l">Delete on every device</span></button>
       </div>` : '';
     const trashbar = _inTrash ? `<div class="sync-selbar">
         <span class="muted small" style="margin-right:auto">${items.filter(i=>!i.dir).length} file${items.filter(i=>!i.dir).length===1?'':'s'} moved aside on this device \u2014 nothing here is on your other devices' screens.</span>
@@ -1962,16 +1981,7 @@ window.PCFilesFactory = function(dep){
       const card = cb.closest('.file-card'); if(card) card.classList.toggle('selected', cb.checked);
       grid.classList.toggle('selmode', _syncSel.size > 0);
       _syncSelOn = _syncSel.size > 0;
-      const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size ? _syncSel.size + ' selected' : 'none selected';
-      const d2 = $('#ss-del', grid); if(d2) d2.disabled = !_syncSel.size;
-      const m2 = $('#ss-move', grid); if(m2) m2.disabled = !_syncSel.size;
-      const n2 = $('#ss-none', grid); if(n2) n2.disabled = !_syncSel.size;
-      const a2 = $('#ss-all', grid); if(a2){
-        const every = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
-        a2.setAttribute('aria-pressed', every ? 'true' : 'false');
-        a2.textContent = (every ? '\u2611 Deselect all' : '\u2610 Select all')
-          + (fileItems.length ? ' (' + fileItems.length + ')' : '');
-      }
+      paintSyncBar(grid, fileItems);
     });
     /* selmode follows the DRIVE's grammar: having a selection IS the mode — no toggle. */
     _syncSelOn = _syncSel.size > 0;
@@ -2061,9 +2071,7 @@ window.PCFilesFactory = function(dep){
             const row = b.closest('.file-card, .fx-row');
             if(row) row.classList.toggle('selrow', _syncSel.has(b.dataset.path));
           });
-          const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size + ' selected';
-          const d = $('#ss-del', grid); if(d) d.disabled = !_syncSel.size;
-          const m = $('#ss-move', grid); if(m) m.disabled = !_syncSel.size;
+          paintSyncBar(grid, fileItems);
         };
         $$('.dlsync', grid).forEach(b => {
           const row = b.closest('.file-card, .fx-row');
