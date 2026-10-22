@@ -509,6 +509,8 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
         if body:
             msg["body_text"] = body.get("body_text", "")
             msg["body_html"] = body.get("body_html", "")
+    # A body the old parser cut to its last html part is re-fetched and stored whole (mail_sync.repair_split_body).
+    msg = await mail_sync.repair_split_body(db, current_user, acc, folder, msg)
     if msg.get("is_draft"):     # draft attachments offloaded to Blossom → rehydrate to b64 for the composer
         for a in (msg.get("attachments") or []):
             if a.get("sha256") and not a.get("b64"):
@@ -1238,4 +1240,9 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
             if body:
                 m["body_text"] = body.get("body_text", "")
                 m["body_html"] = body.get("body_html", "")
+    for i, m in enumerate(thread):                      # a body the old parser cut short (cheap check first)
+        if mail_sync.body_lost_its_head(m):
+            macc = _resolve_account(db, current_user, m.get("account") or "")
+            if macc:
+                thread[i] = await mail_sync.repair_split_body(db, current_user, macc, m.get("folder") or "INBOX", m)
     return {"messages": thread}

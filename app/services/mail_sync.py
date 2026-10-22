@@ -166,6 +166,56 @@ async def load_attachment(db: Session, ref: dict) -> tuple[bytes | None, str]:
 
 # --- message → doc -------------------------------------------------------------------------------
 
+# ---- repair: a body stored by the old parser that kept only the LAST html part --------------------------------
+_HEAD_WORD = __import__("re").compile(r"[A-Za-z]{4,}")
+
+
+def body_lost_its_head(msg: dict) -> bool:
+    """True when the stored HTML is missing most of the text part's OPENING words, on a message with an attachment.
+
+    That is the shape the old get_email_body left (2026-10-22, Sam's reply: the preview -- the text part -- began "I
+    received your email…", the opened message began "Sincerely, Sam"): a reply split into several text/html parts
+    around a PDF, of which only the last was kept. Cheap enough to ask of every opened message."""
+    import re
+    text, html = (msg.get("body_text") or "").strip(), msg.get("body_html") or ""
+    if not text or not html or not msg.get("attachments"):
+        return False
+    head = [w.lower() for w in _HEAD_WORD.findall(text)[:8]]
+    if len(head) < 4:
+        return False
+    plain = re.sub(r"<[^>]+>", " ", html).lower()
+    return sum(1 for w in head if w in plain) * 2 < len(head)
+
+
+async def repair_split_body(db: Session, user, account, folder: str, msg: dict) -> dict:
+    """Re-fetch and re-parse ONE message whose stored body lost its head (body_lost_its_head), store the whole body,
+    and return the repaired message. Anything that fails leaves the message exactly as it was."""
+    if not msg or not body_lost_its_head(msg):
+        return msg
+    import asyncio
+    try:
+        fresh = await asyncio.to_thread(mail_service.fetch_by_uids, account, folder, [str(msg.get("uid"))])
+    except Exception as e:
+        logger.info("[mail-sync] repair re-fetch %s/%s failed: %s", folder, msg.get("uid"), type(e).__name__)
+        return msg
+    m = (fresh or [None])[0]
+    if not m or not m.body_html:
+        return msg
+    if body_lost_its_head({"body_text": m.body_text, "body_html": m.body_html, "attachments": [1]}):
+        return msg                       # the mail itself is like that; nothing to repair
+    try:
+        seckey = nostr_store.user_storage_seckey(db, user)
+        owner_pk = nostr_service.derive_pubkey(seckey)
+        doc = {k: v for k, v in msg.items() if k != "body_ref"}
+        doc.update(body_text=m.body_text or msg.get("body_text", ""), body_html=m.body_html)
+        stored = await offload_body(db, owner_pk, dict(doc))
+        await mail_store.store_message(seckey, account.email, folder, stored)
+        logger.info("[mail-sync] repaired a split html body: %s/%s", folder, msg.get("uid"))
+    except Exception as e:
+        logger.info("[mail-sync] repair store %s/%s failed: %s", folder, msg.get("uid"), type(e).__name__)
+    return {**msg, "body_text": m.body_text or msg.get("body_text", ""), "body_html": m.body_html}
+
+
 def _logical_of(folder: str, meta: dict) -> str:
     """Map a real folder name to a logical one (INBOX/Sent/Drafts/Trash/Spam/Archive) so the unified
     'All inboxes' view can filter consistently across accounts whose real folder names differ."""

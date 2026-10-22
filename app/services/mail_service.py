@@ -223,33 +223,48 @@ def decode_mime_header(header_value: str) -> str:
     return "".join(decoded_parts)
 
 
+def _inline_parts(msg: email.message.Message):
+    """Every leaf part in reading order, skipping attachments and anything inside a forwarded message."""
+    if msg.get_content_type() == "message/rfc822":
+        return                      # a forwarded email is its own message, shown as an attachment
+    if msg.is_multipart():
+        for sub in msg.get_payload() or []:
+            yield from _inline_parts(sub)
+        return
+    if "attachment" in str(msg.get("Content-Disposition", "")).lower():
+        return
+    yield msg
+
+
+def _decoded(part: email.message.Message) -> str:
+    try:
+        charset = part.get_content_charset() or "utf-8"
+        return (part.get_payload(decode=True) or b"").decode(charset, errors="replace")
+    except Exception:
+        return str(part.get_payload())
+
+
 def get_email_body(msg: email.message.Message) -> Tuple[str, Optional[str]]:
-    """Extract text and HTML body from email message."""
+    """Extract text and HTML body from email message.
+
+    EVERY INLINE PART, IN ORDER (2026-10-22, "the preview says 'I received your email, the pdf is…' but that never
+    appears when you open the email"). Apple Mail and others send a reply with a PDF in the middle as several
+    text/html parts -- the reply, the PDF, the signature -- and each part used to be assigned over the last, so the
+    opened message was only "Sincerely, Sam". The pieces are joined in order; a forwarded message (message/rfc822)
+    is never merged in (it used to REPLACE the body when it came last), and an attachment is never the body."""
     text_body = ""
     html_body = None
 
     if msg.is_multipart():
-        for part in msg.walk():
+        texts, htmls = [], []
+        for part in _inline_parts(msg):
             content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition", ""))
-
-            # Skip attachments
-            if "attachment" in content_disposition:
-                continue
-
             if content_type == "text/plain":
-                try:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_body = part.get_payload(decode=True).decode(charset, errors="replace")
-                except Exception:
-                    text_body = str(part.get_payload())
-
+                texts.append(_decoded(part))
             elif content_type == "text/html":
-                try:
-                    charset = part.get_content_charset() or "utf-8"
-                    html_body = part.get_payload(decode=True).decode(charset, errors="replace")
-                except Exception:
-                    html_body = str(part.get_payload())
+                htmls.append(_decoded(part))
+        text_body = "\n".join(t for t in texts if t)
+        html_body = "\n".join(h for h in htmls if h) or None
     else:
         content_type = msg.get_content_type()
         try:
