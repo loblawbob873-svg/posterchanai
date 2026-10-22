@@ -38,9 +38,14 @@ class ComingBackToTheAppChecksMail(unittest.TestCase):
 
     def test_it_refuses_the_cases_that_would_make_it_wrong_or_wasteful(self):
         fn = self._fn()
-        for guard in ("GUEST", "navigator.onLine === false", "this._syncing",
+        for guard in ("GUEST", "this._probablyOffline()", "this._syncing",
                       "this.accounts && this.accounts.length"):
             self.assertIn(guard, fn, guard)
+        # Offline means EVIDENCE (2026-10-22): onLine=false is reported under Orbot's VPN with the network fine, so it
+        # rests only when that AND a recent request failure agree -- onLine alone stopped mail arriving over Tor.
+        body = APP[APP.index("_probablyOffline(){"):APP.index("refreshIfStale(){")]
+        self.assertIn("navigator.onLine === false", body)
+        self.assertIn("this._netFailAt", body)
 
     def test_it_never_toasts_and_never_blocks(self):
         """A background refresh that toasts is a background refresh nobody wanted."""

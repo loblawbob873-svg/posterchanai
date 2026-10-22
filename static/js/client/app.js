@@ -12544,9 +12544,9 @@
     /* Said HERE, before the shared attempt exists — never inside it. Thrown before the attempt's first
      * await, its `finally` would run before `_aiAuthP` is assigned and leave the rejection latched:
      * every later call answered "you're offline" with the network long back. */
-    if(navigator.onLine === false){
-      const e = new Error('could not establish your app session: you’re offline'); e.offline = true; throw e;
-    }
+    /* navigator.onLine is NOT checked here (it was): under Orbot's VPN Android reports false while the network
+     * works, and every app session -- mail, Telegram, AI -- was refused before a request was made. A login that
+     * really cannot reach the instance fails below and is marked `offline` there, so callers still fall back. */
     /* Declared BEFORE the attempt, not after. `signer.signEvent` can throw synchronously (a null
      * signer is a TypeError), and then catch+finally run before the assignment below would — a
      * temporal-dead-zone ReferenceError that would replace the real error with a confusing one on

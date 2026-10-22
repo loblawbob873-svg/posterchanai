@@ -469,17 +469,19 @@ window.PCMailFactory = function(dep){
         if(kept){ this.offline = true; Object.defineProperty(kept, '_fromDevice', { value:true }); return kept; }
         throw why;
       };
-      if(navigator.onLine === false){
-        const e = new Error(read ? 'you’re offline and this hasn’t been opened on this device yet' : 'you’re offline — this needs the mail server');
-        e.offline = true; return fromDevice(e);
-      }
+      /* navigator.onLine IS A HINT, NEVER A REASON NOT TO TRY. With Orbot in VPN mode Android's WebView reports
+       * onLine=false (the VPN is never a "validated" network) while every request works -- and it can stay false after
+       * Orbot is turned off until the app restarts. Refusing on it meant no mail request ever left the phone: the list
+       * came from the device cache and search, which has none, said "Could not search email" (2026-10-22). Truly
+       * offline, the fetch fails in milliseconds and lands in the same device fallback. */
       let j;
       try{
         await ensureAiSession();
         const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
         if(!r.ok) throw new Error('http '+r.status);
         j = await r.json();
-      }catch(e){ if(_unreachable(e)) return fromDevice(e); throw e; }
+      }catch(e){ if(_unreachable(e)){ this._netFailAt = Date.now(); return fromDevice(e); } throw e; }
+      this._netFailAt = 0;
       if(read){ this.offline = false; MailCache.put(path, j); }
       return j;
     },
@@ -1832,7 +1834,7 @@ window.PCMailFactory = function(dep){
       };
     },
     async sync(manual){
-      if(navigator.onLine === false){ if(manual) toast('you’re offline — showing the mail kept on this device'); return; }
+      // navigator.onLine is a hint (see api()): a sync that fails says so through its own error path.
       if(this._syncing) return; this._syncing=true; this._lastSync=Date.now();
       // A background poll has no UI to drive: `this.root` is null unless Messages is open, and every
       // element lookup below is already scoped to it.
@@ -1879,9 +1881,13 @@ window.PCMailFactory = function(dep){
      * what "fresh enough" means. It never toasts and never blocks a paint: the list is already on
      * screen from cache and this fills in behind it. */
     FRESH_MS: 60 * 1000,
+    /* A BACKGROUND poll may rest while offline -- but only on EVIDENCE: navigator.onLine===false AND a request that
+     * really failed in the last five minutes. onLine alone is false under Orbot's VPN with the network fine, and
+     * resting on it would stop new mail arriving for as long as Tor is on. */
+    _probablyOffline(){ return navigator.onLine === false && !!this._netFailAt && Date.now() - this._netFailAt < 300000; },
     refreshIfStale(){
       if(S.GUEST) return false;
-      if(navigator.onLine === false) return false;
+      if(this._probablyOffline()) return false;
       if(this._syncing) return false;
       if(!(this.accounts && this.accounts.length)) return false;
       if(Date.now() - (this._lastSync || 0) < this.FRESH_MS) return false;
@@ -1892,7 +1898,7 @@ window.PCMailFactory = function(dep){
       if(this._pollT) return;                       // one timer per tab, not one per call
       const tick = () => {
         if(S.GUEST) return;
-        if(navigator.onLine === false) return;
+        if(this._probablyOffline()) return;
         // Same occlusion trap as the torrent poll above: on the desktop app `hidden` also means
         // "another window is in front", and a mail check that stops for that is a mail check that
         // stops whenever you are working.

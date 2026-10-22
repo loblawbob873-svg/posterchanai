@@ -64,7 +64,7 @@
       if(v){ st.offline = true; return v; }
       throw why;
     };
-    if(navigator.onLine === false){ const e = new Error('You’re offline.'); e.offline = true; return fromDevice(e); }
+    // navigator.onLine is a hint (Orbot's VPN reports false while it works): try, and fall back on a real failure.
     let r, j = null;
     try{
       try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(e){ if(e && e.offline) throw e; }

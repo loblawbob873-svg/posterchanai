@@ -85,5 +85,13 @@ __PC.switchView('mail');''')
         await browser.js("var input=document.querySelector('#mail-search');input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));")
         await browser.until("document.querySelectorAll('.mail-item').length===1")
         assert await browser.js("mailRequests.filter(p=>p.includes('/messages?')).at(-1).includes('account=same%40work.test')")
+        # ORBOT (2026-10-22): Android's WebView reports navigator.onLine=false under Orbot's VPN while every request
+        # works, and it can stay false after a mid-session network switch. Mail refused to send on that and said "Could
+        # not search email" with the network fine. A false onLine must not stop a search from being ASKED.
+        await browser.js("failSearch=false;Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});")
+        await browser.js("var input=document.querySelector('#mail-search');input.value='orbot';input.dispatchEvent(new Event('input',{bubbles:true}));")
+        await browser.until("mailRequests.some(p=>p==='/api/mail/search?q=orbot')")
+        await browser.until("document.querySelectorAll('.mail-item').length===2")
+        assert not await browser.js("document.querySelector('#mail-items').textContent.includes('Could not search email')")
     init="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online','',check,extra_init=init))
