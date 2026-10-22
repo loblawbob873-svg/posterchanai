@@ -74,7 +74,7 @@ def test_content_warning_clean_links_and_emoji():
         await desktop.login(b)
         await open_composer(b)
         await text(b, "spoilers ahead https://example.com/article?id=7&utm_source=newsletter&utm_medium=email")
-        await more(b, "clean")
+        await more(b, "clean")          # presses the composer's #cmp-clean
         await b.until("!/utm_/.test(document.querySelector('#cmp-send').closest('.modal, .modal-card, [role=dialog], body').querySelector('textarea').value)")
         kept = await b.js("document.querySelector('#cmp-send').closest('.modal, .modal-card, [role=dialog], body').querySelector('textarea').value")
         assert "https://example.com/article?id=7" in kept, kept          # the real parameter survives
@@ -88,6 +88,8 @@ def test_content_warning_clean_links_and_emoji():
         # Content warning with a reason.
         await more(b, "cw")
         await b.until("!document.querySelector('#cmp-cw-row').classList.contains('hidden')")
+        # The menu entry presses the composer's own Sensitive toggle (#cmp-cw-btn), which now reads as on.
+        assert await b.js("document.querySelector('#cmp-cw-btn').classList.contains('on')")
         await b.js("(()=>{const r=document.querySelector('#cmp-cw-reason');r.value='finale spoilers';r.dispatchEvent(new Event('input',{bubbles:true}));})(); 1")
         await b.js("document.querySelector('#cmp-send').click(); 1")
         await b.until("__sentEvents.some(e=>e.kind===1&&/spoilers ahead/.test(e.content))")
