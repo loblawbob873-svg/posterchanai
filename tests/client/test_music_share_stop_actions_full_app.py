@@ -89,3 +89,59 @@ def test_the_stop_actions_are_behind_more_on_a_phone():
     assert "Stop getting this playlist" in got["head_menu"] and "Stop receiving from" in got["head_menu"], got["head_menu"]
     assert got["confirm"], "picking the menu item did nothing"
     assert not got["overflow"]
+
+
+async def _shared_playlist(b):
+    await b.js(SEED)
+    await desktop.login(b)
+    await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+    await b.js("__PC.switchView('music'); true")
+    await b.until("!!window.PCMusicShare")
+    await b.js("(async()=>{ await PCMusicShare.loadIn(); })()")
+    await b.until("PCMusicShare.pendingShares().length>0")
+    await b.js("window.__pl=document.createElement('div'); __pl.id='pl'; document.getElementById('feed').prepend(__pl); PCMusicShare.renderShared(__shareKey, __pl, {}); true")
+    await b.until("!!document.querySelector('#pl #msh-refresh')")
+
+
+async def _confirm(b):
+    await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
+    await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); true")
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_refresh_stop_getting_and_stop_receiving_do_what_they_say():
+    """On a shared playlist: Refresh reads the share again and redraws it; "Stop getting this playlist" (confirmed)
+    takes it off your list; and "Stop receiving from Matthew" (confirmed) hides everything he shares."""
+    async def check(b):
+        await _shared_playlist(b)
+        await b.js("document.querySelector('#pl #msh-refresh').click(); true")
+        await b.until("!!document.querySelector('#pl #msh-refresh') && !document.querySelector('#pl #msh-refresh').disabled")
+        await b.js("document.querySelector('#pl #msh-dismiss').click(); true")
+        await _confirm(b)
+        await b.until("PCMusicShare.pendingShares().length===0 && !document.querySelector('#pl #msh-dismiss')")
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=RELAY))
+
+    async def check2(b):
+        await _shared_playlist(b)
+        await b.js("document.querySelector('#pl #msh-stopfrom').click(); true")
+        await _confirm(b)
+        await b.until("PCMusicShare.pendingShares().length===0 && !document.querySelector('#pl #msh-stopfrom')")
+
+    asyncio.run(desktop.with_browser("online", "", check2, extra_init=RELAY))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_share_dialog_cancels_without_sharing():
+    async def check(b):
+        await desktop.login(b)
+        await b.js("__PC.switchView('music'); true")
+        await b.until("!!window.PCMusicShare")
+        await b.js("window.__shareEv=0;const __s=WebSocket.prototype.send;WebSocket.prototype.send=function(r){try{const m=JSON.parse(r);if(m[0]==='EVENT'&&String(JSON.stringify(m[1].tags)).includes('musicshare'))__shareEv++;}catch(_){}return __s.call(this,r)};"
+                   "PCMusicShare.openShareDialog({name:'Mix',tracks:[{sha:'a'.repeat(64),name:'Song'}]}); true")
+        await b.until("!!document.querySelector('#msh-cancel')")
+        await b.js("document.querySelector('#msh-cancel').click(); true")
+        await b.until("!document.querySelector('#msh-cancel')")
+        assert await b.js("__shareEv") == 0, "Cancel shared something"
+
+    asyncio.run(desktop.with_browser("online", "", check, extra_init=RELAY))
