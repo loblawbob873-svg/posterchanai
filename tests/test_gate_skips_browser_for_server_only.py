@@ -135,7 +135,7 @@ def test_a_server_only_full_run_leaves_out_exactly_the_browser_files(monkeypatch
     g = _gate()
     seen = {}
 
-    def fake_shards(root, env, directory, files, shards, durations, captured):
+    def fake_shards(root, env, directory, files, shards, durations, captured, remote=None):
         seen["files"] = list(files)
         return True, "%d files" % len(files)
     monkeypatch.setitem(g.__dict__, "_run_shards", fake_shards)

@@ -442,7 +442,9 @@ GATE_REMOTE_FILE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.con
 REMOTE_TREE = 'tree'
 REMOTE_MAX_FAILURES = 10           # more on one remote shard = its environment; that shard runs here, whole                     # in the remote account's home; venv-unified there is its own venv
 # Files that need what the remote venv deliberately lacks (torch/XPU, the ACE-Step and searxng checkouts).
-_LOCAL_ONLY = re.compile(r"^\s*(?:import|from)\s+(?:torch|torchaudio|torchvision|acestep|searx)\b", re.M)
+# ...and the gate's own tests, which read this checkout's git state (the remote tree is files, not a repository).
+_LOCAL_ONLY = re.compile(r"^\s*(?:import|from)\s+(?:torch|torchaudio|torchvision|acestep|searx)\b"
+                         r"|deploy_regression_gate|scripts/checkall|checkall\.py", re.M)
 _SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=30']
 
 

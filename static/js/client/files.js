@@ -34,7 +34,7 @@ window.PCFilesFactory = function(dep){
   /* The synced view's selection bar, painted in place (see `selbar`): the count, what is enabled, and Select all's
    * own label -- one place, so a checkbox and a row press cannot leave it saying two different things. */
   function syncAllLabel(every, n){
-    return `<svg class="ic" aria-hidden="true"><use href="#${every ? 'i-close' : 'i-check'}"></use></svg><span class="ssb-l2">${every ? 'Deselect all' : 'Select all'}</span>${n ? ' <span class="ssb-n">' + n + '</span>' : ''}`;
+    return `<svg class="ic b-ic" aria-hidden="true"><use href="#${every ? 'i-close' : 'i-check'}"></use></svg><span class="ssb-l2">${every ? 'Deselect all' : 'Select all'}</span>${n ? ' <span class="ssb-n">' + n + '</span>' : ''}`;
   }
   function paintSyncBar(grid, fileItems){
     const n = _syncSel.size, bar = $('.sync-selbar', grid);
@@ -1934,8 +1934,8 @@ window.PCFilesFactory = function(dep){
         <button class="btn btn-ghost small ssb-sel" id="ss-none"${_syncSel.size?'':' disabled'} aria-label="Clear selection" title="Clear selection"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
         <span class="ssb-count ssb-sel" id="ss-count">${_syncSel.size?_syncSel.size+' selected':''}</span>
         <button class="btn btn-ghost small ssb-all" id="ss-all" title="Select every file here" aria-pressed="${_ssAll?'true':'false'}">${syncAllLabel(_ssAll, fileItems.length)}</button>
-        <button class="btn btn-ghost small ssb-sel" id="ss-move"${_syncSel.size ? '' : ' disabled'} aria-haspopup="menu" aria-label="Move to…" title="Move to…"><svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg><span class="ssb-l">Move to…</span></button>
-        <button class="btn btn-ghost small ssb-sel ssb-danger" id="ss-del"${_syncSel.size ? '' : ' disabled'} aria-label="Delete on every device" title="Delete on every device"><svg class="ic" aria-hidden="true"><use href="#i-trash"></use></svg><span class="ssb-l">Delete on every device</span></button>
+        <button class="btn btn-ghost small ssb-sel" id="ss-move"${_syncSel.size ? '' : ' disabled'} aria-haspopup="menu" aria-label="Move to…" title="Move to…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><span class="ssb-l">Move to…</span></button>
+        <button class="btn btn-ghost small ssb-sel ssb-danger" id="ss-del"${_syncSel.size ? '' : ' disabled'} aria-label="Delete on every device" title="Delete on every device"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg><span class="ssb-l">Delete on every device</span></button>
       </div>` : '';
     const trashbar = _inTrash ? `<div class="sync-selbar">
         <span class="muted small" style="margin-right:auto">${items.filter(i=>!i.dir).length} file${items.filter(i=>!i.dir).length===1?'':'s'} moved aside on this device \u2014 nothing here is on your other devices' screens.</span>

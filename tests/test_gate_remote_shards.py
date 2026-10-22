@@ -50,6 +50,8 @@ def test_tests_needing_torch_or_local_checkouts_stay_here(tmp_path):
     (tmp_path / "c.py").write_text("x = 'import torch'  # prose\nimport json\n")
     assert G["local_only"](tmp_path, "a.py") and G["local_only"](tmp_path, "b.py")
     assert not G["local_only"](tmp_path, "c.py")
+    (tmp_path / "d.py").write_text('G = runpy.run_path("scripts/deploy_regression_gate.py")\n')
+    assert G["local_only"](tmp_path, "d.py"), "the gate's own tests read this checkout's git state"
 
 
 def test_the_remote_verdict_is_never_final():
