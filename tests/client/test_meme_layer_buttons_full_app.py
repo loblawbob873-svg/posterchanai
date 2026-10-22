@@ -199,3 +199,40 @@ def test_the_add_sheet_sticker_layout_and_a_file_from_this_device(media):
         await b.until(f"{LAYERS}.length===3")
         assert not await b.js("window.__errors||[]")
     asyncio.run(_open(1280, 800, False, '', media, check))
+
+
+@pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome required')
+def test_caption_centre_warp_reset_erase_clear_and_audio_full_length(media):
+    """⊕ Centre toggles a caption between centred and free; "Reset warp" drops a warp; "Bring it all back"
+    clears an erase mask; an audio layer's "Whole meme" makes it start at 0 and last the whole meme."""
+    async def check(b):
+        await b.js("PCMeme.reset()")
+        assert await b.js(f"PCMeme.addMedia({json.dumps(_MEDIA[0].base + '/photo.png')},'image/png')")
+        await b.until(f"{LAYERS}.length===1")
+        # A warp and an erase mask on the (selected) photo, as the builder stores them.
+        await b.js("(()=>{const p=JSON.parse(localStorage.getItem('pc_meme_project'));const l=p.layers[0];"
+                   "l.warp=[0,0,1,0,0,1,1,1].map((v,i)=>v+(i===0?0.05:0));l.mask='data:image/png;base64,iVBORw0KGgo=';"
+                   "localStorage.setItem('pc_meme_project',JSON.stringify(p));PCMeme.render();})(); 1")
+        await b.until("!!document.getElementById('mb-warp-reset') && !!document.getElementById('mb-erase-clear')")
+        await b.js("document.getElementById('mb-warp-reset').click(); 1")
+        await b.until(f"!('warp' in {LAYERS}[0])")
+        await b.js("document.getElementById('mb-erase-clear').click(); 1")
+        await b.until(f"!{LAYERS}[0].mask")
+
+        await b.js("document.getElementById('mb-add-text').click(); 1")
+        await b.until("!!document.getElementById('mb-center')")
+        await b.js("document.getElementById('mb-center').click(); 1")
+        await b.until(f"{LAYERS}.some(l=>l.type==='text'&&l.align==='center')")
+        await b.js("document.getElementById('mb-center').click(); 1")
+        await b.until(f"{LAYERS}.some(l=>l.type==='text'&&!l.align)")
+
+        # An audio layer that covers only part of the meme.
+        await b.js("(()=>{const p=JSON.parse(localStorage.getItem('pc_meme_project'));p.layers.push({id:'aud1',type:'audio',src:"
+                   + json.dumps(_MEDIA[0].base + '/photo.png') + ",start:2,dur:1,vol:1});"
+                   "localStorage.setItem('pc_meme_project',JSON.stringify(p));PCMeme.render();})(); 1")
+        await b.until("!!document.querySelector('.mb-track[data-id=aud1]')")
+        await b.js("document.querySelector('.mb-track[data-id=aud1]').click(); 1")
+        await b.until("!!document.getElementById('mb-aud-all')")
+        await b.js("document.getElementById('mb-aud-all').click(); 1")
+        await b.until(f"(()=>{{const a={LAYERS}.find(l=>l.id==='aud1');return a.start===0&&a.dur>1}})()")
+    asyncio.run(_open(1280, 800, False, '', media, check))
