@@ -28,7 +28,7 @@ function boot(seed) {
     TextEncoder, indexedDB: undefined, location: { href: 'https://poster.place/client' }, AbortController };
   context.globalThis = context;
   vm.runInNewContext(src, context);
-  return { C: window.PCConcord, store };
+  return { C: window.PCConcord, store, window };
 }
 
 /* One account's relays: whatever was published is what the next device reads. `mode` lets a test make
@@ -148,6 +148,53 @@ for (const mode of ['silent', 'down']) {
   await tick(1800);
   await laptop.C.__testRefreshReadDoc(net.p, true);
   if (laptop.C.unreadRooms() !== 1) fail('a message newer than the phone\'s mark was marked read');
+}
+
+/* 7. AN ANSWERED INVITATION IS ANSWERED ON EVERY DEVICE AND AFTER EVERY LOGIN. "every time I clear my concord
+ *    invites and login, I see you have 12 invites" (2026-10-21): declines lived in this device's localStorage only.
+ *    The phone declines; a fresh login on the laptop must refuse to park that invitation again. An invitation to a
+ *    community already joined is refused too. */
+{
+  const net = relays();
+  const inviteId = 'e'.repeat(64);
+  const phone = boot();
+  Object.assign(phone.window.__PC, net.p);
+  await phone.C.__testReadDoc(net.p);
+  phone.C.noteInviteAnswered(inviteId);
+  await tick(1800);
+  const saved = net.events.length ? JSON.parse(net.events[0].content.slice(4)) : {};
+  if (!(saved.invites || []).includes(inviteId)) fail('the decline was not written to the account\'s synced document: ' + JSON.stringify(saved));
+  if (!saved.marks) fail('the read marks must survive the invitation write');
+  const laptop = boot({ ['pc.concord.rooms.v1.' + ME]: JSON.stringify([{ ...room, cord: { bundle: { community_id: 'd'.repeat(64) } } }]) });
+  Object.assign(laptop.window.__PC, net.p);
+  await laptop.C.__testReadDoc(net.p);
+  const opts = laptop.C.inviteParkOptions();
+  if (!opts.answered(inviteId)) fail('a fresh login parks an invitation the account already declined');
+  if (opts.answered('f'.repeat(64))) fail('an unanswered invitation was treated as answered');
+  if (!opts.skip({ bundle: { community_id: 'd'.repeat(64) } })) fail('an invitation to a community already joined was parked');
+  if (opts.skip({ bundle: { community_id: '1'.repeat(64) } })) fail('an invitation to a new community was refused');
+}
+
+/* 8. "i see all my new rooms as unread when i did" / "concord read room activity not syncing across devices"
+ *    (2026-10-21). A room the phone OPENED (markRead -- the phone's path, which never went through the desktop-only
+ *    publish) is read on the laptop, and a room restored on the laptop WITHOUT an invite coordinate (no naddr: the
+ *    membership list carried none) reads the synced mark instead of being unread for ever. */
+{
+  const bare = { communityId: '9'.repeat(64), name: 'New room', local: false, channels: [{ name: 'general' }] };
+  const phoneRoom = { ...bare, naddr: 'naddr1newroom', url: 'https://x/invite/naddr1newroom#s' };
+  const hist = [msg('n1', now - 120e3, false), msg('n2', now - 60e3, false)];
+  const net = relays();
+  const phone = boot({ ['pc.concord.rooms.v1.' + ME]: JSON.stringify([phoneRoom]), ['pc.concord.test.' + phoneRoom.naddr]: JSON.stringify(hist) });
+  Object.assign(phone.window.__PC, net.p);
+  await phone.C.__testReadDoc(net.p);
+  phone.C.__testMarkRead(phoneRoom, 'general');
+  await tick(1800);
+  if (!net.published.length) fail('opening a room on the phone did not publish the account\'s read mark');
+  const laptop = boot({ ['pc.concord.rooms.v1.' + ME]: JSON.stringify([bare]), ['pc.concord.test.' + bare.communityId]: JSON.stringify(hist) });
+  Object.assign(laptop.window.__PC, net.p);
+  await laptop.C.__testReadDoc(net.p);
+  const n = laptop.C.unreadRooms();
+  if (n !== 0) fail(`a room read on the phone is unread on the laptop (${n}) -- a room with no naddr must still read the synced mark`);
 }
 
 console.log('concord read follows the account: ok');

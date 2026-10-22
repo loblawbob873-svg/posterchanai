@@ -101,9 +101,10 @@
       const text=localStorage.getItem(storageKey(context))||'';
       if(text.length>4*1024*1024)return {wraps:[],dismissed:[]};
       const value=JSON.parse(text||'{}');
+      const cid={};for(const [k,v] of Object.entries(value.cid&&typeof value.cid==='object'?value.cid:{}))if(hexKey(k)&&hexKey(v))cid[k]=v;
       return {wraps:(Array.isArray(value.wraps)?value.wraps:[]).slice(0,32),
-              dismissed:(Array.isArray(value.dismissed)?value.dismissed:[]).filter(hexKey).slice(0,200)};
-    }catch(_){return {wraps:[],dismissed:[]};}
+              dismissed:(Array.isArray(value.dismissed)?value.dismissed:[]).filter(hexKey).slice(0,200),cid};
+    }catch(_){return {wraps:[],dismissed:[],cid:{}};}
   }
   function pending(context){current(context);return readPending(context).wraps.filter(w=>w&&hexKey(w.id));}
   function dismiss(id,context){
@@ -111,21 +112,33 @@
     const state=readPending(context);
     state.wraps=state.wraps.filter(w=>w&&w.id!==id);
     state.dismissed=[id,...state.dismissed.filter(other=>other!==id)].slice(0,200);
+    delete state.cid[id];
     localStorage.setItem(storageKey(context),JSON.stringify(state));
   }
-  async function park(wrap,context){
+  /* The community a parked invitation is for, as recorded when it was opened -- so an invitation to a community the
+   * account has already joined can be dropped without opening it again (a remote signer would prompt for that). */
+  function communityOf(id,context){ current(context); return readPending(context).cid[id]||''; }
+  /* `options.skip(invite)` -> true: an invitation this account already answered on another device, or one to a
+   * community it is already in. It is recorded as dismissed here and never shown (2026-10-21: "every time I clear my
+   * concord invites and login, I see you have 12 invites"). */
+  async function park(wrap,context,options={}){
     current(context);
     if(!wrap||!hexKey(wrap.id))throw new Error('Invalid invitation ID');
     const before=readPending(context);
     if(before.dismissed.includes(wrap.id)||before.wraps.some(w=>w&&w.id===wrap.id))return false;
-    await open(wrap,context);current(context);
+    if(typeof options.answered==='function'&&options.answered(wrap.id)){ dismiss(wrap.id,context); return false; }
+    const invite=await open(wrap,context);current(context);
+    if(typeof options.skip==='function'&&options.skip(invite)){ dismiss(wrap.id,context); return false; }
     // Persist only the recipient-encrypted giftwrap, never plaintext community keys.
     const state=readPending(context);
     if(state.dismissed.includes(wrap.id)||state.wraps.some(w=>w&&w.id===wrap.id))return false;
     state.wraps=[JSON.parse(JSON.stringify(wrap)),...state.wraps].slice(0,32);
+    const cid=String(invite&&invite.bundle&&invite.bundle.community_id||'');
+    if(hexKey(cid))state.cid[wrap.id]=cid;
+    for(const k of Object.keys(state.cid))if(!state.wraps.some(w=>w&&w.id===k))delete state.cid[k];
     while(JSON.stringify(state).length>3*1024*1024)state.wraps.pop();
     localStorage.setItem(storageKey(context),JSON.stringify(state));
     return true;
   }
-  globalThis.PCCordDirectInvites = Object.freeze({ open, create, pending, park, dismiss });
+  globalThis.PCCordDirectInvites = Object.freeze({ open, create, pending, park, dismiss, communityOf });
 })();

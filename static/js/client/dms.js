@@ -799,7 +799,7 @@ window.PCDmsFactory = function(dep){
     if(_cordDirectBusy.has(key)||_cordDirectBusy.size>=32)return false;
     _cordDirectBusy.add(key);
     try{
-      const api=await cordDirectModule(),added=await api.park(wrap,context);
+      const api=await cordDirectModule(),added=await api.park(wrap,context,(window.PCConcord&&window.PCConcord.inviteParkOptions)?window.PCConcord.inviteParkOptions():{});
       if(added && context.isCurrent()){
         window.dispatchEvent(new CustomEvent('pc-concord-direct-invites'));
         /* The message is the way in: tapping it opens Concord on the invitation (it used to say "open Concord"

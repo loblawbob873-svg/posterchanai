@@ -81,4 +81,18 @@ for(let i=0;i<34;i++)await api.park(wire({body:{...bundle,name:'bounded '+i}}),c
 assert.equal(api.pending(context).length,32);
 const persisted=JSON.stringify([...storage]);
 await assert.rejects(()=>api.park(invalid,context));assert.equal(JSON.stringify([...storage]),persisted);
+// 2026-10-21: "every time I clear my concord invites and login, I see you have 12 invites". An invitation this account
+// already ANSWERED (synced, decided on another device or before the login) is never parked again; one for a community
+// already joined is never parked at all; and a parked one remembers its community so a later join can sweep it.
+storage.clear();
+const answeredWrap=wire({body:{...bundle,name:'answered elsewhere'}});
+assert.equal(await api.park(answeredWrap,context,{answered:id=>id===answeredWrap.id}),false);
+assert.equal(api.pending(context).length,0,'an answered invitation came back after login');
+const joinedWrap=wire({body:{...bundle,name:'already joined'}});
+assert.equal(await api.park(joinedWrap,context,{skip:inv=>inv.bundle.community_id===bundle.community_id}),false);
+assert.equal(api.pending(context).length,0,'an invitation to a joined community was counted');
+const freshWrap=wire({body:{...bundle,name:'new'}});
+assert.equal(await api.park(freshWrap,context,{answered:()=>false,skip:()=>false}),true);
+assert.equal(api.communityOf(freshWrap.id,context),bundle.community_id);
+api.dismiss(freshWrap.id,context);assert.equal(api.communityOf(freshWrap.id,context),'');
 console.log('direct invitation wire passed');

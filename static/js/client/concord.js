@@ -183,7 +183,14 @@
     if(Date.now()>TUNNEL.until)refreshTunnel();
     if(TUNNEL.off&&!TUNNEL.ticket)return null;
     const home=homeRelayUrl(p||(typeof PC==='function'?PC():null));
-    return u=>{const n=normalizeRelay(u);if(!n||n===home)return u;return base+'?u='+encodeURIComponent(u)+'&t='+encodeURIComponent(TUNNEL.ticket);};
+    /* THIS NODE UNDER ANOTHER NAME IS STILL THIS NODE. poster.place's relay is advertised as wss://poster.place/relay
+     * and also answers as wss://relay.poster.place and wss://poster.place/git (the GRASP relay a repository
+     * announces). Sent through the tunnel, those dial the node from itself -- which resolves to a LAN address and is
+     * refused (403) -- so the PosterChan repository's 93 issues never loaded: "clicking bugs in the posterchan room
+     * does nothing" (2026-10-21). The tunnel hides a member from OTHER people's relays; this domain is ours. */
+    let ownHost='';try{ownHost=home?new URL(home).hostname.toLowerCase():'';}catch(_){}
+    const ours=n=>{if(!ownHost)return false;try{const h=new URL(n).hostname.toLowerCase();return h===ownHost||h.endsWith('.'+ownHost);}catch(_){return false;}};
+    return u=>{const n=normalizeRelay(u);if(!n||n===home||ours(n))return u;return base+'?u='+encodeURIComponent(u)+'&t='+encodeURIComponent(TUNNEL.ticket);};
   }
   /* The two doors Concord reaches relays through -- the app's dependency object (PC()) and (window.PCConcordRelay||window.Relay) -- are
    * WRAPPED, so every outside-relay call carries `via` without any call site knowing: a new call cannot forget
@@ -1689,9 +1696,13 @@
    * other account having read it. The shared keys of older builds are copied in when a room is
    * adopted (adoptLegacyRoom), never read directly. */
   const READ_KEY='pc.concord.read.v2.',STAR_KEY='pc.concord.star.v2.';
-  function channelReadKey(room,name){ return READ_KEY+accountPk()+'.'+(room&&room.naddr||'')+':'+(name||'general'); }
+  /* Keyed on the invite coordinate when the room has one (what older builds stored), else on the community id: a room
+   * restored on a second device from the account's membership list can arrive with NO naddr, and gating on it made
+   * that room unread for ever there -- its synced mark was never even consulted ("i see all my new rooms as unread
+   * when i did", 2026-10-21). */
+  function channelReadKey(room,name){ return READ_KEY+accountPk()+'.'+(room&&(room.naddr||roomIdentity(room))||'')+':'+(name||'general'); }
   function seenAt(room,name){
-    if(!room||!room.naddr||!accountPk())return 0;
+    if(!room||!roomIdentity(room)||!accountPk())return 0;
     /* ...AND WHAT THIS ACCOUNT READ ON ANY OTHER DEVICE. The unread dots and the sidebar count read only
      * this device's cursor, while the synced `pcai:concord-read` mark fed the mention bell alone -- so a
      * room read on the phone stayed bold on the desktop ("it's confusing on multiple devices"). Both are
@@ -1699,17 +1710,21 @@
     const synced=readMark(room,name),exact=Number(localStorage.getItem(channelReadKey(room,name))||0);
     if(exact)return Math.max(exact,synced);
     /* Migration fallback for the release that stored one timestamp for the whole community. */
-    return Math.max(synced,Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0));
+    return Math.max(synced,room.naddr?Number(localStorage.getItem(READ_KEY+accountPk()+'.'+room.naddr)||0):0);
   }
   /* READ UP TO THE NEWEST MESSAGE SEEN, not up to this device's clock. A message is unread while its `at` (the SENDER's
    * clock) is newer than the mark, so a phone whose clock ran behind a sender's kept the dot on a channel it had just
    * opened ("i open room but you still see that dot", 2026-10-21) -- and a git row timed by its relay the same. */
   function markRead(room,name){
-    if(!(room&&room.naddr&&accountPk()))return;
+    if(!(room&&roomIdentity(room)&&accountPk()))return;
     let newest=Date.now();
     try{ for(const m of testMessages(channelStoreId(room,name))||[])newest=Math.max(newest,Number(m.at)||0); }catch(_){}
     try{ const c=channelsOf(room).find(x=>x.name===(name||'general'));if(c&&window.PCConcordGit&&PCConcordGit.channelHasGit(c))newest=Math.max(newest,Number(PCConcordGit.latestAt(room,c))||0); }catch(_){}
     localStorage.setItem(channelReadKey(room,name),String(newest));
+    /* ...and read on every device. Only the desktop render path published the synced mark (gated on viewingChannel),
+     * so a room read on the phone cleared its dot there and nowhere else ("concord read room activity not syncing
+     * across devices", 2026-10-21). Same value as the local cursor; noteChannelRead never moves a mark backwards. */
+    try{ const p=PC(); if(p)noteChannelRead(p,room,name||'general',newest); }catch(_){}
   }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))||gitUnread(room,c)); }
   function gitUnread(room,c){ try{ return !!(window.PCConcordGit&&PCConcordGit.channelHasGit(c)&&PCConcordGit.latestAt(room,c)>seenAt(room,c.name)); }catch(_){ return false; } }
@@ -2168,18 +2183,24 @@
     const current=()=>base.isCurrent()&&(creationCurrent?creationCurrent():saved().some(r=>roomIdentity(r)===identity&&r.cord?.bundle?.community_root===root));
     const api=await p.cordInviteLinksModule();if(!current())throw new Error('Concord membership changed');
     const relays=[...new Set([...roomRelays(room.cord.bundle),...CORD_RELAYS])].slice(0,8);
+    /* THE INVITE LIST (13303) IS THIS ACCOUNT'S OWN DOCUMENT, so this node's relay -- which holds every one of
+     * them -- is asked and written too, and its answer is an answer (2026-10-21: "I clicked create link and still
+     * see No links created by this account" -- the list was never saved anywhere: the write waited for all eight
+     * community relays to answer, and one that did not refused every link). The link events (33301) still need
+     * their own relays. */
+    const home=typeof homeRelayUrl==='function'?homeRelayUrl(p):'',own=kind=>kind===13303&&home?[home]:[];
     const context={...base,isCurrent:current,
       query:async(kind,author,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
-        const targets=[...new Set([...bootstrap,...relays])].slice(0,8),report={};
-        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
+        const targets=[...new Set([...own(kind),...bootstrap,...relays])].slice(0,9),report={};
+        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:9,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
         if(!current())throw new Error('Concord membership changed');
-        const missing=unanswered(targets,report);
-        return {events,complete:targets.length>0&&!missing.length,missing};
+        const missing=unanswered(targets,report),homeAnswered=own(kind).length>0&&(report.ok||[]).includes(home);
+        return {events,complete:targets.length>0&&(!missing.length||homeAnswered),missing};
       },
       publish:async(event,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
-        const ack=await p.relayPublishRoom([...new Set([...bootstrap,...relays])].slice(0,8),event);
+        const ack=await p.relayPublishRoom([...new Set([...own(event&&event.kind),...bootstrap,...relays])].slice(0,9),event);
         if(!current())throw new Error('Concord membership changed');
         if(!ack?.ok)throw new Error('No relay accepted the invitation update');
         return true;
@@ -2280,7 +2301,7 @@
   async function showOwnedInviteLinks(p,room){
     const scope=await ownedInviteContext(p,room),read=await scope.api.readList(scope.context);
     if(!scope.context.isCurrent())return;
-    p.modal('<h3>Community invite links</h3><p>Links let anyone with the URL join. Retiring the last active link also rotates community keys.</p><div id="cc-owned-links"></div><button class="btn" id="cc-mint-link">Create invite link</button>',root=>{
+    p.modal('<h3>Community invite links</h3><p>Links let anyone with the URL join. Retiring the last active link also rotates community keys.</p><div id="cc-owned-links"></div><p class="cc-member-help" id="cc-mint-error" role="alert" hidden></p><button class="btn" id="cc-mint-link">Create invite link</button>',root=>{
       const list=root.querySelector('#cc-owned-links');
       const entries=read.list.entries.filter(e=>e.community_id===room.cord.bundle.community_id);
       if(!entries.length)list.textContent='No links created by this account.';
@@ -2291,8 +2312,8 @@
       }
       for(const entry of entries){const row=document.createElement('div'),label=document.createElement('span');label.textContent=entry.label||'Invite link';row.appendChild(label);
         for(const [text,action] of [['Copy',()=>p.copyValue(shareableInviteUrl(p,entry.url))],['Retire',()=>changeOwnedInviteLink(p,room,entry)]]){const button=document.createElement('button');button.className='btn';button.textContent=text;button.onclick=async()=>{button.disabled=true;try{const result=await action();if(text==='Retire'&&result){p.closeModal();p.toast('Invitation retired');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};row.appendChild(button);}list.appendChild(row);}
-      const mintButton=root.querySelector('#cc-mint-link');mintButton.disabled=!communityPermission(p,room,'inviteCreators');if(mintButton.disabled)mintButton.title='Only authorized community staff can create links';
-      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(shareableInviteUrl(p,entry.url));p.closeModal();p.toast('Invitation created and copied');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};
+      const mintButton=root.querySelector('#cc-mint-link');mintButton.disabled=!communityPermission(p,room,'inviteCreators');if(mintButton.disabled){mintButton.title='Only authorized community staff can create links';const why=root.querySelector('#cc-mint-error');why.textContent='Only community staff your community allows to invite can create links.';why.hidden=false;}
+      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;const why=root.querySelector('#cc-mint-error');why.textContent='';why.hidden=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(shareableInviteUrl(p,entry.url));p.closeModal();p.toast('Invitation created and copied');}}catch(e){why.textContent='The link was not created: '+(e.message||String(e));why.hidden=false;}finally{button.disabled=false;}};
     });
   }
   /* PUBLISH OUR OWN GUESTBOOK JOIN / LEAVE (CORD-02 §5, CORD-05 §6). Best effort by design: the
@@ -3276,7 +3297,12 @@
    * the LATER mark per channel, so two devices reading different channels cannot erase each other.
    * Every failure resolves to the old per-device behaviour -- a mention shown twice, never one lost. */
   const READ_D='pcai:concord-read', READ_CAP=500;
-  const readDoc={owner:'',answered:false,marks:{},loading:null,saving:null,dirty:false};
+  /* `invites`: the direct invitations this account has ANSWERED (accepted or declined), by gift-wrap id, synced with
+   * the read marks (2026-10-21: "every time I clear my concord invites and login, I see you have 12 invites" -- a
+   * decline was remembered on one device only, and every login fetched them all again). A set that only grows. */
+  const readDoc={owner:'',answered:false,marks:{},invites:new Set(),loading:null,saving:null,dirty:false};
+  const INVITES_CAP=300;
+  function mergeInvites(into,from){ let changed=false; for(const id of (Array.isArray(from)?from:[])) if(/^[0-9a-f]{64}$/.test(String(id))&&!into.has(id)){ into.add(id); changed=true; } return changed; }
   function readMark(room,channel){ return Number(readDoc.marks[mentionLedgerKey(room,channel)])||0; }
   function mergeMarks(into,from){
     let changed=false;
@@ -3310,22 +3336,22 @@
     // "Nothing came back" counts as an answer only when the relays SAID so; a timeout is not "no doc".
     if(!all.length&&!docAnswered(evs))return null;
     const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
-    if(!ev)return {marks:{}};
+    if(!ev)return {marks:{},invites:[]};
     try{
       const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
-      return {marks:doc&&typeof doc.marks==='object'&&!Array.isArray(doc.marks)?doc.marks:{}};
+      return {marks:doc&&typeof doc.marks==='object'&&!Array.isArray(doc.marks)?doc.marks:{},invites:doc&&Array.isArray(doc.invites)?doc.invites:[]};
     }catch(_){ return null; }   // could not read it: never treat as empty, never overwrite it
   }
   function loadReadDoc(p){
     const owner=p&&p.viewer&&p.viewer().pubkey;
     if(!owner)return Promise.resolve(readDoc);
-    if(readDoc.owner!==owner){ Object.assign(readDoc,{owner,answered:false,marks:{},loading:null,saving:null,dirty:false}); }
+    if(readDoc.owner!==owner){ Object.assign(readDoc,{owner,answered:false,marks:{},invites:new Set(),loading:null,saving:null,dirty:false}); }
     if(readDoc.answered)return Promise.resolve(readDoc);
     if(readDoc.loading)return readDoc.loading;
     readDoc.loading=(async()=>{
       const got=await fetchReadDoc(p,owner);
       if(readDoc.owner!==owner)return readDoc;              // the account changed while we were reading
-      if(got){ mergeMarks(readDoc.marks,got.marks); readDoc.answered=true; pruneReadMentions(); if(readDoc.dirty)saveReadDoc(p); }
+      if(got){ mergeMarks(readDoc.marks,got.marks); const inv=mergeInvites(readDoc.invites,got.invites); readDoc.answered=true; pruneReadMentions(); if(inv)void refreshInviteCount(); if(readDoc.dirty)saveReadDoc(p); }
       return readDoc;
     })().finally(()=>{ readDoc.loading=null; });
     return readDoc.loading;
@@ -3339,9 +3365,10 @@
       await new Promise(r=>setTimeout(r,1500));            // a channel read in bursts is one write
       const fresh=await fetchReadDoc(p,owner);
       if(!fresh||readDoc.owner!==owner){ readDoc.dirty=true; return; }   // could not re-read: write nothing
-      mergeMarks(readDoc.marks,fresh.marks);
+      mergeMarks(readDoc.marks,fresh.marks);mergeInvites(readDoc.invites,fresh.invites);
       readDoc.marks=trimMarks(readDoc.marks);
-      const content=await p.nip44enc(owner,JSON.stringify({v:1,marks:readDoc.marks}));
+      const invites=[...readDoc.invites].slice(-INVITES_CAP);
+      const content=await p.nip44enc(owner,JSON.stringify({v:1,marks:readDoc.marks,invites}));
       const ev=await p.signTemplate({kind:30078,created_at:Math.floor(Date.now()/1000),content,tags:[['d',READ_D]],pubkey:owner});
       await p.relayPublish(ev);
     })().catch(()=>{ readDoc.dirty=true; }).finally(()=>{ readDoc.saving=null; if(readDoc.dirty&&readDoc.answered)setTimeout(()=>saveReadDoc(p),5000); });
@@ -3361,6 +3388,7 @@
     try{
       const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
       if(readDoc.owner!==owner||!doc||typeof doc.marks!=='object'||Array.isArray(doc.marks))return;
+      if(mergeInvites(readDoc.invites,doc.invites))void refreshInviteCount();
       if(mergeMarks(readDoc.marks,doc.marks))readMarksChanged();
     }catch(_){ }
   }
@@ -3371,6 +3399,7 @@
     try{
       if(readDoc.owner!==owner||!readDoc.answered){ await loadReadDoc(p); if(readDoc.answered)readMarksChanged(); return; }
       const got=await fetchReadDoc(p,owner);
+      if(got&&readDoc.owner===owner&&mergeInvites(readDoc.invites,got.invites))void refreshInviteCount();
       if(got&&readDoc.owner===owner&&mergeMarks(readDoc.marks,got.marks))readMarksChanged();
     }finally{ readSync.busy=false; }
   }
@@ -3581,10 +3610,24 @@
    * channel list, plus a number on Invites. Reading the count never touches the network (api.pending is the
    * parked list). */
   let pendingInviteCount=0,inviteCountBusy=false;
+  /* An answered invitation is answered everywhere: recorded in the synced document. */
+  function noteInviteAnswered(id){
+    if(!/^[0-9a-f]{64}$/.test(String(id||'')))return;
+    const p=PC();if(!p)return;
+    void loadReadDoc(p).then(()=>{ if(readDoc.invites.has(id))return; readDoc.invites.add(id); if(readDoc.answered)saveReadDoc(p); else readDoc.dirty=true; });
+  }
+  function inviteAnswered(id){ return readDoc.invites.has(String(id||'')); }
+  function joinedCommunity(cid){ cid=String(cid||'');return !!cid&&saved().some(r=>String(r&&(r.cord&&r.cord.bundle&&r.cord.bundle.community_id||r.communityId)||'')===cid); }
+  /* What dms.js asks before it parks an incoming invitation (cord-direct-invites park options). */
+  function inviteParkOptions(){ return {answered:inviteAnswered,skip:inv=>joinedCommunity(inv&&inv.bundle&&inv.bundle.community_id)}; }
   async function refreshInviteCount(){
     if(inviteCountBusy)return;inviteCountBusy=true;
     try{const p=PC();if(!p||!p.cordDirectContext||!p.cordDirectModule)return;const context=p.cordDirectContext();if(!context||!context.pubkey)return;
-      const api=await p.cordDirectModule(),n=(api.pending(context)||[]).length;
+      const api=await p.cordDirectModule();
+      /* Parked before this device knew better: answered elsewhere, or for a community already joined. */
+      for(const w of api.pending(context)||[]){ const cid=api.communityOf?api.communityOf(w.id,context):'';
+        if(inviteAnswered(w.id)||joinedCommunity(cid)){ api.dismiss(w.id,context); if(joinedCommunity(cid))noteInviteAnswered(w.id); } }
+      const n=(api.pending(context)||[]).length;
       if(n!==pendingInviteCount){pendingInviteCount=n;backgroundRender();}}
     catch(_){}finally{inviteCountBusy=false;}
   }
@@ -3601,7 +3644,9 @@
   async function showDirectInvitations(){
     const p=PC(),context=p.cordDirectContext(),api=await p.cordDirectModule();
     if(!context.isCurrent())return;
-    const wraps=api.pending(context);
+    await loadReadDoc(p).catch(()=>{});
+    const wraps=(api.pending(context)||[]).filter(w=>{ const cid=api.communityOf?api.communityOf(w.id,context):'';
+      if(!inviteAnswered(w.id)&&!joinedCommunity(cid))return true; api.dismiss(w.id,context); return false; });
     const asInvite=invite=>{const bundle=invite.bundle;return {directId:invite.id,account:context.pubkey,by:invite.inviter,
       room:{communityId:bundle.community_id,name:bundle.name||'Concord community',description:'',channels:[{name:'general',private:false}],local:false,cord:{bundle}}};};
     const show=inv=>{ pendingInvite=inv; p.closeModal(); render(); };
@@ -3611,7 +3656,9 @@
       list.innerHTML='<p class="muted" id="cc-direct-loading">Opening '+wraps.length+' invitation'+(wraps.length===1?'':'s')+'…</p>';
       const opened=[];
       for(const wrap of wraps){
-        try{ opened.push(asInvite(await api.open(wrap,context))); }
+        try{ const inv=asInvite(await api.open(wrap,context));
+          if(joinedCommunity(inv.room.communityId)){ api.dismiss(wrap.id,context); noteInviteAnswered(wrap.id); continue; }
+          opened.push(inv); }
         catch(e){ opened.push({error:String(e&&e.message||e),wrap}); }
         if(!context.isCurrent()||!root.isConnected)return;
       }
@@ -3621,7 +3668,7 @@
         if(inv.error){
           card.innerHTML='<div class="cc-direct-main"><b>An invitation that could not be read</b><small>'+p.enc(inv.error.slice(0,160))+'</small></div>'
             +'<div class="cc-direct-btns"><button type="button" class="btn btn-ghost" data-cc-direct-decline>Remove</button></div>';
-          card.querySelector('[data-cc-direct-decline]').onclick=()=>{ try{ api.dismiss(inv.wrap.id,context); }catch(_){} card.remove(); void refreshInviteCount(); if(!list.children.length)list.innerHTML='<p class="muted">No pending invitations.</p>'; };
+          card.querySelector('[data-cc-direct-decline]').onclick=()=>{ try{ api.dismiss(inv.wrap.id,context); }catch(_){} noteInviteAnswered(inv.wrap.id); card.remove(); void refreshInviteCount(); if(!list.children.length)list.innerHTML='<p class="muted">No pending invitations.</p>'; };
           list.appendChild(card);continue;
         }
         const name=String(inv.room.name||'Concord community'),who=inviterOf(p,inv);
@@ -3633,7 +3680,7 @@
         card.querySelector('[data-cc-direct-view]').onclick=()=>show(inv);
         card.querySelector('[data-cc-direct-accept]').onclick=()=>{ show(inv); const a=document.querySelector('#cc-invite-accept'); if(a)a.click(); };
         card.querySelector('[data-cc-direct-decline]').onclick=()=>{
-          if(inv.account===p.viewer()?.pubkey)window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext());
+          if(inv.account===p.viewer()?.pubkey){ window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext()); noteInviteAnswered(inv.directId); }
           card.remove(); void refreshInviteCount(); p.toast('Invitation declined');
           if(!list.children.length)list.innerHTML='<p class="muted">No pending invitations.</p>';
         };
@@ -7287,12 +7334,12 @@
         /* The invitation is ANSWERED the moment the membership is saved -- not after the room's history loads, which
          * on a slow or unreachable relay can take a long while (or fail), leaving "You have an invitation" up for a
          * community you are already in. */
-        const answered=()=>{ if(inv.directId&&inv.account===p.viewer()?.pubkey){ window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext()); void refreshInviteCount(); } };
+        const answered=()=>{ if(inv.directId&&inv.account===p.viewer()?.pubkey){ window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext()); noteInviteAnswered(inv.directId); void refreshInviteCount(); } };
         forgetDeclinedInvite(inv.url);pendingInvite=null;await acceptInvite(inv.url,inv.room,!!inv.directId,answered);
       }
       catch(e){ accept.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
     const decline=$('#cc-invite-decline'); if(decline) decline.onclick=()=>{ const inv=pendingInvite; pendingInvite=null;
-      if(inv?.directId){if(inv.account===p.viewer()?.pubkey)window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext());}
+      if(inv?.directId){if(inv.account===p.viewer()?.pubkey){ window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext()); noteInviteAnswered(inv.directId); }}
       else if(inv)declineInvite(inv.url);
       render();
       for(const id of ['#cc-join','#cc-invite-sheet']){ const panel=$(id); if(panel)panel.classList.add('hidden'); }
@@ -7918,7 +7965,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
@@ -7948,6 +7995,7 @@
   window.PCConcord.__testClearMentions=(room,ch)=>clearMentions(room,ch);
   window.PCConcord.__testNoteChannelRead=(p,room,ch,at)=>noteChannelRead(p,room,ch,at);
   window.PCConcord.__testRefreshReadDoc=(p,force)=>refreshReadDoc(p,force);
+  window.PCConcord.__testMarkRead=(room,ch)=>markRead(room,ch);
   window.PCConcord.__testStartReadSync=p=>startReadSync(p);
   window.PCConcord.__testReadDoc=p=>loadReadDoc(p).then(()=>({answered:readDoc.answered,marks:{...readDoc.marks},saving:readDoc.saving}));
   if(window.__pcConcordHandoff){

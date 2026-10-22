@@ -288,6 +288,14 @@
       const hint=relay?normRelay(relay.startsWith('ws:')?'ws://'+relay.slice(3):'wss://'+relay):'';
       return {address,relayHints:hint?[hint]:[]};
     }
+    /* A GRASP clone address, https://<node>/git/<npub>/<id>.git -- what "Copy clone URL" hands out and what a
+     * repository's own page shows first (2026-10-21: "concord git repository address not working"). The node
+     * that serves it also serves the repository's relay at wss://<node>/git. */
+    if(/^https?:$/.test(url.protocol)&&segs[0]==='git'&&segs.length>=3&&/^npub1/.test(segs[1])){
+      const address=parseAddress(ANN+':'+npubOwner(segs[1])+':'+segs[2].replace(/\.git$/,''));if(!address)throw new Error('Repository address has an invalid owner or identifier.');
+      const hint=normRelay((url.protocol==='http:'?'ws://':'wss://')+url.host+'/git');
+      return {address,relayHints:hint?[hint]:[]};
+    }
     if(/^https?:$/.test(url.protocol)&&segs[0]==='r'&&segs.length===3&&/^npub1/.test(segs[1])){
       const address=parseAddress(ANN+':'+npubOwner(segs[1])+':'+segs[2]);if(!address)throw new Error('Repository address has an invalid owner or identifier.');
       return {address,relayHints:[]};
@@ -747,7 +755,10 @@
   /* Fetch the newest announcement for a resolved address (input hints first, then discovery);
    * Armada refuses a repository whose announcement names no relays — there is nowhere to read it. */
   async function fetchAnnouncement(resolved){
-    const relays=unique([...normRelays(resolved.relayHints),DISCOVERY_RELAY]).slice(0,10);
+    /* This node's relay too: a repository hosted HERE (a /r/ share link carries no relay) is announced on it,
+     * and may be on no public index at all. */
+    let home='';try{home=normRelay(P()&&P().homeRelay&&P().homeRelay()||'');}catch(_){home='';}
+    const relays=unique([...normRelays(resolved.relayHints),...(home?[home]:[]),DISCOVERY_RELAY]).slice(0,10);
     const evs=await query(relays,[{kinds:[ANN],authors:[resolved.address.owner],'#d':[resolved.address.identifier]}]);
     const ann=evs.filter(verify).map(parseAnnouncement).filter(a=>a&&a.address.coordinate===resolved.address.coordinate).sort((a,b)=>b.createdAt-a.createdAt)[0];
     if(!ann)throw new Error('Repository announcement not found.');
@@ -760,7 +771,7 @@
     const p=P();
     return new Promise(resolve=>{
       let done=false;const finish=v=>{if(done)return;done=true;try{p.closeModal();}catch(_){}resolve(v);};
-      p.modal(`<h3>${enc(title)}</h3><p class="muted small">Search repositories announced on Nostr, or paste an address — <code>naddr1…</code>, <code>nostr://npub…/repo</code>, a gitworkshop link or a <code>/r/</code> share link.</p>
+      p.modal(`<h3>${enc(title)}</h3><p class="muted small">Search repositories announced on Nostr, or paste an address — <code>naddr1…</code>, <code>nostr://npub…/repo</code>, a gitworkshop link, a clone address or a <code>/r/</code> share link.</p>
         <input class="input" id="ccg-pick-q" placeholder="Search, or paste an address" autocomplete="off" autocapitalize="none" spellcheck="false">
         <div class="ccg-pick-list" id="ccg-pick-list" role="listbox"><p class="ccg-muted">Loading repositories…</p></div>
         <div class="set-actions"><button class="btn btn-ghost small" id="ccg-pick-cancel">Cancel</button></div>`,rootEl=>{

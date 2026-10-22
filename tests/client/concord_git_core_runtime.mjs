@@ -136,6 +136,8 @@ assert.ok(C.gitworkshopUrl(T2,nip19).includes('/'+nip19.npubEncode(owner.pk)+'/r
 const naddr=nip19.naddrEncode({kind:30617,pubkey:owner.pk,identifier:'ngit',relays:['wss://relay.ngit.dev/']});
 let r=plain(await C.resolveInput(naddr,nip19));assert.equal(r.address.coordinate,coord);assert.deepEqual(r.relayHints,['wss://relay.ngit.dev']);
 r=plain(await C.resolveInput('nostr:'+naddr,nip19));assert.equal(r.address.coordinate,coord);
+// The GRASP clone address ("Copy clone URL") resolves too, with the node's /git relay as the hint (2026-10-21).
+r=plain(await C.resolveInput('https://poster.place/git/'+nip19.npubEncode(owner.pk)+'/ngit.git',nip19));assert.equal(r.address.coordinate,coord);assert.deepEqual(r.relayHints,['wss://poster.place/git']);
 r=plain(await C.resolveInput('nostr://'+nip19.npubEncode(owner.pk)+'/relay.ngit.dev/ngit',nip19));assert.equal(r.address.coordinate,coord);assert.deepEqual(r.relayHints,['wss://relay.ngit.dev']);
 r=plain(await C.resolveInput('nostr://alice@example.com/ngit',nip19,async n=>n==='alice@example.com'?owner.pk:null));assert.equal(r.address.coordinate,coord);
 await assert.rejects(()=>C.resolveInput('nostr://bob@example.com/ngit',nip19,async()=>null),/NIP-05/);

@@ -165,6 +165,7 @@ def test_repository_channel_panel_and_projects(width):
         await press(b, '[data-ccg-close]', 'document.querySelector("#ccg-panel")')
         await b.until("!document.querySelector('#ccg-panel')")
 
+
         # Projects (the phone reaches it from the channel drawer).
         if width < 600:
             await press(b, '#cc-back-channels')
@@ -195,6 +196,21 @@ def test_repository_channel_panel_and_projects(width):
         # Every relay this ever asked is the repository's, never the community's own.
         reads = await b.js("[...new Set(__reads.flat())]")
         assert 'wss://fixture.invalid' not in reads, reads
+
+        await b.js("PCConcordGit.closeProjects()")
+        await b.until("!document.querySelector('#ccg-projects')")
+        if width < 600:   # back from the channel drawer into the room
+            await press(b, '[data-cc-channel="ngit"]')
+            await b.until("!!document.querySelector('#cc-head-more')&&document.querySelector('#cc-head-more').getBoundingClientRect().width>0")
+        # The bug button (Issues and pull requests), reached the way a person reaches it: the room menu ☰.
+        # 2026-10-21: "clicking bugs in the posterchan room does nothing, you did not test it".
+        await press(b, '#cc-head-more')
+        await b.until("[...document.querySelectorAll('button,[role=menuitem]')].some(x=>x.textContent.trim()==='Issues and pull requests'&&x.getBoundingClientRect().width>0)")
+        row = await b.js("(()=>{const el=[...document.querySelectorAll('button,[role=menuitem]')].find(x=>x.textContent.trim()==='Issues and pull requests'&&x.getBoundingClientRect().width>0);el.setAttribute('data-t-issues','1');return true;})()")
+        await press(b, '[data-t-issues]')
+        await b.until("!!document.querySelector('#ccg-projects')")
+        assert await b.js("document.querySelector('#ccg-projects [data-ccg-tab=\"issues\"]').getAttribute('aria-selected')") == 'true'
+        await b.until("!!document.querySelector('#ccg-projects .ccg-item')")
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
