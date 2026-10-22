@@ -6,7 +6,7 @@
   * Export: "Chrome / Firefox (.csv)" downloads a CSV holding that login's site, user and password, and
     "Everything (.json)" a JSON with it; Close closes.
   * Health: opens and Close closes.
-The Android-only autofill panel (pd-*) is covered by the Android checks. Real login, DOM and vault.js; downloads
+The Android-only autofill panel (pd-*) is tests/client/test_vault_device_panel_full_app.py. Real login, DOM and vault.js; downloads
 and the clipboard are recorded.
 """
 import asyncio
