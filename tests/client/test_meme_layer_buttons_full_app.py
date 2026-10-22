@@ -87,3 +87,34 @@ def test_project_menu_rename_clear_new_and_save(media):
         await b.until(f"{LAYERS}.length===0 && !{PROJ}.name")
         assert not await b.js("window.__errors||[]")
     asyncio.run(_open(1280, 800, False, '', media, check))
+
+
+@pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome required')
+def test_resize_canvas_size_and_export_dialogs(media):
+    """Resize layer: "Original" fills in the picture's own pixels (720x640), "Canvas" the canvas size, and Cancel
+    changes nothing. Canvas size and Export each close on Cancel without touching the project."""
+    async def check(b):
+        await b.js("PCMeme.reset()")
+        assert await b.js(f"PCMeme.addMedia({json.dumps(_MEDIA[0].base + '/photo.png')},'image/png')")
+        await b.until("(()=>{const i=document.querySelector('.mb-item img');return !!(i&&i.naturalWidth)})()")
+        before = await b.js(f"JSON.stringify({PROJ})")
+        lid = await b.js(f"{LAYERS}[0].id")
+        await b.js(f"PCMeme.openLayerResize({lid!r}); 1")
+        await b.until("!!document.getElementById('rz-orig')")
+        await b.js("document.getElementById('rz-orig').click(); 1")
+        assert await b.js("[document.getElementById('rz-w').value,document.getElementById('rz-h').value]") == ["720", "640"]
+        await b.js("document.getElementById('rz-canvas').click(); 1")
+        canvas = await b.js(f"[String({PROJ}.w),String({PROJ}.h)]")
+        assert await b.js("[document.getElementById('rz-w').value,document.getElementById('rz-h').value]") == canvas
+        await b.js("document.getElementById('rz-cancel').click(); 1")
+        await b.until("!document.getElementById('rz-cancel')")
+        await b.js("PCMeme.openCanvasSize(); 1")
+        await b.until("!!document.getElementById('cs-cancel')")
+        await b.js("document.getElementById('cs-cancel').click(); 1")
+        await b.until("!document.getElementById('cs-cancel')")
+        await b.js("PCMeme.openExport(); 1")
+        await b.until("!!document.getElementById('ex-cancel')")
+        await b.js("document.getElementById('ex-cancel').click(); 1")
+        await b.until("!document.getElementById('ex-cancel')")
+        assert await b.js(f"JSON.stringify({PROJ})") == before, "a cancelled dialog changed the project"
+    asyncio.run(_open(1280, 800, False, '', media, check))
