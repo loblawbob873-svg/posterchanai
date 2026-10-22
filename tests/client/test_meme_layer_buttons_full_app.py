@@ -53,3 +53,37 @@ def test_photo_layer_buttons(media):
         assert await b.js(f"JSON.stringify({LAYERS}.map(l=>[l.id,l.x,l.y,l.w,l.h]))") == before, "Arrange moved a still layer"
         assert not await b.js("window.__errors||[]")
     asyncio.run(_open(1280, 800, False, '', media, check))
+
+
+@pytest.mark.skipif(not Path(CHROME).exists(), reason='Chrome required')
+def test_project_menu_rename_clear_new_and_save(media):
+    """The project menu: Rename names it; "Remove every layer" (confirmed) empties it and ↶ brings the layers back;
+    "Start a new project" (confirmed) resets layers AND name; "Save to Files" uploads the project file."""
+    async def check(b):
+        await b.js("PCMeme.reset()")
+        assert await b.js(f"PCMeme.addMedia({json.dumps(_MEDIA[0].base + '/photo.png')},'image/png')")
+        await b.until("!!document.getElementById('mb-project')")
+
+        async def menu(item):
+            await b.js("document.getElementById('mb-project').click(); 1")
+            await b.until(f"!!document.getElementById({item!r})")
+            await b.js(f"document.getElementById({item!r}).click(); 1")
+
+        async def answer(text=None):
+            await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
+            if text is not None:
+                await b.js(f"document.querySelector('.uiprompt-in').value={text!r}; 1")
+            await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
+
+        await menu('mbp-name'); await answer('dog on a skateboard')
+        await b.until(f"{PROJ}.name==='dog on a skateboard'")
+        await menu('mbp-clear'); await answer()
+        await b.until(f"{LAYERS}.length===0")
+        await b.js("document.getElementById('mb-undo').click(); 1")
+        await b.until(f"{LAYERS}.length===1")
+        await menu('mbp-save')
+        await b.until("/saved|Saved/.test(document.body.innerText)")
+        await menu('mbp-new'); await answer()
+        await b.until(f"{LAYERS}.length===0 && !{PROJ}.name")
+        assert not await b.js("window.__errors||[]")
+    asyncio.run(_open(1280, 800, False, '', media, check))
