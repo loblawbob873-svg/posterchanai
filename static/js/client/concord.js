@@ -105,6 +105,10 @@
    * redundant Damus sockets. Explicit invite/bootstrap and room bundle relays remain authoritative
    * below, even when they name one of those hosts. */
   const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
+  /* Where this node's server copies the communities it hosts (concord_mirror.py BACKUP_RELAYS -- the same three, a test
+   * keeps them equal). Listed in such a community's relays so any app finds it there if this node is gone; this app
+   * still writes to its home relay alone (roomPublish), and the server does the copying. */
+  const CORD_BACKUP_RELAYS=['wss://jskitty.com/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
   /* How much cached history the channel on screen decrypts before it is drawn. A channel view
    * shows a couple of dozen messages; everything past that is scrollback and belongs behind the
    * paint, not in front of it. */
@@ -310,9 +314,29 @@
       if(accountPk()!==pk)return false;
       if(!res||!res.ok){mirrorRefused.set(key,Date.now());return false;}
       const next=mirrorState(pk);next.groups[group]={relays:[],authors:want,at:Date.now(),replica:true};saveMirrorState(pk,next);mirrorRefused.delete(key);
+      void listBackups(p,room,bundle,wraps);
       return true;
     })().catch(()=>false).finally(()=>{mirrorBusy.delete(key);});
     mirrorBusy.set(key,job);return job;
+  }
+  /* ...AND THE COMMUNITY SAYS WHERE ITS COPIES ARE (2026-10-21: "add the backups to the invite"). Replication puts the
+   * wraps on the backup relays; listing them in the community's own relay list (CORD-02 metadata) is what lets ANY app
+   * find them there when this node is down. Done once per community by whoever may edit its profile (the owner, or a
+   * MANAGE_METADATA role), through the ordinary settings save -- never by anyone else, never a second time. */
+  const backupListTried=new Set();
+  async function listBackups(p,room,bundle,wraps){
+    try{
+      const reader=window.PosterCordReader,me=String(p.viewer&&p.viewer().pubkey||'');
+      if(!reader||!room||!bundle||!me||backupListTried.has(roomIdentity(room)))return false;
+      const listed=new Set(roomRelays(bundle).map(normalizeRelay));
+      if(CORD_BACKUP_RELAYS.every(u=>listed.has(normalizeRelay(u))))return false;
+      const owner=String(bundle.owner||bundle.creator_npub||'');
+      if(owner!==me&&!memberMay(room,me,'MANAGE_METADATA'))return false;
+      backupListTried.add(roomIdentity(room));
+      const relays=[...new Set([...roomRelays(bundle),...CORD_BACKUP_RELAYS].map(normalizeRelay).filter(Boolean))].slice(0,5);   // CORD's MAX_COMMUNITY_RELAYS
+      await saveCommunitySettings(p,room,{relays});
+      return true;
+    }catch(e){ console.warn('Concord: could not list the backup relays',e); return false; }
   }
   function ensureMirror(p,room,bundle,wraps){
     const pk=accountPk(),relays=bundle?roomRelays(bundle):[];
@@ -6202,7 +6226,7 @@
      * here reads and writes it with no other socket, and members elsewhere reach it like any relay (it
      * serves and accepts kind-1059 wraps from anyone). With no instance, the shared CORD relays as before. */
     const home=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
-    const relays=home?[home]:[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
+    const relays=home?[home,...CORD_BACKUP_RELAYS.filter(u=>normalizeRelay(u)!==home)]:[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const creator=p.cordDirectContext();
     const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:publicInviteBase(p),signEvent:creator.sign});
     if(!creator.isCurrent())throw new Error('creating account changed');

@@ -113,7 +113,7 @@ def test_when_this_node_cannot_answer_the_room_says_so_instead_of_claiming_it_is
 
 
 @pytest.mark.skipif(not CHROME, reason='Chrome required')
-def test_a_community_created_on_an_instance_lists_only_this_nodes_relay():
+def test_a_community_created_on_an_instance_lists_this_nodes_relay_then_its_backups():
     async def check(b):
         await open_concord(b)
         await b.js('PCConcord.render()')
@@ -124,7 +124,10 @@ def test_a_community_created_on_an_instance_lists_only_this_nodes_relay():
         await b.js("document.querySelector('#cc-create-go').click()")
         await wait_for(b, "(JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]')).some(r=>r.name==='Made here')", 45)
         room = await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)).find(r=>r.name==='Made here')")
-        assert room['cord']['bundle']['relays'] == [HOME], room['cord']['bundle']['relays']
+        # This node's relay FIRST (where its members read and write), then the backups the server copies it to
+        # (2026-10-21 "add the backups to the invite"), so any app can find it there if this node is gone.
+        backups = ['wss://jskitty.com/nostr', 'wss://nostr.computingcache.com', 'wss://relay.dreamith.to']
+        assert room['cord']['bundle']['relays'] == [HOME] + backups, room['cord']['bundle']['relays']
         # its genesis is on this node's relay; nothing of it was handed to another relay
         wraps = await b.js('__homeWrites.filter(e=>e.kind===1059).length')
         assert wraps >= 3, wraps
@@ -234,4 +237,50 @@ def test_every_joined_community_is_handed_to_this_node_not_only_the_one_opened()
         assert len({r['group'] for r in regs}) == 3, regs
         assert {tuple(r['relays']) for r in regs} >= {('wss://ext-first.invalid',), ('wss://ext-second.invalid',),
                                                       ('wss://ext-third.invalid',)}, regs
+    asyncio.run(desktop.with_browser('online', '', check, init()))
+
+
+# A community made on this node BEFORE the backups were listed: its relays are this node's alone.
+MINT_HOSTED_OLD = r'''(async()=>{
+  const relays=[%s];
+  const made=await PosterCord.createCommunity({owner:__PC.me().pubkey,name:'Old hosted',relays,base:'https://cord.invalid',signEvent:__PC.signTemplate});
+  const bundle={...PosterCord.openInvite(made.url,made.events).bundle,control_root:made.secrets.controlRoot};
+  const controls=made.events.filter(e=>e.kind===1059);
+  const info=PosterCordReader.inspectControl(bundle,controls);
+  __home.push(...made.events);
+  await PCConcordCache.put(JSON.stringify([made.communityId,'control']),controls);
+  const room={name:'Old hosted',communityId:made.communityId,naddr:'cord-old-hosted',url:made.url,channels:info.channels.map(c=>({name:c.name,id:c.id,private:!!c.private})),cord:{bundle}};
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+  window.__bundle=bundle;
+  return true;
+})()''' % json.dumps(HOME)
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_an_owner_lists_the_backups_on_a_community_made_here_before_them():
+    """2026-10-21 "add the backups to the invite": the owner's app, once the node replicates the community, writes
+    the backups into its authoritative relay list (CORD-02 metadata) -- once -- and still only to this node."""
+    backups = ['wss://jskitty.com/nostr', 'wss://nostr.computingcache.com', 'wss://relay.dreamith.to']
+
+    async def check(b):
+        await open_concord(b)
+        assert await b.js(MINT_HOSTED_OLD)
+        await b.js('PCConcord.render()')
+        await wait_for(b, "__registrations.some(r=>r.op==='replicate')", 45)
+        relays = ("(()=>{const all=[...__home,...__homeWrites].filter(e=>e.kind===1059);"
+                  "const i=PosterCordReader.inspectControl(__bundle,[...new Map(all.map(e=>[e.id,e])).values()]);"
+                  "return i.relaysAuthoritative?i.relays:null;})()")
+        await wait_for(b, relays + "&&" + relays + ".length===4", 45)
+        got = await b.js(relays)
+        assert got == [HOME] + backups, got
+        # Nothing of the community reached another relay from this app: the server does the copying.
+        elsewhere = await b.js('[...__upWrites.map(x=>x.ev),...__dirWrites].filter(e=>e.kind===1059).length')
+        assert elsewhere == 0, elsewhere
+        # Once: a repaint does not write it again (distinct events -- the settings save sends its one edition both
+        # through the room door and straight to the listed relays, here the same relay; a duplicate id is harmless).
+        n = await b.js('new Set(__homeWrites.filter(e=>e.kind===1059).map(e=>e.id)).size')
+        await b.js('PCConcord.render()')
+        await asyncio.sleep(3)
+        assert await b.js('new Set(__homeWrites.filter(e=>e.kind===1059).map(e=>e.id)).size') == n
     asyncio.run(desktop.with_browser('online', '', check, init()))

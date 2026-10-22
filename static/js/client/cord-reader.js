@@ -27608,6 +27608,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(!name.trim()||utf8Len(name)>NAME_MAX_BYTES)throw new Error("community name must be 1–64 UTF-8 bytes");
     if(utf8Len(description)>DESCRIPTION_MAX_BYTES)throw new Error("community description is too long");
     const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
+    /* CORD-02 metadata `relays` is the community's authoritative relay list (every client adopts it, ours included:
+     * inspectControl `relaysAuthoritative`). Settable so a community can list more than one -- a community made on a
+     * PosterChan instance listed its node alone (2026-10-21: "add the backups to the invite"). wss:// only, at most
+     * MAX_COMMUNITY_RELAYS -- the cap every reader folds with, so nothing written past it is silently dropped. */
+    if (metadata && Array.isArray(metadata.relays)) {
+      const clean = [...new Set(metadata.relays.map((u) => String(u || "").trim().replace(/\/+$/, ""))
+        .filter((u) => /^wss:\/\/[^\s/?#]+(\/[^\s?#]*)?$/i.test(u)))].slice(0, MAX_COMMUNITY_RELAYS);
+      if (!clean.length) throw new Error("a community needs at least one relay");
+      body.relays = clean;
+    }
     if (metadata && Object.prototype.hasOwnProperty.call(metadata, "message_expiration")) body.message_expiration = messageExpirationSeconds(metadata.message_expiration);
     /* CORD-02 §6: a client's own settings live inside `custom`, under a prefixed key ("posterchan/…"),
      * because top-level fields are reserved for the protocol -- and an editor MUST round-trip the keys it
