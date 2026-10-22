@@ -576,6 +576,9 @@ window.PCDiscoverFactory = function(dep){
     }
     feed.innerHTML = tabs + '<div class="spinner"></div>';
     bind();
+    // Publish is drawn with the tabs, so it works NOW -- not after the relay answers. Bound only after
+    // the list came back, it was a dead button for as long as the query took (seconds on a slow relay).
+    { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     await _renderTorrentsNostr(feed, tabs, bind);
   }
 
