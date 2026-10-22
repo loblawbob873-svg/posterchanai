@@ -72,6 +72,8 @@ def test_retry_after_a_failed_sign_in_draws_the_mailbox():
     async def check(b):
         await _boot(b, "__mail.authFail=1;")
         await b.until("!!document.querySelector('#mail-auth-retry')")
+        # The server's own reason, not "http 401".
+        assert 'could not establish your app session: test' in await b.js("document.querySelector('.mail-empty').textContent")
         await click(b, '#mail-auth-retry')
         await b.until("[...document.querySelectorAll('#mail-items .mail-item')].some(e=>e.textContent.includes('In INBOX'))")
     _run(check)

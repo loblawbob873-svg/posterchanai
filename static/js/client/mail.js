@@ -478,7 +478,13 @@ window.PCMailFactory = function(dep){
       try{
         await ensureAiSession();
         const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
-        if(!r.ok) throw new Error('http '+r.status);
+        /* A 4xx says WHY ("your account isn't a member here"); a bare "http 401" told nobody anything. 5xx keeps
+         * its "http 5xx" text, which _unreachable reads as "use the device copy". */
+        if(!r.ok){
+          let why='';
+          if(r.status<500){ try{ const b=await r.json(); why=typeof b.detail==='string'?b.detail:''; }catch(_){} }
+          const err=new Error(why||('http '+r.status)); err.status=r.status; throw err;
+        }
         j = await r.json();
       }catch(e){ if(_unreachable(e)){ this._netFailAt = Date.now(); return fromDevice(e); } throw e; }
       this._netFailAt = 0;
