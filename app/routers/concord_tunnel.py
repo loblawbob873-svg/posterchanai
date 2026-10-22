@@ -44,7 +44,7 @@ async def mirror_state(user: User = Depends(_member)):
     from this node's copy at once instead of tunnelling to every relay. Only the caller's own registrations."""
     from app.services.nostr.nostr_service import to_pubkey_hex
     from app.services import relay_reader
-    from app.services.nostr_relay import aggregates
+    from app.services.nostr_relay.aggregates import ask as ask_relay
     pk = ""
     try:
         pk = (to_pubkey_hex(getattr(user, "nostr_npub", "") or "") or "").lower()
@@ -53,7 +53,7 @@ async def mirror_state(user: User = Depends(_member)):
     if len(pk) != 64:
         return {"groups": {}}
     try:
-        got = await asyncio.to_thread(aggregates.ask, "concord-mirror-state", {"member": pk}, timeout=5.0)
+        got = await asyncio.to_thread(ask_relay, "concord-mirror-state", {"member": pk}, timeout=5.0)
     except relay_reader.Unavailable:
         from fastapi.responses import JSONResponse
         return JSONResponse({"groups": {}, "error": "the relay could not be asked"}, status_code=503)

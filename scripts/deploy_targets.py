@@ -142,6 +142,9 @@ _OWNED = (
     # thread.py for trigger_backfill / trigger_wot_refresh / trigger_wot_add. Lazily, so the
     # sys.modules measurement that built this table could not see it.
     ("app/services/nostr_relay/thread.py", (APP, RELAY)),
+    # ...and the aggregate client: the APP asks the relay process through it (stats, Trace, and the Concord
+    # mirror-state endpoint in routers/concord_tunnel.py), lazily, so the same measurement could not see it either.
+    ("app/services/nostr_relay/aggregates.py", (APP, RELAY)),
     ("app/worker.py", (WORKER,)),
     # The cron runs in the worker and the "Run Logs" BUTTON runs in the app — one entry point,
     # run_logs_for_admin, shared by both (and by the /logs command). A lazy import in admin.py.
