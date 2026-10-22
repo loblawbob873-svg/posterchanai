@@ -15,13 +15,16 @@ import time
 from app.services.posterchandb.store import Store
 
 N = 300_000
+_PKS = [hashlib.sha256(b"pk%d" % i).hexdigest() for i in range(4000)]
 
 
 def _ev(i, r, now):
     kind = r.choice([1, 1, 1, 6, 7, 7, 0, 3, 30023, 1111])
     created = now - r.randint(0, 120 * 86400)
     eid = hashlib.sha256(b"%d" % i).hexdigest()
-    return {"id": eid, "pubkey": "%064x" % r.randrange(1, 4000), "created_at": created, "kind": kind,
+    # A pubkey looks like one: `"%064x" % n` put all 4,000 authors in ONE first-8-byte bucket of the author index,
+    # so each insert scanned them all -- 363 s of every deploy spent on a key no account can have (2026-10-22).
+    return {"id": eid, "pubkey": _PKS[r.randrange(0, len(_PKS))], "created_at": created, "kind": kind,
             "tags": [], "content": "", "sig": "0" * 128}
 
 

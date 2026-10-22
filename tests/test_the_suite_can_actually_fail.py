@@ -26,11 +26,13 @@ and the test that must go red. The mutation is applied, the test is run, the fil
 `finally`. If a mutation ever stops applying, that is a failure too — a proof that silently matches
 nothing is the very thing this file exists to prevent.
 """
+import queue
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -221,24 +223,50 @@ def _make_worktree(into: Path) -> str:
     return ""
 
 
-def _run(target: str, cwd: Path) -> subprocess.CompletedProcess:
+def _run(target, cwd: Path) -> subprocess.CompletedProcess:
+    targets = [target] if isinstance(target, str) else list(target)
     return subprocess.run(
-        [PY, "-B", "-m", "pytest", target, "-q", "-x", "-p", "no:cacheprovider"],
+        [PY, "-B", "-m", "pytest", *targets, "-q", "-x", "-p", "no:cacheprovider"],
         cwd=str(cwd), capture_output=True, text=True,
         timeout=300,
     )
+
+
+WORKERS = 4
+
+
+def _mutated(trees: "queue.Queue[Path]", rel: str, needle: str, replacement: str, target: str):
+    """Break one guard in a free tree, run its test, put the tree back. (applied, exit, output)."""
+    tree = trees.get()
+    try:
+        path = tree / rel
+        original = path.read_text()
+        try:
+            path.write_text(original.replace(needle, replacement, 1))
+            if path.read_text() == original:
+                return False, None, ""
+            broke = _run(target, tree)
+            return True, broke.returncode, broke.stdout + broke.stderr
+        finally:
+            path.write_text(original)
+    finally:
+        trees.put(tree)
 
 
 class TheSuiteCanFail(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = Path(tempfile.mkdtemp(prefix="pc-mutate-"))
-        cls.tree = cls._tmp / "wt"
-        cls.why = _make_worktree(cls.tree)
+        # ONE TREE PER WORKER (2026-10-22, "we need to deploy faster"): 32 pytest runs one after another were
+        # 193 s of every deploy. A mutation lives in its own worker's tree, so parallel runs never see each other's.
+        cls.trees = [cls._tmp / f"wt{i}" for i in range(WORKERS)]
+        cls.tree = cls.trees[0]
+        cls.why = next((w for w in (_make_worktree(t) for t in cls.trees) if w), "")
 
     @classmethod
     def tearDownClass(cls):
-        _git("worktree", "remove", "--force", str(cls.tree))
+        for t in cls.trees:
+            _git("worktree", "remove", "--force", str(t))
         shutil.rmtree(cls._tmp, ignore_errors=True)
         _git("worktree", "prune")
 
@@ -248,57 +276,69 @@ class TheSuiteCanFail(unittest.TestCase):
             self.skipTest(self.why)
 
     def test_every_guard_is_noticed_when_it_is_broken(self):
-        for label, rel, needle, replacement, target in MUTATIONS:
+        # A mutation that does not apply proves nothing and must be reported as loudly as a test that does
+        # not fail -- this is the exact shape that produced a false "0 failures".
+        for label, rel, needle, _, _ in MUTATIONS:
             with self.subTest(guard=label):
                 path = self.tree / rel
                 self.assertTrue(path.exists(), f"{rel} is missing from the worktree")
                 original = path.read_text()
-
-                # A mutation that does not apply proves nothing and must be reported as loudly as a
-                # test that does not fail — this is the exact shape that produced a false "0 failures".
-                self.assertIn(needle, original,
-                              f"the mutation for {rel} no longer applies; this proof is vacuous")
+                self.assertIn(needle, original, f"the mutation for {rel} no longer applies; this proof is vacuous")
                 self.assertEqual(original.count(needle), 1,
                                  f"{needle!r} is ambiguous in {rel}; the mutation would be imprecise")
 
-                # THE CONTROL RUN, and it is not ceremony. Everything below reads an exit code, and
-                # a test that cannot RUN in this worktree produces a non-zero one for reasons that
-                # have nothing to do with the mutation — so without this, an entry whose target had
-                # been renamed, or which imports something the worktree lacks, would report that the
-                # suite catches a bug it has never once seen. "Could not run" is not "noticed".
-                # ONE retry, for the CONTROL only: its question is "can this target pass here at all", and a
-                # browser target failing once under the gate's parallel load answers nothing about the guard
-                # ("FLAKY UNDER LOAD", 2026-10-07). The MUTATED run below is never retried.
-                clean = _run(target, self.tree)
-                if clean.returncode != 0:
-                    clean = _run(target, self.tree)
+        # THE CONTROL RUN, and it is not ceremony. Everything below reads an exit code, and a test that cannot
+        # RUN in this worktree produces a non-zero one for reasons that have nothing to do with the mutation --
+        # so without this, an entry whose target had been renamed, or which imports something the worktree
+        # lacks, would report that the suite catches a bug it has never once seen. "Could not run" is not
+        # "noticed". Each target once, on the worker trees in parallel, with ONE retry for the control only: a
+        # browser target failing once under the gate's parallel load answers nothing about the guard
+        # ("FLAKY UNDER LOAD", 2026-10-07).
+        free: "queue.Queue[Path]" = queue.Queue()
+        for t in self.trees:
+            free.put(t)
+
+        def control(target):
+            tree = free.get()
+            try:
+                clean = _run(target, tree)
+                return clean if clean.returncode == 0 else _run(target, tree)
+            finally:
+                free.put(tree)
+        targets = list(dict.fromkeys(t for *_, t in MUTATIONS))
+        with ThreadPoolExecutor(WORKERS) as pool:
+            controls = dict(zip(targets, pool.map(control, targets)))
+        runnable = set()
+        for label, _, _, _, target in MUTATIONS:
+            clean = controls[target]
+            with self.subTest(guard=label):
                 self.assertEqual(
                     clean.returncode, 0,
                     f"{target} does not pass on the UNMUTATED worktree (pytest exit {clean.returncode}). "
-                    f"Nothing can be concluded about {label!r} until it does — exit 5 means it "
+                    f"Nothing can be concluded about {label!r} until it does -- exit 5 means it "
                     f"collected no tests at all, 4 a usage error, 2/3 that it broke while running.\n"
                     + (clean.stdout + clean.stderr)[-8000:])
+                runnable.add(target)
 
-                try:
-                    path.write_text(original.replace(needle, replacement, 1))
-                    self.assertNotEqual(path.read_text(), original, "the mutation did not land")
-                    # Exit CODE, never scraped output: reading pytest's prose for the word FAILED is
-                    # how a green run was reported over a suite that never matched anything. And the
-                    # code has to be exactly 1 — "a test failed". Accepting any non-zero was this
-                    # file's own version of the bug it exists to find: pytest answers 5 for "no tests
-                    # collected", 4 for a usage error and 2/3 when it breaks, and every one of those
-                    # would have been read here as proof that the guard works.
-                    broke = _run(target, self.tree)
-                    self.assertEqual(
-                        broke.returncode, 1,
-                        f"{target} did not FAIL with this broken: {label}.\n"
-                        + (f"That test does not measure what it claims to."
-                           if broke.returncode == 0 else
-                           f"pytest exited {broke.returncode}, which is not 'a test failed' — it is 'the run "
-                           f"itself did not work', and that proves nothing either way.")
-                        + "\n" + (broke.stdout + broke.stderr)[-8000:])
-                finally:
-                    path.write_text(original)
+        todo = [m for m in MUTATIONS if m[4] in runnable and m[2] in (self.tree / m[1]).read_text()]
+        with ThreadPoolExecutor(WORKERS) as pool:
+            results = list(pool.map(lambda m: _mutated(free, m[1], m[2], m[3], m[4]), todo))
+        for (label, _, _, _, target), (applied, code, output) in zip(todo, results):
+            with self.subTest(guard=label):
+                self.assertTrue(applied, "the mutation did not land")
+                # Exit CODE, never scraped output: reading pytest's prose for the word FAILED is how a green run
+                # was reported over a suite that never matched anything. And the code has to be exactly 1 -- "a
+                # test failed". pytest answers 5 for "no tests collected", 4 for a usage error and 2/3 when it
+                # breaks, and every one of those would otherwise be read as proof that the guard works.
+                # The MUTATED run is never retried.
+                self.assertEqual(
+                    code, 1,
+                    f"{target} did not FAIL with this broken: {label}.\n"
+                    + ("That test does not measure what it claims to."
+                       if code == 0 else
+                       f"pytest exited {code}, which is not 'a test failed' -- it is 'the run "
+                       f"itself did not work', and that proves nothing either way.")
+                    + "\n" + output[-8000:])
 
     def test_the_working_tree_was_never_touched(self):
         """The mutations happen in a copy. If one ever escapes, every later check is poisoned."""

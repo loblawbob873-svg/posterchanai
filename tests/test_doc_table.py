@@ -49,7 +49,10 @@ class _Relay:
                 st.open(loop)
                 st.preserve_pubkeys = {OP}
                 srv = RelayServer(st, _Gate(), {"wot_enabled": False, "node_pubkey": OP, "operator": OP})
-                ws = await websockets.serve(srv.handle, "127.0.0.1", 0, process_request=srv.process_request)
+                # close_timeout: the app's pooled reader never answers a close handshake at teardown, and the default
+                # 10 s wait was paid by every test that used this relay (2026-10-22).
+                ws = await websockets.serve(srv.handle, "127.0.0.1", 0, process_request=srv.process_request,
+                                            close_timeout=0.2)
                 self.port = ws.sockets[0].getsockname()[1]
                 self._h["stop"] = asyncio.Event()
                 ready.set()
