@@ -63,7 +63,7 @@ def test_preflight_runs_only_when_it_is_a_shortcut(monkeypatch, tmp_path):
         ran.clear()
         monkeypatch.setitem(G["run_preflight"].__globals__, "deploy_changes", lambda root, c=changed: c)
         monkeypatch.setitem(G["run_preflight"].__globals__, "affected_test_files", lambda root, p, f, s=sel: s)
-        did, ok, msg = G["run_preflight"]("r", {}, "d")
+        did, ok, msg, _passed = G["run_preflight"]("r", {}, "d")
         assert did is want_ran and ok, (changed, sel, msg)
         assert bool(ran) is want_ran
     monkeypatch.setitem(G["run_preflight"].__globals__, "run_full_suite", lambda *a, **k: (False, "1 failing"))
@@ -81,3 +81,19 @@ def test_a_failing_preflight_stops_the_gate_before_the_full_run():
     assert "if ran and not ok:" in block and "return 1" in block
     assert "PC_GATE_NO_PREFLIGHT" in block, "an escape hatch exists, and is off by default"
     assert "'--changed'" in src, "the preflight is also runnable on its own"
+
+
+def test_files_the_preflight_passed_are_not_run_again(monkeypatch):
+    """Deploy #17 ran 244 preflight files and then ran the same 244 again in the full suite against the same tree:
+    fourteen of its 75 minutes. A passing preflight hands its files back and the full suite leaves them out; a
+    failing one hands back nothing (the deploy stops anyway)."""
+    files = [f"tests/test_{i}.py" for i in range(40)]
+    monkeypatch.setitem(G["run_preflight"].__globals__, "discover_test_files", lambda root: files)
+    monkeypatch.setitem(G["run_preflight"].__globals__, "deploy_changes", lambda root: ["x.js"])
+    monkeypatch.setitem(G["run_preflight"].__globals__, "affected_test_files", lambda root, p, f: files[:3])
+    monkeypatch.setitem(G["run_preflight"].__globals__, "run_full_suite", lambda *a, **k: (True, "ok"))
+    assert G["run_preflight"]("r", {}, "d")[3] == set(files[:3])
+    monkeypatch.setitem(G["run_preflight"].__globals__, "run_full_suite", lambda *a, **k: (False, "1 failing"))
+    assert G["run_preflight"]("r", {}, "d")[3] == set()
+    src = (ROOT / "scripts/deploy_regression_gate.py").read_text() if "ROOT" in globals() else open("scripts/deploy_regression_gate.py").read()
+    assert "f not in whole and f not in preflight_passed" in src

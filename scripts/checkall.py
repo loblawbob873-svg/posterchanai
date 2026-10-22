@@ -503,6 +503,13 @@ def git_head():
         return "unknown"
 
 
+def _lowest_priority():
+    try:
+        os.nice(19)
+    except OSError:
+        pass
+
+
 def _captured(argv, cwd, env, timeout, output_path, cancel_event=None):
     """Run without a captured PIPE that grandchildren can keep open forever.
 
@@ -521,6 +528,13 @@ def _captured(argv, cwd, env, timeout, output_path, cancel_event=None):
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             kwargs["start_new_session"] = True
+            # LOWEST PRIORITY, CPU AND DISK. A test run on a node that serves the app must never take time the app
+            # needs: the shard count was held at 2 on server1 for that reason, and a 75-minute gate was the price.
+            # At nice 19 / I/O class idle the kernel gives the app and the relay every cycle they ask for first, so
+            # the gate can use the cores they are not using (_default_jobs). Chrome and every child inherit it.
+            kwargs["preexec_fn"] = _lowest_priority
+            if shutil.which("ionice"):
+                argv = ["ionice", "-c", "3", *argv]
         p = subprocess.Popen(argv, **kwargs)
         timed_out = False
         cancelled = False
@@ -716,7 +730,9 @@ def _default_jobs():
     cores = os.cpu_count() or 4
     jobs = max(1, min(6, cores // 2))
     if _serving_live_traffic():
-        jobs = max(1, min(2, jobs))
+        # 4, not 2, now that every job runs at nice 19 / ionice idle (_captured): the measured stall (relay two
+        # minutes behind) was test processes competing at the SAME priority as the app.
+        jobs = max(1, min(4, jobs))
     return jobs
 
 

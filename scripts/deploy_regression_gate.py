@@ -567,19 +567,21 @@ def affected_test_files(root, paths, files=None):
 
 
 def run_preflight(root, env, directory, jobs=None, skip_browser=False):
-    """(ran, ok, message). Runs only when the selection is a real shortcut (not empty, under PREFLIGHT_MAX_SHARE)."""
+    """(ran, ok, message, passed). Runs only when the selection is a real shortcut (not empty, under
+    PREFLIGHT_MAX_SHARE). `passed` is the files it ran green: the full suite then leaves them out -- they just passed
+    against this exact tree, and running them twice cost deploy #17 fourteen of its 75 minutes (244 files)."""
     paths = deploy_changes(root)
     if not paths:
-        return False, True, 'preflight: nothing changed to select by'
+        return False, True, 'preflight: nothing changed to select by', set()
     files = discover_test_files(root)
     sel = set(affected_test_files(root, paths, files))
     if not sel:
-        return False, True, 'preflight: no test names a changed file'
+        return False, True, 'preflight: no test names a changed file', set()
     if len(sel) > PREFLIGHT_MAX_SHARE * len(files):
-        return False, True, 'preflight: %d of %d test files affected -- the full gate is the shortcut' % (len(sel), len(files))
+        return False, True, 'preflight: %d of %d test files affected -- the full gate is the shortcut' % (len(sel), len(files)), set()
     print(f'[regressions] preflight: {len(sel)} test file(s) that name what changed, first')
     ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser, select=lambda f: f in sel)
-    return True, ok, message
+    return True, ok, message, (set(sel) if ok else set())
 
 
 def discover_test_files(root):
@@ -785,11 +787,12 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
                      'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
                      'PC_MMS_SOURCE_ROOT', 'PC_SMS_TEST_SOURCE'):
             env.pop(name, None)
+        preflight_passed = set()
         skip_browser, why = browser_skip_decision(root) if full else (False, '')
         if full:
             print('[regressions] browser tests: ' + ('SKIPPED — ' if skip_browser else 'run — ') + why)
             if os.environ.get('PC_GATE_NO_PREFLIGHT', '').strip() in ('', '0'):
-                ran, ok, message = run_preflight(root, env, directory, jobs=jobs, skip_browser=skip_browser)
+                ran, ok, message, preflight_passed = run_preflight(root, env, directory, jobs=jobs, skip_browser=skip_browser)
                 print('[regressions] ' + message)
                 if ran and not ok:
                     print('[regressions] ABORT: the tests of what changed fail -- stopped before the full run')
@@ -844,7 +847,7 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
             # 14 of a deploy's ~66 minutes (2,316 required cases, every one repeated in the full suite).
             whole = {t for t in required if '::' not in t}
             ok, message = run_full_suite(root, env, directory, jobs=jobs, skip_browser=skip_browser,
-                                         select=lambda f: f not in whole)
+                                         select=lambda f: f not in whole and f not in preflight_passed)
             if not ok:
                 if receipt:
                     Path(receipt).unlink(missing_ok=True)   # the required pass wrote it; this run failed
