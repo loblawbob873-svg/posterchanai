@@ -69,7 +69,11 @@ def test_recent_payments_render_and_history_errors_recover_without_losing_balanc
         assert not await browser.js("document.querySelector('.mw-wrap').textContent.includes('transactions could not be loaded')")
         assert await browser.js("__walletRequests.every(r=>r.method==='GET')"), 'viewing history attempted a wallet mutation'
 
-    init = 'window.__walletHistory=' + json.dumps(payload) + ';' + r'''
+    asyncio.run(desktop.with_browser('online', '', check, extra_init=wallet_init(payload)))
+
+
+def wallet_init(payload):
+    return 'window.__walletHistory=' + json.dumps(payload) + ';' + r'''
 localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
 window.__walletRequests=[];window.__historyFails=false;
 Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__walletCopied=value;}}});
@@ -87,4 +91,23 @@ window.fetch=(url,opts)=>{
   return Promise.resolve(new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}}));
 };
 '''
-    asyncio.run(desktop.with_browser('online', '', check, extra_init=init))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_your_address_copies_and_receive_shows_a_qr_that_copies_the_same_address():
+    """A member's wallet: Copy under "Your receiving address" copies it; Receive opens a QR of the same address, and
+    its Copy address copies exactly that."""
+    address = '4' + 'A' * 94
+
+    async def check(browser):
+        await desktop.login(browser)
+        await browser.js("__PC.switchView('wallet')")
+        await browser.until("!!document.querySelector('#mw-me-copy')")
+        await browser.js("document.querySelector('#mw-me-copy').click()")
+        await browser.until(f"window.__walletCopied==={address!r}")
+        await browser.js("window.__walletCopied=null; document.querySelector('#mw-me-receive').click()")
+        await browser.until("!!document.querySelector('#mw-me-qcopy') && !!document.querySelector('.mw-qr svg, .mw-qr img, .mw-qr canvas')")
+        await browser.js("document.querySelector('#mw-me-qcopy').click()")
+        await browser.until(f"window.__walletCopied==={address!r}")
+
+    asyncio.run(desktop.with_browser('online', '', check, extra_init=wallet_init(history_payload())))
