@@ -207,3 +207,23 @@ def test_a_wallet_reporting_many_unspent_but_none_spendable_is_split(monkeypatch
     wallet = FakeWallet(all_locked, unlocked_atomic=5 * 10 ** 9)
     assert _run(wallet, monkeypatch) == 0
     assert wallet.swept, "ten unspent outputs, one spendable, and the maintainer did nothing"
+
+
+def test_a_wallet_that_does_not_answer_skips_the_run_until_it_is_an_outage():
+    """The wallet RPC stops answering for ~2 minutes several times a day while monerod catches up;
+    each of those failed the unit (18 "service failed" in a week, each followed by a clean run). A
+    run that could not ask skips; an hour of consecutive silence still fails."""
+    assert [keep.unreachable_verdict(n, fail_after=6) for n in range(1, 8)] == [0, 0, 0, 0, 0, 1, 1]
+
+
+def test_the_unreachable_streak_resets_on_an_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(keep, "STATE", str(tmp_path / "streak"))
+
+    def down(*a, **k):
+        raise keep.Unreachable("curl exit 28: Operation timed out")
+    monkeypatch.setattr(keep, "run", down)
+    assert [keep.main() for _ in range(6)] == [0, 0, 0, 0, 0, 1]
+    monkeypatch.setattr(keep, "run", lambda: 0)
+    assert keep.main() == 0 and not (tmp_path / "streak").exists()
+    monkeypatch.setattr(keep, "run", down)
+    assert keep.main() == 0, "a fresh outage starts counting from zero"

@@ -47,6 +47,44 @@ MIN_ATOMIC = int(os.environ.get("XMR_MIN_ATOMIC", str(2 * 10**9)))
 MIN_OUT_ATOMIC = int(os.environ.get("XMR_MIN_OUT_ATOMIC", str(10**9)))
 #: Act before the wallet is blocked, not once it already is.
 LOW_WATER = int(os.environ.get("XMR_LOW_WATER", str(max(2, TARGET // 2))))
+#: Consecutive runs the wallet may go unanswered before the unit FAILS. One run is 10 minutes.
+#: The wallet RPC stops answering for ~2 minutes several times a day while monerod catches up a few
+#: blocks (`no_connection_to_daemon` in its journal); each of those used to fail this unit, which put
+#: "monero-keep-outputs.service failed" on the health check 18 times in a week with nothing wrong.
+#: An hour of silence is an outage, and that still fails.
+UNREACHABLE_FAIL_AFTER = int(os.environ.get("XMR_UNREACHABLE_FAIL_AFTER", "6"))
+STATE = os.environ.get("XMR_KEEP_STATE",
+                       os.path.join(os.path.expanduser("~"), ".cache", "monero-keep-outputs.unreachable"))
+
+
+class Unreachable(Exception):
+    """The wallet could not be ASKED — never read as an answer about its outputs."""
+
+
+def unreachable_verdict(streak, fail_after=UNREACHABLE_FAIL_AFTER):
+    """Exit code for the `streak`-th consecutive run the wallet did not answer. Pure, for the test."""
+    return 1 if streak >= fail_after else 0
+
+
+def _streak(update):
+    """Read the unreachable streak and write `update(streak)` back. A state file that cannot be read
+    counts as 0 and one that cannot be written is ignored: a bookkeeping error must not fail the unit."""
+    try:
+        with open(STATE) as f:
+            n = int(f.read().strip() or 0)
+    except Exception:
+        n = 0
+    n = update(n)
+    try:
+        if n:
+            os.makedirs(os.path.dirname(STATE), exist_ok=True)
+            with open(STATE, "w") as f:
+                f.write(str(n))
+        elif os.path.exists(STATE):
+            os.remove(STATE)
+    except Exception:
+        pass
+    return n
 
 
 def decide(spendable_count, unlocked_atomic, target=TARGET, low_water=LOW_WATER,
@@ -76,11 +114,11 @@ def rpc(method, params=None):
     already has a client that works."""
     body = json.dumps({"jsonrpc": "2.0", "id": "0", "method": method, "params": params or {}})
     out = subprocess.run(
-        ["curl", "-s", "--max-time", "120", "--digest", "-u", f"{USER}:{PASS}",
+        ["curl", "-sS", "--max-time", "120", "--digest", "-u", f"{USER}:{PASS}",
          URL, "-H", "Content-Type: application/json", "-d", body],
         capture_output=True, text=True, timeout=180)
     if out.returncode != 0:
-        raise SystemExit(f"wallet rpc unreachable: {out.stderr.strip()[:120]}")
+        raise Unreachable(f"curl exit {out.returncode}: {out.stderr.strip()[:120]}")
     try:
         return json.loads(out.stdout)
     except Exception:
@@ -104,6 +142,20 @@ def spendable(account_index=0):
 
 
 def main():
+    try:
+        rc = run()
+    except Unreachable as e:
+        n = _streak(lambda n: n + 1)
+        rc = unreachable_verdict(n)
+        print(f"wallet rpc unreachable ({e}); {n} run(s) in a row"
+              + (" — failing" if rc else f", skipping this run (fails after {UNREACHABLE_FAIL_AFTER})"),
+              file=sys.stderr if rc else sys.stdout)
+        return rc
+    _streak(lambda n: 0)
+    return rc
+
+
+def run():
     bal = (rpc("get_balance", {"account_index": 0}).get("result") or {})
     unlocked = int(bal.get("unlocked_balance") or 0)
     count, measured = spendable()
