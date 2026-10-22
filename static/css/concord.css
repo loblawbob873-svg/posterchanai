@@ -712,6 +712,10 @@ svg.ic.cc-starred{fill:currentColor}
 /* Projects */
 .ccg-projects{position:fixed;z-index:80;inset:24px max(24px,calc((100vw - 1120px)/2));display:flex;flex-direction:column;background:var(--cct-pop);color:var(--cct-text);border:1px solid rgba(var(--cct-tint-rgb),.12);border-radius:calc(14px*var(--cct-round));box-shadow:0 20px 70px rgba(var(--cct-shade-rgb),.6);overflow:hidden}
 body.ccg-projects-open::before{content:"";position:fixed;inset:0;z-index:79;background:rgba(4,2,12,.55)}
+/* In the windowed desktop (.os-root, z 300) these opened UNDER every window -- "Issues and Pull Requests does nothing
+   on desktop" (2026-10-22). Lifted the way client.css lifts .modal-bg there (340), and kept below it, because the
+   new-issue form they open IS that modal. */
+body.os-on .ccg-projects{z-index:320}body.os-on.ccg-projects-open::before{z-index:319}body.os-on .ccg-panel{z-index:330}
 .ccg-proj-head{display:flex;gap:12px;align-items:flex-start;padding:16px 16px 8px 20px}.ccg-proj-head>div:first-child{flex:1;min-width:0}
 .ccg-proj-head h2{margin:0;color:var(--cct-strong)}.ccg-proj-head p{margin:2px 0 0;font-size:13px}
 .ccg-proj-tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}

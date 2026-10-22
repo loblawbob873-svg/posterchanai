@@ -95,9 +95,18 @@ async def inside_viewport(b, selector, where):
     assert r[0] >= -1 and r[1] >= -1 and r[2] <= r[4] + 1 and r[3] <= r[5] + 1, f'{where}: {selector} leaves the viewport {r}'
 
 
+async def on_top(b, selector, where):
+    """Present is not visible: at 2026-10-22 the Projects panel opened UNDER the windowed desktop (.os-root, z 300) and
+    "Issues and Pull Requests does nothing on desktop" -- while every check here passed, because they ran with the
+    desktop switched off and only asked whether the element existed. This asks what a click at its centre would hit."""
+    hit = await b.js("""(()=>{const el=document.querySelector(%s);if(!el)return 'missing';const r=el.getBoundingClientRect();
+      const top=document.elementFromPoint(r.x+r.width/2,r.y+Math.min(r.height/2,60));return el.contains(top)?'ok':(top?top.tagName+'.'+top.className:'nothing');})()""" % json.dumps(selector))
+    assert hit == 'ok', f'{where}: {selector} is covered by {hit}'
+
+
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('width', [1280, 390])
-def test_repository_channel_panel_and_projects(width):
+@pytest.mark.parametrize('width,os_mode', [(1280, False), (390, False), (1280, True)])
+def test_repository_channel_panel_and_projects(width, os_mode):
     fx = fixture()
 
     async def check(b):
@@ -122,8 +131,8 @@ def test_repository_channel_panel_and_projects(width):
             publishTo:async(urls,ev)=>{__published.push(ev);return {ok:true,accepted:1};},
             subscribeFrom:()=>({close(){}})};
           Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return door;}});
-          __PC.switchMessagesTab('concord');
-        })()''' % json.dumps(fx))
+          if(%s)__PC.switchView('concord');else __PC.switchMessagesTab('concord');
+        })()''' % (json.dumps(fx), 'true' if os_mode else 'false'))
         await b.until("!!document.querySelector('.cc-channel-list')")
         # The channel list marks repository channels and offers Projects.
         assert await b.js("document.querySelectorAll('.ccg-chan-badge').length") == 2
@@ -173,6 +182,7 @@ def test_repository_channel_panel_and_projects(width):
         await press(b, '#ccg-projects-open')
         await b.until("!!document.querySelector('#ccg-projects .ccg-stats')")
         await inside_viewport(b, '#ccg-projects', 'Projects')
+        await on_top(b, '#ccg-projects', 'Projects')
         await no_sideways_scroll(b, 'Projects')
         await shot(b, f'{width}-3-projects')
         await press(b, '[data-ccg-tab="issues"]', 'document.querySelector("#ccg-projects")')
@@ -211,6 +221,58 @@ def test_repository_channel_panel_and_projects(width):
         await b.until("!!document.querySelector('#ccg-projects')")
         assert await b.js("document.querySelector('#ccg-projects [data-ccg-tab=\"issues\"]').getAttribute('aria-selected')") == 'true'
         await b.until("!!document.querySelector('#ccg-projects .ccg-item')")
+        await on_top(b, '#ccg-projects', 'Issues and pull requests')
+        if os_mode:
+            assert await b.js("!!document.querySelector('.os-root')"), 'the windowed desktop never came up'
+
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:%s}));" % ('true' if os_mode else 'false')
+    asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+PICKER_FIXTURE = r"""
+import fs from 'node:fs';import vm from 'node:vm';
+globalThis.window=globalThis;vm.runInThisContext(fs.readFileSync('static/vendor/nostr/nostr.bundle.js','utf8'));
+const NT=NostrTools;const viewer={sk:new Uint8Array(32).fill(1)};viewer.pk=NT.getPublicKey(viewer.sk);
+const other={sk:new Uint8Array(32).fill(5)};const busy={sk:new Uint8Array(32).fill(6)};
+const now=Math.floor(Date.now()/1000);
+const ann=(who,d,at)=>NT.finalizeEvent({kind:30617,created_at:at,tags:[['d',d],['name',d],['relays','wss://git.fixture.invalid']],content:''},who.sk);
+const events=[ann(viewer,'posterchanai',now-86400*400),ann(other,'oldrepo',now-86400*300)];
+for(let i=0;i<600;i++)events.push(ann(busy,'busy-'+i,now-i));
+console.log(JSON.stringify({events}));
+"""
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_repository_picker_finds_an_old_repository():
+    """2026-10-22, "posterchan not even found in Connect a git repository": every relay held its announcement, but the
+    picker listed the NEWEST thousand (index.ngit.dev: 500) and only filtered that list as you typed. The stub relay
+    here behaves the same way -- newest first, capped at 500, NIP-50 `search` answered -- with 600 newer
+    announcements in front of the two being looked for."""
+    r = subprocess.run(["node", "--input-type=module", "-e", PICKER_FIXTURE], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    fx = json.loads(r.stdout)
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=860, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js(r'''(()=>{
+          const FX=%s;
+          const match=(ev,f)=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.authors||f.authors.includes(ev.pubkey))
+            &&(!f.search||ev.tags.some(t=>t[0]==='name'&&t[1].toLowerCase().includes(f.search.toLowerCase())));
+          const door={queryFrom:async(urls,filters)=>{const out=new Map();
+              for(const f of filters){const hit=FX.events.filter(ev=>match(ev,f)).sort((a,b)=>b.created_at-a.created_at).slice(0,Math.min(f.limit||500,500));
+                for(const ev of hit)out.set(ev.id,ev);}
+              return [...out.values()];},
+            publishTo:async()=>({ok:true,accepted:1}),subscribeFrom:()=>({close(){}})};
+          Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return door;}});
+          __PC.switchMessagesTab('concord');
+        })()''' % json.dumps(fx))
+        await b.until("!!window.PCConcordGit")
+        await b.js("window.__picked=null;PCConcordGit.pickRepository().then(v=>{window.__picked=v;});true")
+        await b.until("!!document.querySelector('#ccg-pick-q')")
+        for text, want in (('posterchan', 'posterchanai'), ('oldrepo', 'oldrepo')):
+            await b.js("(()=>{const q=document.querySelector('#ccg-pick-q');q.value=%s;q.dispatchEvent(new Event('input'));})()" % json.dumps(text))
+            await b.until("[...document.querySelectorAll('#ccg-pick-list .ccg-pick-row')].some(x=>x.textContent.includes(%s))" % json.dumps(want))
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))

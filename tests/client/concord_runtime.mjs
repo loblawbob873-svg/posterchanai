@@ -599,6 +599,11 @@ control('cc-copy-link').click();
 if(calls.copied!=='https://poster.place/invite/naddr1qqqq#abc_DEF') throw new Error('relay invite copy failed');
 await control('cc-publish-listing').click();
 if(!calls.toasts.some(x=>x.includes('published to Armada Discover'))) throw new Error('Armada listing publish failed');
+/* A community JOINED from an invite holds no genesis events (only its creator's device does); listing it is still just
+ * its invite link. It used to answer "old local sandbox; create a relay community" (2026-10-22). */
+{const rooms=JSON.parse(data.get(CC_ROOMS));delete rooms[0].cord.events;data.set(CC_ROOMS,JSON.stringify(rooms));
+ calls.toasts.length=0;await control('cc-publish-listing').click();
+ if(!calls.toasts.some(x=>x.includes('published to Armada Discover'))) throw new Error('a joined community could not be listed: '+calls.toasts.join(' | '));}
 
 const input=control('cc-input');
 control('cc-emoji').click();

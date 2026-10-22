@@ -32,4 +32,23 @@ assert.equal(repaired.length,1);
 assert.equal(repaired[0].communityId,hydrated.communityId);
 assert.equal(repaired[0].channels[0].id,'general-channel');
 assert.equal(PCConcord.uniqueRooms([...repaired,{...distinct,communityId:hydrated.communityId}]).length,1,'rotated token recreated hydrated room');
+
+// ONE INVITER, TWO COMMUNITIES (2026-10-22, "Sorsmenedék and Rin's anime room keep changing into each other"). Both
+// invites live at the inviter's one address (kind 33301, d=''), so before hydration both rows carry the SAME naddr as
+// their communityId; only the token differs. They are two communities and must stay two rows.
+const sors={...room('armada.buzz',[],'wss://first.example',Buffer.alloc(16,1)),name:'Sorsmenedék',communityId:address([])};
+const rin={...room('armada.buzz',[],'wss://first.example',Buffer.alloc(16,2)),name:"Rin's anime room",communityId:address([])};
+assert.equal(PCConcord.sameRoom(sors,rin),false,'two invites from one inviter were taken as one community');
+assert.equal(PCConcord.uniqueRooms([sors,rin]).length,2,'two communities from one inviter were merged');
+// Hydrated: different bundles are never the same room, whatever their invites say.
+const A='c'.repeat(64),B='d'.repeat(64);
+const sorsH={...sors,communityId:A,cord:{bundle:{community_id:A},hydrated:true}},rinH={...rin,communityId:B,cord:{bundle:{community_id:B},hydrated:true}};
+assert.equal(PCConcord.uniqueRooms([sorsH,rinH,sors,rin]).length,2,'hydrated communities from one inviter collapsed');
+// A row the OLD rule merged: one community's id, the other's bundle, both invite URLs. It is repaired to the bundle it
+// holds, sheds the aliases, and the other community stays its own row.
+const merged={...sorsH,cord:{bundle:{community_id:B},hydrated:true},inviteAliases:[sors.url,rin.url]};
+const healed=PCConcord.uniqueRooms([merged,sorsH]);
+assert.equal(healed.length,2,'a merged row swallowed the other community again');
+assert.deepEqual(healed.map(r=>r.communityId).sort(),[A,B].sort());
+for(const r of healed){assert.equal(r.communityId,r.cord.bundle.community_id,'a row kept another community\'s bundle');assert.ok(!r.inviteAliases,'a foreign alias survived');}
 console.log('Concord real invite identity runtime ok');

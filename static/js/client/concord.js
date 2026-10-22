@@ -645,7 +645,6 @@
     roomReadAbortController=identity&&typeof AbortController==='function'?new AbortController():null;
     return roomReadAbortController&&roomReadAbortController.signal;
   }
-  const discoveryIconLoads=new Set();
   const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
   /* `room.cord.hydrated` is durable membership metadata, not renderer state. Treating it as a
@@ -1217,10 +1216,19 @@
     return address+'#'+secret;
   }
   function roomInviteKeys(room){return [room,...(room&&room.inviteAliases||[]).map(url=>({url}))].map(inviteKey).filter(Boolean);}
+  /* TWO COMMUNITIES FROM ONE INVITER WERE ONE ROW. An invite's address is (33301, the inviter's link key, d=''), so
+   * every invite one person makes has the SAME naddr and only the fragment's token tells them apart -- and before
+   * hydration a row's communityId IS that naddr. Equal placeholders were taken as the same community, the rows were
+   * merged with both invite URLs as aliases, and the one row then flipped between the two bundles (channel list and
+   * banner) on every hydration, on every device, since the list syncs ("Sorsmenedék and Rin's anime room keep
+   * changing into each other", 2026-10-22). A placeholder is only a hint: the token decides; and two rows whose
+   * bundles name different communities are never the same. */
+  function bundleIdOf(room){return String(room&&room.cord&&room.cord.bundle&&room.cord.bundle.community_id||'');}
   function sameRoom(a,b){
     if(!a||!b)return false;
-    const ac=communityKey(a),bc=communityKey(b);
-    if(ac&&bc){if(ac===bc)return true;if(!/^naddr1/i.test(ac)&&!/^naddr1/i.test(bc))return false;}
+    const ab=bundleIdOf(a),bb=bundleIdOf(b);if(ab&&bb&&ab!==bb)return false;
+    const ac=communityKey(a),bc=communityKey(b),an=/^naddr1/i.test(ac),bn=/^naddr1/i.test(bc);
+    if(ac&&bc){if(ac===bc&&!(an&&bn))return true;if(!an&&!bn)return false;}
     const ak=roomInviteKeys(a),bk=roomInviteKeys(b);
     if(ak.length&&bk.length)return ak.some(key=>bk.includes(key));
     return !!roomIdentity(a)&&roomIdentity(a)===roomIdentity(b);
@@ -1237,9 +1245,20 @@
     if(aliases.size>1)merged.inviteAliases=[...aliases.values()];else delete merged.inviteAliases;
     return merged;
   }
+  /* A row the old rule merged holds one community's id and the other's bundle (and both invite URLs). The bundle is
+   * what it shows and the key it reads with, so the id follows the bundle; the aliases go, because one of them is
+   * the other community's and would merge it back. The other community returns as its own row from the membership
+   * list. */
+  function repairMergedRoom(row){
+    const id=String(row.communityId||''),bid=bundleIdOf(row);
+    // Only the merge's own signature: a mismatch AND several invite aliases. Some rows are deliberately keyed by
+    // something other than their bundle id, and those carry no aliases.
+    if(!bid||!id||/^naddr1/i.test(id)||id===bid||!Array.isArray(row.inviteAliases)||row.inviteAliases.length<2)return row;
+    const fixed={...row,communityId:bid};delete fixed.inviteAliases;return fixed;
+  }
   function uniqueRooms(rows){
     const result=[];
-    for(const row of rows||[]){if(!row||typeof row!=='object')continue;let room=row,index=result.findIndex(other=>sameRoom(other,room));
+    for(const raw of rows||[]){if(!raw||typeof raw!=='object')continue;const row=repairMergedRoom(raw);let room=row,index=result.findIndex(other=>sameRoom(other,room));
       if(index<0){result.push(room);continue;}
       room=mergeRoom(result[index],room);result[index]=room;
       // Hydration can bridge an old invite-only row and a membership row with a community id.
@@ -3934,19 +3953,6 @@
      * inside `cord.bundle` made persistArmadaMembership() return false, so an apparently successful
      * direct invite vanished on another device or after browser storage was cleared. */
     return {url,naddr:parts.naddr,communityId:bundle.community_id,name:bundle.name||'Concord community',description:'',channels:[{name:'general',private:false}],local:false,cord:{bundle,parsed:opened.parsed}};
-  }
-  async function hydrateDiscoveredIcon(p,item){
-    if(!item||item.icon||discoveryIconLoads.has(item.naddr)||!window.PosterCordReader||!p.relayQueryFrom)return;
-    discoveryIconLoads.add(item.naddr);
-    try{
-      const signal=discoveryAbortController&&discoveryAbortController.signal,room=await hydrateInvite(p,item.url,signal);if(signal&&signal.aborted)return;const bundle=room.cord.bundle,reader=window.PosterCordReader;
-      const seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle);
-      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,signal,plane:cordPlaneContext(p,bundle,[],null)});
-      const info=reader.inspectControl(bundle,wraps||[]);
-      item.name=info.name||item.name; item.description=info.description||item.description;
-      if(info.icon)item.icon=typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon);
-      if(state.community==null)backgroundRender();
-    }catch(_){} finally{ discoveryIconLoads.delete(item.naddr); }
   }
   function inviteRefUrl(ref){ const s=String(ref||''); if(/^https?:/i.test(s))return s; const [naddr,frag]=s.split('#'); return naddr&&frag?`https://armada.buzz/invite/${naddr}#${frag}`:''; }
   function normalizeRelay(value){try{const u=new URL(String(value||''));if(u.protocol!=='ws:'&&u.protocol!=='wss:')return '';return u.href.replace(/\/$/,'');}catch(_){return '';}}
@@ -7239,7 +7245,11 @@
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const manageLinks=$('#cc-manage-links');if(manageLinks)manageLinks.onclick=async()=>{const room=saved()[state.community];if(!room?.cord?.bundle)return;try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}};
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(shareableInviteUrl(p,room.url));return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(shareableInviteUrl(p,room.url)); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(shareableInviteUrl(p,upgraded.url)); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
-    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
+    const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community];
+      /* A JOINED COMMUNITY HAS AN INVITE LINK AND NO GENESIS EVENTS -- those exist only on the device that created it --
+       * and the listing is just that link in a note. Demanding the events refused every community joined from an
+       * invite with "create a relay community", about relays nobody can set (2026-10-22). */
+      if(!room||!room.url||!room.cord){ p.toast('This community has no invite link to list yet'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada Discover…'); for(const ev of (Array.isArray(room.cord.events)?room.cord.events:[]))await p.relayPublishTo(CORD_RELAYS,ev); await announceListing(p,room); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     for(const id of ['#cc-settings-cancel','#cc-settings-close','#cc-settings-back']){const b=$(id);if(b)b.onclick=()=>{closeCommunitySettings();};}
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)activeSet(String(state.community));else activeSet(null);render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until

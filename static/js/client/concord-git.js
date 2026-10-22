@@ -742,11 +742,26 @@
     directory.loading=(async()=>{
       const home=(()=>{try{return P().homeRelay&&P().homeRelay();}catch(_){return '';}})();
       const relays=unique([DISCOVERY_RELAY,normRelay(home||'')].filter(Boolean));
-      const evs=await query(relays,[{kinds:[ANN],limit:1000}],10000),by=new Map();
-      for(const ev of evs){if(!verify(ev))continue;const a=parseAnnouncement(ev);if(!a)continue;const c=by.get(a.address.coordinate);if(!c||a.createdAt>c.createdAt)by.set(a.address.coordinate,a);}
-      directory={at:Date.now(),repos:[...by.values()],loading:null};return directory.repos;
+      /* "PosterChan not even found in Connect a git repository" (2026-10-22): every relay HAS its announcement, but
+       * `limit:1000` is the NEWEST thousand (index.ngit.dev answers 500) and an older repository is simply not in the
+       * list the search box filters. So your own repositories are asked for by author, always, and typing runs a
+       * real search on the index (searchAnnouncements). */
+      const mine=me(),evs=await query(relays,[{kinds:[ANN],limit:1000},...(mine?[{kinds:[ANN],authors:[mine],limit:200}]:[])],10000);
+      directory={at:Date.now(),repos:foldAnnouncements(evs),loading:null};return directory.repos;
     })().catch(()=>{directory.loading=null;return directory.repos;});
     return directory.loading;
+  }
+  function foldAnnouncements(evs,base=[]){
+    const by=new Map(base.map(a=>[a.address.coordinate,a]));
+    for(const ev of evs||[]){if(!verify(ev))continue;const a=parseAnnouncement(ev);if(!a)continue;const c=by.get(a.address.coordinate);if(!c||a.createdAt>c.createdAt)by.set(a.address.coordinate,a);}
+    return [...by.values()];
+  }
+  /* NIP-50 on the index (index.ngit.dev answers it; a relay that does not simply returns nothing). */
+  const searched=new Map();
+  async function searchAnnouncements(text){
+    const k=String(text||'').trim().toLowerCase();if(k.length<2)return [];
+    if(!searched.has(k))searched.set(k,query([DISCOVERY_RELAY],[{kinds:[ANN],search:k,limit:50}],8000).then(evs=>foldAnnouncements(evs)).catch(()=>[]));
+    return searched.get(k);
   }
   async function resolveNip05(name){
     try{const NT=window.NostrTools;if(NT&&NT.nip05&&NT.nip05.queryProfile){const r=await NT.nip05.queryProfile(name);return r&&r.pubkey;}}catch(_){}
@@ -784,8 +799,8 @@
             list.querySelector('[data-ccg-paste]').onclick=async()=>{list.innerHTML='<p class="ccg-muted">Resolving…</p>';
               try{const r=await resolveInput(v,window.NostrTools.nip19,resolveNip05);if(connected.has(r.address.coordinate))throw new Error('This repository is already connected.');finish(await fetchAnnouncement(r));}
               catch(e){list.innerHTML=`<p class="ccg-error">${enc((e&&e.message)||e)}</p>`;}};return;}
-          const repos=await loadDirectory();if(done||q.value.trim()!==v)return;
-          const hits=searchDirectory(repos,v);
+          const [listed,found]=await Promise.all([loadDirectory(),searchAnnouncements(v)]);if(done||q.value.trim()!==v)return;
+          const repos=found.length?foldAnnouncements([],[...listed,...found]):listed,hits=searchDirectory(repos,v);
           list.innerHTML=(v?'':'<p class="ccg-muted">Recently announced</p>')+(hits.length?hits.map(row).join(''):`<p class="ccg-muted">${repos.length?'No repository matches.':'No repositories could be loaded — paste an address instead.'}</p>`);
           list.querySelectorAll('[data-ccg-pick]').forEach(b=>b.onclick=()=>{const a=hits.find(x=>x.address.coordinate===b.dataset.ccgPick);if(!a)return;
             const s=stateOf(a.address.coordinate);absorb(a.address.coordinate,s,[a.event]);finish({address:a.address,relayHints:a.relays,announcement:a});});
