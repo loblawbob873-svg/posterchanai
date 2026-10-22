@@ -439,7 +439,8 @@ HANG_DUMP_S = 600
 # unreachable host, a sync that fails, or a shard that does not finish. A remote failure is re-run here (the retry-
 # alone pass below), and what the remote SKIPPED is run here too -- so the remote can save time, never verdicts.
 GATE_REMOTE_FILE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'posterchanai' / 'gate-remote'
-REMOTE_TREE = 'tree'                     # in the remote account's home; venv-unified there is its own venv
+REMOTE_TREE = 'tree'
+REMOTE_MAX_FAILURES = 10           # more on one remote shard = its environment; that shard runs here, whole                     # in the remote account's home; venv-unified there is its own venv
 # Files that need what the remote venv deliberately lacks (torch/XPU, the ACE-Step and searxng checkouts).
 _LOCAL_ONLY = re.compile(r"^\s*(?:import|from)\s+(?:torch|torchaudio|torchvision|acestep|searx)\b", re.M)
 _SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=30']
@@ -823,8 +824,12 @@ def _run_shards(root, env, directory, files, shards, durations, captured, remote
                 parsed = list(ET.parse(report).getroot().iter('testcase'))
             except (OSError, ET.ParseError):
                 parsed = []
-            if not parsed or code not in (0, 1):
-                print(f'[regressions] remote shard {index} did not finish (exit {code}) -- its files run here')
+            failed = sum(1 for c in parsed if c.find('failure') is not None or c.find('error') is not None)
+            if not parsed or code not in (0, 1) or failed > REMOTE_MAX_FAILURES:
+                # Many failures on one remote shard is the remote's environment, not the code: re-running them one at
+                # a time (the retry pass) could take hours, so the whole shard runs here, in parallel, instead.
+                why = f'did not finish (exit {code})' if not parsed or code not in (0, 1) else f'had {failed} failures'
+                print(f'[regressions] remote shard {index} {why} -- its files run here')
                 redo.extend(shards[index])
                 results[i] = None
             else:

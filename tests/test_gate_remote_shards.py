@@ -57,5 +57,6 @@ def test_the_remote_verdict_is_never_final():
     src = (ROOT / "scripts/deploy_regression_gate.py").read_text()
     body = src[src.index("def _run_shards("):src.index("def run_gate(")]
     assert "again_skipped" in body and "redo.extend(shards[index])" in body
+    assert "failed > REMOTE_MAX_FAILURES" in body, "a broken remote environment would be retried one test at a time"
     assert body.index("if remote:") < body.index("retry = [b for b in bad")
     assert "PC_GATE_MANAGED_PROCESSES') != '1' else None" in src, "a gate inside a shard must not fan out again"
