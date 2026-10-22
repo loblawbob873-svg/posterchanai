@@ -985,7 +985,9 @@ window.PCStreamsFactory = function(dep){
     if(!st || !sel){ const box=root.querySelector('.gl-tpl'); if(box) box.classList.add('hidden'); return; }
     const msg=(t)=>{ const m=$('#gl-tpl-msg',root); if(!m) return; m.textContent=t||''; m.classList.toggle('hidden', !t); };
     let list=st.list();
-    const paint=()=>{ const cur=sel.value;
+    /* `want`: the option to select once it EXISTS. Setting sel.value to a name that has no <option> yet is
+     * silently dropped by the browser, so a just-saved template came back unselected, with its Delete hidden. */
+    const paint=(want)=>{ const cur=want!=null ? want : sel.value;
       sel.innerHTML='<option value="">— none —</option>'+list.map(t=>`<option value="${enc(t.name)}">${enc(t.name)}</option>`).join('');
       sel.value=list.some(t=>t.name===cur) ? cur : '';
       $('#gl-tpl-del',root).classList.toggle('hidden', !sel.value); };
@@ -1016,7 +1018,7 @@ window.PCStreamsFactory = function(dep){
                   cover:($('#gl-img',root).value||'').trim(), post:post?post.value:'' };
       const b=$('#gl-tpl-ok',root); b.disabled=true;
       try{ const r=await st.save(l=>window.PCLiveTpl.upsert(l, tpl));
-        list=r.list; sel.value=name; paint(); nameRow.classList.add('hidden');
+        list=r.list; paint(name); nameRow.classList.add('hidden');
         msg(r.synced ? `Saved “${name}”.` : `Saved “${name}” on this device — it will reach your other devices once your relays answer.`);
       } finally { b.disabled=false; }
     };
@@ -1027,7 +1029,7 @@ window.PCStreamsFactory = function(dep){
       const name=sel.value; if(!name) return;
       if(typeof uiConfirm==='function' && !(await uiConfirm(`Delete the template “${name}”?`))) return;
       const r=await st.save(l=>window.PCLiveTpl.remove(l, name));
-      list=r.list; sel.value=''; paint(); msg(`Deleted “${name}”.`);
+      list=r.list; paint(''); msg(`Deleted “${name}”.`);
     };
   }
   // Pick an image you already have on your Blossom drive. Used by Go Live's cover picker; kept
