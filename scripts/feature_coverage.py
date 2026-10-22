@@ -25,12 +25,12 @@ ROOT = Path(__file__).resolve().parents[1]
 # AI screens are out of scope for now (the owner, 2026-10-22: "not AI at this time").
 AI_VIEWS = {"ai", "translate"}
 
-# Screens opened by something other than switchView/the sidebar -- each with the call that opens it.
+# Screens opened by something other than switchView/the sidebar -- each with the call that opens it. ("Discover" is
+# a sidebar GROUP of other screens, not a screen, so it is not here.)
 EXTRA = {
     "profile": [r"openProfile\(", r"renderProfileView\("],
     "thread": [r"openThread\(", r"renderThread\("],
     "search": [r"runSearch\(", r"switchView\(\s*\\?['\"]search"],
-    "discover": [r"switchView\(\s*\\?['\"]discover", r"openDiscover\("],
     "trending": [],
     "media-center": [],
 }
@@ -48,7 +48,6 @@ KNOWN_GAPS = {
     "ttt": "Nostr game -- no browser test plays it yet",
     "texts": "Android SMS screen -- native; covered by the Android emulator checks in CI, not the gate",
     "xdc": "mini apps view -- the webxdc runtime is unit-tested; the screen itself is not driven yet",
-    "discover": "Discover hub -- opened by the smoke check only",
 }
 
 
@@ -78,13 +77,20 @@ def coverage() -> dict:
     """{view: [browser test files that reach it]}"""
     src = _test_sources()
     browser = {f: s for f, s in src.items() if _BROWSER.search(f + "\n" + s)}
+    # A parametrised test names the screens it drives with FEATURE_COVERS = ("ttt", "chess", ...): the view name is
+    # then a parameter, not a literal switchView('ttt'), and an explicit declaration beats guessing from source.
+    declared = {}
+    for f, s in browser.items():
+        for m in re.finditer(r"FEATURE_COVERS\s*=\s*[\(\[]([^\)\]]*)[\)\]]", s):
+            for v in re.findall(r"['\"]([a-z0-9_-]+)['\"]", m.group(1)):
+                declared.setdefault(v, set()).add(f)
     out = {}
     for v in views():
         q = re.escape(v)
         pats = [rf"""switchView\(\s*\\?['"]{q}\\?['"]""", rf"""switchMessagesTab\(\s*\\?['"]{q}\\?['"]""",
                 rf"""data-view=\\?["']{q}\\?["']""", rf"#view-{q}\b"] + EXTRA.get(v, [])
         rx = re.compile("|".join(pats))
-        out[v] = sorted(f for f, s in browser.items() if rx.search(s))
+        out[v] = sorted({f for f, s in browser.items() if rx.search(s)} | declared.get(v, set()))
     return out
 
 
