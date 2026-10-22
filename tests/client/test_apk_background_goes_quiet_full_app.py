@@ -24,6 +24,7 @@ import httpx
 import pytest
 import websockets
 
+from tests.client import test_desktop_offline_full_app as desktop
 from tests.client.test_effects_full_app import Browser, Handler, INIT
 
 CAP = r'''
@@ -69,11 +70,13 @@ async def run(observe):
                            "Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});"
                            "Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>'hidden'});"
                            "document.dispatchEvent(new Event('visibilitychange'))")
-                await asyncio.sleep(22)          # the grace a glance at the notification shade gets
+                # The page's clock, not the gate's: the grace a glance at the notification shade gets, then a window long
+                # enough to hold every background timer (online count 15s, reminders 60s) at least once.
+                grace = await desktop.advance(b, 22000)
                 before = await b.js("__requests.length")
-                await asyncio.sleep(observe)
+                watched = await desktop.advance(b, observe * 1000)
                 got = {
-                    "awake_sockets": awake,
+                    "awake_sockets": awake, "grace_ms": grace, "watched_ms": watched,
                     "pocket_requests": await b.js(f"__requests.slice({before}).map(r=>r[0].split('?')[0])"),
                     "pocket_sockets": await b.js(OPEN),
                 }
@@ -81,7 +84,7 @@ async def run(observe):
                            "Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>'visible'});"
                            "document.dispatchEvent(new Event('visibilitychange'));"
                            "(__appL.appStateChange||[]).forEach(f=>f({isActive:true}))")
-                await asyncio.sleep(3)
+                await desktop.advance(b, 3000)   # virtual time stays paused once a budget runs out, so this is on it too
                 got["back_sockets"] = await b.js(OPEN)
                 got["errors"] = await b.js("__errors")
                 await b.call("Browser.close")
@@ -97,9 +100,10 @@ async def run(observe):
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 def test_a_backgrounded_apk_makes_no_requests_and_holds_no_sockets_then_reconnects():
-    got = asyncio.run(run(40))
+    got = asyncio.run(run(70))
     print(json.dumps(got))
     assert got["awake_sockets"] > 0, got
+    assert got["grace_ms"] >= 21999 and got["watched_ms"] >= 69999, ("the page clock did not run the window", got)
     assert got["pocket_requests"] == [], got
     assert got["pocket_sockets"] == 0, got
     assert got["back_sockets"] > 0, got

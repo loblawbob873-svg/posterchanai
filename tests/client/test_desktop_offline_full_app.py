@@ -208,6 +208,21 @@ def test_native_popup_is_usable_before_instance_config(mode,kind):
     asyncio.run(cold_popup(mode,kind))
 
 
+async def advance(b, ms):
+    """Run ``ms`` of the PAGE's clock through Chrome's virtual time, as fast as the page can do the work, and return how
+    far it actually went (callers assert it, so a policy Chrome ignored cannot pass as a quiet window).
+
+    Once a budget runs out the page's clock stays PAUSED: every later wait in that page must be another advance(),
+    or its timers never fire."""
+    t0 = await b.js("performance.now()")
+    await b.call('Emulation.setVirtualTimePolicy', {'policy': 'advance', 'budget': ms})
+    for _ in range(300):
+        if await b.js("performance.now()") - t0 >= ms - 1:   # the budget lands within a fraction of a ms, either side
+            break
+        await asyncio.sleep(.05)
+    return round(await b.js("performance.now()") - t0)
+
+
 async def login(b):
     await b.until("document.body.classList.contains('guest')")
     await b.js("(()=>{const key=new Uint8Array(32).fill(1);document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(key);document.querySelector('#btn-nsec-login').click()})()")

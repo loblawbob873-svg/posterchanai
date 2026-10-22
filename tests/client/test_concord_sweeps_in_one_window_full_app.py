@@ -42,10 +42,11 @@ def test_only_the_communities_window_sweeps(window, sweeps):
         await b.js(r"""(()=>{window.__subs=0;const R=window.PCConcordRelay||window.Relay;
           for(const k of ['subscribeFrom','queryFrom']){const o=R[k]&&R[k].bind(R);if(o)R[k]=(...a)=>{window.__subs++;return o(...a);};}
           for(const k of ['relayQueryFrom','relaySubscribeFrom']){const o=__PC[k];if(o)__PC[k]=(...a)=>{window.__subs++;return o(...a);};}})()""")
-        await asyncio.sleep(24)                   # one 20 s sweep
+        got["virtual_ms"] = await desktop.advance(b, 24000)   # one 20 s sweep, on the page's clock
         got["subs"] = await b.js("window.__subs")
 
     asyncio.run(desktop.with_browser("online", "", check, ""))
+    assert got["virtual_ms"] >= 23999, ("the page clock did not run a whole sweep", got)
     if sweeps:
         assert got["subs"] > 0, ("the page that owns the badge stopped sweeping", got)
     else:

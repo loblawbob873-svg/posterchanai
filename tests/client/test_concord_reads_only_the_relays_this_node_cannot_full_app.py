@@ -64,19 +64,13 @@ def test_only_the_relay_this_node_cannot_read_is_read_through_the_tunnel():
         await b.js("window.__mark=(window.__tunneled||[]).length")
         # 70 seconds of the page's clock without 70 seconds of the gate's: Chrome's virtual time runs the timers
         # (the minute-rate-limited refreshes included) as fast as the page can do the work. Measured below.
-        t0 = await b.js("performance.now()")
-        await b.call('Emulation.setVirtualTimePolicy', {'policy': 'advance', 'budget': 70000})
-        for _ in range(300):
-            if await b.js("performance.now()") - t0 >= 70000:
-                break
-            await asyncio.sleep(.2)
-        got['virtual_ms'] = await b.js("performance.now()") - t0
+        got['virtual_ms'] = await desktop.advance(b, 70000)
         got['tunneled'] = await b.js(TUNNELED_SINCE_MARK)
         got['direct'] = await b.js(T.DIRECT)
 
     asyncio.run(desktop.with_browser('online', '', check, T.tunnel(
         __upRelays=RELAYS, __homeMirror='partial', __regReply='mirroring: 3 stream(s) from 3 relay(s); read directly: ' + REFUSER)))
-    assert got['virtual_ms'] >= 70000, ('the page clock did not run the full window', got['virtual_ms'])
+    assert got['virtual_ms'] >= 69999, ('the page clock did not run the full window', got['virtual_ms'])
     assert any(u.rstrip('/') == REFUSER for u in got['tunneled']), ('no refresh ran in the window -- the check below would pass vacuously', got)
     assert got['direct'] == [], ('Concord dialled a relay directly', got['direct'])
     others = sorted({u for u in got['tunneled'] if u.rstrip('/') != REFUSER})
