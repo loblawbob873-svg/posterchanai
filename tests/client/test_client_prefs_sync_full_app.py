@@ -100,7 +100,7 @@ RELAY = r"""
   fire(type,data){const e=type==='message'?new MessageEvent(type,{data:JSON.stringify(data)}):new Event(type);this['on'+type]?.(e);this.dispatchEvent(e);}
   send(raw){let m;try{m=JSON.parse(raw);}catch(_){return;}if(!Array.isArray(m))return;
    if(m[0]==='REQ'){const id=m[1],fl=m.slice(2);
-    if(fl.some(f=>(f['#d']||[]).includes('pcai:client-prefs'))&&fx.mode().read==='down'){fx.dropped++;return;}   // "could not ask": no EOSE, ever
+    if(fl.some(f=>(f['#d']||[]).includes('pcai:client-prefs'))&&fx.mode().read==='down'){fx.dropped++;(fx.droppedIds=fx.droppedIds||new Set()).add(id);return;}   // "could not ask": no EOSE, ever
     if(fl.some(f=>(f['#d']||[]).includes('pcai:client-prefs')))fx.reads=(fx.reads||0)+1;
     const all=strangerEvents().concat(fx.events());
     setTimeout(()=>{const out=[];
@@ -111,7 +111,7 @@ RELAY = r"""
     if(fx.isPrefs(ev)&&!fx.mode().accept){ok=false;msg='blocked: fixture refuses';fx.refused++;}
     else{store(ev);if(fx.isPrefs(ev))fx.accepted++;}
     setTimeout(()=>this.fire('message',['OK',ev.id,ok,msg]),12);}
-   if(m[0]==='CLOSE')return;}
+   if(m[0]==='CLOSE'){if(fx.droppedIds&&fx.droppedIds.delete(m[1]))fx.droppedClosed=(fx.droppedClosed||0)+1;return;}}
   close(){if(this.readyState===3)return;this.readyState=3;this.fire('close',{});}
  }
  window.WebSocket=FixtureSocket;
@@ -319,7 +319,13 @@ def me_pk(b):
 async def read_fails_once_more(b, before):
     """Wait until a client-prefs read has been tried and given up on (3 unanswered REQs + the last timeout)."""
     await wait(b, f"__fx.dropped>={before + 3}", 40, "the save's read to be tried three times")
-    await asyncio.sleep(7)
+    # The client gives up on the last one when it CLOSEs it; a flat 7s guessed at that (called 7 times per run).
+    t0 = asyncio.get_running_loop().time()
+    while asyncio.get_running_loop().time() - t0 < 7:
+        if await b.js("(__fx.droppedClosed||0)>=__fx.dropped"):
+            break
+        await asyncio.sleep(.2)
+    await asyncio.sleep(.5)
 
 
 # ----------------------------------------------------------------------------------- the sweep
