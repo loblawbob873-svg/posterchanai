@@ -67,3 +67,35 @@ def test_desktop_terminal_keeps_its_full_height():
     asyncio.run(desktop.with_browser('online', '', check))
     assert got['nav'] is None, got
     assert got['viewport']['bottom'] >= got['inner'] - 80, ("the desktop terminal lost height it does not need to give up", got)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_text_size_more_menu_and_split_panes():
+    """The toolbar does what it says: A+ and A− change the terminal's text size (and remember it), More → Reset
+    text size puts it back; Split → Split down adds a pane below, and Close this pane removes it again."""
+    async def check(b):
+        await _open_terminal(b, 1280, 860, False)
+        size = "(+localStorage.getItem('pc_tty_font_size')||0)"
+        await b.js("document.querySelector('#tty-font-more').click(); 1")
+        await b.until(f"{size}>0")
+        bigger = await b.js(size)
+        await b.js("document.querySelector('#tty-font-less').click(); document.querySelector('#tty-font-less').click(); 1")
+        await b.until(f"{size}==={bigger - 2}")
+        await b.js("document.querySelector('#tty-more').click(); 1")
+        await b.until("!document.querySelector('#tty-more-menu').hidden")
+        await b.js("document.querySelector('#tty-more-font-reset').click(); 1")
+        await b.until("localStorage.getItem('pc_tty_font_size')===null && document.querySelector('#tty-more-menu').hidden")
+
+        panes = "document.querySelectorAll('.tty-pane').length"
+        one = await b.js(panes)
+        await b.js("document.querySelector('#tty-split').click(); 1")
+        await b.until("!document.querySelector('#tty-split-menu').hidden")
+        await b.js("document.querySelector('#tty-split-down').click(); 1")
+        await b.until(f"{panes}==={one}+1")
+        await b.js("document.querySelector('#tty-split').click(); 1")
+        await b.until("!document.querySelector('#tty-split-menu').hidden && !document.querySelector('#tty-pane-close').classList.contains('hidden')")
+        await b.js("document.querySelector('#tty-pane-close').click(); 1")
+        await b.until(f"{panes}==={one}")
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    asyncio.run(desktop.with_browser('online', '', check))
