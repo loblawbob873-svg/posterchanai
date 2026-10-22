@@ -171,14 +171,20 @@ async def journey(base: str, sk_hex: str) -> list:
             await page.call("Page.navigate", {"url": base + "/"})
 
             # -- login: the button a person presses, then the app session -----------------------------------
-            t = await page.until("!!document.querySelector('#btn-nip07') || !!(window.__PC && __PC.me && __PC.me() && __PC.me().pubkey)", 45)
+            # The button is in the page's HTML from the first byte; its handler is attached at boot. Pressed before
+            # that, the click is simply lost (2 of 4 runs on 2026-10-22), so wait for a button that DOES something.
+            t = await page.until("(()=>{const b=document.querySelector('#btn-nip07');return (!!b&&typeof b.onclick==='function')"
+                                 "||!!(window.__PC && __PC.me && __PC.me() && __PC.me().pubkey)})()", 45)
             if t is None:
                 results.append(("login", FAIL, 45, "no sign-in button and nobody signed in after 45 s"))
                 return results
             await page.js("(()=>{const b=document.querySelector('#btn-nip07'); if(b) b.click(); return 1})()")
             t = await page.until("!!(window.__PC && __PC.me && __PC.me() && __PC.me().pubkey)", 45)
             if t is None:
-                results.append(("login", FAIL, 45, "the NIP-07 sign-in never completed"))
+                # Say what the page WAS showing: "never completed" alone cost a round of guessing (2026-10-22).
+                seen = await page.js("(()=>{const b=document.body;return {button:!!document.querySelector('#btn-nip07'),"
+                                     "app:!!window.__PC,nostr:!!window.nostr,text:(b&&b.innerText||'').replace(/\\s+/g,' ').slice(0,160)}})()")
+                results.append(("login", FAIL, 45, f"the NIP-07 sign-in never completed; the page showed {seen}"))
                 return results
             # Signed in means the SERVER knows us too: every app feature (Mail, Concord's tunnel, AI) rides that
             # session, and the page knowing its key says nothing about it.
