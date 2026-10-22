@@ -4,6 +4,8 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -51,6 +53,11 @@ public class DirectPushService extends Service {
     private WebSocket socket;
     private int generation = 0;
     private int failures = 0;
+    /* NO NETWORK, NO REDIAL. A failed dial was retried on a timer capped at 30s whether or not the phone had any
+     * network, so a phone awake with no signal redialled twice a minute for as long as it stayed that way. With no
+     * network the retry waits for this callback instead, and the network returning dials at once -- sooner than
+     * the timer would have. Registered while the service runs; ACCESS_NETWORK_STATE is already declared. */
+    private ConnectivityManager.NetworkCallback netWatch;
 
     public static boolean configured(Context context) {
         return DirectPushStore.load(context) != null;
@@ -114,6 +121,7 @@ public class DirectPushService extends Service {
                     .retryOnConnectionFailure(false)
                     .build();
         }
+        watchNetwork();
         connectNow();
         return START_STICKY;
     }
@@ -266,10 +274,12 @@ public class DirectPushService extends Service {
         // after an instance comes back, without making behavior impossible to test.
         delay += Math.abs(DirectPushStore.deviceId(this).hashCode() % 750);
         handler.removeCallbacksAndMessages(null);
+        if (!online()) { lastError = reason + " (waiting for a network)"; return; }
         handler.postDelayed(this::connectNow, delay);
     }
 
     private void stopDirect() {
+        unwatchNetwork();
         running = false;
         connected = false;
         generation++;
@@ -278,6 +288,46 @@ public class DirectPushService extends Service {
         socket = null;
         if (old != null) try { old.close(1000, "disabled"); } catch (Throwable ignored) { }
         dropNotification();
+    }
+
+    /** True unless Android says there is no default network. "Could not ask" is online: never strand the socket. */
+    private boolean online() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            return cm == null || cm.getActiveNetwork() != null;
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    private void watchNetwork() {
+        if (netWatch != null) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    handler.post(() -> {
+                        if (!running || socket != null) return;
+                        failures = 0;
+                        handler.removeCallbacksAndMessages(null);
+                        connectNow();
+                    });
+                }
+            };
+            cm.registerDefaultNetworkCallback(cb);
+            netWatch = cb;
+        } catch (Throwable ignored) { }
+    }
+
+    private void unwatchNetwork() {
+        ConnectivityManager.NetworkCallback cb = netWatch;
+        netWatch = null;
+        if (cb == null) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) cm.unregisterNetworkCallback(cb);
+        } catch (Throwable ignored) { }
     }
 
     private void dropNotification() {

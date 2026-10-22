@@ -76,7 +76,8 @@ def test_reconnect_backoff_cannot_outlast_the_call_queue(tmp_path):
     harness = r'''
 public class DirectPushService {
  CONSTANT
- int generation=2,failures=0,reconnected=0;boolean running=true,connected=true,configured=true;
+ int generation=2,failures=0,reconnected=0;boolean running=true,connected=true,configured=true,net=true;
+ boolean online(){return net;}
  String lastError="";WebSocket socket=new WebSocket();Handler handler=new Handler();
  static class WebSocket {}
  static class Handler {long delay=-1;Runnable job;void removeCallbacksAndMessages(Object o){job=null;}void postDelayed(Runnable r,long d){job=r;delay=d;} }
@@ -99,6 +100,9 @@ public class DirectPushService {
    check(s.reconnected==20);
    s.handler.job=null;s.running=false;s.failed(2,null,"disabled");check(s.handler.job==null);
    s.running=true;s.configured=false;s.failed(2,null,"credentials removed");check(s.handler.job==null);
+   // No network: no timer at all (the network callback dials when one returns), and the reason says so.
+   s.configured=true;s.net=false;s.socket=new WebSocket();s.failed(2,s.socket,"radio unavailable");
+   check(s.handler.job==null&&s.lastError.contains("waiting for a network"));
  }
 }
 '''.replace('CONSTANT', constant).replace('RETRY', retry)
