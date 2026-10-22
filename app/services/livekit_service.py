@@ -20,6 +20,7 @@ Turnkey notes:
 """
 from __future__ import annotations
 
+import http.client
 import logging
 import os
 import re
@@ -142,9 +143,34 @@ def wanted(cfg: dict) -> bool:
     return enabled(cfg) and installed() and bool(public_ip(cfg))
 
 
+_seen = {"at": 0.0, "up": False}
+
+
 def available() -> bool:
-    """Is a call SFU running here right now (what the broker's discovery probe answers)."""
-    return _proc is not None and _proc.poll() is None
+    """Is a call SFU running on this node right now (what the broker's discovery probe answers).
+
+    ACROSS PROCESSES (2026-10-22): on a role-split node LiveKit runs under the MEDIA process (role_runner) while the
+    broker answers in the WEB process, where `_proc` is always None -- so the probe said 404 with the SFU up. When this
+    process did not spawn it, LiveKit itself is asked: its signalling port answers GET / with "OK". One loopback
+    request at most every 5 s; a node without LiveKit is refused instantly."""
+    if _proc is not None and _proc.poll() is None:
+        return True
+    now = time.monotonic()
+    if now - _seen["at"] < 5.0:
+        return _seen["up"]
+    up = False
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", _port(_cfg(), "livekit_http_port"), timeout=0.5)
+        try:
+            conn.request("GET", "/")
+            r = conn.getresponse()
+            up = r.status == 200 and r.read(16).strip() == b"OK"
+        finally:
+            conn.close()
+    except (OSError, http.client.HTTPException):
+        up = False
+    _seen.update(at=now, up=up)
+    return up
 
 
 def _write_config(text: str) -> None:

@@ -30,6 +30,9 @@ _ROLE_SERVICES = {
     "media": [
         ("streams (mediamtx)", "app.services.stream_service", "start_stream_server", "stop_stream_server"),
         ("TURN (pion-turn)", "app.services.turn_service", "start_turn_server", "stop_turn_server"),
+        # Concord calls' SFU (2026-10-22): main.py started it only in the single-process layout, so on a split node
+        # it never ran and calls fell back to armada.buzz. Every media component belongs in this list.
+        ("LiveKit (Concord calls)", "app.services.livekit_service", "start_livekit_server", "stop_livekit_server"),
     ],
     "bots": [
         ("bot manager", "app.services.bot_manager_service", "start_bot_manager", "stop_bot_manager"),

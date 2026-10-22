@@ -77,7 +77,7 @@ def test_client_shell_reports_the_sw_version(monkeypatch):
 def _main_with(monkeypatch, verdicts):
     monkeypatch.setattr(clp, "wait_ready", lambda base: (True, {"relay_url": "wss://r"}))
     names = ["check_server_stats", "check_relay_publish", "check_concord_ticket", "check_client_shell",
-             "check_federation"]
+             "check_federation", "check_concord_calls"]
     for n, v in zip(names, verdicts):
         monkeypatch.setattr(clp, n, lambda *_a, _v=v: (_v, "stub"))
     return clp.main(["x", "https://x"])
@@ -85,9 +85,26 @@ def _main_with(monkeypatch, verdicts):
 
 def test_exit_codes(monkeypatch):
     P, F, S = clp.PASS, clp.FAIL, clp.SKIP
-    assert _main_with(monkeypatch, [P] * 5) == 0
-    assert _main_with(monkeypatch, [P, P, S, P, P]) == 2, "a could-not-ask must never read as a pass"
-    assert _main_with(monkeypatch, [P, F, S, P, P]) == 1
+    assert _main_with(monkeypatch, [P] * 6) == 0
+    assert _main_with(monkeypatch, [P, P, S, P, P, P]) == 2, "a could-not-ask must never read as a pass"
+    assert _main_with(monkeypatch, [P, F, S, P, P, P]) == 1
     monkeypatch.setattr(clp, "wait_ready", lambda base: (False, "HTTP 502"))
     assert clp.main(["x", "https://x"]) == 2
     assert clp.main(["x"]) == 2
+
+
+@pytest.mark.parametrize("offered,probe,grant,verdict", [
+    (True, 204, 401, "PASS"),
+    (True, 404, 401, "FAIL"),            # deploy #20: enabled, SFU never started, broker said 404 -- and it read green
+    (True, 204, 200, "FAIL"),            # an unsigned grant handed out a token
+    (False, 404, 404, "PASS"),           # a node that does not offer calls
+    (False, 204, 401, "FAIL"),           # answers as a broker while its config says it is not one
+])
+def test_concord_calls(monkeypatch, offered, probe, grant, verdict):
+    _serve(monkeypatch, {"/.well-known/concord/av": _R(probe), "/.well-known/concord/av/" + "0" * 64: _R(grant)})
+    assert clp.check_concord_calls("https://x", {"concord_calls": offered})[0] == getattr(clp, verdict)
+
+
+def test_concord_calls_unreachable_is_a_skip(monkeypatch):
+    _serve(monkeypatch, {"/.well-known/concord/av": OSError("down")})
+    assert clp.check_concord_calls("https://x", {"concord_calls": True})[0] == clp.SKIP

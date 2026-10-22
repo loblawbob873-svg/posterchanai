@@ -311,6 +311,8 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "default_relays": _default_relays[:8],
         "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
+        # Concord calls on this node's own LiveKit (routers/concord_av.py): what check_live_production expects.
+        "concord_calls": _setting(db, "livekit_enabled", "false").lower() == "true",
         # Folder sync needs the per-blob ceiling to skip-and-report an oversized file rather than
         # push it and take a 413 after spending the upload. It is an admin setting, so it is
         # published rather than assumed client-side.

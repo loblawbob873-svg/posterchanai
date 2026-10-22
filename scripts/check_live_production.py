@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Is the deploy that just landed actually WORKING on production? Five questions asked of the real instance.
+"""Is the deploy that just landed actually WORKING on production? Six questions asked of the real instance.
 
 Every other check runs this checkout against stubs or a loopback server, so all of them can be green while
 production is broken — which is what the owner kept reporting: "it broke in production while all tests
@@ -13,10 +13,13 @@ verified every node is on the commit:
   concord_ticket /ws/concord-relay with a FORGED ticket must be refused at the handshake (403), never accepted
   client_shell   GET / is the client HTML and /client/sw.js carries `pc-nostr-v<N>` (N is printed)
   federation     GET /client/federation -> 200 JSON in state ok/off; 503 = could not ask (never a pass)
+  concord_calls  when /client/config says `concord_calls`, the CORD-07 broker probe answers 204 and an UNSIGNED
+                 grant is refused (401) -- the SFU is up and the broker checks signatures; a node that does not
+                 offer calls must answer 404 (2026-10-22: a green deploy shipped calls whose broker said 404)
 
     venv-unified/bin/python scripts/check_live_production.py https://poster.place
 
-Exit 0 = all five passed, 1 = at least one FAILED (printed), 2 = could not run / could not ask (never a pass).
+Exit 0 = all six passed, 1 = at least one FAILED (printed), 2 = could not run / could not ask (never a pass).
 No Chrome. Load is a handful of requests. No secrets; the throwaway key lives only in memory; nothing a user
 wrote is printed — only status codes, counts and the check's own event.
 """
@@ -227,6 +230,27 @@ def check_federation(base):
     return SKIP, "could not ask: " + tail
 
 
+def check_concord_calls(base, cfg):
+    offered = bool((cfg or {}).get("concord_calls"))
+    try:
+        probe = _http(base + "/.well-known/concord/av")
+    except Exception as e:
+        return SKIP, f"could not ask: {type(e).__name__}"
+    if not offered:
+        if probe.status_code == 204:
+            return FAIL, "the broker answers 204 but /client/config does not offer calls"
+        return PASS, f"calls not offered here (probe {probe.status_code})"
+    if probe.status_code != 204:
+        return FAIL, f"calls are enabled but the broker probe answered HTTP {probe.status_code} (is livekit-server running?)"
+    try:
+        unsigned = _http(base + "/.well-known/concord/av/" + "0" * 64)
+    except Exception as e:
+        return SKIP, f"could not ask the grant: {type(e).__name__}"
+    if unsigned.status_code != 401:
+        return FAIL, f"an UNSIGNED call grant answered HTTP {unsigned.status_code}, not 401"
+    return PASS, "broker probe 204; an unsigned grant is refused (401)"
+
+
 # ------------------------------------------------------------------------------------------------ main
 def main(argv):
     base = (argv[1] if len(argv) > 1 else "").rstrip("/")
@@ -251,6 +275,7 @@ def main(argv):
         ("concord_ticket", check_concord_ticket(base)),
         ("client_shell", check_client_shell(base)),
         ("federation", check_federation(base)),
+        ("concord_calls", check_concord_calls(base, cfg)),
     ]
     for name, (verdict, why) in results:
         print(f"{verdict:4}  {name:15} {why}")
