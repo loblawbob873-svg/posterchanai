@@ -308,3 +308,30 @@ def test_find_your_community_has_a_search_that_filters_the_list():
         await b.js('PCConcord.render()')
         await wait_for(b, f"{shown}.length===1 && document.querySelector('#cc-public-q').value==='room 2'")
     asyncio.run(desktop.with_browser('online', '', check, init(__dirMode='serve', __dirHold=True)))
+
+
+INVITES_WITH_PICTURE = INVITES.replace(
+    "tags:[['t','concord']]}",
+    "tags:i===0?[['t','concord'],['image','https://pics.example/room0.png']]:[['t','concord']]}")
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_a_listing_s_picture_is_its_avatar_in_discover():
+    """"Concord community listing shows no community avatars" (2026-10-22): a listing that carries the community's
+    picture shows it as the tile's avatar; the others keep their initials while their icons are looked up in the
+    background, without an error."""
+    assert INVITES_WITH_PICTURE != INVITES
+
+    async def check(b):
+        await open_concord(b)
+        await b.js(INVITES_WITH_PICTURE)
+        await b.js('PCConcord.render()')
+        await wait_for(b, "document.querySelectorAll('.cc-public-room').length===3", 30)
+        pics = await b.js("[...document.querySelectorAll('.cc-public-room')].map(r=>({name:r.querySelector('b').textContent,"
+                          "img:(r.querySelector('.cc-public-icon img')||{}).src||''}))")
+        by = {p["name"]: p["img"] for p in pics}
+        assert by["Directory room 0"] == "https://pics.example/room0.png", pics
+        assert by["Directory room 1"] == "" and by["Directory room 2"] == "", pics
+        await asyncio.sleep(2)
+        assert not await b.js("__errors"), await b.js("__errors")
+    asyncio.run(desktop.with_browser('online', '', check, init(__dirMode='serve', __dirHold=True)))

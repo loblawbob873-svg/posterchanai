@@ -1424,8 +1424,59 @@
     if(/^(https?:\/\/|blob:)/i.test(icon)) return `<img class="cc-server-img" src="${p.enc(icon)}" alt="">`;
     return `<span class="cc-server-glyph">${p.enc(icon||roomName(r,i).slice(0,2).toUpperCase())}</span>`;
   }
+  /* DISCOVER'S AVATARS ("Concord community listing shows no community avatars", 2026-10-22). A listing is a text
+   * post carrying an invite link, so it has no picture of its own, and a community's icon lives in its CONTROL
+   * events, readable only after opening the invite. In order of cost: an `image` tag on a one-invite listing
+   * (discoverInvites), the icon of the same community if this account is in it, a 7-day cache, and only then a
+   * background read through the invite -- two at a time, at most 24 per visit, "no icon" remembered for a day --
+   * so Discover never waits on it and a long directory does not become a burst of tunnel dials. */
+  const LISTING_ICON_KEY='pc.concord.listing-icons.v1',listingIcons=new Map(),listingIconQueue=[],listingIconTried=new Set();
+  let listingIconActive=0;
+  function _listingIconCache(){try{return JSON.parse(localStorage.getItem(LISTING_ICON_KEY)||'{}')||{};}catch(_){return {};}}
+  function _listingIconRemember(key,val){try{const all=_listingIconCache();all[key]={...val,at:Date.now()};const ks=Object.keys(all);
+    if(ks.length>300)for(const k of ks.sort((x,y)=>(all[x].at||0)-(all[y].at||0)).slice(0,ks.length-300))delete all[k];
+    localStorage.setItem(LISTING_ICON_KEY,JSON.stringify(all));}catch(_){}}
+  function listingIcon(p,r){
+    const key=r&&r.url?inviteKey(r):'';if(!key)return '';
+    if(listingIcons.has(key))return listingIcons.get(key);
+    try{const joined=saved().find(x=>sameRoom(x,r));if(joined){const c=roomIconRefs.get(roomIdentity(joined)),u=normalizeIcon(c&&c.url||joined.icon);if(u)return u;}}catch(_){}
+    const hit=_listingIconCache()[key],age=hit?Date.now()-(Number(hit.at)||0):Infinity;
+    if(hit&&typeof hit.icon==='string'&&hit.icon&&age<7*86400000){listingIcons.set(key,hit.icon);return hit.icon;}
+    if(hit&&hit.none&&age<86400000)return '';
+    queueListingIcon(p,r,key,hit&&hit.ptr&&age<7*86400000?hit:null);
+    return '';
+  }
+  function queueListingIcon(p,r,key,hit){
+    if(listingIconTried.has(key)||listingIconTried.size>=24)return;
+    listingIconTried.add(key);listingIconQueue.push([r,key,hit]);pumpListingIcons(p);
+  }
+  function pumpListingIcons(p){
+    while(listingIconActive<2&&listingIconQueue.length){
+      const [r,key,hit]=listingIconQueue.shift();listingIconActive++;
+      resolveListingIcon(p,r,key,hit).catch(e=>console.warn('Concord listing icon unavailable',e&&e.message||e))
+        .finally(()=>{listingIconActive--;pumpListingIcons(p);});
+    }
+  }
+  async function resolveListingIcon(p,r,key,hit){
+    let value=hit&&hit.ptr||null,loadKey=hit&&hit.loadKey||'';
+    if(!value){
+      const reader=window.PosterCordReader;if(!reader||!r.url)return;
+      const room=await hydrateInvite(p,r.url),bundle=room&&room.cord&&room.cord.bundle;if(!bundle)return;
+      loadKey=room.communityId||room.naddr;
+      const seed=reader.inspectControl(bundle,[]);
+      const wraps=await queryEnvelopeHistory(p,roomRelays(bundle),seed.controlPubkeys||[],[],{purpose:'concord listing icon',minInterval:0});
+      value=reader.inspectControl(bundle,wraps||[]).icon||'';
+      if(!value){_listingIconRemember(key,{none:1});return;}
+    }
+    let url='';
+    if(typeof value==='string'){url=normalizeIcon(value);if(url)_listingIconRemember(key,{icon:url});}
+    else{url=await decryptImagePointer(value,loadKey,iconRef(value));_listingIconRemember(key,{ptr:value,loadKey});}
+    if(!url)return;
+    listingIcons.set(key,url);
+    if(state.community==null)backgroundRender();
+  }
   function publicRoomIcon(p,r){
-    const icon=normalizeIcon(r&&r.icon);
+    const icon=normalizeIcon((r&&r.icon)||listingIcon(p,r));
     if(/^(https?:\/\/|blob:)/i.test(icon))return `<img src="${p.enc(icon)}" alt="" loading="lazy">`;
     return `<span>${p.enc(icon||(r.name||'C').slice(0,2).toUpperCase())}</span>`;
   }
@@ -3625,7 +3676,10 @@
       const line=before.slice(before.lastIndexOf('\n')+1).trim();
       const label=/^([^:\r\n]+):\s*$/.exec(line);
       const name=label?label[1].replace(/^[-*•]\s+/,'').trim():blurb;
-      return {...parsed,name:name.slice(0,80)||'Public Concord community',description:blurb,source};
+      // A post naming ONE community may carry its picture (announceListing adds it); with several invites a
+      // post-level picture belongs to none of them in particular.
+      const pic=matches.length===1?String(((source&&source.tags)||[]).find(t=>t&&t[0]==='image'&&/^https:\/\//i.test(String(t[1]||'')))?.[1]||''):'';
+      return {...parsed,name:name.slice(0,80)||'Public Concord community',description:blurb,source,...(pic?{icon:pic}:{})};
     }).filter(Boolean);
   }
   /* v2 BECAUSE v1 HOLDS RECORDS NOTHING CAN CLEAR, AND THAT IS A COMMUNITY HIDDEN FOR EVER.
@@ -6348,7 +6402,10 @@
       if(!accepted)throw new Error('Armada discovery relays rejected the listing');
       return held;
     }
-    const made=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]);
+    // The community's picture rides along when it is a public address, so Discover can show it without opening
+    // the invite. An encrypted icon stays encrypted: it is only for people holding the invite's key.
+    const pic=normalizeIcon(room.icon||'');
+    const made=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community'],...(/^https:\/\//i.test(pic)?[['image',pic]]:[])]);
     const ev=made&&made.ev;if(!ev)throw new Error('the listing could not be signed');
     // Remembered BEFORE the discovery send, so a refused send is retried with this same event.
     rememberListing(pk,room.url,ev);
