@@ -1051,7 +1051,13 @@
       }
       return;
     }
-    try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ }
+    /* THE NODE'S WALLET IS WARMED ONLY FOR SOMEBODY WHO CAN OPEN IT (2026-10-22). It is admin-only, so for every
+       other member the warm was three 403s on every page load (status, balance, history -- found by the live
+       sign-in check, scripts/check_live_journey.py) and "[monero wallet] probe failed" in their console. A member
+       is warmed for THEIR OWN wallet below; a person pressing ɱ or opening Wallet still probes on demand. An
+       embedder with no isAdmin keeps the old behaviour. */
+    const mayOpenNodeWallet = !(PC && typeof PC.isAdmin === 'function') || !!PC.isAdmin();
+    if(mayOpenNodeWallet){ try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ } }
     try{ Promise.resolve(meProbe(false)).catch(()=>null); }catch(_){ }
   }
   /* ── THE USER'S OWN WALLET ─────────────────────────────────────────────────────────────────

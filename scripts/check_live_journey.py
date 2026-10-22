@@ -153,13 +153,13 @@ async def journey(base: str, sk_hex: str) -> list:
                 return results
             await page.js("(()=>{const b=document.querySelector('#btn-nip07'); if(b) b.click(); return 1})()")
             t = await page.until("!!(window.__PC && __PC.me && __PC.me() && __PC.me().pubkey)", 45)
-            results.append(("login", PASS if t is not None else FAIL, t or 45, "" if t is not None else "the NIP-07 sign-in never completed"))
+            results.append(("login", PASS if t is not None else FAIL, 45 if t is None else t, "" if t is not None else "the NIP-07 sign-in never completed"))
             if t is None:
                 return results
 
             # -- feed -----------------------------------------------------------------------------------------
             t = await page.until("document.querySelectorAll('#feed .note').length>0", 45)
-            results.append(("feed", PASS if t is not None else FAIL, t or 45,
+            results.append(("feed", PASS if t is not None else FAIL, 45 if t is None else t,
                             "" if t is not None else "no note drawn in 45 s: " + str(await page.js("(document.querySelector('#feed')||{}).innerText||''"))[:160]))
 
             # -- concord: every saved room says something -------------------------------------------------------

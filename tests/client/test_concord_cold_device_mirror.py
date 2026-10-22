@@ -12,7 +12,7 @@ def test_a_cold_device_reads_this_nodes_copy_after_one_ask():
 def test_a_room_load_asks_the_node_before_its_first_read():
     """The seed is worthless if the room has already tunnelled: it runs before ensureMirror and the control read."""
     src = (Path(__file__).resolve().parents[2] / "static/js/client/concord.js").read_text()
-    i = src.index("await seedMirrorFromNode(p);")
+    i = src.index("await seedMirrorFromNode(p);")   # guarded like ensureMirror (a test slices this function out)
     assert i < src.index("ensureMirror(p,room,bundle,controlWraps)", i) < src.index("const controlRead=await queryControlUntilAsked", i)
     live = src[src.index("function startRoomsLive(p){"):][:200]
     assert "seedMirrorFromNode(p)" in live, "the background sweep must seed too (rooms not opened yet)"

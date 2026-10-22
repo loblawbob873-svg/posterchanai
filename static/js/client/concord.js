@@ -5270,7 +5270,7 @@
       try{
       /* Ask this node to hold the community BEFORE reading it (bounded: a node that does not answer costs
        * six seconds once, then the room reads its own relays as it always did). */
-      await seedMirrorFromNode(p);   // bounded (4 s), once per account: a cold device reads this node's copy first
+      if(typeof seedMirrorFromNode==='function')await seedMirrorFromNode(p);   // bounded (4 s), once per account: a cold device reads this node's copy first
       if(typeof ensureMirror==='function')await Promise.race([ensureMirror(p,room,bundle,controlWraps),new Promise(r=>setTimeout(r,6000))]);
       if(!currentOwner())return;
       const controlRead=await queryControlUntilAsked(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
@@ -5808,7 +5808,7 @@
     return null;
   }
   function startRoomsLive(p){
-    void seedMirrorFromNode(p);
+    if(typeof seedMirrorFromNode==='function')void seedMirrorFromNode(p);
     try{
       const R=(window.PCConcordRelay||window.Relay),reader=window.PosterCordReader;
       if(!p||!R||!R.subscribeFrom||!reader)return;
