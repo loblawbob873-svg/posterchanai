@@ -78,7 +78,17 @@
     // navigator.onLine is a hint (Orbot's VPN reports false while it works): try, and fall back on a real failure.
     let r, j = null;
     try{
-      try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(e){ if(e && e.offline) throw e; }
+      /* THE SESSION IS INSIDE THE LIMIT TOO (2026-10-22, Windows over Tor: "telegram is stuck at connecting..." --
+       * the node's log showed NO request from the app after it reconnected, so the wait was before the request,
+       * where this await had no limit). A sign-in that has not answered says so, with Retry, instead of a screen
+       * that waits for ever; it keeps going in the background, and Retry (`forceSession`) asks afresh. */
+      if(P.ensureAiSession){
+        let t = null;
+        try{ await Promise.race([P.ensureAiSession(st.forceSession ? { force:true } : undefined),
+          new Promise((_, no) => { t = setTimeout(() => { const e = new Error('Your sign-in did not answer (the app session for Telegram) — press Retry'); e.offline = true; e.session = true; no(e); }, patience(path, opts)); })]); }
+        catch(e){ if(e && e.offline) throw e; }
+        finally{ clearTimeout(t); st.forceSession = false; }
+      }
       /* A NODE THAT DOES NOT ANSWER IS UNREACHABLE AFTER 15 s, not a screen that waits for ever. Started while the
        * node was restarting, the Windows app sat on a black "CONNECTING…" until PosterChan was restarted
        * (2026-10-21): the request never settled, so neither the error card nor the device copy was ever reached. */
@@ -116,18 +126,25 @@
   const size = n => n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n > 1e3 ? Math.round(n / 1e3) + ' KB' : (n || 0) + ' B';
 
   // ---- live socket (shared by the view and the background notifier) -------------------------------
+  const WS_CONNECT_MS = 20000;
   function connect(){
     if(st.ws && st.ws.readyState <= 1) return;
     const P = PC(), base = (P.apiBase ? P.apiBase() : location.origin) || location.origin;
     let ws;
     try{ ws = new WebSocket(base.replace(/^http/, 'ws') + '/api/tgc/ws'); }catch(_){ return; }
     st.ws = ws;
+    /* A HANDSHAKE THAT NEVER ENDS MUST NOT END LIVE TELEGRAM (2026-10-22, the Windows app over Tor: three reconnects
+     * in 30 s after a node restart, then none for the rest of the session). The guard above refuses to dial while a
+     * socket is CONNECTING, and over Tor a handshake can stall with no open, error or close -- so one stalled circuit
+     * blocked every later connect(). Still connecting after WS_CONNECT_MS: dropped, and redialled like any close. */
+    clearTimeout(st.wsOpenTimer);
+    st.wsOpenTimer = setTimeout(() => { if(st.ws === ws && ws.readyState === 0){ try{ ws.close(); }catch(_){} if(ws.onclose) ws.onclose(); } }, WS_CONNECT_MS);
     const again = !!st.wsDropped;
     ws.onopen = async () => { try{ if(P.ensureAiSession) await P.ensureAiSession(); }catch(_){}
       ws.send(JSON.stringify({ token: P.aiToken ? P.aiToken() : '' }));
       if(again){ st.wsDropped = false; catchUpAll(); } };
     ws.onmessage = e => { let ev; try{ ev = JSON.parse(e.data); }catch(_){ return; } onEvent(ev); };
-    ws.onclose = () => { if(st.ws === ws) st.ws = null; st.wsDropped = true;
+    ws.onclose = () => { if(st.ws !== ws && st.ws) return; clearTimeout(st.wsOpenTimer); ws.onclose = null; st.ws = null; st.wsDropped = true;
       // Back off and come back: a restart of the node must not end notifications for the session.
       clearTimeout(st.wsTimer); st.wsTimer = setTimeout(() => { if(wanted()) connect(); }, 8000); };
   }
@@ -302,7 +319,7 @@
     catch(e){
       root.innerHTML = `<div class="tg-card"><h3>Telegram is not available</h3><p>${esc(e.message)}</p>${retryNote()}
         <div class="tg-form"><button class="tg-btn tg-primary" data-act="retry">Retry now</button></div></div>`;
-      root.querySelector('[data-act="retry"]').onclick = () => { retryMs = 5000; render(); };
+      root.querySelector('[data-act="retry"]').onclick = () => { retryMs = 5000; st.forceSession = true; render(); };
       scheduleRetry();
       return;
     }
@@ -938,7 +955,7 @@
     if(!isPhone()) setTimeout(background, 0);
     return !isPhone();
   }
-  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _patience:patience, _askForm:askForm, _setForm:f => { form = f; },
+  const api_ = { render, isPhone, onEvent, setHere, chosenHere, _state:st, react, _patience:patience, _api:api, _connect:connect, _askForm:askForm, _setForm:f => { form = f; },
                  openNotification:o => openChatFromNotification(Number(o && o.chat)) };
   window.PCTelegram = api_;
   if(typeof module !== 'undefined') module.exports = api_;
