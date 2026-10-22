@@ -12485,7 +12485,14 @@
     }catch(_){}
   }
   let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
-  let _aiAuthP=null, _aiAuthPAt=0;   // the in-flight login, and when it started — see ensureAiSession
+  let _aiAuthP=null, _aiAuthPAt=0;
+  /* A REFUSAL IS AN ANSWER, NOT A REASON TO ASK AGAIN EVERY MINUTE (2026-10-22). The server answers 403 when this
+   * node will not give the key an account (registration closed, a blocked key) -- and nothing remembered that, so
+   * the minute reminder poller signed a fresh proof and asked again for the life of the page (seen in the router log
+   * as a 403 every 60 s, from a page nobody was looking at). Remembered per account for AI_REFUSED_MS and said
+   * locally; Retry (`force`) asks the server again, and a different account starts clean. */
+  let _aiRefused=null;
+  const AI_REFUSED_MS=1800000;   // the in-flight login, and when it started — see ensureAiSession
   let _aiToken='';      // bearer token from nostr-login; needed for the chat WS in the bundled app, where the
                         // session cookie is on the remote instance and can't be read from document.cookie
   // Hand it to the bundled-app fetch shim, which attaches it as `Authorization: Bearer` to every request
@@ -12532,6 +12539,9 @@
      *
      * `force` is a person pressing Retry: it declines to adopt and starts its own attempt. */
     if(_aiAuthP && !(opts && opts.force)) return _aiAuthP;
+    if(_aiRefused && ME && _aiRefused.pk===ME.pubkey && !(opts && opts.force) && Date.now()-_aiRefused.at<AI_REFUSED_MS){
+      const e=new Error('could not establish your app session: '+_aiRefused.why); e.refused=true; throw e;
+    }
     // Guest/boot smoke routes have no identity to prove. Fail deliberately before building tags or
     // touching ME.pubkey; callers can render a login-required state and no protected request leaves.
     if(!ME || !ME.pubkey) throw new Error('sign in with a Nostr account to start an app session');
@@ -12571,7 +12581,13 @@
           n.offline = true; throw n;
         }finally{ if(timer) clearTimeout(timer); }
         let r=null; try{ r=await response.json(); }catch(_){}
+        if(response.status===403){
+          const why=(r && (r.detail || r.error)) || 'this server refused this account';
+          _aiRefused={pk:ME.pubkey,at:Date.now(),why};
+          const e=new Error(why); e.refused=true; throw e;
+        }
         if(!response.ok) throw new Error((r && (r.detail || r.error)) || ('login returned HTTP '+response.status));
+        _aiRefused=null;
         if(r && r.access_token) _setAiToken(r.access_token);
         if(r && r.user){ _aiAuth = r.user; try{ applyTermGate();applyMediaGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
         /* SAY WHAT ACTUALLY CAME BACK. Our server answers this POST with JSON carrying `user` on every
@@ -12585,7 +12601,7 @@
       }catch(e){
         const why=(e&&e.message)||String(e||'unknown error');
         const out=new Error('could not establish your app session: '+why);
-        try{ out.cause=e; if(e && e.offline) out.offline=true; }catch(_){}
+        try{ out.cause=e; if(e && e.offline) out.offline=true; if(e && e.refused) out.refused=true; }catch(_){}
         throw out;                                             // callers MUST NOT continue tokenless
       }
       /* Only ever retire OUR OWN attempt. With `force` a second attempt can be running, and a

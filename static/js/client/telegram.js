@@ -86,7 +86,7 @@
         let t = null;
         try{ await Promise.race([P.ensureAiSession(st.forceSession ? { force:true } : undefined),
           new Promise((_, no) => { t = setTimeout(() => { const e = new Error('Your sign-in did not answer (the app session for Telegram) — press Retry'); e.offline = true; e.session = true; no(e); }, patience(path, opts)); })]); }
-        catch(e){ if(e && e.offline) throw e; }
+        catch(e){ if(e && (e.offline || e.refused)) throw e; }   // a refusal is the reason to show, not "Not authenticated"
         finally{ clearTimeout(t); st.forceSession = false; }
       }
       /* A NODE THAT DOES NOT ANSWER IS UNREACHABLE AFTER 15 s, not a screen that waits for ever. Started while the
