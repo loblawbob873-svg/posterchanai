@@ -63,4 +63,11 @@ assert.ok(rebuilt,'the other invite was DROPPED instead of becoming its own room
 const hydratedAgain=PCConcord.uniqueRooms(healed.map(r=>r===rebuilt?{...r,communityId:B,cord:{bundle:{community_id:B},hydrated:true}}:r));
 assert.equal(hydratedAgain.length,2,'a rebuilt invite that hydrated to the same community stayed a duplicate');
 assert.deepEqual(hydratedAgain.map(r=>r.communityId).sort(),[A,B].sort());
+// Clicking Rin's invite after the split ("it reloads both channels at the same time"): the invite must find ONE
+// room, Rin's own, and never the kept Sorsmenedek row -- the merged row matched both invites and reloaded both.
+const clicked={...PCConcord.inviteParts(rin.url),url:rin.url};
+const hits=healed.filter(r=>PCConcord.sameRoom(r,clicked));
+assert.equal(hits.length,1,'an invite click matched '+hits.length+' rooms');
+assert.ok(hits[0]!==kept&&hits[0].url===rin.url,'Rin\'s invite opened the Sorsmenedek row');
+assert.ok(PCConcord.sameRoom(merged,clicked),"the pre-split row is the one that swallowed the click (this test can fail)");
 console.log('Concord real invite identity runtime ok');
