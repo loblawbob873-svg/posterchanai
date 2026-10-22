@@ -120,7 +120,7 @@ def test_the_stats_bot_never_posts_zeros_for_a_relay_it_could_not_ask(no_postgre
 
 # ------------------------------------------------------------------ the relay trace
 def _upstream(monkeypatch, followers):
-    async def fake_followers(p, relays):
+    def fake_followers(p):                                   # asked of THIS relay now (relay_trace._followers)
         return list(followers)
     monkeypatch.setattr(relay_trace, "_followers", fake_followers)
 
@@ -135,7 +135,7 @@ def test_the_relay_trace_opens_no_database(no_postgres, monkeypatch):
         return [e for e, _o in EVENTS if e["pubkey"] in f["authors"] and e["kind"] in f["kinds"]][:f["limit"]]
     monkeypatch.setattr(relay_reader, "query", fake_query)
     _upstream(monkeypatch, [pk("alice"), pk("carol")])
-    facts = asyncio.run(relay_trace.gather(bob, ["wss://x.example"]))
+    facts = asyncio.run(relay_trace.gather(bob))
     assert facts["rows"]["profile"] and len(facts["rows"]["recent"]) == 5
     assert facts["rows"]["recent"][0][2] >= facts["rows"]["recent"][-1][2]       # newest first
     out = relay_trace.explain(facts)
@@ -147,7 +147,7 @@ def test_a_relay_trace_against_an_unreachable_relay_fails_rather_than_reporting_
         no_postgres, monkeypatch):
     _relay_down(monkeypatch)
     with pytest.raises(Unavailable):
-        asyncio.run(relay_trace.gather(pk("bob"), []))
+        asyncio.run(relay_trace.gather(pk("bob")))
 
 
 def test_followers_whose_membership_could_not_be_asked_are_unknown_not_outsiders(no_postgres, monkeypatch):
@@ -162,7 +162,7 @@ def test_followers_whose_membership_could_not_be_asked_are_unknown_not_outsiders
     monkeypatch.setattr(aggregates, "ask", ask)
     monkeypatch.setattr(relay_reader, "query", lambda filters, **kw: [])
     _upstream(monkeypatch, [pk("alice"), pk("carol")])
-    out = relay_trace.explain(asyncio.run(relay_trace.gather(pk("bob"), [])))
+    out = relay_trace.explain(asyncio.run(relay_trace.gather(pk("bob"))))
     assert out["followers"]["found"] == 2
     assert out["followers"]["in_wot"] is None
     assert all(f["in_wot"] is None for f in out["followers"]["shown"])
