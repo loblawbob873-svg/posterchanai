@@ -208,6 +208,7 @@ show_help() {
     echo "  --music          Set up the ACE-Step music server (venv-music) for musicgeni"
     echo "  --video          Install the videogeni (text-to-video) deps into the image venv"
     echo "  --turn           Build the built-in Pion TURN relay for voice/video calls"
+    echo "  --livekit        Install the LiveKit server that hosts Concord community calls"
     echo "  --stream         Install the built-in MediaMTX media server for OBS streaming"
     echo "  --office         Install the built-in CODE office editor (DOCX/XLSX/PPTX)"
     echo "  --searxng        Run this node's own SearXNG (web search for the AI, news, bots, Web Search)"

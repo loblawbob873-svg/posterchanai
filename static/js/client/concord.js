@@ -3513,6 +3513,20 @@
       return h==='localhost'||h.endsWith('.localhost')||h==='::1'||h==='0.0.0.0'||/^127\./.test(h);
     }catch(_){ return true; }
   }
+  /* CALLS GO THROUGH THIS INSTANCE WHEN IT HOSTS THEM (livekit_service + routers/concord_av.py), not armada.buzz.
+   * Its broker says so by answering the CORD-07 probe with 204; asked once per page. A broker somebody typed stays
+   * theirs -- but armada.buzz in storage is NOT a choice: the panel stores whatever its field held on Join, and the
+   * field used to default to it. In a call already running, CORD-07's occupied-broker rule still joins the others
+   * wherever they are. */
+  const PUBLIC_CALL_BROKER='https://armada.buzz';let instanceBroker=null;
+  function callBroker(p){
+    let stored='';try{stored=String(localStorage.getItem('pc.concord.call-broker')||'');}catch(_){}
+    if(stored&&stored!==PUBLIC_CALL_BROKER)return Promise.resolve(stored);
+    if(!instanceBroker){const base=publicInviteBase(p);
+      instanceBroker=base===PUBLIC_INVITE_HOST?Promise.resolve(''):fetch(base+'/.well-known/concord/av',{credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'})
+        .then(r=>r.status===204?base:'',()=>'');}
+    return instanceBroker.then(b=>b||stored||PUBLIC_CALL_BROKER);
+  }
   function publicInviteBase(p){
     let origin='';try{origin=String((p&&p.serverOrigin&&p.serverOrigin())||'');}catch(_){}
     return origin&&!unreachableOrigin(origin)?new URL(origin).origin:PUBLIC_INVITE_HOST;
@@ -7887,7 +7901,7 @@
     if(!current())return;
     let subscription=null;
     return calls.open({name:channelName,current,
-      preferred:localStorage.getItem('pc.concord.call-broker')||'https://armada.buzz',
+      preferred:await callBroker(p),
       joinOnOpen:!!opts.joinOnOpen,
       listened:()=>voiceWatch.key&&voiceWatch.room===identity?Date.now()-voiceWatch.since:0,
       seed:()=>voiceWatch.room===identity&&channelId?[...(voiceWatch.rows.get(channelId)||new Map()).values()]:[],
@@ -7982,7 +7996,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

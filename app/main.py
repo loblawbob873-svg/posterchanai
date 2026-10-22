@@ -81,7 +81,10 @@ class _ScopedCORS(CORSMiddleware):
     # /.well-known/webfinger|host-meta|nodeinfo and /nodeinfo/: public discovery documents that answer
     # `*` themselves (routers/activitypub.py _OPEN; RFC 7033 §5).
     _OWN_CORS = ("/blossom", "/git/", "/jellyfin/", "/api/vmhost/iso/",
-                 "/.well-known/webfinger", "/.well-known/host-meta", "/.well-known/nodeinfo", "/nodeinfo/")   # trailing slash: must not swallow a future /gitea-style route
+                 "/.well-known/webfinger", "/.well-known/host-meta", "/.well-known/nodeinfo", "/nodeinfo/",
+                 # The CORD-07 call broker (routers/concord_av.py): called by Concord clients on every origin
+                 # (Armada, the APK), credentials omitted, Authorization = a room-key grant. It answers `*` itself.
+                 "/.well-known/concord/av")   # trailing slash: must not swallow a future /gitea-style route
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("path", "").startswith(self._OWN_CORS):
@@ -307,6 +310,8 @@ app.include_router(vmhost_router.ws_router)  # /ws/vmconsole — noVNC behind a 
 from app.routers import concord_tunnel as concord_tunnel_router
 app.include_router(concord_tunnel_router.router)     # /client/concord/tunnel-ticket
 app.include_router(concord_tunnel_router.ws_router)  # /ws/concord-relay — Concord's relay connections, carried by this node
+from app.routers import concord_av as concord_av_router
+app.include_router(concord_av_router.router)         # /.well-known/concord/av — the CORD-07 call broker (livekit_service)
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 from app.routers import bot_talk as _bot_talk   # talking replies: a bot's text -> its talking-face clip
@@ -757,6 +762,14 @@ async def startup():
                 logging.error(f"Error starting TURN server: {e}", exc_info=True)
 
             try:
+                # Supervise the built-in LiveKit SFU for Concord calls (no-op unless livekit_enabled, the binary
+                # is installed and a public IP is known). The broker is routers/concord_av.py.
+                from app.services.livekit_service import start_livekit_server
+                if _owns('media'): start_livekit_server()
+            except Exception as e:
+                logging.error(f"Error starting LiveKit: {e}", exc_info=True)
+
+            try:
                 # Supervise the built-in MediaMTX server for OBS streaming (subprocess; no-op unless
                 # stream_enabled + the binary is installed)
                 from app.services.stream_service import start_stream_server
@@ -1069,6 +1082,11 @@ async def shutdown():
         try:
             from app.services.turn_service import stop_turn_server
             if _owns('media'): stop_turn_server()
+        except Exception:
+            pass
+        try:
+            from app.services.livekit_service import stop_livekit_server
+            if _owns('media'): stop_livekit_server()
         except Exception:
             pass
         try:

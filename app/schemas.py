@@ -255,6 +255,15 @@ class SettingsResponse(BaseModel):
     turn_relay_min_port: str = "49160"  # relay UDP port range (small = few ports to forward; widen to scale)
     turn_relay_max_port: str = "49200"
     stun_fallback_urls: str = ""       # optional public STUN (comma list) used when turn_enabled is off
+    # Concord calls (CORD-07): the bundled LiveKit SFU (livekit_service.py) + the blind broker at
+    # /.well-known/concord/av (routers/concord_av.py). Needs UDP livekit_udp_port and TCP livekit_tcp_port forwarded
+    # to this machine and nginx proxying wss://<host>/livekit/ to 127.0.0.1:livekit_http_port.
+    livekit_enabled: str = "false"     # run the SFU + answer as a Concord call broker
+    livekit_public_ip: str = ""        # IP in ICE candidates; blank = turn_public_ip
+    livekit_public_url: str = ""       # signalling URL handed to callers; blank = wss://<this host>/livekit
+    livekit_http_port: str = "7880"    # signalling, 127.0.0.1 only (nginx proxies it)
+    livekit_tcp_port: str = "7881"     # ICE over TCP, for networks that drop UDP
+    livekit_udp_port: str = "7882"     # every call's media on ONE UDP port (LiveKit's UDP mux)
     # OBS streaming — bundled MediaMTX (stream_service.py) ingests RTMP from OBS + remuxes to HLS for the
     # NIP-53 Streams tab. Publish auth reuses the per-user API key; see app/routers/streams.py.
     stream_enabled: str = "false"      # run the built-in MediaMTX media server (needs a public RTMP port)

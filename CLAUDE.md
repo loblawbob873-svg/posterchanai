@@ -1770,6 +1770,22 @@ would have handled it fine).
   stop old links in the background with a bounded wait, `asyncio.timeout` (never wait_for) in the link's receive
   loop. Live check: `data/nostr_relay.status.json` -> `concord_mirror.links` must list every relay `_desired()` wants.
   `tests/test_concord_mirror.py::test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror`.
+- **CONCORD CALLS RUN ON OUR OWN LIVEKIT** (`app/services/livekit_service.py` + `app/routers/concord_av.py`; Admin →
+  Live → Community Calls; `./install.sh --livekit`, pinned + sha256-checked). CORD-07 voice/video is a LiveKit room
+  reached through a BLIND broker: `GET /.well-known/concord/av` answers 204 while the SFU runs, and
+  `/.well-known/concord/av/<room>` trades a kind-27235 grant SIGNED BY THE ROOM KEY (pubkey == room, `u` == this exact
+  URL, fresh 60s, nonce once) for a 10-minute LiveKit JWT for that one room. It never learns who calls. The SFU only
+  forwards per-sender-E2EE frames (no transcoding), all media on ONE UDP port (7882, LiveKit's mux; a port RANGE turns
+  the mux off) + TCP 7881 fallback, `node_ip` = TURN's public IP, our pion TURN attached by its REST secret. Signalling
+  stays on 127.0.0.1 and THE APP carries it at `/livekit/` (`signalling` in concord_av.py), so a node needs no nginx
+  change -- its catch-all already forwards upgrades. The broker path is in main.py `_OWN_CORS` (Armada and the APK call
+  it cross-origin; the credentialed CORS layer would 400 their preflight). The client prefers THIS instance's broker
+  when it answers 204 (`callBroker`; a stored armada.buzz is the old default, not a choice). The router forwards UDP
+  7882 / TCP 7881 by `ip daddr <public IP>` so LAN devices hairpin. Proof: `tests/client/test_concord_call_livekit_live.py`
+  -- the real binary, the real broker over HTTPS, two Chromes with fake mics pressing Join in the shipped panel; it
+  passes only when each side HEARS the other (WebAudio RMS) and the leaver's element is gone. Two panel bugs it found:
+  a failure was repainted "Ready to join" a second later, and a departed person's <audio> stayed (LiveKit detaches
+  before TrackUnsubscribed, so `track.detach()` returned nothing).
 - **THE PLEROMA BRIDGE IS REMOVED (2026-09-23)** — the timeline mirror, write-back, personal plane,
   bridge access grants, fedi-only client mode, Sign in with Pleroma, Telegram → Pleroma posting and
   Pleroma → Telegram alerts. The ActivityPub server replaced all of it. What SURVIVES, on purpose:

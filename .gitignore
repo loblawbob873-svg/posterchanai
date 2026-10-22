@@ -166,3 +166,6 @@ scratchpad/
 # core dumps (a deliberate crash test once committed two 147 MB cores)
 core
 core.[0-9]*
+livekit/livekit-server
+livekit/livekit.gen.yaml
+livekit/livekit.gen.tmp

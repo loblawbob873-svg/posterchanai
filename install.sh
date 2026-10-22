@@ -37,6 +37,7 @@ source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
 source "$INSTALL_DIR/voice.sh"
 source "$INSTALL_DIR/turn.sh"
+source "$INSTALL_DIR/livekit.sh"
 source "$INSTALL_DIR/stream.sh"
 source "$INSTALL_DIR/ptop.sh"
 source "$INSTALL_DIR/sandbox.sh"
@@ -135,6 +136,12 @@ fi
 # Add-on: build the built-in Pion TURN relay for voice/video calls (needs the Go toolchain).
 if [ "$1" = "--turn" ]; then
     setup_turn_server
+    exit $?
+fi
+
+# Add-on: install the built-in LiveKit SFU for Concord community calls (pinned, checksummed prebuilt binary).
+if [ "$1" = "--livekit" ]; then
+    setup_livekit_server
     exit $?
 fi
 
@@ -401,6 +408,9 @@ main() {
     # calls are turnkey (no separate ./install.sh --turn step). Non-fatal — a missing Go toolchain just leaves
     # calls on STUN-only until built later with ./install.sh --turn.
     setup_turn_server || print_warning "TURN relay build skipped (Go toolchain missing?); build later with ./install.sh --turn"
+
+    # Step 9e2: The LiveKit SFU for Concord calls (a pinned, checksummed download; off until Admin enables it).
+    setup_livekit_server || print_warning "LiveKit not installed; Concord calls use other brokers until ./install.sh --livekit"
 
     # Step 9f: Verify the built-in git server's prerequisites (git + git-http-backend). Nothing to
     # install — it's stdlib + the git package — so this only reports, and the host still ships OFF

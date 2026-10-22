@@ -23,7 +23,7 @@
     if(version!==openVersion)return null;
     const V=root.PCCordVoice,abort=new AbortController();
     let closed=false,room=null,worker=null,subscription=null,heart=null,clock=null,membership=null;
-    let joined=null,material=context.material(),moving=false,muted=false,video=false,readSeq=0,generation=0,attemptAbort=null,pendingBroker=null;
+    let joined=null,material=context.material(),moving=false,muted=false,video=false,readSeq=0,generation=0,attemptAbort=null,pendingBroker=null,failure='';
     const records=new Map(),keys=new Set(),tracks=new Map();
     const panel=document.createElement('section');panel.className='pc-cord-call';panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Concord call');
     panel.style.cssText='position:fixed;z-index:12000;right:12px;bottom:12px;width:min(400px,calc(100vw - 24px));max-height:80vh;overflow:auto;padding:16px;border:1px solid var(--border,#555);border-radius:12px;background:var(--panel,#171723);color:var(--text,#eee);box-shadow:0 8px 32px #0008';
@@ -48,11 +48,15 @@
       // detach it again without trusting participant-supplied display names.
       for(const [track,entry] of tracks){
         const verified=present.some(p=>p.identity===entry.identity&&p.verified&&p.broker===joined?.broker);
-        if(verified&&!entry.attached){const element=track.attach();element.style.cssText='width:100%;max-height:220px';element.autoplay=true;button('media').append(element);entry.attached=true;}
-        else if(!verified&&entry.attached){track.detach().forEach(e=>e.remove());entry.attached=false;}
+        if(verified&&!entry.attached){const element=track.attach();element.style.cssText='width:100%;max-height:220px';element.autoplay=true;button('media').append(element);entry.attached=true;entry.element=element;}
+        else if(!verified&&entry.attached){drop(track,entry);}
       }
 
     }
+    /* OUR element, removed by us. By the time TrackUnsubscribed fires LiveKit has already detached the track, so
+     * track.detach() returns nothing and the <audio>/<video> it had filled stayed in the panel, empty -- one black
+     * frame per person who ever left (tests/client/test_concord_call_livekit_live.py, the leave step). */
+    function drop(track,entry){try{track.detach().forEach(e=>e.remove());}catch(_){}if(entry&&entry.element){entry.element.remove();entry.element=null;}if(entry)entry.attached=false;}
     async function announce(verb){
       if(!joined||!valid()||context.material().room!==joined.voiceRoom)return;
       await context.presence(verb,joined.identity,joined.broker);
@@ -64,7 +68,7 @@
       if(leave&&last&&valid()){
         try{if(context.material().room===last.voiceRoom)void Promise.resolve(context.presence('left',last.identity,last.broker)).catch(()=>{});}catch(_){}
       }
-      for(const track of tracks.keys())try{track.detach().forEach(e=>e.remove());}catch(_){}tracks.clear();
+      for(const [track,entry] of tracks)drop(track,entry);tracks.clear();
       button('media').replaceChildren();button('mute').disabled=true;button('video').disabled=true;button('screen').disabled=true;button('screen').textContent='Share screen';
       try{if(previous)await previous.disconnect();}
       finally{previousWorker?.terminate();}
@@ -121,7 +125,7 @@
             tracks.set(track,{identity:p.identity,attached:false});people();
           }catch(e){status(e.message);}
         });
-        room.on(L.RoomEvent.TrackUnsubscribed,track=>{tracks.delete(track);track.detach().forEach(e=>e.remove());});
+        room.on(L.RoomEvent.TrackUnsubscribed,track=>{drop(track,tracks.get(track));tracks.delete(track);people();});
         room.on(L.RoomEvent.EncryptionError,e=>{status('Call encryption failed: '+e.message);void close();});
         await keyProvider.install(grant.identity);await room.setE2EEEnabled(true);checkAttempt();
         await room.connect(grant.url,grant.token);checkAttempt();
@@ -133,10 +137,12 @@
         await announce('joined');checkAttempt();
         heart=setInterval(()=>{void announce('joined').catch(()=>status('Call presence could not be refreshed'));},30000);
         button('mute').disabled=false;button('video').disabled=false;button('screen').disabled=false;
-        status('Connected · end-to-end encrypted');people();
+        failure='';status('Connected · end-to-end encrypted');people();
       }catch(e){
         if(attemptRoom&&room!==attemptRoom)try{await attemptRoom.disconnect();}catch(_){}
-        await disconnect();if(!closed&&!pendingBroker)status(e.message||'The call could not connect');
+        /* The tick below repaints this line every second; without `failure` it said "Ready to join" one second
+         * after a call failed, and nobody ever saw why. */
+        await disconnect();if(!closed&&!pendingBroker){failure=e.message||'The call could not connect';status(failure+' — press Join to try again');}
       }finally{
         if(attemptAbort===controller)attemptAbort=null;
         moving=false;if(!closed)button('join').disabled=false;
@@ -166,7 +172,7 @@
     try{subscription=context.subscribe(receive);}catch(e){await close();throw e;}
     /* `joinOnOpen`: the person already asked to join (they tapped the channel's voice control), so the
      * first moment a broker can be chosen correctly is the moment to connect -- never a second tap. */
-    const tick=()=>{people();if(!joined&&!moving){const left=Math.ceil((heardUntil-Date.now())/1000);status(left>0?'Listening for an existing call ('+left+'s)…':'Ready to join');button('join').disabled=left>0;
+    const tick=()=>{people();if(!joined&&!moving){const left=Math.ceil((heardUntil-Date.now())/1000);status(left>0?'Listening for an existing call ('+left+'s)…':failure?failure+' — press Join to try again':'Ready to join');button('join').disabled=left>0;
       if(left<=0&&context.joinOnOpen&&!autoTried&&valid()){autoTried=true;void connect(button('broker').value);}}};
     clock=setInterval(tick,1000);
     membership=setInterval(()=>{
@@ -175,7 +181,7 @@
     },2000);
     button('close').onclick=()=>{void close();};
     button('join').disabled=true;status('Listening for an existing call (30s)…');tick();
-    button('join').onclick=()=>{context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
+    button('join').onclick=()=>{failure='';context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
     button('mute').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setMicrophoneEnabled(muted);if(!valid()||room!==target){await target.disconnect();return;}muted=!muted;button('mute').textContent=muted?'Unmute':'Mute';}catch(e){status(e.message);}};
     button('video').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setCameraEnabled(!video);if(!valid()||room!==target){await target.disconnect();return;}video=!video;button('video').textContent=video?'Camera off':'Camera on';}catch(e){status(e.message);}};
     button('screen').onclick=async()=>{

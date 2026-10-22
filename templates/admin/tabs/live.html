@@ -128,4 +128,34 @@
             <small><strong>Note:</strong> the app supervises the relay automatically — toggling "Run the built-in TURN relay" takes effect within a few seconds (no restart needed), provided the binary is built and a Public IP is set.</small>
         </div>
     </fieldset>
+
+    <fieldset>
+        <legend>🎙️ Community Calls (Concord) — built-in LiveKit server</legend>
+        <div class="form-group">
+            <label for="livekit_enabled">
+                <input type="checkbox" id="livekit_enabled" name="livekit_enabled"> Host Concord calls on this server
+            </label>
+            <small>Runs a LiveKit SFU and answers as a Concord call broker at <code>/.well-known/concord/av</code>, so community voice/video goes through this server instead of armada.buzz. Calls stay end-to-end encrypted: the server only forwards frames and never learns who is in a community. Install once with <code>./install.sh --livekit</code>. <strong>Forward UDP <span class="lk-udp">7882</span> and TCP <span class="lk-tcp">7881</span></strong> to this machine, and proxy <code>wss://&lt;your host&gt;/livekit/</code> to <code>127.0.0.1:7880</code> in nginx. Uses the TURN relay above for callers behind strict NAT when it is on.</small>
+        </div>
+        <div class="form-group">
+            <label for="livekit_public_ip">Public IP</label>
+            <input type="text" id="livekit_public_ip" name="livekit_public_ip" placeholder="(blank = the TURN public IP)">
+        </div>
+        <div class="form-group">
+            <label for="livekit_public_url">Signalling URL</label>
+            <input type="text" id="livekit_public_url" name="livekit_public_url" placeholder="(blank = wss://<this host>/livekit)">
+        </div>
+        <div class="form-group">
+            <label for="livekit_udp_port">Media port (UDP)</label>
+            <input type="text" id="livekit_udp_port" name="livekit_udp_port" placeholder="7882">
+        </div>
+        <div class="form-group">
+            <label for="livekit_tcp_port">Fallback port (TCP)</label>
+            <input type="text" id="livekit_tcp_port" name="livekit_tcp_port" placeholder="7881">
+        </div>
+        <div class="form-group">
+            <label for="livekit_http_port">Signalling port (127.0.0.1 only)</label>
+            <input type="text" id="livekit_http_port" name="livekit_http_port" placeholder="7880">
+        </div>
+    </fieldset>
 </div>

@@ -21,6 +21,7 @@ const window={PCCordVoice:{},PCCordCall:{open:async ctx=>{opened=ctx;return ctx;
  createVoicePresence:async(_b,_c,_ch,verb,pk,sign)=>{await sign({pubkey:pk});return{pubkey:'stream'+room.cord.bundle.epoch,kind:21059,content:verb};}},
  Relay:{subscribeFrom:(relays,filters,opts)=>{subscriptions.push({relays,filters,opts});const stop=()=>{};stop.publish=()=>0;stop.hasTargets=true;stop.ready=Promise.resolve(true);return stop;}}};
 const localStorage={getItem:()=>null,setItem:()=>{}},callModules=new Map(),concordScriptUrl=null;
+const callBroker=async()=>'https://armada.buzz';   // which broker: tests/client/concord_call_broker_runtime.mjs
 '''+planes+calls+r'''
 (async()=>{
  await startCordCall(p,room,'general');assert(opened);
