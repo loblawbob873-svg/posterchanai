@@ -104,8 +104,9 @@ def test_on_a_phone_the_members_dialog_searches_too():
         # Opened the way a person does on a phone: into the channel, then Members in its header.
         await b.js("(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()")
         await b.until("getComputedStyle(document.querySelector('.cc-conversation')).display!=='none'")
-        await b.until("[...document.querySelectorAll('button')].some(x=>/^members$/i.test(x.getAttribute('aria-label')||x.title||''))")
-        await b.js("[...document.querySelectorAll('button')].filter(x=>/^members$/i.test(x.getAttribute('aria-label')||x.title||'')&&x.getBoundingClientRect().width>0)[0].click()")
+        # Members is the first row of the room menu (☰).
+        await b.until("!!document.querySelector('#cc-head-more')")
+        await b.js("(id=>{document.querySelector('#cc-head-more').click();const b=[...document.querySelectorAll('.menu-pop [data-m]')].find(x=>x.dataset.m===id);if(!b)throw new Error('the room menu has no '+id);b.click();})('cc-members')")
         await b.until("(()=>{const d=document.getElementById('cc-members-dialog');return !!d&&!d.classList.contains('hidden')&&d.getBoundingClientRect().height>0})()")
         await b.until("!!document.querySelector('#cc-members-dialog .cc-member-search')")
         # The channel is still loading behind it; its repaint must not shut the dialog (it did, in 0.1s).

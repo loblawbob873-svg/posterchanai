@@ -72,7 +72,10 @@ def test_concord_header_channel_action_and_invite_access(width, role):
         await click(b, '#cc-join-cancel')
         if width < 600:
             await click(b, '.cc-channel')
-        await click(b, '#cc-copy-link')
+        # Copy invite link lives in the room menu (☰) -- the room bar is search, call and the menu, as in Armada.
+        await click(b, '#cc-head-more')
+        await b.until("!!document.querySelector('.menu-pop [data-m=\"cc-copy-link\"]')")
+        await b.js("document.querySelector('.menu-pop [data-m=\"cc-copy-link\"]').click()")
         await b.until("window.__copiedInvite==='https://fixture.invalid/invite/fixture#secret'")
     extra="localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__copiedInvite=value;}}});"
     asyncio.run(desktop.with_browser('online', '', check, extra))

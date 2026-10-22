@@ -58,13 +58,8 @@ def test_the_room_call_button_starts_the_call_for_the_channel_on_screen(width):
 
     async def check(b):
         await _in_room(b, width, channel='hangout')
-        if width < 370:
-            # Too narrow for 📞 in the header: it must be in ⋯ instead — never simply gone.
-            await click(b, '#cc-head-more')
-            await b.until("[...document.querySelectorAll('.menu-pop button')].some(x=>/call/i.test(x.textContent))")
-            await b.js("[...document.querySelectorAll('.menu-pop button')].find(x=>/call/i.test(x.textContent)).click()")
-        else:
-            await click(b, '#cc-call')        # real pointer input; fails if hidden, clipped or covered
+        # The room bar is search, call and the menu at every width (Armada's), so 📞 is on screen even at 360px.
+        await click(b, '#cc-call')        # real pointer input; fails if hidden, clipped or covered
         await b.until("!!window.__opened")
         got['opened'] = await b.js("__opened")
         got['errors'] = await b.js("__errors")

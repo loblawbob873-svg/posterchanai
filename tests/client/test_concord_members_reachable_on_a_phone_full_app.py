@@ -45,18 +45,18 @@ def test_members_is_on_screen_and_opens_the_list_on_a_phone(width):
     async def check(b):
         await _room(b, width)
         got['header'] = await b.js(HEADER)
-        await b.js("document.querySelector('#cc-members').click()")
-        await asyncio.sleep(.3)
-        got['dialog'] = await b.js("(()=>{const d=document.querySelector('#cc-members-dialog');return !!d&&!d.classList.contains('hidden')&&d.getBoundingClientRect().height>0})()")
-        await b.js("document.querySelector('#cc-members-close').click()")
-        # The folded actions are still reachable through ⋯.
+        # Every room action is in the room menu (☰); Members is its first row.
         await b.js("document.querySelector('#cc-head-more').click()")
         await asyncio.sleep(.3)
         got['menu'] = await b.js("[...document.querySelectorAll('.menu-pop button')].map(x=>x.textContent.trim())")
+        await b.js("document.querySelector('.menu-pop [data-m=\"cc-members\"]').click()")
+        await asyncio.sleep(.3)
+        got['dialog'] = await b.js("(()=>{const d=document.querySelector('#cc-members-dialog');return !!d&&!d.classList.contains('hidden')&&d.getBoundingClientRect().height>0})()")
 
     asyncio.run(desktop.with_browser("online", "", check, EXTRA))
     shown = {h[0]: h for h in got['header']}
-    assert 'cc-members' in shown, ("Members is not in the header at all", got['header'])
+    assert 'cc-head-more' in shown and 'cc-search' in shown, ("the room bar is search, call and the menu", got['header'])
+    assert got['menu'] and got['menu'][0] == 'Members', got['menu']
     off = [h for h in got['header'] if not h[3]]
     assert not off, ("header controls off screen", off)
     assert got['dialog'], "tapping Members did not open the member list"
@@ -64,7 +64,7 @@ def test_members_is_on_screen_and_opens_the_list_on_a_phone(width):
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-def test_desktop_width_keeps_every_action_and_no_more_button():
+def test_desktop_room_bar_is_search_call_and_the_menu():
     got = {}
 
     async def check(b):
@@ -73,4 +73,6 @@ def test_desktop_width_keeps_every_action_and_no_more_button():
 
     asyncio.run(desktop.with_browser("online", "", check, EXTRA))
     ids = [h[0] for h in got['header']]
-    assert 'cc-head-more' not in ids and 'cc-members' in ids and 'cc-direct-send' in ids, ids
+    # Armada's room bar, at desktop width too: search, call, the menu -- nothing else competing for the space.
+    assert ids[-3:] == ['cc-search', 'cc-call', 'cc-head-more'], ids
+    assert 'cc-members' not in ids and 'cc-direct-send' not in ids, ids

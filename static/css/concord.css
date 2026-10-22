@@ -368,7 +368,8 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
   body.concord-view .cc-public-room>strong,body.concord-view .cc-joined-room>strong{display:none!important}
   body.concord-view .cc-joined-room{grid-template-columns:42px minmax(0,1fr)!important;min-height:64px!important;padding:10px!important}
 }
-@media(max-width:370px){body.concord-view #cc-call{display:none!important}body.concord-view .cc-conversation>header>b{max-width:30vw!important}body.concord-view .cc-compose #cc-emoji{display:none!important}}
+/* Call stays on the room bar at every width now that the bar is only search, call and the menu (Armada's). */
+@media(max-width:370px){body.concord-view .cc-conversation>header>b{max-width:30vw!important}body.concord-view .cc-compose #cc-emoji{display:none!important}}
 
 /* Phone Concord follows the working PosterChanOS workspace, not a separate card UI.  The same
    vertical community rail + channel pane are visible before a room is opened and become one
@@ -555,10 +556,19 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
    conversation stay on screen. Outside a room the header has room for everything and ⋯ never shows —
    that is where Invites is used most (direct invitations arrive before you are in the room). */
 .cc-head-more{display:none!important}
-@media(max-width:820px){
-  body.concord-view .cc-conversation>header:has(#cc-call) :is(#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-leave-shortcut,#cc-direct-inbox){display:none!important}
-  body.concord-view .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
-}
+/* INSIDE A ROOM THE HEADER IS 🔍 📞 ☰, at every width (Armada's room bar). Everything else is in the ☰ menu, which
+   presses these same buttons -- hidden, never removed, so each action keeps one implementation. */
+body.concord-view .cc-conversation>header:has(#cc-call) :is(#cc-pins,#cc-threads-toggle,#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-copy-link,#cc-leave-shortcut,#cc-notify-head,#cc-direct-inbox,#ccg-head-issues,#cc-members){display:none!important}
+body.concord-view .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
+/* Search results (concord.js openRoomSearch). */
+.cc-search-results{display:grid;gap:6px;margin-top:10px;max-height:60vh;overflow:auto}
+.cc-search-note{margin:6px 0 0}
+.cc-search-hit{display:grid;gap:2px;width:100%;padding:9px 11px;border:1px solid rgba(var(--cct-tint-rgb),.1);border-radius:calc(10px*var(--cct-round));background:var(--cct-raised);color:var(--cct-text);text-align:start;cursor:pointer;min-width:0}
+.cc-search-hit:hover,.cc-search-hit:focus-visible{border-color:rgba(var(--cct-accent-rgb),.5)}
+.cc-search-where{display:flex;justify-content:space-between;gap:8px;color:var(--cct-muted);font-size:12px}
+.cc-search-hit b{color:var(--cct-strong);font-size:13px}
+.cc-search-text{font-size:14px;line-height:1.4;overflow-wrap:anywhere}
+.cc-search-text mark{background:rgba(var(--cct-accent-rgb),.3);color:inherit;border-radius:3px;padding:0 1px}
 /* Code in messages (messageContentHtml: `inline` and ``` fenced blocks). A block keeps its line breaks
    and scrolls sideways INSIDE itself, so a long command never widens the chat on a phone. */
 .cc-message-body .cc-code{font-family:var(--mono,monospace);font-size:.9em;padding:.1em .35em;border-radius:calc(5px*var(--cct-round));
@@ -828,3 +838,8 @@ body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--
 /* The @-picker under a textarea that is not the composer (the edit box): below it, inside the sheet. */
 .cc-box-mentions{margin:6px 0 0!important}
 .cc-box-mentions[hidden]{display:none!important}
+/* Known members, grouped (concord.js memberRow): Admins, then Members. */
+.cc-member-group{margin:10px 4px 4px!important;color:var(--cct-section)!important;font-size:11px!important;font-weight:800!important;letter-spacing:.06em!important;text-transform:uppercase!important}
+.cc-member-group:first-child{margin-top:2px!important}
+.cc-member-group span{margin-inline-start:4px!important;font-weight:600!important;opacity:.8!important}
+.cc-member-group.hidden{display:none!important}

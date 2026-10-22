@@ -67,9 +67,12 @@ def test_vector_parity_controls_are_reachable(width):
         await b.until("document.querySelectorAll('.cc-message').length===2")
         # (edited) is shown; the pinned list is one tap from the header and names the message.
         assert await b.js("document.querySelectorAll('.cc-edited').length") == 1
-        assert await hit(b, '#cc-pins') == 'ok', 'the pinned-messages button is not reachable in the header'
-        assert await b.js("document.querySelector('#cc-pins small')?.textContent") == '1'
-        await b.js("document.querySelector('#cc-pins').click()")
+        # The pinned list is in the room menu (☰), with its count.
+        assert await hit(b, '#cc-head-more') == 'ok', 'the room menu is not reachable in the header'
+        await b.js("document.querySelector('#cc-head-more').click()")
+        await b.until("!!document.querySelector('.menu-pop [data-m=\"cc-pins\"]')")
+        assert await b.js("document.querySelector('.menu-pop [data-m=\"cc-pins\"]').textContent.trim()") == 'Pinned messages (1)'
+        await b.js("document.querySelector('.menu-pop [data-m=\"cc-pins\"]').click()")
         await b.until("!!document.querySelector('.cc-pin-item')")
         assert 'their pinned words' in await b.js("document.querySelector('.cc-pin-item').textContent")
         assert await hit(b, '.cc-pin-item') == 'ok'

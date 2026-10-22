@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=26'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=27'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>cordDeps(window.__PC);
   /* CONCORD THEMES. How Concord looks to ME (per account, never per community): a preset name plus an
@@ -5693,6 +5693,8 @@
     document.querySelectorAll('.cc-members-scroll, .cc-member-list').forEach(list=>{
       let shown=0;
       list.querySelectorAll('.cc-member').forEach(row=>{ const hit=!terms.length||terms.every(t=>(row.dataset.q||'').includes(t)); row.classList.toggle('hidden',!hit); if(hit)shown++; });
+      // A section heading (Admins / Members) shows only while something under it does.
+      list.querySelectorAll('.cc-member-group').forEach(h=>{ let any=false; for(let x=h.nextElementSibling;x&&!x.classList.contains('cc-member-group');x=x.nextElementSibling)if(x.classList.contains('cc-member')&&!x.classList.contains('hidden')){any=true;break;} h.classList.toggle('hidden',!any); });
       let none=list.querySelector('.cc-member-none');
       if(terms.length&&!shown){ if(!none){ none=document.createElement('div'); none.className='cc-empty-side cc-member-none'; list.appendChild(none); } none.textContent='No member matches “'+memberQuery.trim()+'”.'; }
       else if(none)none.remove();
@@ -6437,7 +6439,14 @@
       canBanAny=!!current&&!current.local&&!!current.cord&&(isOwner||memberMay(current,viewer.pubkey,'BAN'));
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     wantProfiles(p,memberPks,saved()[state.community]);
-    const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
+    /* ADMINS, THEN MEMBERS (Armada's member list): the owner and everyone holding a community role first, each labelled
+     * with the role, then everyone else. Roles are read from the control stream once per paint, not once per member. */
+    const roleMap=memberRolesMap(current),ranked=pk=>pk===ownerPk||(roleMap.get(pk)||[]).length>0;
+    const roleLabel=pk=>pk===ownerPk?'Owner':((roleMap.get(pk)||[]).join(', ')||'Member');
+    const memberRow=pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');let npub='';try{npub=window.NostrTools.nip19.npubEncode(pk);}catch(_){}/* the form people copy and paste -- the hex alone found nobody from an npub */const q=[name,pr.name,pr.display_name,pr.nip05,npub,pk].filter(Boolean).join(' ').toLowerCase();return `<button class="cc-member" data-cc-member="${p.enc(pk)}" data-q="${p.enc(q)}" aria-label="${p.enc(name)} — ${p.enc(roleLabel(pk))}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${p.enc(roleLabel(pk))}</small></span></button>`;};
+    const admins=memberPks.filter(ranked).sort((a,b)=>(b===ownerPk)-(a===ownerPk)),regulars=memberPks.filter(pk=>!ranked(pk));
+    const memberRows=(admins.length?`<div class="cc-member-group" role="heading" aria-level="3">Admins <span>${admins.length}</span></div>`+admins.map(memberRow).join(''):'')
+      +(regulars.length?`<div class="cc-member-group" role="heading" aria-level="3">Members <span>${regulars.length}</span></div>`+regulars.map(memberRow).join(''):'');
     notifyMentions(p,current,messages,viewer,me,state.channel||'general');
     if(current&&viewingChannel(current,state.channel||'general')){
       clearMentions(current,state.channel||'general');   // on screen = read
@@ -6487,7 +6496,7 @@
         <div class="cc-channel-list">${inviteCardHtml(p)}${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-theme" title="Concord theme" aria-label="Concord theme"><svg class="ic"><use href="#i-palette"></use></svg></button><button class="cc-head-btn${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify" title="Notification settings: ${concordNotifyOn()?'community notifications on — tap to turn off':'community notifications off — tap to turn on'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button></footer>
       </aside>
-      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn cc-notify-head${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify-head" title="Community notifications ${concordNotifyOn()?'on':'off'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button><button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="More" aria-label="More room actions"><svg class="ic" aria-hidden="true"><use href="#i-more"></use></svg></button></header>
+      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-search" title="Search this community" aria-label="Search this community"><svg class="ic"><use href="#i-search"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn cc-notify-head${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify-head" title="Community notifications ${concordNotifyOn()?'on':'off'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button><button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="Room menu" aria-label="Room menu"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value=""><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div><div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div></div></div><div class="cc-join cc-invite-sheet${pendingInvite?'':' hidden'}" id="cc-invite-sheet">${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-icon-status" id="cc-community-icon-status" role="status" aria-live="polite" hidden></div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
@@ -6589,6 +6598,54 @@
    * room identity (saved array positions change), paint the named channel, then keep looking while
    * relay history hydrates. A missing target leaves the requested room/channel open; it must never
    * silently jump to some other community. */
+  /* SEARCH THIS COMMUNITY (Armada's 🔍). Concord is end-to-end encrypted, so no server can search it: this reads the
+   * messages this device has decrypted, every channel of the open community, newest first. A result opens its channel
+   * (its thread, for a reply), scrolls to the message and marks it -- the same reveal a notification uses. */
+  function searchRoom(room,query){
+    const q=String(query||'').trim().toLowerCase();if(!room||q.length<2)return [];
+    const out=[];
+    for(const c of channelsOf(room)){
+      let rows=[];try{rows=testMessages(channelStoreId(room,c.name))||[];}catch(_){}
+      for(const m of rows){
+        if(!m||m.failed||(m.kind&&m.kind!==9&&m.kind!==1111&&m.kind!==1))continue;
+        const text=String(m.text||'');if(!text.toLowerCase().includes(q))continue;
+        out.push({channel:c.name,m,rows});
+      }
+    }
+    return out.sort((a,b)=>(Number(b.m.at)||0)-(Number(a.m.at)||0)).slice(0,100);
+  }
+  function openRoomSearch(p){
+    const room=saved()[state.community];if(!room||!p.modal)return;
+    const snippet=(text,q)=>{const t=String(text||'').replace(/\s+/g,' '),i=t.toLowerCase().indexOf(q.toLowerCase()),a=Math.max(0,i-40),
+      part=(a?'…':'')+t.slice(a,i+q.length+80)+(i+q.length+80<t.length?'…':''),j=part.toLowerCase().indexOf(q.toLowerCase());
+      return j<0?p.enc(part):p.enc(part.slice(0,j))+'<mark>'+p.enc(part.slice(j,j+q.length))+'</mark>'+p.enc(part.slice(j+q.length));};
+    p.modal('<h3>Search '+p.enc(roomName(room,state.community))+'</h3><input class="input" id="cc-search-q" type="search" placeholder="Search messages" autocomplete="off" enterkeyhint="search">'
+      +'<p class="muted small cc-search-note">Searches the messages this device has loaded. They are end-to-end encrypted, so no server can search them.</p><div id="cc-search-results" class="cc-search-results" role="list"></div>',root=>{
+      const input=root.querySelector('#cc-search-q'),list=root.querySelector('#cc-search-results');let timer=0,last=[];
+      const run=()=>{
+        const q=String(input.value||'').trim();
+        if(q.length<2){list.innerHTML='';last=[];return;}
+        last=searchRoom(saved()[state.community],q);
+        if(!last.length){list.innerHTML='<p class="muted">No messages found.</p>';return;}
+        list.innerHTML=last.map((r,i)=>{const pr=p.profOf&&r.m.pubkey?p.profOf(r.m.pubkey)||{}:{},who=String(pr.display_name||pr.name||r.m.by||'');
+          return '<button type="button" class="cc-search-hit" role="listitem" data-cc-search-hit="'+i+'"><span class="cc-search-where">#'+p.enc(r.channel)+(r.m.kind===1111?' · in a thread':'')
+            +'<time>'+p.enc(new Date(Number(r.m.at)||0).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}))+'</time></span>'
+            +'<b>'+p.enc(who)+'</b><span class="cc-search-text">'+snippet(r.m.text,q)+'</span></button>';}).join('')
+          +(last.length===100?'<p class="muted small">Showing the newest 100.</p>':'');
+      };
+      input.oninput=()=>{clearTimeout(timer);timer=setTimeout(run,120);};
+      input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(timer);run();}};
+      list.onclick=e=>{
+        const hit=e.target.closest&&e.target.closest('[data-cc-search-hit]');if(!hit)return;
+        const r=last[Number(hit.dataset.ccSearchHit)];if(!r)return;
+        p.closeModal();
+        let root=null;if(r.m.kind===1111){try{root=threadRootId(r.rows,r.m)||null;}catch(_){}}
+        state.thread=root&&root!==messageId(r.m)?root:null;
+        openNotification({community:roomIdentity(saved()[state.community]),channel:r.channel,message:messageId(r.m)});
+      };
+      setTimeout(()=>{try{input.focus();}catch(_){}},30);
+    });
+  }
   function openNotification(target){
     const t=target&&typeof target==='object'?target:{},rooms=saved(),identity=String(t.community||''),
       index=rooms.findIndex(room=>roomIdentity(room)===identity);
@@ -6786,16 +6843,26 @@
      * android": Members was the LAST of a dozen buttons and the header ran out of screen before it.
      * At phone width (client.css) the room's secondary actions fold into this ⋯ and Members stays in
      * the header; each menu row presses the real (hidden) button, so there is one handler per action. */
+    /* THE ROOM MENU (Armada's): inside a room the header is 🔍 📞 ☰ and every other room action is here -- "armada UI
+     * is simpler and cleaner, their Room top bar has a hamburger menu with the options instead of cluttered like us"
+     * (2026-10-21). Each row presses the action's own button (kept in the header, hidden by concord.css), so every
+     * action still has exactly one implementation. Labels say the current state where there is one. */
     { const more=$('#cc-head-more'); if(more)more.onclick=()=>{
-        // Call too, when the header has no room for it (under 370px it is hidden): a phone that cannot see
-        // the 📞 must still be able to start a call.
         const callEl=$('#cc-call'), callHidden=callEl&&!callEl.getBoundingClientRect().width;
-        const rows=[...(callHidden?[['cc-call','Start a call']]:[]),['ccg-head-issues','Issues and pull requests'],['cc-members','Members'],['cc-direct-send','Invite an account'],
-          ['cc-manage-links','Invitation links'],['cc-direct-inbox','Review invitations'],['cc-publish-listing','Publish to Armada Discover'],
+        const pinN=(()=>{try{return pinsOf(saved()[state.community],state.channel).length;}catch(_){return 0;}})();
+        const tt=$('#cc-threads-toggle'),inbox=pendingInviteCount;
+        const rows=[...(callHidden?[['cc-call','Start a call']]:[]),
+          ['cc-members','Members'],['cc-pins',pinN?'Pinned messages ('+pinN+')':'Pinned messages'],
+          ...(tt?[['cc-threads-toggle',tt.getAttribute('aria-label')||'Threads']]:[]),
+          ['ccg-head-issues','Issues and pull requests'],
+          ['cc-notify-head',concordNotifyOn()?'Notifications: on':'Notifications: off'],
+          ['cc-direct-send','Invite an account'],['cc-copy-link','Copy invite link'],['cc-manage-links','Invitation links'],
+          ['cc-direct-inbox',inbox?'Invitations ('+inbox+')':'Invitations'],['cc-publish-listing','Publish to Armada Discover'],
           ['cc-leave-shortcut','Leave community']].filter(([id])=>!!$('#'+id));
         if(!p.openMenuPopover||!rows.length)return;
         p.openMenuPopover(more,rows,a=>{ const b=$('#'+a); if(b)b.click(); });
       }; }
+    const search=$('#cc-search'); if(search)search.onclick=()=>openRoomSearch(p);
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
     $$('.cc-ban-npub').forEach(b=>{b.onclick=async()=>{
       const room=saved()[state.community],owner=String(room?.cord?.bundle?.owner||'');
@@ -7306,6 +7373,14 @@
     const res=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!res||!res.ok)throw new Error('the community relays did not accept it');
     roomControls.set(loadKey,[...wraps,made.wrap]);
     return !pinned;
+  }
+  function memberRolesMap(room){
+    const out=new Map();
+    try{ const r=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle; if(!r||!bundle)return out;
+      const info=r.inspectControl(bundle,roomControls.get(room.communityId||room.naddr)||[]),byId=new Map((info.roles||[]).filter(x=>x.scope==='server').map(x=>[x.id,x.name]));
+      for(const [pk,ids] of Object.entries(info.grants||{})){ const names=[...new Set((ids||[]).map(id=>byId.get(id)).filter(Boolean))]; if(names.length)out.set(pk,names); }
+    }catch(_){}
+    return out;
   }
   function memberRoleNames(room,pk){
     try{ const r=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle; if(!r||!bundle)return [];
