@@ -87,3 +87,48 @@ def test_raw_event_and_report_from_the_post_menu():
         await b.js("document.querySelector('#rep-close').click(); 1")
         await b.until("!document.querySelector('#rep-close')")
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+SHOT = r'''
+window.__shots=[];window.__notes=[];
+const __sf=window.fetch;
+window.fetch=(u,o)=>{if(String(u).includes('/client/screenshot')){__shots.push(JSON.parse(o.body));
+  return Promise.resolve(new Response(JSON.stringify({image:'PNG'}),{status:200,headers:{'Content-Type':'application/json'}}));}
+  return __sf(u,o);};
+'''.replace('PNG', PNG_B64)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_screenshot_card_copy_save_to_notes_meme_and_close():
+    """⋯ → Screenshot renders the post as a card, uploads it, and the card's dialog works: Copy copies the card's
+    link, Save to Notes saves the card AS AN ATTACHMENT with the post's words, Meme Builder opens it there, Close
+    closes."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js(SETUP)
+        await menu(b, "screenshot")
+        await b.until("!!document.querySelector('#ss-copy')")
+        sent = await b.js("__shots[0]")
+        assert "a post to report" in sent["text"], sent
+        link = await b.js("document.querySelector('.ss-acts').closest('.modal, .modal-card, [role=dialog], body').querySelector('img').getAttribute('src')")
+        await b.js("document.querySelector('#ss-copy').click(); 1")
+        await b.until(f"__clip.includes({link!r})")
+        await b.js("window.PCNotes=Object.assign(window.PCNotes||{},{save:async n=>{__notes.push({title:n.title,body:n.body,files:(n.files||[]).map(f=>f.name+':'+f.type)});return {};}}); 1")
+        await b.js("document.querySelector('#ss-note').click(); 1")
+        await b.until("__notes.length===1 && !document.querySelector('#ss-note')")
+        note = await b.js("__notes[0]")
+        assert note["files"] == ["post.png:image/png"] and "a post to report" in note["body"] and link in note["body"], note
+        # Meme Builder, from a fresh card.
+        await menu(b, "screenshot")
+        await b.until("!!document.querySelector('#ss-meme')")
+        await b.js("document.querySelector('#ss-meme').click(); 1")
+        await b.until("/card added to the Meme Builder/.test(document.body.innerText)")
+        # Close.
+        await b.js(f"__PC.openNote(__post.id); 1")
+        await menu(b, "screenshot")
+        await b.until("!!document.querySelector('#ss-close')")
+        await b.js("document.querySelector('#ss-close').click(); 1")
+        await b.until("!document.querySelector('#ss-close')")
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE + SHOT))
