@@ -242,7 +242,7 @@ jobs:
           APT_OPTS=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
           for attempt in 1 2 3; do
             if sudo apt-get "${APT_OPTS[@]}" update -qq \
-               && sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv default-jdk-headless squashfs-tools pulseaudio pulseaudio-utils; then
+               && sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv squashfs-tools pulseaudio pulseaudio-utils; then
               exit 0
             fi
             echo "apt attempt $attempt failed -- retrying in $((attempt * 20))s"
@@ -250,6 +250,29 @@ jobs:
           done
           echo "::error::the desktop regression packages could not be installed (mirror unreachable) -- no test ran"
           exit 1
+
+      # JAVA FROM THE ACTIONS CACHE, NOT APT (2026-10-22). `default-jdk-headless` pulled 192 MB of openjdk-25 from the
+      # runner's Ubuntu mirror, whose amd64v3 copies stalled ("Ign: ... openjdk-25-jre-headless") until the 12-minute
+      # step timeout -- no test ran and nothing was published. The javac/java-driven Android tests only need a JDK.
+      - name: Java for the Android source checks
+        if: matrix.name == 'linux'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # THE CALL TESTS NEED THE REAL SFU. tests/client/test_concord_call_livekit_live.py skips without livekit-server,
+      # and a required test that skips aborts the gate -- every Desktop run since 18:06Z on 2026-10-22 ended there.
+      # Same pinned, checksummed binary a node installs (scripts/install/livekit.sh).
+      - name: LiveKit for the call tests
+        if: matrix.name == 'linux'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/install/livekit.sh
+          setup_livekit_server
+          test -x livekit/livekit-server
 
       # A PINNED PYTHON FOR THE GATE'S VENV. It used the runner's `python3`, which became 3.14 on 2026-10-19 -- coincurve has
       # no 3.14 wheel, its source build died ("Expected exactly one LICENSE file in cffi distribution, got 0"), and every
