@@ -1364,6 +1364,11 @@
    * which is what keeps them out of the room for every other client too. */
   const NODE_BLOCKS={blocked:new Set(),askedAt:new Map(),busy:false};
   function nodeBlocked(pk){ return !!pk&&NODE_BLOCKS.blocked.has(String(pk).toLowerCase()); }
+  /* Who an admin-owner's device has already tried to ban automatically, per community (bounded). */
+  const autoBan={busy:false};
+  function autoBanKey(){ return 'pc.concord.autoban.v1.'+accountPk(); }
+  function autoBanTried(id){ try{ const d=JSON.parse(localStorage.getItem(autoBanKey())||'{}'); return new Set((d&&d[id])||[]); }catch(_){ return new Set(); } }
+  function noteAutoBan(id,pk){ try{ const d=JSON.parse(localStorage.getItem(autoBanKey())||'{}')||{}; d[id]=[...new Set([...(d[id]||[]),pk])].slice(-500); localStorage.setItem(autoBanKey(),JSON.stringify(d)); }catch(_){ } }
   async function refreshNodeBlocks(room){
     const p=PC();
     if(NODE_BLOCKS.busy||!room||room.local||!tunnelBase(p))return;
@@ -6962,6 +6967,25 @@
         render(); p.toast(verb==='kick'?'Member kicked.':'Member banned.');
       }catch(e){ p.toast('Community moderation needs attention: '+(e&&e.message||e)); }
     };
+    /* AUTOMATIC IN AN ADMIN'S OWN COMMUNITY (2026-10-21: "yes make bans automatic for admin-owned communities"). When
+     * the person looking is this community's OWNER and an admin of this node, anyone here who is blocked on the node is
+     * banned without a button: the community ban, with the key rotation that keeps them out of every app. Each person
+     * is tried ONCE per community (a failed rotation is not retried on every repaint -- the notice and its button stay
+     * for that), and the loop stops if the screen moves to another community, because banMember acts on the open one. */
+    { const room=saved()[state.community];
+      if(isOwner&&room&&room.cord&&!room.local&&p.isAdmin&&p.isAdmin()&&!autoBan.busy){
+        const id=roomIdentity(room),tried=autoBanTried(id),banned=new Set(room.banned||[]);
+        const todo=roomParticipants(room,viewer.pubkey).filter(pk=>pk!==viewer.pubkey&&nodeBlocked(pk)&&!banned.has(pk)&&!tried.has(pk));
+        if(todo.length){
+          autoBan.busy=true;
+          p.toast('Removing '+todo.length+(todo.length===1?' person':' people')+' blocked on this server from '+roomName(room,state.community)+'…');
+          (async()=>{ try{ for(const pk of todo){
+            if(roomIdentity(saved()[state.community])!==id)break;
+            noteAutoBan(id,pk);
+            try{ await banMember(pk); }catch(e){ p.toast('could not ban automatically: '+((e&&e.message)||e)); break; }
+          } }finally{ autoBan.busy=false; } })();
+        }
+      } }
     { const b=$('#cc-ban-node-blocked'); if(b)b.onclick=async()=>{
         const pks=String(b.dataset.pks||'').split(',').filter(x=>/^[0-9a-f]{64}$/.test(x)); if(!pks.length)return;
         const ok=p.uiConfirm?await p.uiConfirm('Ban '+pks.length+(pks.length===1?' person':' people')+' blocked on this server from this community? The community keys are rotated so they cannot read or post here.',{ok:'Ban'}):true;

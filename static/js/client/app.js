@@ -14511,6 +14511,7 @@
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */
     saveBlobDoc,
+    isAdmin: () => !!IS_ADMIN,   // an admin of this node (CFG.admin_npubs) -- concord.js bans relay-blocked people from their own communities
     blossomListAuth,   // upload.js: the signed `list` authorization this node's Blossom requires to list a drive
     saveCopyTo,   // files.js: Save as -- a name and a place (a drive folder, a synced folder, this computer)
     /* HOW TO REOPEN WHAT THIS WINDOW IS SHOWING, as a path — the desktop's monitor handoff needs it.

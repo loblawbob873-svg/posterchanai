@@ -29,11 +29,32 @@ def bundled_assets():
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
 @pytest.mark.parametrize('width', [1280, 390])
 def test_a_relay_blocked_author_is_not_drawn_and_the_owner_can_ban(width):
+    got = asyncio.run(_open(width, admin=False))
+    assert got['asked'] and any(OTHER in batch for batch in got['asked']), got['asked']
+    assert all(len(x) == 64 for batch in got['asked'] for x in batch)
+    assert got['spam_shown'] is False, "a relay-blocked author's message was drawn"
+    assert '1 person here is blocked on this server' in got['note'] and got['ban_btn'], got
+    assert 'blocked on this server' in got['label'], got['label']
+    assert got['fits']
+    assert not got['auto'], "a non-admin owner was banned for automatically"
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_an_admin_owner_bans_them_automatically_once():
+    """"yes make bans automatic for admin-owned communities": no button to press, and one attempt per person per community."""
+    got = asyncio.run(_open(390, admin=True))
+    assert any('Removing 1 person blocked on this server' in t for t in got['toasts']), got['toasts']
+    assert got['auto'] == [OTHER], got['auto']
+    assert sum('Removing' in t for t in got['toasts']) == 1, ("tried more than once", got['toasts'])
+
+
+async def _open(width, admin):
     got = {}
 
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=850, deviceScaleFactor=1, mobile=width < 600))
         await desktop.login(b)
+        await b.js("window.__toasts=[];const t0=__PC.toast;__PC.toast=m=>{__toasts.push(String(m));try{t0(m);}catch(_){}};__PC.isAdmin=()=>" + ("true" if admin else "false"))
         await b.js(r'''(()=>{
           const me=__PC.me().pubkey,other='OTHER';
           const room={name:'Abuse fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
@@ -61,10 +82,10 @@ def test_a_relay_blocked_author_is_not_drawn_and_the_owner_can_ban(width):
         got['ban_btn'] = await b.js("!!document.querySelector('#cc-ban-node-blocked')")
         got['label'] = await b.js("[...document.querySelectorAll('.cc-member small')].map(x=>x.textContent).join('|')")
         got['fits'] = await b.js("document.documentElement.scrollWidth<=innerWidth+1")
-    asyncio.run(desktop.with_browser('online', '', check, NO_OS + ASK))
-    assert got['asked'] and any(OTHER in batch for batch in got['asked']), got['asked']
-    assert all(len(x) == 64 for batch in got['asked'] for x in batch)
-    assert got['spam_shown'] is False, "a relay-blocked author's message was drawn"
-    assert '1 person here is blocked on this server' in got['note'] and got['ban_btn'], got
-    assert 'blocked on this server' in got['label'], got['label']
-    assert got['fits']
+        await asyncio.sleep(1.5)
+        await b.js("PCConcord.render&&PCConcord.render()")   # repaints must not try again
+        await asyncio.sleep(1)
+        got['toasts'] = await b.js("__toasts")
+        got['auto'] = await b.js("(JSON.parse(localStorage.getItem('pc.concord.autoban.v1.'+__PC.me().pubkey)||'{}')['c'.repeat(64)]||[])")
+    await desktop.with_browser('online', '', check, NO_OS + ASK)
+    return got
