@@ -307,6 +307,10 @@ async def _a_call_the_caller_abandons_is_logged_as_missed(relay, alice, bob):
     await bob.until("!!document.querySelector('.call-missed .call-contact[data-pk]')", what='the Missed list')
     assert await bob.js("document.querySelector('.call-missed .call-contact').dataset.pk") == alice.pubkey
     assert await alice.missed() == [], 'the CALLER did not miss anything'
+    # Clear empties the list, on screen and on the device.
+    await bob.press('missed-clear')
+    await bob.until("!document.querySelector('.call-missed')", what='the Missed list to go')
+    assert await bob.missed() == []
 
 
 def test_a_call_the_caller_abandons_is_logged_as_missed():
@@ -524,3 +528,64 @@ async def _a_group_video_call_shows_every_face(relay, alice, bob, carol):
 
 def test_a_group_video_call_shows_every_face():
     _a_group_video_call_shows_every_face()
+
+
+
+@scenario(ALICE, BOB)
+async def _a_group_call_started_from_the_picker_mutes_and_minimises(relay, alice, bob):
+    """The Calls screen's own group-call controls: "Start a group call" opens the picker, Start with nobody picked
+    says so, picking a friend and Start rings them; in the call, mute silences the microphone without ending it,
+    and minimise shrinks the call to a pill."""
+    # Alice follows Bob from his profile, so he is in her picker (it lists the people you follow).
+    await alice.js(f"__PC.openProfile({json.dumps(bob.pubkey)})")
+    await alice.press('prof-menu')
+    await alice.until("!!document.querySelector('.menu-pop [data-m=follow]')", what='Follow in the profile menu')
+    await alice.js("document.querySelector('.menu-pop [data-m=follow]').click()")
+    await alice.until("/\\bfollowed\\b/.test(document.body.innerText)", what='"followed"')
+    await alice.press('prof-menu')
+    await alice.until("/Unfollow/.test((document.querySelector('.menu-pop [data-m=follow]')||{}).textContent||'')", what='the menu to offer Unfollow')
+    await alice.js("document.querySelectorAll('.menu-pop').forEach(m=>m.remove())")
+    await alice.js("__PC.switchView('calls')")
+    await alice.press('grp-toggle')
+    await alice.until("document.querySelector('#grp-panel').style.display!=='none'", what='the group picker')
+    await alice.until(f"!!document.querySelector('.grp-pick[value={json.dumps(bob.pubkey)}]')", what='Bob in the picker')
+    await alice.press('grp-start')
+    await alice.until("/pick at least one/.test(document.body.innerText)", what='"pick at least one person"')
+    assert not await alice.js("!!document.querySelector('#room-overlay')"), 'a group call started with nobody in it'
+    await alice.js(f"document.querySelector('.grp-pick[value={json.dumps(bob.pubkey)}]').click()")
+    await alice.press('grp-start')
+    await alice.until("!!document.querySelector('#room-overlay')", what='the group call screen')
+    await bob.press('room-accept')
+    await _connected_to(alice, 1)
+    senders = "__pcs.filter(p=>p.connectionState==='connected').every(p=>p.getSenders().filter(s=>s.track&&s.track.kind==='audio').every(s=>s.track.enabled===%s))"
+    await alice.press('room-mute')
+    await alice.until(senders % 'false', what='her microphone to be muted')
+    assert await alice.live_connections() == 1, 'mute ended the group call'
+    await alice.press('room-mute')
+    await alice.until(senders % 'true', what='her microphone to be back')
+    await alice.press('room-min')
+    await alice.until("document.querySelector('#room-overlay').classList.contains('call-mini')", what='the call to minimise')
+    assert await alice.live_connections() == 1, 'minimising ended the call'
+
+
+def test_a_group_call_started_from_the_picker_mutes_and_minimises():
+    _a_group_call_started_from_the_picker_mutes_and_minimises()
+
+
+@scenario(ALICE, BOB)
+async def _a_video_group_call_turns_the_camera_off_and_on(relay, alice, bob):
+    await alice.js("__PC.switchView('calls')")
+    await alice.until("!!document.querySelector('#call-npub')", what='the Calls screen')
+    await alice.js(f"__PC.startGroupCall({json.dumps([bob.pubkey])}, true)")
+    await alice.until("!!document.querySelector('#room-overlay')", what='the group call screen')
+    await bob.press('room-accept')
+    await _connected_to(alice, 1)
+    video = "__pcs.filter(p=>p.connectionState==='connected').every(p=>p.getSenders().filter(s=>s.track&&s.track.kind==='video').every(s=>s.track.enabled===%s))"
+    await alice.press('room-cam')
+    await alice.until(video % 'false', what='her camera to turn off')
+    await alice.press('room-cam')
+    await alice.until(video % 'true', what='her camera to come back')
+
+
+def test_a_video_group_call_turns_the_camera_off_and_on():
+    _a_video_group_call_turns_the_camera_off_and_on()
