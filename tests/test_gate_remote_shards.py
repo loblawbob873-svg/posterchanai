@@ -52,6 +52,8 @@ def test_tests_needing_torch_or_local_checkouts_stay_here(tmp_path):
     assert not G["local_only"](tmp_path, "c.py")
     (tmp_path / "d.py").write_text('G = runpy.run_path("scripts/deploy_regression_gate.py")\n')
     assert G["local_only"](tmp_path, "d.py"), "the gate's own tests read this checkout's git state"
+    (tmp_path / "e.py").write_text('subprocess.run(["git", "diff", "HEAD~1"], cwd=ROOT)\n')
+    assert G["local_only"](tmp_path, "e.py"), "a test reading this checkout's history cannot run on files alone"
 
 
 def test_the_remote_verdict_is_never_final():

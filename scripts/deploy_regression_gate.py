@@ -444,7 +444,8 @@ REMOTE_MAX_FAILURES = 10           # more on one remote shard = its environment;
 # Files that need what the remote venv deliberately lacks (torch/XPU, the ACE-Step and searxng checkouts).
 # ...and the gate's own tests, which read this checkout's git state (the remote tree is files, not a repository).
 _LOCAL_ONLY = re.compile(r"^\s*(?:import|from)\s+(?:torch|torchaudio|torchvision|acestep|searx)\b"
-                         r"|deploy_regression_gate|scripts/checkall|checkall\.py", re.M)
+                         r"|deploy_regression_gate|scripts/checkall|checkall\.py"
+                         r"|rev-parse|ls-files|[\"']git[\"'], [\"'](?:log|diff|show|status)[\"']|git (?:log|diff|show) ", re.M)
 _SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=30']
 
 
