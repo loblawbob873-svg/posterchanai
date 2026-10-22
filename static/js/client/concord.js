@@ -1286,24 +1286,34 @@
     return merged;
   }
   /* A row the old rule merged holds one community's id and the other's bundle (and both invite URLs). The bundle is
-   * what it shows and the key it reads with, so the id follows the bundle; the aliases go, because one of them is
-   * the other community's and would merge it back. The other community returns as its own row from the membership
-   * list. */
+   * what it shows and the key it reads with, so the id follows the bundle.
+   *
+   * SPLIT, NEVER DROP (2026-10-22, "still shows rins room but community says Sorsmenedek"). This used to delete the
+   * aliases, trusting the membership list to bring the other community back -- on a device where it did not, the
+   * other room was simply gone, and the row kept the OTHER community's channel list: Sorsmenedék showing Rin's anime
+   * room's channels for good, since a control read that fails (its relays unreachable) never replaces them. Now:
+   * every other invite becomes its own invite-only row (opened and hydrated like any fresh invite; one that turns
+   * out to be this same community merges back by bundle id), and the kept row's channels are cleared so the next
+   * control read draws this community's own. Returns ROWS. */
   function repairMergedRoom(row){
     const id=String(row.communityId||''),bid=bundleIdOf(row);
     // Only the merge's own signature: a mismatch AND several invite aliases. Some rows are deliberately keyed by
     // something other than their bundle id, and those carry no aliases.
-    if(!bid||!id||/^naddr1/i.test(id)||id===bid||!Array.isArray(row.inviteAliases)||row.inviteAliases.length<2)return row;
-    const fixed={...row,communityId:bid};delete fixed.inviteAliases;return fixed;
+    if(!bid||!id||/^naddr1/i.test(id)||id===bid||!Array.isArray(row.inviteAliases)||row.inviteAliases.length<2)return [row];
+    const fixed={...row,communityId:bid,channels:[]};delete fixed.inviteAliases;
+    const own=inviteKey({url:row.url||''});
+    const others=row.inviteAliases.filter(url=>url&&inviteKey({url})!==own)
+      .map(url=>({url,naddr:row.naddr,name:'Community (restoring)',description:'',channels:[{name:'general',private:false}],local:false}));
+    return [fixed,...others];
   }
   function uniqueRooms(rows){
     const result=[];
-    for(const raw of rows||[]){if(!raw||typeof raw!=='object')continue;const row=repairMergedRoom(raw);let room=row,index=result.findIndex(other=>sameRoom(other,room));
+    for(const raw of rows||[]){if(!raw||typeof raw!=='object')continue;for(const row of repairMergedRoom(raw)){let room=row,index=result.findIndex(other=>sameRoom(other,room));
       if(index<0){result.push(room);continue;}
       room=mergeRoom(result[index],room);result[index]=room;
       // Hydration can bridge an old invite-only row and a membership row with a community id.
       for(let j=result.length-1;j>index;j--)if(sameRoom(result[j],room)){room=mergeRoom(result[j],room);result[index]=room;result.splice(j,1);}
-    }
+    }}
     return result;
   }
   function notificationRoute(room,channel,message){

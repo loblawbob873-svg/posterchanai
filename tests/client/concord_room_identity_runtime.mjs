@@ -45,10 +45,22 @@ const A='c'.repeat(64),B='d'.repeat(64);
 const sorsH={...sors,communityId:A,cord:{bundle:{community_id:A},hydrated:true}},rinH={...rin,communityId:B,cord:{bundle:{community_id:B},hydrated:true}};
 assert.equal(PCConcord.uniqueRooms([sorsH,rinH,sors,rin]).length,2,'hydrated communities from one inviter collapsed');
 // A row the OLD rule merged: one community's id, the other's bundle, both invite URLs. It is repaired to the bundle it
-// holds, sheds the aliases, and the other community stays its own row.
-const merged={...sorsH,cord:{bundle:{community_id:B},hydrated:true},inviteAliases:[sors.url,rin.url]};
+// holds and SPLIT, never dropped (2026-10-22, "still shows rins room but community says Sorsmenedek": dropping the
+// alias lost the other room on a device whose membership list never brought it back, and the kept row went on
+// drawing the other community's channels). Every other invite becomes its own row; the kept row's channels are
+// cleared so its own control read draws them.
+const merged={...sorsH,channels:[{name:'Anime 🍿',id:'rin-anime'}],cord:{bundle:{community_id:B},hydrated:true},inviteAliases:[sors.url,rin.url]};
 const healed=PCConcord.uniqueRooms([merged,sorsH]);
-assert.equal(healed.length,2,'a merged row swallowed the other community again');
-assert.deepEqual(healed.map(r=>r.communityId).sort(),[A,B].sort());
-for(const r of healed){assert.equal(r.communityId,r.cord.bundle.community_id,'a row kept another community\'s bundle');assert.ok(!r.inviteAliases,'a foreign alias survived');}
+const kept=healed.find(r=>r.cord&&r.cord.bundle&&r.cord.bundle.community_id===B);
+assert.ok(kept,'the merged row was lost');
+assert.equal(kept.communityId,B,'the kept row does not follow its bundle');
+assert.ok(!kept.inviteAliases,'a foreign alias survived on the kept row');
+assert.ok(!(kept.channels||[]).some(c=>c.id==='rin-anime'),'the kept row still draws the other community\'s channels');
+assert.ok(healed.some(r=>r.communityId===A),'the other hydrated community disappeared');
+const rebuilt=healed.find(r=>r.url===rin.url&&!(r.cord&&r.cord.bundle));
+assert.ok(rebuilt,'the other invite was DROPPED instead of becoming its own room');
+// Once that invite hydrates to the kept row's community, it merges back: nothing is duplicated for good.
+const hydratedAgain=PCConcord.uniqueRooms(healed.map(r=>r===rebuilt?{...r,communityId:B,cord:{bundle:{community_id:B},hydrated:true}}:r));
+assert.equal(hydratedAgain.length,2,'a rebuilt invite that hydrated to the same community stayed a duplicate');
+assert.deepEqual(hydratedAgain.map(r=>r.communityId).sort(),[A,B].sort());
 console.log('Concord real invite identity runtime ok');
