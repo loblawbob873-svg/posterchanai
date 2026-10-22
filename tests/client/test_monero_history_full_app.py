@@ -111,3 +111,54 @@ def test_your_address_copies_and_receive_shows_a_qr_that_copies_the_same_address
         await browser.until(f"window.__walletCopied==={address!r}")
 
     asyncio.run(desktop.with_browser('online', '', check, extra_init=wallet_init(history_payload())))
+
+
+def node_wallet_init(payload):
+    """The NODE's wallet answering (an operator's view): status names a block explorer, history has payments."""
+    return 'window.__walletHistory=' + json.dumps(payload) + ';' + r'''
+localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__walletCopied=value;}}});
+const nodeFetch=window.fetch;
+window.fetch=(url,opts)=>{
+  const path=String(url);
+  if(!path.includes('/api/wallet/xmr/'))return nodeFetch(url,opts);
+  const addr='4'+'B'.repeat(94);let body={};
+  if(path.includes('/status'))body={enabled:true,network:'mainnet',explorer_tx_base:'https://explorer.example/tx/'};
+  else if(path.includes('/balance'))body={address:addr,balance:'1.5',unlocked_balance:'1.5',outputs:3};
+  else if(path.includes('/address'))body={address:addr};
+  else if(path.includes('/history'))body=__walletHistory;
+  else if(path.includes('/sync-state'))body={scanning:false};
+  return Promise.resolve(new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}}));
+};
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_node_wallet_copy_receive_send_and_explorer_copy():
+    """The operator's wallet: Copy copies the receive address; Receive shows a QR whose Copy copies the same
+    address; Send opens the send sheet; a payment's ↗ asks before going to an explorer, and "Copy the transaction
+    ID instead" copies the id and goes nowhere."""
+    address = '4' + 'B' * 94
+
+    async def check(browser):
+        await desktop.login(browser)
+        await browser.js("window.__opened=[];window.open=u=>{__opened.push(String(u));return null;};__PC.switchView('wallet')")
+        await browser.until("!!document.querySelector('#mw-copy')")
+        await browser.js("document.querySelector('#mw-copy').click()")
+        await browser.until(f"window.__walletCopied==={address!r}")
+        await browser.js("window.__walletCopied=null;document.querySelector('#mw-receive').click()")
+        await browser.until("!!document.querySelector('#mw-modal-copy')")
+        await browser.js("document.querySelector('#mw-modal-copy').click()")
+        await browser.until(f"window.__walletCopied==={address!r}")
+        await browser.js("__PC.closeModal(); document.querySelector('#mw-send').click()")
+        await browser.until("/Send/i.test((document.querySelector('.mw-modal h3')||{}).textContent||'')")
+        await browser.js("__PC.closeModal()")
+        await browser.until("!!document.querySelector('.mw-tx-open')")
+        tx = await browser.js("document.querySelector('.mw-tx-open').getAttribute('data-tx')")
+        await browser.js("document.querySelector('.mw-tx-open').click()")
+        await browser.until("!!document.querySelector('#mw-exp-copy')")
+        await browser.js("document.querySelector('#mw-exp-copy').click()")
+        await browser.until(f"window.__walletCopied==={tx!r}")
+        assert await browser.js("__opened.length") == 0, "the explorer was opened without being asked to"
+
+    asyncio.run(desktop.with_browser('online', '', check, extra_init=node_wallet_init(history_payload())))
