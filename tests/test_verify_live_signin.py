@@ -1,10 +1,10 @@
-"""scripts/check_live_journey.py: a real sign-in on production after every deploy (2026-10-22). "Could not run" is
+"""scripts/verify_live_signin.py: a real sign-in on production after every deploy (2026-10-22). "Could not run" is
 never a pass, and the deploy fails loudly only on a real failure."""
 import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location("clj", ROOT / "scripts" / "check_live_journey.py")
+_spec = importlib.util.spec_from_file_location("clj", ROOT / "scripts" / "verify_live_signin.py")
 clj = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(clj)
 

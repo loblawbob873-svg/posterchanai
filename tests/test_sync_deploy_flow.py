@@ -486,15 +486,15 @@ def test_sync_runs_the_live_production_check_last(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     calls = (tmp_path / "calls").read_text().split()
     assert calls == ["scripts/check_live_production.py", "https://poster.place",
-                     "scripts/check_live_journey.py", "https://poster.place"], calls
+                     "scripts/verify_live_signin.py", "https://poster.place"], calls
     out = r.stdout
     assert out.index("all nodes in sync") < out.index("verifying production"), \
         "the live check must run only after every node is verified on the commit"
     assert "production verified" in out
     src = open(SYNC, encoding="utf-8").read()
-    # The sign-in check (scripts/check_live_journey.py) follows the HTTP check and is the last step.
-    assert src.index('echo "[sync] production verified"') < src.index("check_live_journey.py")
-    assert src.rstrip().endswith("fi") and 'echo "[sync] sign-in verified"' in src[src.index("check_live_journey.py"):]
+    # The sign-in check (scripts/verify_live_signin.py) follows the HTTP check and is the last step.
+    assert src.index('echo "[sync] production verified"') < src.index("verify_live_signin.py")
+    assert src.rstrip().endswith("fi") and 'echo "[sync] sign-in verified"' in src[src.index("verify_live_signin.py"):]
     assert "sign-in verified" in out
 
 

@@ -13,7 +13,7 @@ NIP-07 button a person presses -- and walks the screens a person opens first:
   telegram   Telegram leaves "CONNECTING…" (signed in, setup, sign-in, or an error card -- never the boot screen)
   console    no console.error and no uncaught exception anywhere along the way
 
-    venv-unified/bin/python scripts/check_live_journey.py https://poster.place
+    venv-unified/bin/python scripts/verify_live_signin.py https://poster.place
 
 The test identity is a hex secret key in ~/.config/posterchanai/live-journey.key (0600, machine-local, never in the
 repo). Without it the check SKIPs. Exit 0 = every step passed, 1 = a step FAILED, 2 = could not run. Each line names

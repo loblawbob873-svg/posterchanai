@@ -531,7 +531,7 @@ fi
 echo "[sync] production verified"
 
 # ---------------------------------------------------------------------------------------------
-# AND CAN A PERSON SIGN IN AND USE IT? (scripts/check_live_journey.py, 2026-10-22). A real headless Chrome with an
+# AND CAN A PERSON SIGN IN AND USE IT? (scripts/verify_live_signin.py, 2026-10-22). A real headless Chrome with an
 # EMPTY profile (a cold device -- Tor Browser is one every session) presses the real sign-in button with the test
 # identity in ~/.config/posterchanai/live-journey.key and walks the first screens: feed, Communities, Telegram, and
 # the console. Every regression that day passed the suite and the HTTP checks above and was visible the moment
@@ -539,12 +539,12 @@ echo "[sync] production verified"
 # is said and does not -- the key is machine-local and most installs will not have one.
 # ---------------------------------------------------------------------------------------------
 echo "[sync] signing in to $_LIVE_URL as the live-check identity"
-venv-unified/bin/python scripts/check_live_journey.py "$_LIVE_URL" 2>&1 | sed 's/^/[sync]   /'
+venv-unified/bin/python scripts/verify_live_signin.py "$_LIVE_URL" 2>&1 | sed 's/^/[sync]   /'
 _JOURNEY_RC=${PIPESTATUS[0]}
 if [ "$_JOURNEY_RC" = "1" ]; then
     echo "[sync] ================================================================"
     echo "[sync] SIGN-IN CHECK FAILED -- the deploy LANDED but a person signing in to $_LIVE_URL sees something broken."
-    echo "[sync] Re-run: venv-unified/bin/python scripts/check_live_journey.py $_LIVE_URL"
+    echo "[sync] Re-run: venv-unified/bin/python scripts/verify_live_signin.py $_LIVE_URL"
     echo "[sync] ================================================================"
     exit 1
 elif [ "$_JOURNEY_RC" = "2" ]; then
