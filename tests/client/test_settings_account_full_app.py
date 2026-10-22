@@ -78,3 +78,26 @@ def test_account_relays_wallet_and_logout():
         await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
         await b.until("document.body.classList.contains('guest')")
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+RELAY_INPUTS = "[...document.querySelectorAll('.us-pane[data-pane] input[type=url], .set-relay-row input, .relay-row input')].map(i=>i.value)"
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_relays_import_from_the_extension_and_from_a_nip05():
+    """Import from extension adds the extension's relays; Import from NIP-05 adds the relays its nostr.json names."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("""(()=>{window.nostr=window.nostr||{};window.nostr.getRelays=async()=>({'wss://ext.example':{read:true,write:true}});
+          const f=window.fetch;window.fetch=(u,o)=>String(u).startsWith('https://names.example/.well-known/nostr.json')
+            ?Promise.resolve(new Response(JSON.stringify({names:{bob:'b'.repeat(64)},relays:{['b'.repeat(64)]:['wss://bob.example']}}),{status:200,headers:{'Content-Type':'application/json'}}))
+            :f(u,o);})(); 1""")
+        await b.js("__PC.switchView('settings'); 1")
+        await b.until("!!document.querySelector('#set-relay-ext')")
+        await open_tab_holding(b, "#set-relay-ext")
+        await b.js("document.querySelector('#set-relay-ext').click(); 1")
+        await b.until(f"{RELAY_INPUTS}.some(v=>/ext\\.example/.test(v))")
+        await b.js("document.querySelector('#set-nip05').value='bob@names.example'; document.querySelector('#set-relay-nip05').click(); 1")
+        await b.until(f"{RELAY_INPUTS}.some(v=>/bob\\.example/.test(v))")
+        assert await b.js(f"{RELAY_INPUTS}.some(v=>/ext\\.example/.test(v))"), 'the NIP-05 import dropped the extension relay'
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE))

@@ -111,3 +111,24 @@ def test_concords_colours_can_become_the_whole_apps():
     asyncio.run(desktop.with_browser("online", "", check, NO_OS))
     assert got["neon"] == "#22cc55", ("Concord's colour did not reach the rest of the app", got)
     assert got["cc"]["theme"] == "app" and not got["cc"]["accent"], ("Concord should now follow the app's look", got)
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_remove_wallpaper_and_reset_appearance():
+    """Remove takes the wallpaper off the page; Reset puts the theme's own colours back."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("__PC.switchView('settings')")
+        await b.until("!!document.querySelector('#us-look .look')")
+        await b.js("document.querySelector('.us-tab[data-tab=\"appearance\"]').click()")
+        theme = await b.js(ROOTVAR.format('--neon'))
+        await _color(b, 'accent', '#ff2a2a')
+        await b.js("(()=>{const u=document.querySelector('#look-url');u.value='/static/signon-nostr-city.webp';u.dispatchEvent(new Event('change',{bubbles:true}))})()")
+        await b.until(f"/signon-nostr-city/.test({BODYBG}) && !document.querySelector('#look-wall-off').disabled")
+        await b.js("document.querySelector('#look-wall-off').click()")
+        await b.until(f"!/signon-nostr-city/.test({BODYBG}) && document.querySelector('#look-wall-off').disabled")
+        assert await b.js(ROOTVAR.format('--neon')) == '#ff2a2a', 'removing the wallpaper also dropped the colours'
+        await b.js("document.querySelector('#look-reset').click()")
+        await b.until(f"{ROOTVAR.format('--neon')}==={theme!r} && document.querySelector('#look-reset').disabled")
+
+    asyncio.run(desktop.with_browser("online", "", check, NO_OS))
