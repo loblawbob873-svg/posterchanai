@@ -184,3 +184,52 @@ def test_the_hosted_set_survives_a_restart():
         finally:
             await node.close()
     run(go())
+
+
+def test_backups_are_reached_only_through_the_nodes_fallback_proxy(monkeypatch):
+    """"make sure it uses our http proxy, tor tor2 then fall back to direct": every backup connection -- the history
+    push and each new post -- goes through concord_mirror_proxy (the proxy's Tor 1 -> Tor 2 -> direct listener),
+    never a socket of the node's own. The backup here has a name only the proxy can reach."""
+    from tests.test_concord_mirror import RecordingProxy
+    monkeypatch.setattr(cm, "BACKFILL_PACE", 0)
+    stream, member = key(), key()
+    old = wrap(stream, created_at=int(time.time()) - 100)
+
+    async def go():
+        up = await Upstream().start()
+        proxy = await RecordingProxy().start()
+        name = f"ws://backup.test:{up.port}"
+        node = Node({pub(member)}, cfg={"concord_mirror_proxy": f"http://127.0.0.1:{proxy.port}",
+                                        "concord_backup_relays": [name]}, open_ws=None)
+        node.mirror._open_override = None
+        await node.start()
+        try:
+            await node.store.add_event(old, origin="direct")
+            assert (await node.publish(replicate(member, [pub(stream)])))[2] is True
+            assert await until(lambda: any(e["id"] == old["id"] for e in up.writes), 15)
+            new = wrap(stream)
+            assert (await node.publish(new))[2] is True
+            assert await until(lambda: any(e["id"] == new["id"] for e in up.writes), 15)
+            assert ("CONNECT", f"backup.test:{up.port}") in proxy.targets
+            assert all(m == "CONNECT" for m, _t in proxy.targets)
+        finally:
+            await node.close()
+            await proxy.close()
+            await up.close()
+    run(go())
+
+
+def test_with_no_proxy_nothing_is_replicated_and_the_member_is_told():
+    stream, member = key(), key()
+
+    async def go():
+        node = Node({pub(member)}, cfg={"concord_backup_relays": ["wss://jskitty.com/nostr"]}, open_ws=None)
+        node.mirror._open_override = None
+        await node.start()
+        try:
+            ok = await node.publish(replicate(member, [pub(stream)]))
+            assert ok[2] is False and "no outbound proxy" in ok[3], ok
+            assert not node.mirror.links
+        finally:
+            await node.close()
+    run(go())
