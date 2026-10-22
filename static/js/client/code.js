@@ -981,6 +981,14 @@
     async function reloadDoc(){
       const d = doc();
       if(!d) return;
+      /* A DRIVE FILE HAS NO WORKSPACE PATH. Its `path` is only its NAME, so the workspace read below asked the
+       * node for a file of the same name -- an error at best, and at worst somebody else's same-named file
+       * loaded into this tab, ready to be saved over the drive copy. Its stored version is the one it was
+       * opened at or last saved as (`disk`, which Save moves forward), so Reload goes back to that. */
+      if(d.blob){
+        d.text = d.disk; status('Back to the saved version of ' + d.path, 'ok');
+        save(); paint(); return;
+      }
       try{
         /* A selected desktop project belongs to THIS computer. Sending its display name to the
          * node workspace can either fail or, worse, load a same-named file from PosterChan's own
