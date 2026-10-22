@@ -3449,66 +3449,124 @@ window.PCFilesFactory = function(dep){
       drop: async()=>{ try{ await L.close(session.id, session.token); }catch(_){ } },
     };
   }
-  async function _officeStoreDrive(blob,name){
+  /* SAVE INTO THE FOLDER YOU CHOSE. Into the drive's top level was the only option ("Office Save as does not let me
+   * choose a folder! same for choosing synced folder or blossom", 2026-10-21). An ENCRYPTED folder gets an encrypted
+   * upload, exactly as Files' own upload does -- a plaintext copy of a document saved into Private would be a leak. */
+  async function _officeStoreDrive(blob,name,folder){
+    folder=String(folder||'');
     const file=fileFromBytes(await blob.arrayBuffer(),name,blob.type||mimeForName(name)||'application/octet-stream');
+    if(folder&&FilesIdx.isEncFolder(folder)){ const sha=await uploadEncFile(file,folder,null); _rememberUploadedBlob(sha,'',file); return sha; }
     const stored={}; const url=await uploadBlob(file,{hashOut:stored,noCompress:true});
     const sha=stored.sha||_shaFromUrl(url); if(!sha)throw new Error('upload completed without a content hash');
-    FilesIdx.setFile(sha,{name,folder:'',mime:file.type,size:file.size,ts:Math.floor(Date.now()/1000)});
+    FilesIdx.setFile(sha,{name,folder,mime:file.type,size:file.size,ts:Math.floor(Date.now()/1000)});
     _rememberUploadedBlob(sha,url,file); return sha;
   }
-  function _officeSaveCopy(blob,name){
-    /* THE SAME CHOOSER AS EVERYTHING ELSE. This grew its own markup — `.openwith-list` /
-     * `.openwith-row`, no icons, no way out but the backdrop — beside `_openWithSheet`'s
-     * `.openwith` / `.ow-opt`, which every other "which one of these?" in the app uses. Reported as
-     * "very ugly", and it was: two patterns for one question, and the plain one on the screen you
-     * reach by saving work. Same classes, same header shape, same ✕ — no new CSS. */
-    const dests = [
-      ['drive','🗂','Files / Blossom','Your PosterChan drive'],
-      ...(_S._syncRoot?[['sync','🔄','Synced Folder','The folder currently open in Files']]:[]),
-      ['local','💻','This computer','Choose a local destination'],
-    ];
-    return new Promise((resolve,reject)=>modal(
-      `<h3 class="cmp-hd">Save “${enc(name)}”<button class="modal-x" id="os-x" title="Close" aria-label="Close">&#215;</button></h3>
-       <div class="openwith">${dests.map(([id,icon,label,hint])=>
-         `<button class="ow-opt" data-office-dest="${enc(id)}"><span class="ow-ic">${icon}</span>
-            <span class="ow-t"><b>${enc(label)}</b><i>${enc(hint)}</i></span></button>`).join('')}</div>`,root=>{
-      /* A CHOOSER THAT IS DISMISSED MUST STILL SETTLE — reported as "convert to pdf button is
-       * stuck". `Save as PDF…` disables its button, awaits this promise and re-enables afterwards;
-       * dismissing this sheet by the BACKDROP or Escape called `closeModal()` and resolved nothing,
-       * so the await never returned and the button sat on "Converting…" for the life of the page.
-       * The ✕ had the same hole. Watching for the node to leave the document covers every way out
-       * at once — including a `closeModal()` from somewhere else entirely — where handling each
-       * one separately is how the backdrop got missed in the first place.
-       *
-       * Cancelling is not an error: resolve with nothing rather than rejecting into a "could not
-       * save a PDF" toast for a deliberate choice. */
-      let settled = false;
-      const done = v => { if(settled) return; settled = true; resolve(v); };
-      const fail = e => { if(settled) return; settled = true; reject(e); };
-      { const x=$('#os-x',root); if(x) x.onclick=()=>{ closeModal(); done(null); }; }
-      try{
-        const host = $('#modal-root');
-        if(host && window.MutationObserver){
-          const mo = new MutationObserver(()=>{ if(!root.isConnected){ mo.disconnect(); done(null); } });
-          mo.observe(host, {childList:true, subtree:true});
+  /* WHERE TO SAVE: a name you can change, and a place you browse to -- any folder of the drive (Files / Blossom),
+   * any folder inside any synced folder (not just the one open in Files right now), or this computer's own save
+   * dialog. Resolves {kind:'drive',folder,name} | {kind:'sync',key,dir,name} | {kind:'local',name}, or null if the
+   * person backs out. */
+  function _chooseSaveTarget(name){
+    const kids=(paths,base)=>{ const pre=base?base+'/':'',out=new Set();
+      for(const p of paths){ if(!p.startsWith(pre))continue; const rest=p.slice(pre.length); if(!rest)continue; out.add(rest.split('/')[0]); }
+      return [...out].sort((a,b)=>a.localeCompare(b)); };
+    let at={place:''},syncDirs=null,busy='';
+    return new Promise(resolve=>modal(
+      `<h3 class="cmp-hd">Save as<button class="modal-x" id="sv-x" title="Close" aria-label="Close">&#215;</button></h3>
+       <label class="fld sv-name-fld">File name<input class="input" id="sv-name" value="${enc(name)}" autocomplete="off" spellcheck="false"></label>
+       <div class="sv-crumbs" id="sv-crumbs"></div><div class="sv-list" id="sv-list" role="list"></div>
+       <div class="sv-actions"><button class="btn btn-ghost" id="sv-newdir">New folder</button><span class="sv-gap"></span>
+         <button class="btn btn-ghost" id="sv-cancel">Cancel</button><button class="btn btn-neon" id="sv-save">Save here</button></div>`,root=>{
+      let settled=false; const done=v=>{ if(settled)return; settled=true; resolve(v); };
+      try{ const host=$('#modal-root'); if(host&&window.MutationObserver){ const mo=new MutationObserver(()=>{ if(!root.isConnected){ mo.disconnect(); done(null); } }); mo.observe(host,{childList:true,subtree:true}); } }catch(_){ }
+      const list=$('#sv-list',root),crumbs=$('#sv-crumbs',root),save=$('#sv-save',root),newdir=$('#sv-newdir',root),nameIn=$('#sv-name',root);
+      const fileName=()=>String(nameIn.value||'').replace(/[\\/]+/g,'-').trim()||name;
+      const row=(attr,icon,label,hint)=>`<button type="button" class="ow-opt sv-row" role="listitem" ${attr}><span class="ow-ic">${icon}</span><span class="ow-t"><b>${enc(label)}</b>${hint?`<i>${enc(hint)}</i>`:''}</span></button>`;
+      async function paint(){
+        const c=[`<button type="button" class="sv-crumb" data-sv-go="">Places</button>`];
+        if(at.place==='drive'){ c.push(`<button type="button" class="sv-crumb" data-sv-go="drive:">Files</button>`);
+          let acc=''; for(const seg of (at.dir?at.dir.split('/'):[])){ acc=acc?acc+'/'+seg:seg; c.push(`<button type="button" class="sv-crumb" data-sv-go="drive:${enc(acc)}">${enc(seg)}</button>`); } }
+        if(at.place==='sync'){ c.push(`<button type="button" class="sv-crumb" data-sv-go="sync:${enc(at.key)}:">${enc(at.key)}</button>`);
+          let acc=''; for(const seg of (at.dir?at.dir.split('/'):[])){ acc=acc?acc+'/'+seg:seg; c.push(`<button type="button" class="sv-crumb" data-sv-go="sync:${enc(at.key)}:${enc(acc)}">${enc(seg)}</button>`); } }
+        crumbs.innerHTML=c.join('<span class="sv-sep">›</span>');
+        save.disabled=!at.place; newdir.hidden=!at.place;
+        if(!at.place){
+          let syncRows='';
+          if(!_standalone()){
+            if(!Array.isArray(_syncPairs)){ syncRows=`<div class="muted small sv-note">${_syncPairs==='error'?'Synced folders could not be loaded just now.':'Loading synced folders…'}</div>`;
+              if(_syncPairs!=='error'&&!busy){ busy='pairs'; _ensureSyncPairs().catch(()=>{}).then(()=>{ busy=''; if(root.isConnected&&!at.place)paint(); }); } }
+            else syncRows=_syncPairs.map(f=>row(`data-sv-go="sync:${enc(f.key)}:"`,'🔄',f.key,'Synced folder')).join('');
+          }
+          list.innerHTML=row('data-sv-go="drive:"','🗂','Files','Your PosterChan drive (Blossom)')+syncRows
+            +row('data-sv-local','💻','This computer','Choose a place with this device’s save dialog');
+          return;
         }
-      }catch(_){ }
-      $$('[data-office-dest]',root).forEach(btn=>btn.onclick=async()=>{
-        try{
-          const dest=btn.dataset.officeDest;
-          if(dest==='drive')await _officeStoreDrive(blob,name);
-          else if(dest==='sync'){
-            if(!(window.PCSync&&PCSync.edit&&PCSync.edit.uploadMany))throw new Error('this build cannot write to a synced folder');
-            const r=await PCSync.edit.uploadMany(_S._syncRoot,_S._syncPath||'',[fileFromBytes(await blob.arrayBuffer(),name,blob.type)],{replace:false});
-            if(r&&r.failed&&r.failed.length)throw new Error('the folder refused the write');
-            _syncManifests.delete(_S._syncRoot);
-          }else if(window.pcHost&&pcHost.saveFile){
-            const out=await pcHost.saveFile(name,new Uint8Array(await blob.arrayBuffer())); if(!out)return;
-          }else await saveBlobAs(blob,name);
-          closeModal();toast('saved '+name);done(dest);
-        }catch(e){closeModal();fail(e);}
+        if(at.place==='drive'){
+          const folders=FilesIdx.folders().filter(f=>f!=='Music'&&!f.startsWith('Music/'));
+          const sub=kids(folders,at.dir);
+          list.innerHTML=(sub.length?sub.map(n=>{ const full=at.dir?at.dir+'/'+n:n;
+            return row(`data-sv-go="drive:${enc(full)}"`,FilesIdx.isEncFolder(full)?'🔒':'📁',n,FilesIdx.isEncFolder(full)?'Encrypted folder':''); }).join('')
+            :'<div class="muted small sv-note">No folders here. Save here, or make a new folder.</div>');
+          return;
+        }
+        if(at.place==='sync'){
+          if(!syncDirs||syncDirs.key!==at.key){
+            list.innerHTML='<div class="muted small sv-note">Reading the folder…</div>';
+            try{ const m=await _syncManifest(at.key); const dirs=new Set();
+              for(const p in m){ const e=m[p]; if(!e||e.deletedAt)continue; if(('/'+p+'/').indexOf('/.pc-trash/')>=0)continue;
+                const parts=p.split('/'); parts.pop(); let acc=''; for(const seg of parts){ acc=acc?acc+'/'+seg:seg; dirs.add(acc); } }
+              syncDirs={key:at.key,dirs:[...dirs]}; }
+            catch(e){ if(root.isConnected)list.innerHTML=`<div class="muted small sv-note">Could not read this folder: ${enc((e&&e.message)||e)}</div>`; return; }
+            if(!root.isConnected)return;
+          }
+          const sub=kids(syncDirs.dirs,at.dir);
+          list.innerHTML=sub.length?sub.map(n=>row(`data-sv-go="sync:${enc(at.key)}:${enc(at.dir?at.dir+'/'+n:n)}"`,'📁',n,'')).join('')
+            :'<div class="muted small sv-note">No folders here. Save here, or make a new folder.</div>';
+        }
+      }
+      root.addEventListener('click',e=>{
+        const go=e.target.closest&&e.target.closest('[data-sv-go]');
+        if(go){ const v=go.dataset.svGo;
+          if(!v)at={place:''};
+          else if(v.startsWith('drive:'))at={place:'drive',dir:v.slice(6)};
+          else if(v.startsWith('sync:')){ const r=v.slice(5),i=r.indexOf(':'); at={place:'sync',key:r.slice(0,i),dir:r.slice(i+1)}; }
+          paint(); return; }
+        if(e.target.closest&&e.target.closest('[data-sv-local]')){ closeModal(); done({kind:'local',name:fileName()}); }
       });
+      newdir.onclick=async()=>{
+        const n=String((await uiPrompt('New folder name',{value:'',ok:'Create'}))||'').replace(/[\\/]+/g,'-').trim().slice(0,60); if(!n)return;
+        const full=at.dir?at.dir+'/'+n:n;
+        if(at.place==='drive'){ FilesIdx.addFolder(full,FilesIdx.isEncFolder(at.dir||''),true); at={place:'drive',dir:full}; }
+        else if(at.place==='sync'){ if(syncDirs&&!syncDirs.dirs.includes(full))syncDirs.dirs.push(full); at={...at,dir:full}; }
+        paint();
+      };
+      $('#sv-x',root).onclick=$('#sv-cancel',root).onclick=()=>{ closeModal(); done(null); };
+      save.onclick=()=>{ if(!at.place)return; const n=fileName(); closeModal();
+        done(at.place==='drive'?{kind:'drive',folder:at.dir||'',name:n}:{kind:'sync',key:at.key,dir:at.dir||'',name:n}); };
+      nameIn.onkeydown=e=>{ if(e.key==='Enter'&&!save.disabled){ e.preventDefault(); save.click(); } };
+      /* Start where you are: the folder open in Files, else Places. */
+      if(_S._syncRoot)at={place:'sync',key:_S._syncRoot,dir:_S._syncPath||''};
+      else if(_S._filesFolder&&_S._filesFolder!=='Music')at={place:'drive',dir:_S._filesFolder};
+      paint();
+      setTimeout(()=>{ try{ const dot=nameIn.value.lastIndexOf('.'); nameIn.focus(); nameIn.setSelectionRange(0,dot>0?dot:nameIn.value.length); }catch(_){ } },30);
     }));
+  }
+  async function _officeSaveCopy(blob,name){
+    // Backing out resolves null (a choice, not an error); a save that fails REJECTS, so the caller says so.
+    const t=await _chooseSaveTarget(name); if(!t)return null;
+    {
+      if(t.kind==='drive')await _officeStoreDrive(blob,t.name,t.folder);
+      else if(t.kind==='sync'){
+        if(!(window.PCSync&&PCSync.edit&&PCSync.edit.uploadMany))throw new Error('this build cannot write to a synced folder');
+        const r=await PCSync.edit.uploadMany(t.key,t.dir,[fileFromBytes(await blob.arrayBuffer(),t.name,blob.type)],{replace:false});
+        if(r&&r.failed&&r.failed.length)throw new Error('the folder refused the write');
+        _syncManifests.delete(t.key);
+      }else if(window.pcHost&&pcHost.saveFile){
+        const out=await pcHost.saveFile(t.name,new Uint8Array(await blob.arrayBuffer())); if(!out)return null;
+      }else await saveBlobAs(blob,t.name);
+      const where=t.kind==='drive'?('Files'+(t.folder?' / '+t.folder:'')):t.kind==='sync'?(t.key+(t.dir?' / '+t.dir:'')):'';
+      toast('saved '+t.name+(where?' to '+where:''));
+      return t.kind;
+    }
   }
 
   function renderOfficeHome(){
@@ -4307,5 +4365,6 @@ window.PCFilesFactory = function(dep){
     _openHostFile, _openWithSheet, _syncBlobBytes, _walkEntries, encFileUrl, openCodeFile,
     openOfficeFile, openPreviewFile, openSyncCodeFile, openSyncOfficeFile, pickSyncedFile, renderBlossom,
     renderOfficeHome, runFileWindow, saveBlobDoc, uploadEncFile,
+    saveCopyTo: _officeSaveCopy,   // "save this file somewhere": name + a folder in Files, a synced folder or this computer
   };
 };

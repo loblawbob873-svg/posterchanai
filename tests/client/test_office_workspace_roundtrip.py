@@ -25,17 +25,16 @@ def test_editor_save_as_and_pdf_share_the_destination_picker():
     session = APP[APP.index("async function _officeSession"):APP.index("function renderOfficeHome")]
     assert 'id="office-saveas"' in session
     assert session.count("_officeSaveCopy(") >= 2
-    picker = APP[APP.index("function _officeSaveCopy"):APP.index("function renderOfficeHome")]
-    # The three destinations are generated from a list now (so the sheet can use the shared
-    # `.ow-opt` chooser markup — see tests/test_office_reaches_the_editor.py), so assert the
-    # destinations themselves rather than the attribute text a template no longer contains.
-    assert "data-office-dest=" in picker
-    for destination in ("'drive'", "'sync'", "'local'"):
+    picker = APP[APP.index("function _chooseSaveTarget"):APP.index("function renderOfficeHome")]
+    # The sheet is a name plus a PLACE you browse to (2026-10-21: "Save as does not let me choose a folder"):
+    # a drive folder, a folder inside any synced folder, or this computer.
+    assert "data-sv-go=" in picker
+    for destination in ("kind:'drive'", "kind:'sync'", "kind:'local'"):
         assert destination in picker, f"the {destination} destination is gone from the picker"
     assert "PCSync.edit.uploadMany" in picker
     assert "_officeStoreDrive" in picker
     assert "pcHost.saveFile" in picker
-    assert "else await saveBlobAs(blob,name)" in picker, (
+    assert "else await saveBlobAs(blob,t.name)" in picker, (
         "Android has no desktop pcHost bridge; its local destination must reach saveBlobAs, "
         "which hands the PDF/document to the native Files/share sheet"
     )

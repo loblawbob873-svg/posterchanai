@@ -144,14 +144,16 @@ def test_the_document_window_asks_for_an_icon_that_exists():
 # ---------------------------------------------------------------- 3. the unstyled chooser
 
 def _save_copy_body():
-    start = APP_JS.index("function _officeSaveCopy(")
-    return APP_JS[start:APP_JS.index("\n  function ", start + 10)]
+    """The Save sheet: `_chooseSaveTarget` draws it (a name and a folder, 2026-10-21), `_officeSaveCopy` acts on it."""
+    start = APP_JS.index("function _chooseSaveTarget(")
+    end = APP_JS.index("function _officeSaveCopy(", start)
+    return APP_JS[start:APP_JS.index("\n  function ", end + 10)]
 
 
 def test_the_save_destination_sheet_uses_the_shared_chooser():
     """One pattern for "which one of these?", not two — and the bespoke one had no CSS at all."""
     body = _save_copy_body()
-    assert 'class="ow-opt"' in body and 'class="openwith"' in body
+    assert 'class="ow-opt sv-row"' in body and 'class="ow-ic"' in body
     # The emitted ATTRIBUTE, not the word: the comment above the code names the old classes, and
     # matching prose is how a test starts failing for the wrong reason.
     assert 'class="openwith-row"' not in body and 'class="openwith-list"' not in body
@@ -171,7 +173,7 @@ def test_every_class_that_sheet_draws_is_actually_styled():
 def test_it_has_a_visible_way_out():
     """A chooser reachable only by the backdrop is a trap on a phone, and this one is reached by
     saving work."""
-    assert 'id="os-x"' in _save_copy_body()
+    assert 'class="modal-x" id="sv-x"' in _save_copy_body() and "id=\"sv-cancel\"" in _save_copy_body()
 
 
 # ---------------------------------------------------------------- 4. the promise that hung
@@ -184,7 +186,7 @@ def test_dismissing_the_sheet_settles_it_however_it_was_closed():
     body = _save_copy_body()
     assert "MutationObserver" in body
     assert "root.isConnected" in body
-    assert "let settled = false" in body
+    assert "let settled=false" in body
 
 
 def test_the_pdf_button_re_enables_itself():
@@ -202,7 +204,8 @@ def test_cancelling_is_not_reported_as_a_failure():
     not save a PDF" on screen for somebody who decided not to."""
     body = _save_copy_body()
     assert "done(null)" in body, "cancelling no longer resolves"
-    assert "fail(e)" in body, "a real save failure must still reject"
+    save = APP_JS[APP_JS.index("async function _officeSaveCopy("):][:1800]
+    assert "if(!t)return null" in save and "catch" not in save, "a real save failure must still reject (nothing swallows it)"
 
 
 # ---------------------------------------------------------------- 5. the web gets a view, not a box

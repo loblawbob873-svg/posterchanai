@@ -11134,6 +11134,7 @@
   function renderBlossom(){ return _lzRun(_filesMod, _filesLoad, 'renderBlossom', arguments, true); }
   function renderOfficeHome(){ return _lzRun(_filesMod, _filesLoad, 'renderOfficeHome', arguments, true); }
   function saveBlobDoc(){ return _lzRun(_filesMod, _filesLoad, 'saveBlobDoc', arguments); }
+  function saveCopyTo(){ return _lzRun(_filesMod, _filesLoad, 'saveCopyTo', arguments); }
   function uploadEncFile(){ return _lzRun(_filesMod, _filesLoad, 'uploadEncFile', arguments); }
 
   /* ---------- The encrypted drive index: moved to static/js/client/filesindex.js (its own <script> tag) ----------
@@ -14509,6 +14510,7 @@
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */
     saveBlobDoc,
+    saveCopyTo,   // files.js: Save as -- a name and a place (a drive folder, a synced folder, this computer)
     /* HOW TO REOPEN WHAT THIS WINDOW IS SHOWING, as a path — the desktop's monitor handoff needs it.
      *
      * The two monitors are separate Electron renderers, so no module state crosses the seam and the

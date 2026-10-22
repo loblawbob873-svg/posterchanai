@@ -12575,3 +12575,17 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .look-chip{padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:none;color:var(--text);cursor:pointer;font-size:13px}
 .look-chip.on{border-color:var(--neon);color:var(--neon)}
 .look-dim input{width:100%}
+
+/* SAVE AS (files.js _chooseSaveTarget): a name, a breadcrumb of where you are, the folders here, Save here. */
+.sv-name-fld{margin-bottom:10px}
+.sv-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin:4px 0 8px;font-size:13px}
+.sv-crumb{padding:3px 6px;border:0;border-radius:var(--r-sm);background:none;color:var(--cyan);cursor:pointer;font:inherit}
+.sv-crumb:last-of-type{color:var(--text);font-weight:600}
+.sv-crumb:hover{background:var(--hover)}
+.sv-sep{color:var(--muted)}
+.sv-list{display:grid;gap:6px;max-height:min(48vh,380px);overflow:auto;padding:2px}
+.sv-list .sv-row{width:100%}
+.sv-note{padding:10px 4px}
+.sv-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.sv-actions .sv-gap{flex:1}
+.sv-actions [hidden]{display:none}
