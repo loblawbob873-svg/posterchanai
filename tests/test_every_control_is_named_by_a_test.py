@@ -14,7 +14,7 @@ _spec = importlib.util.spec_from_file_location("cc", ROOT / "scripts" / "control
 cc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cc)
 
-UNTESTED_CEILING = 305
+UNTESTED_CEILING = 295
 
 UNTESTED = {i for ids in cc.untested().values() for i in ids}
 
