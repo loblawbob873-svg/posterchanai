@@ -6533,7 +6533,7 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     own = _own_media_hosts(db)
 
     from app.services import work_dir
-    tmpdir = work_dir.mkdtemp("pcmemesrc-")   # the data disk: /tmp is RAM, and a source can be GBs
+    tmpdir = work_dir.scratch("pcmemesrc-")   # the data disk: /tmp is RAM, and a source can be GBs
     streaming = [False]   # True once a FileResponse owns tmpdir (it cleans it after sending)
     sources: dict = {}
     _meme_rendering.add(pk)   # released in the finally below — paired so a failure can never wedge the user out

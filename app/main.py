@@ -776,6 +776,11 @@ async def startup():
                 # hook needed: orphans come from kills, and a kill is always followed by a start.
                 from app.services.temp_sweep_service import sweep_temp_orphans
                 sweep_temp_orphans()
+                # ...and the Meme Builder's scratch on the DATA disk (work_dir): a long render killed mid-way
+                # leaves GBs of sources there. Only this process renders, so at startup anything older than a
+                # few minutes is an orphan. Unfinished chunked uploads expire on their own (chunked_upload.sweep).
+                from app.services import work_dir
+                work_dir.sweep(max_age_s=600)
             except Exception as e:
                 logging.error(f"Error sweeping orphaned temp files: {e}", exc_info=True)
 

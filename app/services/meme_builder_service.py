@@ -668,7 +668,7 @@ def render(edit: dict, sources: dict, out_file: str | None = None) -> tuple:
         mp4, _ = render({**edit, "fmt": "mp4"}, sources)
         return _mp4_to_gif(mp4, out_w, out_h), "image/gif"
 
-    tmp = work_dir.mkdtemp("pcmeme-")   # the data disk, not /tmp (RAM): a 30-minute render is GBs of output
+    tmp = work_dir.scratch("pcmeme-")   # the data disk, not /tmp (RAM): a 30-minute render is GBs of output
     try:
         # -filter_complex_threads 1 is the fix for the renders that WEDGED: a stuck job was sitting on 232
         # threads blocked in futex_do_wait with a 48-byte output and ~1% CPU — ffmpeg's multi-threaded filter

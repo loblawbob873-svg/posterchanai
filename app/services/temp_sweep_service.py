@@ -66,7 +66,7 @@ _APP_TEMP_PREFIXES: Tuple[str, ...] = (
     # deliberately NOT renamed: that would be churn with no safety gain.
     "pcai_blossom_vid_", "pcai_char_frame_", "pcai_char_work_", "pcai_client_probe_",
     "pcai_doc_bmp_", "pcai_music_", "pcai_stt_", "pcai_tts_",
-    "pcmeme-", "pcmemegif-", "pcmemesrc-",
+    "pcmemegif-",
     "postcard_",
     "talk_cmd_",
     "tg_music_", "tg_pin_", "tg_png_", "tg_song_", "tg_video_",

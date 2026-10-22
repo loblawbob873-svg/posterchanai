@@ -115,6 +115,20 @@ def test_a_source_under_the_cap_lands_whole(work):
 
 def test_scratch_space_is_on_the_data_disk_not_tmpfs(work):
     from app.services import work_dir
-    d = work_dir.mkdtemp("pcmemesrc-")
+    d = work_dir.scratch("pcmemesrc-")
     assert d.startswith(str(work / "work")) and os.path.isdir(d)
-    assert "work_dir.mkdtemp(\"pcmeme-\")" in open(mb.__file__).read()
+    assert "work_dir.scratch(\"pcmeme-\")" in open(mb.__file__).read()
+
+
+def test_a_crashed_render_leaves_nothing_on_the_data_disk_for_long(work):
+    import time
+    from app.services import work_dir
+    old, new = work_dir.scratch("pcmemesrc-"), work_dir.scratch("pcmeme-")
+    keep = os.path.join(work_dir.root(), "chunked")              # not ours to sweep (its own TTL)
+    os.makedirs(keep)
+    past = time.time() - 3 * 3600
+    os.utime(old, (past, past)); os.utime(keep, (past, past))
+    assert work_dir.sweep(max_age_s=600) == 1
+    assert not os.path.exists(old) and os.path.isdir(new) and os.path.isdir(keep)
+    with pytest.raises(ValueError):
+        work_dir.scratch("anything-")                              # an unlisted prefix would never be swept
