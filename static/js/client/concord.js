@@ -254,7 +254,10 @@
   Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return cordRelay(window.Relay);}});
   function homeRelayUrl(p){try{return normalizeRelay(p&&p.homeRelay&&p.homeRelay())||'';}catch(_){return '';}}
   function relaysAreHome(p,relays){const h=homeRelayUrl(p);return !!h&&(relays||[]).some(u=>normalizeRelay(u)===h);}
-  function mirrorKey(pk){return 'pc.concord.mirror.v1.'+pk;}
+  /* v2 (2026-10-22): v1 replies named relays this node had BLOCKLISTED under "read directly", and a device kept
+   * that answer for MIRROR_FRESH_MS -- tunnelling to relay.ditto.pub per stream per refresh. A new key re-registers
+   * every community once with the node's corrected reply. */
+  function mirrorKey(pk){return 'pc.concord.mirror.v2.'+pk;}
   function mirrorState(pk){try{const v=JSON.parse(localStorage.getItem(mirrorKey(pk))||'null');return v&&typeof v==='object'&&v.groups&&typeof v.groups==='object'?v:{groups:{}};}catch(_){return {groups:{}};}}
   function saveMirrorState(pk,v){try{localStorage.setItem(mirrorKey(pk),JSON.stringify(v));}catch(_){}}
   /* Streams this node has said it mirrors for the signed-in account, newer than MIRROR_TRUST_MS. */

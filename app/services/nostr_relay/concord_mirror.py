@@ -136,6 +136,9 @@ def _own_hosts(cfg: dict) -> set:
     return out
 
 
+BLOCKLISTED = "relay is on this node's blocklist"
+
+
 def default_url_ok(url: str, cfg: dict) -> str:
     """'' when `url` may be dialled for a member, else the reason it may not. Blocking (DNS) — call
     it off the event loop."""
@@ -148,7 +151,7 @@ def default_url_ok(url: str, cfg: dict) -> str:
         return "only relays on port 443 are mirrored"
     host = p.hostname.lower()
     if _host_blocked(host, cfg.get("blocked_relays")):
-        return "relay is on this node's blocklist"
+        return BLOCKLISTED
     if host in _own_hosts(cfg):
         return "that is this node's own relay"
     if not is_safe_host("https://" + host):
@@ -828,7 +831,13 @@ class ConcordMirror:
             why = await asyncio.to_thread(self._url_ok, r, self.cfg)
             if why:
                 reasons.append(f"{r}: {why}")
-                skipped.append(r)
+                # A relay the operator BLOCKED is one this node will not read, not one it cannot: the community's
+                # other relays carry the same streams and are mirrored. Named under "read directly" it sent every
+                # device to it through the tunnel, once per stream on every refresh, often for full history --
+                # relay.ditto.pub, ~2,700 tunnels an hour from one account (2026-10-22). Only relays a CLIENT can
+                # reach and this node cannot (an odd port, a refused subscription below) are read directly.
+                if why != BLOCKLISTED:
+                    skipped.append(r)
             else:
                 relays.append(r)
         if not relays:

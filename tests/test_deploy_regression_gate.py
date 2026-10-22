@@ -243,6 +243,10 @@ def _full_env(tmp_path, **extra):
     # These tests are about running EVERYTHING; what a server-only deploy may skip is
     # tests/test_gate_skips_browser_for_server_only.py (the real repo's diff must not decide it here).
     extra.setdefault('PC_GATE_FULL_BROWSER', '1')
+    # Same for the preflight: it selects from the REAL repo's diff, so a deploy whose own commits change a test file
+    # ran that file in the preflight AND here, and "ran a test file twice" blocked it (deploy #16, 2026-10-22).
+    # Running it twice is the preflight working; tests that are about the preflight set this themselves.
+    extra.setdefault('PC_GATE_NO_PREFLIGHT', '1')
     return dict(os.environ, PYTHONPATH=str(tmp_path), XDG_CACHE_HOME=str(tmp_path / 'cache'),
                 FULL_SEEN=str(tmp_path / 'seen'), REQ_SEEN=str(tmp_path / 'req_seen'), **extra)
 

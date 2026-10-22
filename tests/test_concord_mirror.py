@@ -880,3 +880,36 @@ def test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror():
             await asyncio.wait_for(node.close(), 20)
             await up.close()
     run(go())
+
+
+def test_a_relay_on_this_nodes_blocklist_is_not_named_for_clients_to_read_directly():
+    """relay.ditto.pub is on poster.place's relay blocklist and is listed by every community one account belongs
+    to. The registration reply named it under "read directly:", so every device read it ITSELF, through the
+    tunnel, one socket per stream on every refresh, often for the whole history: ~2,700 tunnels an hour from one
+    account, measured 2026-10-22. Blocked is "this node will not read it", not "cannot": the community's other
+    relays carry the same streams and are mirrored. A relay a client can reach and this node cannot (an odd port)
+    is still named."""
+    stream, member = key(), key()
+
+    def url_ok(u, c):
+        if "blocked" in u:
+            return cm.BLOCKLISTED
+        if u.endswith(":7777"):
+            return "only relays on port 443 are mirrored"
+        return ""
+
+    async def go():
+        good = await Upstream([wrap(stream)]).start()
+        node = await Node({pub(member)}, url_ok=url_ok).start()
+        try:
+            blocked, odd = "wss://relay.blocked.example", "wss://relay.odd.example:7777"
+            ok = await node.publish(registration(member, [good.url, blocked], [pub(stream)]))
+            assert ok[2] is True, ok
+            assert "read directly:" not in ok[3], ("a blocklisted relay was handed to clients to read", ok)
+            ok = await node.publish(registration(member, [good.url, blocked, odd], [pub(stream)], group="ab" * 32))
+            assert ok[2] is True, ok
+            assert ok[3].split("read directly:", 1)[1].split() == [odd], ok
+        finally:
+            await node.close()
+            await good.close()
+    run(go())
