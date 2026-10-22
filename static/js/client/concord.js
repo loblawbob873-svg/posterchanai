@@ -630,7 +630,7 @@
   /* `thread` is the id of the root whose conversation is open, or null for the channel.
    * Cleared on every room/channel change — a thread belongs to one channel. */
   const state={ community:null, channel:null, thread:null };
-  let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
+  let replyTarget=null, editTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
   let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryAbortController=null, discoveryLoaded=false, discoveryUnreachable='', membershipBusy=false, membershipRetryTimer=null;
   let discoveryPaintPending=false;
   let membershipViewer='';const membershipDocs=new Map();
@@ -887,10 +887,10 @@
       end=Number.isFinite(input.selectionEnd)?input.selectionEnd:start;
     const focused=document.activeElement===input;
     composerDrafts.set(key,{value:String(input.value||''),start,end,direction:input.selectionDirection||'none',
-      focused,replyTarget,mentionChoices:[...(activeMentionState.choices||[])],
+      focused,replyTarget,editTarget,mentionChoices:[...(activeMentionState.choices||[])],
       mentionIndex:Number(activeMentionState.index)||0,mentionRecipients:new Map(activeMentionState.recipients||[])});
   }
-  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
+  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;editTarget=null;}
   function cloneComposerDraft(draft){return draft?{...draft,mentionChoices:[...(draft.mentionChoices||[])],mentionRecipients:new Map(draft.mentionRecipients||[])}:null;}
   /* Sending is optimistic, so the composer must look sent immediately instead of displaying a
    * duplicate copy until signing/relay I/O finishes. Keep the submitted value off-DOM solely as a
@@ -907,7 +907,7 @@
     composerDrafts.set(key,cloneComposerDraft(submitted));
     if(liveKey===key&&input){input.value=String(submitted.value||'');try{input.setSelectionRange(Number(submitted.start)||0,Number(submitted.end)||Number(submitted.start)||0,submitted.direction||'none');}catch(_){}}
     activeMentionState={choices:[...(submitted.mentionChoices||[])],index:Number(submitted.mentionIndex)||0,recipients:new Map(submitted.mentionRecipients||[])};
-    replyTarget=submitted.replyTarget||null;
+    replyTarget=submitted.replyTarget||null;editTarget=submitted.editTarget||null;
     return true;
   }
   function backgroundRender(){
@@ -1616,63 +1616,6 @@
    * so `@Alice` typed in an edit tagged nobody -- and the message's existing mentions were shown as `@npub1…`. This is
    * the composer's picker for any textarea (same rows, same tap-on-release, arrows/Tab/Enter on a keyboard), plus the
    * composer's own wire rules on the way out (wireMentionText + typedMentionRecipients). */
-  function textareaMentions(p,box,room){
-    const viewer=p.viewer?p.viewer():{},recipients=new Map();let choices=[],index=0;
-    const list=document.createElement('div');list.className='cc-mentions cc-box-mentions';list.setAttribute('role','listbox');
-    list.setAttribute('aria-label','Mention a member');list.hidden=true;box.parentElement.insertBefore(list,box.nextSibling);
-    const token=()=>String(box.value||'').slice(0,box.selectionStart).match(/(?:^|\s)@([\w.-]*)$/);
-    const paint=()=>{
-      if(!choices.length){list.hidden=true;list.innerHTML='';return;}
-      list.hidden=false;
-      list.innerHTML=choices.map((c,i)=>{const pr=p.profOf?p.profOf(c.pk)||{}:{};
-        return '<button type="button" role="option" class="cc-mention-opt'+(i===index?' on':'')+'" aria-selected="'+(i===index)+'" data-cc-mention="'+i+'">'
-          +'<img src="'+p.enc(pr.picture||p.LOGO||'')+'" alt=""><span>@'+p.enc(c.name)+'</span></button>';}).join('');
-    };
-    const draw=()=>{
-      const m=token();if(!m){choices=[];paint();return;}
-      const q=m[1].toLowerCase();
-      choices=roomParticipants(room,viewer.pubkey).map(pk=>{const pr=p.profOf?p.profOf(pk)||{}:{},name=String(pr.display_name||pr.name||String(pk).slice(0,12));
-        return {pk,name,aliases:mentionAliases(pr,pk,name)};}).filter(x=>!q||[...x.aliases].some(a=>a.includes(q))).slice(0,8);
-      index=0;paint();
-    };
-    const accept=i=>{
-      const m=token(),c=choices[i];if(!m||!c)return false;
-      const handle=c.name.replace(/\s+/g,'_'),end=box.selectionStart,start=end-m[1].length-1;
-      recipients.set(handle.toLowerCase(),c.pk);box.setRangeText('@'+handle+' ',start,end,'end');
-      choices=[];paint();box.focus();return true;
-    };
-    let sx=0,sy=0,moved=false;
-    list.addEventListener('pointerdown',ev=>{if(!ev.target.closest||!ev.target.closest('[data-cc-mention]'))return;sx=ev.clientX;sy=ev.clientY;moved=false;ev.preventDefault();});
-    list.addEventListener('pointermove',ev=>{if(Math.abs(ev.clientX-sx)>8||Math.abs(ev.clientY-sy)>8)moved=true;});
-    list.addEventListener('pointerup',ev=>{const row=ev.target.closest&&ev.target.closest('[data-cc-mention]');if(!row||moved)return;ev.preventDefault();accept(Number(row.dataset.ccMention)||0);});
-    box.addEventListener('input',draw);
-    box.addEventListener('keydown',e=>{
-      if(!choices.length)return;
-      if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();e.stopImmediatePropagation();index=(index+(e.key==='ArrowDown'?1:-1)+choices.length)%choices.length;paint();return;}
-      if(e.key==='Tab'||(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();e.stopImmediatePropagation();accept(index);return;}
-      if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();choices=[];paint();}
-    },true);
-    return {
-      /* `@npub1…` (the wire form) as the `@Name` a person types, each one remembered so it goes back out the same. */
-      readable(text){
-        return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
-          let pk='';try{const d=window.NostrTools.nip19.decode(np);pk=d.type==='npub'?d.data:'';}catch(_){}
-          if(!pk)return whole;
-          const pr=p.profOf?p.profOf(pk)||{}:{},handle=String(pr.display_name||pr.name||String(pk).slice(0,12)).replace(/\s+/g,'_');
-          recipients.set(handle.toLowerCase(),pk);return pre+'@'+handle;});
-      },
-      /* {text, tags}: the wire text and a `p` tag per person mentioned, exactly as a new message is sent. */
-      wire(text){
-        const lower=String(text||'').toLowerCase(),tagged=new Set(),pairs=[];
-        for(const [handle,pk] of recipients)if(lower.includes('@'+handle)){tagged.add(pk);pairs.push([handle,pk]);}
-        for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){
-          tagged.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};
-          for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))pairs.push([alias,pk]);
-        }
-        return {text:wireMentionText(text,pairs,npubOf),tags:[...tagged].map(pk=>['p',pk])};
-      },
-    };
-  }
   /* `@npub1…` → `nostr:npub1…` before linkify, which renders a profile link reading `@Name`. Left as
    * `@npub1…` it rendered `@@Name` (linkify keeps the character before the entity). */
   function readableMentions(text){ return String(text||'').replace(/(^|\s)@((?:npub1)[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,'$1nostr:$2'); }
@@ -2159,8 +2102,25 @@
     try{const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){if(host.dataset.ccReady!=='1'){host.innerHTML=attachmentImageHtml(p,file,got);host.dataset.ccReady='1';}const img=host.querySelector('img');if(img&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(img.naturalWidth&&img.naturalHeight)attachmentDims.set(attachmentKey(file),{w:img.naturalWidth,h:img.naturalHeight});};if(img.complete)note();else img.addEventListener('load',note,{once:true});}const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){if(host.dataset.ccReady!=='1'||!host.querySelector('video')){host.innerHTML=attachmentVideoHtml(p,file,got);host.dataset.ccReady='1';}const vid0=host.querySelector('video');if(vid0&&!attachmentDims.has(attachmentKey(file))){const note=()=>{if(vid0.videoWidth&&vid0.videoHeight)attachmentDims.set(attachmentKey(file),{w:vid0.videoWidth,h:vid0.videoHeight});};if(vid0.readyState>=1)note();else vid0.addEventListener('loadedmetadata',note,{once:true});}const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/')){/* Built ONCE, like the video: a repaint that rewrote it stopped a playing track. */if(host.dataset.ccReady!=='1'||!host.querySelector('audio')){host.innerHTML=p.trackCard?p.trackCard(got.url,got.name||file.name,'metadata'):`<audio src="${url}" controls preload="metadata"></audio>`;host.dataset.ccReady='1';}}else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(e){console.warn('Concord attachment paint failed',e);}
   }
   function channelStarKey(room,name){ return `${STAR_KEY}${accountPk()}.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
-  function channelStarred(room,name){ try{return localStorage.getItem(channelStarKey(room,name))==='1';}catch(_){return false;} }
-  function setChannelStarred(room,name,on){ try{if(on)localStorage.setItem(channelStarKey(room,name),'1');else localStorage.removeItem(channelStarKey(room,name));}catch(_){} }
+  /* A STAR FOLLOWS THE ACCOUNT (2026-10-22: "Concord starred channels don't sync across devices?" -- they were
+   * localStorage only). The account's sealed read doc carries them (see READ_D); localStorage is this device's
+   * cache, painted before the doc answers and corrected from it after. */
+  function channelStarred(room,name){
+    const local=(()=>{try{return localStorage.getItem(channelStarKey(room,name))==='1';}catch(_){return false;}})();
+    const row=readDoc.owner&&readDoc.owner===accountPk()?readDoc.stars[mentionLedgerKey(room,name)]:null;
+    if(!row)return local;
+    const on=row[0]===1;
+    if(on!==local)try{if(on)localStorage.setItem(channelStarKey(room,name),'1');else localStorage.removeItem(channelStarKey(room,name));}catch(_){}
+    return on;
+  }
+  function setChannelStarred(room,name,on){
+    try{if(on)localStorage.setItem(channelStarKey(room,name),'1');else localStorage.removeItem(channelStarKey(room,name));}catch(_){}
+    const p=PC();if(!p||!room)return;
+    loadReadDoc(p);
+    if(readDoc.owner!==accountPk())return;
+    readDoc.stars[mentionLedgerKey(room,name)]=[on?1:0,Date.now()];
+    if(readDoc.answered)saveReadDoc(p); else readDoc.dirty=true;
+  }
   function orderedChannels(room){ return channelsOf(room).map((channel,index)=>({channel,index,starred:channelStarred(room,channel.name)})).sort((a,b)=>Number(b.starred)-Number(a.starred)||a.index-b.index).map(x=>x.channel); }
   function canManageChannels(p,room){
     const me=p.viewer?p.viewer().pubkey:'',owner=String(room&&room.cord&&room.cord.bundle&&(room.cord.bundle.owner||'')||'');
@@ -3326,8 +3286,32 @@
   /* `invites`: the direct invitations this account has ANSWERED (accepted or declined), by gift-wrap id, synced with
    * the read marks (2026-10-21: "every time I clear my concord invites and login, I see you have 12 invites" -- a
    * decline was remembered on one device only, and every login fetched them all again). A set that only grows. */
-  const readDoc={owner:'',answered:false,marks:{},invites:new Set(),loading:null,saving:null,dirty:false};
-  const INVITES_CAP=300;
+  /* `stars`: { "<room>\n<channel>": [1|0, ms] } -- the LATEST toggle per channel wins, and an unstar is kept as
+   * a 0 so it reaches the other devices instead of being outvoted by their older star. */
+  const readDoc={owner:'',answered:false,marks:{},invites:new Set(),stars:{},loading:null,saving:null,dirty:false};
+  const INVITES_CAP=300, STARS_CAP=500;
+  function mergeStars(into,from){
+    let changed=false;
+    if(!from||typeof from!=='object'||Array.isArray(from))return false;
+    for(const [k,v] of Object.entries(from)){
+      if(typeof k!=='string'||!k.includes('\n')||!Array.isArray(v)||(v[0]!==0&&v[0]!==1))continue;
+      const at=Number(v[1]);if(!Number.isFinite(at)||at<=0)continue;
+      const have=into[k];
+      if(!have||at>Number(have[1])||(at===Number(have[1])&&v[0]===1&&have[0]!==1)){ into[k]=[v[0],at]; changed=true; }
+    }
+    return changed;
+  }
+  function trimStars(m){ return Object.fromEntries(Object.entries(m).sort((a,b)=>(b[1][0]-a[1][0])||(b[1][1]-a[1][1])).slice(0,STARS_CAP)); }
+  /* Stars made before they synced exist only on the device that made them: each one goes into the doc once, at
+   * time 1, so every device's old stars are kept (a union) and any real toggle since outranks them. */
+  function adoptLocalStars(){
+    const pk=readDoc.owner;let changed=false;
+    try{ for(const room of saved())for(const ch of channelsOf(room)){
+      const k=mentionLedgerKey(room,ch.name);
+      if(!readDoc.stars[k]&&localStorage.getItem(STAR_KEY+pk+'.'+(roomIdentity(room)||'unknown')+':'+(ch.name||'general'))==='1'){ readDoc.stars[k]=[1,1]; changed=true; }
+    } }catch(_){ }
+    return changed;
+  }
   function mergeInvites(into,from){ let changed=false; for(const id of (Array.isArray(from)?from:[])) if(/^[0-9a-f]{64}$/.test(String(id))&&!into.has(id)){ into.add(id); changed=true; } return changed; }
   function readMark(room,channel){ return Number(readDoc.marks[mentionLedgerKey(room,channel)])||0; }
   function mergeMarks(into,from){
@@ -3362,22 +3346,25 @@
     // "Nothing came back" counts as an answer only when the relays SAID so; a timeout is not "no doc".
     if(!all.length&&!docAnswered(evs))return null;
     const ev=all.sort((a,b)=>b.created_at-a.created_at)[0];
-    if(!ev)return {marks:{},invites:[]};
+    if(!ev)return {marks:{},invites:[],stars:{}};
     try{
       const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
-      return {marks:doc&&typeof doc.marks==='object'&&!Array.isArray(doc.marks)?doc.marks:{},invites:doc&&Array.isArray(doc.invites)?doc.invites:[]};
+      return {marks:doc&&typeof doc.marks==='object'&&!Array.isArray(doc.marks)?doc.marks:{},invites:doc&&Array.isArray(doc.invites)?doc.invites:[],
+        stars:doc&&doc.stars&&typeof doc.stars==='object'&&!Array.isArray(doc.stars)?doc.stars:{}};
     }catch(_){ return null; }   // could not read it: never treat as empty, never overwrite it
   }
   function loadReadDoc(p){
     const owner=p&&p.viewer&&p.viewer().pubkey;
     if(!owner)return Promise.resolve(readDoc);
-    if(readDoc.owner!==owner){ Object.assign(readDoc,{owner,answered:false,marks:{},invites:new Set(),loading:null,saving:null,dirty:false}); }
+    if(readDoc.owner!==owner){ Object.assign(readDoc,{owner,answered:false,marks:{},invites:new Set(),stars:{},loading:null,saving:null,dirty:false}); }
     if(readDoc.answered)return Promise.resolve(readDoc);
     if(readDoc.loading)return readDoc.loading;
     readDoc.loading=(async()=>{
       const got=await fetchReadDoc(p,owner);
       if(readDoc.owner!==owner)return readDoc;              // the account changed while we were reading
-      if(got){ mergeMarks(readDoc.marks,got.marks); const inv=mergeInvites(readDoc.invites,got.invites); readDoc.answered=true; pruneReadMentions(); if(inv)void refreshInviteCount(); if(readDoc.dirty)saveReadDoc(p); }
+      if(got){ mergeMarks(readDoc.marks,got.marks); const inv=mergeInvites(readDoc.invites,got.invites); mergeStars(readDoc.stars,got.stars); readDoc.answered=true; pruneReadMentions(); if(inv)void refreshInviteCount();
+        if(adoptLocalStars())readDoc.dirty=true;
+        if(readDoc.dirty)saveReadDoc(p); }
       return readDoc;
     })().finally(()=>{ readDoc.loading=null; });
     return readDoc.loading;
@@ -3392,9 +3379,10 @@
       const fresh=await fetchReadDoc(p,owner);
       if(!fresh||readDoc.owner!==owner){ readDoc.dirty=true; return; }   // could not re-read: write nothing
       mergeMarks(readDoc.marks,fresh.marks);mergeInvites(readDoc.invites,fresh.invites);
-      readDoc.marks=trimMarks(readDoc.marks);
+      if(mergeStars(readDoc.stars,fresh.stars))readMarksChanged();
+      readDoc.marks=trimMarks(readDoc.marks);readDoc.stars=trimStars(readDoc.stars);
       const invites=[...readDoc.invites].slice(-INVITES_CAP);
-      const content=await p.nip44enc(owner,JSON.stringify({v:1,marks:readDoc.marks,invites}));
+      const content=await p.nip44enc(owner,JSON.stringify({v:1,marks:readDoc.marks,invites,stars:readDoc.stars}));
       const ev=await p.signTemplate({kind:30078,created_at:Math.floor(Date.now()/1000),content,tags:[['d',READ_D]],pubkey:owner});
       await p.relayPublish(ev);
     })().catch(()=>{ readDoc.dirty=true; }).finally(()=>{ readDoc.saving=null; if(readDoc.dirty&&readDoc.answered)setTimeout(()=>saveReadDoc(p),5000); });
@@ -3415,7 +3403,8 @@
       const doc=JSON.parse(await p.nip44dec(owner,ev.content)||'null');
       if(readDoc.owner!==owner||!doc||typeof doc.marks!=='object'||Array.isArray(doc.marks))return;
       if(mergeInvites(readDoc.invites,doc.invites))void refreshInviteCount();
-      if(mergeMarks(readDoc.marks,doc.marks))readMarksChanged();
+      const stars=mergeStars(readDoc.stars,doc.stars);
+      if(mergeMarks(readDoc.marks,doc.marks)||stars)readMarksChanged();
     }catch(_){ }
   }
   async function refreshReadDoc(p,force){
@@ -3426,7 +3415,8 @@
       if(readDoc.owner!==owner||!readDoc.answered){ await loadReadDoc(p); if(readDoc.answered)readMarksChanged(); return; }
       const got=await fetchReadDoc(p,owner);
       if(got&&readDoc.owner===owner&&mergeInvites(readDoc.invites,got.invites))void refreshInviteCount();
-      if(got&&readDoc.owner===owner&&mergeMarks(readDoc.marks,got.marks))readMarksChanged();
+      const stars=!!(got&&readDoc.owner===owner&&mergeStars(readDoc.stars,got.stars));
+      if(got&&readDoc.owner===owner&&mergeMarks(readDoc.marks,got.marks)||stars)readMarksChanged();
     }finally{ readSync.busy=false; }
   }
   function startReadSync(p){
@@ -6579,7 +6569,7 @@
     }
     if(current&&currentChannel)void recoverDeliveries(p,current,currentChannel);
     const draftKey=composerKey(current,state.channel),draft=composerDrafts.get(draftKey)||null;
-    replyTarget=draft&&draft.replyTarget||null;
+    replyTarget=draft&&draft.replyTarget||null;editTarget=draft&&draft.editTarget||null;
     activeMentionState=draft?{choices:[...(draft.mentionChoices||[])],index:Number(draft.mentionIndex)||0,
       recipients:new Map(draft.mentionRecipients||[])}:{choices:[],index:0,recipients:new Map()};
     const channelPrivate=!!(currentChannel&&currentChannel.private);
@@ -6658,7 +6648,7 @@
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-search" title="Search this community" aria-label="Search this community"><svg class="ic"><use href="#i-search"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn cc-notify-head${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify-head" title="Community notifications ${concordNotifyOn()?'on':'off'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button><button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="Room menu" aria-label="Room menu"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button></header>
         ${nodeBlockNoteHtml(p,current,memberPks,canBanAny)}<div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
-        <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
+        <div class="cc-reply${editTarget?' cc-editing':''}${replyTarget||editTarget?'':' hidden'}" id="cc-reply">${editTarget?`<span>Editing message — <b>Enter</b> to save, <b>Esc</b> to cancel</span><button id="cc-edit-cancel" aria-label="Cancel edit">×</button>`:replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':editTarget?'Edit your message':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>${editTarget?'Save':'Send'}</button></div>
       </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value=""><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div><div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div></div></div><div class="cc-join cc-invite-sheet${pendingInvite?'':' hidden'}" id="cc-invite-sheet">${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-icon-status" id="cc-community-icon-status" role="status" aria-live="polite" hidden></div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-icon-value">Upload image…</button><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     /* THE SAME SCREEN IS NOT DRAWN TWICE. "Communities: keeps flashing every few seconds" -- measured on
      * a real desktop: 46 full rebuilds of #feed in two minutes with nothing new to show, every one
@@ -7450,10 +7440,14 @@
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){setMobileDrawer(!mobileDrawerOpen);return;}else mobileChatOpen=true; render(); };
     const drawerBackdrop=$('#cc-drawer-backdrop');if(drawerBackdrop)drawerBackdrop.onclick=()=>setMobileDrawer(false);
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,_shown=(target&&!state.thread)?(()=>{ /* replying from the channel: open that thread, or the reply vanishes into the collapse as it is sent */ try{ expandedThreads.add(threadRootId(testMessages(storeId)||[],target)); }catch(_){} return 1; })():0,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();const mentionPairs=[];for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle)){taggedPeople.add(pk);mentionPairs.push([handle,pk]);}}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){taggedPeople.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))mentionPairs.push([alias,pk]);}for(const pk of taggedPeople){mentionTags.push(['p',pk]);}const mentioned=wireMentionText(text,mentionPairs,npubOf),wireText=room.cord&&room.protocol!=='nip29'?wireAttachmentText(mentioned,used.filter(([,tag])=>tag.includes('encryption-algorithm aes-gcm')).map(([url])=>url)):mentioned; if(target){replyTags.push(...cordReplyTags(target,messageId(target),threadParticipants(m,target,viewer.pubkey),viewer.pubkey));} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text:wireText,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text,expires:(target.tags||[]).find(t=>t[0]==='expiration')?.[1]}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,wireText,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.tags=d.made.tags||row.tags;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.tags=made.tags||sent.tags;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
+      send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,_shown=(target&&!state.thread)?(()=>{ /* replying from the channel: open that thread, or the reply vanishes into the collapse as it is sent */ try{ expandedThreads.add(threadRootId(testMessages(storeId)||[],target)); }catch(_){} return 1; })():0,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();const mentionPairs=[];for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle)){taggedPeople.add(pk);mentionPairs.push([handle,pk]);}}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf)){taggedPeople.add(pk);const pr=p.profOf?p.profOf(pk)||{}:{};for(const alias of mentionAliases(pr,pk,String(pr.display_name||pr.name||String(pk).slice(0,12))))mentionPairs.push([alias,pk]);}for(const pk of taggedPeople){mentionTags.push(['p',pk]);}const mentioned=wireMentionText(text,mentionPairs,npubOf),wireText=room.cord&&room.protocol!=='nip29'?wireAttachmentText(mentioned,used.filter(([,tag])=>tag.includes('encryption-algorithm aes-gcm')).map(([url])=>url)):mentioned; if(editTarget){ return sendComposerEdit(p,room,sendChannel,storeId,key,wireText,mentionTags); } if(target){replyTags.push(...cordReplyTags(target,messageId(target),threadParticipants(m,target,viewer.pubkey),viewer.pubkey));} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text:wireText,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text,expires:(target.tags||[]).find(t=>t[0]==='expiration')?.[1]}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,wireText,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.tags=d.made.tags||row.tags;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.tags=made.tags||sent.tags;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
       input.onkeydown=e=>{ const enter=e.key==='Enter'||e.code==='Enter'; if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;syncMentionState();drawMentions();return;} if(e.key==='Tab'||(enter&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } /* ENTER SENDS ("make enter sent message instead of ctrl+enter, ctrl+enter should add" a line). Shift+Enter
          and Ctrl/⌘+Enter put a line break in instead; Enter while an IME is composing (Japanese, Chinese…)
          belongs to the IME and never sends half a word. */
+      if(e.key==='Escape'&&editTarget){ e.preventDefault(); cancelComposerEdit(); return; }
+      if(e.key==='ArrowUp'&&!editTarget&&!String(input.value||'')&&!e.shiftKey&&!e.altKey&&!e.ctrlKey&&!e.metaKey){
+        const room=saved()[state.community],viewer=p.viewer?p.viewer():{},mine=testMessages(channelStoreId(room,state.channel)).filter(m=>canEditMessage(m,viewer,room)&&!m.deleted);
+        if(mine.length){ e.preventDefault(); beginComposerEdit(p,mine[mine.length-1]); return; } }
       if(enter&&(e.ctrlKey||e.metaKey)){ e.preventDefault();
         if(typeof input.setRangeText==='function'){ input.setRangeText('\n',input.selectionStart,input.selectionEnd,'end'); }
         else input.value=String(input.value||'')+'\n';
@@ -7462,6 +7456,7 @@
       if(enter&&!e.shiftKey&&!e.altKey&&!e.isComposing&&e.keyCode!==229){ e.preventDefault(); return send.onclick(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
+    const editCancel=$('#cc-edit-cancel'); if(editCancel)editCancel.onclick=()=>cancelComposerEdit();
     bindMessages(); paintTyping(p);
   }
   /* THE MESSAGE ROWS BIND SEPARATELY FROM THE WORKSPACE AROUND THEM.
@@ -7586,6 +7581,57 @@
       return [...new Set((info.roles||[]).filter(x=>held.has(x.id)&&x.scope==='server').map(x=>x.name))];
     }catch(_){ return []; }
   }
+  /* EDITING HAPPENS IN THE CHAT BAR (2026-10-22: "concord edit modal, can disappear, terrible! ... make it like
+   * other chat programs, the chat bar gets populated with the message and you can send the update"). The modal
+   * was its own layer and went with any repaint that closed it; the composer is the one thing every repaint
+   * keeps (captureComposer), so the edit now rides there: editTarget beside replyTarget, in the same draft.
+   * Whatever was typed before Edit is put back after the edit is saved or cancelled. */
+  function readableComposerText(p,text){
+    return String(text||'').replace(/(^|\s)@(npub1[023456789acdefghjklmnpqrstuvwxyz]{58})(?![0-9a-z])/gi,(whole,pre,np)=>{
+      let pk='';try{const d=window.NostrTools.nip19.decode(np);pk=d.type==='npub'?d.data:'';}catch(_){}
+      if(!pk)return whole;
+      const pr=p.profOf?p.profOf(pk)||{}:{},handle=String(pr.display_name||pr.name||String(pk).slice(0,12)).replace(/\s+/g,'_');
+      activeMentionState.recipients.set(handle.toLowerCase(),pk);return pre+'@'+handle;});
+  }
+  function composerInput(){ return (document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input')); }
+  function beginComposerEdit(p,m){
+    captureComposer();
+    const input=composerInput(),prev=editTarget?editTarget.prev:String(input&&input.value||'');
+    if(!(activeMentionState.recipients instanceof Map))activeMentionState.recipients=new Map(activeMentionState.recipients||[]);
+    const text=readableComposerText(p,m.text);
+    editTarget={id:messageId(m),text:String(m.text||'').trim(),prev};replyTarget=null;
+    if(input)input.value=text;
+    render();
+    const box=composerInput();
+    if(box){ if(box.value!==text)box.value=text; try{ box.focus(); box.setSelectionRange(text.length,text.length); }catch(_){ } try{ box.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){ } }
+  }
+  function cancelComposerEdit(){
+    if(!editTarget)return;
+    const prev=editTarget.prev||'',input=composerInput();
+    editTarget=null;
+    if(input)input.value=prev;
+    render();
+    const box=composerInput();if(box){ if(box.value!==prev)box.value=prev; try{ box.focus(); }catch(_){ } }
+  }
+  async function sendComposerEdit(p,room,channel,storeId,key,text,mentionTags){
+    const target=editTarget;if(!target)return;
+    if(text.trim()===target.text){ cancelComposerEdit(); return; }
+    if(sendingDrafts.has(key))return;
+    const submitted=beginComposerSend(key);sendingDrafts.add(key);
+    const input=composerInput();if(input&&target.prev)input.value=target.prev;   // the bar goes back to what was being typed
+    const rows=testMessages(storeId),row=rows.find(x=>messageId(x)===target.id),before=row?{text:row.text,tags:row.tags,originalText:row.originalText}:null;
+    if(row){ if(typeof row.originalText!=='string')row.originalText=row.text; row.text=text; row.tags=[...(row.tags||[]).filter(t=>t[0]!=='edited'),['edited',String(Math.floor(Date.now()/1000))]]; saveTestMessages(storeId,rows); }
+    preserveChatScroll(()=>render());
+    try{ await publishCordMessage(p,room,channel,text,[['e',target.id],...mentionTags],3302); }
+    catch(e){
+      const latest=testMessages(storeId),back=latest.find(x=>messageId(x)===target.id);
+      if(back&&before){ back.text=before.text;back.tags=before.tags;if(before.originalText===undefined)delete back.originalText;saveTestMessages(storeId,latest); }
+      const box=composerInput(),cur=String(box&&box.value||'');
+      if(!cur.trim()||cur===target.prev){ if(box)box.value=''; restoreFailedComposer(key,submitted); editTarget=target; }   // never over newer typing
+      preserveChatScroll(()=>render());
+      p.toast('the edit was not sent: '+(e&&e.message||e));
+    }finally{ sendingDrafts.delete(key); }
+  }
   function canEditMessage(m,viewer,room){
     return !!(m&&viewer&&viewer.pubkey&&m.pubkey===viewer.pubkey&&(m.kind===9||m.kind===1111)&&!m.pending&&!m.failed
       &&!String(m.id||'').startsWith('pending-')&&room&&room.cord&&!room.local&&room.protocol!=='nip29');
@@ -7703,18 +7749,7 @@
       p.modal(`<h3>📌 Pinned in #${p.enc(state.channel||'general')}</h3>${list.length?`<div class="cc-pin-list">${list.map(e=>{const pr=p.profOf?p.profOf(e.pubkey)||{}:{};return `<button class="cc-pin-item" data-cc-pin-jump="${p.enc(e.id)}"><b>${p.enc(pr.display_name||pr.name||String(e.pubkey).slice(0,12))}</b><span>${p.enc(mentionNames(String(e.content||''),p.profOf).slice(0,280))}</span>${e.edited?'<small>(edited)</small>':''}</button>`;}).join('')}</div>`:'<p class="muted">Nothing is pinned in this channel yet.</p>'}`,root=>{
         root.querySelectorAll('[data-cc-pin-jump]').forEach(x=>x.onclick=()=>{ p.closeModal(); const row=document.querySelector(`.cc-message[data-message-id="${CSS.escape(x.dataset.ccPinJump)}"]`); if(row){ row.scrollIntoView({block:'center'}); row.classList.add('cc-flash'); setTimeout(()=>row.classList.remove('cc-flash'),1600); } else p.toast('that message is older than the history loaded here'); });
       }); };
-    $$('[data-cc-edit]').forEach(b=>b.onclick=()=>{ closeMessageActions();const room=saved()[state.community],channel=state.channel,storeId=channelStoreId(room,channel),found=testMessages(storeId).find(x=>messageId(x)===b.dataset.ccEdit),viewer=p.viewer?p.viewer():{}; if(!found||!canEditMessage(found,viewer,room)||!p.modal)return;
-      p.modal(`<h3>Edit message</h3><textarea class="input cc-edit-text" rows="4" maxlength="65536"></textarea><div class="cc-join-actions"><button class="btn btn-ghost" data-cc-edit-cancel>Cancel</button><button class="btn btn-neon" data-cc-edit-save>Save</button></div>`,root=>{
-        const box=root.querySelector('.cc-edit-text'),save=root.querySelector('[data-cc-edit-save]'),mentions=textareaMentions(p,box,room);box.value=mentions.readable(found.text);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);},20);
-        root.querySelector('[data-cc-edit-cancel]').onclick=()=>p.closeModal();
-        box.onkeydown=e=>{if((e.key==='Enter')&&(e.ctrlKey||e.metaKey)){e.preventDefault();save.click();}};
-        save.onclick=async()=>{ const typed=String(box.value||'').trim(); if(!typed){p.toast('an edit cannot be empty — delete the message instead');return;} const out=mentions.wire(typed),text=out.text; if(text===String(found.text||'').trim()){p.closeModal();return;} save.disabled=true;
-          try{ await publishCordMessage(p,room,channel,text,[['e',messageId(found)],...out.tags],3302);
-            const rows=testMessages(storeId),row=rows.find(x=>messageId(x)===messageId(found));
-            if(row){ if(typeof row.originalText!=='string')row.originalText=row.text; row.text=text; row.tags=[...(row.tags||[]).filter(t=>t[0]!=='edited'),['edited',String(Math.floor(Date.now()/1000))]]; saveTestMessages(storeId,rows); }
-            p.closeModal(); preserveChatScroll(()=>render());
-          }catch(e){ save.disabled=false; p.toast('the edit was not sent: '+(e&&e.message||e)); } };
-      }); });
+    $$('[data-cc-edit]').forEach(b=>b.onclick=()=>{ closeMessageActions();const room=saved()[state.community],found=testMessages(channelStoreId(room,state.channel)).find(x=>messageId(x)===b.dataset.ccEdit),viewer=p.viewer?p.viewer():{}; if(!found||!canEditMessage(found,viewer,room))return; beginComposerEdit(p,found); });
     /* 🚩 REPORT A MESSAGE -- PRIVATELY. The room is encrypted, so a public NIP-56 (kind 1984) naming or
        quoting this message would publish its text and who is in the room. The report goes, as NIP-17
        gift-wrapped DMs, to the room's owner and moderators (reportRecipients: they can already read
@@ -8028,7 +8063,10 @@
   window.PCConcord.__testRefreshReadDoc=(p,force)=>refreshReadDoc(p,force);
   window.PCConcord.__testMarkRead=(room,ch)=>markRead(room,ch);
   window.PCConcord.__testStartReadSync=p=>startReadSync(p);
-  window.PCConcord.__testReadDoc=p=>loadReadDoc(p).then(()=>({answered:readDoc.answered,marks:{...readDoc.marks},saving:readDoc.saving}));
+  window.PCConcord.__testReadDoc=p=>loadReadDoc(p).then(()=>({answered:readDoc.answered,marks:{...readDoc.marks},stars:{...readDoc.stars},saving:readDoc.saving}));
+  window.PCConcord.__testEdit={begin:(p,m)=>beginComposerEdit(p,m),cancel:()=>cancelComposerEdit(),target:()=>editTarget};
+  window.PCConcord.__testStar=(room,name,on)=>on===undefined?channelStarred(room,name):setChannelStarred(room,name,on);
+  window.PCConcord.__testRefreshReadDoc=p=>refreshReadDoc(p,true);
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }

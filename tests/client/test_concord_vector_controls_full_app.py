@@ -85,10 +85,12 @@ def test_vector_parity_controls_are_reachable(width):
         await b.js(f"document.querySelector('{mine} [data-cc-actions]').click()")
         assert await hit(b, f'{mine} [data-cc-edit]') == 'ok'
         await b.js(f"document.querySelector('{mine} [data-cc-edit]').click()")
-        await b.until("!!document.querySelector('.cc-edit-text')")
-        assert await b.js("document.querySelector('.cc-edit-text').value") == 'my own words'
-        assert await b.js("document.querySelector('.cc-edit-text').getBoundingClientRect().right<=innerWidth+1")
-        await b.js("__PC.closeModal()")
+        # ...in the chat bar, not a modal (2026-10-22).
+        await b.until("!!document.querySelector('#cc-reply.cc-editing')")
+        assert await b.js("document.querySelector('#cc-input').value") == 'my own words'
+        assert await b.js("document.querySelector('#cc-input').getBoundingClientRect().right<=innerWidth+1")
+        await b.js("document.querySelector('#cc-edit-cancel').click()")
+        await b.until("!document.querySelector('#cc-reply.cc-editing')")
         # Pin toggle: their message is pinned → offered as Unpin.
         assert await b.js(f"document.querySelector('{theirs} [data-cc-pin]').title") == 'Unpin message'
         assert await b.js(f"document.querySelector('{mine} [data-cc-pin]').title") == 'Pin message'

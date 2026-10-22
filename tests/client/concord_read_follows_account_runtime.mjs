@@ -197,5 +197,38 @@ for (const mode of ['silent', 'down']) {
   if (n !== 0) fail(`a room read on the phone is unread on the laptop (${n}) -- a room with no naddr must still read the synced mark`);
 }
 
+/* 9. "Concord starred channels don't sync across devices?" (2026-10-22). A star made on the phone is a star on the
+ *    laptop, an unstar on the laptop reaches the phone (the newer toggle wins, the older star does not outvote it),
+ *    and a star made before stars synced -- localStorage only -- is carried into the doc, not lost. */
+{
+  const R = { communityId: '7'.repeat(64), naddr: 'naddr1starroom', name: 'Star room', local: false, channels: [{ name: 'general' }, { name: 'memes' }, { name: 'old' }] };
+  const rooms = { ['pc.concord.rooms.v1.' + ME]: JSON.stringify([R]) };
+  const net = relays();
+  const legacy = 'pc.concord.star.v2.' + ME + '.' + R.communityId + ':old';
+  const phone = boot({ ...rooms, [legacy]: '1' });
+  Object.assign(phone.window.__PC, net.p);
+  await phone.C.__testReadDoc(net.p);
+  phone.C.__testStar(R, 'memes', true);
+  await tick(1800);
+  const laptop = boot(rooms);
+  Object.assign(laptop.window.__PC, net.p);
+  if (laptop.C.__testStar(R, 'memes')) fail('a star showed before the account doc was read');
+  await laptop.C.__testReadDoc(net.p);
+  if (!laptop.C.__testStar(R, 'memes')) fail('a channel starred on the phone is not starred on the laptop');
+  if (!laptop.C.__testStar(R, 'old')) fail('a star made before stars synced was lost instead of carried into the doc');
+  if (laptop.C.__testStar(R, 'general')) fail('a channel nobody starred came back starred');
+  if (laptop.store.get('pc.concord.star.v2.' + ME + '.' + R.communityId + ':memes') !== '1') fail('the synced star was not cached for the next cold paint');
+  await tick(5);
+  laptop.C.__testStar(R, 'memes', false);
+  await tick(1800);
+  await phone.C.__testRefreshReadDoc(net.p);
+  if (phone.C.__testStar(R, 'memes')) fail('an unstar on the laptop did not reach the phone -- its older star outvoted it');
+  if (!phone.C.__testStar(R, 'old')) fail('an unrelated star was dropped by another device\'s save');
+  const doc = JSON.parse(net.events[0].content.slice(4));
+  if (!doc.stars || !Array.isArray(doc.stars[R.communityId + '\nmemes']) || doc.stars[R.communityId + '\nmemes'][0] !== 0)
+    fail('the unstar is not kept in the doc as a 0: ' + JSON.stringify(doc.stars));
+  if (doc.marks === undefined || !Array.isArray(doc.invites)) fail('saving stars dropped the read marks or invites');
+}
+
 console.log('concord read follows the account: ok');
 process.exit(0);

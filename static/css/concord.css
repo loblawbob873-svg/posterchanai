@@ -493,7 +493,6 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
 .cc-icon-pick{display:block;margin:6px 0 2px;min-height:40px;max-width:100%}
 @media (max-width:600px){.cc-icon-pick{width:100%}}
 .cc-edited{margin-left:6px;font-size:11px;color:var(--cct-muted)}
-.cc-edit-text{width:100%;box-sizing:border-box;min-height:96px;resize:vertical}
 .cc-channel-more{flex:0 0 auto;min-width:32px;border:0;background:transparent;color:var(--cct-muted);cursor:pointer;border-radius:calc(8px*var(--cct-round))}
 .cc-channel-more:hover{color:rgb(var(--cct-accent-rgb));background:rgba(var(--cct-accent-rgb),.1)}
 @media (max-width:600px){.cc-channel-more{min-width:44px;min-height:44px}}
@@ -840,8 +839,6 @@ body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what{min-width:0!import
 body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what b{color:var(--cct-strong)!important;font-size:14.5px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--cct-muted)!important;font-size:12px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 /* The @-picker under a textarea that is not the composer (the edit box): below it, inside the sheet. */
-.cc-box-mentions{margin:6px 0 0!important}
-.cc-box-mentions[hidden]{display:none!important}
 /* Known members, grouped (concord.js memberRow): Admins, then Members. */
 .cc-member-group{margin:10px 4px 4px!important;color:var(--cct-section)!important;font-size:11px!important;font-weight:800!important;letter-spacing:.06em!important;text-transform:uppercase!important}
 .cc-member-group:first-child{margin-top:2px!important}
@@ -850,3 +847,5 @@ body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--
 /* Owners/moderators: the people here this node has blocked (concord.js nodeBlockNoteHtml). */
 .cc-node-block-note{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px 12px!important;margin:6px 10px!important;padding:9px 12px!important;border:1px solid rgba(var(--cct-warn-rgb),.45)!important;border-radius:calc(10px*var(--cct-round))!important;background:rgba(var(--cct-warn-rgb),.08)!important;color:var(--cct-text)!important;font-size:13px!important;line-height:1.4!important}
 .cc-node-block-note span{flex:1 1 220px!important;min-width:0!important}
+/* Editing in the chat bar (2026-10-22): the bar says so in the accent, so an edit is never mistaken for a new message. */
+.cc-reply.cc-editing{border-inline-start:3px solid var(--cct-accent)!important}.cc-reply.cc-editing span{white-space:normal!important}

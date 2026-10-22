@@ -42,16 +42,29 @@ def test_edit_mentions_and_the_thread_bar(width):
         await b.js("document.querySelector('#cc-send').click()")
         await wait_for(b, GENERAL + ".then(m=>m.some(x=>x[1]==='Season finale tonight'))", 30)
         await wait_for(b, "[...document.querySelectorAll('.cc-message')].some(m=>m.textContent.includes('Season finale tonight')&&m.querySelector('[data-cc-edit]'))", 30)
-        # Edit: type "@", the picker offers the member, a tap puts the name in.
+        # Edit happens IN THE CHAT BAR, like other chat apps: whatever was being typed waits, the bar holds the
+        # message, Enter saves. A repaint (a message arriving) must not lose it -- the modal it replaced did.
+        await type_into(b, '#cc-input', 'half-typed draft')
         await b.js("[...document.querySelectorAll('.cc-message')].find(m=>m.textContent.includes('Season finale tonight')).querySelector('[data-cc-edit]').click()")
-        await wait_for(b, "!!document.querySelector('.cc-edit-text')")
-        await b.js("(()=>{const t=document.querySelector('.cc-edit-text');t.focus();t.setSelectionRange(t.value.length,t.value.length);"
+        await wait_for(b, "!!document.querySelector('#cc-reply.cc-editing') && document.querySelector('#cc-input').value==='Season finale tonight'")
+        assert not await b.js("!!document.querySelector('.cc-edit-text')"), 'the edit modal is back'
+        assert await b.js("document.querySelector('#cc-send').textContent.trim()") == 'Save'
+        await b.js("PCConcord.render()")
+        assert await b.js("!!document.querySelector('#cc-reply.cc-editing') && document.querySelector('#cc-input').value==='Season finale tonight'"), 'a repaint dropped the edit'
+        # Esc cancels and gives the draft back; Edit again resumes.
+        await b.js("document.querySelector('#cc-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+        await wait_for(b, "!document.querySelector('#cc-reply.cc-editing') && document.querySelector('#cc-input').value==='half-typed draft'")
+        await b.js("[...document.querySelectorAll('.cc-message')].find(m=>m.textContent.includes('Season finale tonight')).querySelector('[data-cc-edit]').click()")
+        await wait_for(b, "document.querySelector('#cc-input').value==='Season finale tonight'")
+        await b.js("(()=>{const t=document.querySelector('#cc-input');t.focus();t.setSelectionRange(t.value.length,t.value.length);"
                    "t.setRangeText(' with @',t.value.length,t.value.length,'end');t.dispatchEvent(new Event('input',{bubbles:true}));})()")
-        await wait_for(b, "document.querySelectorAll('.cc-box-mentions .cc-mention-opt').length>0")
-        await b.js("(()=>{const r=document.querySelector('.cc-box-mentions .cc-mention-opt');const o={bubbles:true,pointerId:1,clientX:5,clientY:5};"
+        await wait_for(b, "document.querySelectorAll('.cc-mentions .cc-mention-opt').length>0")
+        await b.js("(()=>{const r=document.querySelector('.cc-mentions .cc-mention-opt');const o={bubbles:true,pointerId:1,clientX:5,clientY:5};"
                    "r.dispatchEvent(new PointerEvent('pointerdown',o));r.dispatchEvent(new PointerEvent('pointerup',o));})()")
-        assert await b.js("/ with @\\S+ $/.test(document.querySelector('.cc-edit-text').value)"), await b.js("document.querySelector('.cc-edit-text').value")
-        await b.js("document.querySelector('[data-cc-edit-save]').click()")
+        assert await b.js("/ with @\\S+ $/.test(document.querySelector('#cc-input').value)"), await b.js("document.querySelector('#cc-input').value")
+        await b.js("document.querySelector('#cc-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))")
+        await wait_for(b, "!document.querySelector('#cc-reply.cc-editing') && document.querySelector('#cc-input').value==='half-typed draft'")
+        await b.js("document.querySelector('#cc-input').value='';document.querySelector('#cc-input').dispatchEvent(new Event('input',{bubbles:true}))")
         npub = await b.js("NostrTools.nip19.npubEncode(__PC.me().pubkey)")
         await wait_for(b, GENERAL + ".then(m=>m.some(x=>x[1]==='Season finale tonight with @'+" + json.dumps(npub) + "))", 30)
         # The thread bar of a chat thread: where you are and the way back, no raw key.
