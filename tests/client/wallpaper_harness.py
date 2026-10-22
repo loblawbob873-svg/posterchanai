@@ -40,7 +40,8 @@ OVERRIDES = {}      # url path -> local file served in its place
 def reset():
     STATE.clear()
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
-                 held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock())
+                 held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock(),
+                 held_open={}, held_seen=0, held_closed_at=None)
 
 
 reset()
@@ -161,11 +162,16 @@ class Relay:
                     if hold == 'late':
                         STATE['held'].append((ws, subid, filters))
                     elif hold == 'never':
-                        pass
+                        # A read this relay will never answer: remember it, so a test can tell when the
+                        # client has GIVEN UP on it (it closes the subscription) instead of sleeping a guess.
+                        STATE.setdefault('held_open', {})[(id(ws), subid)] = __import__('time').monotonic()
+                        STATE['held_seen'] = STATE.get('held_seen', 0) + 1
                     else:
                         await self.answer(ws, subid, filters)
                 elif m[0] == 'CLOSE':
                     self.subs.pop((ws, m[1]), None)
+                    if STATE.get('held_open', {}).pop((id(ws), m[1]), None) is not None:
+                        STATE['held_closed_at'] = __import__('time').monotonic()
                 elif m[0] == 'EVENT':
                     ev = m[1]
                     if isinstance(ev, dict) and ev.get('kind') == 30078:
@@ -640,3 +646,21 @@ async def decoded_layout(b):
         return None
     ev = max(docs, key=lambda e: e['created_at'])
     return await b.js("(async()=>JSON.parse(await __PC.nip44dec(__PC.me().pubkey,%s)))()" % json.dumps(ev['content']))
+
+
+
+async def gave_up(cap, margin=4.0):
+    """Wait until the client has abandoned every read this relay is holding (it CLOSEd them all, after at least
+    one), and then `margin` more seconds with no new held read -- the window in which a wrongly-armed writer would
+    publish. Never longer than `cap`, the flat wait this replaces, so a client that keeps a read open for ever
+    still gets the full window. Measured: the silent-relay tests spent 135s of fixed sleeps."""
+    import asyncio
+    import time
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < cap:
+        seen, opened = STATE.get('held_seen', 0), STATE.get('held_open', {})
+        closed = STATE.get('held_closed_at')
+        if seen and not opened and closed and time.monotonic() - closed >= margin:
+            return time.monotonic() - t0
+        await asyncio.sleep(.25)
+    return cap

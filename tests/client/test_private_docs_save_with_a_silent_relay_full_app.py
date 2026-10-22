@@ -83,7 +83,9 @@ class Devices:
 
 
 async def quiet_for(seconds):
-    await asyncio.sleep(seconds)
+    """Long enough for a wrongly-armed writer to publish: until the client gave up on the silent read and a margin
+    after it, never more than `seconds` (H.gave_up)."""
+    await H.gave_up(seconds)
 
 
 def no_errors(errors):
