@@ -9,16 +9,55 @@
   const _SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
   const _fediPrivate = event => (event.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only');
   // ---- worker RPC (crypto: sign / keygen / nip04 / verify) ----
+  /* A WORKER WHOSE SCRIPT NEVER LOADED IS RESTARTED, AND ONE THAT CANNOT LOAD SAYS SO.
+   *
+   * `new Worker(url)` cannot fail synchronously: a script that does not arrive fires one `error` event
+   * on the Worker and nothing else. Nothing listened. Every call() posted into that dead worker waited
+   * for ever -- and the signer is the first thing a saved session resumes through, so an offline cold
+   * start that lost this one load (measured: `signer-worker.js` ERR_ABORTED, about 1 launch in 15
+   * under load) sat on an EMPTY SCREEN for good: the shell drawn, every module loaded, nobody signed
+   * in and no error anywhere (tests/client/test_pwa_offline_cold_start_full_app.py).
+   * NOTE the worker is OUTSIDE the PWA worker's scope (/static/... vs /client), so Chromium never routes
+   * its script through sw.js: offline it comes from the browser's HTTP cache or not at all (measured:
+   * fetch() of the same URL is answered by the precache, `new Worker()` of it is not).
+   * An error before the worker has EVER answered is a load failure: start it again (backoff) and
+   * re-post what is waiting, since those messages went to a worker that never existed. After a few
+   * tries every waiting call is REJECTED, which resume() already turns into read-only guest with a toast
+   * and a retry -- a sentence instead of a blank page -- and the next call starts the worker afresh. A worker that has answered is never restarted
+   * here: it may hold state, and its errors are its callers' to see. */
   class WorkerRPC {
     constructor(url){
-      this.w = new Worker(url); this.seq = 0; this.pending = new Map();
-      this.w.onmessage = (e) => {
+      this.url = url; this.seq = 0; this.pending = new Map(); this.answered = false; this.tries = 0; this.dead = null;
+      this._start();
+    }
+    _start(){
+      const w = this.w = new Worker(this.url);
+      w.onmessage = (e) => {
+        this.answered = true;
         const { id, ok, data, error } = e.data;
         const p = this.pending.get(id); if (!p) return;
         this.pending.delete(id); ok ? p.res(data) : p.rej(new Error(error || 'worker error'));
       };
+      w.onerror = (e) => {
+        if (this.answered || w !== this.w) return;
+        try{ e.preventDefault(); }catch(_){}
+        try{ w.terminate(); }catch(_){}
+        if (++this.tries > 4){
+          this.dead = new Error('the signer could not start (' + this.url.split('?')[0].split('/').pop() + ' did not load)');
+          for (const p of this.pending.values()) p.rej(this.dead);
+          this.pending.clear();
+          return;
+        }
+        setTimeout(() => {
+          this._start();
+          for (const [id, p] of this.pending) this.w.postMessage({ id, op: p.op, args: p.args });
+        }, 250 * Math.pow(2, this.tries - 1));
+      };
     }
-    call(op, args){ return new Promise((res,rej)=>{ const id = ++this.seq; this.pending.set(id,{res,rej}); this.w.postMessage({ id, op, args }); }); }
+    call(op, args){ return new Promise((res,rej)=>{
+      // Given up earlier: a NEW call (the login retry, a later action) gets a fresh set of tries.
+      if (this.dead){ this.dead = null; this.tries = 0; this._start(); }
+      const id = ++this.seq; this.pending.set(id,{res,rej,op,args}); this.w.postMessage({ id, op, args }); }); }
   }
   const worker = new WorkerRPC('/static/js/client/signer-worker.js?v=' + (self.__VER || ''));
 

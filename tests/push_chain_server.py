@@ -125,8 +125,14 @@ class Server:
         fake.webpush, fake.WebPushException = webpush, WebPushException
         monkeypatch.setitem(sys.modules, "pywebpush", fake)
         real_get = settings_store.get
+        # A REAL key in the shape ensure_vapid stores (PEM): push_service parses it before calling
+        # pywebpush, so a placeholder string would fail exactly as an unusable key would in production.
+        from py_vapid import Vapid
+        _v = Vapid()
+        _v.generate_keys()
+        vapid_pem = _v.private_pem().decode()
         monkeypatch.setattr(settings_store, "get",
-                            lambda k, d=None: "test-vapid-key" if k == "push_vapid_private" else real_get(k, d))
+                            lambda k, d=None: vapid_pem if k == "push_vapid_private" else real_get(k, d))
         monkeypatch.setattr(push_service.direct_push_service, "wake", lambda *_a: None)
         self.loop = asyncio.new_event_loop()
         self.token = None

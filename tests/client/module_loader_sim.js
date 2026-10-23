@@ -43,7 +43,9 @@ const context = {
   },
 };
 vm.createContext(installStateGlobals(context) && context);
-vm.runInContext(`const _lateLoad = {}; ${fn('function _withModule(')};
+// _ontoNewBuild runs for real: with none of app.js's update state defined here it answers "load
+// normally", which is the cold/warm path this checks.
+vm.runInContext(`const _lateLoad = {}; ${fn('function _ontoNewBuild(')}; ${fn('function _withModule(')};
   globalThis.load = () => _withModule('code.js', 'PCCode');
   globalThis.warm = cb => _withModule('code.js', 'PCCode', cb);`, context);
 

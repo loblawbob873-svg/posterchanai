@@ -2115,6 +2115,7 @@
     if(ready) return Promise.resolve(ready);
     const loading = _lzLoading || (_lzLoading = Object.create(null));
     if(!loading[file]){
+      const moving = _ontoNewBuild(file); if(moving) return moving;
       /* A <script> for this file being ON the page is not the same as its factory having ARRIVED: a tag
        * that failed to execute, or a stale copy from an older cached shell, leaves the element there and
        * the factory absent -- and _loadScript resolves at once for a src it has already seen, so this
@@ -2889,7 +2890,7 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music','vms']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music','vms','concord']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -3035,8 +3036,14 @@
       // the self-activating worker + controllerchange handle everything from there.
       navigator.serviceWorker.register(_isApp?'/sw.js':'/client/sw.js',{scope:_isApp?'/':'/client',updateViaCache:'none'}).then(reg=>{
         if(_isApp) return;   // APK: registered purely for media caching — the APK updates itself.
-        try{ reg.update(); }catch(_){}
-        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic check; controllerchange does the rest
+        /* update() REJECTS when the check cannot reach the node -- i.e. on every offline launch -- and a
+         * try/catch cannot see a rejection: it reached the global unhandledrejection surface, so the app
+         * opened offline greeted the person with "⚠ action failed: Failed to update a ServiceWorker…
+         * An unknown error", an alarm about nothing they did. Offline is not an error here; the next
+         * check (or the next launch) simply tries again. tests/client/test_pwa_offline_cold_start_full_app.py */
+        const _check = () => { try{ const p = reg.update(); if(p && p.catch) p.catch(()=>{}); }catch(_){} };
+        _check();
+        setInterval(_check, 900000);   // periodic check; controllerchange does the rest
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
@@ -12045,6 +12052,39 @@
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
+  /* A MODULE FROM THE NEW BUILD IS NEVER GRAFTED ONTO THIS ONE.
+   *
+   * Once a newer service worker controls this page (_onNewController set _newBuild), every app-code
+   * request is answered with the NEW build's bytes -- freshFirst asks the network, and the node only
+   * has the new files; the `?v=` on the request names this page's build and changes nothing. So the
+   * first screen opened after a deploy loaded its module from the new build into a page still running
+   * the old app.js and the old page-tag modules beside it: measured, concord.js from the old build with
+   * cord-reader.js from the new one, and an _lzLoad factory (mail.js, settings.js...) handed the OLD
+   * app.js's deps object. Nothing errors until the two disagree about something, and then it is a
+   * screen that half works with nothing in any log (tests/client/test_pwa_update_full_app.py).
+   *
+   * The only consistent pair is the new page with the new module, so this moves the page onto the new
+   * build and back to the screen being opened. Unsent work survives the reload by the same route as
+   * applyUpdate's (the composer autosaves to Drafts on pagehide; the Outbox is in localStorage). Never
+   * during an upload -- the same exception as the launch-window reload --, never while a call or any
+   * media is live (_busyInBackground: a reload would hang it up), and never in a bundle, whose modules
+   * ship inside the app. In those cases the module loads as before and the Update row stays up. Returns a promise that never settles (the page is going away), or null
+   * to load normally. */
+  function _ontoNewBuild(file){
+    let nb = false;
+    try{ nb = _newBuild && !_apkUpdate && !BUNDLED && !(_uploading > 0) && !_busyInBackground(); }catch(_){ return null; }   // before the update state exists: nothing to move
+    if(!nb) return null;
+    if(!_updApplying){
+      _updApplying = true;
+      try{ console.info('[update] ' + file + ' is from the new build; reloading onto it'); }catch(_){}
+      try{ toast('\u{1F504} Updating to the new version\u2026'); }catch(_){}
+      // Back to the screen being opened: boot honours ?view= for the screens it knows (its VALID list,
+      // which concord joined for this) and lands on the default for any other.
+      const v = (typeof VIEW === 'string' && VIEW) ? ('?view=' + encodeURIComponent(VIEW)) : '';
+      setTimeout(() => { try{ location.replace('/client' + v); }catch(_){ try{ location.reload(); }catch(e){} } }, 250);
+    }
+    return new Promise(() => {});
+  }
   function applyUpdate(){
     // Bundled app update = install a new APK, not an SW reload. Open /apk (served directly by the server,
     // resumable); Capacitor routes the external URL to the system browser → Android download → install.
@@ -12985,6 +13025,7 @@
       return Promise.resolve(window[global]);
     }
     if(!_lateLoad[file]){
+      const moving = _ontoNewBuild(file); if(moving) return moving;
       /* VERSIONED like the page's own tags, and RETRIED after a failure.
        *
        * cord-reader.js used to be a page tag (`?v={{ ver }}`) and is loaded from here now. A bare

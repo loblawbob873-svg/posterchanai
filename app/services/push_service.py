@@ -61,6 +61,43 @@ async def ensure_vapid(db) -> tuple[str, str]:
         return priv, pub
 
 
+_signer: tuple[str, object] | None = None
+
+
+def _vapid_signer(priv: str):
+    """The stored VAPID key as the `Vapid` object pywebpush signs with -- parsed once per key.
+
+    ensure_vapid has always stored the key as PEM. Handed a STRING, pywebpush treats it as a file path
+    and otherwise as base64url DER (`Vapid.from_string`), which a PEM is not -- every Web Push this node
+    ever attempted died in pywebpush with "Could not deserialize key data", logged as a send error and
+    reported to /api/push/test as "could not send", never as the key. Converting here keeps every
+    existing key (and so every browser subscribed against it) valid; a DER/raw key still works.
+    tests/test_web_push_through_a_push_service.py sends through the real pywebpush to a push service that
+    verifies the VAPID signature and decrypts the body."""
+    global _signer
+    if _signer and _signer[0] == priv:
+        return _signer[1]
+    # `Vapid` is py_vapid's RFC 8292 class (`Authorization: vapid t=…, k=…`) -- the one pywebpush itself
+    # builds from a string key; Vapid01 would sign the superseded draft-01 `WebPush` scheme.
+    from py_vapid import Vapid
+    text = priv.strip()
+    v = Vapid.from_pem(text.encode()) if text.startswith('-----BEGIN') else Vapid.from_string(private_key=text)
+    _signer = (priv, v)
+    return v
+
+
+#: How long the push service may hold a notification for a device it cannot reach right now (RFC 8030
+#: section 5.2). pywebpush's default is 0, which tells the service to deliver IMMEDIATELY OR DISCARD -- the
+#: phone asleep in a pocket, the one case Web Push exists for, simply never heard about a mention or a DM.
+#: A call is worth ringing only while it can still be answered.
+_TTL_SECONDS = 86400
+_CALL_TTL_SECONDS = 60
+
+
+def _ttl(payload: dict) -> int:
+    return _CALL_TTL_SECONDS if (payload or {}).get("type") == "call" else _TTL_SECONDS
+
+
 def send(subscription: dict, payload: dict) -> bool:
     """Send ONE notification (blocking — call via asyncio.to_thread). Returns False if the endpoint is
     permanently gone (404/410) so the caller deletes it; True otherwise (sent, or transient failure).
@@ -106,7 +143,8 @@ def send_result(subscription: dict, payload: dict) -> str:
         return "failed"
     try:
         webpush(subscription_info=subscription, data=json.dumps(payload),
-                vapid_private_key=priv, vapid_claims={"sub": _VAPID_SUBJECT}, timeout=10)
+                vapid_private_key=_vapid_signer(priv), vapid_claims={"sub": _VAPID_SUBJECT}, timeout=10,
+                ttl=_ttl(payload))
         return "accepted"
     except WebPushException as e:
         code = getattr(getattr(e, "response", None), "status_code", None)
