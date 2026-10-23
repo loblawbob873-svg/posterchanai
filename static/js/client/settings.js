@@ -1259,7 +1259,12 @@ window.PCSettingsFactory = function(dep){
         const cb=$('#us-ntor-on'), st=$('#us-ntor-state'), cc=$('#us-ntor-cc'), nb=$('#us-ntor-new');
         const paint=(s)=>{
           s=s||{};
-          if(cb) cb.checked=!!s.enabled;
+          /* WHAT THE SHELL SAYS IS NOT AN EDIT. The switch takes effect the moment it is pressed, so its
+           * state is the shell's, never unsaved form input — but renderUserSettings counts any checkbox whose
+           * `checked` differs from `defaultChecked` as somebody's edit and refuses to redraw over it. With
+           * Tor on, every redraw of this screen was refused: "Unlink Telegram" unlinked and the card went on
+           * saying "Linked". */
+          if(cb) cb.checked=cb.defaultChecked=!!s.enabled;
           if(cc){
             const list=[['','Any country (fastest)'], ...((s.countries)||[])];
             cc.innerHTML=list.map(([v,n])=>`<option value="${enc(v)}"${(s.country||'')===v?' selected':''}>${enc(n)}</option>`).join('');
