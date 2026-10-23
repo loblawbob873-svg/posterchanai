@@ -111,8 +111,12 @@ esac
 exit 0
 """)
     (bindir/'apt-get').chmod(0o755)
+    # its own package cache and apt archive: on a CI runner RUNNER_TEMP holds the REAL cached .debs, and copying them
+    # into the real /var/cache/apt through the stand-in sudo is refused (desktop run 39925909551)
+    (tmp_path/'archives').mkdir()
     res = subprocess.run(['bash', '-c', run], cwd=tmp_path, capture_output=True, text=True, timeout=20,
-                         env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH']})
+                         env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
+                              'RUNNER_TEMP': str(tmp_path), 'APT_ARCHIVES': str(tmp_path/'archives')})
     assert (res.returncode == 0) == expect_ok, res.stdout + res.stderr
     args = (tmp_path/'args').read_text()
     assert 'Acquire::http::Timeout=30' in args and 'Acquire::Retries=5' in args, args
