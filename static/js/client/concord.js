@@ -1814,16 +1814,22 @@
    * opened ("i open room but you still see that dot", 2026-10-21) -- and a git row timed by its relay the same. */
   function markRead(room,name){
     if(!(room&&roomIdentity(room)&&accountPk()))return;
-    let newest=Date.now();
-    try{ for(const m of testMessages(channelStoreId(room,name))||[])newest=Math.max(newest,Number(m.at)||0); }catch(_){}
-    try{ const c=channelsOf(room).find(x=>x.name===(name||'general'));if(c&&window.PCConcordGit&&PCConcordGit.channelHasGit(c))newest=Math.max(newest,Number(PCConcordGit.latestAt(room,c))||0); }catch(_){}
+    /* THE SYNCED MARK IS THE NEWEST THING SEEN, NOT THIS DEVICE'S CLOCK. Starting from Date.now() moved the mark on every
+     * render, and each move re-read, re-encrypted, re-signed and republished pcai:concord-read: 27 publishes a minute
+     * from ONE idle browser sitting in a quiet room (measured live by scripts/check_concord_federation_live.py,
+     * 2026-10-22), queued ahead of everything else the page sent. The local cursor may stay "now" (a localStorage
+     * write); what is shared moves only when a newer message does. */
+    let seen=0;
+    try{ for(const m of testMessages(channelStoreId(room,name))||[])seen=Math.max(seen,Number(m.at)||0); }catch(_){}
+    try{ const c=channelsOf(room).find(x=>x.name===(name||'general'));if(c&&window.PCConcordGit&&PCConcordGit.channelHasGit(c))seen=Math.max(seen,Number(PCConcordGit.latestAt(room,c))||0); }catch(_){}
+    const newest=Math.max(Date.now(),seen);
     localStorage.setItem(channelReadKey(room,name),String(newest));
     /* ...and read on every device. Only the desktop render path published the synced mark (gated on viewingChannel),
      * so a room read on the phone cleared its dot there and nowhere else ("concord read room activity not syncing
      * across devices", 2026-10-21). Same value as the local cursor; noteChannelRead never moves a mark backwards.
      * AFTER this render: markRead runs before notifyMentions in render(), and a synced mark written first made a
      * mention that had just arrived read before it was ever announced. */
-    setTimeout(()=>{ try{ const p=PC(); if(p)noteChannelRead(p,room,name||'general',newest); }catch(_){} },0);
+    if(seen)setTimeout(()=>{ try{ const p=PC(); if(p)noteChannelRead(p,room,name||'general',seen); }catch(_){} },0);
   }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))||gitUnread(room,c)); }
   function gitUnread(room,c){ try{ return !!(window.PCConcordGit&&PCConcordGit.channelHasGit(c)&&PCConcordGit.latestAt(room,c)>seenAt(room,c.name)); }catch(_){ return false; } }
