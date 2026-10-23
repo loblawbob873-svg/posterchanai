@@ -385,7 +385,9 @@ jobs:
           grep -q 'data-view="messages"' www/index.html
           grep -q 'static/css/concord.css' www/index.html
           grep -q 'static/js/client/concord.js' www/index.html
-          grep -q 'static/js/client/cord-reader.js' www/index.html
+          # cord-reader.js is loaded ON DEMAND (2026-10-23, -1.1 MB per cold load): bundled (the test -s above), and
+          # deliberately NOT a <script> tag in the page. Requiring the tag failed the desktop build for 6e9f80176.
+          ! grep -q 'static/js/client/cord-reader.js' www/index.html
 
       # Insurance: `--publish never` means electron-builder doesn't run its publisher, and whether it
       # still writes the update feed varies by version. Generate it from the built bytes when missing —
