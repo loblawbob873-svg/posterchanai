@@ -5224,7 +5224,7 @@
       const persistRoom=()=>{if(!currentOwner())return false;const latest=saved(),at=latest.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;
         /* The aliases are the SAVED row's: this pass never edits them, and its copy predates any cleanup -- spread back,
          * it put Rin's invite back on Sorsmenedék right after Join had taken it off (2026-10-22). */
-        const aliases=latest[at].inviteAliases;latest[at]={...latest[at],...room,cord:{...(latest[at].cord||{}),...(room.cord||{})}};
+        const aliases=latest[at].inviteAliases;latest[at]={...latest[at],...room,channels:mergeSavedChannels(latest[at],room),cord:{...(latest[at].cord||{}),...(room.cord||{})}};
         if(aliases)latest[at].inviteAliases=aliases;else delete latest[at].inviteAliases;save(latest);return true;};
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
@@ -5268,7 +5268,10 @@
          * the user left and re-entered the room. */
         const activeNow=saved()[state.community];
         if(roomIdentity(activeNow)===identity){
-          const names=(room.channels||[]).map(channel=>channel.name),wanted=state.channel||'general';
+          /* The SAVED room's channels, not this pass's `room`: the pass began before a channel created meanwhile, so
+           * against its list a channel made a second ago "does not exist" and the creator was moved to #general
+           * (reproduced under load by tests/client/test_concord_git_reconnect_full_app.py, 2026-10-22). */
+          const names=[...new Set([...(activeNow.channels||[]),...(room.channels||[])].map(channel=>channel&&channel.name).filter(Boolean))],wanted=state.channel||'general';
           if(names.length&&!names.includes(wanted)){state.channel=names[0];state.thread=null;}
           backgroundRender();
         }
@@ -5575,6 +5578,23 @@
    * channel that is actually in it. Only called when the id is already known to be missing, so an
    * ordinary tick pays nothing. An empty readable set is "could not ask" — leave everything alone
    * and let the next tick retry, exactly as the control fetch itself does. */
+  /* THIS PASS'S ROOM IS A SNAPSHOT; THE SAVED ROOM MAY BE NEWER. A hydration pass reads the control plane, then writes
+   * its `room` back -- and a channel created, or a repository attached, on this device while it ran is in the SAVED
+   * room only. Spread over it, the pass deleted the new channel and the attachment until the next read brought them
+   * back, and the creator was moved to #general (reproduced 1 run in 4 under load, 2026-10-22). So: every channel the
+   * pass knows, plus a saved one it does not (unless deleted); for a channel both have, the repository history that has
+   * seen more edits -- attach appends and detach stamps detachedAt, so that history only grows. */
+  function mergeSavedChannels(savedRoom,room){
+    const mine=Array.isArray(room&&room.channels)?room.channels:null,theirs=Array.isArray(savedRoom&&savedRoom.channels)?savedRoom.channels:[];
+    if(!mine)return theirs;
+    const gone=new Set([...((room&&room.deletedChannels)||[]),...((savedRoom&&savedRoom.deletedChannels)||[])]);
+    const weight=c=>(Array.isArray(c&&c.repositories)?c.repositories:[]).reduce((n,a)=>n+1+(a&&a.detachedAt!==undefined?1:0),0);
+    const byId=new Map(theirs.filter(c=>c&&c.id).map(c=>[c.id,c]));
+    const out=mine.filter(c=>c&&!gone.has(c.id)).map(c=>{const t=c.id&&byId.get(c.id);return t&&weight(t)>weight(c)?{...c,repositories:t.repositories}:c;});
+    const have=new Set(out.map(c=>c.id).filter(Boolean)),names=new Set(out.map(c=>c.name));
+    for(const t of theirs)if(t&&t.id&&!have.has(t.id)&&!gone.has(t.id)&&!names.has(t.name))out.push(t);
+    return out;
+  }
   function reconcileChannels(reader,bundle,controlWraps,room,wantName){
     let info=null; try{ info=reader.inspectControl(bundle,controlWraps||[]); }catch(_){ return null; }
     const live=((info&&info.channels)||[]).filter(c=>c&&c.name);
