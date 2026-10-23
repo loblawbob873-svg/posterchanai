@@ -187,7 +187,8 @@ def test_device_home_probe_requires_background_audio_and_visible_launcher_togeth
     device = (Path(ROOT) / "mobile/android/app/src/androidTest/java/place/poster/app/music/"
                      "MusicBackgroundDeviceTest.java").read_text()
     assert "after > before + 0.7" in device
-    assert "scenario.getState() == Lifecycle.State.CREATED" in device
+    # polled, not read once: getState() throws while a transition is still in flight (CI 2026-10-23)
+    assert 'reaches(scenario, Lifecycle.State.CREATED, 5000)' in device
     assert 'assertTrue("the emulator did not assign PosterChan the HOME role"' in device
     assert "if (HomeRoles.isDefaultHome(ctx))" not in device
     assert "LauncherState.atHome()" in device
