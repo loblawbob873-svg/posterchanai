@@ -85,7 +85,11 @@ def test_failed_direct_queue_is_not_claimed_as_sent_or_deleted(direct_db, monkey
 @pytest.mark.parametrize('code,expected', [(None, 'accepted'), (410, 'expired'), (503, 'failed')])
 def test_real_webpush_adapter_distinguishes_acceptance_failure_and_expiry(monkeypatch, code, expected):
     import pywebpush
-    monkeypatch.setattr(push.settings_store, 'get', lambda *a: 'private')
+    from py_vapid import Vapid
+    v = Vapid()
+    v.generate_keys()
+    pem = v.private_pem().decode()        # what ensure_vapid stores; a placeholder is now parsed and refused
+    monkeypatch.setattr(push.settings_store, 'get', lambda *a: pem)
     def webpush(**kwargs):
         if code:
             raise pywebpush.WebPushException('test failure', response=SimpleNamespace(status_code=code))

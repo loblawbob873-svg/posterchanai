@@ -492,9 +492,12 @@ async def _call_handler(ev: dict):
         # type 'call' to Calls on its own. Same lesson as the DM's `view` below.
         payload = {"title": "📞 Incoming call", "body": f"{name} is calling…", "type": "call", "author": author,
                    "view": "calls"}
+        dead = []
         for subs in targets.values():
             for sub in subs:
-                await asyncio.to_thread(push_service.send, sub, payload)
+                if not await asyncio.to_thread(push_service.send, sub, payload):
+                    dead.append(sub)         # expired at the push service -- see _dm_handler
+        await _prune(dead)
     except Exception as e:
         logger.warning(f"[nostr-push] call handler error: {e}")
 
@@ -673,6 +676,7 @@ async def _dm_handler(ev: dict):
                    "body": f"{who} sent you a message" if who else "Someone sent you a message",
                    "type": "dm", "view": "messages", "tag": "pc-dm",
                    "wid": str(ev.get("id") or "")}
+        dead = []
         for subs in targets.values():
             for sub in subs:
                 # THE DEVICE'S OWN ANSWER, asked here like everywhere else. This handler was the one
@@ -684,7 +688,13 @@ async def _dm_handler(ev: dict):
                 # preference somebody explicitly switched off.
                 if not push_prefs.allows_row(sub, "dm"):
                     continue
-                await asyncio.to_thread(push_service.send, sub, payload)
+                # "EXPIRED" IS AN ANSWER, AND THIS HANDLER USED TO DROP IT. send() returns False only when
+                # the push service said 404/410 -- the browser unsubscribed or the vendor expired it -- and
+                # the poller prunes on that. The DM and call watchers threw it away, so a dead browser
+                # whose owner only ever got DMs stayed registered and was POSTed every message for ever.
+                if not await asyncio.to_thread(push_service.send, sub, payload):
+                    dead.append(sub)
+        await _prune(dead)
     except Exception as e:
         logger.warning(f"[nostr-push] dm handler error: {e}")
 

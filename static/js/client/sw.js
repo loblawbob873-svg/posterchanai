@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v2441';
+const CACHE = 'pc-nostr-v2442';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -357,11 +357,26 @@ function cacheFirst(req){
 // Without this, /client?compose=1, ?view=notifications, ?view=messages and ?shared=1 — i.e. every
 // home-screen shortcut and the OS share sheet, the most app-like entry points there are — were exact-match
 // cache misses and so the ONLY parts of the app guaranteed to fail offline.
-function shellDoc(req){
-  return caches.open(CACHE).then(cache => cache.match('/client').then(hit => {
-    const net = fetch(req).then(res => { if (res && res.ok) cache.put('/client', res.clone()); return res; })
-                          .catch(() => hit);
-    return hit || net.then(r => r || Response.error());
+//
+// NETWORK FIRST, the cached shell after APP_FRESH_MS or on failure -- the rule freshFirst already applies
+// to every script this document loads. It was cache-first, and that split the app across two builds on
+// every launch after a deploy: the PREVIOUS build's document (its `?v=`, its markup, its inline config)
+// painted, while each of its script tags was answered fresh from the network with the NEW build's
+// bytes. The new modules ran on the old shell until the new worker's controllerchange reloaded the page
+// seconds later (tests/client/test_pwa_update_full_app.py measured exactly that: ver 1000 + every module
+// from build B). Offline, or on a radio that does not answer in time, the cached shell is served as before.
+function shellDoc(req, clientId){
+  return caches.open(CACHE).then(cache => new Promise(resolve => {
+    let settled = false;
+    const done = r => { if (!settled && r) { settled = true; resolve(r); } };
+    const fallback = () => cache.match('/client').then(hit => { if (hit && !settled) _fromCache(clientId); done(hit); }).catch(() => {});
+    const timer = setTimeout(fallback, APP_FRESH_MS);
+    // No RequestInit: a navigate-mode Request cannot be re-constructed with one. The route answers no-store.
+    fetch(req).then(res => {
+      clearTimeout(timer);
+      if (res && res.ok) { cache.put('/client', res.clone()).catch(() => {}); done(res); }
+      else fallback().then(() => done(res || Response.error()));
+    }).catch(() => { clearTimeout(timer); fallback().then(() => done(Response.error())); });
   }));
 }
 // /client/config: relay_url, blossom_url, admin npubs, branding. It used to bypass the SW entirely, so
@@ -379,14 +394,38 @@ function shellDoc(req){
  * the cached copy, so a plane still gets the app instantly. `no-store` on the network attempt stops
  * the HTTP cache answering with the same stale body the SW was already holding. */
 const APP_FRESH_MS = 2500;
-function freshFirst(req){
+/* ONE PAGE, ONE SOURCE. A page whose DOCUMENT came from the cache (offline, or the network slower than
+ * APP_FRESH_MS) takes its app code from the cache as well, without racing the network: otherwise a slow
+ * shell answered from the cache and quick script fetches answered fresh pair one build's markup with
+ * the next build's modules. Keyed on the client the navigation created (resultingClientId -> clientId);
+ * bounded, and lost with the worker, which only means the next request races as before. */
+const _cachedPages = new Set();
+function _fromCache(id){
+  if (!id) return;
+  _cachedPages.add(id);
+  if (_cachedPages.size > 64) _cachedPages.delete(_cachedPages.values().next().value);
+}
+/* THE FALLBACK IS EXACT FIRST, THEN THE BARE PRECACHED PATH -- the same order staleWhileRevalidate
+ * keeps, and for the same reason. The page asks for `app.js?v=<mtime>`; install precaches SHELL's
+ * BARE paths; the first visit's own script tags load before this worker controls the page, so they
+ * are never stored under their versioned URL at all. An exact-only fallback therefore answered
+ * NOTHING on the first offline cold start after an install (or after an update the user never
+ * reloaded onto): the shell document came from the cache, every script tag failed, and a signed-in
+ * user was shown the sign-in screen with no app behind it (tests/client/test_pwa_offline_cold_start_full_app.py).
+ * The loose match runs only once the network has failed or stalled, so online it can never hand an
+ * old build to a new page; `_put` keeps one copy per path, so it can only ever find the newest. */
+function freshFirst(req, clientId){
+  if (clientId && _cachedPages.has(clientId))
+    return caches.open(CACHE).then(cache => cache.match(req).then(hit => hit || _stale(cache, req))
+      .then(hit => hit || fetch(req)).catch(() => Response.error()));
   return caches.open(CACHE).then(cache => new Promise(resolve => {
     let settled = false;
-    const fallback = () => cache.match(req).then(hit => { if (hit && !settled) { settled = true; resolve(hit); } });
+    const fallback = () => cache.match(req).then(hit => hit || _stale(cache, req))
+      .then(hit => { if (hit && !settled) { settled = true; resolve(hit); } }).catch(() => {});
     const timer = setTimeout(fallback, APP_FRESH_MS);
     fetch(req, { cache: 'no-store' }).then(res => {
       clearTimeout(timer);
-      if (res && res.ok) { cache.put(req, res.clone()).catch(() => {}); if (!settled) { settled = true; resolve(res); } }
+      if (res && res.ok) { _put(cache, req, res.clone()).catch(() => {}); if (!settled) { settled = true; resolve(res); } }
       else if (!settled) fallback().then(() => { if (!settled) { settled = true; resolve(res); } });
     }).catch(() => { clearTimeout(timer); fallback().then(() => { if (!settled) { settled = true; resolve(Response.error()); } }); });
   }));
@@ -709,7 +748,7 @@ self.addEventListener('fetch', e => {
 
   // Launching the app (or a shortcut / share / OAuth return) — answer from the shell doc, query and all.
   if (e.request.mode === 'navigate' && (url.pathname === '/client' || url.pathname === '/client/')){
-    e.respondWith(shellDoc(e.request)); return;
+    e.respondWith(shellDoc(e.request, e.resultingClientId)); return;
   }
 
   const isAppCode = url.pathname === '/client' || url.pathname === '/client/' ||
@@ -728,7 +767,7 @@ self.addEventListener('fetch', e => {
   const isShellArt = url.origin === self.location.origin && SHELL_PATHS.has(url.pathname) &&
     (e.request.destination === 'image' || e.request.destination === 'video');
 
-  if (isAppCode) e.respondWith(freshFirst(e.request));
+  if (isAppCode) e.respondWith(freshFirst(e.request, e.clientId));
   else if (isVendorOrIcon || isShellArt) e.respondWith(cacheFirst(e.request));
   // Encrypted-drive blobs (fetch(), so destination ''), BEFORE the destination rules below: a public
   // <img> pointing at the same path is ordinary media and keeps going to MEDIA_CACHE.
@@ -760,7 +799,7 @@ self.addEventListener('fetch', e => {
   // Our own client code — the one thing that must never be a version behind on a reload.
   else if (url.origin === self.location.origin
            && (url.pathname.startsWith('/static/js/client/') || url.pathname.startsWith('/static/css/')))
-    e.respondWith(freshFirst(e.request));
+    e.respondWith(freshFirst(e.request, e.clientId));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
 });
 
