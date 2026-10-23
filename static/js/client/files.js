@@ -1799,6 +1799,12 @@ window.PCFilesFactory = function(dep){
         + '<span class="muted small">Your files are safe — this is the shared list of them, not the files.</span></div>';
       return;
     }
+    /* THE TRASH HEADER NEEDS THE FOLDER'S RECORD, AND THE SIDEBAR WAS DRAWN BEFORE IT ARRIVED. `_fxDeletedHTML`
+     * reads `_syncManifests`, which the await above fills — so the first visit to a synced folder drew the sidebar
+     * with no Trash at all, and the account-wide undo stayed hidden until something else happened to repaint
+     * (found pressing #fx-del-toggle in a test, 2026-10-22). Repaint once now that it can be drawn: the check is
+     * the very HTML the next pass draws, so that pass finds it and never comes back here. */
+    if(!$('#fx-del-toggle', pane) && _fxSyncedHTML().includes('id="fx-del-toggle"')) return renderBlossom();
     /* THE TRASH IS A FOLDER, BROWSED LIKE ANY OTHER.
      *
      * It used to be a collapsed block of DATES with a Restore button per date — you could see that
