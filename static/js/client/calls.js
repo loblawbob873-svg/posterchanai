@@ -61,17 +61,25 @@ window.PCCallsFactory = function(dep){
    * short-lived socket when the user has dropped our relay from their list, which is exactly the case
    * that otherwise silently breaks ringing: the server's push watcher subscribes to its OWN relay, so a
    * frame that never reaches it means the callee's closed phone is never woken. */
+  /* Resolves true the moment ANY relay accepted the frame, false once every one of them has said no (or gone
+   * quiet past its late window). Only the invite's answer is used: it is what tells "nobody picked up" apart
+   * from "the call never left this device" — two outcomes the caller used to be told the same "no answer" for. */
+  function _anyTrue(ps){ return new Promise(res=>{ let left=ps.length; if(!left){ res(false); return; }
+    const one=v=>{ if(v) res(true); else if(--left===0) res(false); };
+    ps.forEach(p=>Promise.resolve(p).then(one, ()=>one(false))); }); }
   function _callPublish(ev){
-    try{ Relay.publish(ev); }catch(_){}
+    const tries=[];
+    try{ tries.push(Promise.resolve(Relay.publish(ev)).then(r=>(r&&r.ok) ? true : (r&&r.late ? r.late.then(Boolean) : false))); }catch(_){}
     // normalizeRelay is REQUIRED, not tidiness: publishTo's skip is a raw string compare against the pool
     // keys, and those are normalized (trailing slash stripped, scheme prepended) whenever relays are
     // configured. Our own default list writes 'wss://relay.poster.place/' WITH the slash, so passing
     // CFG.relay_url verbatim misses the match and opens a NEW SOCKET PER SIGNALING FRAME — and there is one
     // frame per ICE candidate, i.e. ~8-20 sockets in two seconds per call, more for a group room.
     try{ const own = (S.CFG && S.CFG.relay_url) ? [normalizeRelay(S.CFG.relay_url)].filter(Boolean) : [];   // empty on a standalone install (no instance)
-      if(own.length) Relay.publishTo(own, ev).catch(()=>{}); }catch(_){}
+      if(own.length) tries.push(Relay.publishTo(own, ev).then(n=>n>0).catch(()=>false)); }catch(_){}
     try{ if(_call && _call.signalRelays && _call.signalRelays.length)
-      Relay.publishTo(_call.signalRelays, ev).catch(()=>{}); }catch(_){}
+      tries.push(Relay.publishTo(_call.signalRelays, ev).then(n=>n>0).catch(()=>false)); }catch(_){}
+    return _anyTrue(tries);
   }
   /* The ONE frame per call that should wake a phone, marked in the clear so the server can tell.
    *
@@ -101,8 +109,8 @@ window.PCCallsFactory = function(dep){
       const payload=Object.assign({},obj,{deviceId:_CALL_DEVICE_ID});
       const ct = await S.signer.nip44enc(peerHex, JSON.stringify(payload));
       const ev = await sign(CALL_KIND, ct, _callTags(peerHex, obj));   // ephemeral, not stored, no client tag
-      _callPublish(ev);
-    }catch(_){}
+      return { delivered:_callPublish(ev) };   // wrapped: an awaited caller must not wait for the relays' answers
+    }catch(_){ return { delivered:Promise.resolve(false) }; }
   }
   /* Prefer H.264 on the video sender, so BOTH ends use the hardware encoder/decoder.
    *
@@ -1006,9 +1014,16 @@ window.PCCallsFactory = function(dep){
       if(!_call || _call.pc!==pc){ return; }
     }catch(_){ if(_call===activeCall){toast('couldn’t start the call');_hangup(false);}return; }
     _callUI();
-    await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, remoteDesktop,
+    const sent = await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, remoteDesktop,
                               sdp: pc.localDescription.sdp});
-    if(_call===activeCall) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
+    /* "No answer" is a claim about the OTHER person, so it is only said when a relay took the invite. A call
+     * no relay accepted (offline, every relay refused) ends at once and says so; one no relay has confirmed
+     * by the time the caller gives up says THAT, not that they were ignored. */
+    if(_call!==activeCall) return;
+    if(sent && sent.delivered) sent.delivered.then(ok=>{ if(_call!==activeCall) return; _call.inviteDelivered=ok;
+      if(!ok && _call.state==='calling'){ toast('call not delivered — no relay accepted it. Check your connection.'); _hangup(true); } });
+    _call.timeout = setTimeout(()=>{ if(_call===activeCall && _call.state==='calling'){
+      toast(_call.inviteDelivered ? 'no answer' : 'call not delivered — no relay confirmed it. Check your connection.'); _hangup(false); } }, 45000);
   }
   const _remoteDesktopResolved=new Map();
   async function _remoteDesktopAddress(peer){
