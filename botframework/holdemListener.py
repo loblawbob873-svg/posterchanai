@@ -72,6 +72,12 @@ _IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_ids_{_suffix()}")
 _DM_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_dms_{_suffix()}")
 _CMD_IDS_FILE = os.path.join(_STATE_DIR, f".processed_holdem_cmds_{_suffix()}")
 _MAX_IDS = 5000
+# The seed (first run with no dedup file: claim history WITHOUT acting on it) covers only what was written BEFORE
+# this process started. The seed used to last until the first claim CREATED the file -- so on a node with no
+# history yet, the first command, mention or DM ever sent to this bot was claimed as "history" and dropped: the
+# first person to press Deal got no table, and nothing in any log said why
+# (tests/client/test_table_games_between_two_accounts_full_app.py runs a fresh bot exactly like that).
+_SEED_BEFORE = int(time.time())
 
 
 def _claim_in(ids_file, item_id):
@@ -776,7 +782,7 @@ def process_holdem():
             continue
         if ev.get("created_at", 0) < cutoff:
             continue
-        if seed_cmds:
+        if seed_cmds and ev.get("created_at", 0) < _SEED_BEFORE:
             _claim_cmd(eid)        # seed only — don't replay commands on a fresh deploy
             continue
         if not _claim_cmd(eid):
@@ -796,7 +802,7 @@ def process_holdem():
             continue   # never engage ANOTHER of our bots — anti-loop (a game bot must not play itself)
         if (note.get("_event") or {}).get("created_at", 0) < cutoff:
             continue
-        if seed_mentions:
+        if seed_mentions and (note.get("_event") or {}).get("created_at", 0) < _SEED_BEFORE:
             _claim(nid)        # seed only — do not act on history
             continue
         root = _root_id(note)
@@ -827,7 +833,7 @@ def process_holdem():
             continue
         if dm.get("created_at", 0) < cutoff:
             continue
-        if seed_dms:
+        if seed_dms and dm.get("created_at", 0) < _SEED_BEFORE:
             _claim_dm(rid)     # seed only — do not replay old moves
             continue
         gameid, move_text = _clean_dm_text(dm.get("text") or "")

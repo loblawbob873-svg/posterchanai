@@ -362,7 +362,7 @@ class Foreign:
 
 
 # ------------------------------------------------------------------------------------------------ the instance
-NODE = {'home': None, 'api': {}, 'seen': []}
+NODE = {'home': None, 'api': {}, 'seen': [], 'config': {}}   # config: extra /client/config keys (game bot npubs, ...)
 
 
 class Instance(H.Instance):
@@ -412,7 +412,7 @@ class Instance(H.Instance):
             return self._splice_to(home.port)    # an APP route on a real node (nginx -> 3051), never the relay port
         if p == '/client/config' and home is not None:
             return self._json({'nostr_only': False, 'relay_url': home.url, 'relays': [home.url],
-                               'default_relays': [home.url], 'blossom_enabled': True})
+                               'default_relays': [home.url], 'blossom_enabled': True, **NODE['config']})
         if p in NODE['api']:
             v = NODE['api'][p]
             return self._json(v() if callable(v) else v)
@@ -441,6 +441,7 @@ class Node:
             H.EMPTY = H.EmptyRelay().start()
         NODE['home'] = self.home
         NODE['seen'] = []
+        NODE['config'] = {}
         NODE['api'] = {'/client/concord/tunnel-ticket': {'ticket': TICKET if tunnel else '', 'ttl': 3600}}
         full.ROOT = ROOT
         self.http = ThreadingHTTPServer(('127.0.0.1', 0), Instance)

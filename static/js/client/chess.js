@@ -132,7 +132,11 @@
         if(hidden.has(gid)) continue;   // resigned/quit or cleared from this device
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).filter(g=>['active'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1) || (b.started||0)-(a.started||0));
+      // In-progress games AND recently-finished ones (last 2 days), as tic-tac-toe and Connect 4 do: a game that
+      // vanished the moment it ended meant neither player ever saw the checkmate or who won -- the result banner
+      // in _fillChessCard was unreachable. The ✕ dismisses a finished game; old ones age out on their own.
+      const _recent = Math.floor(Date.now()/1000) - 2*86400;
+      const games=Object.values(byGame).filter(g=> g.status==='active' || (g._t||0) > _recent).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1) || (b.started||0)-(a.started||0));
       if(!games.length){ list.innerHTML='<div class="empty">No games yet. Challenge someone above to start one.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"><div class="spinner"></div></div>`).join('');
       games.forEach((g,i)=>_fillChessCard(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
