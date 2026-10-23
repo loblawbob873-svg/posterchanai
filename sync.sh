@@ -199,12 +199,15 @@ fi
 # extension change reaches users ONLY through this push — skip the mirror and the .xpi on
 # poster.place/extension silently stays at the previous build.
 # NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
-git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
+# RETRIED: one "Could not resolve hostname github.com" (2026-10-22, a DNS blip seconds before the master push went
+# through) left the mirror's main behind and NO app build started for that deploy. Three tries, 10s apart.
+_push_github() { for _try in 1 2 3; do git push github "$1" && return 0; sleep 10; done; return 1; }
+_push_github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 # AND THE MIRROR'S OWN `master`, which is a MIRROR ONLY: the workflows trigger on `main` alone (they used to trigger
 # on both, so a master push re-ran every app build and Mozilla refused the duplicate add-on upload with
 # "Conflict"). It sat two months behind production because nothing ever pushed it (2026-10-22, "make sure both
 # repos are on the same level and consistent"). Verified below with the other three branch tips.
-git push github master:master || echo "[sync] WARN: could not update the mirror's master"
+_push_github master:master || echo "[sync] WARN: could not update the mirror's master"
 
 # AND KEEP THE HOSTED `main` IN STEP WITH master ON THE NOSTR HOST TOO.
 #

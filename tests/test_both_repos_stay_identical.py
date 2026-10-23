@@ -14,8 +14,10 @@ SYNC = (ROOT / "sync.sh").read_text(encoding="utf-8")
 
 
 def test_sync_pushes_all_four_branch_tips():
-    for push in ("git push github master:main", "git push github master:master", "git push origin master:main"):
+    for push in ("_push_github master:main", "_push_github master:master", "git push origin master:main"):
         assert push in SYNC, push
+    # a DNS blip must not skip the app builds: the GitHub pushes are retried
+    assert re.search(r'_push_github\(\) \{ for _try in 1 2 3; do git push github "\$1" && return 0; sleep 10; done; return 1; \}', SYNC)
     # `git push` itself moves origin/master (the deploy); the explicit refspecs move the other three.
     assert re.search(r"for _r in origin:master origin:main github:main github:master; do", SYNC), \
         "the end-of-deploy check does not verify every branch tip on both repositories"
