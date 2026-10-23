@@ -1325,11 +1325,17 @@ window.PCSettingsFactory = function(dep){
       if(row && sw){
         if(!B){ row.remove(); }
         else{
-          if(B.systemBars) B.systemBars().then(r=>{ sw.checked=!!(r&&r.hidden); }).catch(()=>{});
+          /* WHAT THE PHONE SAYS IS NOT AN EDIT. The switch takes effect on the phone the moment it is pressed,
+           * so its state is the phone's, never unsaved form input — but renderUserSettings counts any checkbox
+           * whose `checked` differs from `defaultChecked` as somebody's edit and refuses to redraw over it. With
+           * the bars hidden, every redraw of this screen was refused: "Unlink Telegram" unlinked and the card
+           * went on saying "Linked" (the same bug as the desktop Tor switch). */
+          const set=on=>{ sw.checked=sw.defaultChecked=!!on; };
+          if(B.systemBars) B.systemBars().then(r=>{ set(r&&r.hidden); }).catch(()=>{});
           sw.onchange=()=>{ const want=sw.checked; sw.disabled=true;
             B.setSystemBarsHidden({hidden:want})
-              .then(r=>{ sw.checked=!!(r&&r.hidden); toast(sw.checked?'system bars hidden — swipe from the edge to show them':'system bars shown'); })
-              .catch(()=>{ sw.checked=!want; toast('could not change the system bars'); })
+              .then(r=>{ set(r&&r.hidden); toast(sw.checked?'system bars hidden — swipe from the edge to show them':'system bars shown'); })
+              .catch(()=>{ set(!want); toast('could not change the system bars'); })
               .finally(()=>{ sw.disabled=false; }); };
         }
       } }
