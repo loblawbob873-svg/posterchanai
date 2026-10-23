@@ -809,23 +809,56 @@ class ConcordMirror:
     # community. One accepted delivery is remembered per id; a FAILED one is not, so a retry still goes out.
     _FORWARDED_MAX = 20000
 
-    async def forward(self, ev: dict) -> bool:
+    # DELIVERED IS PER RELAY. "At least one relay accepted it" used to mark a wrap done everywhere, so a relay whose link
+    # timed out or was reconnecting never got it from the forward -- only from the slower history copy, minutes later
+    # or not at all: measured 2026-10-22 by scripts/check_concord_federation_live.py, a message on ONE of a community's
+    # three relays after 40-71s, the other two still without it a minute later. Armada members reading those relays
+    # did not see PosterChan members' messages. Each relay that has not accepted is retried, a few times, in the
+    # background; a member's re-publish only goes to the relays still missing it.
+    _FORWARD_RETRIES = (5.0, 30.0)
+
+    async def forward(self, ev: dict, _retrying: bool = False) -> bool:
         """Deliver a member's wrap to the community's relays. True when at least one accepted it."""
         eid = ev.get("id", "")
         done = self.__dict__.setdefault("_forwarded", collections.OrderedDict())
-        if eid and eid in done:
+        wanted = [u for u in self._relays_for(ev.get("pubkey", "")) if u in self.links]
+        accepted = done.get(eid) if eid else None
+        if accepted is not None:
             done.move_to_end(eid)
-            return True
-        links = [self.links[u] for u in self._relays_for(ev.get("pubkey", "")) if u in self.links]
-        if not links:
-            return False
-        results = await asyncio.gather(*(link.publish(ev) for link in links), return_exceptions=True)
-        ok = any(r is True for r in results)
-        if ok and eid:
-            done[eid] = True
+        missing = [u for u in wanted if not accepted or u not in accepted]
+        if not missing:
+            return bool(accepted)
+        results = await asyncio.gather(*(self.links[u].publish(ev) for u in missing), return_exceptions=True)
+        now_ok = {u for u, r in zip(missing, results) if r is True}
+        if eid and now_ok:
+            done[eid] = (accepted or set()) | now_ok
             while len(done) > self._FORWARDED_MAX:
                 done.popitem(last=False)
-        return ok
+        # A relay that refused or timed out while another accepted: retried in the background, bounded. A wrap NO relay
+        # took is the caller's failure to retry (as before) -- the background never owns it.
+        if eid and not _retrying and len(now_ok) < len(missing) and (accepted or now_ok):
+            self._retry_forward_later(ev)
+        return bool(now_ok or accepted)
+
+    def _retry_forward_later(self, ev: dict) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        tasks = self.__dict__.setdefault("_forward_retries", set())
+        if len(tasks) > 2000:                       # bounded: a long relay outage is the history copy's job
+            return
+
+        async def later():
+            for delay in self._FORWARD_RETRIES:
+                await asyncio.sleep(delay)
+                await self.forward(ev, _retrying=True)
+                have = (self.__dict__.get("_forwarded") or {}).get(ev.get("id", "")) or set()
+                if all(u in have for u in self._relays_for(ev.get("pubkey", "")) if u in self.links):
+                    return
+        t = loop.create_task(later())
+        tasks.add(t)
+        t.add_done_callback(tasks.discard)
 
     async def forward_ephemeral(self, ev: dict) -> None:
         for u in self._relays_for(ev.get("pubkey", "")):

@@ -150,3 +150,36 @@ def test_the_firehose_does_not_rebroadcast_an_event_the_store_already_held():
     fh, srv = _shipped_firehose(fresh)
     asyncio.run(fh(build_event(SK, 1, "brand new")))
     srv.subs.fanout.assert_called_once()
+
+
+def test_a_relay_that_missed_a_forward_gets_it_from_the_retry_and_the_others_never_twice():
+    """2026-10-22, measured by scripts/check_concord_federation_live.py: one of a community's three relays accepted a
+    member's message and that marked it delivered everywhere -- the other two got it only from the slower history
+    copy, a minute later or not at all, so Armada members reading them missed PosterChan members' messages. Delivery
+    is per relay now: a relay that timed out is retried in the background (bounded), one that accepted is never sent
+    it again, and one that never accepts is not retried for ever."""
+    from app.services.nostr_relay.concord_mirror import ConcordMirror
+
+    class Link:
+        def __init__(self, answers):
+            self.answers, self.sent = list(answers), []
+
+        async def publish(self, ev):
+            self.sent.append(ev["id"])
+            return self.answers.pop(0) if self.answers else True
+
+    async def run():
+        m = ConcordMirror.__new__(ConcordMirror)
+        m._FORWARD_RETRIES = (0.05, 0.1)
+        a, b, dead = Link([True]), Link([False, True]), Link([False, False, False, False])
+        m.links = {"wss://a": a, "wss://b": b, "wss://dead": dead}
+        m._relays_for = lambda author: ["wss://a", "wss://b", "wss://dead"]
+        wrap = {"id": "4" * 64, "pubkey": "5" * 64, "kind": 1059}
+        assert await m.forward(wrap) is True
+        await asyncio.sleep(0.5)                      # both background retries have run
+        return a.sent, b.sent, dead.sent
+
+    a_sent, b_sent, dead_sent = asyncio.run(run())
+    assert len(a_sent) == 1, ("a relay that accepted was sent the wrap again", len(a_sent))
+    assert len(b_sent) == 2, ("the relay that timed out was not retried (or retried after it accepted)", len(b_sent))
+    assert len(dead_sent) == 3, ("a relay that never accepts must be retried a bounded number of times", len(dead_sent))
