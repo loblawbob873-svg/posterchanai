@@ -3753,6 +3753,71 @@
     await Promise.all(Array.from({length: Math.min(HYDRATE_LANES, queue.length)}, lane));
   }
 
+  /* SAVING AN ATTACHMENT, from the thread itself ("sms apk does not let me save media attachments").
+   *
+   * Only a file that was neither a picture, a video nor a sound had a Save button. A picture could be
+   * saved only from the lightbox; a video's full-screen viewer offers no Save (the lightbox shows it
+   * for images only); and a voice note or song had no way out at all. Every attachment now carries
+   * the same Save under it.
+   *
+   * THE ORIGINAL, NEVER THE PREVIEW. A remote thread draws a picture from its thumbnail; saving that
+   * would keep a small re-encoded copy of a photo somebody sent at full size.
+   *
+   * `strict`: on the APK a write the phone REFUSES is reported, with the phone's own words, instead of
+   * quietly opening the share sheet -- the person pressed Save and has to be told it did not happen.
+   * A phone that cannot save directly at all (Android 9, an APK older than MediaSave) still gets the
+   * share sheet, which is saveBlobAs's documented fallback. */
+  async function attOriginal(p, d){
+    if(d.preview && p.sha && PC.encFileUrl){
+      const url = await PC.encFileUrl(p.sha, p.ct || 'application/octet-stream');
+      const r = await fetch(url);
+      if(r && r.ok === false) throw new Error('the original is not in your encrypted storage');
+      return await r.blob();
+    }
+    return d.blob;
+  }
+  function attFileName(p, blob){
+    const ct = String((p && p.ct) || (blob && blob.type) || '').split(';')[0].trim().toLowerCase();
+    let nm = String((p && p.name) || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+    if(!nm || nm === '.' || nm === '..') nm = attLabel(p).toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'attachment';
+    if(!/\.[A-Za-z0-9]{1,8}$/.test(nm)){
+      const sub = (ct.split('/')[1] || '').replace(/^x-/, '');
+      const ext = ({jpeg:'jpg', 'svg+xml':'svg', quicktime:'mov', '3gpp':'3gp', '3gpp2':'3g2', mpeg:/^audio/.test(ct) ? 'mp3' : 'mpg',
+                   'vcard':'vcf', plain:'txt'})[sub] || (/^[a-z0-9]{1,8}$/.test(sub) ? sub : '');
+      if(ext) nm += '.' + ext;
+    }
+    return nm.slice(-120);
+  }
+  async function saveAtt(btn, p, d){
+    const label = attLabel(p);
+    if(btn) btn.disabled = true;
+    try{
+      let blob;
+      try{ blob = await attOriginal(p, d); }
+      catch(e){ PC.toast('Could not save ' + label + ': ' + String((e && e.message) || e)); return 'failed'; }
+      if(!blob || !blob.size){ PC.toast('Could not save ' + label + ': it has no bytes'); return 'failed'; }
+      if(p.ct && blob.type !== p.ct) try{ blob = new Blob([blob], {type: p.ct}); }catch(_){ }
+      let how;
+      try{ how = await PC.saveBlobAs(blob, attFileName(p, blob), {quiet: true, strict: true}); }
+      catch(e){ PC.toast('Could not save ' + label + ': ' + String((e && e.message) || e || 'the phone refused it')); return 'failed'; }
+      const where = /^saved:/.test(String(how || '')) ? String(how).slice(6) : '';
+      if(where) PC.toast(label + ' saved to ' + where);
+      return how;
+    }finally{ if(btn) btn.disabled = false; }
+  }
+  function saveButton(p, d){
+    const b = document.createElement('button');
+    b.className = 'sms-att-open sms-att-save';
+    b.type = 'button';
+    b.textContent = 'Save ' + attLabel(p).toLowerCase();
+    b.setAttribute('aria-label', 'Save ' + attLabel(p));
+    /* PC.saveBlobAs, NEVER a bare `<a download>`. The APK's WebView ignores a programmatic download
+     * and the desktop's app:// origin refuses one, so an anchor is a button that silently does
+     * nothing on two of the three platforms this ships to. */
+    b.onclick = (e) => { if(e) e.stopPropagation(); saveAtt(b, p, d); };
+    return b;
+  }
+
   function drawAtt(el, p, d){
     el.innerHTML = '';
     if(isImage(p.ct)){
@@ -3772,6 +3837,7 @@
         try{ PC.openLightbox(url, 'image'); }catch(_){ }
       };
       el.appendChild(img);
+      el.appendChild(saveButton(p, d));
       return;
     }
     if(isVideo(p.ct) || isAudio(p.ct)){
@@ -3793,19 +3859,10 @@
         full.onclick = () => { try{ PC.openLightbox(d.url, 'video'); }catch(_){} };
         el.appendChild(full);
       }
+      el.appendChild(saveButton(p, d));
       return;
     }
-    const b = document.createElement('button');
-    b.className = 'btn small';
-    b.textContent = 'Save ' + attLabel(p);
-    /* PC.saveBlobAs, NEVER a bare `<a download>`. The APK's WebView ignores a programmatic download
-     * and the desktop's app:// origin refuses one, so an anchor is a button that silently does
-     * nothing on two of the three platforms this ships to. */
-    b.onclick = async () => {
-      try{ await PC.saveBlobAs(d.blob, p.name || ('attachment.' + (String(p.ct||'').split('/')[1] || 'bin'))); }
-      catch(_){ PC.toast('could not save that attachment'); }
-    };
-    el.appendChild(b);
+    el.appendChild(saveButton(p, d));
   }
 
   /* Preserve the message being read while async attachment media takes its real height. A total

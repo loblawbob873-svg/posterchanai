@@ -780,9 +780,11 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
      * re-decrypts every picture in it on every keystroke. */
     if(opt.hydrateProbe.twice) await S._hydrateAtt(root, msgs);
     hydrateProbe = {done: els.map(el => (el.dataset && el.dataset.done) === '1' ? 1 : 0),
-                    // How many times each placeholder was DRAWN INTO. drawAtt appends the <img>,
-                    // so a second pass that re-does finished work shows up as a second child.
-                    drawn: els.map(el => el.children.length)};
+                    // How many times each placeholder was DRAWN INTO. drawAtt appends the <img>
+                    // (and, since every attachment got a Save, a button beside it), so a second pass
+                    // that re-does finished work shows up as a second <img> -- counted by its class,
+                    // not as children, which the Save button would double.
+                    drawn: els.map(el => el.children.filter(k => k && k.className === 'sms-att-img').length)};
   }
   let hydrationProbe = null;
   if(opt.hydrationProbe){

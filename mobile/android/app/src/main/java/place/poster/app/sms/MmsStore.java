@@ -497,6 +497,13 @@ public final class MmsStore {
         }
     }
 
+    /** The part's bytes as a stream, for a caller that copies them somewhere (MmsPartSave) rather than
+     * holding them: a 90 MB video saved to the phone never sits whole in this process. Caller closes. */
+    public static InputStream partStream(Context ctx, long partId) throws java.io.IOException {
+        return ctx.getContentResolver().openInputStream(
+                Uri.withAppendedPath(PART_URI, String.valueOf(partId)));
+    }
+
     /** A bounded slice for the WebView bridge. Large MMS media must not be converted into one giant
      * base64 string: Android, Capacitor and JavaScript each retain a copy and can kill the app even
      * when the raw file itself fits comfortably. The caller advances by the returned byte count. */

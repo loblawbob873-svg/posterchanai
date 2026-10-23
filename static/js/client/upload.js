@@ -774,18 +774,26 @@ window.PCUploadFactory = function(dep){
   async function saveBlobAs(blob, name, opts){
     name=name||'file';
     if(_isNativeApp()){
+      /* `opts.strict`: a write the phone REFUSED throws, with the phone's own words, instead of turning
+       * into a share sheet -- for a caller whose button says Save and must say when it did not. A phone
+       * that cannot save directly at all (no MediaSave, Android 9) still gets the sheet either way. */
+      let refused=null;
       try{
         const P=(window.Capacitor&&Capacitor.Plugins)||{}, M=P.MediaSave;
         if(M && typeof M.available==='function' && ((await M.available())||{}).ok){
-          const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'',
-                                 hint: (opts && opts.kind) ? String(opts.kind) : '' });
-          if(r && r.ok){
-            const where=String(r.where||('Download/PosterChan/'+name));
-            if(!(opts&&opts.quiet)) try{ toast('saved to '+where); }catch(_){ }
-            return 'saved:'+where;
-          }
+          try{
+            const r=await M.save({ data: await _blobToB64(blob), name, mime: blob.type||'',
+                                   hint: (opts && opts.kind) ? String(opts.kind) : '' });
+            if(r && r.ok){
+              const where=String(r.where||('Download/PosterChan/'+name));
+              if(!(opts&&opts.quiet)) try{ toast('saved to '+where); }catch(_){ }
+              return 'saved:'+where;
+            }
+            refused=String((r && (r.error || r.message)) || 'the phone did not save it');
+          }catch(e){ refused=String((e && e.message) || e || 'the phone refused the file'); }
         }
       }catch(_){ /* the share sheet below is still a way to keep the file */ }
+      if(refused!==null && opts && opts.strict) throw new Error(refused);
       try{
         const P=(window.Capacitor&&Capacitor.Plugins)||{};
         if(P.Filesystem && P.Share){
