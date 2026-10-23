@@ -15,6 +15,7 @@ A workflow whose path filter did not fire for this commit is NOT a failure and i
 rolling release it publishes (apk-latest / desktop-latest) must also have moved since the run started.
 """
 import json
+import re
 import subprocess
 import sys
 import time
@@ -68,6 +69,28 @@ def release_moved(tag, since):
     return newest >= since, datetime.fromtimestamp(newest, timezone.utc).strftime('%Y-%m-%d %H:%MZ')
 
 
+def overlay_freshness(sha):
+    """Which desktop build the Gentoo overlay COMMITTED at this deploy pins, against the newest published one.
+
+    The committed ebuild is the only version authority (publish_overlay.sh publishes what is committed), and a
+    deploy can only pin a build that already exists -- so installed PosterChanOS machines trail by at least one
+    deploy. Said in the verdict so the trailing is seen (2026-10-22: two builds behind, nobody knew)."""
+    try:
+        names = subprocess.run(['git', 'ls-tree', '--name-only', sha, 'os/overlay/app-misc/posterchan-desktop/'],
+                               capture_output=True, text=True, timeout=30, cwd=Path(__file__).resolve().parents[1]).stdout
+        pinned = next((re.search(r'posterchan-desktop-([0-9.]+)\.ebuild', n).group(1) for n in names.split()
+                       if n.endswith('.ebuild')), '')
+        tags = gh('release', 'list', '-L', '20', '--json', 'tagName')
+        newest = max((t['tagName'][len('desktop-v'):] for t in tags if t['tagName'].startswith('desktop-v')),
+                     key=lambda v: [int(x) for x in v.split('.')], default='')
+    except Exception as e:      # the app verdict stands without it
+        return {'state': 'unknown', 'why': str(e)[:200]}
+    if not pinned or not newest:
+        return {'state': 'unknown', 'why': 'pinned=%r newest=%r' % (pinned, newest)}
+    behind = [int(x) for x in pinned.split('.')] < [int(x) for x in newest.split('.')]
+    return {'state': 'behind' if behind else 'current', 'pinned': pinned, 'newest': newest}
+
+
 def watch(sha):
     t0 = time.time()
     while True:
@@ -108,6 +131,7 @@ def watch(sha):
                                      'run passed but %s was last updated %s, before it started' % (tag, when)})
         else:
             result['apps'][name] = {'state': 'passed'}
+    result['overlay'] = overlay_freshness(sha)
     states = [a['state'] for a in result['apps'].values()]
     result['ok'] = 'FAILED' not in states and 'unknown' not in states
     VERDICT.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +146,14 @@ def show(result):
                                          (' -- ' + a['why']) if a.get('why') else '') +
                       ('\n  %-24s %s' % ('', a['url']) if a.get('url') and a['state'] != 'published' else '')
                       for n, a in result['apps'].items()]
+    o = result.get('overlay') or {}
+    if o.get('state') == 'behind':
+        lines.append('  %-24s pins desktop %s, newest published is %s -- the next deploy pins it (installed PosterChanOS '
+                     'machines get it then)' % ('Gentoo overlay', o['pinned'], o['newest']))
+    elif o.get('state') == 'current':
+        lines.append('  %-24s pins desktop %s (newest)' % ('Gentoo overlay', o['pinned']))
+    elif o:
+        lines.append('  %-24s unknown -- %s' % ('Gentoo overlay', o.get('why', '')))
     print('\n'.join(lines))
 
 

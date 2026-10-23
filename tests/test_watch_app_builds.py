@@ -103,3 +103,29 @@ def test_sync_follows_the_builds_and_reports_the_last_verdict():
     follow = re.search(r'nohup venv-unified/bin/python scripts/watch_app_builds.py "\$_EXPECT"[^\n]*\n[^\n]*&', sync)
     assert follow, 'the builds of the deployed commit are followed, detached'
     assert sync.index('git push github master:main') < follow.start()
+
+
+def _overlay(monkeypatch, pinned, tags, gh_down=False):
+    class R:
+        stdout = f"os/overlay/app-misc/posterchan-desktop/Manifest\nos/overlay/app-misc/posterchan-desktop/posterchan-desktop-{pinned}.ebuild\n"
+    monkeypatch.setattr(W.subprocess, 'run', lambda *a, **k: R())
+
+    def fake(*args):
+        if gh_down:
+            raise RuntimeError('error connecting to api.github.com')
+        assert args[:2] == ('release', 'list')
+        return [{'tagName': t} for t in tags]
+    monkeypatch.setattr(W, 'gh', fake)
+    return W.overlay_freshness('a' * 40)
+
+
+def test_the_verdict_says_when_the_gentoo_overlay_trails_the_newest_desktop(monkeypatch):
+    got = _overlay(monkeypatch, '1.0.1993', ['desktop-latest', 'desktop-v1.0.1996', 'desktop-v1.0.1995', 'apk-latest'])
+    assert got == {'state': 'behind', 'pinned': '1.0.1993', 'newest': '1.0.1996'}
+    # numeric, not lexical: 1.0.999 is older than 1.0.1000
+    assert _overlay(monkeypatch, '1.0.999', ['desktop-v1.0.1000'])['state'] == 'behind'
+    assert _overlay(monkeypatch, '1.0.1996', ['desktop-v1.0.1996', 'desktop-v1.0.1995'])['state'] == 'current'
+
+
+def test_an_unreadable_release_list_is_unknown_never_current(monkeypatch):
+    assert _overlay(monkeypatch, '1.0.1993', [], gh_down=True)['state'] == 'unknown'
