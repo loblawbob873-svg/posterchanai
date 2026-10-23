@@ -1262,14 +1262,18 @@ window.PCCallsFactory = function(dep){
     // clock ran >5s ahead had perfectly good invites dropped here. _callSeen dedups; a 45s-old call is over.
     try{ _callSub = Relay.subscribe([{ '#p':[S.ME.pubkey], kinds:[CALL_KIND], since: Math.floor(Date.now()/1000)-45 }], { onEvent:_onCallEvent, live:true }); }catch(_){}
   }
-  function _ringtone(on){
+  /* `beepOnly`: the file was just refused. The fallback used to call _ringtone(true) again, which took the FILE
+     branch again, was refused again, and so on for as long as the call rang -- a new Audio and a rejected play()
+     per turn of the event loop, the callee's page frozen at full CPU on exactly the page autoplay refuses (one
+     nobody has touched yet). tests/client/test_a_refused_ringtone_falls_back_to_the_beep_full_app.py */
+  function _ringtone(on, beepOnly){
     try{
       if(on){
         /* The PosterChan ringtone (User Settings → Ringtone), unless switched off there. Falls back to the
            beep when the browser will not start audio on its own (autoplay rules) or the file is missing. */
-        if(!_ringOsc && ClientSettings.get('callRingtone', true)!==false){
+        if(!_ringOsc && !beepOnly && ClientSettings.get('callRingtone', true)!==false){
           const a=new Audio('/static/sounds/posterchan-cyberpunk.ogg'); a.loop=true; _ringOsc={audio:a};
-          a.play().catch(()=>{ if(_ringOsc && _ringOsc.audio===a){ _ringOsc=null; _ringtone(true); } });
+          a.play().catch(()=>{ if(_ringOsc && _ringOsc.audio===a){ _ringOsc=null; _ringtone(true, true); } });
           try{ navigator.vibrate && navigator.vibrate([400,200,400]); }catch(_){}
           return;
         }
