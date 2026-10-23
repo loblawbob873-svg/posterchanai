@@ -484,7 +484,12 @@ sleep() {{ :; }}
 def test_sync_runs_the_live_production_check_last(tmp_path):
     r = _run_tail(tmp_path, 0)
     assert r.returncode == 0, r.stdout + r.stderr
-    calls = (tmp_path / "calls").read_text().split()
+    import time
+    for _ in range(50):                    # the watcher is detached: it may be recorded a moment after sync.sh returns
+        calls = (tmp_path / "calls").read_text().split()
+        if "scripts/watch_app_builds.py" in calls:
+            break
+        time.sleep(.1)
     # The app-build watcher (scripts/watch_app_builds.py) is started DETACHED on the deployed commit, so where it lands
     # among the recorded calls is a race; it is checked on its own, the two live checks in order without it.
     watch = [calls[i + 1] for i, c in enumerate(calls) if c == "scripts/watch_app_builds.py"]
