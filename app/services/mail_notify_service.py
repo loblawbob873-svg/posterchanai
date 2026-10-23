@@ -62,7 +62,9 @@ async def _push(db, user, title: str, body: str) -> None:
         from app.services import push_prefs
         # Unreadable devices raise (relay_reader.Unavailable) into the except below: nothing is deleted.
         rows = (await push_store.subs_for([pk])).get(pk, []) if pk else []
-        payload = {"title": title, "body": body, "type": "mail"}
+        # `view` IS THE TAP TARGET ON ANDROID (2026-10-22): without it PushEventService.deliver opens
+        # Notifications. sw.js maps type 'mail' → Mail by itself, which is why only the phone was wrong.
+        payload = {"title": title, "body": body, "type": "mail", "view": "mail"}
         for row in rows:
             # THE "EMAIL" TOGGLE WAS HONOURED BY NOTHING ON THIS PATH.
             #
