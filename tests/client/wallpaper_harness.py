@@ -15,7 +15,15 @@ Knobs (`STATE`), each a way the user's own layout read or write can go wrong:
                may be a (pubkey, tag) pair: then only that account's reads of it are held, so scenarios on
                different accounts can share the relay at the same time
   api          url path -> JSON the instance answers with (an endpoint a scenario needs, e.g. Go Live)
+  refuse_docs  a set of (pubkey, d-tag or d-prefix ending in ':'): that account's publish of it is
+               answered OK=false (the relay refused it -- the client keeps it to send again)
+  index_fail   a set of pubkeys whose drive-index READ the instance answers 503 (it could not ask)
 Every kind-30078 event the relay is SENT is kept in STATE['pubs'], accepted or not.
+The drive index is kept PER ACCOUNT (`indexes`), and Blossom lists each account's own uploads
+(`/blossom/list/<pubkey>`, from the upload's NIP-98 auth) and honours DELETE, so several accounts
+can share one instance at the same time.
+`ROUTES` is a list of callables (handler, method, path, body) -> bool: an endpoint a test serves
+itself (e.g. the node's own API routers) -- the first that answers True has handled the request.
 """
 import asyncio
 import hashlib
@@ -37,13 +45,15 @@ CHROME = '/opt/google/chrome/chrome'
 
 STATE = {}
 OVERRIDES = {}      # url path -> local file served in its place
+ROUTES = []         # (handler, method, path, body) -> bool -- see the docstring
 
 
 def reset():
     STATE.clear()
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
                  held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock(),
-                 held_open={}, held_seen=0, held_closed_at=None, held_by={})
+                 held_open={}, held_seen=0, held_closed_at=None, held_by={}, refuse_docs=set(),
+                 indexes={}, index_fail=set(), owners={})
 
 
 reset()
@@ -85,6 +95,10 @@ def _held_doc_req(filters):
     held = STATE.get('hold_docs') or ()
     for f in filters:
         authors = f.get('authors') or []
+        # (pubkey, '*'): EVERY private-document read of that account -- a namespace scan names no `d`.
+        if 30078 in (f.get('kinds') or []) and any(isinstance(h, tuple) and h[1] == '*' and h[0] in authors
+                                                   for h in held):
+            return True
         for d in (f.get('#d') or []) + (f.get('#l') or []):
             for h in held:
                 pk, h = h if isinstance(h, tuple) else (None, h)
@@ -195,6 +209,10 @@ class Relay:
                     ev = m[1]
                     if isinstance(ev, dict) and ev.get('kind') == 30078:
                         STATE['pubs'].append(ev)
+                    if isinstance(ev, dict) and ev.get('kind') == 30078 and any(
+                            pk == ev.get('pubkey') and _dmatch(d)(_d(ev)) for pk, d in STATE.get('refuse_docs') or ()):
+                        await ws.send(json.dumps(['OK', ev['id'], False, 'blocked: fixture refuses']))
+                        continue
                     if _is_layout(ev):
                         STATE['layout_pubs'].append(ev)
                         if STATE['refuse_layout']:
@@ -271,7 +289,11 @@ class SilentRelay(Relay):
                         continue
                     await ws.send(json.dumps(['EOSE', m[1]]))
                 elif m[0] == 'EVENT':
-                    await ws.send(json.dumps(['OK', m[1]['id'], True, '']))
+                    ev = m[1]
+                    # `refuse_docs` is "no relay will store it" -- this one refuses it too
+                    refused = ev.get('kind') == 30078 and any(
+                        pk == ev.get('pubkey') and _dmatch(d)(_d(ev)) for pk, d in STATE.get('refuse_docs') or ())
+                    await ws.send(json.dumps(['OK', ev['id'], not refused, 'blocked: fixture refuses' if refused else '']))
         except websockets.ConnectionClosed:
             pass
 
@@ -293,7 +315,10 @@ class EmptyRelay(Relay):
                 if m[0] == 'REQ':
                     await ws.send(json.dumps(['EOSE', m[1]]))
                 elif m[0] == 'EVENT' and isinstance(m[1], dict):
-                    await ws.send(json.dumps(['OK', m[1].get('id', ''), True, '']))
+                    ev = m[1]
+                    refused = ev.get('kind') == 30078 and any(
+                        pk == ev.get('pubkey') and _dmatch(d)(_d(ev)) for pk, d in STATE.get('refuse_docs') or ())
+                    await ws.send(json.dumps(['OK', ev.get('id', ''), not refused, 'blocked' if refused else '']))
         except websockets.ConnectionClosed:
             pass
 
@@ -318,8 +343,24 @@ class Instance(full.Handler):
         n = int(self.headers.get('Content-Length') or 0)
         return self.rfile.read(n) if n else b''
 
+    def _route(self, method, body=b''):
+        for fn in ROUTES:
+            if fn(self, method, self.path, body):
+                return True
+        return False
+
+    def _nip98_pubkey(self):
+        try:
+            import base64
+            h = self.headers.get('Authorization') or ''
+            return json.loads(base64.b64decode(h.split(' ', 1)[1]))['pubkey'] if h.startswith('Nostr ') else ''
+        except Exception:
+            return ''
+
     def do_GET(self):
         p = self.path.split('?')[0]
+        if self._route('GET'):
+            return
         if p in OVERRIDES:                  # serve an older copy of one shipped file (fail-first runs)
             data = Path(OVERRIDES[p]).read_bytes()
             self.send_response(200)
@@ -336,6 +377,13 @@ class Instance(full.Handler):
             return self._json({'allowed': True, 'whitelisted': True})
         if p in STATE.get('api', {}):
             return self._json(STATE['api'][p])
+        m = re.match(r'^/blossom/list/([0-9a-f]{64})$', p)
+        if m:
+            origin = f'http://{self.headers.get("Host")}'
+            return self._json([{'sha256': sha, 'size': len(STATE['blobs'][sha]), 'type': 'application/octet-stream',
+                                'url': f'{origin}/blossom/{sha}', 'uploaded': at}
+                               for sha, (pk, at) in list(STATE['owners'].items())
+                               if pk == m.group(1) and sha in STATE['blobs']])
         m = re.match(r'^/blossom/([0-9a-f]{64})(\.[a-z0-9]+)?$', p)
         if m:
             data = STATE['blobs'].get(m.group(1))
@@ -360,10 +408,15 @@ class Instance(full.Handler):
         return super().do_HEAD()
 
     def do_PUT(self):
+        if self.path.split('?')[0] != '/blossom/upload' and self._route('PUT', self._body()):
+            return
         if self.path.split('?')[0] == '/blossom/upload':
             data = self._body()
             sha = hashlib.sha256(data).hexdigest()
             STATE['blobs'][sha] = data
+            who = self._nip98_pubkey()
+            if who:
+                STATE['owners'].setdefault(sha, (who, int(__import__('time').time())))
             origin = f'http://{self.headers.get("Host")}'
             return self._json({'url': f'{origin}/blossom/{sha}', 'sha256': sha, 'size': len(data),
                                'type': self.headers.get('Content-Type') or ''})
@@ -372,16 +425,32 @@ class Instance(full.Handler):
     def do_POST(self):
         p = self.path.split('?')[0]
         body = self._body()
+        if self._route('POST', body):
+            return
         if p == '/client/files-index':
             try:
                 j = json.loads(body or b'{}')
             except ValueError:
                 j = {}
+            who = j.get('pubkey') or ''
             if j.get('index') is not None:
                 STATE['index'] = j['index']
+                STATE['indexes'][who] = j['index']
                 return self._json({'ok': True, 'mk': j['index'].get('mk')})
-            return self._json({'ok': True, 'index': STATE['index']})
+            if who in STATE['index_fail']:
+                return self._json({'ok': False, 'error': 'index unavailable'}, 503)
+            return self._json({'ok': True, 'index': STATE['indexes'].get(who)})
         return self._json({})
+
+    def do_DELETE(self):
+        if self._route('DELETE'):
+            return
+        m = re.match(r'^/blossom/([0-9a-f]{64})', self.path)
+        if m and STATE['owners'].get(m.group(1), ('',))[0] == self._nip98_pubkey():
+            STATE['blobs'].pop(m.group(1), None)
+            STATE['owners'].pop(m.group(1), None)
+            return self._json({'ok': True})
+        return self._json({}, 404 if not m else 403)
 
     def do_OPTIONS(self):
         self.send_response(204)

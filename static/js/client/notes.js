@@ -386,7 +386,14 @@
    * Newest FIRST, so on a big library the notes someone actually wants to see decrypt first. */
   async function _absorb(lib, evs, onProgress){
     let usable = 0;
-    evs = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
+    /* A DELETE IN THE SAME SECOND AS THE SAVE IT DELETES MUST STILL WIN. created_at is whole seconds, so a note
+     * saved and deleted inside one second gives a tombstone and a real copy with EQUAL timestamps -- and "newest
+     * wins" then decided nothing: whichever this device absorbed first stayed, and a device holding the saved copy
+     * (the one that wrote it) skipped the tombstone as "not newer" and showed the deleted note again after every
+     * reload, while the relay (later write wins) and every other device had it deleted. On a tie the tombstone
+     * sorts first and an equal-time tombstone still applies. Measured 2026-10-22,
+     * tests/client/test_private_docs_cross_device_full_app.py. */
+    evs = (evs || []).slice().sort((a,b) => ((b.created_at||0) - (a.created_at||0)) || ((a.content?1:0) - (b.content?1:0)));
     for(const ev of evs){
       const d = (ev.tags||[]).find(t=>t[0]==='d');
       if(!d || !d[1]) continue;
@@ -395,7 +402,7 @@
       const id = d[1].slice((isNote?D_NOTE:D_FOLDER).length);
       const into = isNote ? lib.notes : lib.folders;
       const have = into.get(id);
-      if(have && have._at >= ev.created_at) continue;
+      if(have && (have._at > ev.created_at || (have._at === ev.created_at && ev.content))) continue;
       /* A DELETED NOTE CAME BACK, AND `into.delete(id)` IS WHY.
        *
        * A deletion is an empty content — a tombstone. Addressable events cannot be un-published and
@@ -568,6 +575,12 @@
     // tombstone is what actually makes it disappear everywhere; kind 5 is the polite half.
     const r = await publish(KIND, '', [['d', d], ['l', L_TAG]], {quiet:true, noQueue:true});
     if(r && r.ev && !r.ok){ try{ Store().saveEvent(r.ev); }catch(_){ } queue(r.ev); }
+    /* A DELETE THAT LANDED SUPERSEDES WHATEVER THIS DEVICE STILL HAD QUEUED FOR THAT NOTE. A save the relays
+     * refused sits in the queue, and flushPending only drops an entry the library holds something NEWER than --
+     * but a deleted note is not in the library at all, so the stale save went out on the next reconnect: the
+     * deleted text published again, held by any relay that had not seen the tombstone (and, in the same second,
+     * by one that had). Measured 2026-10-22, tests/client/test_private_docs_cross_device_full_app.py. */
+    else if(r && r.ok) setPending(pending().filter(e => _dOf(e) !== d));
     (isFolder ? _lib.folders : _lib.notes).delete(obj.id);
     try{ await publish(5, '', [['a', KIND+':'+ME().pubkey+':'+d]], {quiet:true, noQueue:true}); }catch(_){ }
     return r;
