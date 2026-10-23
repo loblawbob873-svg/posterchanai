@@ -255,19 +255,25 @@ window.PCStreamsFactory = function(dep){
         if(dtag){ try{ const vods=await _vodList(_tokenOfD(dtag));
                        if(vods===null) vodUnknown=true; else vurl=_vodPick(vods, _starts); }catch(_){ vodUnknown=true; } }
         if(S.VIEW!=='stream'||openStream._view!==_view) return;   // navigated away / opened another stream
-        /* ONLY A RECORDING IS PLAYABLE ONCE A STREAM HAS ENDED. Falling back to `streaming` handed the
-         * player the stopped live feed -- and every stream Go Live ever ended keeps that tag (_liveBase),
-         * so OUR OWN ended streams never reached the branch below: no "saving your recording", no "no
-         * recording available", just a dead HLS load and "could not play this stream here". */
-        const playUrl=vurl||_tag('recording'); const n2=$('#st-note');
+        /* AN ENDED STREAM PLAYS ITS RECORDING -- OR, FROM ANOTHER HOST, WHATEVER ITS `streaming` URL STILL SERVES.
+         * Our own ended streams keep the stopped live feed in `streaming` (_liveBase), and handing that to the
+         * player was a dead HLS load and "could not play this stream here" instead of the messages below. But
+         * other NIP-53 hosts serve the replay AT the streaming URL, so never trying it made those unplayable.
+         * So: a feed on this app's HLS proxy path (a PosterChan Go Live, whose replay is only ever the recording
+         * looked up above) is not tried; any other is tried HIDDEN, shown once it answers, and a feed that
+         * fails before answering falls through to exactly the message a stream with no feed gets. */
+        const recUrl=vurl||_tag('recording'); const n2=$('#st-note');
         const v0=$('#st-video');
-        if(!playUrl && v0) v0.hidden=true;   // nothing to play: no black box under the message
-        if(!playUrl && vodUnknown){
-          // "Could not ask" is not "there is none" -- the recordings list did not answer (503, timeout).
-          if(n2) n2.textContent='This stream ended. Couldn\u2019t check for a recording right now \u2014 the server didn\u2019t answer.';
-          return;
-        }
-        if(!playUrl){
+        const feedUrl=recUrl ? '' : _tag('streaming');
+        const tryFeed=!!feedUrl && !/\/api\/streams\/hls\//.test(feedUrl);
+        const noRecording=()=>{
+          const n3=$('#st-note'), v3=$('#st-video');
+          if(v3) v3.hidden=true;   // nothing to play: no black box under the message
+          if(vodUnknown){
+            // "Could not ask" is not "there is none" -- the recordings list did not answer (503, timeout).
+            if(n3) n3.textContent='This stream ended. Couldn\u2019t check for a recording right now \u2014 the server didn\u2019t answer.';
+            return;
+          }
           /* "no recording available" was stated flatly from the instant a stream ended — but the
            * recording does not exist for another ~60-90s (server-side concat + upload), so for that
            * whole window this told the streamer their replay had failed when it was still being made.
@@ -275,15 +281,20 @@ window.PCStreamsFactory = function(dep){
            * two: recent = still saving (and re-check, so it appears without a manual reload). */
           const _ends = parseInt((e.tags.find(t=>t[0]==='ends')||[])[1] || e.created_at, 10) || 0;
           const _fresh = _ends && (Date.now()/1000 - _ends) < 15 * 60;
-          if(n2) n2.textContent = _fresh
+          if(n3) n3.textContent = _fresh
             ? 'Saving your recording — about a minute. You can close the app; it finishes on the server.'
             : 'This stream ended — no recording available.';
           if(_fresh) setTimeout(()=>{ if(S.VIEW==='stream' && openStream._view===_view) openStream(e); }, 20000);
+        };
+        if(!recUrl && !tryFeed){ noRecording(); return; }
+        if(!recUrl){
+          if(n2) n2.textContent='';
+          if(v0){ v0.hidden=true; v0.addEventListener('loadedmetadata', ()=>{ v0.hidden=false; }, {once:true}); }
+          attachStream(feedUrl, ()=>{ if(S.VIEW==='stream' && openStream._view===_view) noRecording(); });
           return;
         }
         if(n2) n2.textContent = vurl ? '▶ Recorded stream' : '';
-        attachStream(playUrl);
-        if(vurl) _backfillRecordingTag(e, vurl);
+        attachStream(recUrl);
       })();
     } else if(url && !selfLive){ attachStream(url); }
     /* Preview is OPT-IN and starts MUTED — the echo is the reason the player is off, so the way back
@@ -2250,7 +2261,9 @@ window.PCStreamsFactory = function(dep){
   // `Path=/api/streams/hls/<token>/`, so match the path — NOT the origin. The native app reaches its own
   // server cross-origin (so same-origin would be wrong), and a deployment using a direct `stream_hls_base`
   // subdomain bypasses the proxy entirely and never has that cookie to send.
-  function attachStream(url){
+  /* `onFail` (optional): called ONCE, instead of the "could not play" notes, when the source fails before it has
+   * answered at all -- how an ended stream tries its old feed without ever showing a dead player's error. */
+  function attachStream(url, onFail){
     const v=$('#st-video'); if(!v) return;
     _disposeInlineHls();   // drop any previous inline hls before attaching a new one — unconditional:
                            // this window is about to replace the player it owns, parked or not
@@ -2263,10 +2276,20 @@ window.PCStreamsFactory = function(dep){
     const n0=$('#st-note'); if(n0 && !n0.textContent) n0.textContent=CONNECTING;
     const okd=()=>{ const n=$('#st-note'); if(n && n.textContent===CONNECTING) n.textContent=''; };
     v.addEventListener('loadedmetadata', okd, {once:true});   // metadata = the source answered; a paused VOD stops there
+    let gaveUp=false;
+    const failed=(say)=>{
+      if(onFail){
+        if(gaveUp || $('#st-video')!==v) return;
+        if(v.readyState<1){ gaveUp=true; _disposeInlineHls(); v.onerror=null; try{ v.removeAttribute('src'); v.load(); }catch(_){}
+                            const n=$('#st-note'); if(n && n.textContent===CONNECTING) n.textContent='';
+                            onFail(); return; }
+      }
+      say();
+    };
     setTimeout(()=>{ if($('#st-video')!==v || v.readyState>=1) return;
-      const n=$('#st-note'); if(n && (n.textContent===CONNECTING || !n.textContent))
-        n.textContent='The stream isn\u2019t answering \u2014 it may have ended, or its server can\u2019t be reached. Try the \u201cOpen stream URL\u201d link below.'; }, 15000);
-    const native=()=>{ v.onerror=()=>_streamNote('Could not play this video here — try the \u201cOpen stream URL\u201d link below.'); v.src=url; };
+      failed(()=>{ const n=$('#st-note'); if(n && (n.textContent===CONNECTING || !n.textContent))
+        n.textContent='The stream isn\u2019t answering \u2014 it may have ended, or its server can\u2019t be reached. Try the \u201cOpen stream URL\u201d link below.'; }); }, 15000);
+    const native=()=>{ v.onerror=()=>failed(()=>_streamNote('Could not play this video here — try the \u201cOpen stream URL\u201d link below.')); v.src=url; };
     if(!isHls){ native(); return; }   // mp4/webm VOD — <video> plays it directly
     // HLS: try hls.js FIRST, and fall back to native ONLY when it isn't usable. The reverse order (the old
     // `!canPlayType(...)` gate) is what produced "No video with supported format and MIME type found" on
@@ -2305,16 +2328,16 @@ window.PCStreamsFactory = function(dep){
         const h=new window.Hls({ maxBufferLength:10, maxMaxBufferLength:20,
                                  liveSyncDurationCount:5, liveMaxLatencyDurationCount:12 }); _streamHls=h;
         h.loadSource(url); h.attachMedia(v);
-        h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.'); });
+        h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) failed(()=>_streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.')); });
         return;
       }
       // No MediaSource (iPhone Safari) — native HLS is the right path there.
       if(v.canPlayType('application/vnd.apple.mpegurl')){ native(); return; }
-      _streamNote('This stream needs HLS playback, which isn\u2019t available in this browser — try the \u201cOpen stream URL\u201d link below.');
+      failed(()=>_streamNote('This stream needs HLS playback, which isn\u2019t available in this browser — try the \u201cOpen stream URL\u201d link below.'));
     }).catch(()=>{
       // hls.js itself failed to load; native is the only option left, so try it before giving up.
       if(v.canPlayType('application/vnd.apple.mpegurl')) native();
-      else _streamNote('Couldn\u2019t load the video player — try the \u201cOpen stream URL\u201d link below.');
+      else failed(()=>_streamNote('Couldn\u2019t load the video player — try the \u201cOpen stream URL\u201d link below.'));
     });
   }
   return {

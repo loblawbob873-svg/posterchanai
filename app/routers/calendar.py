@@ -283,6 +283,10 @@ async def delete_calendar(cal_id: str, current_user: User = Depends(get_current_
         if e.deleted:
             _forget(current_user.username)
         raise HTTPException(status_code=502, detail="Could not delete the calendar — try again.")
+    except caldav_store.DeleteCutShort as e:
+        if e.deleted:
+            _forget(current_user.username)      # what did go must not stay on the phones
+        raise _unreachable(f"calendar {cal_id!r}", e.__cause__ or e)
     except Exception as e:
         raise _unreachable(f"calendar {cal_id!r}", e)
     _forget(current_user.username)

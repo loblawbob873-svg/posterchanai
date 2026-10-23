@@ -130,6 +130,10 @@ async def delete_book(book_id: str, current_user: User = Depends(get_current_use
         if e.deleted:
             _forget(current_user.username)
         raise HTTPException(status_code=502, detail="Could not delete the addressbook — try again.")
+    except caldav_store.DeleteCutShort as e:
+        if e.deleted:
+            _forget(current_user.username)      # what did go must not stay on the phones
+        raise _unreachable(f"addressbook {book_id!r}", e.__cause__ or e)
     except Exception as e:
         raise _unreachable(f"addressbook {book_id!r}", e)
     _forget(current_user.username)

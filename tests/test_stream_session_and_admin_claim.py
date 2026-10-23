@@ -293,8 +293,8 @@ def test_a_stream_that_just_ended_does_not_claim_it_has_no_recording():
     in that window told the streamer their replay had failed while it was still being made — which is
     what made people think they had to sit and wait with the app open."""
     src = client_source()
-    branch = src[src.index("if(!playUrl){"):]
-    branch = branch[:branch.index("if(n2) n2.textContent = vurl")]
+    branch = src[src.index("const noRecording=()=>{"):]
+    branch = branch[:branch.index("if(!recUrl && !tryFeed)")]
     assert "_fresh" in branch and "15 * 60" in branch, "no recent-vs-really-absent distinction"
     assert "Saving your recording" in branch
     assert "setTimeout" in branch, "a stream still saving must re-check, not need a manual reload"
