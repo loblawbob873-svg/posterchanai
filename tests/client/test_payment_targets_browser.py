@@ -1,8 +1,10 @@
 """Exercise the shipped payment editor and chooser with signed NIP-A3 events in Chromium."""
-import base64
 import json
 import os
 import re
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -63,14 +65,51 @@ const settle=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setTimeout(r,5)
               state_shims(functions),functions,'editor();']))
 
 
+@pytest.fixture(scope='module')
+def served():
+    """The page, built ONCE and served over loopback HTTP. It used to be navigated to as a 1.7 MB `data:` URL per case,
+    and Chrome took ~2.2 s to decode and boot that against ~0.3 s for the same bytes over HTTP -- 50 cases, ~100 s of the
+    file. The bytes are identical; each case still gets a brand-new page in its OWN browser context (no storage, cache
+    or globals shared with another case -- as isolated as the opaque `data:` origin was)."""
+    body=page().encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            ok=self.path.split('?')[0]=='/payment-targets.html'
+            self.send_response(200 if ok else 404)
+            self.send_header('Content-Type','text/html; charset=utf-8')
+            self.send_header('Content-Length',str(len(body) if ok else 0))
+            self.end_headers()
+            if ok:
+                self.wfile.write(body)
+
+        def log_message(self,*_):
+            pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        yield f'http://127.0.0.1:{server.server_address[1]}/payment-targets.html'
+    finally:
+        server.shutdown();server.server_close()
+
+
+def open_page(chrome,url):
+    chrome.command('Page.navigate',{'url':url})
+    deadline=time.monotonic()+30
+    while not chrome.evaluate("location.href==="+json.dumps(url)+"&&document.readyState==='complete'&&typeof settle==='function'"):
+        assert time.monotonic()<deadline,'the payment page never finished loading'
+        time.sleep(.02)
+
+
 @pytest.mark.parametrize('width',[380,1280])
 @pytest.mark.parametrize('case',['editor_buttons','hydrate','save','clear','publish_failure','offline','account_switch','conflict','chooser','monero_tip','lightning_choice','invalid_monero','signer_refusal','signer_changed_targets','chooser_account_switch','cold_outbox','lazy_module','legacy_card','pinned_card','stored_note','bch_prefixed','lightning_account_switch','invoice_account_switch','bch_account_switch','concord_targets'])
-def test_payment_targets_in_browser(chrome,width,case):
-    target=chrome.command('Target.createTarget',{'url':'about:blank'})['targetId']
+def test_payment_targets_in_browser(chrome,served,width,case):
+    context=chrome.command('Target.createBrowserContext')['browserContextId']
+    target=chrome.command('Target.createTarget',{'url':'about:blank','browserContextId':context})['targetId']
     chrome.session=chrome.command('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
     try:
         chrome.command('Emulation.setDeviceMetricsOverride',{'width':width,'height':850,'deviceScaleFactor':1,'mobile':width<500})
-        chrome.command('Page.navigate',{'url':'data:text/html;base64,'+base64.b64encode(page().encode()).decode()})
+        open_page(chrome,served)
         chrome.evaluate('settle()')
         assert chrome.evaluate("$$('.pt-edit-row').length")==2
         if case=='hydrate':
@@ -192,3 +231,4 @@ def test_payment_targets_in_browser(chrome,width,case):
             assert chrome.evaluate('lastTip.address')=='two@test.test'
     finally:
         chrome.session=None;chrome.command('Target.closeTarget',{'targetId':target})
+        chrome.command('Target.disposeBrowserContext',{'browserContextId':context})

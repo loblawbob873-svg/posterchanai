@@ -154,16 +154,20 @@ SEED = r"""(async()=>{const NT=NostrTools, k=new Uint8Array(32).fill(7), other=N
 GO = "try{{ document.querySelectorAll('.modal.open,.overlay.open').forEach(m=>m.classList.remove('open')); {} }}catch(e){{ (window.__errors=window.__errors||[]).push(String(e)) }}"
 
 
-async def walk(b, mobile):
+async def walk(b, mobile, lane=0, lanes=1):
+    """One LANE of the walk: the shell (lane 0), its contiguous share of the sidebar's views, and -- in the last lane --
+    the screens no sidebar item opens, the keyboard checks and the windowed desktop."""
     found = {}
     await desktop.login(b)
     await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
     await b.js(SEED)
     await b.js(GO.format("__PC.switchView('global')"))
     await settle(b)
-    found["shell"] = await b.js(AUDIT % json.dumps(mobile))
+    if lane == 0:
+        found["shell"] = await b.js(AUDIT % json.dumps(mobile))
     views = await b.js("[...new Set([...document.querySelectorAll('.sidebar .nav-item[data-view]')].map(b=>b.dataset.view))]")
-    for v in views:
+    per = -(-len(views) // lanes)
+    for v in views[lane * per:(lane + 1) * per]:
         await b.js(GO.format(f"__PC.switchView({json.dumps(v)})"))
         await settle(b)
         if v == "global":
@@ -171,6 +175,8 @@ async def walk(b, mobile):
             # The picture's alt is the author's own NIP-92 description, not a generic word.
             found["picture alt"] = await b.js("[...document.querySelectorAll('#feed .media-row img')].map(i=>i.alt)")
         found[v] = await b.js(AUDIT % json.dumps(mobile))
+    if lane != lanes - 1:
+        return views, found
     # Two screens no sidebar item opens, and the ones people spend the most time in.
     await b.js(GO.format("__PC.openProfile(__seed.other)"))
     await settle(b)
@@ -229,6 +235,9 @@ def report(found):
 
 
 SIZES = {"desktop": (1280, 800, False), "mobile": (390, 844, True)}
+# Each size's walk is split into LANES, each in its own Chrome (its own profile -- a separate device that signs in and
+# seeds by itself), run at the same time. The per-view settle is unchanged; ~50 sequential settles a size now overlap.
+LANES = 3
 
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
@@ -237,14 +246,25 @@ def test_every_view_is_accessible(size):
     width, height, mobile = SIZES[size]
     got = {}
 
-    async def check(b):
-        await b.call("Emulation.setDeviceMetricsOverride",
-                     {"width": width, "height": height, "deviceScaleFactor": 2 if mobile else 1, "mobile": mobile})
-        await b.call("Page.reload")
-        await b.until("!!window.__PC && document.body && document.body.classList.contains('guest')")
-        got["views"], got["found"] = await walk(b, mobile)
+    def check(lane):
+        async def run(b):
+            await b.call("Emulation.setDeviceMetricsOverride",
+                         {"width": width, "height": height, "deviceScaleFactor": 2 if mobile else 1, "mobile": mobile})
+            await b.call("Page.reload")
+            await b.until("!!window.__PC && document.body && document.body.classList.contains('guest')")
+            got[lane] = await walk(b, mobile, lane, LANES)
+        return run
 
-    asyncio.run(desktop.with_browser("online", "", check, INIT))
+    async def lanes():
+        await asyncio.gather(*(desktop.with_browser("online", "", check(i), INIT) for i in range(LANES)))
+    asyncio.run(lanes())
+    # Every lane read the same sidebar; merged in lane order, the report is the one a single walk produced.
+    assert all(got[i][0] == got[0][0] for i in range(LANES)), [got[i][0] for i in range(LANES)]
+    got["views"], got["found"] = got[0][0], {}
+    for i in range(LANES):
+        got["found"].update(got[i][1])
+    walked = [v for v in got["found"] if v in got["views"]]
+    assert sorted(walked) == sorted(got["views"]), ("a view was not audited", set(got["views"]) - set(walked))
     assert len(got["views"]) >= 40, f"only {len(got['views'])} views walked"
     assert got["found"]["notes on the timeline"] >= 3, "the seeded posts never reached the timeline"
     assert got["found"]["enter opens a post"] == "thread", "Enter on a focused post did not open it"
