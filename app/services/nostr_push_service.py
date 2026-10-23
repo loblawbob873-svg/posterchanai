@@ -375,6 +375,23 @@ async def _poll():
                     # There is no post to open: a tap lands on Notifications, where the follow is listed.
                     payload.pop("eid", None)
                     payload["view"] = "notifications"
+                else:
+                    # THE CARD'S IDENTITY IS `nostr-<event id>` ON EVERY SURFACE, SAID EXPLICITLY
+                    # (2026-10-22). The client's own notification for this event (notifPing) and the
+                    # APK's renderer both key on it; sw.js keyed on the bare eid, so on the web the
+                    # push and the open tab's own card for one mention carried different tags.
+                    payload["tag"] = "nostr-" + eid
+                    # A REACTION, REPOST OR ZAP OPENS THE POST IT IS ABOUT. `eid` is the tap target
+                    # (PushEventService → post:<eid>, sw.js → ?event=<eid>), and it named the
+                    # reaction EVENT — a thread rooted on a card reading "🔥" — while the client's
+                    # own card for the same event, under the same tag, opens the reacted-to post
+                    # (notifview.js `_notifCtxId`: the last `e` tag). Which screen a tap reached
+                    # depended on which card was drawn last. The tag above keeps the identity.
+                    if ev.get("kind") in (6, 7, 9735):
+                        es = [t[1] for t in (ev.get("tags") or [])
+                              if len(t) >= 2 and t[0] == "e" and isinstance(t[1], str)]
+                        if es and len(es[-1]) == 64 and all(c in "0123456789abcdef" for c in es[-1].lower()):
+                            payload["eid"] = es[-1].lower()
                 for s in by_pk[pk]:
                     # Per DEVICE: a phone and a laptop may want different things, and the row is
                     # where the client mirrored the answer to. Unset means send (see push_prefs).
@@ -470,7 +487,11 @@ async def _call_handler(ev: dict):
         if not targets:
             return
         name = await _name_for(author)
-        payload = {"title": "📞 Incoming call", "body": f"{name} is calling…", "type": "call", "author": author}
+        # `view` IS THE TAP TARGET ON ANDROID (2026-10-22): PushEventService.deliver opens `view`
+        # and falls back to Notifications, so a tapped call landed there — sw.js has always mapped
+        # type 'call' to Calls on its own. Same lesson as the DM's `view` below.
+        payload = {"title": "📞 Incoming call", "body": f"{name} is calling…", "type": "call", "author": author,
+                   "view": "calls"}
         for subs in targets.values():
             for sub in subs:
                 await asyncio.to_thread(push_service.send, sub, payload)
@@ -587,8 +608,6 @@ async def _dm_handler(ev: dict):
     fresh = [pk for pk in recips if now - _dm_recent.get(pk, 0.0) >= _DM_COOLDOWN]
     if not fresh:
         return
-    for pk in fresh:
-        _dm_recent[pk] = now
 
     try:
         # A MESSAGE YOU SENT IS NOT NEWS TO ANY OF YOUR DEVICES.
@@ -609,6 +628,14 @@ async def _dm_handler(ev: dict):
             fresh = [pk for pk in fresh if pk not in mine]
             if not fresh:
                 return
+        # THE COOLDOWN IS STAMPED ONLY FOR A MESSAGE THAT IS GOING OUT (2026-10-22). It used to be
+        # stamped above, before the check just made — so the self-copy of a message you sent from
+        # your desktop, correctly never pushed, still spent your 10-second window, and the reply
+        # that came back inside it (the likeliest moment in a conversation for one) reached no
+        # device at all. A silenced DM is the failure this module argues hardest against.
+        # Handlers run one at a time off the subscription, so stamping after the await races nothing.
+        for pk in fresh:
+            _dm_recent[pk] = now
         targets = await _subs_for_retrying(fresh)
         if not targets:
             return

@@ -79,6 +79,14 @@ final class DirectPushStore {
     static boolean allowsType(String storedJson, String type) {
         if (type == null || type.isEmpty() || "call".equals(type)) return true;
         if (storedJson == null || storedJson.isEmpty()) return true;
+        /* A PAYLOAD TYPE IS NOT ALWAYS A TOGGLE NAME (2026-10-22). The server types a mail push
+         * `mail` and a reminder `reminder` (those strings are routing, read by sw.js), while the
+         * toggles are `email` and `reminders` (push_prefs.PUSH_TYPES). Looked up as-is they matched
+         * nothing, so this backstop never filtered either: "Email" off on the phone did nothing
+         * whenever the server row was the stale one this copy exists to cover.
+         * tests/test_push_chain_server_to_android.py feeds it the server's real mail frame. */
+        if ("mail".equals(type)) type = "email";
+        else if ("reminder".equals(type)) type = "reminders";
         try {
             JSONObject o = new JSONObject(storedJson);
             return o.isNull(type) || o.optBoolean(type, true);
