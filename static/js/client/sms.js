@@ -1358,7 +1358,16 @@
   }
 
   S.blocks = S.blocks || {};      // key(number) -> {number, block, at, applied?:{state, at}}
-  const blockedKey = addr => { const k = key(addr); const b = k && S.blocks[k]; return !!(b && b.block); };
+  /* THE BLOCK LIST BELONGS TO ONE ACCOUNT. Every other piece of Texts state is retired on an account switch (watch()),
+   * this one was not -- so account B's next block published account A's blocked numbers into B's list (found
+   * 2026-10-22 by the desktop->phone SMS chain work). Read and written only through here, keyed to its owner. */
+  let _blocksOwner = '';
+  function ownBlocks(){
+    const me = ME().pubkey || '';
+    if(me !== _blocksOwner){ _blocksOwner = me; S.blocks = {}; _blocksSeenAt = 0; }
+    return S.blocks;
+  }
+  const blockedKey = addr => { const k = key(addr); const b = k && ownBlocks()[k]; return !!(b && b.block); };
   /* Newest `at` wins per number; an `applied` is kept only for the request it answers (its `at` >= the request's). */
   function mergeBlocks(into, from){
     for(const [k, v] of Object.entries(from || {})){
@@ -1379,7 +1388,8 @@
   function publishBlocks(){
     _blocksChain = _blocksChain.then(async () => {
       const owner = ME().pubkey; if(!owner) return;
-      const ct = await PC.nip44enc(owner, JSON.stringify({ v:1, numbers:S.blocks }));
+      const numbers = ownBlocks(); if(_blocksOwner !== owner) return;
+      const ct = await PC.nip44enc(owner, JSON.stringify({ v:1, numbers }));
       const createdAt = Math.max(now(), _blocksSeenAt + 1);
       const r = await PC.publish(KIND, ct, [['d', D_BLOCKS], ['l', L_TAG]], {quiet:true, noQueue:true, createdAt});
       if(r && r.ok) _blocksSeenAt = Math.max(_blocksSeenAt, Number((r.ev && r.ev.created_at) || createdAt));
@@ -1392,7 +1402,7 @@
     if(_applyingBlocks) return; const P = plug('setBlocked'); if(!P) return;
     _applyingBlocks = true; let changed = false;
     try{
-      for(const [k, v] of Object.entries(S.blocks)){
+      for(const [k, v] of Object.entries(ownBlocks())){
         if(!v || !v.number || (v.applied && (v.applied.at || 0) >= (v.at || 0))) continue;
         let r = null; try{ r = await P.setBlocked({ number:v.number, block:!!v.block }); }catch(_){ r = null; }
         const state = !r || r.blocked == null ? 'unknown' : (!!r.blocked === !!v.block ? (v.block ? 'blocked' : 'unblocked') : 'refused');
@@ -1405,25 +1415,26 @@
     try{
       if(ME().pubkey && ev.pubkey === ME().pubkey) _blocksSeenAt = Math.max(_blocksSeenAt, Number(ev.created_at) || 0);
       const body = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content || ''));
-      mergeBlocks(S.blocks, body && body.numbers);
+      if(ev.pubkey !== ME().pubkey) return;
+      mergeBlocks(ownBlocks(), body && body.numbers);
       if(textsOnScreen()) paint();
       const st = await phoneState(); if(st.telephony) applyBlocksHere();
     }catch(_){ }
   }
   async function setBlock(addr, block){
     const k = key(addr); if(!k) return;
-    S.blocks[k] = { number:String(addr), block:!!block, at:Date.now() };
+    ownBlocks()[k] = { number:String(addr), block:!!block, at:Date.now() };
     if(textsOnScreen()) paint();
     await publishBlocks();
     const st = await phoneState().catch(() => ({}));
     if(st && st.telephony) await applyBlocksHere();
-    const v = S.blocks[k], said = v && v.applied ? v.applied.state : '';
+    const v = ownBlocks()[k], said = v && v.applied ? v.applied.state : '';
     PC.toast(block ? (said === 'blocked' ? 'Blocked on your phone' : said === 'refused' || said === 'unknown'
                         ? 'Saved — your phone could not block it (PosterChan must be the default SMS app)' : 'Blocked — your phone will apply it the next time it is on')
                    : (said === 'unblocked' ? 'Unblocked' : 'Unblocked — your phone will apply it'));
   }
   function blockLine(t){
-    const v = S.blocks[key(t && t.address)]; if(!v || !v.block) return '';
+    const v = ownBlocks()[key(t && t.address)]; if(!v || !v.block) return '';
     const st = v.applied && (v.applied.at || 0) >= (v.at || 0) ? v.applied.state : 'pending';
     return st === 'blocked' ? 'Blocked' : st === 'pending' ? 'Blocked — waiting for your phone' : 'Blocked here — your phone could not apply it';
   }

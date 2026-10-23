@@ -84,3 +84,11 @@ def test_the_phones_answer_lands_even_when_its_clock_is_behind_the_desktops(phon
     assert ph["blocked"] == [NUM]
     assert not [x for x in hand["phone"] if "refusedByRelay" in x], hand["phone"]
     assert back["blockLabels"][NUM] == "Blocked", back["blockLabels"]
+
+
+def test_a_block_after_switching_account_does_not_carry_the_other_accounts_numbers():
+    """Every other piece of Texts state is retired on an account switch; the block list was not, so account B's next
+    block published account A's blocked numbers into B's list (2026-10-22). The shipped sms.js, switched in place."""
+    out = sim(steps=["block:+15550001", "account:" + "b" * 64, "block:+15550002"])
+    numbers = sorted(v["number"] for v in out["blocks"].values())     # the list account B's save publishes
+    assert numbers == ["+15550002"], ("account A's blocked number is in account B's list", numbers)

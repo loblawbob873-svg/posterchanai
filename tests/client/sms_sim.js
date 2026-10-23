@@ -594,6 +594,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step.startsWith('block:')){ await S.setBlock(step.slice(6), true); }
+    /* `account:<pubkey>` -- the person switches account on this device (no reload). */
+    else if(step.startsWith('account:')){ global.__PC.ME = { pubkey: step.slice(8) }; }
     /* `liveMsg:<address>:<text>` -- an incoming text arriving on the LIVE subscription now, the path that notifies. */
     else if(step.startsWith('liveMsg:')){
       const [, addr, ...rest] = step.split(':'), at = Date.now() + 1000, d = 'pcai:sms:' + createHash('sha256').update(step).digest('hex').slice(0, 24);
@@ -839,7 +841,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const i = sms.indexOf('function blockLine(t)');
       let k = sms.indexOf('{', i), depth = 0, j = k;
       for(; j < sms.length; j++){ if(sms[j] === '{') depth++; else if(sms[j] === '}' && --depth === 0) break; }
-      return new Function('S', 'key', sms.slice(i, j + 1) + '; return blockLine;')(st, S._key)({address: v.number});
+      return new Function('S', 'key', 'ownBlocks', sms.slice(i, j + 1) + '; return blockLine;')(st, S._key, () => st.blocks || {})({address: v.number});
     })()])),
     phone: phoneLog,
     relayFull: opt.realKey ? Array.from(relay.values()) : [],
