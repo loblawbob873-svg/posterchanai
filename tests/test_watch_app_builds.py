@@ -102,7 +102,7 @@ def test_sync_follows_the_builds_and_reports_the_last_verdict():
     assert 'PIPESTATUS[0]' in sync[start:start + 400], "the watcher's status, not sed's"
     follow = re.search(r'nohup venv-unified/bin/python scripts/watch_app_builds.py "\$_EXPECT"[^\n]*\n[^\n]*&', sync)
     assert follow, 'the builds of the deployed commit are followed, detached'
-    assert sync.index('git push github master:main') < follow.start()
+    assert sync.index('_push_github master:main') < follow.start()
 
 
 def _overlay(monkeypatch, pinned, tags, gh_down=False):

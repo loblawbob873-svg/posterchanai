@@ -157,7 +157,10 @@ class Device:
                 (self.prof / lock).unlink()
             except OSError:
                 pass
-        port = _free_port()
+        # The runner's port for the first device (checkall runs browser checks concurrently and hands each one
+        # PC_CHECK_PORT); the second device asks the OS for a free one.
+        port = int(os.environ.get("PC_CHECK_PORT") or 0) if self.label == "A" else 0
+        port = port or _free_port()
         self.proc = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1366,900",
                                       "--no-first-run", "--disable-background-timer-throttling",
                                       "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
