@@ -89,6 +89,36 @@ async def wait(b, expression, seconds=40):
         "icons:[...document.querySelectorAll('#os-root .os-icons .os-icon')].map(x=>x.dataset.view)})")})
 
 
+async def vwait(b, expression, ms):
+    """`wait`, on the PAGE's clock: virtual time is advanced in small steps until `expression` holds.
+    Returns the virtual ms it took (at most `ms`)."""
+    spent = 0
+    while spent < ms:
+        if await b.js(expression):
+            return spent
+        got = await desktop.advance(b, 100)
+        assert got >= 99, ('the page clock did not advance', got)
+        spent += got
+    raise AssertionError({'waiting (virtual ms %d)' % ms: expression, 'state': await b.js(
+        "({errors:__errors,toasts:__toasts,pubs:__layPubs.length,held:__held.length})")})
+
+
+async def vrun(b, ms, step=100):
+    """Run `ms` of the PAGE's clock in `step`-ms slices. One long budget would race through timers faster
+    than work the page hands to its signer worker can come back (measured: a second save queued 1.5 s
+    after the first never reached the relay inside a single 2 s budget); slices let both keep pace."""
+    spent = 0
+    while spent < ms:
+        spent += await desktop.advance(b, min(step, ms - spent))
+    return spent
+
+
+IN_IDB = """(id=>new Promise(res=>{const r=indexedDB.open('posterchan-nostr');r.onerror=()=>res(false);
+  r.onsuccess=()=>{try{const g=r.result.transaction('events').objectStore('events').get(id);
+    g.onsuccess=()=>{res(!!g.result);r.result.close();};g.onerror=()=>{res(false);r.result.close();};}
+    catch(_){res(false);r.result.close();}};}))"""
+
+
 async def put_layout(b, doc):
     """Sign `doc` as this account's encrypted desktop layout, NEWER than any the relay holds, onto
     the relay only -- what another device's save looks like from here."""
@@ -100,7 +130,11 @@ async def put_layout(b, doc):
 
 
 async def decoded(b, ev_expr):
-    return await b.js("(async()=>JSON.parse(await __PC.nip44dec(__PC.me().pubkey, (%s).content)))()" % ev_expr)
+    """The layout an event carries, decrypted with the account's key right here -- synchronously, since
+    the page's own nip44dec waits on the page clock, which these tests leave paused."""
+    return await b.js("(()=>{const N=NostrTools.nip44;"
+                      "return JSON.parse(N.decrypt((%s).content,N.getConversationKey(%s,__PC.me().pubkey)));})()"
+                      % (ev_expr, SK))
 
 
 ICONS = "[...document.querySelectorAll('#os-root .os-icons .os-icon')].map(x=>x.dataset.view)"
@@ -142,7 +176,8 @@ async def boot_with_cached_layout(b, hold):
             await hide_by_hand(b, x)
         await asyncio.sleep(.4)
     await wait(b, '__layPubs.length>0 && !' + has(x))
-    await asyncio.sleep(2.0)                # the Store batches its IndexedDB writes
+    # The Store batches its IndexedDB writes: wait until the published layout is on disk.
+    await wait(b, '(%s)(__layPubs[__layPubs.length-1].id)' % IN_IDB)
     await b.js("localStorage.setItem('__layHold'," + json.dumps(hold) + ")")
     await b.call('Page.reload')
     await wait(b, DESK_UP)
@@ -167,17 +202,22 @@ def test_a_change_made_while_the_read_is_pending_lands_on_the_newer_remote_layou
         toasts = await b.js('__toasts')
         assert not any('try that again' in t for t in toasts), toasts
         assert await b.js('__layPubs.length') == 0, 'published before the layout was read'
-        await asyncio.sleep(1.0)
+        # From here on the PAGE's clock runs (Chrome virtual time): the quiet second and the "a second
+        # write would have gone out by now" window cost the gate nothing. It stays paused between
+        # advances, so every later wait is a vwait.
+        quiet = await vrun(b, 1000)
+        assert quiet >= 999, ('the page clock did not run the quiet second', quiet)
         assert await b.js('__layPubs.length') == 0, 'published before the layout was read'
 
         assert await b.js('__releaseLayout()') > 0
-        await wait(b, '__layPubs.length>0')
-        await asyncio.sleep(2.0)                      # a second write would have gone out by now
+        await vwait(b, '__layPubs.length>0', 30000)
+        after = await vrun(b, 2000)                   # a second write would have gone out by now
+        assert after >= 1999, ('the page clock did not run the window', after)
         assert await b.js('__layPubs.length') == 1, await b.js('__layPubs.length')
         doc = await decoded(b, '__layPubs[0]')
         assert {x, y, z} <= set(doc.get('hidden', [])), doc
         # And the screen agrees with what was stored: B's change AND ours.
-        await wait(b, '!' + has(x) + ' && !' + has(y) + ' && !' + has(z), 10)
+        await vwait(b, '!' + has(x) + ' && !' + has(y) + ' && !' + has(z), 10000)
         assert not await b.js('__errors'), await b.js('__errors')
 
     asyncio.run(desktop.with_browser('online', '', check, RELAY))
@@ -189,15 +229,18 @@ def test_a_failed_read_keeps_the_change_queued_and_publishes_nothing():
         x, y, z = await boot_with_cached_layout(b, 'fail')
         await hide_by_hand(b, z)
         await wait(b, '!' + has(z), 10)
-        # The read gives up (no relay EOSEs): the change stays, said out loud, published nowhere.
-        await wait(b, "__toasts.some(t=>t.includes('will sync when your relays answer'))", 60)
+        # The read gives up (no relay EOSEs): the change stays, said out loud, published nowhere. All of
+        # it on the PAGE's clock (Chrome virtual time) -- the read's own timeouts are what took the gate
+        # ~20 s; the page clock stays paused between advances, so every later wait is a vwait.
+        await vwait(b, "__toasts.some(t=>t.includes('will sync when your relays answer'))", 60000)
         assert await b.js('__layPubs.length') == 0, 'published over a layout that was never read'
         assert not await b.js(has(z)), 'the queued change was dropped from the screen'
 
         # The relays come back: the queued change is sent, once, on top of what they hold.
         await b.js('__releaseLayout()')
-        await wait(b, '__layPubs.length>0', 90)
-        await asyncio.sleep(2.0)
+        await vwait(b, '__layPubs.length>0', 90000)
+        after = await vrun(b, 2000)                   # a second write would have gone out by now
+        assert after >= 1999, ('the page clock did not run the window', after)
         assert await b.js('__layPubs.length') == 1, await b.js('__layPubs.length')
         doc = await decoded(b, '__layPubs[0]')
         assert {x, z} <= set(doc.get('hidden', [])), doc
