@@ -70,6 +70,16 @@ public final class MediaSaveRules {
       case "video/mp4": return "mp4";
       case "video/webm": return "webm";
       case "video/quicktime": return "mov";
+      // What MMS actually carries: a phone camera clip is 3GPP and a voice note AMR. With no extension
+      // the gallery and music apps skip the file even though the type is right.
+      case "video/3gpp": return "3gp";
+      case "video/3gpp2": return "3g2";
+      case "image/bmp": return "bmp";
+      case "image/heic": return "heic";
+      case "audio/amr": return "amr";
+      case "audio/amr-wb": return "awb";
+      case "audio/3gpp": return "3gp";
+      case "text/x-vcard": case "text/vcard": return "vcf";
       // A music app lists a file by its extension as much as by its type.
       case "audio/mpeg": case "audio/mp3": return "mp3";
       case "audio/mp4": case "audio/x-m4a": return "m4a";

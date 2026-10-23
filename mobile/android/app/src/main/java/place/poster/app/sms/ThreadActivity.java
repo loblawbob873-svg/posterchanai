@@ -38,6 +38,7 @@ import android.util.LruCache;
 
 import androidx.core.content.FileProvider;
 
+import place.poster.app.preview.MediaSaveWriter;
 import place.poster.app.signer.Nostr;
 import place.poster.app.signer.SignerKey;
 import place.poster.app.signer.SignerRelayService;
@@ -1357,19 +1358,86 @@ public class ThreadActivity extends PcActivity {
         }, "pc-mms-video").start();
     }
 
+    /* SAVE, under every attachment ("sms apk does not let me save media attachments"). This screen
+     * had none: a picture opened in a viewer with nothing but "tap to close", a video only played,
+     * and a voice note or any other file was not drawn at all -- only named in the bubble's text. */
+    private Button saveButton(final SmsPart p) {
+        Button save = new Button(this);
+        save.setText("Save " + MmsPartSave.label(p).toLowerCase(java.util.Locale.ROOT));
+        save.setContentDescription("Save " + MmsPartSave.label(p));
+        save.setAllCaps(false);
+        save.setOnClickListener(v -> savePart(p, v));
+        return save;
+    }
+
+    private void savePart(final SmsPart p, final View button) {
+        if (!MediaSaveWriter.available()) { sharePart(p); return; }
+        if (button != null) button.setEnabled(false);
+        say("Saving " + MmsPartSave.label(p).toLowerCase(java.util.Locale.ROOT) + "\u2026");
+        new Thread(() -> {
+            java.io.InputStream in = null;
+            try { in = MmsStore.partStream(this, p.id); } catch (Throwable ignored) { }
+            final String said = MmsPartSave.save(getContentResolver(), in, p);
+            main.post(() -> { if (button != null) button.setEnabled(true); say(said); });
+        }, "pc-mms-save").start();
+    }
+
+    /** Android 9 and older: no permission-free public folder, so hand the file to the share sheet
+     * (the same fallback the WebView's Save has there) -- a way to keep it, and labelled as such. */
+    private void sharePart(final SmsPart p) {
+        new Thread(() -> {
+            try {
+                File dir = new File(getCacheDir(), "sms-share");
+                if (!dir.isDirectory() && !dir.mkdirs()) throw new java.io.IOException("no cache directory");
+                String name = place.poster.app.preview.MediaSaveRules.name(MmsPartSave.fileName(p),
+                        place.poster.app.preview.MediaSaveRules.mime(p.ct));
+                File file = new File(dir, name);
+                long total = 0;
+                try (java.io.InputStream in = MmsStore.partStream(this, p.id);
+                     FileOutputStream out = new FileOutputStream(file)) {
+                    if (in == null) throw new java.io.IOException("the phone would not open it");
+                    byte[] buf = new byte[64 * 1024]; int n;
+                    while ((n = in.read(buf)) >= 0) { out.write(buf, 0, n); total += n; }
+                }
+                if (total == 0) throw new java.io.IOException("it has no bytes");
+                final Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
+                main.post(() -> {
+                    Intent send = new Intent(Intent.ACTION_SEND).setType(p.ct == null || p.ct.isEmpty()
+                            ? "application/octet-stream" : p.ct)
+                            .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    try { startActivity(Intent.createChooser(send, "Save or share " + MmsPartSave.label(p))); }
+                    catch (Throwable t) { say("Could not save " + MmsPartSave.label(p) + ": no app can take it"); }
+                });
+            } catch (Throwable t) {
+                final String why = t.getMessage() == null ? "error" : t.getMessage();
+                main.post(() -> say("Could not save " + MmsPartSave.label(p) + ": " + why));
+            }
+        }, "pc-mms-share").start();
+    }
+
     private void drawParts(final LinearLayout host, SmsMsg m) {
         host.removeAllViews();
         for (final SmsPart p : m.parts) {
-            if (p.ct != null && p.ct.toLowerCase().startsWith("video/")) {
+            if (!MmsPartSave.savable(p)) continue;
+            String ct = p.ct == null ? "" : p.ct.toLowerCase(java.util.Locale.ROOT);
+            if (ct.startsWith("video/")) {
                 Button play = new Button(this); play.setText(p.name.isEmpty() ? "Play video" : "Play " + p.name);
-                play.setAllCaps(false); play.setOnClickListener(v -> showVideo(p)); host.addView(play); continue;
+                play.setAllCaps(false); play.setOnClickListener(v -> showVideo(p)); host.addView(play);
+                host.addView(saveButton(p));
+                continue;
             }
-            if (p.ct == null || !p.ct.toLowerCase().startsWith("image/")) continue;
+            if (!ct.startsWith("image/")) {
+                // A voice note, a contact card, any other file: it was named in the bubble and
+                // reachable nowhere. Saving it is the way to open it in the app that understands it.
+                host.addView(saveButton(p));
+                continue;
+            }
             final ImageView image = new ImageView(this);
             image.setAdjustViewBounds(true); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setMinimumWidth(dp(180)); image.setMinimumHeight(dp(110));
             image.setMaxWidth(dp(320)); image.setMaxHeight(dp(260));
             final String token = m.id + ":" + p.id; image.setTag(token); host.addView(image);
+            host.addView(saveButton(p));
             Bitmap cached = thumbs.get(p.id);
             if (cached != null) { image.setImageBitmap(cached); image.setOnClickListener(v -> showPicture(cached)); continue; }
             new Thread(() -> {

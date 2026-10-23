@@ -61,15 +61,19 @@ def test_every_save_goes_into_the_one_downloads_tree():
     reaches the rule."""
     plugin = open(os.path.join(SRC, "MediaSavePlugin.java")).read()
     save = plugin[plugin.index("public void save("):]
-    assert "MediaStore.Downloads.EXTERNAL_CONTENT_URI" in save
-    assert "Images.Media.EXTERNAL_CONTENT_URI" not in save and "Video.Media.EXTERNAL_CONTENT_URI" not in save
-    assert 'call.getString("hint"' in save and "MediaSaveRules.kind(mime, hint)" in save
+    # The write itself is MediaSaveWriter's, shared with the native Messages screen (one tree, one
+    # set of rules); the plugin hands it the page's hint.
+    assert 'call.getString("hint"' in save and "MediaSaveWriter.write(" in save and "name, mime, hint)" in save
+    writer = open(os.path.join(SRC, "MediaSaveWriter.java")).read()
+    assert "MediaStore.Downloads.EXTERNAL_CONTENT_URI" in writer
+    assert "Images.Media.EXTERNAL_CONTENT_URI" not in writer and "Video.Media.EXTERNAL_CONTENT_URI" not in writer
+    assert "MediaSaveRules.kind(mime, hint)" in writer
 
 
 def test_the_plugin_is_registered_and_never_asks_for_storage_permission():
     main = open(os.path.join(ROOT, "mobile/android/app/src/main/java/place/poster/app/MainActivity.java")).read()
     assert "registerPlugin(place.poster.app.preview.MediaSavePlugin.class);" in main
-    plugin = open(os.path.join(SRC, "MediaSavePlugin.java")).read()
-    assert "RELATIVE_PATH" in plugin and "IS_PENDING" in plugin and "SDK_INT >= 29" in plugin
+    writer = open(os.path.join(SRC, "MediaSaveWriter.java")).read()
+    assert "RELATIVE_PATH" in writer and "IS_PENDING" in writer and "SDK_INT >= 29" in writer
     manifest = open(os.path.join(ROOT, "mobile/android/app/src/main/AndroidManifest.xml")).read()
     assert "WRITE_EXTERNAL_STORAGE" not in manifest
