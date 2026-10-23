@@ -269,9 +269,9 @@ def test_a_moderator_and_a_ban_take_effect_on_the_other_clients():
             await alice.b.js("document.querySelector('[data-cc-member-role=\"moderator\"]').click();true")
             await R.wait(alice.b, "(window.__toastLog||[]).some(t=>/Role granted/.test(t))", 40, 'the role granted', state=STATE)
             # Bob's client, which read nothing from Alice's: it now offers him the moderator's Kick. Roles live on the
-            # control plane, which a member's client re-reads about once a minute (refreshRoomMetadata, minInterval
-            # 60 s; measured 64 s), so allow for that.
-            await menu_offers(bob, R.pubkey(CAROL), 'Kick from community', 120)
+            # control plane; the open community holds a LIVE subscription to it (startControlLive), so this is seconds.
+            # Before that it waited for the once-a-minute metadata poll (measured 64 s) -- 20 s fails that.
+            await menu_offers(bob, R.pubkey(CAROL), 'Kick from community', 20)
             # Alice bans Carol (the owner's ban also rotates the community keys).
             offered = await member_menu(alice, R.pubkey(CAROL))
             assert 'Ban from community' in offered, offered
@@ -288,7 +288,7 @@ def test_a_moderator_and_a_ban_take_effect_on_the_other_clients():
             # Carol leaves Bob's member list.
             await R.wait(bob.b, "(()=>{const m=document.querySelector('#cc-members');if(!document.querySelector('.cc-members-pane .cc-member')&&m)m.click();"
                                 "return !!document.querySelector('.cc-members-pane .cc-member') && !%s.includes(%s)})()"
-                         % (MEMBERS, json.dumps(R.pubkey(CAROL))), 100, "Carol gone from Bob's member list",
+                         % (MEMBERS, json.dumps(R.pubkey(CAROL))), 30, "Carol gone from Bob's member list",
                          state="({members:%s,active:(document.activeElement||{}).outerHTML.slice(0,200),state:%s})" % (MEMBERS, STATE))
             # Carol's room SAYS she is out, and does not take a message nobody can read any more.
             await R.wait(carol.b, "(()=>{const i=document.querySelector('#cc-input');return !!i&&i.disabled&&"
@@ -313,9 +313,9 @@ def test_a_pin_shows_in_the_other_members_pinned_list():
             await shows(bob, 'house rules: be kind')
             await message_action(alice, 'house rules: be kind', 'data-cc-pin')
             await R.wait(alice.b, "(window.__toastLog||[]).some(t=>/Message pinned/.test(t))", 40, 'pinned', state=STATE)
-            # Bob opens 📌 Pinned: the pin is a control-plane write, which his client re-reads about once a minute.
+            # Bob opens 📌 Pinned: the pin is a control-plane write, which reaches his open community live.
             loop = asyncio.get_running_loop()
-            end, seen = loop.time() + 100, []
+            end, seen = loop.time() + 20, []
             while loop.time() < end:
                 await bob.b.js("document.activeElement&&document.activeElement.blur();document.querySelector('#cc-pins').click();true")
                 await R.wait(bob.b, "!!document.querySelector('.cc-pin-list,.modal')", 10, 'the pinned list')

@@ -6413,18 +6413,21 @@
     if(!closed)entry.refresh();
   }
 
-  async function refreshRoomMetadata(p){
-    if(metadataBusy||!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
+  async function refreshRoomMetadata(p,only=null){
+    if(metadataBusy){if(only)controlPending=only;return;}
+    if(!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
     const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle&&!x.room.cord.bundle.dissolved);
     if(!eligible.length)return; metadataBusy=true;
     try{
       /* Rotate through every joined community. Metadata belongs to the community rail as much as
        * the active header, so refreshing only state.community leaves all other icons stale until
        * somebody navigates away and back. */
-      const selected=eligible[metadataCursor++%eligible.length],room=selected.room,bundle=room.cord.bundle,
+      const selected=only?eligible.find(x=>roomIdentity(x.room)===only.identity):eligible[metadataCursor++%eligible.length];
+      if(!selected)return;
+      const room=selected.room,bundle=room.cord.bundle,
         reader=window.PosterCordReader,loadKey=room.communityId||room.naddr,
         seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle),context=cordPlaneContext(p,bundle,roomControls.get(loadKey)||[],room),
-        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cachedWraps,{plane:context,signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
+        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,[...cachedWraps,...((only&&only.extra)||[])],{plane:context,signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
         info=reader.inspectControl(bundle,wraps||[]);
       if(!context.current())return;
       await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);if(!context.current())return;roomControls.set(loadKey,wraps||[]);
@@ -6449,9 +6452,36 @@
       if(changed){const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at>=0){latest[at]=mergeRoom(latest[at],room);save(latest);preserveChatScroll(()=>backgroundRender());}}
       const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
       if(roomIdentity(active)===roomIdentity(room)&&activeChannel)startChatLive(p,active,activeChannel);
-    }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
+      if(roomIdentity(active)===roomIdentity(room))startControlLive(p,active,seed.controlPubkeys);
+    }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;if(controlPending){const next=controlPending;controlPending=null;void refreshRoomMetadata(p,next);}}
   }
-  function stopLiveSync(){ stopVoiceWatch(); stopRekeyLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
+  /* CONTROL CHANGES ARRIVE LIVE FOR THE COMMUNITY ON SCREEN (2026-10-23). A new channel, a ban, a role or a pin used to
+   * reach other members only through the rotating metadata poll (at most once a minute per community, round-robin over
+   * every joined one): a channel somebody just made took a minute or more to appear, and the two-client test of it was
+   * flaky under load. The open community now holds one live REQ on its control authors -- like the rekey streams -- and a
+   * new control envelope refreshes that room at once, carrying the envelope in hand so no throttled read can lose it. */
+  const controlLive={key:'',close:null};let controlPending=null;
+  function stopControlLive(){try{if(controlLive.close)controlLive.close();}catch(_){}controlLive.key='';controlLive.close=null;}
+  function startControlLive(p,room,authors){
+    const R=(window.PCConcordRelay||window.Relay),bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
+    if(!R||!R.subscribeFrom||!bundle||bundle.dissolved||bundle.removed||!owner||!authors||!authors.length){stopControlLive();return;}
+    const identity=roomIdentity(room),relays=roomRelays(bundle),key=owner+'\n'+identity+'\n'+authors.join(',')+'\n'+relays.join(',');
+    if(controlLive.key===key)return;
+    stopControlLive();
+    const loadKey=room.communityId||room.naddr,since=Math.floor(Date.now()/1000)-60,plane=cordPlaneContext(p,bundle,roomControls.get(loadKey)||[],room);
+    let pooled=null,external=null,timer=null;const pending=new Map();
+    const onEvent=ev=>{
+      if(controlLive.key!==key||!ev||Number(ev.kind)!==1059||!authors.includes(ev.pubkey))return;
+      if((roomControls.get(loadKey)||[]).some(old=>old.id===ev.id)||pending.size>=200)return;
+      pending.set(ev.id,ev);clearTimeout(timer);
+      timer=setTimeout(()=>{const extra=[...pending.values()];pending.clear();if(controlLive.key===key)void refreshRoomMetadata(p,{identity,extra});},250);
+    };
+    const filters=[{kinds:[1059],authors,since}];
+    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true,max:1},plane):R.subscribeFrom(relays,filters,{onEvent,timeout:0,live:true});}
+    catch(e){console.warn('Concord control subscription failed',e);}
+    controlLive.key=key;controlLive.close=()=>{clearTimeout(timer);try{if(pooled)R.close(pooled);}catch(_){}try{if(external)external();}catch(_){}};
+  }
+  function stopLiveSync(){ stopVoiceWatch(); stopRekeyLive(); stopControlLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
   /* THE LIVE LOOP RESTS. It was started on the first visit to Communities and never stopped (stopLiveSync has no caller),
    * so every 4 s for the life of the page -- in the background too, since the APK's foreground service keeps the WebView's
    * timers running -- it refreshed metadata, swept every room's relays, re-deduplicated every room and swept IndexedDB

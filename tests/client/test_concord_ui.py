@@ -746,7 +746,7 @@ def test_entering_channel_wins_scroll_race_with_history_and_media():
 
 
 def test_all_joined_community_metadata_repaints_live_without_moving_chat():
-    block = CONCORD.split('async function refreshRoomMetadata(p)', 1)[1].split('function startLiveSync', 1)[0]
+    block = CONCORD.split('async function refreshRoomMetadata(p,only=null)', 1)[1].split('function startLiveSync', 1)[0]
     assert 'eligible[metadataCursor++%eligible.length]' in block
     assert 'roomControls.set(loadKey,wraps||[])' in block
     assert "assign('name'" in block and "assign('description'" in block
@@ -775,7 +775,7 @@ def test_background_repaints_never_replace_a_focused_workspace_control():
     # added, so one implementation serves both the periodic tick and a pushed event.
     live = CONCORD.split('async function absorbChatWraps(', 1)[1].split(
         'async function refreshRoomMetadata(p)', 1)[0]
-    metadata = CONCORD.split('async function refreshRoomMetadata(p)', 1)[1].split(
+    metadata = CONCORD.split('async function refreshRoomMetadata(p,only=null)', 1)[1].split(
         'function startLiveSync', 1)[0]
     hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split(
         'async function publishCordMessage', 1)[0]
