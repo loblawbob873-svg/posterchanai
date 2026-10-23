@@ -581,8 +581,8 @@ if(activeRoomQueries.some(relays=>relays.some(relay=>!roomRelaySet.includes(rela
   throw new Error('active room queried outside its bundle relay: '+JSON.stringify(activeRoomQueries));
 
 control('cc-edit-icon').click();
-control('cc-icon-value').value='https://example.test/room.png';
-await control('cc-icon-save').click();
+control('cc-settings-icon').value='https://example.test/room.png';
+await control('cc-settings-save').click();
 const edited=JSON.parse(data.get(CC_ROOMS));
 if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed: '+JSON.stringify({icon:edited[0].icon,ptr:edited[0].iconPointer,local:edited[0].local}));
 control('cc-description-value').value='Editable room description';

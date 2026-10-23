@@ -69,5 +69,8 @@ const clicked={...PCConcord.inviteParts(rin.url),url:rin.url};
 const hits=healed.filter(r=>PCConcord.sameRoom(r,clicked));
 assert.equal(hits.length,1,'an invite click matched '+hits.length+' rooms');
 assert.ok(hits[0]!==kept&&hits[0].url===rin.url,'Rin\'s invite opened the Sorsmenedek row');
-assert.ok(PCConcord.sameRoom(merged,clicked),"the pre-split row is the one that swallowed the click (this test can fail)");
+// And the leftover alias itself no longer captures it: a decrypted row is matched by an undecrypted invite through
+// its OWN invite only, so even the pre-split row cannot swallow Rin's (2026-10-22, "it loads the other community").
+assert.equal(PCConcord.sameRoom(merged,clicked),false,'a leftover alias on a decrypted row still swallows an undecrypted invite');
+assert.equal(PCConcord.sameRoom(merged,{...PCConcord.inviteParts(sors.url),url:sors.url}),true,'a row no longer matches its own invite');
 console.log('Concord real invite identity runtime ok');

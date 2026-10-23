@@ -43,3 +43,43 @@ def test_check_my_communities_opens_a_report_on_the_community_list(width):
     assert "Membership documents found:" in got["text"], ("the report says nothing it measured", got["text"][:300])
     assert got["inside"], ("the report runs off the screen", got)
     assert got["copy"], "no way to copy the report off the phone"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_restore_brings_back_a_community_this_device_recorded_leaving():
+    """The "I left and rejoined, and it never comes back on this device" shape (2026-10-22): the account's membership
+    list holds the community, but this device remembers leaving it, so it stays hidden. The check names that and
+    offers Restore; Restore forgets the device's record and the community is back in the list."""
+    import json
+    from tests.client.concord_fixture_relay import INSTALL, MINT, OPEN_ROOM
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=1280, height=850, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.switchView('concord')")
+        await b.until('!!window.PosterCordReader && !!window.PosterCord && !!window.PCConcord')
+        await b.js(INSTALL)
+        minted = await b.js(MINT.replace('NAME', json.dumps('Came back')))
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        # The account's membership list is written to this node's relay, which keeps it and serves it back.
+        await b.js("window.__publishOK=true; PCConcord.persistArmadaMembership(__PC,__cordRoom)")
+        await b.until("(window.__published||[]).some(e=>e.kind===33302||e.kind===30078||e.kind===10009)")
+        await b.js("window.__events=[...(window.__events||[]),...__published]; __relaySeed(__published); 1")
+        # This device recorded leaving it, and it is gone from the list here.
+        await b.js("(()=>{const pk=__PC.me().pubkey;PCConcord.rememberLeftCommunity(pk,__cordRoom);"
+                   "localStorage.setItem('pc.concord.rooms.v1.'+pk,'[]');localStorage.removeItem('pc.concord.active.v1.'+pk);PCConcord.render();})()")
+        await b.until("!!document.getElementById('cc-discovery')")
+        await b.js("document.getElementById('cc-discovery').click()")
+        await b.until("!!document.getElementById('cc-check-memberships')")
+        await b.js("document.getElementById('cc-check-memberships').click()")
+        await b.until("((document.getElementById('cc-mcheck-out')||{}).textContent||'').includes('Decrypted')")
+        await b.until("/Came back: hidden: this device recorded leaving it/.test((document.getElementById('cc-mcheck-out')||{}).textContent||'')")
+        await b.until("!document.getElementById('cc-mcheck-fix').hidden")
+        await b.js("document.getElementById('cc-mcheck-fix').click()")
+        await b.until("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]').some(r=>r.name==='Came back')")
+        await b.until("/Came back: shown/.test(document.getElementById('cc-mcheck-out').textContent)")
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser("online", "", check, extra))

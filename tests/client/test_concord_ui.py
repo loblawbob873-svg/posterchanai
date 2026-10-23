@@ -425,9 +425,8 @@ def test_armada_membership_snapshot_is_resolved_through_its_invite_bundle():
 def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert 'cc-community-icon' in CONCORD
     assert 'id="cc-edit-icon"' in CONCORD
-    assert 'id="cc-icon-save"' in CONCORD
-    assert "target.value=normalizeIcon($('#cc-icon-value').value)" in CONCORD
-    assert 'return saveButton.click()' in CONCORD
+    assert 'id="cc-settings-icon"' in CONCORD           # the icon is edited in Community settings (the gear)
+    assert 'id="cc-icon-dialog"' not in CONCORD          # the old standalone dialog had no way to open it since 2026-08-24
     assert 'reader.createMetadataWrap' in CONCORD
     assert 'community relays rejected the profile update' in CONCORD
     assert 'createMetadataWrap: () => createMetadataWrap' in CORD_READER

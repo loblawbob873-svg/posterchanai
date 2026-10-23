@@ -42,9 +42,9 @@ def test_theme_create_and_invitation_links_on_desktop():
         await b.js("document.querySelector('#cc-create-cancel').click(); 1")
         await b.until("document.querySelector('#cc-create-dialog').classList.contains('hidden')")
 
-        await b.js("""(async()=>{document.getElementById('cc-head-more').click();await new Promise(r=>setTimeout(r,250));
-            const it=[...document.querySelectorAll('.menu-popover [data-act],.menu-popover button,.mp-item,[data-m]')]
-              .find(x=>/Invitation links/.test(x.textContent));if(it)it.click();})(); 1""")
+        await b.js("document.getElementById('cc-head-more').click(); 1")
+        await b.until("!!document.querySelector('.menu-pop [data-m=\"cc-manage-links\"]')")
+        await b.js("document.querySelector('.menu-pop [data-m=\"cc-manage-links\"]').click(); 1")
         await b.until("!!document.querySelector('#cc-mint-link') && !!document.querySelector('#cc-owned-links')")
         assert not await b.js("__errors"), await b.js("__errors")
 
