@@ -102,7 +102,10 @@ def test_the_prompt_window_does_what_each_choice_says(choice):
         await b.until("!!document.querySelector('.os-shot-popup .shot-prompt')")
         assert await b.js("!!document.querySelector('.shot-prompt .shot-prev')"), "no preview of what was captured"
         await b.js(f"document.querySelector('[data-shot-act=\"{choice}\"]').click()")
-        await asyncio.sleep(1.2)
+        # 1.2 s on the PAGE's clock (Chrome virtual time): the saved prompt's 0.9 s close, and room for
+        # anything a choice must NOT do afterwards (delete the frame a region is chosen on).
+        ran = await desktop.advance(b, 1200)
+        assert ran >= 1199, ("the page clock did not run the window", ran)
         shot, acts, closed = await b.js("[__shot, __acts, __closed]")
         if choice == "save":
             assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in shot, shot
@@ -137,7 +140,7 @@ def test_the_prompt_survives_the_page_finishing_its_boot():
         assert state == {"closed": 0, "prompt": True, "prev": True}, ("the prompt window closed itself", state)
         # And it still does its job afterwards.
         await b.js("document.querySelector('[data-shot-act=\"save\"]').click()")
-        await asyncio.sleep(1.2)
+        await b.until('__shot.some(x=>x[0]==="take")')
         assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in await b.js("__shot")
 
     asyncio.run(desktop.with_browser("online", "?pcpopup=shot", check, BRIDGES + STAGED))
@@ -299,6 +302,8 @@ def test_clicking_the_countdown_cancels_it():
         await b.js("PCOSShell.delayedShot(3)")
         await b.until("!!document.getElementById('os-shot-count')")
         await b.js("document.getElementById('os-shot-count').click()")
+        # Real time, NOT Chrome virtual time: the capture after the countdown waits on two animation frames,
+        # which virtual time does not run -- on the page clock a countdown that was never cancelled passed.
         await asyncio.sleep(3.6)
         assert not await b.js("__shot.some(x=>x[0]==='stage')"), "a cancelled countdown still took the screenshot"
         assert not await b.js("!!document.getElementById('os-shot-count')")
@@ -314,7 +319,7 @@ def test_mark_up_saves_the_shot_and_hands_it_to_the_desktop():
     async def check(b):
         await b.until("!!document.querySelector('.os-shot-popup .shot-prompt [data-shot-act=\"markup\"]')")
         await b.js("document.querySelector('[data-shot-act=\"markup\"]').click()")
-        await asyncio.sleep(1.0)
+        await b.until("__acts.some(a=>a.startsWith('markup:'))")
         shot, acts = await b.js("[__shot, __acts]")
         assert ["take", {"staged": "/tmp/posterchan-shots-1000/s.png", "copy": False}] in shot, ("the original was not saved first", shot)
         assert "markup:" + "%2Fhome%2Fu%2FPictures%2FScreenshots%2FPosterChan-x.png" in acts, acts
