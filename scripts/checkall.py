@@ -155,6 +155,9 @@ CHECKS = {
     # By hand only: it creates (and dissolves) a community on public relays and calls through two production SFUs.
     "check_armada_call_interop":       dict(group="manual", secs=1260, serial=True,
                                             why="run by hand: scripts/check_armada_call_interop.py https://poster.place"),
+    # By hand only: it creates (and dissolves) a community on public relays and posts in it from two Chromes.
+    "check_concord_federation_live":   dict(group="manual", secs=1560, serial=True,
+                                            why="run by hand: scripts/check_concord_federation_live.py https://poster.place"),
     "check_signer_transport":          dict(group="live", secs=420, serial=True, live_args=[]),
     "check_client_icon_themes":        dict(group="live", secs=600),
     "check_client_mobile":             dict(group="live", secs=600),
