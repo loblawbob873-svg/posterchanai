@@ -76,11 +76,17 @@ def test_text_size_more_menu_and_split_panes():
     async def check(b):
         await _open_terminal(b, 1280, 860, False)
         size = "(+localStorage.getItem('pc_tty_font_size')||0)"
+        # What the terminal DRAWS, not only the number it saves: a saved size the screen ignores is a dead button. In a
+        # window of fixed width, larger text is FEWER columns -- read off the live grid (PCTerm._grid).
+        cols = "PCTerm._grid().cols"
+        before = await b.js(cols)
         await b.js("document.querySelector('#tty-font-more').click(); 1")
         await b.until(f"{size}>0")
         bigger = await b.js(size)
+        await b.until(f"{cols}<{before}")
         await b.js("document.querySelector('#tty-font-less').click(); document.querySelector('#tty-font-less').click(); 1")
         await b.until(f"{size}==={bigger - 2}")
+        await b.until(f"{cols}>{before}")
         await b.js("document.querySelector('#tty-more').click(); 1")
         await b.until("!document.querySelector('#tty-more-menu').hidden")
         await b.js("document.querySelector('#tty-more-font-reset').click(); 1")
