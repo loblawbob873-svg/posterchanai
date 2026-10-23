@@ -191,3 +191,24 @@ class WhenTheRelayIsUpAndEmpty(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RefusingRelay(_LiveRelay):
+    """Reachable and readable, but it REFUSES the write (a policy, a full disk, a same-second tie lost)."""
+
+    async def put_doc(self, port, sk, d, payload, encrypt=True, **kw):
+        self.writes.append((d, json.loads(json.dumps(payload))))
+        return False
+
+
+class WhenTheRelayRefusesTheWrite(_Base):
+    """2026-10-23: the drafts save ignored put_doc's answer and said {"ok": true} for a document the relay
+    refused -- the client then marked those drafts synced, and no other device ever saw them."""
+
+    RELAY = _RefusingRelay
+
+    def test_a_refused_drafts_save_is_not_reported_as_saved(self):
+        code, j = self.drafts(drafts=[{"id": "d1", "ts": 10, "text": "hello"}])
+        self.assertEqual(1, len(self.relay.writes), "the save was not even attempted")
+        self.assertEqual(502, code, "a refused drafts save answered %s" % code)
+        self.assertFalse(j.get("ok"))

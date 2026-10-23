@@ -5063,7 +5063,12 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
                 if cur is None or (d.get("ts") or 0) >= (cur.get("ts") or 0):
                     merged[d["id"]] = d
         out = _cap_drafts(merged.values())
-        await store.put_doc(port, sk, "pcai:drafts", {"drafts": out})
+        # A WRITE THE RELAY REFUSED IS NOT A SAVE (2026-10-23). put_doc answers whether the relay accepted the
+        # document; this ignored it and said {"ok": true}, so the client marked drafts synced that no other device
+        # would ever see. The client already treats a non-ok answer as "not synced" and keeps its copy to send again.
+        if not await store.put_doc(port, sk, "pcai:drafts", {"drafts": out}):
+            logger.warning("[client] drafts: the relay refused the drafts document")
+            return JSONResponse({"ok": False, "error": "drafts not saved -- the relay refused them"}, status_code=502)
         return JSONResponse({"ok": True, "drafts": out})
     # STRICT on the LOAD half too. `Drafts.pull()` merges the answer with what this device holds and
     # writes the union to localStorage, so a loose read that answers [] for an unreachable relay is
