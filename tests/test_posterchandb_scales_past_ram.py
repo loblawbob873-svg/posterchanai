@@ -12,6 +12,7 @@ and drops what is not, exactly like the segment files, and a snapshot appends th
 changed pages. These tests hold both properties against the SHIPPED store at two sizes, measured -- anonymous memory of
 a process that opened the store and queried it, and the bytes a snapshot actually wrote.
 """
+import copy
 import os
 import shutil
 import subprocess
@@ -42,6 +43,33 @@ def _build(path, n, seed=1):
     return g
 
 
+# BUILT ONCE PER MODULE. Building is ~90 us an event, and this file used to build 1.13M of them (the 360k store twice):
+# ~105 s of its ~115 s. Two stores now, each built the same way as before; a test that WRITES works on its own copy
+# (a file copy of the store a clean close left), so no test sees another's writes.
+SMALL_N, BIG_N = 60_000, 360_000
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    made = {}
+
+    def get(name):
+        if name not in made:
+            path = str(tmp_path_factory.mktemp("pcdb-" + name) / "s")
+            made[name] = (path, _build(path, {"small": SMALL_N, "big": BIG_N}[name]))
+        return made[name]
+    return get
+
+
+def _copy(built, name, into):
+    """A private copy of a built store, and its generator exactly where the build left it (each copy continues the same
+    stream, as a test that built its own store did)."""
+    src, _ = built(name)
+    dst = os.path.join(into, "s")
+    shutil.copytree(src, dst)
+    return dst, copy.deepcopy(built(name)[1])
+
+
 PROBE = r"""
 import sys, os
 sys.path.insert(0, %(root)r)
@@ -66,13 +94,9 @@ def _anon(path):
     return int(r.stdout.split()[-1])
 
 
-def test_a_bigger_store_does_not_take_more_ram_to_open_and_query():
-    small_n, big_n = 60_000, 360_000
-    with tempfile.TemporaryDirectory(prefix="pcdb-ram-") as d:
-        small, big = os.path.join(d, "small"), os.path.join(d, "big")
-        _build(small, small_n)
-        _build(big, big_n)
-        a_small, a_big = _anon(small), _anon(big)
+def test_a_bigger_store_does_not_take_more_ram_to_open_and_query(built):
+    small_n, big_n = SMALL_N, BIG_N
+    a_small, a_big = _anon(built("small")[0]), _anon(built("big")[0])
     per_event = (a_big - a_small) / (big_n - small_n)
     # Before: ~200 B an event (columns 82, postings 65, the `#d~` tuples ~60) -- 60 MB more for these 300k events.
     assert per_event < 16, ("anonymous RAM grows with the store: %.0f bytes/event (%d -> %d bytes)"
@@ -85,10 +109,9 @@ def _written():
             return int(l.split()[1])
 
 
-def test_a_snapshot_writes_what_changed_not_the_whole_index():
+def test_a_snapshot_writes_what_changed_not_the_whole_index(built):
     with tempfile.TemporaryDirectory(prefix="pcdb-ckpt-") as d:
-        path = os.path.join(d, "s")
-        g = _build(path, 200_000)
+        path, g = _copy(built, "big", d)
         st = Store(path, flush_interval=3600, direct_durable=False, segment_bytes=SEG)
         try:
             for _ in range(2000):
@@ -99,15 +122,14 @@ def test_a_snapshot_writes_what_changed_not_the_whole_index():
             wrote = _written() - w0
         finally:
             st.close()
-    # 2000 events are ~1 MB of log and index. Before: the whole index again (~40 MB at 200k events, 1.24 GB live).
+    # 2000 events are ~1 MB of log and index. Before: the whole index again (~70 MB at these 360k events, 1.24 GB live).
     assert wrote < 4 * 1024 * 1024, "a snapshot after 2000 new events wrote %.1f MB" % (wrote / 2 ** 20)
 
 
-def test_a_clean_stop_and_start_replays_nothing():
+def test_a_clean_stop_and_start_replays_nothing(built):
     """A deploy restarts the relay: with a snapshot at every clean stop (cheap now), the start replays no log at all."""
     with tempfile.TemporaryDirectory(prefix="pcdb-stop-") as d:
-        path = os.path.join(d, "s")
-        g = _build(path, 30_000)
+        path, g = _copy(built, "small", d)
         st = Store(path, flush_interval=3600, direct_durable=False, segment_bytes=SEG)
         for _ in range(500):
             st.copy_put(g.event())
@@ -115,7 +137,7 @@ def test_a_clean_stop_and_start_replays_nothing():
         st = Store(path, flush_interval=3600, direct_durable=False, segment_bytes=SEG)
         try:
             assert st.last_open["snapshot"] and st.last_open["replayed"] == 0, st.last_open
-            assert st.stats()["events"] == 30_500
+            assert st.stats()["events"] == SMALL_N + 500
         finally:
             st.close()
 
@@ -123,32 +145,28 @@ def test_a_clean_stop_and_start_replays_nothing():
 @pytest.mark.skipif(not shutil.which("systemd-run") or subprocess.run(
     ["systemd-run", "--user", "--scope", "-q", "true"], capture_output=True).returncode != 0,
     reason="needs a user systemd to put the probe in a memory-limited cgroup")
-def test_a_cheap_vps_opens_and_queries_a_store_bigger_than_its_ram():
+def test_a_cheap_vps_opens_and_queries_a_store_bigger_than_its_ram(built):
     """'we also need to make sure people can run posterchan on a cheap VPS' (2026-10-16). The probe runs in a cgroup
     capped BELOW the size of the store's files (no swap): the index is read through the page cache, which the kernel
     reclaims inside the cap, so only what is genuinely anonymous has to fit. Before: ~186 bytes an event of anonymous
     index, and this cap was exceeded (the kernel kills the process)."""
-    n = 360_000
-    with tempfile.TemporaryDirectory(prefix="pcdb-vps-") as d:
-        path = os.path.join(d, "s")
-        _build(path, n)
-        size = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path))
-        cap = 88 * 1024 * 1024
-        assert size > 1.4 * cap, "the store must be bigger than the cap for this to mean anything (%d)" % size
-        r = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=%d" % cap, "-p", "MemorySwapMax=0",
-                            sys.executable, "-c", PROBE % {"root": ROOT, "path": path, "seg": SEG}],
-                           capture_output=True, text=True, timeout=600)
+    path = built("big")[0]           # opened read-only by the probe: the same 360k store the RAM test measured
+    size = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path))
+    cap = 88 * 1024 * 1024
+    assert size > 1.4 * cap, "the store must be bigger than the cap for this to mean anything (%d)" % size
+    r = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=%d" % cap, "-p", "MemorySwapMax=0",
+                        sys.executable, "-c", PROBE % {"root": ROOT, "path": path, "seg": SEG}],
+                       capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, ("the store could not be opened and queried within %d MB: rc=%s %s"
                                % (cap >> 20, r.returncode, r.stderr[-2000:]))
 
 
-def test_the_admin_read_cache_setting_bounds_the_index_in_ram_too():
+def test_the_admin_read_cache_setting_bounds_the_index_in_ram_too(built):
     """'ram usage should be tuneable in admin settings' -- Admin -> Relay -> Database -> Read cache (MB) is ONE number
     for the event cache AND the index pages a query pulled in. Over it, the governor hands the index's pages back."""
     from app.services.posterchandb import cache, tuning
     with tempfile.TemporaryDirectory(prefix="pcdb-trim-") as d:
-        path = os.path.join(d, "s")
-        _build(path, 120_000)
+        path, _ = _copy(built, "big", d)
         gov = cache.CacheGovernor(budget_mb=0, interval=3600)
         st = Store(path, flush_interval=3600, direct_durable=False, segment_bytes=SEG, admit=gov.admit)
         gov.store = st
