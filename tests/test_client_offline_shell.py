@@ -54,6 +54,27 @@ class TestShellCoversThePage(unittest.TestCase):
                       "SHELL must precache the '/client' document or a cold offline launch has no shell")
 
 
+class TestOnDemandModulesStayOffline(unittest.TestCase):
+    """The page is not the whole client. A module that is loaded on first need rather than by a
+    <script> tag is invisible to the page-vs-SHELL comparison above, and dropping it from SHELL would
+    pass that test while making its feature unavailable offline. These are named, one by one."""
+
+    # cord-reader.js: the CORD wire protocol, loaded by concord.js at Communities' door
+    # (cordReaderReady) since it left client.html. Without it offline, no room can be read.
+    ON_DEMAND = ("/static/js/client/cord-reader.js",)
+
+    def test_on_demand_modules_are_precached(self):
+        shell = _shell_entries(_read(_SW))
+        missing = [m for m in self.ON_DEMAND if m not in shell]
+        self.assertEqual(missing, [], "loaded on demand, so only SHELL keeps these on the device offline: "
+                         + ", ".join(missing))
+
+    def test_they_really_are_on_demand(self):
+        # If one becomes a page tag again the check above is redundant -- and the boot payload grew.
+        in_page = [m for m in self.ON_DEMAND if m in _page_assets(_read(_PAGE))]
+        self.assertEqual(in_page, [], "back in client.html: " + ", ".join(in_page))
+
+
 class TestVersionedUrlMatching(unittest.TestCase):
     def test_page_versions_its_assets(self):
         # If this stops being true the ignoreSearch handling below is dead weight — and, more to the

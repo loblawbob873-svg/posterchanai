@@ -15,7 +15,8 @@ import pytest
 from tests.client import test_desktop_offline_full_app as desktop
 
 ROOM = r"""(async()=>{
-  const me=__PC.me().pubkey, R=window.PosterCordReader;
+  // The reader loads on demand (concord.js cordReaderReady); this fixture writes before Communities opens.
+  const me=__PC.me().pubkey, R=window.PosterCordReader||await PCConcord.readerReady();
   const sign=async t=>__PC.signTemplate(t);
   const made=await PosterCord.createCommunity({owner:me,name:'Old room',relays:['wss://fixture.invalid'],base:'https://fixture.invalid',signEvent:sign});
   const bundle={...PosterCord.openInvite(made.url,made.events).bundle};

@@ -541,7 +541,8 @@
 <script src="/static/js/client/media-center-ui.js?v={{ ver }}"></script>
 <script src="/static/js/client/monero-wallet.js?v={{ ver }}"></script>
 <script src="/static/js/client/cord-protocol.js?v={{ ver }}"></script>
-<script src="/static/js/client/cord-reader.js?v={{ ver }}"></script>
+<!-- cord-reader.js (1.1 MB, the CORD wire protocol) is NOT a tag: concord.js loads it on first need
+     (cordReaderReady), and sw.js still precaches it for offline. tests/test_client_boot_payload_budget.py -->
 <script src="/static/js/client/concord-cache.js?v={{ ver }}"></script>
 <script src="/static/js/client/cord-spaces.js?v={{ ver }}"></script>
 <script src="/static/js/client/concord.js?v={{ ver }}"></script>

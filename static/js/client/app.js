@@ -12979,10 +12979,18 @@
       return Promise.resolve(window[global]);
     }
     if(!_lateLoad[file]){
+      /* VERSIONED like the page's own tags, and RETRIED after a failure.
+       *
+       * cord-reader.js used to be a page tag (`?v={{ ver }}`) and is loaded from here now. A bare
+       * path is what Cloudflare's 31-day max-age caches, so a deploy that changed the Concord wire
+       * code could pair the new concord.js with the previous reader for a month. And a load that
+       * failed (offline before it was ever cached) used to be remembered as failed for the life of
+       * the page, so the next tap of Communities could never succeed. */
       _lateLoad[file] = new Promise(res => {
-        const el = document.createElement('script');
-        el.src = '/static/js/client/' + file;
-        el.onload = () => res(true); el.onerror = () => res(false);
+        const el = document.createElement('script'), ver = window.__VER ? ('?v=' + encodeURIComponent(window.__VER)) : '';
+        el.src = '/static/js/client/' + file + ver;
+        el.onload = () => res(true);
+        el.onerror = () => { delete _lateLoad[file]; try{ el.remove(); }catch(_){} res(false); };
         (document.head || document.documentElement).appendChild(el);
       });
     }
@@ -14476,6 +14484,9 @@
   let _bumpT = 0;   // see __PC.bumpNotif
   window.__PC = {
     deviceCache,
+    // The one on-demand script loader, shared so a module is never fetched twice (concord.js loads
+    // cord-reader.js through it: the reader is not a page tag any more, see cordReaderReady there).
+    loadModule: (file, global) => _withModule(file, global),
     openBech32, openMailto,   // links handed in by another Android app (phoneshell.js consumeLaunchView)
     parkFileJob, takeFileJob,   // a doc:file: window takes the open a Files window parked here (files.js _fileWindow)
     // Concord draws its audio attachments with the same track card a post uses (cover, title, artist).
