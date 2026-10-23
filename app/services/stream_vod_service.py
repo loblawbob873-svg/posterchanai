@@ -363,7 +363,10 @@ async def _process(staging: str) -> None:
         db = SessionLocal()
         try:
             from app.services.stream_end_service import user_by_token
-            user_id = user_by_token(db, token) if token else None
+            # AWAITED: user_by_token is async (its table moved to the relay, #161 wave 2). Called bare it handed back
+            # a coroutine -- truthy, so it was used as the user id, `user_table.aget` raised, the job was logged
+            # "finalize failed ... (will retry)" every pass and dropped after a day: no recording was ever saved.
+            user_id = await user_by_token(db, token) if token else None
             from app.services import user_table
             # Unavailable propagates (the job stays staged for the next pass) -- never read as "opted out".
             user = await user_table.aget(db, user_id) if user_id else None
@@ -439,6 +442,14 @@ async def _claim_ended_sessions() -> None:
         newest = _newest_mtime(d)
         if newest is not None and now - newest < _END_QUIET_S:
             continue   # a segment was written recently — still live or mid-reconnect
+        # A FRESH go-live gets the same grace. The marker is written at publish-AUTH, before MediaMTX has written a
+        # byte (and, for WebRTC, before ICE has even finished, so the path is not "ready" yet either): a pass that
+        # landed in that window saw no footage and "not publishing", read it as "announced but never went live",
+        # and deleted the marker -- and a session with no marker is an orphan, never uploaded. That silently lost
+        # the recording of any go-live a reaper pass happened to land beside.
+        start = _golive_of(token)
+        if start is not None and now - start < _END_QUIET_S:
+            continue
         try:
             live = await is_publishing(token)
         except Exception:

@@ -148,6 +148,12 @@ TESTS = (
     # another person's file and a token for a different file. The real-CODE round trip is
     # tests/client/test_office_real_collabora.py -- full pass only, it needs the AppImage this runner lacks.
     'tests/test_office_wopi_boundary.py',
+    # Live streaming's publish boundary (no MediaMTX needed): MediaMTX's auth/unpublish hooks refuse a forged hook
+    # secret, a borrowed or made-up key, another user's path, a revoked permission; the WHIP proxy sends the key only
+    # to this machine's MediaMTX; a claimed recording becomes a VOD. Go Live against the REAL MediaMTX is
+    # tests/client/test_golive_real_mediamtx.py -- full pass only, it needs the pinned binary this runner lacks.
+    'tests/test_stream_auth_hook.py',
+    'tests/test_stream_vod_finalize.py',
     'tests/client/test_detached_sync_writer.py',
     'tests/client/test_sync_tick.py',
     'tests/test_native_window_reload_electron.py',
