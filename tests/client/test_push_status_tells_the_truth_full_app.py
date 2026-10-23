@@ -24,7 +24,8 @@ def plugin(state):
     return ("window.Capacitor=window.Capacitor||{};window.Capacitor.Plugins=Object.assign(window.Capacitor.Plugins||{},{PosterChanPush:{"
             "register:async()=>({ok:true}),setPrefs:async()=>{},stayConnected:async()=>({on:false}),"
             "batteryStatus:async()=>({ignoring:true}),"
-            f"getEndpoint:async()=>({json.dumps(state)})}}}});true")
+            "getEndpoint:async()=>{window.__endpointReads=(window.__endpointReads||0)+1;"
+            f"return ({json.dumps(state)});}}}}}});true")
 
 
 async def status(b, state):
@@ -33,8 +34,10 @@ async def status(b, state):
     await b.js(plugin(state))
     await b.js("__PC.switchView('settings');true")
     await b.until("!!document.getElementById('set-push-status')")
-    await asyncio.sleep(9.5)            # the screen gives a fresh start up to 8 s to connect
-    return await b.js("({text:document.getElementById('set-push-status').textContent, warn:document.getElementById('set-push-status').classList.contains('push-warn'), btn:document.getElementById('set-push-toggle').textContent})")
+    # The screen gives a fresh start up to 8 s to connect; those 9.5 s run on the PAGE's clock (Chrome
+    # virtual time), so a late warning still lands inside the window, without the gate waiting for it.
+    waited = await desktop.advance(b, 9500)
+    return await b.js("({text:document.getElementById('set-push-status').textContent, warn:document.getElementById('set-push-status').classList.contains('push-warn'), btn:document.getElementById('set-push-toggle').textContent, reads:window.__endpointReads||0})") | {"waited_ms": waited}
 
 
 CASES = {
@@ -56,6 +59,7 @@ def test_a_phone_that_is_not_connected_is_told_so(case):
     async def check(b):
         res.update(await status(b, state))
     asyncio.run(desktop.with_browser("online", "", check))
+    assert res["waited_ms"] >= 9499, res                       # the whole grace really ran
     assert "Turn off" in res["btn"], res                       # it IS switched on
     assert res["warn"] and "NOT connected" in res["text"] and why in res["text"], res
 
@@ -68,4 +72,6 @@ def test_a_connected_phone_is_not_warned():
         res.update(await status(b, {"endpoint": "pcdirect:dev1", "deviceId": "dev1", "connected": True,
                                     "notificationsEnabled": True}))
     asyncio.run(desktop.with_browser("online", "", check))
+    # the whole grace ran, and the screen DID ask the phone (a check that never ran cannot warn either)
+    assert res["waited_ms"] >= 9499 and res["reads"] >= 1, res
     assert not res["warn"] and "NOT connected" not in res["text"] and res["text"].startswith("On"), res

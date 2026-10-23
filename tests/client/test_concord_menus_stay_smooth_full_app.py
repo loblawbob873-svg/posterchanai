@@ -104,14 +104,22 @@ async def measure_menus(b):
     # Doing nothing must not rebuild the conversation either. The background sweep of the other rooms
     # (every 20 s) ended in an UNCONDITIONAL full render, new messages or not -- the same 170-190 ms
     # rebuild, on a timer, under whatever menu happened to be open.
+    # The 25 s run on the PAGE's clock (Chrome virtual time): the sweep and live-sync timers fire as they
+    # would in 25 real seconds, without the gate waiting for them. `viewer()` is what every one of those
+    # timer ticks asks first, so counting it proves the timers really ran in the window (a quiet window
+    # in which nothing ran would prove nothing).
     await b.js("window.__idle=new Set(document.querySelectorAll('.cc-message'));window.__idleLongs=[];"
                "window.__idleObs=new PerformanceObserver(l=>{for(const e of l.getEntries())__idleLongs.push(Math.round(e.duration));});"
-               "__idleObs.observe({type:'longtask'})")
-    await asyncio.sleep(25)
+               "__idleObs.observe({type:'longtask'});"
+               "window.__ticks=0;{const v=__PC.viewer;__PC.viewer=(...a)=>{__ticks++;return v(...a);};}")
+    # Chrome's CPU throttle and virtual time deadlock (every evaluate hangs), so the idle window runs
+    # unthrottled; what it guards -- a sweep that rebuilds the cards -- is the structural `replaced` check.
+    await b.call('Emulation.setCPUThrottlingRate', {'rate': 1})
+    idle_ms = await desktop.advance(b, 25000)
     out.append({'label': 'idle 25 s (a background sweep runs)', 'longs': await b.js('__idleObs.disconnect(),__idleLongs'),
                 'cards': await b.js("document.querySelectorAll('.cc-message').length"),
-                'replaced': await b.js("[...__idle].filter(n=>!n.isConnected).length")})
-    await b.call('Emulation.setCPUThrottlingRate', {'rate': 1})
+                'replaced': await b.js("[...__idle].filter(n=>!n.isConnected).length"),
+                'virtual_ms': idle_ms, 'ticks': await b.js('__ticks')})
     return out
 
 
@@ -126,6 +134,9 @@ def test_concord_menus_do_not_rebuild_the_conversation_on_a_phone():
     report = '\n'.join(json.dumps(s) for s in steps)
     if os.environ.get('PC_PRINT_MEASURE'):
         print(report)
+    idle = steps[-1]
+    assert idle['virtual_ms'] >= 24999, 'the page clock did not run the whole idle window:\n' + report
+    assert idle['ticks'] >= 5, 'no background timer ran in the idle window, so it proves nothing:\n' + report
     missing = [s for s in steps if 'missing' in s]
     assert not missing, 'a menu control was not on screen:\n' + report
     rebuilt = [s for s in steps if s['replaced']]

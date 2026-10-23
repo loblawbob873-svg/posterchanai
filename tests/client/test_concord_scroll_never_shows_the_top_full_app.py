@@ -28,7 +28,7 @@ IMAGES = r"""(async()=>{
   const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,plain);
   const ox=hx(await crypto.subtle.digest('SHA-256',plain));
   const IMG='https://blossom.fixture/'+ox+'.bin';
-  const f0=window.fetch;window.fetch=(u,o)=>String(u)===IMG?new Promise(r=>setTimeout(()=>r(new Response(cipher.slice(0))),150)):f0(u,o);
+  window.__busy=0;const f0=window.fetch;window.fetch=(u,o)=>String(u)===IMG?(__busy++,new Promise(r=>setTimeout(()=>{__busy--;r(new Response(cipher.slice(0)));},150))):f0(u,o);
   window.__imeta=['imeta','url '+IMG,'m image/png','encryption-algorithm aes-gcm','decryption-key '+hx(raw),'decryption-nonce '+hx(iv),'ox '+ox,'name shot.png'];
 })()"""
 
@@ -55,6 +55,19 @@ WATCH = r"""(()=>{window.__seen=[];const feed=document.getElementById('feed');
     __seen.push({top:Math.round(b.scrollTop),fromBottom:Math.round(b.scrollHeight-b.clientHeight-b.scrollTop)});});
   mo.observe(feed,{childList:true,subtree:true});window.__stopWatch=()=>mo.disconnect();})()"""
 
+# Settled = no picture download in flight and nothing in the page changed for `quiet` ms, measured
+# instead of a flat sleep; never longer than `cap`, the flat sleep it replaces. Before a watch window this
+# only keeps earlier work out of it; AS the watch window after a send, it lasts until the send's repaints
+# (optimistic row, signing, sent -- measured within ~0.3 s) have stopped, plus `quiet`.
+SETTLE = r"""(quiet,cap)=>new Promise(res=>{let last=performance.now();const t0=last;
+ const mo=new MutationObserver(()=>{last=performance.now();});mo.observe(document.body,{childList:true,subtree:true,attributes:true,characterData:true});
+ const t=setInterval(()=>{const now=performance.now();if(window.__busy)last=now;
+  if(now-last>=quiet||now-t0>=cap){clearInterval(t);mo.disconnect();res(Math.round(now-t0));}},50);})"""
+
+
+async def settle(b, cap_s, quiet_ms=500):
+    return await b.js("(%s)(%d,%d)" % (SETTLE, quiet_ms, cap_s * 1000))
+
 
 @pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
 @pytest.mark.parametrize("width", [1280, 390])
@@ -68,11 +81,11 @@ def test_the_room_never_flashes_its_oldest_messages(width):
         await b.until("document.querySelectorAll('.cc-message').length>=50 || !!document.querySelector('[data-cc-channel]')")
         await b.js("(()=>{const c=document.querySelector('[data-cc-channel]');if(c&&!document.querySelector('.cc-app.show-chat .cc-message'))c.click();})()")
         await b.until("document.querySelectorAll('.cc-message').length>=50")
-        await asyncio.sleep(2)
+        await settle(b, 2)
         # Sending from the bottom.
         await b.js(WATCH)
         await b.js("const i=document.getElementById('cc-input');i.value='hello from the test';i.dispatchEvent(new Event('input'));document.getElementById('cc-send').click()")
-        await asyncio.sleep(2)
+        await settle(b, 2)
         seen = await b.js("__stopWatch(),__seen")
         assert seen, "sending did not repaint the room — the check saw nothing"
         assert all(s["fromBottom"] <= 2 for s in seen), f"sending showed the room away from the newest message: {seen}"
@@ -107,10 +120,10 @@ def test_a_room_with_images_stays_at_the_bottom_when_a_message_comes_in(width):
         await b.until("document.querySelectorAll('.cc-message').length>=50 || !!document.querySelector('[data-cc-channel]')")
         await b.js("(()=>{const c=document.querySelector('[data-cc-channel]');if(c&&!document.querySelector('.cc-app.show-chat .cc-message'))c.click();})()")
         await b.until("document.querySelectorAll('.cc-encrypted-attachment img').length>=10")
-        await asyncio.sleep(2.5)
+        await settle(b, 2.5)
         await b.js(WATCH)
         await b.js("const i=document.getElementById('cc-input');i.value='hello';i.dispatchEvent(new Event('input'));document.getElementById('cc-send').click()")
-        await asyncio.sleep(2)
+        await settle(b, 2)
         sent = await b.js("__stopWatch(),__seen")
         await b.js(WATCH)
         await b.js("__msgs.push({id:'n'+'y'.repeat(63),pubkey:'b'.repeat(64),text:'a new one',at:5000,kind:9,tags:[__imeta]});PCConcord.refreshActiveChannel&&PCConcord.refreshActiveChannel()")

@@ -53,8 +53,9 @@ NO_OS = ("localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse
          "localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));")
 
 # A blob server for encrypted pictures: answers 250ms after it is asked, like a real one.
-IMAGES = r'''(()=>{window.__blobs=new Map();
- const f0=window.fetch;window.fetch=(u,o)=>{const k=String(u&&u.url||u);return __blobs.has(k)?new Promise(r=>setTimeout(()=>r(new Response(__blobs.get(k).slice(0))),250)):f0(u,o);};
+IMAGES = r'''(()=>{window.__blobs=new Map();window.__busy=window.__busy||0;
+ const f0=window.fetch;window.fetch=(u,o)=>{const k=String(u&&u.url||u);if(!__blobs.has(k))return f0(u,o);
+  __busy++;return new Promise(r=>setTimeout(()=>{__busy--;r(new Response(__blobs.get(k).slice(0)));},250));};
  window.__hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
  window.__sealedImage=async(w,h,color,withDim)=>{const c=new OffscreenCanvas(w,h),g=c.getContext('2d');g.fillStyle=color;g.fillRect(0,0,w,h);
   const plain=new Uint8Array(await (await c.convertToBlob({type:'image/png'})).arrayBuffer());
@@ -66,9 +67,22 @@ IMAGES = r'''(()=>{window.__blobs=new Map();
   if(withDim)t.push('dim '+w+'x'+h);return t;};
 })()'''
 
-LATENCY = r'''(()=>{const d=ms=>new Promise(r=>setTimeout(r,ms));
- const q=__PC.relayQuery,qf=__PC.relayQueryFrom;__PC.relayQuery=async(...a)=>{await d(window.__lat||0);return q(...a);};
- __PC.relayQueryFrom=async(...a)=>{await d(window.__lat||0);return qf(...a);};})()'''
+LATENCY = r'''(()=>{const d=ms=>new Promise(r=>setTimeout(r,ms));window.__busy=window.__busy||0;
+ const slow=fn=>async(...a)=>{__busy++;try{await d(window.__lat||0);return await fn(...a);}finally{__busy--;}};
+ __PC.relayQuery=slow(__PC.relayQuery);__PC.relayQueryFrom=slow(__PC.relayQueryFrom);})()'''
+
+# Settled = no relay query or picture download in flight, and nothing in the page changed for `quiet`
+# ms -- what the flat "let it settle" sleeps before each switch waited for, measured instead of guessed.
+# Never longer than `cap` (the flat sleep it replaces). A switch recorded on an unsettled page can only
+# see MORE movement, so this cannot hide a shake; it only stops the gate waiting for nothing.
+SETTLE = r'''(quiet,cap)=>new Promise(res=>{let last=performance.now();const t0=last;
+ const mo=new MutationObserver(()=>{last=performance.now();});mo.observe(document.body,{childList:true,subtree:true,attributes:true,characterData:true});
+ const t=setInterval(()=>{const now=performance.now();if(window.__busy)last=now;
+  if(now-last>=quiet||now-t0>=cap){clearInterval(t);mo.disconnect();res(Math.round(now-t0));}},50);})'''
+
+
+async def settle(b, cap_s, quiet_ms=400):
+    return await b.js('(%s)(%d,%d)' % (SETTLE, quiet_ms, cap_s * 1000))
 
 # Two real communities, each with #general and #random, messages of differing heights, a picture
 # every seventh message (alternately with and without `dim`), and one PLAIN picture with `dim`.
@@ -198,7 +212,7 @@ def test_switching_room_and_community_holds_still(width):
         await b.until("!!document.querySelector('[data-cc-channel=\"general\"]')")
         await b.js("document.querySelector('[data-cc-channel=\"general\"]').click()")
         await b.until(f"document.querySelectorAll('.cc-message').length>={counts['Alpha/general']}")
-        await asyncio.sleep(3)          # the first room's history, pictures and live sync settle
+        await settle(b, 3)              # the first room's history, pictures and live sync settle
 
         async def open_drawer():
             if phone and not await b.js("!!document.querySelector('.cc-app.drawer-open')"):
@@ -215,24 +229,24 @@ def test_switching_room_and_community_holds_still(width):
           const r=d.getBoundingClientRect();return {sized:d.hasAttribute('data-cc-sized'),w:Math.round(r.width),h:Math.round(r.height)};})()""")
         if not plain or not plain['sized'] or abs(plain['h'] - plain['w'] * 480 / 640) > 2:
             found.append(f'a plain picture with dim 640x480 did not reserve its box: {plain}')
-        await asyncio.sleep(2)
+        await settle(b, 2)
         # 2. Community -> community: Alpha -> Beta (never opened, so its history comes from the relay).
         await open_drawer()
         beta = ['general', counts['Beta/general']]
         rec = await switch(b, '[data-cc-server="1"]', phone, want=None if phone else beta)
         if phone:     # the switch happens inside the open drawer; the channel tap shows the room
             found += problems('community->community (drawer)', rec, drawer_open=True)
-            await asyncio.sleep(1.5)
+            await settle(b, 1.5)
             rec = await switch(b, '[data-cc-channel="general"]', phone, want=beta)
         found += problems('community->community', rec, expect=('general', counts['Beta/general']))
-        await asyncio.sleep(2)
+        await settle(b, 2)
         # 3. And back to a community this device has already read (painted from what it holds).
         await open_drawer()
         alpha = ['general', counts['Alpha/general']]
         rec = await switch(b, '[data-cc-server="0"]', phone, want=None if phone else alpha)
         if phone:
             found += problems('community back (drawer)', rec, drawer_open=True)
-            await asyncio.sleep(1.5)
+            await settle(b, 1.5)
             rec = await switch(b, '[data-cc-channel="general"]', phone, want=alpha)
         found += problems('community back', rec, expect=('general', counts['Alpha/general']))
         assert await b.js('__errors') == []

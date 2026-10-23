@@ -63,7 +63,7 @@ RELAY = r"""
  const SK='__fxRelay', MK='__fxMode';
  const load=()=>{try{const v=JSON.parse(localStorage.getItem(SK)||'null');return Array.isArray(v)?v:null;}catch(_){return null;}};
  if(!load()) localStorage.setItem(SK, JSON.stringify(window.__fxSeed||[]));
- const fx=window.__fx={published:[],dropped:0,refused:0,accepted:0,reads:0,
+ const fx=window.__fx={published:[],dropped:0,refused:0,refusedOk:0,accepted:0,reads:0,restored:0,
    mode:()=>{try{return Object.assign({read:'up',accept:true},JSON.parse(localStorage.getItem(MK)||'{}'));}catch(_){return {read:'up',accept:true};}},
    set:m=>localStorage.setItem(MK,JSON.stringify(Object.assign(fx.mode(),m))),
    events:()=>load()||[],
@@ -110,11 +110,18 @@ RELAY = r"""
    if(m[0]==='EVENT'){const ev=m[1];fx.published.push(ev);let ok=true,msg='';
     if(fx.isPrefs(ev)&&!fx.mode().accept){ok=false;msg='blocked: fixture refuses';fx.refused++;}
     else{store(ev);if(fx.isPrefs(ev))fx.accepted++;}
-    setTimeout(()=>this.fire('message',['OK',ev.id,ok,msg]),12);}
+    setTimeout(()=>{this.fire('message',['OK',ev.id,ok,msg]);if(!ok)fx.refusedOk++;},12);}
    if(m[0]==='CLOSE'){if(fx.droppedIds&&fx.droppedIds.delete(m[1]))fx.droppedClosed=(fx.droppedClosed||0)+1;return;}}
   close(){if(this.readyState===3)return;this.readyState=3;this.fire('close',{});}
  }
  window.WebSocket=FixtureSocket;
+ // When the account's prefs restore has FINISHED (read, applied, sent anything pending): the module's own
+ // restoreClientPrefsNostr, wrapped as the lazy module is built, so the gate waits on the event, not a guess.
+ let factory;
+ Object.defineProperty(window,'PCBlossomFactory',{configurable:true,get:()=>factory,set(f){
+   factory=function(){const m=f.apply(this,arguments),restore=m&&m.restoreClientPrefsNostr;
+     if(typeof restore==='function')m.restoreClientPrefsNostr=function(){return Promise.resolve(restore.apply(this,arguments)).finally(()=>{fx.restored++;});};
+     return m;};}});
 })();
 """.replace("XMR_ADDR", XMR).replace("BCH_ADDR", BCH)
 
@@ -295,6 +302,22 @@ async def login(b, key):
     await wait(b, '!!__PC.me() && Relay.status==="ok"', 30)
 
 
+async def restored(b):
+    """The login (or reload) restore of the account's prefs has finished."""
+    await wait(b, "__fx.restored>=1", 40, "the account's prefs restore to finish")
+
+
+async def sent(b):
+    """Nothing is left unsent: every recorded change was accepted in a published document."""
+    await wait(b, "!localStorage.getItem('pc.prefs.pending.'+__PC.me().pubkey)", 30, "every pending change to be sent")
+
+
+async def reloading(b, script):
+    """Run `script` (which reloads the page) and wait until the OLD document is gone."""
+    await b.js("window.__oldPage=true;" + script)
+    await wait(b, "!window.__oldPage", 30, "the page to reload")
+
+
 async def reload(b):
     await b.call("Page.reload")
     await wait(b, '!!window.__PC && !!window.NostrTools && document.readyState==="complete"', 30)
@@ -458,13 +481,20 @@ def test_every_synced_pref_reaches_a_second_device():
         got = {k: await b.js(READ[k]) for k in expect}
         # ...and SHOWS it: no first-login splash (the account chose), the Concord theme painted, the right
         # panel gone, the hidden sidebar row gone, and the Settings screen drawn from the synced values.
-        await asyncio.sleep(1.5)
-        visible = await b.js("""({splash:!!document.getElementById('pc-experience'),
+        # The splash is decided synchronously right after the restore resolves (app.js
+        # _maybeExperienceSplash), so once the restore has finished a wrong splash is already on screen.
+        await restored(b)
+        VISIBLE = """({splash:!!document.getElementById('pc-experience'),
             theme:document.documentElement.dataset.ccTheme,
             accent:document.documentElement.style.getPropertyValue('--cct-accent').trim(),
             panel:document.querySelector('.rightbar').getClientRects().length>0,
             hiddenRowShown:(ClientSettings.get('navHidden')||[]).filter(k=>!k.startsWith('group:')).some(k=>{
-              const e=document.querySelector('.sidebar .nav [data-v="'+k+'"]');return e&&e.getClientRects().length>0;})})""")
+              const e=document.querySelector('.sidebar .nav [data-v="'+k+'"]');return e&&e.getClientRects().length>0;})})"""
+        want_visible = {"splash": False, "theme": "oled", "accent": "#ff8800", "panel": False, "hiddenRowShown": False}
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 10
+        while (visible := await b.js(VISIBLE)) != want_visible and loop.time() < end:
+            await asyncio.sleep(.2)
         await open_settings(b)
         controls = await b.js("(()=>{const o={};for(const id of " + json.dumps(list(SWITCHES)) + ")o[id]=document.getElementById(id).checked;"
                               "for(const id of " + json.dumps(list(SELECTS)) + ")o[id]=document.getElementById(id).value;"
@@ -501,7 +531,7 @@ def test_a_change_made_while_the_prefs_could_not_be_read_rides_the_next_save():
     state = {}
 
     async def on_a(b):
-        await asyncio.sleep(2)                               # the login restore has read (an empty account)
+        await restored(b)                                    # the login restore has read (an empty account)
         await open_settings(b)
         await b.js("__fx.set({read:'down'})")
         d0 = await b.js("__fx.dropped")
@@ -511,7 +541,7 @@ def test_a_change_made_while_the_prefs_could_not_be_read_rides_the_next_save():
         await b.js("__fx.set({read:'up'})")
         assert await toggle(b, "set-hide-replies") is True
         await wait(b, "(__fx.prefsDoc()||{}).hideReplies===true", 30, "the second save to land")
-        await asyncio.sleep(1)
+        await sent(b)
         doc = await b.js("__fx.prefsDoc()")
         state["seed"] = [await b.js("__fx.prefs()")]
         return doc
@@ -526,7 +556,7 @@ def test_a_change_made_while_the_prefs_could_not_be_read_syncs_on_its_own():
     """(a') Nothing else is changed and the page is not reloaded: once the relay answers again, the
     waiting change is sent by itself (a desktop left open for days must not keep it to itself)."""
     async def on_a(b):
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await b.js("__fx.set({read:'down'})")
         d0 = await b.js("__fx.dropped")
@@ -547,16 +577,15 @@ def test_a_refused_publish_stays_pending_until_a_relay_accepts_it():
     state = {}
 
     async def on_a(b):
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await b.js("__fx.set({accept:false})")
         await toggle(b, "set-vim")
-        await wait(b, "__fx.refused>=1", 30, "the refused publish")
-        await asyncio.sleep(1)
+        await wait(b, "__fx.refused>=1 && __fx.refusedOk>=__fx.refused", 30, "the refusal to reach the page")
         await b.js("__fx.set({accept:true})")
         state["pe"] = await toggle(b, "set-post-effects")
         await wait(b, "__fx.accepted>=1 && 'postEffects' in (__fx.prefsDoc()||{})", 30)
-        await asyncio.sleep(1)
+        await wait(b, "!localStorage.getItem('pc.prefs.pending.'+__PC.me().pubkey)", 10, "the sent values to leave pending")
         state["seed"] = [await b.js("__fx.prefs()")]
         state["pending"] = await b.js("localStorage.getItem('pc.prefs.pending.'+__PC.me().pubkey)")
         return await b.js("__fx.prefsDoc()")
@@ -573,7 +602,7 @@ def test_an_older_account_copy_does_not_revert_an_unsent_change_and_a_reload_sen
     saver ON while the prefs cannot be read, then reloads once the relay is back: the restore must NOT
     put the older `false` back over the change, and must send the change -- keeping the other keys."""
     async def make_old(b):           # "another device": an ordinary accepted save
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         if not await b.js("document.getElementById('set-no-images').checked"):
             await toggle(b, "set-no-images")
@@ -587,7 +616,7 @@ def test_an_older_account_copy_does_not_revert_an_unsent_change_and_a_reload_sen
     assert json.loads(seed[0]["content"]) == {**json.loads(seed[0]["content"]), "vimKeys": True, "noImages": False}
 
     async def on_a(b):
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await wait(b, "ClientSettings.get('vimKeys')===true", 15)
         await b.js("__fx.set({read:'down'})")
@@ -597,7 +626,7 @@ def test_an_older_account_copy_does_not_revert_an_unsent_change_and_a_reload_sen
         await b.js("__fx.set({read:'up'})")
         await reload(b)                         # (the fixture's counters start again with the page)
         await wait(b, "__fx.reads>=1", 30, "the reload's restore to read the account's copy")
-        await asyncio.sleep(3)                  # the restore has applied what it read
+        await restored(b)                       # the restore has applied what it read
         await open_settings(b)
         after = await b.js("({stored:ClientSettings.get('noImages'),switch:document.getElementById('set-no-images').checked})")
         await settle(b, "(__fx.prefsDoc()||{}).noImages===true?[]:[1]", 30)
@@ -614,12 +643,12 @@ def test_two_saves_at_once_both_survive():
     """(d) Two switches flipped in the same tick: two read-modify-writes of one replaceable document. Both
     values must be in the account's document (the chain serializes them)."""
     async def on_a(b):
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await b.js("""(()=>{for(const id of ['set-hide-replies','set-clean-links']){const x=document.getElementById(id);
             x.checked=!x.checked;x.dispatchEvent(new Event('change',{bubbles:true}));}})()""")
         await wait(b, "(()=>{const d=__fx.prefsDoc()||{};return d.hideReplies===true&&d.cleanLinks===true;})()", 30)
-        await asyncio.sleep(1.5)
+        await sent(b)
         return await b.js("__fx.prefsDoc()")
 
     doc = asyncio.run(device(on_a))
@@ -632,7 +661,7 @@ def test_an_unsent_change_is_never_published_under_another_account():
     switcher's "add account" → sign in). Y's saves never carry X's change; back on X, it is sent as X."""
     async def on_x(b):
         x = await me_pk(b)
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await b.js("__fx.set({read:'down'})")
         d0 = await b.js("__fx.dropped")
@@ -640,22 +669,20 @@ def test_an_unsent_change_is_never_published_under_another_account():
         await read_fails_once_more(b, d0)
         await b.js("__fx.set({read:'up'})")
         # Switch to a second account: the live session is cleared (the remembered one stays), sign in as Y.
-        await b.js("Session.clear();location.reload()")
-        await asyncio.sleep(1)
+        await reloading(b, "Session.clear();location.reload()")
         await login(b, KEY_Y)
         y = await me_pk(b)
         assert y != x
-        await asyncio.sleep(2)
+        await restored(b)
         await open_settings(b)
         await toggle(b, "set-hide-replies")
         await wait(b, f"(__fx.prefsDoc({json.dumps(y)})||{{}}).hideReplies!==undefined", 30)
-        await asyncio.sleep(3)
+        await sent(b)                           # Y's restore and save are done: nothing more is queued as Y
         prefs_sent = await b.js("__fx.published.filter(__fx.isPrefs)")
         y_docs = [json.loads(e["content"]) for e in prefs_sent if e["pubkey"] == y]
         x_docs_while_y = [e for e in prefs_sent if e["pubkey"] == x]
         # Back to X: its unsent change goes out, signed by X.
-        await b.js("Session.clear();location.reload()")
-        await asyncio.sleep(1)
+        await reloading(b, "Session.clear();location.reload()")
         await login(b, KEY_A)
         await settle(b, f"(__fx.prefsDoc({json.dumps(x)})||{{}}).vimKeys!==undefined?[]:[1]", 40)
         return x, y, y_docs, x_docs_while_y, await b.js(f"__fx.prefsDoc({json.dumps(x)})")
@@ -675,7 +702,7 @@ def test_an_unsent_sidebar_change_survives_the_social_set_migration():
     prefs could not be read must be part of what that migration starts from -- never dropped from `pr`, which
     made the migration rebuild the list from nothing and save it over the person's choice."""
     async def make_old(b):
-        await asyncio.sleep(2)
+        await wait(b, "__fx.dropped>=1", 30, "the login restore to ask (and get no answer)")
         await b.js("__fx.put(NostrTools.finalizeEvent({kind:30078,created_at:Math.floor(Date.now()/1000)-600,"
                    "tags:[['d','pcai:client-prefs']],content:JSON.stringify({experience:'social',experienceRev:1,"
                    "navHidden:['notes']})},new Uint8Array(32).fill(1)))")
@@ -684,7 +711,7 @@ def test_an_unsent_sidebar_change_survives_the_social_set_migration():
     seed = asyncio.run(device(make_old, mode={"read": "down", "accept": True}))
 
     async def on_a(b):
-        await asyncio.sleep(1)
+        await wait(b, "__fx.dropped>=1", 30, "the login restore to ask (and get no answer)")
         await open_settings(b)
         d0 = await b.js("__fx.dropped")
         # A row the Social migration neither shows nor hides by itself.
@@ -695,7 +722,7 @@ def test_an_unsent_sidebar_change_survives_the_social_set_migration():
         await b.js("__fx.set({read:'up'})")
         await reload(b)
         await settle(b, "(__fx.prefsDoc()||{}).experienceRev===2?[]:[1]", 40)
-        await asyncio.sleep(1)
+        await sent(b)
         return hidden, await b.js("ClientSettings.get('navHidden')"), await b.js("__fx.prefsDoc()")
 
     hidden, local, doc = asyncio.run(device(on_a, seed=seed, mode={"read": "down", "accept": True}))
@@ -710,7 +737,7 @@ def test_an_older_unsent_concord_theme_never_overwrites_a_newer_one():
     a different one picked LATER on another device, must leave the account -- and this device after its
     restore -- on the newer one; sending the older one would overwrite it and the two devices would flip."""
     async def on_a(b):
-        await asyncio.sleep(2)
+        await restored(b)
         await b.js("__fx.set({read:'down'})")
         d0 = await b.js("__fx.dropped")
         await b.js("PCConcordTheme.forOwner(__PC.me().pubkey);PCConcordTheme.set({theme:'monero'})")
@@ -727,7 +754,7 @@ def test_an_older_unsent_concord_theme_never_overwrites_a_newer_one():
         await wait(b, "!!document.getElementById('set-hide-replies')", 30)
         await toggle(b, "set-hide-replies")
         await settle(b, "'hideReplies' in (__fx.prefsDoc()||{})?[]:[1]", 30)
-        await asyncio.sleep(1)
+        await sent(b)                           # every send this page had queued has gone out
         return await b.js("document.documentElement.dataset.ccTheme"), await b.js("__fx.prefsDoc()")
 
     painted, doc = asyncio.run(device(on_a))
