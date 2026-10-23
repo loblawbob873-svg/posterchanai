@@ -325,6 +325,13 @@
         r = JSON.parse(mine || 'null');
         if(mine){ localStorage.setItem(_PROJ, mine); localStorage.removeItem(_PROJ + ':' + pk); }
         else localStorage.removeItem(_PROJ);
+      } else if(!r && pk){
+        /* AN EMPTY SLOT IS NOT "NO BUILD". The other account opened the builder, parked this account's build and
+         * made nothing of its own -- the slot is left empty, and this account's build waited under its parked key
+         * for good (A builds, switches to B, B only looks, A comes back to a blank builder). Found by
+         * tests/client/test_upgrade_from_old_builds.py. */
+        const mine = localStorage.getItem(_PROJ + ':' + pk);
+        if(mine){ r = JSON.parse(mine); localStorage.setItem(_PROJ, mine); localStorage.removeItem(_PROJ + ':' + pk); }
       }
       if(r && Array.isArray(r.layers)){ _healLayers(r); return r; }
     }catch(_){ }

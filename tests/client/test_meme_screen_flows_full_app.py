@@ -18,6 +18,7 @@ finished meme): each says what happened, and nothing broken or empty is ever pos
 AI features of the builder (image generation, the talking head, face swap, magic erase) are out of scope.
 Harness: tests/client/discover_flows_harness.py. Fail-first: PC_JOURNEY_OVERRIDE="/static/js/client/meme.js=...".
 """
+import asyncio
 import json
 
 import pytest
@@ -28,7 +29,7 @@ from tests.client import wallpaper_harness as H
 
 CHROME = pytest.mark.skipif(not R.chrome_ok(), reason='Chrome required')
 FEATURE_COVERS = ('meme',)
-FIRST_FILL = 90            # 90 .. 113 (account keys are one byte; each module has its own node)
+FIRST_FILL = 90            # 90 .. 121 (account keys are one byte; each module has its own node)
 SCENARIOS = {}
 COST = {'a_meme_is_posted_with_its_picture_and_a_fresh_device_sees_it': 30,
         'a_meme_made_from_a_post_is_posted_back_as_one_reply': 30}
@@ -403,3 +404,35 @@ async def another_account_on_this_device_never_gets_the_meme_in_progress(S):
 @CHROME
 def test_another_account_on_this_device_never_gets_the_meme_in_progress(ran):
     ran('another_account_on_this_device_never_gets_the_meme_in_progress')
+
+
+async def look_at_builder(d):
+    """Open the Meme Builder and touch NOTHING (open_builder picks a format, which saves a project)."""
+    await d.b.js("__PC.switchView('meme');true")
+    await F.wait(d, "!!document.getElementById('mb-stage') && !!window.PCMeme && !!document.querySelector('.mb-wrap')",
+                 30, 'the Meme Builder')
+
+
+@scenario
+async def the_meme_in_progress_comes_back_after_another_account_only_looked(S):
+    # B opens the builder and makes nothing: A's build is parked and the slot is left EMPTY -- which load() read as
+    # "no build" and A came back to a blank builder, the build waiting under its parked key for good (found by
+    # tests/client/test_upgrade_from_old_builds.py).
+    d = await S.device(0)
+    secret = 'kept while B only looked %d' % S.base
+    await open_builder(d)
+    await add_caption(d, secret)
+    await F.wait(d, "%s.includes(%s)" % (STAGE_TEXT, json.dumps(secret.split()[0])), 10, "A's caption on the stage")
+    await asyncio.sleep(1)
+    await add_account(d, S.fill(3))
+    await look_at_builder(d)
+    await asyncio.sleep(1)
+    assert secret not in await d.b.js(STAGE_TEXT), "account B opened account A's meme"
+    await switch_to(d, S.pk(0))
+    await look_at_builder(d)
+    await F.wait(d, "%s.includes(%s)" % (STAGE_TEXT, json.dumps(secret.split()[0])), 20, "A's meme back under A")
+
+
+@CHROME
+def test_the_meme_in_progress_comes_back_after_another_account_only_looked(ran):
+    ran('the_meme_in_progress_comes_back_after_another_account_only_looked')

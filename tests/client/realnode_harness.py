@@ -492,11 +492,13 @@ class Device:
     signs in by typing an nsec into the login screen and yields `d` (`d.b` is the CDP browser)."""
 
     def __init__(self, node: Node, sk_fill=1, phone=False, pre_init='', port=None, profile=None, url=None, login=True,
-                 args=()):
+                 args=(), chrome_args=()):
         """`login=False`: stop at the login screen (a device that signs in some other way, e.g. a remote signer).
-        `args`: extra Chrome switches (e.g. a fake camera: --use-fake-device-for-media-stream)."""
+        `args` / `chrome_args` (two callers, one meaning): extra Chrome switches -- a fake camera/microphone for a
+        device that streams or places a call, an autoplay policy for one that must ring."""
         self.node, self.sk_fill, self.phone, self.login = node, sk_fill, phone, login
-        self.args = tuple(args)
+        self.args = tuple(args) + tuple(chrome_args)
+        self.chrome_args = list(self.args)
         self.url = url or node.origin + '/client'
         self.width, self.height = (390, 844) if phone else (1440, 900)
         self.pre_init = pre_init

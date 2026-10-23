@@ -8211,7 +8211,10 @@
     if(window[name])return window[name];
     if(!callModules.has(file))callModules.set(file,new Promise((resolve,reject)=>{
       const script=document.createElement('script');
-      script.src=concordScriptUrl?new URL(file,concordScriptUrl).href:'/static/js/client/'+file;
+      /* Under concord.js's OWN ?v=: resolving a name against a URL drops its query, and a bare /static URL is one an edge
+       * or a browser may answer from a weeks-old copy (Cloudflare's 31-day max-age) -- a new concord.js with an old
+       * call module after a deploy. tests/client/test_concord_call_modules_carry_the_build.py */
+      script.src=concordScriptUrl?(()=>{const u=new URL(file,concordScriptUrl);u.search=new URL(concordScriptUrl).search;return u.href;})():'/static/js/client/'+file;
       script.onload=()=>resolve(window[name]);script.onerror=()=>{callModules.delete(file);reject(new Error('Concord call components could not load'));};
       document.head.appendChild(script);
     }));

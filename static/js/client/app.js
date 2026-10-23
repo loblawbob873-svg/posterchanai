@@ -3820,8 +3820,49 @@
    * first failed query) is the backstop anyway. */
   function _nativeResume(){ if(Date.now() - _hiddenAt > 6000) _resumeRelay(); }
 
+  /* WHAT THIS DEVICE KEPT BEFORE IT WAS KEPT PER ACCOUNT GOES TO THE ACCOUNT SIGNED IN WHEN THIS BUILD FIRST RUNS.
+   *
+   * The missed-call log, the calculator tape and the Meme Builder's build in progress were one device-wide copy until
+   * 2026-10-23, and each module adopted that copy for "the first account to open the screen". The first account to
+   * open the screen is not the one that wrote it on any device with two accounts: the upgrade lands while A is signed
+   * in (the session carries over), A switches to B without opening Calculator, and B opened it onto A's sums -- and
+   * KEPT them, while A's tape was gone for good (measured on real older builds, tests/client/test_upgrade_from_old_
+   * builds.py). The one account this device can name as the writer is the one signed in when the old build last ran,
+   * which is exactly who startApp runs as the first time the new build does. So the old copy moves to that account
+   * HERE, before any screen can be opened and before any account switch. A device signed out at the upgrade has no
+   * such account: the first one to sign in takes it, as the old build would have shown it to them anyway.
+   * A list the account already has (an older build ran again after this one, e.g. a rolled-back deploy) is merged,
+   * never overwritten. */
+  const _PRE_ACCOUNT_LISTS = [['pc_missed_calls', 30, x => -(Number(x && x.at) || 0)], ['pc_calc_history', 50, null]];
+  function _adoptPreAccountData(){
+    const me = !GUEST && ME && ME.pubkey; if(!me) return;
+    for(const [base, cap, order] of _PRE_ACCOUNT_LISTS){
+      try{
+        const old = localStorage.getItem(base); if(old == null) continue;
+        const key = base + ':' + me, mine = localStorage.getItem(key);
+        if(mine == null) localStorage.setItem(key, old);
+        else {
+          let a = [], b = [];
+          try{ a = JSON.parse(mine); }catch(_){} try{ b = JSON.parse(old); }catch(_){}
+          if(!Array.isArray(a)) a = []; if(!Array.isArray(b)) b = [];
+          const seen = new Set(), all = [];
+          for(const x of [...a, ...b]){ const k = JSON.stringify(x); if(!seen.has(k)){ seen.add(k); all.push(x); } }
+          if(order) all.sort((x, y) => order(x) - order(y));
+          localStorage.setItem(key, JSON.stringify(all.slice(0, cap)));
+        }
+        localStorage.removeItem(base);
+      }catch(_){}
+    }
+    // The build in progress stays in its slot, stamped with its owner -- meme.js parks it for that account (never
+    // drops it) when another one opens the builder.
+    try{
+      const raw = localStorage.getItem('pc_meme_project'), p = raw && JSON.parse(raw);
+      if(p && typeof p === 'object' && !p.owner){ p.owner = me; localStorage.setItem('pc_meme_project', JSON.stringify(p)); }
+    }catch(_){}
+  }
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    try{ _adoptPreAccountData(); }catch(_){}
     // This account's read markers (pcai:seen): cached ones paint now, the relay's when it answers.
     // A background nicety -- nothing after this line may depend on it, so a throw stops here.
     try{ _seenStart(); }catch(_){}
