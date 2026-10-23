@@ -16,7 +16,7 @@ name: Desktop apps
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]   # main only: the mirror's master is a copy, never a second release trigger
     paths:
       - 'desktop/**'
       - 'static/js/client/**'

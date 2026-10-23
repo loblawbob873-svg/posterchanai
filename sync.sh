@@ -200,6 +200,11 @@ fi
 # poster.place/extension silently stays at the previous build.
 # NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
 git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
+# AND THE MIRROR'S OWN `master`, which is a MIRROR ONLY: the workflows trigger on `main` alone (they used to trigger
+# on both, so a master push re-ran every app build and Mozilla refused the duplicate add-on upload with
+# "Conflict"). It sat two months behind production because nothing ever pushed it (2026-10-22, "make sure both
+# repos are on the same level and consistent"). Verified below with the other three branch tips.
+git push github master:master || echo "[sync] WARN: could not update the mirror's master"
 
 # AND KEEP THE HOSTED `main` IN STEP WITH master ON THE NOSTR HOST TOO.
 #
@@ -479,7 +484,7 @@ _verify_node() {
 
 echo "[sync] verifying every node is on ${_EXPECT:0:8}"
 echo "[sync]   ok   local       ${_EXPECT:0:8}"
-for _r in origin:master github:main; do
+for _r in origin:master origin:main github:main github:master; do
     _rem="${_r%%:*}"; _br="${_r##*:}"
     _got="$(git rev-parse "$_rem/$_br" 2>/dev/null)"
     if [ "$_got" = "$_EXPECT" ]; then

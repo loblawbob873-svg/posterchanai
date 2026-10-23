@@ -7,7 +7,7 @@ name: Android APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]   # main only: the mirror's master is a copy, never a second release trigger
     paths:
       - 'static/js/client/**'
       - 'static/vendor/**'

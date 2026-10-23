@@ -21,7 +21,7 @@ name: Firefox extension
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]   # main only: the mirror's master is a copy, never a second release trigger
     paths:
       - 'extension/**'
       - 'static/js/client/vaultcore.js'      # the shared core IS the extension's core

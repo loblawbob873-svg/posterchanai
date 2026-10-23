@@ -28,7 +28,7 @@ name: Android emulator checks
 # only that script and no emulator run started, which reads exactly like a green build.
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]   # main only: the mirror's master is a copy, never a second release trigger
     paths:
       - 'static/js/client/**'
       - 'static/vendor/**'
@@ -44,7 +44,7 @@ on:
       - '.github/workflows/android.yml'
       - '.github/workflows/android-emulator.yml'
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]   # main only: the mirror's master is a copy, never a second release trigger
     paths:
       - 'static/js/client/**'
       - 'static/vendor/**'
