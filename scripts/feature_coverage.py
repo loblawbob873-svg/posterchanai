@@ -38,9 +38,9 @@ EXTRA = {
 # A screen with no browser test yet, and why it is acceptable for now. tests/test_every_feature_has_a_test.py fails
 # when a listed screen GAINS a test (take it off) and when an unlisted one has none (write one, or list it with a
 # reason). Shrink this list; never grow it to make a deploy pass.
-KNOWN_GAPS = {
-    "texts": "Android SMS screen -- native; covered by the Android emulator checks in CI, not the gate",
-}
+# Empty since 2026-10-22: Texts, the last screen on it, is driven end to end from the phone's own Java event
+# (tests/client/test_sms_phone_to_desktop_notification_full_app.py) and every one of its buttons is pressed.
+KNOWN_GAPS = {}
 
 
 def views() -> list:
