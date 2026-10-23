@@ -288,7 +288,12 @@ public class MusicBackgroundDeviceTest {
      * emulator, timed out ("WebView did not answer JavaScript"), blocking APK publication twice on 2026-10-22. Wait for
      * RESUMED, ask once more on a miss, and say the lifecycle state if it still never answers. */
     private static void waitResumed(ActivityScenario<MainActivity> scenario) {
-        for (int i = 0; i < 100 && scenario.getState() != Lifecycle.State.RESUMED; i++) SystemClock.sleep(100);
+        // getState() THROWS while a transition is in flight ("transition is incomplete. Current stage = STARTED",
+        // CI 2026-10-23) -- that is "not resumed yet", so keep polling instead of failing the test on it.
+        for (int i = 0; i < 100; i++) {
+            try { if (scenario.getState() == Lifecycle.State.RESUMED) return; } catch (RuntimeException midTransition) { }
+            SystemClock.sleep(100);
+        }
     }
 
     private static String eval(WebView web, String js) throws Exception {
