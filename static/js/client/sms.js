@@ -1370,11 +1370,19 @@
     return into;
   }
   let _blocksChain = Promise.resolve();
+  /* THE NEWEST VERSION OF THE LIST THIS DEVICE HAS SEEN, and every save is strictly newer than it
+   * (2026-10-22). One addressable document written by several devices with several clocks: a relay
+   * refuses a version older than the one it holds, and refused it reaches nobody. A phone a few
+   * seconds behind the desktop applied the block and its answer was dropped, so the desktop said
+   * "waiting for your phone" for ever. tests/client/test_texts_block_desktop_to_phone_e2e.py. */
+  let _blocksSeenAt = 0;
   function publishBlocks(){
     _blocksChain = _blocksChain.then(async () => {
       const owner = ME().pubkey; if(!owner) return;
       const ct = await PC.nip44enc(owner, JSON.stringify({ v:1, numbers:S.blocks }));
-      await PC.publish(KIND, ct, [['d', D_BLOCKS], ['l', L_TAG]], {quiet:true, noQueue:true});
+      const createdAt = Math.max(now(), _blocksSeenAt + 1);
+      const r = await PC.publish(KIND, ct, [['d', D_BLOCKS], ['l', L_TAG]], {quiet:true, noQueue:true, createdAt});
+      if(r && r.ok) _blocksSeenAt = Math.max(_blocksSeenAt, Number((r.ev && r.ev.created_at) || createdAt));
     }).catch(() => {});
     return _blocksChain;
   }
@@ -1395,6 +1403,7 @@
   }
   async function absorbBlocks(ev){
     try{
+      if(ME().pubkey && ev.pubkey === ME().pubkey) _blocksSeenAt = Math.max(_blocksSeenAt, Number(ev.created_at) || 0);
       const body = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content || ''));
       mergeBlocks(S.blocks, body && body.numbers);
       if(textsOnScreen()) paint();
@@ -3002,7 +3011,7 @@
          * which the sender can inspect or delete, never as a request eligible for automatic retry. */
         await mark(d, { done:true, ok:false, dropped:'too old', error:'request expired before phone was reachable',
                         request:Object.assign({}, request,
-                          {at:Number(req.at) || Number(request && request.at) || Date.now()}) });
+                          {at:Number(req.at) || Number(request && request.at) || Date.now()}) }, ev);
         continue;
       }
       const P = plug(req.attachment ? 'sendMms' : 'send');
@@ -3025,17 +3034,25 @@
       const completedRequest = Object.assign({}, request,
         { at:Number(r && r.sentAt) || Number(request && request.at) || Date.now() });
       await mark(d, { done:true, ok: !!(r && r.ok), error: (r && r.error) || '',
-                      request:completedRequest });
+                      request:completedRequest }, ev);
       done++;
     }
     if(done) mirror({ limit: 50 });
     return done;
   }
 
-  async function mark(doc, obj){
+  /* THE RECEIPT IS STRICTLY NEWER THAN THE REQUEST IT REPLACES, WHATEVER THIS PHONE'S CLOCK SAYS
+   * (2026-10-22). Same addressable document, and a relay refuses a version older than the one it holds
+   * -- refused, it reaches nobody. The request carries the DESKTOP's clock; a phone a few seconds
+   * behind it left the request standing, the desktop said "sending" for ever, and the claim forbade a
+   * retry. SmsOutbox.marker does the same for the background drain.
+   * tests/client/test_sms_send_desktop_to_phone_e2e.py. */
+  async function mark(doc, obj, replaces){
     try{
       const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(obj));
-      const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
+      const after = Number(replaces && replaces.created_at) || 0;
+      const createdAt = Math.max(now(), after + 1);
+      const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true, createdAt});
       return !!(r && r.ok);
     }catch(_){ return false; }
   }

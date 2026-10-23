@@ -238,7 +238,8 @@ public final class SmsOutbox {
 
             long asked = req.optLong("at", 0L);
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
-                return marker(ctx, sec, me, doc, false, "too old", to, body, asked, attachment);
+                return marker(ctx, sec, me, doc, false, "too old", to, body, asked, attachment,
+                        ev.optLong("created_at", 0L));
             }
 
             // A background MMS needs the account's encrypted-drive endpoints/key. If this phone has
@@ -287,7 +288,7 @@ public final class SmsOutbox {
              * recorded in the marker so the other device can say so, rather than retried blindly. */
             long sentAt = r != null && r.sentAt > 0L ? r.sentAt : asked;
             return marker(ctx, sec, me, doc, r != null && r.ok, r == null ? "no result" : r.error,
-                    to, body, sentAt, attachment);
+                    to, body, sentAt, attachment, ev.optLong("created_at", 0L));
         } catch (Throwable t) {
             Log.w(TAG, "sms outbox: could not perform a request", t);
             return null;
@@ -297,7 +298,8 @@ public final class SmsOutbox {
     /** The `{done:true}` replacement for the request, signed and ready to publish. */
     private static JSONObject marker(Context ctx, byte[] sec, byte[] me, String doc,
                                      boolean ok, String error, String to, String body,
-                                     long asked, JSONObject attachment) throws Exception {
+                                     long asked, JSONObject attachment, long requestCreatedAt)
+            throws Exception {
         JSONObject o = new JSONObject();
         o.put("done", true);
         o.put("ok", ok);
@@ -326,7 +328,14 @@ public final class SmsOutbox {
         List<String> d = new ArrayList<String>(); d.add("d"); d.add(doc); tags.add(d);
         List<String> l = new ArrayList<String>(); l.add("l"); l.add(L_TAG); tags.add(l);
 
-        long now = System.currentTimeMillis() / 1000L;
+        /* STRICTLY NEWER THAN THE REQUEST IT REPLACES, WHATEVER THIS PHONE'S CLOCK SAYS (2026-10-22).
+         * The receipt is the same addressable document as the request, and a relay REFUSES a version
+         * older than the one it holds -- refused, it is broadcast to nobody (pcdb_store._stored). The
+         * request carries the DESKTOP's clock; a phone a few seconds behind it (or one answering inside
+         * the request's own second on a relay that keeps the lower id) had its receipt dropped, so the
+         * desktop said "sending" for ever while the durable claim above forbade another attempt.
+         * tests/client/test_sms_send_desktop_to_phone_e2e.py runs both halves against each other. */
+        long now = Math.max(System.currentTimeMillis() / 1000L, requestCreatedAt + 1L);
         String pubHex = hex(me);
         String tagsJson = Nostr.tagsJson(tags);
         String ser = Nostr.serialize(pubHex, now, KIND, tagsJson, ct);
