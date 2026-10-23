@@ -204,6 +204,9 @@ class OfficeLocal {
         BaseFileName: s.name, Size: fs.statSync(s.file).size, Version: String(s.version),
         OwnerId: 'posterchan', UserId: 'posterchan', UserFriendlyName: 'PosterChan user',
         UserCanWrite: !s.readonly, SupportsLocks: true, SupportsUpdate: !s.readonly,
+        // No Save As / Export / Rename inside the editor (PutRelativeFile / RenameFile, answered 501 below): the
+        // page's own Save As / PDF write the copy. Stated, not left to CODE's default -- app/routers/office.py.
+        UserCanNotWriteRelative: true, SupportsRename: false, UserCanRename: false,
         PostMessageOrigin: this.origin,
       }));
     }

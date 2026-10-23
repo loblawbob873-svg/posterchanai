@@ -123,6 +123,17 @@ def test_a_document_opens_saves_and_converts_on_the_machine_and_code_stops_after
         base = f"http://127.0.0.1:{wopi}/wopi/files/{s['id']}"
         info = httpx.get(base, params={"access_token": s["token"]}).json()
         assert info["BaseFileName"] == "letter.odt" and info["UserCanWrite"] and info["PostMessageOrigin"] == origin
+        # No Save As / Export / Rename inside the editor: stated, and the WOPI calls for them write nothing.
+        assert (info.get("UserCanNotWriteRelative"), info.get("SupportsRename"), info.get("UserCanRename")) == \
+            (True, False, False), info
+        before = sorted(str(p) for p in Path(work).rglob("*"))
+        for hdrs in ({"X-WOPI-Override": "PUT_RELATIVE", "X-WOPI-SuggestedTarget": "../escaped.odt"},
+                     {"X-WOPI-Override": "PUT_RELATIVE", "X-WOPI-SuggestedTarget": "Copy.odt"},
+                     {"X-WOPI-Override": "RENAME_FILE", "X-WOPI-RequestedName": "../renamed"}):
+            r = httpx.post(base, params={"access_token": s["token"]}, headers=hdrs, content=b"ATTACKER")
+            assert r.status_code == 501, (hdrs, r.status_code)
+        assert sorted(str(p) for p in Path(work).rglob("*")) == before, "a refused Save As / Rename wrote a file"
+        assert httpx.get(base, params={"access_token": s["token"]}).json()["BaseFileName"] == "letter.odt"
         assert httpx.get(base, params={"access_token": "x" * len(s["token"])}).status_code == 401
         assert httpx.get(base + "/contents", params={"access_token": "nope"}).status_code == 401
 

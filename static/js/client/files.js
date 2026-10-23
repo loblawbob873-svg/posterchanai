@@ -3332,6 +3332,16 @@ window.PCFilesFactory = function(dep){
           let m = ev.data;
           if(typeof m === 'string'){ try{ m = JSON.parse(m); }catch(_){ return; } }
           if(m && m.MessageId === 'Doc_ModifiedStatus' && m.Values && m.Values.Modified === true) editorDirty = true;
+          /* COLLABORA'S OWN SAVE AS ASKS THE PAGE. File > Save As / Export as do not save anything themselves: they
+           * post `UI_SaveAs {format}` and wait for the host to answer with `Action_SaveAs`, which stores the copy
+           * through WOPI PutRelativeFile -- storage the office host does not have (the drive is encrypted HERE).
+           * CheckFileInfo keeps those entries hidden (UserCanNotWriteRelative); if CODE ever shows one anyway, the
+           * press opens the app's own Save As / PDF instead of nothing (measured: unanswered, it did nothing). */
+          if(m && m.MessageId === 'UI_SaveAs'){
+            const fmt = String((m.Values && m.Values.format) || '').toLowerCase();
+            const btn = $(fmt === 'pdf' ? '#office-pdf' : '#office-saveas', root);
+            if(btn && !btn.disabled) btn.click();
+          }
         };
         try{ window.addEventListener('message', onEditorMsg); }catch(_){ }
         $('.office-launch',root).submit();

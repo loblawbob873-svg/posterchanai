@@ -24,6 +24,12 @@ Flows (each its own test):
        changes" or "saved"; the drive keeps the old version.
   5    the same document edited from two devices of one account (the drive is per account; nothing in the app shares
        one document between two people, so there is no co-editing to test): both saves land and neither edit is lost.
+  7    CODE's OWN Save As / Export (its control posts UI_SaveAs to the page) -> the app's Save As dialog -> a NEW drive
+       file beside the original holding the typed words, the original untouched, a fresh device lists it; Export as
+       PDF -> a PDF on the drive.
+  8    what CODE is told it may not do: no Save As / Export as / Rename in its File tab, a read-only name box, and the
+       PutRelativeFile it sends for an `Action_SaveAs` (also what the name box and conflict dialog send) refused with
+       nothing written -- for an ordinary name, '../x' and an absolute path.
   6    CODE killed mid-session -> Save says the editor is not answering and the changes were not saved; opening a
        document then says the office server is unavailable.
 
@@ -62,6 +68,8 @@ SCENARIOS = {}
 COST = {'a_document_typed_into_is_saved_to_the_drive_and_a_fresh_device_opens_it': 50,
         'a_save_the_storage_refuses_is_said_and_the_drive_keeps_the_old_version': 40,
         'two_devices_editing_one_document_lose_neither_edit': 30,
+        'collaboras_own_save_as_saves_a_copy_beside_the_original_and_a_fresh_device_lists_it': 45,
+        'collabora_offers_no_save_as_or_rename_the_storage_cannot_keep_and_writes_nothing': 20,
         'collabora_going_down_mid_session_is_said_in_words': 1}
 
 
@@ -467,3 +475,113 @@ async def open_from_files_no_editor(d, name):
 
 def test_collabora_going_down_mid_session_is_said_in_words(ran):
     ran('collabora_going_down_mid_session_is_said_in_words')
+
+
+
+# --------------------------------------------------------------------------------------------- 7 + 8: Save As
+FRAME = "document.querySelector('.office-frame').contentWindow"
+
+
+async def save_as_dialog(d, name, n_toasts):
+    """The app's Save As dialog: type the name, go to Files (the drive's top level), press Save here."""
+    await F.wait(d, "!!document.querySelector('#sv-name')", 30, "the app's Save As dialog")
+    await d.b.js("(i=>{i.value=%s;i.dispatchEvent(new Event('input'));return true})(document.querySelector('#sv-name'))"
+                 % json.dumps(name))
+    await d.b.js("(b=>{if(b)b.click();return true})(document.querySelector('[data-sv-go=\"drive:\"]'))")
+    await F.wait(d, "!!document.querySelector('#sv-save') && !document.querySelector('#sv-save').disabled", 15,
+                 'Save here enabled on Files')
+    await d.b.js("document.querySelector('#sv-save').click();true")
+    await F.wait(d, "(window.__toastLog||[]).slice(%d).some(t=>/^saved |failed|could not/i.test(t))" % n_toasts, 90,
+                 'the Save As answered')
+    return await toasts_since(d, n_toasts)
+
+
+@scenario
+async def collaboras_own_save_as_saves_a_copy_beside_the_original_and_a_fresh_device_lists_it(S):
+    name = 'Plan %d.docx' % S.base
+    copy = 'Plan %d copy.docx' % S.base
+    d = await device(S)
+    orig = await new_doc_on_drive(S, d, name, 'The plan')
+    await open_from_files(d, name)
+    await editor_loaded(d)
+    words = 'Only in the copy %d' % S.base
+    await type_in_editor(d, words)
+
+    # CODE's own Save As control runs map.openSaveAs(): it saves nothing itself, it posts UI_SaveAs to the page.
+    n = len(await d.b.js('window.__toastLog||[]'))
+    m = len(await d.b.js('window.__officeMsgs'))
+    await d.b.js('%s.app.map.openSaveAs();true' % FRAME)
+    await F.wait(d, "(window.__officeMsgs||[]).slice(%d).some(x=>x.id==='UI_SaveAs')" % m, 15, 'CODE asked the page')
+    said = await save_as_dialog(d, copy, n)
+    assert any(t.startswith('saved ' + copy) for t in said), said
+
+    new = await drive_entry(d, copy)
+    assert len(new) == 1, ('the copy is not on the drive', await d.b.js(DRIVE))
+    assert new[0]['folder'] == orig['folder'], ('the copy did not land beside the original', new, orig)
+    assert words in docx_text(R.H.STATE['blobs'][new[0]['sha']]), 'the copy is not the edited document'
+    still = await drive_entry(d, name)
+    assert [e['sha'] for e in still] == [orig['sha']], ('Save As moved the ORIGINAL', still, orig)
+    assert words not in docx_text(R.H.STATE['blobs'][orig['sha']]), 'the original took the edit'
+
+    # Export as PDF from CODE's own Export menu (openSaveAs('pdf')) -> the app's PDF path -> a PDF on the drive.
+    pdf = 'Plan %d.pdf' % S.base
+    n = len(await d.b.js('window.__toastLog||[]'))
+    await d.b.js("%s.app.map.openSaveAs('pdf');true" % FRAME)
+    said = await save_as_dialog(d, pdf, n)
+    assert any(t.startswith('saved ' + pdf) for t in said), said
+    got = await drive_entry(d, pdf)
+    assert len(got) == 1 and R.H.STATE['blobs'][got[0]['sha']][:5] == b'%PDF-', ('no PDF on the drive', got)
+
+    # A FRESH device of the account lists the copy (and the original, unchanged).
+    d2 = await device(S)
+    listed = {(f['name'], f['sha']) for f in await d2.b.js(DRIVE)}
+    assert (copy, new[0]['sha']) in listed and (name, orig['sha']) in listed and (pdf, got[0]['sha']) in listed, listed
+
+
+def test_collaboras_own_save_as_saves_a_copy_beside_the_original_and_a_fresh_device_lists_it(ran):
+    ran('collaboras_own_save_as_saves_a_copy_beside_the_original_and_a_fresh_device_lists_it')
+
+
+@scenario
+async def collabora_offers_no_save_as_or_rename_the_storage_cannot_keep_and_writes_nothing(S):
+    name = 'Fixed %d.docx' % S.base
+    d = await device(S)
+    orig = await new_doc_on_drive(S, d, name, 'Stays put')
+    await open_from_files(d, name)
+    sid = await session_id(d)
+    await editor_loaded(d)
+    wopi = await d.b.js("(w=>({rel:w.app.map.wopi.UserCanNotWriteRelative,ren:w.app.map.wopi._supportsRename(),"
+                        "can:w.app.map.wopi.UserCanRename,box:(w.document.querySelector('#document-name-input')||{}).disabled"
+                        "}))(%s)" % FRAME)
+    assert wopi == {'rel': True, 'ren': False, 'can': False, 'box': True}, wopi
+    # The File tab as a person opens it: Download is there (the tab rendered), Save As / Export as / Rename are not.
+    await d.b.js("%s.document.querySelector('#File-tab-label').click();true" % FRAME)
+    await F.wait(d, "!!%s.document.querySelector('#downloadas')" % FRAME, 20, "CODE's File tab")
+    shown = await d.b.js("[...%s.document.querySelectorAll('[id*=saveas],[id*=exportas],[id*=renamedoc]')]"
+                         ".filter(e=>e.offsetParent!==null).map(e=>e.id)" % FRAME)
+    assert shown == [], ('CODE offers a Save As / Export / Rename the storage cannot keep', shown)
+
+    # What the name box and the conflict dialog would send: PutRelativeFile, via Action_SaveAs. Refused, nothing kept.
+    dirs = {k: sorted(x.name for x in v.iterdir()) for k, v in S.ctx.session_dirs().items()}
+    doc = (Path(S.ctx.work) / sid / 'document').read_bytes()
+    for target in ('Copy %d.docx' % S.base, '../escape-%d.docx' % S.base, '/tmp/pc-office-abs-%d.docx' % S.base):
+        m, seen = len(await d.b.js('window.__officeMsgs')), len(S.ctx.api.seen)
+        await d.b.js("(w=>{w.postMessage(JSON.stringify({MessageId:'Host_PostmessageReady',Values:{}}),'*');"
+                     "w.postMessage(JSON.stringify({MessageId:'Action_SaveAs',Values:{Filename:%s,Notify:true}}),'*');"
+                     "return true})(%s)" % (json.dumps(target), FRAME))
+        await F.wait(d, "(window.__officeMsgs||[]).slice(%d).some(x=>x.id==='Action_Save_Resp')" % m, 30,
+                     'CODE answered the Save As of %r' % target)
+        resp = [x for x in (await d.b.js('window.__officeMsgs'))[m:] if x['id'] == 'Action_Save_Resp']
+        assert resp and resp[0]['v'].get('success') is False, ('a Save As the host cannot keep was reported done',
+                                                               target, resp)
+        assert ('POST', '/wopi/files/%s' % sid) in S.ctx.api.seen[seen:], ('CODE never asked the host', target)
+    assert {k: sorted(x.name for x in v.iterdir()) for k, v in S.ctx.session_dirs().items()} == dirs, \
+        'a refused Save As left a session or a file behind'
+    assert (Path(S.ctx.work) / sid / 'document').read_bytes() == doc
+    assert not Path('/tmp/pc-office-abs-%d.docx' % S.base).exists()
+    assert not (Path(S.ctx.work).parent / ('escape-%d.docx' % S.base)).exists()
+    assert [e['sha'] for e in await drive_entry(d, name)] == [orig['sha']]
+
+
+def test_collabora_offers_no_save_as_or_rename_the_storage_cannot_keep_and_writes_nothing(ran):
+    ran('collabora_offers_no_save_as_or_rename_the_storage_cannot_keep_and_writes_nothing')

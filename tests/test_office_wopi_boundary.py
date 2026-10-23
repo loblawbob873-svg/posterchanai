@@ -8,6 +8,11 @@ token, an expired one, a token whose expiry was edited to live longer, another p
 file, a closed session, and an owner who is no longer a member. Each must be refused AND leave the stored document
 exactly as it was.
 
+Save As / Export / Rename from INSIDE the editor (WOPI PutRelativeFile, RenameFile) are not storage operations this
+host has: the drive is encrypted in the browser, so a new or renamed drive file can only be made there (the editor's
+own "Save As..." button does exactly that). CheckFileInfo therefore tells CODE so -- UserCanNotWriteRelative, no
+SupportsRename/UserCanRename -- and the two operations are refused with every kind of token and target, writing nothing.
+
 These need no CODE and no browser; they run everywhere (the deploy gate and the desktop CI's required list). The real
 Collabora round trip is tests/client/test_office_real_collabora.py.
 """
@@ -84,6 +89,11 @@ def every_route(n, file_id, params, headers=None):
                              headers={**h, 'X-WOPI-Override': 'PUT'})),
         ('Lock', n.c.post(u, params=params, headers={**h, 'X-WOPI-Override': 'LOCK', 'X-WOPI-Lock': 'evil'})),
         ('GetLock', n.c.post(u, params=params, headers={**h, 'X-WOPI-Override': 'GET_LOCK'})),
+        ('PutRelativeFile', n.c.post(u, params=params, content=b'ATTACKER BYTES',
+                                     headers={**h, 'X-WOPI-Override': 'PUT_RELATIVE',
+                                              'X-WOPI-SuggestedTarget': 'copy.docx', 'X-WOPI-Size': '14'})),
+        ('RenameFile', n.c.post(u, params=params, headers={**h, 'X-WOPI-Override': 'RENAME_FILE',
+                                                           'X-WOPI-RequestedName': 'renamed'})),
         ('session contents', n.c.get('/client/office/session/%s/contents' % file_id, params=params, headers=h)),
         ('session export', n.c.get('/client/office/session/%s/export/pdf' % file_id, params=params, headers=h)),
         ('session close', n.c.delete('/client/office/session/%s' % file_id, params=params, headers=h)),
@@ -213,3 +223,73 @@ def test_a_put_the_storage_refuses_keeps_the_old_version(node):
     assert stored(node, s) == b'original bytes' and version(node, s) == '1'
     assert sorted(x.name for x in (node.root / s['id']).iterdir()) == ['document', 'meta.json'], \
         'a refused save left a temporary file behind'
+
+
+# --------------------------------------------------------------------------------------------- Save As / Rename
+def snapshot(root):
+    """Every file under the sessions directory and its bytes: 'nothing written' means this did not change."""
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob('*')) if p.is_file()}
+
+
+@pytest.mark.parametrize('mode', ['edit', 'view'])
+def test_check_file_info_tells_collabora_there_is_no_save_as_export_or_rename(node, mode):
+    """WHAT CODE OFFERS IS DECIDED BY THESE FLAGS, measured with the shipped CODE 26.04.4 in
+    tests/client/test_office_real_collabora.py: UserCanNotWriteRelative=false puts File > Save As, Export as and an
+    editable document-name box on screen, and the name box (and the conflict dialog's "Save to new file") call
+    PutRelativeFile directly -- storage this host does not have. SupportsRename+UserCanRename add File > Rename
+    (RenameFile). With the fields ABSENT, coolwsd happened to default to the safe side; this states them instead of
+    depending on a default CODE's own browser code reads the opposite way (`!!n.UserCanNotWriteRelative`)."""
+    s = open_doc(node, 'alice', mode=mode)
+    info = node.c.get('/wopi/files/%s' % s['id'], params={'access_token': s['token']}).json()
+    assert info.get('UserCanNotWriteRelative') is True, info
+    assert info.get('SupportsRename') is False and info.get('UserCanRename') is False, info
+
+
+def relative_attempts():
+    """(label, headers) of every PutRelativeFile / RenameFile CODE could send, hostile targets included."""
+    put = {'X-WOPI-Override': 'PUT_RELATIVE', 'X-WOPI-Size': '14'}
+    out = [('save as', {**put, 'X-WOPI-SuggestedTarget': 'Copy of report.docx'}),
+           ('export pdf', {**put, 'X-WOPI-SuggestedTarget': '.pdf'}),
+           ('exact target', {**put, 'X-WOPI-RelativeTarget': 'report.docx', 'X-WOPI-OverwriteRelativeTarget': 'true'})]
+    for bad in ('../x.docx', '../../escaped.docx', '/tmp/pc-office-escaped.docx', '..\\x.docx', 'a/../../b.docx',
+                '%2e%2e%2fx.docx', 'meta.json', 'x' * 5000 + '.docx', '.', '..', ''):
+        out.append(('suggested %r' % bad[:40], {**put, 'X-WOPI-SuggestedTarget': bad}))
+        out.append(('relative %r' % bad[:40], {**put, 'X-WOPI-RelativeTarget': bad}))
+        out.append(('rename %r' % bad[:40], {'X-WOPI-Override': 'RENAME_FILE', 'X-WOPI-RequestedName': bad}))
+    out.append(('rename', {'X-WOPI-Override': 'RENAME_FILE', 'X-WOPI-RequestedName': 'Renamed report'}))
+    return out
+
+
+def test_put_relative_and_rename_write_nothing_whatever_the_token_or_target(node, tmp_path):
+    """Every PutRelativeFile / RenameFile -- with no token, a forged one, an expired one, another person's, and the
+    RIGHT one with every target from an ordinary copy to '../x', an absolute path and a 5000-character name -- is
+    refused, and afterwards the sessions directory is byte-for-byte what it was: no new session, no stray file, the
+    document, its name and its version untouched, no file outside the directory, the lock still held."""
+    alice = open_doc(node, 'alice', 'report.docx', b'original bytes')
+    bob = open_doc(node, 'bob', 'bob.docx', b'bob secret')
+    p = {'access_token': alice['token']}
+    assert node.c.post('/wopi/files/%s' % alice['id'], params=p,
+                       headers={'X-WOPI-Override': 'LOCK', 'X-WOPI-Lock': 'editor-1'}).status_code == 200
+    before = snapshot(node.root)
+    tokens = [('valid', alice['token'], 501), ('none', None, 401), ('forged', alice['token'][:-4] + '0000', 401),
+              ('expired', office._token(alice['id'], int(time.time()) - 5), 401),
+              ("bob's", bob['token'], 401)]
+    answered = []
+    for tname, tok, want in tokens:
+        params = {'access_token': tok} if tok is not None else {}
+        for label, headers in relative_attempts():
+            r = node.c.post('/wopi/files/%s' % alice['id'], params=params, content=b'ATTACKER BYTES',
+                            headers={**headers, 'X-WOPI-Lock': 'editor-1'})
+            answered.append((tname, label, r.status_code))
+            assert r.status_code == want, (tname, label, r.status_code, r.text[:120])
+            assert b'original bytes' not in r.content and b'bob secret' not in r.content, (tname, label)
+            assert 'Url' not in r.text and 'HostEditUrl' not in r.text, ('a refusal handed out a document URL',
+                                                                         tname, label, r.text[:120])
+    assert snapshot(node.root) == before, 'a refused Save As / Rename changed the sessions directory'
+    for escaped in (tmp_path.parent / 'escaped.docx', tmp_path.parent / 'x.docx', Path('/tmp/pc-office-escaped.docx')):
+        assert not escaped.exists(), ('a relative target escaped the sessions directory', escaped)
+    info = node.c.get('/wopi/files/%s' % alice['id'], params=p).json()
+    assert info['BaseFileName'] == 'report.docx' and info['Version'] == '1', info
+    assert node.c.post('/wopi/files/%s' % alice['id'], params=p,
+                       headers={'X-WOPI-Override': 'GET_LOCK'}).headers['x-wopi-lock'] == 'editor-1'
+    assert len(answered) == len(tokens) * len(relative_attempts())

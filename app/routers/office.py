@@ -373,6 +373,15 @@ async def check_file_info(file_id: str, request: Request, access_token: str = Qu
             # The EMBEDDING page's origin, not ours — see _post_message_origin. Older sessions
             # (created before this field existed) keep the previous behaviour.
             "SupportsUpdate": not meta["readonly"],
+            # NO SAVE AS / EXPORT / RENAME *INSIDE* THE EDITOR -- the app's own "Save As…" and "PDF…" do those.
+            # Collabora stores those through WOPI PutRelativeFile / RenameFile, which this host cannot honour: it is
+            # a plaintext working copy, the DRIVE is encrypted in the browser, so only the browser can make or rename
+            # a drive file (and a finished Save As re-points the editor at a new WOPISrc behind the app's Save).
+            # Measured against the shipped CODE 26.04.4: with these flags ABSENT its server already defaulted to
+            # "cannot write relative" and hid them; set to false/true it shows File > Save As, Export as, Rename and
+            # an editable name box (which calls PutRelativeFile directly). So they are stated, not left to a default
+            # its own browser code reads the other way (`!!n.UserCanNotWriteRelative`). tests/test_office_wopi_boundary.py
+            "UserCanNotWriteRelative": True, "SupportsRename": False, "UserCanRename": False,
             "PostMessageOrigin": meta.get("origin") or base}
 
 
@@ -435,6 +444,10 @@ async def file_operation(file_id: str, access_token: str = Query(""),
             _LOCKS.pop(file_id, None)
         elif op == "GET_LOCK":
             return JSONResponse({}, headers={"X-WOPI-Lock": current_lock})
+        elif op in {"PUT_RELATIVE", "RENAME_FILE"}:
+            # Not offered (CheckFileInfo says so, see above) and not storage this host has: nothing is read or
+            # written, whatever the target. 501 is WOPI's "not supported".
+            raise HTTPException(501, "Save As and Rename happen in the app, not in the editor")
         else:
             raise HTTPException(501, "unsupported WOPI operation")
     return JSONResponse({})
