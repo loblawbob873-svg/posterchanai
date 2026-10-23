@@ -485,8 +485,13 @@ def test_sync_runs_the_live_production_check_last(tmp_path):
     r = _run_tail(tmp_path, 0)
     assert r.returncode == 0, r.stdout + r.stderr
     calls = (tmp_path / "calls").read_text().split()
-    assert calls == ["scripts/check_live_production.py", "https://poster.place",
-                     "scripts/verify_live_signin.py", "https://poster.place"], calls
+    # The app-build watcher (scripts/watch_app_builds.py) is started DETACHED on the deployed commit, so where it lands
+    # among the recorded calls is a race; it is checked on its own, the two live checks in order without it.
+    watch = [calls[i + 1] for i, c in enumerate(calls) if c == "scripts/watch_app_builds.py"]
+    assert len(watch) == 1 and len(watch[0]) == 40, ("the deployed commit's app builds are not followed", calls)
+    live = [c for i, c in enumerate(calls) if c != "scripts/watch_app_builds.py" and (i == 0 or calls[i - 1] != "scripts/watch_app_builds.py")]
+    assert live == ["scripts/check_live_production.py", "https://poster.place",
+                    "scripts/verify_live_signin.py", "https://poster.place"], calls
     out = r.stdout
     assert out.index("all nodes in sync") < out.index("verifying production"), \
         "the live check must run only after every node is verified on the commit"
