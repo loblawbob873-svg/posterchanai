@@ -46,6 +46,7 @@ CHROME = shutil.which("google-chrome-stable") or "/opt/google/chrome/chrome"
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or ""
 CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 0)
 WIDTHS = [(1440, 1000, False), (390, 844, True)]
+LANES = max(1, int(os.environ.get("PC_CHECK_LANES") or 2))     # pages per width, driven at the same time
 
 # Screens that are reached some other way than a sidebar row, but are still whole views.
 EXTRA_VIEWS = ["profile", "drafts", "notifications", "settings", "bookmarks", "messages", "mail",
@@ -116,57 +117,96 @@ async def run(simulate=None):
                 print("SKIP chrome never published its DevTools port")
                 raise SystemExit(2)
             async with httpx.AsyncClient() as h:
-                pages = (await h.get(f"http://127.0.0.1:{port}/json")).json()
-            url = next(p for p in pages if p.get("type") == "page")["webSocketDebuggerUrl"]
-            async with websockets.connect(url, max_size=40_000_000) as ws:
-                b = full.Browser(ws)
-                await b.call("Page.enable")
-                await b.call("Network.setBlockedURLs", {"urls": ["https://*", "wss://*"]})
-                inject = ERRORS_JS + full.INIT + FIXTURE_JS
-                if simulate == "broken-view":
-                    # Break one screen's entry point the way a missed dependency would.
-                    inject += ("\naddEventListener('DOMContentLoaded',()=>{const sv=__PC.switchView;"
-                               "__PC.switchView=v=>{ if(v==='bookmarks') setTimeout(()=>{ undefinedHelperFromTheOldScope(); });"
-                               " return sv(v); };});")
-                await b.call("Page.addScriptToEvaluateOnNewDocument", {"source": inject})
-                for (w, h_, mobile) in WIDTHS:
-                    await b.call("Emulation.setDeviceMetricsOverride",
-                                 {"width": w, "height": h_, "deviceScaleFactor": 1, "mobile": mobile})
-                    await b.call("Page.navigate", {"url": f"http://127.0.0.1:{server.server_port}/client"})
-                    await b.until('!!window.__PC && !!window.NostrTools && document.readyState==="complete"')
-                    await b.until("document.body.classList.contains('guest') || !!__PC.me()")
-                    await b.js("(()=>{const key=new Uint8Array(32).fill(7);"
-                               "window.__events=Array.from({length:6},(_,i)=>NostrTools.finalizeEvent({kind:1,"
-                               "created_at:Math.floor(Date.now()/1000)-i,content:'every view '+i,tags:[]},key));"
-                               "if(!__PC.me()){document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(key);"
-                               "document.querySelector('#btn-nsec-login').click()}})()")
-                    await b.until("!!__PC.me() && document.querySelectorAll('.note').length>=1")
-                    await asyncio.sleep(1.5)
-                    boot_errors = await b.js("__viewErrors.splice(0)")
-                    for e in boot_errors:
-                        problems.append(f"[{w}px] error during boot: {e}")
-                    views = await b.js("[...new Set([...document.querySelectorAll('[data-view]')]"
-                                       ".map(e=>e.dataset.view).filter(Boolean))]")
-                    for v in EXTRA_VIEWS:
-                        if v not in views:
-                            views.append(v)
-                    for v in views:
-                        if v in NO_FEED:
-                            continue
-                        await b.js(f"__PC.switchView({json.dumps(v)})")
-                        await asyncio.sleep(1.2)
-                        state = await b.js("({errs:__viewErrors.splice(0)})")
-                        opened += 1
-                        for e in state["errs"]:
-                            problems.append(f"[{w}px] error opening {v}: {e}")
-                    # A thread and the own profile via their real entry points.
-                    for label, expr in (("thread", "__PC.openThread(__events[0].id)"),
-                                        ("own profile", "__PC.openProfile(__PC.me().pubkey)")):
-                        await b.js(f"(()=>{{try{{ {expr}; }}catch(e){{ __viewErrors.push('error: '+e.message); }}}})()")
-                        await asyncio.sleep(1.2)
-                        opened += 1
-                        for e in await b.js("__viewErrors.splice(0)"):
-                            problems.append(f"[{w}px] error opening {label}: {e}")
+                browser_ws = (await h.get(f"http://127.0.0.1:{port}/json/version")).json()["webSocketDebuggerUrl"]
+            inject = ERRORS_JS + full.INIT + FIXTURE_JS
+            if simulate == "broken-view":
+                # Break one screen's entry point the way a missed dependency would.
+                inject += ("\naddEventListener('DOMContentLoaded',()=>{const sv=__PC.switchView;"
+                           "__PC.switchView=v=>{ if(v==='bookmarks') setTimeout(()=>{ undefinedHelperFromTheOldScope(); });"
+                           " return sv(v); };});")
+            # LANES, CONCURRENTLY: each width's screens are split into LANES contiguous runs, and every run is driven
+            # in its own page in its OWN browser context (its own storage -- a fresh device that boots and signs in
+            # by itself). The per-screen wait is unchanged; what used to be ~110 sequential 1.2 s waits now overlap.
+            async with websockets.connect(browser_ws, max_size=40_000_000) as bws:
+                browser, root_lock = full.Browser(bws), asyncio.Lock()
+
+                async def root(method, params=None):         # one browser socket, shared by the lanes: one call at a time
+                    async with root_lock:
+                        return await browser.call(method, params)
+
+                async def lane(w, h_, mobile, index):
+                    nonlocal opened
+                    ctx = (await root("Target.createBrowserContext"))["browserContextId"]
+                    tid = (await root("Target.createTarget", {"url": "about:blank", "browserContextId": ctx}))["targetId"]
+                    try:
+                        async with websockets.connect(f"ws://127.0.0.1:{port}/devtools/page/{tid}",
+                                                      max_size=40_000_000) as ws:
+                            b = full.Browser(ws)
+                            await b.call("Page.enable")
+                            await b.call("Network.setBlockedURLs", {"urls": ["https://*", "wss://*"]})
+                            await b.call("Page.addScriptToEvaluateOnNewDocument", {"source": inject})
+                            await b.call("Emulation.setDeviceMetricsOverride",
+                                         {"width": w, "height": h_, "deviceScaleFactor": 1, "mobile": mobile})
+                            await b.call("Page.navigate", {"url": f"http://127.0.0.1:{server.server_port}/client"})
+                            await b.until('!!window.__PC && !!window.NostrTools && document.readyState==="complete"')
+                            await b.until("document.body.classList.contains('guest') || !!__PC.me()")
+                            await b.js("(()=>{const key=new Uint8Array(32).fill(7);"
+                                       "window.__events=Array.from({length:6},(_,i)=>NostrTools.finalizeEvent({kind:1,"
+                                       "created_at:Math.floor(Date.now()/1000)-i,content:'every view '+i,tags:[]},key));"
+                                       "if(!__PC.me()){document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(key);"
+                                       "document.querySelector('#btn-nsec-login').click()}})()")
+                            await b.until("!!__PC.me() && document.querySelectorAll('.note').length>=1")
+                            await asyncio.sleep(1.5)
+                            boot_errors = await b.js("__viewErrors.splice(0)")
+                            for e in boot_errors:
+                                problems.append(f"[{w}px] error during boot: {e}")
+                            if index == 0:      # the first lane of a width reads the list; the others take their share
+                                views = await b.js("[...new Set([...document.querySelectorAll('[data-view]')]"
+                                                   ".map(e=>e.dataset.view).filter(Boolean))]")
+                                for v in EXTRA_VIEWS:
+                                    if v not in views:
+                                        views.append(v)
+                                listed[w] = [v for v in views if v not in NO_FEED]
+                                ready[w].set()
+                            await ready[w].wait()
+                            per = -(-len(listed[w]) // LANES)
+                            mine = listed[w][index * per:(index + 1) * per]
+                            seen_views.setdefault(w, []).extend(mine)
+                            for v in mine:
+                                await b.js(f"__PC.switchView({json.dumps(v)})")
+                                await asyncio.sleep(1.2)
+                                state = await b.js("({errs:__viewErrors.splice(0)})")
+                                opened += 1
+                                for e in state["errs"]:
+                                    problems.append(f"[{w}px] error opening {v}: {e}")
+                            if index == LANES - 1:
+                                # A thread and the own profile via their real entry points.
+                                for label, expr in (("thread", "__PC.openThread(__events[0].id)"),
+                                                    ("own profile", "__PC.openProfile(__PC.me().pubkey)")):
+                                    await b.js(f"(()=>{{try{{ {expr}; }}catch(e){{ __viewErrors.push('error: '+e.message); }}}})()")
+                                    await asyncio.sleep(1.2)
+                                    opened += 1
+                                    for e in await b.js("__viewErrors.splice(0)"):
+                                        problems.append(f"[{w}px] error opening {label}: {e}")
+                    finally:
+                        try:
+                            await root("Target.closeTarget", {"targetId": tid})
+                            await root("Target.disposeBrowserContext", {"browserContextId": ctx})
+                        except Exception:
+                            pass
+
+                seen_views, listed = {}, {}
+                ready = {w: asyncio.Event() for (w, _h, _m) in WIDTHS}
+                lanes = [asyncio.ensure_future(lane(w, h_, mobile, i)) for (w, h_, mobile) in WIDTHS for i in range(LANES)]
+                try:
+                    await asyncio.gather(*lanes)
+                finally:
+                    for t in lanes:
+                        t.cancel()
+                # Together the lanes opened every listed screen, once.
+                for w, got in seen_views.items():
+                    if sorted(got) != sorted(listed.get(w, [])):
+                        problems.append(f"[{w}px] the lanes did not open the listed screens exactly once")
         finally:
             proc.terminate()
             try:
