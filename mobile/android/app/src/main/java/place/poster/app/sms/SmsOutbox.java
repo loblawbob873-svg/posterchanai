@@ -61,8 +61,17 @@ public final class SmsOutbox {
 
     private SmsOutbox() { }
 
-    /** Build the encrypted archive event for a text that arrived while the WebView was asleep. */
-    public static JSONObject archiveIncoming(Context ctx, String from, String body, long when) {
+    /** Build the encrypted archive event for a text that arrived while the WebView was asleep.
+     *
+     * `received` IS WHEN THIS PHONE GOT IT, and it is what makes the text NEWS. `when` is the
+     * carrier's service-centre stamp -- the sender's clock -- which can be minutes or hours before the
+     * text reaches the phone (a phone out of signal, a delayed carrier, a service centre stamping in the
+     * wrong zone). Every other device decides "is this a new text worth announcing, or history?" by
+     * comparing the message time with when it started listening, so a text delivered NOW but stamped
+     * before a desktop started was filed silently and never announced (2026-10-22, "I am not seeing
+     * any SMS notifications"). The archived `date` stays the carrier's, as the thread order wants;
+     * `received` (0 = unknown, then omitted) is only the freshness. */
+    public static JSONObject archiveIncoming(Context ctx, String from, String body, long when, long received) {
         try {
             byte[] sec = SignerKey.load(ctx);
             if (sec == null || from == null || from.isEmpty()) return null;
@@ -70,6 +79,7 @@ public final class SmsOutbox {
             JSONObject o = new JSONObject();
             o.put("address", from); o.put("body", body == null ? "" : body);
             o.put("date", when); o.put("incoming", true); o.put("name", "");
+            if (received > 0) o.put("received", received);
             byte[] ck = Crypt.conversationKey(sec, me);
             String ct = Crypt.nip44Encrypt(ck, o.toString(), null);
             String doc = SmsKeys.docId(from, when, body, true);

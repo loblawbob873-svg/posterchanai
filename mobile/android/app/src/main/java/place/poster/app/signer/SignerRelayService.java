@@ -183,10 +183,11 @@ public class SignerRelayService extends Service {
     private static final java.util.concurrent.ConcurrentLinkedQueue<String> smsArchiveDeletes =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
 
-    /** Called by the SMS_DELIVER receiver; the queue survives a cold service start in this process. */
+    /** Called by the SMS_DELIVER receiver; the queue survives a cold service start in this process.
+     *  The fourth column is when THIS PHONE received it -- see SmsOutbox.archiveIncoming. */
     public static void archiveIncoming(Context ctx, String from, String body, long when) {
         smsArchive.add(new String[]{from == null ? "" : from, body == null ? "" : body,
-                Long.toString(when)});
+                Long.toString(when), Long.toString(System.currentTimeMillis())});
         if (wanted(ctx)) kick(ctx, ACTION_SMS_ARCHIVE);
     }
 
@@ -813,7 +814,7 @@ public class SignerRelayService extends Service {
             final java.util.List<JSONObject> events = new java.util.ArrayList<>();
             if (row != null) {
                 JSONObject ev = SmsOutbox.archiveIncoming(SignerRelayService.this, row[0], row[1],
-                        Long.parseLong(row[2]));
+                        Long.parseLong(row[2]), row.length > 3 ? Long.parseLong(row[3]) : 0L);
                 if (ev != null) events.add(ev);
             } else events.addAll(SmsOutbox.archiveDelete(SignerRelayService.this, deletedDoc));
             handler.post(() -> {

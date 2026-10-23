@@ -11850,7 +11850,11 @@
    * The click action stays here, keyed by the card's id, until the card is clicked or expires. */
   const _toastActs = new Map();
   let _toastSeq = 0, _toastWired = false;
-  function _nativeToast(html, pic, onClick){
+  /* `refused` runs when the card window says no. main.js only runs it under --shell, and preload
+   * exposes pcToast in EVERY desktop-app window -- so on the Windows/macOS app with the desktop layout
+   * on, every card was handed to a window that does not exist and was shown nowhere at all ("I am not
+   * seeing any SMS notifications on OS and windows app", 2026-10-22). Refused is drawn here instead. */
+  function _nativeToast(html, pic, onClick, refused){
     try{
       if(!window.pcToast || typeof pcToast.show !== 'function') return false;
       if(!_toastWired && typeof pcToast.onClick === 'function'){
@@ -11861,14 +11865,19 @@
       const cid = 't' + (++_toastSeq) + '-' + Date.now().toString(36);
       _toastActs.set(cid, onClick || null);
       if(_toastActs.size > 50) _toastActs.delete(_toastActs.keys().next().value);
-      Promise.resolve(pcToast.show({ id: cid, html: String(html || ''), pic: String(pic || '') })).catch(() => {});
+      const no = () => { _toastActs.delete(cid); if(refused) try{ refused(); }catch(_){ } };
+      Promise.resolve(pcToast.show({ id: cid, html: String(html || ''), pic: String(pic || '') }))
+        .then(ok => { if(ok === false) no(); }, no);
       return true;
     }catch(_){ return false; }
   }
   function osToast(html, pic, onClick, notificationType){
     if(!on || (PC().notificationAllowed && !PC().notificationAllowed(notificationType))) return;
     ding();
-    if(_nativeToast(html, pic, onClick)){ notifChanged(); return; }
+    if(_nativeToast(html, pic, onClick, () => pageCard(html, pic, onClick))){ notifChanged(); return; }
+    pageCard(html, pic, onClick);
+  }
+  function pageCard(html, pic, onClick){
     if(!toastHost || !toastHost.isConnected){
       toastHost = document.createElement('div');
       toastHost.className = 'os-toasts';
