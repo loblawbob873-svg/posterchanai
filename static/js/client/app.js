@@ -5694,13 +5694,15 @@
   // refresh from the relay and re-apply the LATEST KNOWN version (cache ∪ network via Store.query, so a
   // late/older relay copy can't regress a version we already have). Never wipes on an empty/errored read
   // (Store.query keeps returning the cache), and re-renders only when the winning event actually changed.
+  // Returns the relay's answer (null when the query threw), so a caller can tell "read, and empty" from "not read".
   async function _cacheFirstList(filt, apply){
     const c = Store.query(filt); apply(c);
     try{
       const evs = await Relay.query(filt);
       if(evs.length){ evs.forEach(e=>Store.saveEvent(e)); const n = Store.query(filt);
         if(!c.length || !n.length || c[0].id !== n[0].id) apply(n); }   // re-apply only on a real change
-    }catch(_){}
+      return evs;
+    }catch(_){ return null; }
   }
   // ---- Replaceable-list durability (follows/mutes). The "my mutes/follows vanished" bug is a WRITE bug:
   // a throttled/empty relay read yields an empty base, and the next edit republishes it empty. We fix it
@@ -6403,6 +6405,13 @@
     // Source of truth = UNION of the relay's list and our in-memory set — a bare relay read can be empty
     // (not-yet-synced) or STALE, and republishing from it alone wipes/regresses the list. Same anti-wipe
     // rule as _editPList (this is what the pins/bookmarks write path was missing).
+    /* "COULD NOT READ THE LIST" IS NOT "THE LIST IS EMPTY" -- the rule _editPList has for follows. A fresh device
+     * whose relay never answered holds none of the account's bookmarks, and an edit built on that published a
+     * list of ONE over every bookmark (and every foreign `a` tag, e.g. repo stars) the account had. */
+    if(!cur && !_followReadAnswered(evs)){
+      toast('Couldn’t read your '+(kind===10003?'bookmarks':'pinned posts')+' from your relays — nothing was changed. Try again in a moment.');
+      return false;
+    }
     const inmem = kind===10001 ? PINNED : kind===10003 ? BOOKMARKS : new Set();
     const eset = new Set([...inmem, ...(cur?cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[])]);
     if(add) eset.add(eid); else eset.delete(eid);
@@ -6433,14 +6442,27 @@
   }
   // ---------- bookmarks (NIP-51 kind 10003 — replaceable e-tag list) ----------
   async function fetchBookmarks({repaint=true}={}){
+    // A caller joining a read in flight still gets ITS repaint: the answer may land while Bookmarks is open.
+    _bmPaint = _bmPaint || repaint;
+    if(_bmFetch) return _bmFetch;
     const owner=ME.pubkey;
-    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10003], limit:1 }], (evs)=>{
-      if(!ME || ME.pubkey!==owner || GUEST) return;
-      if(evs.length) BOOKMARKS=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
-      if(VIEW==='bookmarks'){ if(repaint) renderBookmarks(); }
-      else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on posts already on screen
-    });
+    _bmFetch=(async()=>{
+      const got=await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10003], limit:1 }], (evs)=>{
+        if(!ME || ME.pubkey!==owner || GUEST) return;
+        if(evs.length){ BOOKMARKS=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])); _bmReadFor=owner; }
+        if(VIEW==='bookmarks'){ if(_bmPaint) renderBookmarks(); }
+        else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on posts already on screen
+      });
+      if(ME && ME.pubkey===owner && got && (got.length || _followReadAnswered(got))) _bmReadFor=owner;
+    })().finally(()=>{ _bmFetch=null; _bmPaint=false;
+      // The screen was waiting on THIS read (a spinner or "couldn't read"): draw its verdict.
+      if(VIEW==='bookmarks' && $('#feed .bm-wait')) renderBookmarks(); });
+    return _bmFetch;
   }
+  /* WHOSE LIST HAS BEEN READ (a pubkey): a relay answered the kind-10003 read, or the list was found. Until then an
+   * empty BOOKMARKS is "not read yet", never "no bookmarks" -- the view must not tell somebody with fifty saved
+   * posts that they have none because a relay was silent. `_bmFetch` is the read in flight. */
+  let _bmReadFor = '', _bmFetch = null, _bmPaint = false;
   async function toggleBookmark(id, btn){
     const have=BOOKMARKS.has(id);
     if(!await _editEList(10003, id, !have)) return;   // relay didn't store it → don't fake the bookmark
@@ -8025,7 +8047,14 @@
     const feed=$('#feed');
     _bookmarksFromStore();
     const ids=[...BOOKMARKS];
-    if(!ids.length){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
+    if(!ids.length){
+      if(ME && _bmReadFor===ME.pubkey){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
+      if(_bmFetch){ feed.innerHTML='<div class="bm-wait"><div class="spinner"></div></div>'; return; }   // fetchBookmarks repaints
+      feed.innerHTML='<div class="empty bm-wait bm-unreachable">Couldn’t reach your relays to load your bookmarks. Nothing was changed.'
+        +'<div><button class="btn btn-ghost small" id="bm-retry">Try again</button></div></div>';
+      const r=$('#bm-retry'); if(r) r.onclick=()=>{ if(!ME || GUEST) return; fetchBookmarks(); renderBookmarks(); };
+      return;
+    }
     const held=()=>ids.map(id=>Store.get(id)).filter(Boolean).sort((a,b)=>b.created_at-a.created_at);
     const first=held();
     if(first.length){ feed.innerHTML=first.map(noteHtml).join(''); hydrate(feed); }
