@@ -1065,6 +1065,14 @@ would have handled it fine).
   engine requests forever (and the container chowns its config dir, so the rewrite needs it back).
   (11) A stored `search.poster.place` — the retired hardcoded default, seeded on older installs — is
   treated as "not configured" rather than honoured, since the box behind it is gone.
+  (12) **The reader's fetches judge EVERY address and connect to the one judged** (`is_safe_url` over
+  `getaddrinfo`, `fetch_transport()` = `redirect_guard.PinnedTransport`): `gethostbyname` saw one IPv4, so a name
+  with a loopback AAAA or a second loopback A record, a DNS-rebinding name, and CGNAT/Tailscale `100.64/10` all
+  reached this node's network and the body came back. Every fetch has a whole-fetch `FETCH_DEADLINE` (a trickling
+  page never trips httpx's per-read timeout) and `/read` streams against `READ_MAX_BYTES`. The page view's sanitiser
+  checks EVERY attribute (an SVG `xlink:href="javascript:"` survived and ran without the CSP).
+  `tests/test_web_reader_fetches_safely.py` (real guard, fake DNS + dial in `tests/reader_fake_web.py`) +
+  `tests/client/test_web_reader_full_app.py`.
   See `docs/WEBSEARCH.md`; `tests/test_websearch.py` + `scripts/check_websearch_mobile.py` (the
   generic `check_client_mobile.py` never opens this screen).
 - **Folder Sync — the THIRD engine (2026-08-18), and the design is ONE VERSIONED RECORD PER FILE.**

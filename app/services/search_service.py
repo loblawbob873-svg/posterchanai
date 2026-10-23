@@ -290,10 +290,59 @@ def own_media_hosts() -> set:
     return own
 
 
+# Names this deployment serves itself that are allowed even when they resolve to a private address (split-horizon
+# DNS sends them to the LAN from inside it). Exact hostnames only.
+TRUSTED_DOMAINS = frozenset({'git.poster.place', 'poster.place'})
+
+
+def trusted_host(hostname: str) -> bool:
+    """A name the guard passes WITHOUT judging its address: the trusted domains and this deployment's own media hosts.
+    The pinned transport (`fetch_transport`) connects to these as resolved, for the same reason."""
+    h = (hostname or "").lower().rstrip(".")
+    if not h:
+        return False
+    if h in TRUSTED_DOMAINS:
+        return True
+    try:
+        return h in own_media_hosts()
+    except Exception:
+        return False   # never let a settings read turn the guard into a hard failure
+
+
+def _judge_ip(ip_obj) -> str:
+    """Why `ip_obj` is not a public address, or "" when it is."""
+    mapped = getattr(ip_obj, "ipv4_mapped", None)
+    if mapped is not None:
+        ip_obj = mapped
+    ip = str(ip_obj)
+    if ip in ('169.254.169.254', '100.100.100.200', 'fd00:ec2::254'):
+        return "Cloud metadata endpoint not allowed"
+    if ip_obj.is_loopback:
+        return f"Loopback IP not allowed: {ip}"
+    if ip_obj.is_link_local:
+        return f"Link-local IP not allowed: {ip}"
+    if ip_obj.is_private:
+        return f"Private IP not allowed: {ip}"
+    if ip_obj.is_reserved:
+        return f"Reserved IP not allowed: {ip}"
+    if ip_obj.is_multicast:
+        return f"Multicast IP not allowed: {ip}"
+    if ip_obj.is_unspecified or not ip_obj.is_global:
+        # CGNAT (100.64/10 -- Tailscale's whole address space) is neither "private" nor public, and was let through.
+        return f"Non-public IP not allowed: {ip}"
+    return ""
+
+
 def is_safe_url(url: str) -> tuple[bool, str]:
     """
     SSRF protection: Validate that URL doesn't point to internal networks.
     Returns (is_safe, error_message).
+
+    EVERY address the name resolves to is judged, IPv4 and IPv6 alike. This used `gethostbyname`, which returns ONE
+    IPv4 answer -- so a name with a public A record and a loopback AAAA (the connection prefers IPv6), or with two A
+    records the second of which is 127.0.0.1 (the client falls back to it when the first refuses), passed the check
+    and was fetched from this node's own network. A check is still only a check: the fetchers also connect THROUGH
+    `fetch_transport()`, which dials the address that was judged (DNS rebinding).
     """
     try:
         parsed = urlparse(url)
@@ -306,43 +355,16 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         if not hostname:
             return False, "No hostname in URL"
 
-        # Trusted domains that are allowed even if they resolve to private IPs
-        # (e.g., internal git servers, local services with proper DNS entries)
-        trusted_domains = {'git.poster.place', 'poster.place'}
-        if hostname.lower() in trusted_domains:
+        # Trusted domains + the hosts this deployment serves itself (CONFIG rather than hardcoded names). Without the
+        # latter, only the meme/effect fetch path was exempt and everything else -- AI chat reading a page, translate
+        # <url>, link previews -- refused our own media.
+        if trusted_host(hostname):
             return True, ""
-        # …and the hosts this deployment serves itself, which are CONFIG rather than hardcoded names.
-        # Without this, only the meme/effect fetch path was exempt and everything else — AI chat
-        # reading a page, translate <url>, link previews — refused our own media.
-        try:
-            if hostname.lower() in own_media_hosts():
-                return True, ""
-        except Exception:
-            pass   # never let a settings read turn the guard into a hard failure
 
         # Block localhost variations
         localhost_names = {'localhost', 'localhost.localdomain', '127.0.0.1', '::1'}
         if hostname.lower() in localhost_names:
             return False, "Localhost URLs not allowed"
-
-        # Resolve hostname to IP
-        try:
-            ip = socket.gethostbyname(hostname)
-            ip_obj = ipaddress.ip_address(ip)
-        except (socket.gaierror, ValueError) as e:
-            return False, f"Cannot resolve hostname: {e}"
-
-        # Block private/internal IP ranges
-        if ip_obj.is_private:
-            return False, f"Private IP not allowed: {ip}"
-        if ip_obj.is_loopback:
-            return False, f"Loopback IP not allowed: {ip}"
-        if ip_obj.is_link_local:
-            return False, f"Link-local IP not allowed: {ip}"
-        if ip_obj.is_reserved:
-            return False, f"Reserved IP not allowed: {ip}"
-        if ip_obj.is_multicast:
-            return False, f"Multicast IP not allowed: {ip}"
 
         # Block common internal hostnames
         internal_patterns = ['internal', 'intranet', 'corp', 'local', 'private']
@@ -350,14 +372,74 @@ def is_safe_url(url: str) -> tuple[bool, str]:
             if pattern in hostname.lower():
                 return False, f"Internal hostname pattern detected: {hostname}"
 
-        # Block AWS/cloud metadata endpoints
-        metadata_ips = ['169.254.169.254', '100.100.100.200', 'fd00:ec2::254']
-        if ip in metadata_ips:
-            return False, "Cloud metadata endpoint not allowed"
+        # Resolve hostname to EVERY address
+        try:
+            infos = socket.getaddrinfo(hostname, parsed.port or None, type=socket.SOCK_STREAM)
+            ips = []
+            for info in infos:
+                ip_obj = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+                if ip_obj not in ips:
+                    ips.append(ip_obj)
+        except (socket.gaierror, ValueError, UnicodeError) as e:
+            return False, f"Cannot resolve hostname: {e}"
+        if not ips:
+            return False, f"Cannot resolve hostname: {hostname}"
+
+        for ip_obj in ips:
+            why = _judge_ip(ip_obj)
+            if why:
+                return False, why
 
         return True, ""
     except Exception as e:
         return False, f"URL validation error: {e}"
+
+
+def fetch_transport():
+    """The transport every fetch of a caller-supplied URL goes through: it connects to the address it JUDGED, not to
+    whatever the name resolves to a moment after `is_safe_url` looked (DNS rebinding), and refuses a name with any
+    non-public answer. `trusted_host` names are connected to as resolved, as the guard passes them."""
+    from app.utils.redirect_guard import PinnedTransport
+    return PinnedTransport(trust=trusted_host)
+
+
+# How long ONE fetch of a page or asset may take, all of it -- connect, redirects and body. httpx's `timeout` is per
+# operation, so a server that sends a byte every few seconds never trips it and held a request (and a slot on the
+# single worker's event loop) for as long as it liked.
+FETCH_DEADLINE = 30.0
+# The most of a page's HTML the text reader reads. It returns at most 40k characters of text.
+READ_MAX_BYTES = 3_000_000
+TIMED_OUT = "the site took too long to answer (timed out)"
+
+
+def status_words(code: int) -> str:
+    """An HTTP error status, said the way a person would say it."""
+    if code in (404, 410):
+        w = "page not found"
+    elif code in (401, 403):
+        w = "the site refused this request"
+    elif code == 429:
+        w = "the site is rate-limiting requests"
+    elif code == 503:
+        w = "the site is unavailable right now"
+    elif code >= 500:
+        w = "the site had a server error"
+    else:
+        w = "the site answered with an error"
+    return f"{w} (HTTP {code})"
+
+
+def _fetch_error(e: BaseException) -> str:
+    """What went wrong with a fetch, never an empty string (`str(httpx.ReadTimeout())` is '' -- and an empty error
+    read as "no error" turned a timeout into an empty article)."""
+    from app.utils.redirect_guard import RedirectRefused
+    if isinstance(e, RedirectRefused):
+        return f"URL blocked: {e}"
+    if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError, TimeoutError)):
+        return TIMED_OUT
+    if isinstance(e, httpx.ConnectError):
+        return f"could not connect to the site ({str(e)[:120] or 'connection failed'})"
+    return (str(e) or type(e).__name__)[:200]
 
 # Regex patterns for URL detection
 # Match full URLs with protocol
@@ -824,7 +906,8 @@ class SearchService:
         try:  # best-effort page title (the watch-page <title> is the video title)
             # DEFENCE IN DEPTH: even reached with a validated url, a redirect is a NEW url this
             # node did not choose — the same reason every other fetcher here hand-rolls its hops.
-            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False,
+                                         transport=fetch_transport()) as client:
                 r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
                 for _hop in range(4):
                     if r.status_code not in (301, 302, 303, 307, 308):
@@ -873,7 +956,8 @@ class SearchService:
             "Accept-Language": "en-US,en;q=0.5",
         }
         try:
-            async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+            async with asyncio.timeout(FETCH_DEADLINE), \
+                    httpx.AsyncClient(timeout=25, follow_redirects=False, transport=fetch_transport()) as client:
                 current, hops = url, 0
                 while True:
                     # STREAMED, so `max_bytes` is a real limit rather than a slice taken after the
@@ -915,8 +999,8 @@ class SearchService:
                         return {"url": current, "html": b"".join(chunks)[:max_bytes].decode(enc, errors="replace"),
                                 "content_type": ctype, "status": r.status_code, "error": None}
         except Exception as e:
-            logger.info("page fetch failed for %s: %s", url, e)
-            return {"url": url, "html": "", "content_type": "", "error": str(e)[:200]}
+            logger.info("page fetch failed for %s: %r", url, e)
+            return {"url": url, "html": "", "content_type": "", "error": _fetch_error(e)}
 
     async def fetch_asset(self, url: str, max_bytes: int = 8_000_000, allow: tuple = ()) -> dict:
         """One SUBRESOURCE of a framed page — a stylesheet, an image, a font.
@@ -933,7 +1017,8 @@ class SearchService:
             "Accept": "*/*",
         }
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            async with asyncio.timeout(FETCH_DEADLINE), \
+                    httpx.AsyncClient(timeout=20, follow_redirects=False, transport=fetch_transport()) as client:
                 current, hops = url, 0
                 while True:
                     async with client.stream("GET", current, headers=headers) as r:
@@ -952,7 +1037,7 @@ class SearchService:
                                 continue
                         if r.status_code >= 400:
                             return {"url": current, "body": b"", "content_type": "",
-                                    "error": f"upstream {r.status_code}"}
+                                    "error": f"upstream {status_words(r.status_code)}"}
                         ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
                         if allow and not any(ctype.startswith(a) for a in allow):
                             return {"url": current, "body": b"", "content_type": ctype,
@@ -966,8 +1051,8 @@ class SearchService:
                         return {"url": current, "body": b"".join(chunks)[:max_bytes],
                                 "content_type": r.headers.get("content-type") or ctype, "error": None}
         except Exception as e:
-            logger.info("asset fetch failed for %s: %s", url, e)
-            return {"url": url, "body": b"", "content_type": "", "error": str(e)[:200]}
+            logger.info("asset fetch failed for %s: %r", url, e)
+            return {"url": url, "body": b"", "content_type": "", "error": _fetch_error(e)}
 
     async def fetch_url_content(self, url: str, max_length: int = 15000,
                                 allow_render: bool = True) -> Optional[dict]:
@@ -1016,231 +1101,193 @@ class SearchService:
         except Exception as _yt_err:
             logger.warning(f"YouTube transcript path failed for {url}: {_yt_err}")
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        }
+        # The FETCH is `fetch_url_raw`'s -- one implementation of the hop loop (the SSRF guard re-checked on every
+        # redirect: `https://attacker.example/r` → 302 → `http://169.254.169.254/...` was once fetched and its body
+        # handed back), the pinned transport (DNS rebinding), the byte cap and the whole-fetch deadline. This used to
+        # carry its own copy with `client.get()`, which reads the WHOLE body before anything can look at it: a page
+        # that never ends held the request, and the memory, for ever.
+        fetched = await self.fetch_url_raw(url, max_bytes=READ_MAX_BYTES)
+        if fetched.get("error"):
+            ctype = fetched.get("content_type") or ""
+            if ctype and fetched["error"].startswith("not a web page"):
+                return {"url": url, "title": url, "content": f"[Non-HTML content: {ctype}]", "error": None}
+            return {"url": url, "title": url, "content": "", "error": fetched["error"]}
+        if (fetched.get("status") or 200) >= 400:
+            logger.warning("HTTP error fetching %s: %s", url, fetched["status"])
+            return {"url": url, "title": url, "content": "", "error": status_words(fetched["status"])}
+        final_url = fetched.get("url") or url
+        try:
+            html = fetched.get("html") or ""
+            soup = BeautifulSoup(html, "lxml")
 
-        # follow_redirects=False + a hand-rolled hop loop, NOT because redirects are unwanted (most
-        # article URLs take one) but because `is_safe_url` above only ever saw the FIRST url. Letting
-        # httpx follow made the guard advisory: `https://attacker.example/r` → 302 →
-        # `http://169.254.169.254/latest/meta-data/` was fetched and its body handed back to whoever
-        # asked. That matters more now that a search RESULT — a URL this node did not choose — can be
-        # the input, via Web Search's reader and its two summarize endpoints.
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-            try:
-                response, hops = None, 0
-                next_url = url
-                while True:
-                    response = await client.get(next_url, headers=headers)
-                    if response.status_code not in (301, 302, 303, 307, 308):
-                        break
-                    loc = response.headers.get("location")
-                    if not loc:
-                        break
-                    hops += 1
-                    if hops > 5:
-                        return {"url": url, "title": url, "content": "", "error": "too many redirects"}
-                    # Relative Location is legal and common; resolve it against the hop we are on.
-                    next_url = str(httpx.URL(next_url).join(loc))
-                    ok, why = is_safe_url(next_url)
-                    if not ok:
-                        logger.warning("SSRF blocked (redirect): %s -> %s - %s", url, next_url, why)
-                        return {"url": url, "title": url, "content": "",
-                                "error": f"URL blocked: {why}"}
-                response.raise_for_status()
+            # Remove script, style, nav, footer, and other non-content elements
+            for element in soup(["script", "style", "nav", "footer", "header",
+                                 "aside", "noscript", "iframe", "form", "button"]):
+                element.decompose()
 
-                content_type = response.headers.get("content-type", "").lower()
+            # Get title
+            title = ""
+            if soup.title:
+                title = soup.title.get_text(strip=True)
 
-                # Only process HTML content
-                if "text/html" not in content_type and "application/xhtml" not in content_type:
-                    return {
-                        "url": url,
-                        "title": url,
-                        "content": f"[Non-HTML content: {content_type}]",
-                        "error": None
-                    }
+            # Try to find main content area
+            main_content = None
+            for selector in ["main", "article", "[role='main']", "#content", ".content", "#main", ".main"]:
+                main_content = soup.select_one(selector)
+                if main_content:
+                    break
 
-                html = response.text
-                soup = BeautifulSoup(html, "lxml")
+            # Fall back to body if no main content area found
+            if not main_content:
+                main_content = soup.body or soup
 
-                # Remove script, style, nav, footer, and other non-content elements
-                for element in soup(["script", "style", "nav", "footer", "header",
-                                     "aside", "noscript", "iframe", "form", "button"]):
-                    element.decompose()
+            # Extract links with their text (for news sites)
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            links_text = []
+            seen_texts = set()  # Avoid duplicate headlines
 
-                # Get title
-                title = ""
-                if soup.title:
-                    title = soup.title.get_text(strip=True)
+            # Words that indicate navigation rather than article headlines
+            nav_patterns = ['trending', 'live updates', 'breaking', 'watch', 'listen',
+                           'subscribe', 'sign in', 'log in', 'menu', 'search', 'more']
 
-                # Try to find main content area
-                main_content = None
-                for selector in ["main", "article", "[role='main']", "#content", ".content", "#main", ".main"]:
-                    main_content = soup.select_one(selector)
-                    if main_content:
-                        break
+            for a in main_content.find_all('a', href=True):
+                # Use separator to prevent text mashing
+                link_text = a.get_text(separator=' ', strip=True)
+                # Clean up multiple spaces
+                link_text = ' '.join(link_text.split())
+                href = a['href']
 
-                # Fall back to body if no main content area found
-                if not main_content:
-                    main_content = soup.body or soup
+                # Skip empty, anchor-only, or very short links
+                if not link_text or len(link_text) < 15 or href.startswith('#'):
+                    continue
 
-                # Extract links with their text (for news sites)
-                from urllib.parse import urlparse
-                parsed_url = urlparse(url)
-                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                links_text = []
-                seen_texts = set()  # Avoid duplicate headlines
+                # Skip navigation-like links
+                text_lower = link_text.lower()
+                if any(nav in text_lower for nav in nav_patterns):
+                    continue
 
-                # Words that indicate navigation rather than article headlines
-                nav_patterns = ['trending', 'live updates', 'breaking', 'watch', 'listen',
-                               'subscribe', 'sign in', 'log in', 'menu', 'search', 'more']
+                # Skip if just numbers, ranking-prefixed (e.g. "7 Avalanche AVAX"), or very generic
+                if link_text.isdigit() or text_lower in ['read more', 'click here', 'learn more']:
+                    continue
+                if re.match(r'^\d+[\s.]', link_text):
+                    continue
 
-                for a in main_content.find_all('a', href=True):
-                    # Use separator to prevent text mashing
-                    link_text = a.get_text(separator=' ', strip=True)
-                    # Clean up multiple spaces
-                    link_text = ' '.join(link_text.split())
-                    href = a['href']
+                # Skip duplicate headlines
+                if text_lower in seen_texts:
+                    continue
+                seen_texts.add(text_lower)
 
-                    # Skip empty, anchor-only, or very short links
-                    if not link_text or len(link_text) < 15 or href.startswith('#'):
-                        continue
+                # Make relative URLs absolute
+                if href.startswith('/'):
+                    href = base_url + href
+                elif not href.startswith('http'):
+                    continue
 
-                    # Skip navigation-like links
-                    text_lower = link_text.lower()
-                    if any(nav in text_lower for nav in nav_patterns):
-                        continue
+                # Format as markdown link
+                links_text.append(f"- [{link_text}]({href})")
 
-                    # Skip if just numbers, ranking-prefixed (e.g. "7 Avalanche AVAX"), or very generic
-                    if link_text.isdigit() or text_lower in ['read more', 'click here', 'learn more']:
-                        continue
-                    if re.match(r'^\d+[\s.]', link_text):
-                        continue
+            # Extract plain text as fallback
+            text = main_content.get_text(separator="\n", strip=True)
 
-                    # Skip duplicate headlines
-                    if text_lower in seen_texts:
-                        continue
-                    seen_texts.add(text_lower)
+            # Clean up whitespace and filter JS/data garbage
+            raw_lines = [line.strip() for line in text.split("\n") if line.strip()]
+            filtered = []
+            seen = set()
+            for line in raw_lines:
+                # Deduplicate identical lines (repeated table rows, nav labels)
+                key = line.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
 
-                    # Make relative URLs absolute
-                    if href.startswith('/'):
-                        href = base_url + href
-                    elif not href.startswith('http'):
-                        continue
+                # Skip very short tokens (nav labels, button text, currency symbols)
+                if len(line) < 8:
+                    continue
 
-                    # Format as markdown link
-                    links_text.append(f"- [{link_text}]({href})")
+                # Skip lines that are purely numeric/symbolic (price rows, rank numbers, percentages)
+                if re.match(r'^[\d\s$%,.\-+/\\*:]+$', line):
+                    continue
 
-                # Extract plain text as fallback
-                text = main_content.get_text(separator="\n", strip=True)
+                # Skip lines starting with a rank/index number or percentage rating
+                # e.g. "1 Bitcoin", "42 Solana", "100% accurate", "75% True"
+                if re.match(r'^\d+[\s.%]', line):
+                    continue
 
-                # Clean up whitespace and filter JS/data garbage
-                raw_lines = [line.strip() for line in text.split("\n") if line.strip()]
-                filtered = []
-                seen = set()
-                for line in raw_lines:
-                    # Deduplicate identical lines (repeated table rows, nav labels)
-                    key = line.lower()
-                    if key in seen:
-                        continue
-                    seen.add(key)
+                # Skip question lines — FAQ questions cause the model to enter a Q&A loop,
+                # hallucinating follow-up questions and answers after the real response.
+                if line.endswith('?'):
+                    continue
 
-                    # Skip very short tokens (nav labels, button text, currency symbols)
-                    if len(line) < 8:
-                        continue
+                # Skip lines that look like JS code
+                # — long unbroken strings (minified JS, base64, data URIs)
+                if len(line) > 120 and " " not in line:
+                    continue
+                # — high density of JS/JSON special characters
+                js_chars = sum(1 for c in line if c in "{}[]();=>|\\")
+                if len(line) > 0 and js_chars / len(line) > 0.12:
+                    continue
+                # — starts with JS keywords
+                js_kw = ("var ", "let ", "const ", "function ", "return ",
+                         "import ", "export ", "window.", "document.",
+                         "module.", "require(", "__NEXT", "undefined", "null,")
+                if any(line.lstrip().startswith(kw) for kw in js_kw):
+                    continue
 
-                    # Skip lines that are purely numeric/symbolic (price rows, rank numbers, percentages)
-                    if re.match(r'^[\d\s$%,.\-+/\\*:]+$', line):
-                        continue
+                # Skip lines that are predominantly non-alphabetic
+                # (price rows, percentage tables, raw numbers)
+                alpha = sum(1 for c in line if c.isalpha())
+                if len(line) > 0 and alpha / len(line) < 0.30:
+                    continue
 
-                    # Skip lines starting with a rank/index number or percentage rating
-                    # e.g. "1 Bitcoin", "42 Solana", "100% accurate", "75% True"
-                    if re.match(r'^\d+[\s.%]', line):
-                        continue
+                filtered.append(line)
 
-                    # Skip question lines — FAQ questions cause the model to enter a Q&A loop,
-                    # hallucinating follow-up questions and answers after the real response.
-                    if line.endswith('?'):
-                        continue
+            text = "\n".join(filtered)
 
-                    # Skip lines that look like JS code
-                    # — long unbroken strings (minified JS, base64, data URIs)
-                    if len(line) > 120 and " " not in line:
-                        continue
-                    # — high density of JS/JSON special characters
-                    js_chars = sum(1 for c in line if c in "{}[]();=>|\\")
-                    if len(line) > 0 and js_chars / len(line) > 0.12:
-                        continue
-                    # — starts with JS keywords
-                    js_kw = ("var ", "let ", "const ", "function ", "return ",
-                             "import ", "export ", "window.", "document.",
-                             "module.", "require(", "__NEXT", "undefined", "null,")
-                    if any(line.lstrip().startswith(kw) for kw in js_kw):
-                        continue
+            # Prepend extracted links if we found any
+            if links_text:
+                links_section = "\n".join(links_text[:8])
+                text = f"ARTICLE LINKS:\n{links_section}\n\nPAGE TEXT:\n{text}"
 
-                    # Skip lines that are predominantly non-alphabetic
-                    # (price rows, percentage tables, raw numbers)
-                    alpha = sum(1 for c in line if c.isalpha())
-                    if len(line) > 0 and alpha / len(line) < 0.30:
-                        continue
+            # NOTHING CAME OUT — so read the page the way a browser reads it. What the server
+            # sent is only the whole page on a server-rendered site; anywhere else it is a shell
+            # whose text arrives when the page's own JavaScript runs. Measured here, an SPA
+            # route extracts ZERO characters while the thinnest real page extracts ~2800, and
+            # zero characters is the shape that makes a model answer from its priors instead.
+            # Generic on purpose: the fallback knows nothing about the site, only that this one
+            # said nothing.
+            if allow_render and page_render.looks_unrendered(text):
+                rendered = await asyncio.to_thread(
+                    page_render.render_page_text, final_url,
+                    page_render.RENDER_TIMEOUT,
+                    lambda u: is_safe_url(u)[0])
+                if rendered:
+                    r_title, r_text = rendered
+                    logger.info("Rendered %s in a browser: %d chars (server sent %d)",
+                                url, len(r_text), len(text))
+                    text, title, did_render = r_text, (title or r_title), True
 
-                    filtered.append(line)
+            # Truncate if too long
+            if len(text) > max_length:
+                text = text[:max_length] + "\n\n[Content truncated...]"
 
-                text = "\n".join(filtered)
+            return {
+                "url": url,
+                "title": title or url,
+                "content": text,
+                "error": None,
+                "rendered": did_render,
+            }
 
-                # Prepend extracted links if we found any
-                if links_text:
-                    links_section = "\n".join(links_text[:8])
-                    text = f"ARTICLE LINKS:\n{links_section}\n\nPAGE TEXT:\n{text}"
-
-                # NOTHING CAME OUT — so read the page the way a browser reads it. What the server
-                # sent is only the whole page on a server-rendered site; anywhere else it is a shell
-                # whose text arrives when the page's own JavaScript runs. Measured here, an SPA
-                # route extracts ZERO characters while the thinnest real page extracts ~2800, and
-                # zero characters is the shape that makes a model answer from its priors instead.
-                # Generic on purpose: the fallback knows nothing about the site, only that this one
-                # said nothing.
-                if allow_render and page_render.looks_unrendered(text):
-                    rendered = await asyncio.to_thread(
-                        page_render.render_page_text, str(response.url),
-                        page_render.RENDER_TIMEOUT,
-                        lambda u: is_safe_url(u)[0])
-                    if rendered:
-                        r_title, r_text = rendered
-                        logger.info("Rendered %s in a browser: %d chars (server sent %d)",
-                                    url, len(r_text), len(text))
-                        text, title, did_render = r_text, (title or r_title), True
-
-                # Truncate if too long
-                if len(text) > max_length:
-                    text = text[:max_length] + "\n\n[Content truncated...]"
-
-                return {
-                    "url": url,
-                    "title": title or url,
-                    "content": text,
-                    "error": None,
-                    "rendered": did_render,
-                }
-
-            except httpx.HTTPStatusError as e:
-                logger.warning(f"HTTP error fetching {url}: {e.response.status_code}")
-                return {
-                    "url": url,
-                    "title": url,
-                    "content": "",
-                    "error": f"HTTP {e.response.status_code}"
-                }
-            except Exception as e:
-                logger.warning(f"Error fetching {url}: {e}")
-                return {
-                    "url": url,
-                    "title": url,
-                    "content": "",
-                    "error": str(e)
-                }
+        except Exception as e:
+            logger.warning(f"Error fetching {url}: {e}")
+            return {
+                "url": url,
+                "title": url,
+                "content": "",
+                "error": _fetch_error(e)
+            }
 
     async def fetch_urls(self, urls: list[str], max_urls: int = 3) -> list[dict]:
         """Fetch content from multiple URLs.

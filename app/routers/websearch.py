@@ -206,6 +206,10 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
     from urllib.parse import urljoin
 
     soup = BeautifulSoup(html, "lxml")
+    # <embed> is a VOID element, but lxml nests everything after it inside it, so decomposing it threw away the rest
+    # of the article. It can hold nothing of its own, so take the tag out and keep what lxml put under it.
+    for tag in soup("embed"):
+        tag.unwrap()
     for tag in soup(list(_PAGE_STRIP)):
         tag.decompose()
 
@@ -223,13 +227,17 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
         # Inline handlers survive a script strip, and they are scripts.
         for attr in [a for a in el.attrs if a.lower().startswith("on")]:
             del el[attr]
-        for attr in ("href", "src", "action", "poster", "srcset", "data-src"):
+        # EVERY attribute, not a list of the usual ones: SVG and MathML carry their links in `xlink:href`, an SVG
+        # <animate>/<set> can WRITE one through `values`/`to`, and a list of six names let all of those through
+        # (`<svg><a xlink:href="javascript:…">` survived, stopped only by the CSP).
+        for attr in [a for a, v in el.attrs.items() if isinstance(v, str)]:
             v = el.get(attr)
             # Entity decoding happens BEFORE we see the value, so `java&#9;script:` arrives as
             # "java\tscript:" and a bare startswith misses it. Strip every ASCII whitespace/control
             # character out of the comparison — the browser ignores them in a scheme, so we must too.
-            if isinstance(v, str) and _SCHEME_JUNK.sub("", v).lower().startswith(
-                    ("javascript:", "vbscript:", "data:text/html")):
+            low = _SCHEME_JUNK.sub("", v).lower()
+            if low.startswith(("javascript:", "vbscript:", "data:text/html")) or (
+                    attr.lower() in ("values", "to", "from", "by") and ("javascript:" in low or "vbscript:" in low)):
                 del el[attr]
         # Lazy-loaded images: the real URL sits in data-src and the src is a placeholder, so without
         # this half a page renders blank inside the frame (the loader that would swap them is gone).
@@ -315,7 +323,14 @@ def _render_page(html: str, final_url: str, self_base: str = "", token: str = ""
 
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
-        if href.startswith("#") or not href:
+        if not href:
+            continue
+        if href.startswith("#"):
+            # An in-page link ("#section", a table of contents, "back to top"). Left as it was, the injected <base>
+            # resolves it against the SITE, so pressing it navigated the frame off to the raw page -- which then
+            # refuses to be framed. Through this endpoint it is the same page with the fragment on.
+            a["href"] = _self_link(self_base, final_url, token) + href
+            a["target"] = "_self"
             continue
         absolute = urljoin(final_url, href)
         if absolute.lower().startswith(("http://", "https://")):
@@ -528,9 +543,13 @@ def _refused_page(url: str, status, raw: str) -> str:
                "article. Those checks need scripts and cookies, which this view does not run, so it "
                "cannot be passed here.")
     else:
-        head = f"The site refused this request ({status})"
-        why = ("It answered with an error rather than the page. That is the site's decision, not a "
-               "problem with the link you clicked.")
+        from app.services.search_service import status_words
+        words = status_words(status)
+        head = words[:1].upper() + words[1:]
+        why = ("It answered with an error rather than the page"
+               + (" — the address may be out of date or mistyped." if status in (404, 410) else
+                  " — usually a passing problem on the site's side; try again later." if status >= 500 else
+                  ". That is the site's decision, not a problem with the link you clicked."))
     return ("<!doctype html><meta charset=utf-8><style>body{font:16px/1.7 system-ui;padding:28px;"
             "color:#e8e8f0;background:#111}a{color:#3ce8ff}.h{font-size:19px;font-weight:700;"
             "margin-bottom:10px}.m{color:#9fa1c6}</style>"
@@ -602,6 +621,13 @@ async def render_page(
     # scripts/check_websearch_pages.py found across all five test sites, and exactly the failure the
     # page view exists to avoid.
     token = request.query_params.get("t") or _mint_ticket(current_user.id)
+    # An ERROR STATUS is said as one, whatever the body holds. A 404 page with a few paragraphs of the site's own
+    # chrome used to be rendered as if it were the article, and an empty one was called "built by JavaScript".
+    status = out.get("status")
+    if isinstance(status, int) and status >= 400:
+        return Response(content=_refused_page(url, status, out.get("html") or ""), media_type="text/html; charset=utf-8",
+                        headers={"Content-Security-Policy": _PAGE_CSP, "X-Content-Type-Options": "nosniff",
+                                 "Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=60"})
     try:
         # OFF the event loop: this is an lxml parse plus a full-tree attribute walk over up to 3 MB of
         # someone else's markup, and the deployment runs a SINGLE uvicorn worker — inline, one heavy
