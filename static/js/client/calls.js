@@ -1108,24 +1108,37 @@ window.PCCallsFactory = function(dep){
    * notification is gone for good.)
    *
    * Local storage rather than an event: this is a per-DEVICE fact ("this device did not take that
-   * call"), it must work with no network, and publishing it would leak who calls you to the relay.
+   * call" -- and kept per account on it, see _missedKey), it must work with no network, and publishing it would leak who calls you to the relay.
    * Capped hard — a log nobody prunes is a log that eventually breaks the page it lives on. */
   const MISSED_MAX = 30;
   // Calls another of my devices already dealt with. Ephemeral signaling has no retry, so a `handled`
   // that arrives late (or a timer that fires first) would otherwise record a MISSED call for one that
   // was answered — the log lying is worse than the log being empty.
   const _handledIds = new Set();
-  function _missedList(){ try{ return JSON.parse(localStorage.getItem('pc_missed_calls')||'[]'); }catch(_){ return []; } }
+  /* PER ACCOUNT, NOT PER DEVICE. It was one `pc_missed_calls` for whoever was signed in, so after an account
+   * switch the other account's Calls screen listed who had called the first one -- and its Clear wiped them.
+   * The log is `pc_missed_calls:<pubkey>`; the old unscoped list is adopted by the first account to open it
+   * (the one time there is no way to tell whose it was -- the meme project's rule). No account, no log. */
+  const _MISSED = 'pc_missed_calls';
+  function _missedKey(){
+    const me = S.ME && S.ME.pubkey; if(!me) return '';
+    const key = _MISSED + ':' + me;
+    try{ const old = localStorage.getItem(_MISSED);
+      if(old != null){ if(localStorage.getItem(key) == null) localStorage.setItem(key, old); localStorage.removeItem(_MISSED); } }catch(_){}
+    return key;
+  }
+  function _missedList(){ const k=_missedKey(); if(!k) return []; try{ return JSON.parse(localStorage.getItem(k)||'[]'); }catch(_){ return []; } }
   function _missedAdd(pk, callId){
     if(!pk || (callId && _handledIds.has(callId))) return;
+    const k=_missedKey(); if(!k) return;
     try{
       const l=_missedList();
       l.unshift({pk, at: Math.floor(Date.now()/1000)});
-      localStorage.setItem('pc_missed_calls', JSON.stringify(l.slice(0, MISSED_MAX)));
+      localStorage.setItem(k, JSON.stringify(l.slice(0, MISSED_MAX)));
       _redrawCallsIfIdle();
     }catch(_){}
   }
-  function _missedClear(){ try{ localStorage.removeItem('pc_missed_calls'); _redrawCallsIfIdle(); }catch(_){} }
+  function _missedClear(){ const k=_missedKey(); try{ if(k) localStorage.removeItem(k); _redrawCallsIfIdle(); }catch(_){} }
   /* Redraw the Calls view only when the user is not mid-interaction. renderCalls() replaces innerHTML
    * wholesale, so an unguarded redraw — and a missed call can land at any moment — throws away a
    * half-typed npub, the focus, and any ticked group-call boxes. */

@@ -28,7 +28,7 @@ from tests.client import realnode_harness as R
 
 CHROME = pytest.mark.skipif(not R.chrome_ok(), reason='Chrome required')
 FEATURE_COVERS = ('contacts',)
-FIRST_FILL = 8             # 8 .. 31 (account keys are one byte; each module has its own node)
+FIRST_FILL = 8             # 8 .. 35 (account keys are one byte; each module has its own node)
 SCENARIOS = {}
 COST = {'add_edit_and_delete_reach_the_relay_and_a_fresh_device': 40}
 
@@ -339,3 +339,30 @@ async def a_save_or_delete_the_node_refused_is_said_and_kept(S):
 @CHROME
 def test_a_save_or_delete_the_node_refused_is_said_and_kept(ran):
     ran('a_save_or_delete_the_node_refused_is_said_and_kept')
+
+
+@scenario
+async def an_addressbook_delete_the_relay_refused_is_said_and_kept(S):
+    ctx, pk = S.ctx, S.pk(0)
+    ctx.seed(pk, 'friends', [('ct-kept-1', 'Mary Jackson', '+15550800')])
+    d = await S.device(0)
+    await open_contacts(d)
+    await F.wait(d, "%s.includes('Mary Jackson')" % NAMES, 30, 'the book drawn')
+    press = "(e=>!!e&&(e.click(),true))(document.querySelector(%s))"
+    ctx.refuse_deletes.add(ctx.storage_pk(pk))
+    await F.wait(d, press % json.dumps('#ct-menu'), 15, 'the Addressbooks menu')
+    await F.wait(d, press % json.dumps('.ctb-del[data-id="friends"]'), 15, 'Delete in the Addressbooks menu')
+    await F.wait(d, press % json.dumps('.uiconfirm-btns [data-uc="1"]'), 10, 'the delete confirmation')
+    # Refused: said so, and the book and its card are still there (on the relay and listed).
+    await F.wait(d, "(window.__toastLog||[]).some(t=>/could not delete/i.test(t))", 20, 'the refused delete said')
+    assert [b['id'] for b in ctx.books(pk)] == ['friends']
+    assert list(by_fn(ctx.cards(pk, 'friends'))) == ['Mary Jackson']
+    ctx.refuse_deletes.discard(ctx.storage_pk(pk))
+    await F.wait(d, press % json.dumps('.ctb-del[data-id="friends"]'), 15, 'Delete again (the menu stays open)')
+    await F.wait(d, press % json.dumps('.uiconfirm-btns [data-uc="1"]'), 10, 'the delete confirmation again')
+    await F.until(lambda: ctx.books(pk) == [] and ctx.cards(pk, 'friends') == [], 20, 'the book gone once accepted', d)
+
+
+@CHROME
+def test_an_addressbook_delete_the_relay_refused_is_said_and_kept(ran):
+    ran('an_addressbook_delete_the_relay_refused_is_said_and_kept')

@@ -245,3 +245,69 @@ async def _a_relay_that_refuses(relay, alice, bob):
 
 def test_a_call_every_relay_refuses_ends_at_once_and_says_so():
     _a_relay_that_refuses()
+
+
+# ---------------------------------------------------------------------------------------------------
+# Two accounts on one device: a missed call is the ACCOUNT's, not the device's
+# ---------------------------------------------------------------------------------------------------
+MISSED_ON_SCREEN = "[...document.querySelectorAll('.call-missed .call-contact[data-pk]')].map(e=>e.dataset.pk)"
+
+
+async def _add_account(p, key_byte):
+    """The account card -> "＋ Add an account" -> the login screen -> that account's nsec, as a person does."""
+    await p.js("document.querySelector('#me-card').click();true")
+    await p.until("!!document.querySelector('.acct-pop [data-act=add]')", what='the account menu')
+    await p.js("document.querySelector('.acct-pop [data-act=add]').click();true")
+    await p.until("!!window.__PC && document.body.classList.contains('guest') && !!document.querySelector('#nsec-input')",
+                  timeout=60, what='the login screen for another account')
+    await p.js("(()=>{const k=new Uint8Array(32).fill(%d);document.querySelector('#nsec-input').value="
+               "NostrTools.nip19.nsecEncode(k);document.querySelector('#btn-nsec-login').click();return true})()" % key_byte)
+    await p.until("!!__PC.me() && __PC.me().pubkey===NostrTools.getPublicKey(new Uint8Array(32).fill(%d))" % key_byte,
+                  timeout=60, what='signed in as the added account')
+
+
+async def _switch_account(p, pk):
+    """The account card -> the other account's row (the page reloads signed in as it)."""
+    await p.js("document.querySelector('#me-card').click();true")
+    row = json.dumps(".acct-pop .acct-p[data-pk=\"%s\"]" % pk)
+    await p.until("!!document.querySelector(%s)" % row, what='the other account in the menu')
+    await p.js("window.__pcBeforeSwitch=true;document.querySelector(%s).click();true" % row)
+    await p.until("!window.__pcBeforeSwitch && !!window.__PC && !!__PC.me() && __PC.me().pubkey===%s" % json.dumps(pk),
+                  timeout=60, what='signed in as the account switched to')
+
+
+async def _calls_screen(p):
+    await p.js("__PC.switchView('calls')")
+    await p.until("!!document.querySelector('#call-npub')", what='the Calls screen')
+    await asyncio.sleep(.5)
+
+
+@flow(ALICE, BOB)
+async def _a_missed_call_stays_with_the_account_it_rang(relay, alice, bob):
+    # Alice rings Bob and gives up: Bob's device logs a missed call from her (the real producer -- calls.js).
+    await alice.call(bob)
+    await bob.until("!!document.getElementById('call-accept')", what='the incoming call')
+    await alice.press('call-hang')
+    await bob.until(NO_OVERLAY, what='his phone to stop ringing when she gave up')
+    await _calls_screen(bob)
+    await bob.until("%s.length===1" % MISSED_ON_SCREEN, what="Bob's Missed list")
+    # Someone else signs in on Bob's device (key 4). Who called BOB is not theirs to see.
+    bob_pk = bob.pubkey
+    await _add_account(bob, 4)
+    await _calls_screen(bob)
+    assert await bob.js(MISSED_ON_SCREEN) == [], "the other account is shown Bob's missed calls"
+    assert alice.pubkey not in await bob.js("document.querySelector('#feed').innerHTML"), \
+        "Bob's caller is on the other account's Calls screen"
+    # Bob again: his missed call is still his.
+    await _switch_account(bob, bob_pk)
+    await _calls_screen(bob)
+    await bob.until("%s.length===1 && %s[0]===%s" % (MISSED_ON_SCREEN, MISSED_ON_SCREEN, json.dumps(alice.pubkey)),
+                    what="Bob's missed call back under Bob")
+    # Clear (by its id) clears Bob's list only, and it stays cleared for him.
+    await bob.press('missed-clear')
+    await bob.until("!document.querySelector('.call-missed')", what='the Missed list to go')
+    assert await bob.missed() == []
+
+
+def test_a_missed_call_stays_with_the_account_it_rang():
+    _a_missed_call_stays_with_the_account_it_rang()

@@ -24,6 +24,23 @@ window.PCSignerFactory = function(dep){
     NT, _capPlugin, _eventId, _instanceBase, _ncRelays, _renderSignerApps, toast, uiConfirm,
   } = dep;
 
+  /* THE SIGNATURE MUST BE OVER WHAT WE ASKED FOR -- for every signer that hands back a whole event (NIP-46 and
+   * NIP-55 alike). It was published as received, so a signer that changed it -- other text, other tags, another
+   * KIND -- was posted under the user's name as if they had written it: measured with a signer that appended to the
+   * content, the app toasted "posted" over words the user never typed (through NIP-46, and through Amber, which
+   * also toasted "posted" when it answered with another kind). Worse, every guard in publish() (the follow/mute-list shrink guard above all) ran
+   * on the TEMPLATE, before signing, so a returned kind 3 skipped all of them. The id commits to these fields, so
+   * comparing them is the whole check; created_at only when we set one (signers may stamp their own clock). */
+  function _signedWhatWasAsked(ev, tpl){
+    if(!ev || ev.kind !== tpl.kind || String(ev.content == null ? '' : ev.content) !== String(tpl.content == null ? '' : tpl.content)
+       || JSON.stringify(ev.tags || []) !== JSON.stringify(tpl.tags || [])
+       || (tpl.created_at && ev.created_at !== tpl.created_at)){
+      try{ toast('Your signer returned something other than what you asked it to sign — nothing was published.'); }catch(_){}
+      throw new Error('the signer altered the event it was asked to sign');
+    }
+    return ev;
+  }
+
   // ---------- NIP-55: on-device Android signer (Amber) ----------
   // The native counterpart of NIP-46. Same guarantee — the key never enters this app — but the exchange
   // is an Android intent to a signer installed on the SAME phone instead of a round trip through a relay,
@@ -86,7 +103,8 @@ window.PCSignerFactory = function(dep){
       // Prefer the signer's own signed event — it is authoritative about created_at/id. Older signers
       // return only the signature, so rebuild the event around it (the id is a pure function of the
       // template, so this cannot disagree unless the signer altered the template).
-      if(r.event){ try{ return JSON.parse(r.event); }catch(_){} }
+      // ...but only an event over what was ASKED (see _signedWhatWasAsked -- an unparseable one falls through).
+      if(r.event){ let ev = null; try{ ev = JSON.parse(r.event); }catch(_){} if(ev) return _signedWhatWasAsked(ev, tpl); }
       if(!r.result) throw new Error('the signer returned no signature');
       const ev = Object.assign({}, tpl); ev.id = await _eventId(ev); ev.sig = r.result; return ev;
     },
@@ -942,20 +960,7 @@ window.PCSignerFactory = function(dep){
                    + 'Switch it back, or sign in again as that account.'); }catch(_){}
         throw err;
       }
-      /* THE SIGNATURE MUST BE OVER WHAT WE ASKED FOR. A remote signer hands back a whole event and it was
-       * published as received, so a signer that changed it -- other text, other tags, another KIND -- was
-       * posted under the user's name as if they had written it: measured with a signer that appended to the
-       * content, the app toasted "posted" over words the user never typed. Worse, every guard in publish()
-       * (the follow/mute-list shrink guard above all) ran on the TEMPLATE, before signing, so a returned
-       * kind 3 would have skipped all of them. The id commits to these fields, so comparing them is the
-       * whole check; created_at only when we set one (signers may stamp their own clock). */
-      if(!ev || ev.kind !== tpl.kind || String(ev.content == null ? '' : ev.content) !== String(tpl.content == null ? '' : tpl.content)
-         || JSON.stringify(ev.tags || []) !== JSON.stringify(tpl.tags || [])
-         || (tpl.created_at && ev.created_at !== tpl.created_at)){
-        try{ toast('Your signer returned something other than what you asked it to sign — nothing was published.'); }catch(_){}
-        throw new Error('the signer altered the event it was asked to sign');
-      }
-      return ev;
+      return _signedWhatWasAsked(ev, tpl);
     },
     nip04enc(peer, text){ return this._send('nip04_encrypt',[peer, text]); },
     nip04dec(peer, ct){ return this._send('nip04_decrypt',[peer, ct]); },
