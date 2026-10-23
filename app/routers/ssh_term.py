@@ -78,6 +78,10 @@ def _why_kind(n: str, raw: str) -> str:
     # two tests, and the passphrase answer is the useful one.
     if "encrypted" in msg or "passphrase" in msg:
         return "that private key is passphrase-protected, which this terminal cannot unlock"
+    # paramiko's RejectPolicy says "Server '[host]:port' not found in known_hosts" -- an UNKNOWN HOST KEY, which the
+    # line below used to report as a missing key file (2026-10-23), sending people to look for a file that was fine.
+    if "known_hosts" in msg:
+        return "this server does not know that host's key yet -- add it to the server account's known_hosts"
     if "not found" in msg or "no such file" in msg:
         return "the key file configured for this host is not on the server"
     if "private key" in msg:

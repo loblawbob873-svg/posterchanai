@@ -204,6 +204,11 @@ class Ctx:
                 'ssh_hosts': 'box tester@127.0.0.1:%d' % self.box.port,
                 'ssh_terminal_users': ' '.join(self.users)}
         mp.setattr(ssh_service, '_get', lambda k, d='': conf.get(k) or d)
+        # NEVER THE LIVE KEEPER. ssh_keeper.socket_path() is <checkout>/.run/ssh-keeper.sock, and on a node (the deploy
+        # checkout) the production shell keeper is listening there: the router handed this test's connects to it --
+        # another process, outside every patch here, with the real known_hosts (deploy #40 stopped on 'could not
+        # connect'). A socket path nobody listens on keeps the PTY in this process, where the patches hold.
+        mp.setenv('POSTERCHANAI_SSH_SOCK', os.path.join(self.box.home, 'no-keeper.sock'))
         # This test host's key, the way the server account's known_hosts would hold it (RejectPolicy stays real).
         mp.setattr(paramiko.SSHClient, 'load_system_host_keys',
                    lambda cli, filename=None: cli.load_host_keys(self.box.known_hosts))
