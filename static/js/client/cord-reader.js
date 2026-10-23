@@ -26810,7 +26810,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(forJoin)delete result.root_refounder; // Only our authenticated rekey/vault may name the epoch minter.
     return result;
   }
+  function avBrokersOf(list) {
+    const out=[];if(!Array.isArray(list))return out;
+    for(const v of list){if(out.length>=5)break;if(typeof v!=='string')continue;let u;try{u=new URL(v.trim());}catch{continue;}
+      if(u.protocol!=='https:'||u.username||u.password||!u.hostname)continue;if(!out.includes(u.origin))out.push(u.origin);}
+    return out;
+  }
   async function createCommunity(opts,legacyCreate) {
+    /* `avBrokers` is written into the genesis metadata as `av_brokers` (see avBrokersOf), so an Armada member's
+     * calls in a community made here go to the broker this instance runs. Nothing given = nothing declared. */
+    opts={...opts,avBrokers:avBrokersOf(opts.avBrokers)};
     if(typeof opts.name!=='string'||!opts.name.trim()||utf8Len(opts.name)>NAME_MAX_BYTES)throw new Error('community name must be 1–64 UTF-8 bytes');
     if(opts.description!==undefined&&(typeof opts.description!=='string'||utf8Len(opts.description)>DESCRIPTION_MAX_BYTES))throw new Error('community description is too long');
     const made=await legacyCreate(opts),controlRoot=randomBytes(32),id=hex32(made.communityId),root=hex32(made.secrets.root);
@@ -26979,6 +26988,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       banner: folded.metadata?.banner || null,
       relays: community.relays,
       relaysAuthoritative: !!folded.metadata?.relaysPresent,
+      /* The community's declared call servers (CORD-02 metadata `av_brokers`, Concord PR #22 -- Armada's wire format:
+       * an array of https origins, at most 5 read). Canonical, deduplicated; [] when absent or unreadable. The call
+       * panel uses ONLY these when there are any (cord-voice.js `candidates`). */
+      av_brokers: avBrokersOf(folded.metadata?.av_brokers),
       controlPubkeys: groups.map((g) => g.pk),
       guestbookPubkeys: guestbookGroups(bundle).map(g=>g.pk),
       banned: [...folded.banned],

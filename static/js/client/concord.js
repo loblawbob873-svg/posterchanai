@@ -3637,10 +3637,14 @@
   function callBroker(p){
     let stored='';try{stored=String(localStorage.getItem('pc.concord.call-broker')||'');}catch(_){}
     if(stored&&stored!==PUBLIC_CALL_BROKER)return Promise.resolve(stored);
+    return ownCallBroker(p).then(b=>b||stored||PUBLIC_CALL_BROKER);
+  }
+  /* This instance's broker when it answers the CORD-07 probe, else ''. No instance (the relays-only app) is ''. */
+  function ownCallBroker(p){
     if(!instanceBroker){const base=publicInviteBase(p);
       instanceBroker=base===PUBLIC_INVITE_HOST?Promise.resolve(''):fetch(base+'/.well-known/concord/av',{credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'})
         .then(r=>r.status===204?base:'',()=>'');}
-    return instanceBroker.then(b=>b||stored||PUBLIC_CALL_BROKER);
+    return instanceBroker;
   }
   function publicInviteBase(p){
     let origin='';try{origin=String((p&&p.serverOrigin&&p.serverOrigin())||'');}catch(_){}
@@ -6461,7 +6465,12 @@
     const home=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
     const relays=home?[home,...CORD_BACKUP_RELAYS.filter(u=>normalizeRelay(u)!==home)]:[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const creator=p.cordDirectContext();
-    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:publicInviteBase(p),signEvent:creator.sign});
+    /* A COMMUNITY MADE HERE DECLARES THIS INSTANCE'S CALL SERVER (`av_brokers`, Armada's field). Armada uses a
+     * community's declared servers and nothing else, so without this an Armada member called through av.armada.buzz
+     * while we called through our own broker -- two SFUs, one silent call (interop test, 2026-10-22). No instance,
+     * or one without a running SFU: declare nothing, and every client keeps its own default. */
+    const avBrokers=await ownCallBroker(p).then(b=>b?[b]:[],()=>[]);
+    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:publicInviteBase(p),signEvent:creator.sign,avBrokers});
     if(!creator.isCurrent())throw new Error('creating account changed');
     const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
     const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,name,url:made.url,cord:{bundle}};
@@ -8143,8 +8152,13 @@
     await callModule('cord-voice.js','PCCordVoice');const calls=await callModule('cord-call.js','PCCordCall');
     if(!current())return;
     let subscription=null;
+    /* The community's declared call servers, read from its control state each time the panel asks (an owner can
+     * change them mid-call). With any, the panel uses only those (PCCordVoice.candidates). */
+    const declaredBrokers=()=>{try{const x=parts();return x.reader.inspectControl(x.bundle,x.controls).av_brokers||[];}catch(_){return [];}};
+    let preferred=await callBroker(p);
+    try{const list=declaredBrokers();if(list.length){const x=parts(),room=x.reader.voiceMaterial(x.bundle,x.controls,x.channel.id).room;preferred=(await window.PCCordVoice.candidates(room,{declared:list}))[0]||preferred;}}catch(_){}
     return calls.open({name:channelName,current,
-      preferred:await callBroker(p),
+      preferred,declared:declaredBrokers,
       joinOnOpen:!!opts.joinOnOpen,
       listened:()=>voiceWatch.key&&voiceWatch.room===identity?Date.now()-voiceWatch.since:0,
       seed:()=>voiceWatch.room===identity&&channelId?[...(voiceWatch.rows.get(channelId)||new Map()).values()]:[],

@@ -17,6 +17,29 @@
     const ranked=await Promise.all(all.map(async value=>({value,rank:await rank(room,value)})));
     return ranked.sort((a,b)=>a.rank<b.rank?-1:a.rank>b.rank?1:0).map(r=>r.value);
   }
+  /* THE COMMUNITY'S DECLARED CALL SERVERS WIN (CORD-02 metadata `av_brokers`, Concord PR #22 -- what Armada writes
+   * and obeys). Armada routes ONLY on that list and never follows presence, so a PosterChan member who joined an
+   * empty room on this instance's broker sat in a different SFU from every Armada member: the live interop test of
+   * 2026-10-22 (scripts/check_armada_call_interop.py) split exactly when PosterChan joined first. With a list, the
+   * candidates are the list alone -- an occupied broker first ONLY when it is on the list (CORD-07 §5 agreeing with
+   * the community), then the list in room-keyed tie-break order, which is the order Armada probes it in. With no
+   * list, unchanged: occupied brokers, then this caller's preferred one. Origins are Armada's canonical form (https,
+   * no credentials, default port dropped), deduplicated, at most 5 -- the cap Armada reads. */
+  function declared(list){
+    if(!Array.isArray(list))return [];
+    const out=[];for(const v of list){if(out.length>=5)break;const o=typeof v==='string'?origin(v.trim()):null;if(o&&!out.includes(o))out.push(o);}
+    return out;
+  }
+  async function candidates(room,{declared:list=[],occupied=[],preferred=''}={}){
+    const allowed=declared(list),busy=await brokers(room,occupied);
+    if(allowed.length){const ranked=await brokers(room,allowed);return [...busy.filter(b=>allowed.includes(b)),...ranked.filter(b=>!busy.includes(b))];}
+    const mine=await brokers(room,[preferred]);return [...busy,...mine.filter(b=>!busy.includes(b))];
+  }
+  /* §5 healing, inside the same fence: move only to an occupied broker the community allows. */
+  async function heal(room,current,occupied,list=[]){
+    const allowed=declared(list),seen=allowed.length?occupied.filter(b=>allowed.includes(origin(b))):occupied;
+    return (await brokers(room,[current,...seen]))[0]||current;
+  }
   async function senderKey(mediaRoot,identity){
     if(!(mediaRoot instanceof Uint8Array)||mediaRoot.length!==32||typeof identity!=='string'||!identity||identity.length>512)
       throw Error('Invalid call sender key material');
@@ -69,5 +92,5 @@
       return {token:body.token,identity:body.identity,url:u.href,broker:base};
     }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
   }
-  root.PCCordVoice=Object.freeze({origin,rank,brokers,senderKey,fold,token});
+  root.PCCordVoice=Object.freeze({origin,rank,brokers,declared,candidates,heal,senderKey,fold,token});
 })(globalThis);
