@@ -7,7 +7,8 @@
   * Screenshot → '#ss-fx' "Effect": closes the card dialog and opens the Effects studio ON THE CARD -- the AI view
     loads the card's own uploaded link (through /client/proxy-image) and the studio shows it as the thumbnail.
 
-'#rep-ban' (the Communities "Ban from this room" option) is not tested: no caller has ever passed `opts.ban` to
+The report sheet's "Ban from this room" button (menus.js, shown when `opts.ban` is a function) is not tested,
+and deliberately not named here so the coverage scan keeps counting it as untested: no caller has ever passed `opts.ban` to
 openReport (`git log -S'opts.ban'` finds only 769b06747, which added the button and no caller), so no screen
 can show it.
 Real login, DOM, cards.js and menus.js; the relay socket and HTTP are fixtures that record what was sent.
