@@ -11,7 +11,9 @@ Knobs (`STATE`), each a way the user's own layout read or write can go wrong:
                never answered at all (no EVENT, no EOSE)
   refuse_layout  publish of pcai:desktop is answered OK=false
   hold_docs    a set of d-tags (an entry ending in ':' is a prefix) or l-tags: a REQ naming one is never
-               answered by THIS relay either -- with the SilentRelay in the pool, nobody answers it
+               answered by THIS relay either -- with the SilentRelay in the pool, nobody answers it. An entry
+               may be a (pubkey, tag) pair: then only that account's reads of it are held, so scenarios on
+               different accounts can share the relay at the same time
   api          url path -> JSON the instance answers with (an endpoint a scenario needs, e.g. Go Live)
 Every kind-30078 event the relay is SENT is kept in STATE['pubs'], accepted or not.
 """
@@ -41,7 +43,7 @@ def reset():
     STATE.clear()
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
                  held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock(),
-                 held_open={}, held_seen=0, held_closed_at=None)
+                 held_open={}, held_seen=0, held_closed_at=None, held_by={})
 
 
 reset()
@@ -79,13 +81,26 @@ def _layout_req(filters):
 
 
 def _held_doc_req(filters):
-    """Does this REQ ask for a document `hold_docs` names (by d-tag, d-prefix or l-tag)?"""
+    """Does this REQ ask for a document `hold_docs` names (by d-tag, d-prefix or l-tag; for one account, or any)?"""
     held = STATE.get('hold_docs') or ()
     for f in filters:
+        authors = f.get('authors') or []
         for d in (f.get('#d') or []) + (f.get('#l') or []):
-            if any(d == h or (h.endswith(':') and str(d).startswith(h)) for h in held):
-                return True
+            for h in held:
+                pk, h = h if isinstance(h, tuple) else (None, h)
+                if (pk is None or not authors or pk in authors) and (d == h or (h.endswith(':') and str(d).startswith(h))):
+                    return True
     return False
+
+
+def _authors(filters):
+    """The accounts a REQ reads -- None when a filter names none (it could be anybody's)."""
+    out = set()
+    for f in filters:
+        if not f.get('authors'):
+            return None
+        out.update(f['authors'])
+    return frozenset(out)
 
 
 def _dmatch(d):
@@ -164,14 +179,18 @@ class Relay:
                     elif hold == 'never':
                         # A read this relay will never answer: remember it, so a test can tell when the
                         # client has GIVEN UP on it (it closes the subscription) instead of sleeping a guess.
-                        STATE.setdefault('held_open', {})[(id(ws), subid)] = __import__('time').monotonic()
+                        STATE.setdefault('held_open', {})[(id(ws), subid)] = (__import__('time').monotonic(),
+                                                                               _authors(filters))
                         STATE['held_seen'] = STATE.get('held_seen', 0) + 1
+                        _held_note(_authors(filters), 'seen')
                     else:
                         await self.answer(ws, subid, filters)
                 elif m[0] == 'CLOSE':
                     self.subs.pop((ws, m[1]), None)
-                    if STATE.get('held_open', {}).pop((id(ws), m[1]), None) is not None:
+                    was = STATE.get('held_open', {}).pop((id(ws), m[1]), None)
+                    if was is not None:
                         STATE['held_closed_at'] = __import__('time').monotonic()
+                        _held_note(was[1], 'closed_at', STATE['held_closed_at'])
                 elif m[0] == 'EVENT':
                     ev = m[1]
                     if isinstance(ev, dict) and ev.get('kind') == 30078:
@@ -219,6 +238,16 @@ class Relay:
         for ws, subid, filters in held:
             asyncio.run_coroutine_threadsafe(self.answer(ws, subid, filters), self.loop)
         return len(held)
+
+
+def _held_note(authors, key, value=None):
+    """Per-account held-read bookkeeping (STATE['held_by'][pubkey]), for gave_up(author=...)."""
+    for pk in (authors if authors is not None else [None]):
+        rec = STATE.setdefault('held_by', {}).setdefault(pk, {'seen': 0, 'closed_at': None})
+        if key == 'seen':
+            rec['seen'] += 1
+        else:
+            rec[key] = value
 
 
 class SilentRelay(Relay):
@@ -649,17 +678,27 @@ async def decoded_layout(b):
 
 
 
-async def gave_up(cap, margin=4.0):
+async def gave_up(cap, margin=4.0, author=None):
     """Wait until the client has abandoned every read this relay is holding (it CLOSEd them all, after at least
     one), and then `margin` more seconds with no new held read -- the window in which a wrongly-armed writer would
     publish. Never longer than `cap`, the flat wait this replaces, so a client that keeps a read open for ever
-    still gets the full window. Measured: the silent-relay tests spent 135s of fixed sleeps."""
+    still gets the full window. Measured: the silent-relay tests spent 135s of fixed sleeps.
+    `author`: only that account's held reads count (and any held read that names no account), so a scenario
+    on another account running at the same time neither ends this wait early nor holds it open."""
     import asyncio
     import time
     t0 = time.monotonic()
     while time.monotonic() - t0 < cap:
-        seen, opened = STATE.get('held_seen', 0), STATE.get('held_open', {})
-        closed = STATE.get('held_closed_at')
+        if author is None:
+            seen, opened = STATE.get('held_seen', 0), STATE.get('held_open', {})
+            closed = STATE.get('held_closed_at')
+        else:
+            by = STATE.get('held_by', {})
+            mine, anyone = by.get(author) or {}, by.get(None) or {}
+            seen = mine.get('seen', 0)
+            opened = [k for k, (_t, who) in list(STATE.get('held_open', {}).items()) if who is None or author in who]
+            closes = [c for c in (mine.get('closed_at'), anyone.get('closed_at')) if c]
+            closed = max(closes) if closes else None
         if seen and not opened and closed and time.monotonic() - closed >= margin:
             return time.monotonic() - t0
         await asyncio.sleep(.25)
