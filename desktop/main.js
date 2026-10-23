@@ -41,6 +41,14 @@ if (_crashHandlerRunnable()) {
 // other exports are native lazy getters; destructuring `screen`, powerMonitor, session or Tray while
 // this module loads can initialize platform backends before app.ready and SIGTRAP on a fast boot.
 const { app, ipcMain, protocol } = electron;
+/* WINDOWS SHOWS A TOAST ONLY FOR AN APP ID A START-MENU SHORTCUT CARRIES. The NSIS installer
+ * (electron-builder, installer.nsh `WinShell::SetLnkAUMI`) stamps the shortcut with the build's
+ * `appId`; a process that never says which app it is gets Electron's generated `electron.app.<name>`,
+ * which no shortcut carries, and Windows drops its notifications without an error. Reported
+ * 2026-10-22 as no SMS notifications on the Windows app. Must equal package.json build.appId --
+ * tests/test_desktop_windows_notification_identity.py reads both. */
+const WINDOWS_APP_ID = 'place.poster.desktop';
+if (process.platform === 'win32') { try { app.setAppUserModelId(WINDOWS_APP_ID); } catch (_) { } }
 let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer;
 const path = require('path');
 const fsbridge = require('./fsbridge');
@@ -3801,7 +3809,11 @@ ipcMain.handle('pc:host:notify', (e, options) => {
   fsGuard(e);
   // PosterChanOS owns its notification centre; avoid activating a second D-Bus popup daemon.
   // Standalone desktop apps retain their platform notifications and click routing.
-  if(SHELL_MODE) return true;
+  /* `false` MEANS "NOTHING WAS SHOWN", and the renderer acts on it. It used to answer `true` here, and
+   * a renderer cannot otherwise tell PosterChanOS from the desktop app with the windowed desktop
+   * layout on -- which is how texts on the Windows app ended up shown nowhere (2026-10-22, see
+   * osNotify in static/js/client/app.js). Under --shell the desktop's own card is the notification. */
+  if(SHELL_MODE) return false;
   const o=options&&typeof options==='object'?options:{},Notification=electron.Notification;
   if(!Notification||!Notification.isSupported())return false;
   const owner=BrowserWindow.fromWebContents(e.sender)||win,route=String(o.route||'notifications').slice(0,220);

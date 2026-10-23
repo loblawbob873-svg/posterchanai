@@ -1424,7 +1424,12 @@
       const m = S.msgs.get(d);
       if(!m || m.gone || !m.incoming || _announced.has(d)) return;
       if(blockedKey(m.address)) return;   // blocked on any device: no notification, before the phone has even applied it
-      if((m.date || 0) < S.since) return;
+      /* NEW IS WHEN THE PHONE GOT IT, NOT WHEN THE CARRIER STAMPED IT. `date` is the service centre's
+       * clock and can predate delivery by minutes or hours, so a text that reached the phone after
+       * this page started -- but was stamped before -- was filed without a sound (2026-10-22, "I am
+       * not seeing any SMS notifications"). The phone's receiver records `received`
+       * (SmsOutbox.archiveIncoming); history, which never has it, is still judged by its date. */
+      if(Math.max(Number(m.date) || 0, Number(m.received) || 0) < S.since) return;
       if(owner !== ME().pubkey || (window.pcShell && pcShell.backgroundOwner === false)) return;
       // Reserve before asynchronous phone detection: concurrent duplicate relay deliveries may
       // both begin before either has inserted the message into the archive map.

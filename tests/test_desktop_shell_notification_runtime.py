@@ -24,7 +24,7 @@ for(const shell of [true,false]) {
   electron:{Notification},BrowserWindow:{fromWebContents:()=>owner},win:null,path:{join:()=>'/icon.png'},__dirname:'/'};
  vm.runInNewContext(code,scope);
  assert.throws(()=>handler({sender:{}},{}),/untrusted/,'authorization remains before suppression');
- for(let i=0;i<30;i++)assert.equal(handler({sender},{title:'New message',body:'body',route:'messages',silent:true}),true);
+ for(let i=0;i<30;i++)assert.equal(handler({sender},{title:'New message',body:'body',route:'messages',silent:true}),!shell,'false = nothing shown: the renderer draws the desktop card instead');
  if(shell){assert.equal(supported,0);assert.equal(notes.length,0,'no native daemon activation even under a burst');}
  else {
   assert.equal(notes.length,30);assert(notes.every(n=>n.shown&&n.options.silent));

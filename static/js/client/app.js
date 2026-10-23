@@ -12742,24 +12742,39 @@
      * Telegram, Texts and reminders raised nothing at all ("i am not seeing any notifications for
      * telegram messages"). The desktop card is the surface Nostr notifications already use; osToast
      * plays the chime and keeps where a click goes. */
-    try{
-      if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.osToast){
-        const route=(opts&&opts.route)||'notifications';
-        const go=(opts&&typeof opts.onClick==='function')?opts.onClick:()=>{ try{ openOsNotificationRoute(route); }catch(_){} };
-        PCOS.osToast('<b>'+enc(String(title||'PosterChan'))+'</b>'+(clean?'<br>'+enc(clean):''), (opts&&opts.icon)||'', go, _notificationType(opts));
-        return null;
-      }
-    }catch(_){}
-    notificationSound();
+    const desktopCard=()=>{
+      const route=(opts&&opts.route)||'notifications';
+      const go=(opts&&typeof opts.onClick==='function')?opts.onClick:()=>{ try{ openOsNotificationRoute(route); }catch(_){} };
+      PCOS.osToast('<b>'+enc(String(title||'PosterChan'))+'</b>'+(clean?'<br>'+enc(clean):''), (opts&&opts.icon)||'', go, _notificationType(opts));
+    };
+    let desktopOn=false;
+    try{ desktopOn=!!(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.osToast); }catch(_){}
+    /* THE DESKTOP LAYOUT IS NOT POSTERCHANOS, AND ONLY THE MAIN PROCESS KNOWS WHICH ONE THIS IS.
+     * "I am not seeing any SMS notifications on OS and windows app" (2026-10-22). `PCOS.isOn()` is
+     * true for the windowed desktop layout in ANY shell -- including the Windows/macOS/Linux desktop
+     * app with that layout switched on -- so every text, Telegram message and reminder there went to
+     * the PosterChanOS card window, which main.js only runs under --shell: the card was refused and
+     * NOTHING was shown, not even inside the window. So the bundled app asks for the platform
+     * notification first; main.js answers `false` exactly when it is PosterChanOS (no notification
+     * daemon there, by design), and only then is the desktop's own card the notification.
+     * tests/client/test_sms_phone_to_desktop_notification_full_app.py drives all four shells. */
+    if(desktopOn && !(window.pcHost && pcHost.notify)){ try{ desktopCard(); }catch(_){} return null; }
     /* Bundled desktop pages must not depend on Chromium's per-origin web-notification permission.
      * Electron owns a native notification API, including click-to-focus, so use the guarded preload
      * bridge before either the Android plugin or the browser fallback. */
     if(window.pcHost&&pcHost.notify){
       if(!osNotify._nativeClicks&&pcHost.onNotificationClick){osNotify._nativeClicks=pcHost.onNotificationClick(openOsNotificationRoute);}
+      // The chime: the desktop's card plays its own, and the native one is asked to be silent.
+      if(!desktopOn) notificationSound();
       try{const r=pcHost.notify({title:String(title||'PosterChan'),body:clean,
-        route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||'',silent:true});if(r&&r.catch)r.catch(()=>{});}catch(_){}
+        route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||'',silent:true});
+        if(desktopOn) Promise.resolve(r).then(shown=>{
+          if(shown===false){ try{ desktopCard(); }catch(_){} } else notificationSound();
+        },()=>{ try{ desktopCard(); }catch(_){} });
+        else if(r&&r.catch)r.catch(()=>{});}catch(_){ if(desktopOn) try{ desktopCard(); }catch(_){} }
       return null;
     }
+    notificationSound();
     /* THE APK GOES NATIVE, because Android's WebView does not implement the Notifications API at all.
      * `new Notification(...)` in there is not an error and not a refusal — it is silence, so every
      * caller below has been drawing nothing on the packaged app since it shipped: a DM that had
