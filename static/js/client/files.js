@@ -2688,15 +2688,10 @@ window.PCFilesFactory = function(dep){
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
     /* Optimistic controls are intentional: no signature or network request happens until the user
      * chooses files. The real PUT reports denial and offers/request access on that explicit action. */
-    const canUp=true;
-    const head = canUp
-      ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_S._filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
+    const head = `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_S._filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> <span class="dz-text">Drop files/folders here, or</span> <span class="dz-btns"><button class="btn btn-cyan small" id="bl-pick"><svg class="ic b-ic dz-up" aria-hidden="true"><use href="#i-upload"></use></svg>choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button></span>
           <div class="muted small">→ ${_S._filesFolder?((FilesIdx.isEncFolder(_S._filesFolder)?'🔒 ':'📁 ')+enc(_S._filesFolder)):'All files'} · uploaded one at a time${_S._filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_S._filesFolder)?' · encrypted on this device':'')}</div></div>
-          <div class="up-queue" id="bl-queue"></div></div>`
-      : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
-           <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
-           <button class="btn btn-cyan" id="bl-request"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Request upload access</button></div>`;
+          <div class="up-queue" id="bl-queue"></div></div>`;
     /* EXPLORER LAYOUT. The folder list is a left PANE and everything else a right one, which is the
      * shape every file manager has settled on because it is the one that scales: a row of chips wraps
      * into three lines the moment you have eight folders, and then the files start below the fold.
@@ -2709,7 +2704,7 @@ window.PCFilesFactory = function(dep){
       + '<div class="files-selbar" id="bl-selbar"></div>'
       + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
-    if(canUp){
+    {
       const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
       $('#bl-pick',pane).onclick=()=>fileInput.click();
       { const fb=$('#bl-pickfolder',pane); if(fb) fb.onclick=()=>folderInput&&folderInput.click(); }
@@ -2725,7 +2720,7 @@ window.PCFilesFactory = function(dep){
         if(entries.length){ _walkEntries(entries).then(fs=>{ if(fs.length) uploadFilesSeq(fs); }); }
         else { const fs=[...((dt&&dt.files)||[])]; if(fs.length) uploadFilesSeq(fs); }
       };
-    } else { const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb); }
+    }
     /* HOME: folder tiles in the grid, and NOTHING fetched. It used to return before this whole
      * function ran, which took the drop zone with it — so on the one screen that says "your folders"
      * there was no way to put anything in one. The uploader is built above, so it is here now;

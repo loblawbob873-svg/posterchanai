@@ -3083,9 +3083,6 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .captcha-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .captcha-img{height:56px;border-radius:8px;border:1px solid rgba(0,240,255,.4);background:#0a0418}
 .captcha-box .input{text-transform:uppercase;letter-spacing:4px;text-align:center;font-weight:700}
-.blossom-locked{margin:16px;padding:18px 20px;border-radius:14px;text-align:center}
-.blossom-locked b{font-size:17px}
-.blossom-locked p{margin:6px 0 12px}
 
 /* profile */
 .prof{padding:0 0 20px}
