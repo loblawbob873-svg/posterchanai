@@ -89,11 +89,15 @@ async def put_item(db, user, calendar: str, uid: str, ics: str, component: str =
     sk = user_storage_seckey(db, user)
     d = f"{NS_ITEM}{calendar}:{uid}"
     if href is None and keep_href:
+        # STRICT: this read feeds a put_doc of the SAME document. Loosely, an unreachable relay reads as "no stored
+        # href", the item is rewritten under its UID, and the phone gets a second copy beside its own (the bug the
+        # href exists to prevent). Could not ask -> not saved (False), which the routes already report.
         try:
-            old = await store.get_doc(_port(db), d, seckey=sk)
-            href = (old or {}).get("href") if isinstance(old, dict) else None
-        except Exception:
-            href = None          # unreadable: the item is written under its UID, as before
+            old = await store.get_doc(_port(db), d, seckey=sk, strict=True)
+        except Exception as e:
+            logger.warning("[caldav] cannot read %s before rewriting it, not saved: %s", d, type(e).__name__)
+            return False
+        href = (old or {}).get("href") if isinstance(old, dict) else None
     rec = {"cal": calendar, "uid": uid, "ics": ics, "component": component, "ts": time.time()}
     if href:
         rec["href"] = href
