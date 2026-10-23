@@ -147,6 +147,10 @@ window.PCDraftsFactory = function(dep){
   }
   const Scheduled = {
     _cache:null, _cacheAt:0,
+    /* Why the last list() could not be read ('' = it was). "Could not ask" is never "nothing scheduled":
+       the Drafts screen said nothing at all when the list failed, which is exactly what an empty
+       schedule looks like -- and a post that is still going out at 9 looked cancelled. */
+    unread:'',
     _proof(){ return selfProof(); },   // shared with Drafts → opening Drafts never triggers a 2nd signer prompt
     async create(kind, content, tags, whenTs){
       const t=_enrichTags(kind, tags, content);   // same enrichment as publish() → a scheduled post is identical
@@ -162,11 +166,20 @@ window.PCDraftsFactory = function(dep){
       if(!force && this._cache && (now-this._cacheAt)<4000) return this._cache;   // short TTL: avoid re-fetch on rapid re-renders
       try{ const r=await fetch('/client/scheduled/list',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof()})}).then(_schedAnswer);
-        if(!r || !Array.isArray(r.posts)) return this._cache||[];   // "could not ask" is never "nothing scheduled"
-        const posts=r.posts; this._cache=posts; this._cacheAt=now; return posts;
-      }catch(_){ return this._cache||[]; } },
-    async cancel(id){ try{ const r=await fetch('/client/scheduled/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),id})}).then(_schedAnswer); this._cache=null; return !!(r&&r.ok); }catch(_){ return false; } },
+        if(!r || !Array.isArray(r.posts)){   // "could not ask" is never "nothing scheduled"
+          this.unread=String((r&&r.error)||'the server did not answer'); return this._cache||[]; }
+        const posts=r.posts; this._cache=posts; this._cacheAt=now; this.unread=''; return posts;
+      }catch(e){ this.unread='the server could not be reached'+(e&&e.message?' ('+e.message+')':''); return this._cache||[]; } },
+    /* {ok} -- or {late}: the server ANSWERED that the post is already sending or sent -- or {error}: it
+       could not be asked, and the post is STILL SCHEDULED. All three used to be one `false`, toasted as
+       "too late — it already posted" -- about a post that was going to go out anyway. */
+    async cancel(id){ try{ const res=await fetch('/client/scheduled/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pubkey:S.ME.pubkey,auth:await this._proof(),id})}); const r=await _schedAnswer(res); this._cache=null;
+      if(r&&r.ok) return {ok:true};
+      // A 200 JSON "no" is the node ANSWERING: the post is no longer cancellable (sending or sent).
+      if(res.ok && /json/i.test(res.headers.get('content-type')||'') && r && r.ok===false) return {ok:false,late:true};
+      return {ok:false,error:String((r&&r.error)||('HTTP '+res.status))};
+    }catch(e){ return {ok:false,error:'the server could not be reached'}; } },
   };
   function renderDrafts(){
     _reconcileDeliveredDrafts();
@@ -217,8 +230,13 @@ window.PCDraftsFactory = function(dep){
     const host=$('#sched-section'); if(!host || S.VIEW!=='drafts') return;   // navigated away while fetching
     // Hide the "No drafts" empty-state when there ARE scheduled posts (else it reads as contradictory).
     { const de=$('#drafts-empty'); if(de) de.style.display = posts.length ? 'none' : ''; }
-    if(!posts.length){ host.innerHTML=''; return; }
-    host.innerHTML = `<div class="sched-head">⏰ Scheduled · ${posts.length}</div>` + posts.map(p=>{
+    const unread = Scheduled.unread
+      ? `<div class="empty sched-unreadable" id="sched-unreadable">Couldn’t load your scheduled posts — ${enc(Scheduled.unread)}. `
+        + (posts.length ? 'Showing what this device last saw. ' : '')
+        + `Anything you scheduled is still scheduled; nothing was changed.<div><button class="btn btn-ghost small" id="sched-retry">Try again</button></div></div>`
+      : '';
+    if(!posts.length){ host.innerHTML=unread; _bindSchedRetry(host); return; }
+    host.innerHTML = unread + `<div class="sched-head">⏰ Scheduled · ${posts.length}</div>` + posts.map(p=>{
       const when=new Date((p.scheduled_at||0)*1000).toLocaleString();
       const st=p.status;
       const label = st==='failed' ? ('⚠ failed to publish · was due '+when)
@@ -232,10 +250,16 @@ window.PCDraftsFactory = function(dep){
       const b=card.querySelector('[data-act="cancel"]'); if(!b) return;
       const failed=card.classList.contains('sched-failed');
       b.onclick=async()=>{ if(!await uiConfirm(failed?'Dismiss this failed scheduled post?':'Cancel this scheduled post?')) return; b.disabled=true;
-        const ok=await Scheduled.cancel(card.dataset.sid);
-        if(!ok && !failed) toast('too late — it already posted');
-        if(S.VIEW==='drafts') _renderScheduled(); };
+        const r=await Scheduled.cancel(card.dataset.sid);
+        if(r.late && !failed) toast('too late — it already posted');
+        else if(!r.ok && !r.late) toast((failed?'could not dismiss it':'could not cancel — it is STILL SCHEDULED')+': '+r.error);
+        if(S.VIEW==='drafts') _renderScheduled(); else b.disabled=false; };
     });
+    _bindSchedRetry(host);
+  }
+  function _bindSchedRetry(host){
+    const rt=host.querySelector('#sched-retry');
+    if(rt) rt.onclick=async()=>{ rt.disabled=true; await Scheduled.list(true); if(S.VIEW==='drafts') _renderScheduled(); };
   }
   // Append a quoted note as an inline `nostr:nevent` (WITH relay hint + author) to the post content.
   // A NIP-18 quote needs BOTH the `q` tag AND the inline nevent: many clients (Damus/Amethyst/Primal)

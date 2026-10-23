@@ -12,6 +12,9 @@ months):
 * `sweep` -- `SmsSweep.run` over a provider of the test's rows, sealed exactly as `SmsArchive.sweep`
   seals them (`Crypt` NIP-44 to self, `SmsOutbox.signed`): the phone's archive of a picture message.
 * `block` -- `SmsPlugin.setBlocked` -> `Blocklist.set`: the answer the WebView's applyBlocksHere reads.
+* `archived` -- `SmsArchived.absorb` over the Texts events its relay sockets delivered (what
+  SignerRelayService does with every `pcai:smsarc:` record), then `ArchivedThreads.hidden` -- the
+  question the native thread list asks of each conversation.
 
 What is NOT the shipped code, and why -- each is a platform service with no JVM implementation:
 
@@ -251,6 +254,19 @@ public class PhoneDrv {
       out.put("isRequest", asked).put("published", published);
     } else if (a[0].equals("sweep")) {
       out = Sweep.run(ctx, new JSONObject(stdin()));
+    } else if (a[0].equals("archived")) {
+      // Every event the sockets delivered, in order, each offered to SmsArchived.absorb as
+      // SignerRelayService does; then the native list's question, per (address, newest date).
+      JSONObject in = new JSONObject(stdin());
+      JSONArray evs = in.optJSONArray("events"), ask = in.optJSONArray("ask"), hidden = new JSONArray();
+      int took = 0;
+      for (int i = 0; i < evs.length(); i++) if (SmsArchived.absorb(ctx, evs.optJSONObject(i))) took++;
+      ArchivedThreads t = SmsArchived.load(ctx);
+      for (int i = 0; i < ask.length(); i++) {
+        JSONArray q = ask.optJSONArray(i);
+        hidden.put(t.hidden(q.optString(0), ((Number) q.opt(1)).longValue()));
+      }
+      out.put("absorbed", took).put("hidden", hidden);
     } else if (a[0].equals("block")) {
       ctx.blockAvailable = !"false".equals(a.length > 3 ? a[3] : "true");
       com.getcapacitor.Plugin.CTX = ctx;
@@ -282,6 +298,7 @@ final class Sweep {
     final String pubHex = SmsOutbox.hex(me);
     final byte[] mk = Base64.getDecoder().decode(in.optString("mk"));
     final JSONArray rowsIn = in.optJSONArray("rows");
+    final JSONObject names = in.optJSONObject("names") == null ? new JSONObject() : in.optJSONObject("names");
     final List<SmsMsg> rows = new ArrayList<>();
     final Map<Long, byte[]> bytes = new HashMap<>();
     for (int i = 0; i < rowsIn.length(); i++) {
@@ -300,7 +317,6 @@ final class Sweep {
     }
     final JSONObject blobs = new JSONObject();
     final JSONArray events = new JSONArray();
-    final long[] mark = {0L};
     SmsSweep.Io io = new SmsSweep.Io() {
       public List<SmsMsg> since(long dateMs, int limit) {
         List<SmsMsg> o = new ArrayList<>(); for (SmsMsg m : rows) if (m.date > dateMs) o.add(m); return o; }
@@ -318,10 +334,15 @@ final class Sweep {
         return SmsOutbox.signed(sec, pubHex, System.currentTimeMillis() / 1000L, 30078, tags, ct);
       }
       public long now() { return Long.MAX_VALUE / 4; }   // past every settle window
-      public long mark() { return mark[0]; }
-      public void mark(long ms) { mark[0] = ms; }
+      // The phone's address book (PhoneBook.nameOf over the Contacts provider), as the test's map.
+      public String contactName(String address) { return names.optString(address, ""); }
+      // The sweep's high-water mark, kept in the phone's preferences as SmsArchive keeps it: a second
+      // run is the same phone later, and re-reads only what is newer.
+      public long mark() { return ctx.getSharedPreferences("pc_sms_sweep", 0).getLong("mark", 0L); }
+      public void mark(long ms) { ctx.getSharedPreferences("pc_sms_sweep", 0).edit().putLong("mark", ms).commit(); }
     };
     SmsSweep.Report rep = SmsSweep.run(io, 100);
+    SmsSweep.commit(io, rep);          // the relay accepted the batch (the test publishes every event)
     for (JSONObject ev : rep.events) events.put(ev);
     return new JSONObject().put("events", events).put("blobs", blobs).put("error", rep.error)
         .put("attachments", (long) rep.attachments).put("refused", (long) rep.refused);
@@ -342,7 +363,7 @@ class Phone:
         import test_android_signer_service_compiles as svc
         shims = dict(svc.SHIMS)
         shims["place/poster/app/signer/SignerKey.java"] = base.SIGNER_KEY_SHIM
-        real = [os.path.join(SMS, f + ".java") for f in ("SmsOutbox", "SmsSweep", "SmsPlugin")]
+        real = [os.path.join(SMS, f + ".java") for f in ("SmsOutbox", "SmsSweep", "SmsPlugin", "SmsArchived")]
         real.append(os.path.join(PHONE, "Blocklist.java"))
         r = ac.compile_sources(real, self.tmp, shims=shims)
         assert r.returncode == 0, "the phone half does not compile against android.jar:\n" \

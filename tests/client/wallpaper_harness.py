@@ -18,6 +18,7 @@ Knobs (`STATE`), each a way the user's own layout read or write can go wrong:
   refuse_docs  a set of (pubkey, d-tag or d-prefix ending in ':'): that account's publish of it is
                answered OK=false (the relay refused it -- the client keeps it to send again)
   index_fail   a set of pubkeys whose drive-index READ the instance answers 503 (it could not ask)
+  upload_fail  a set of pubkeys whose Blossom UPLOADS the instance answers 503 (storage unreachable)
   slow_reqs    {(pubkey, kind): seconds} -- a REQ for that account's events of that kind is answered that
                many seconds late (a slow relay); if the client has CLOSEd it by then, it is not answered at all
 Every kind-30078 event the relay is SENT is kept in STATE['pubs'], accepted or not.
@@ -55,7 +56,7 @@ def reset():
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
                  held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock(),
                  held_open={}, held_seen=0, held_closed_at=None, held_by={}, refuse_docs=set(),
-                 indexes={}, index_fail=set(), owners={}, slow_reqs={})
+                 indexes={}, index_fail=set(), owners={}, slow_reqs={}, upload_fail=set())
 
 
 reset()
@@ -429,9 +430,11 @@ class Instance(full.Handler):
             return
         if self.path.split('?')[0] == '/blossom/upload':
             data = self._body()
+            who = self._nip98_pubkey()
+            if who and who in STATE['upload_fail']:
+                return self._json({'error': 'storage unavailable'}, 503)
             sha = hashlib.sha256(data).hexdigest()
             STATE['blobs'][sha] = data
-            who = self._nip98_pubkey()
             if who:
                 STATE['owners'].setdefault(sha, (who, int(__import__('time').time())))
             origin = f'http://{self.headers.get("Host")}'

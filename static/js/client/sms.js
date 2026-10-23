@@ -989,7 +989,20 @@
       t.msgs.push(m);
       if(m.date > t.date){ t.date = m.date; t.address = m.address; }
     }
-    for(const t of by.values()){ t.msgs.sort((a,b) => (a.date||0) - (b.date||0)); t.msgs = settlePictureSends(t.msgs); }
+    for(const t of by.values()){
+      t.msgs.sort((a,b) => (a.date||0) - (b.date||0)); t.msgs = settlePictureSends(t.msgs);
+      /* THE CONVERSATION'S NAME IS THE NEWEST NAME ANY OF ITS MESSAGES CARRIES -- not the newest
+       * message's. A text that reaches the phone is archived by SmsOutbox.archiveIncoming, which knows
+       * no contacts and files it with `name:''`, and so does every send made from this computer; read
+       * off the last message alone, the conversation with a contact turned into a bare number the
+       * moment they texted, and searching for their name found nothing. A name equal to the address is
+       * the provider's not-yet-joined fallback, not a name (whoIs). */
+      t.name = '';
+      for(let i = t.msgs.length - 1; i >= 0; i--){
+        const n = String(t.msgs[i].name || '').trim();
+        if(n && key(n) !== key(t.address)){ t.name = n; break; }
+      }
+    }
     // Contacts/notifications may select a recipient whose archive has not reached this device.
     // Keep that empty composer through subsequent catch-up rebuilds until its first row arrives.
     const emptySelection = S.threads.find(t => t.key === S.open && !t.msgs.length);
@@ -1393,7 +1406,8 @@
       const createdAt = Math.max(now(), _blocksSeenAt + 1);
       const r = await PC.publish(KIND, ct, [['d', D_BLOCKS], ['l', L_TAG]], {quiet:true, noQueue:true, createdAt});
       if(r && r.ok) _blocksSeenAt = Math.max(_blocksSeenAt, Number((r.ev && r.ev.created_at) || createdAt));
-    }).catch(() => {});
+      return !!(r && r.ok);
+    }).catch(() => false);
     return _blocksChain;
   }
   /* The phone's half: apply every request it has not applied yet, then say what the list now says. */
@@ -1423,9 +1437,19 @@
   }
   async function setBlock(addr, block){
     const k = key(addr); if(!k) return;
+    const before = ownBlocks()[k];
     ownBlocks()[k] = { number:String(addr), block:!!block, at:Date.now() };
     if(textsOnScreen()) paint();
-    await publishBlocks();
+    /* THE LIST IS ONLY CHANGED IF A RELAY TOOK IT. The document is the only way the phone -- and every
+     * other device -- ever hears of a block; a refused one used to stay on this screen as "waiting for
+     * your phone" and be toasted as on its way, while nothing anywhere would ever apply it and the next
+     * reload forgot it. */
+    if(!(await publishBlocks())){
+      if(before) ownBlocks()[k] = before; else delete ownBlocks()[k];
+      if(textsOnScreen()) paint();
+      PC.toast((block ? 'could not block' : 'could not unblock') + ' \u2014 your relay did not take it; nothing was changed');
+      return;
+    }
     const st = await phoneState().catch(() => ({}));
     if(st && st.telephony) await applyBlocksHere();
     const v = ownBlocks()[k], said = v && v.applied ? v.applied.state : '';
@@ -2707,7 +2731,7 @@
         const sha = await PC.uploadEncFile(file, 'MMS');
         const mime=mmsMime(file);
         attachment = {sha, mime, name:file.name||(mime.startsWith('video/')?'video.mp4':'photo.jpg'), bytes:file.size};
-      }catch(e){ return {ok:false,error:'could not encrypt attachment: '+String(e&&e.message||e)}; }
+      }catch(e){ return {ok:false,error:'could not store the attachment in your drive ('+String(e&&e.message||e)+') \u2014 nothing was sent'}; }
     }
     /* COMMANDS STAY INLINE. Message archives use encrypted Blossom to keep history off the relay,
      * but the Android background service is deliberately tiny: it decrypts NIP-44 and talks to the
@@ -3219,17 +3243,27 @@
     }
     if(refused) return { archive:0, phone:0, refused:true };
 
-    let archive = 0;
+    let archive = 0, kept = 0;
     for(const d of docs){
-      forgetMessageParts(S.msgs.get(d));
+      // Taken BEFORE the publish: the relay's echo of the tombstone can replace the entry with a bare
+      // `gone` marker while it is out, and the parts to evict would be gone with it.
+      const held = S.msgs.get(d);
       const r = await PC.publish(KIND, '', [['d', d], ['l', L_TAG]], {quiet:true, noQueue:true});
-      if(r && r.ok) archive++;
+      /* A TOMBSTONE NO RELAY TOOK DELETED NOTHING. It used to be hidden here anyway and toasted as
+       * "deleted from your archive" -- and came back on the next reload and on every other device,
+       * the opposite of what the screen had just said. */
+      if(!(r && r.ok)){ kept++; continue; }
+      archive++;
+      forgetMessageParts(held);
       try{ await PC.publish(5, '', [['a', KIND+':'+ME().pubkey+':'+d]], {quiet:true, noQueue:true}); }catch(_){ }
       // A MARKER, not a removal — the same reason absorb() keeps one: a cached copy of the original
       // read back later would otherwise walk straight over the hole and restore the message.
       S.msgs.set(d, { doc:d, _at: now(), gone:true });
     }
     rebuild();
+    if(kept) return { archive, phone, refused:true, cancelled:pendingOutboxes.length,
+      error: phone ? 'deleted from this phone, but your relay did not take the delete \u2014 it is still in your archive'
+                   : 'not deleted \u2014 your relay did not take the delete; nothing was changed' };
     return { archive, phone, cancelled:pendingOutboxes.length };
   }
 
@@ -3466,6 +3500,9 @@
   function mmsWithoutMedia(m){
     return !!(m && m.mms && !((m.parts || []).length) && !m.gone);
   }
+  /* WHAT A SEARCH READS: the whole text, and the attachment's label. It read `snippetOf`, which is cut
+     at 90 characters for the list, so a word further into a long message was never found. */
+  function searchText(m){ return (String((m && m.body) || '') + '\n' + snippetOf(m)).toLowerCase(); }
   function snippetOf(m){
     const body = String((m && m.body) || '').slice(0, 90);
     const parts = (m && m.parts) || [];
@@ -3963,8 +4000,8 @@
       if(!S.q) return true;
       const q = S.q.toLowerCase();
       return String(t.address||'').toLowerCase().includes(q)
-          || (t.msgs.some(m => snippetOf(m).toLowerCase().includes(q)))
-          || String((t.msgs[t.msgs.length-1]||{}).name||'').toLowerCase().includes(q);
+          || (t.msgs.some(m => searchText(m).includes(q)))
+          || String(whoIs(t.name, t.address)||'').toLowerCase().includes(q);
     });
 
     feed.innerHTML = `
@@ -4011,7 +4048,7 @@
           <span>Archived conversations</span></div>` : ''}
         <div class="sms-threads">${rows.map(t => {
           const last = t.msgs[t.msgs.length-1] || {};
-          const who = whoIs(last.name, t.address);
+          const who = whoIs(t.name, t.address);
           return `<button class="sms-thread${isArchived(t) ? ' sms-archived' : ''}" data-k="${enc(t.key)}">
             ${avatarHtml(t.address, who, enc)}
             <div class="sms-body">
@@ -4023,7 +4060,13 @@
               ${blockLine(t) ? `<div class="sms-blocked">⊘ ${enc(blockLine(t))}</div>` : ''}
             </div></button>`;
         }).join('') || ('<div class="sms-empty muted" style="padding:24px;text-align:center">'
-             + enc(S.emptyWhy || 'No messages here yet')
+             /* A SEARCH THAT FOUND NOTHING IS NOT AN EMPTY INBOX, and a search of a history that could
+              * not be read is not a clean "no match": it searched only what arrived, and the message
+              * may well be in the part that did not. */
+             + enc(S.q ? ('No messages match \u201c' + S.q + '\u201d'
+                          + (S.historyIncomplete ? ' in the messages that could be loaded \u2014 the rest of your history could not be read right now, so it may be there.'
+                             : S.loading ? ' yet \u2014 still loading your messages.' : '.'))
+                   : (S.emptyWhy || 'No messages here yet'))
              + (S.emptyFix === 'deep'
                  ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-deep">'
                    + 'Bring in everything</button></div>' : '')
@@ -4163,7 +4206,7 @@
           if(v === 'unblock') setBlock(t.address, false);
         });
       };
-      b.onclick = () => { if(held){ held = false; return; } S.open = b.dataset.k; paint(); };
+      b.onclick = () => { if(held){ held = false; return; } S.open = b.dataset.k; if(S.q) jumpToHit(S.open, S.q); paint(); };
       b.oncontextmenu = e => { e.preventDefault(); menu(); };
       b.onpointerdown = e => {
         if(e.pointerType === 'mouse') return;
@@ -4575,6 +4618,20 @@
     }
     return at;
   }
+  /* A CONVERSATION OPENED FROM A SEARCH OPENS AT WHAT THE SEARCH FOUND. The list matched a word in
+     a message 580 back, and the thread opened on its newest 20 -- the found message behind a "Show
+     older" button the person had no reason to press, which reads as the search having been wrong.
+     The page is widened back to it (pageStart's own mechanism) and the paint scrolls to it. */
+  function jumpToHit(k, q){
+    const t = S.threads.find(x => x.key === k); if(!t) return;
+    const rx = reactionsFor(t), shown = t.msgs.filter(m => !rx.consumed.has(String(m.doc || '')));
+    const want = String(q || '').toLowerCase();
+    let at = -1;
+    for(let i = shown.length - 1; i >= 0; i--){ if(searchText(shown[i]).includes(want)){ at = i; break; } }
+    if(at < 0) return;                          // matched by name or number: the newest is right
+    const from = at < Math.max(0, shown.length - PAGE_FIRST) ? String(shown[Math.max(0, at - 2)].doc || '') : '';
+    S.jump = { key: t.key, doc: String(shown[at].doc || ''), from };   // applied by paintThread, on arrival
+  }
   let _olderBusy = false;
   function showOlder(t, list){
     /* A scroll event queued for a list the last paint already replaced must not reach back again:
@@ -4610,6 +4667,7 @@
     if(!oldList || (oldList.dataset.threadKey || '') !== S.open){
       delete S.scroll[S.open];
       delete S.firstShown[S.open];      // arriving at a conversation starts at its newest page
+      if(S.jump && S.jump.key === S.open && S.jump.from) S.firstShown[S.open] = S.jump.from;   // ...or at a search hit
     }
     /* AND THE CARET, for the same reason as the scroll offset. The draft itself survives on S.draft
        now, but a repaint landing while somebody is mid-word still rebuilds the element under them:
@@ -4621,7 +4679,7 @@
     const caret = hadFocus ? [oldIn.selectionStart, oldIn.selectionEnd] : null;
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
-    const who = whoIs((t.msgs[t.msgs.length-1] || {}).name, t.address);
+    const who = whoIs(t.name, t.address);
     /* An archived message can carry the name the phone knew when it arrived. That is useful for
        the title, but it is not proof the card still exists: after deleting the contact it would
        hide the only way to add them back. Ask the current Contacts index for button visibility. */
@@ -5019,7 +5077,7 @@
         const r = await remove([el.dataset.doc]);
         // SAY WHICH COPIES WENT, and never promise the ones this device cannot reach. Other phones
         // and laptops drop theirs when the tombstone reaches them.
-        if(r.refused) PC.toast('this phone would not delete it — nothing was changed');
+        if(r.refused) PC.toast(r.error || 'this phone would not delete it — nothing was changed');
         else PC.toast(r.phone ? 'deleted here and from your archive' : 'deleted from your archive');
         paint();
       };
@@ -5066,6 +5124,16 @@
       const el = list.querySelector('.bubble[data-doc="' + (window.CSS && CSS.escape ? CSS.escape(anc.doc) : anc.doc) + '"]');
       if(el) list.scrollTop = Math.max(0, el.offsetTop - anc.gap);
       S.scroll[t.key] = scrollState(list);
+    }
+    const hit = S.jump;
+    if(list && hit && hit.key === t.key){
+      S.jump = null;
+      const el = list.querySelector('.bubble[data-doc="' + (window.CSS && CSS.escape ? CSS.escape(hit.doc) : hit.doc) + '"]');
+      if(el){
+        list.scrollTop = Math.max(0, el.offsetTop - Math.floor(list.clientHeight / 3));
+        el.classList.add('sms-hit');
+        S.scroll[t.key] = scrollState(list);
+      }
     }
     const older = () => showOlder(t, list);
     { const b = feed.querySelector('#sms-older'); if(b) b.onclick = older; }

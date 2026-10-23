@@ -12,9 +12,14 @@ def test_live_tombstone_evicts_attachment_bytes_before_marking_message_gone():
 
 def test_explicit_delete_evicts_provider_media_cache():
     remove=SMS[SMS.index('async function remove(docs)'):SMS.index('async function askForRead')]
-    evict=remove.index('forgetMessageParts(S.msgs.get(d))')
-    publish=remove.index("PC.publish(KIND, '', [['d', d]",evict)
-    assert evict < publish
+    # The message is taken before the tombstone goes out (the relay's echo can replace it with a bare
+    # `gone` marker meanwhile), and its media evicted only once a relay ACCEPTED the delete -- a refused
+    # delete keeps the message, so it must keep its pictures too (tests/client/test_texts_gaps_full_app.py).
+    held=remove.index('const held = S.msgs.get(d)')
+    publish=remove.index("PC.publish(KIND, '', [['d', d]",held)
+    accepted=remove.index("if(!(r && r.ok)){ kept++; continue; }",publish)
+    evict=remove.index('forgetMessageParts(held)',accepted)
+    assert held < publish < accepted < evict
 
 
 def test_transient_attachment_failure_is_not_cached_for_the_session():

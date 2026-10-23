@@ -107,9 +107,10 @@ class Scenario:
         """The phone archives these provider rows (SmsSweep) and publishes them to the relay."""
         out = await asyncio.to_thread(self.java.ph.run, 'sweep', self.sec, self.state, {'mk': MK, 'rows': rows})
         assert not out.get('error'), out
-        for ev in out['events']:
-            await publish(ev)
-            self.phone_ids.add(ev['id'])
+        for sha, b64 in (out.get('blobs') or {}).items():      # its pictures, as drive ciphertext
+            H.STATE['blobs'][sha] = base64.b64decode(b64)
+        await publish_many(out['events'])
+        self.phone_ids.update(ev['id'] for ev in out['events'])
         return out['events']
 
     async def incoming(self, sender, body, when_ms=None):
@@ -134,20 +135,28 @@ class Scenario:
 
 async def publish(ev):
     """Publish to the node relay as another client would -- live subscriptions get it forwarded."""
+    await publish_many([ev])
+
+
+async def publish_many(evs):
+    """The same, over one connection (a long history is hundreds of documents)."""
     async with websockets.connect('ws://127.0.0.1:%d' % H.RELAY.port) as ws:
-        await ws.send(json.dumps(['EVENT', ev]))
-        while True:
-            m = json.loads(await asyncio.wait_for(ws.recv(), 10))
-            if m[0] == 'OK' and m[1] == ev['id']:
-                assert m[2], m
-                return
+        for ev in evs:
+            await ws.send(json.dumps(['EVENT', ev]))
+            while True:
+                m = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                if m[0] == 'OK' and m[1] == ev['id']:
+                    assert m[2], m
+                    break
 
 
-@pytest.fixture(scope='module')
-def ran(request, tmp_path_factory):
+def run_scenarios(request, tmp_path_factory, scenarios, first_fill, cost, lanes=LANES, setup=None):
+    """Run every wanted scenario of the calling module, `lanes` at a time, each on its own account
+    (`first_fill` + its index). Shared by tests/client/test_texts_gaps_full_app.py. `setup(pk, sec)` runs
+    per account before any scenario (e.g. its drive index)."""
     wanted = [i.name[len('test_'):] for i in request.session.items
               if getattr(i, 'module', None) is request.module and i.name.startswith('test_')]
-    assert not [w for w in wanted if w not in SCENARIOS]
+    assert not [w for w in wanted if w not in scenarios]
     java = Java()
     tmp = tmp_path_factory.mktemp('texts')
     H.start()
@@ -175,8 +184,11 @@ def ran(request, tmp_path_factory):
             return ev['created_at'] < c0 or (ev['created_at'] == c0 and ev['id'] < c1)
         return True
     H._match = match
-    fills = {n: FIRST_FILL + i for i, n in enumerate(SCENARIOS)}
+    fills = {n: first_fill + i for i, n in enumerate(scenarios)}
     members = {_pubkey(f) for f in fills.values()}
+    for f in fills.values():
+        if setup:
+            setup(_pubkey(f), ('%02x' % f) * 32)
 
     def session(h, method, path, body):
         """The node's app session + membership answer, for these accounts (Texts is an instance app)."""
@@ -195,7 +207,7 @@ def ran(request, tmp_path_factory):
             return True
         return False
     H.ROUTES.append(session)
-    queue = sorted(wanted, key=lambda n: -COST.get(n, 20))
+    queue = sorted(wanted, key=lambda n: -cost.get(n, 20))
     outcome = {}
 
     async def lane():
@@ -203,7 +215,7 @@ def ran(request, tmp_path_factory):
             name = queue.pop(0)
             S = Scenario(name, fills[name], java, tmp)
             try:
-                await SCENARIOS[name](S)
+                await scenarios[name](S)
                 outcome[name] = None
             except BaseException as e:      # noqa: B036 -- re-raised by that scenario's own test
                 outcome[name] = e
@@ -214,7 +226,7 @@ def ran(request, tmp_path_factory):
                     pass
 
     async def main():
-        await asyncio.gather(*(lane() for _ in range(LANES)))
+        await asyncio.gather(*(lane() for _ in range(lanes)))
     try:
         asyncio.run(main())
     finally:
@@ -227,6 +239,12 @@ def ran(request, tmp_path_factory):
         if outcome[name] is not None:
             raise outcome[name]
     return check
+
+
+
+@pytest.fixture(scope='module')
+def ran(request, tmp_path_factory):
+    return run_scenarios(request, tmp_path_factory, SCENARIOS, FIRST_FILL, COST)
 
 
 # ------------------------------------------------------------------------------------------- the screen
