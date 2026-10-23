@@ -83,6 +83,9 @@ public final class AppViewsLaunchSmokeTest {
             List<String> failures = new ArrayList<String>();
             for (int i = 0; i < names.length(); i++) {
                 String view = names.getString(i);
+                /* NAME THE SCREEN THAT HUNG (CI 2026-10-23, 6e9f80176): a renderer that stopped answering used to fail
+                 * as a bare "stopped answering JavaScript" with no word of which view did it -- the one fact needed. */
+                try {
                 eval(web, "(()=>{window.__pcLaunchErrors.length=0;try{__PC.switchView("
                         + JSONObject.quote(view) + ");return 'started';}catch(e){return 'throw:'+String(e.stack||e);}})()");
                 // Module-backed views load their script asynchronously.  Give that path a real turn
@@ -110,6 +113,10 @@ public final class AppViewsLaunchSmokeTest {
                 if (!state.getBoolean("sameDocument")) failures.add(view + ": document was replaced");
                 JSONArray errors = state.getJSONArray("errors");
                 if (errors.length() != 0) failures.add(view + ": uncaught JS " + errors);
+                } catch (AssertionError hung) {
+                    failures.add(view + " (view " + (i + 1) + " of " + names.length() + "): " + hung.getMessage());
+                    break;
+                }
             }
             assertTrue("app launch smoke failures: " + failures, failures.isEmpty());
         } finally {
