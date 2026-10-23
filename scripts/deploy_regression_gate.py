@@ -529,7 +529,21 @@ _IMPORT = re.compile(r"^\s*from\s+(tests(?:\.\w+)+)\s+import|^\s*import\s+(tests
 
 
 def browser_test_files(root):
-    """Every file under tests/ that drives a browser, directly or through a test module it imports."""
+    """Every file under tests/ that drives a browser, directly or through a test module it imports.
+
+    Scanned ONCE per tree per gate process: a server-only deploy asks four times (the preflight's selection, the
+    preflight's run, the required list's filter, the full run), and the tree cannot change under a gate run --
+    main() refuses one that did (source_fingerprint). A fresh set each call, so a caller may change its copy."""
+    key = str(Path(root).resolve())
+    if key not in _BROWSER_SCANS:
+        _BROWSER_SCANS[key] = frozenset(_scan_browser_test_files(root))
+    return set(_BROWSER_SCANS[key])
+
+
+_BROWSER_SCANS = {}
+
+
+def _scan_browser_test_files(root):
     root = Path(root)
     src = {}
     for p in (root / 'tests').rglob('*.py'):
