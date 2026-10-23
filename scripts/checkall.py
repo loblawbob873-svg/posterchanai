@@ -736,9 +736,11 @@ def _default_jobs():
     cores = os.cpu_count() or 4
     jobs = max(1, min(6, cores // 2))
     if _serving_live_traffic():
-        # 4, not 2, now that every job runs at nice 19 / ionice idle (_captured): the measured stall (relay two
-        # minutes behind) was test processes competing at the SAME priority as the app.
-        jobs = max(1, min(4, jobs))
+        # 6 (2026-10-23; was 4, was 2): every job runs at nice 19 / ionice idle (_captured), and the measured stall
+        # (relay two minutes behind) was test processes at the SAME priority as the app. Measured with 4 shards on
+        # server1 mid-gate: CPU 58-83% idle, load 5-8 on 12 cores, 33 GB available -- the shards mostly WAIT on
+        # browsers. The full suite was ~35 of a deploy's ~45 minutes at 4.
+        jobs = max(1, min(6, jobs))
     return jobs
 
 
