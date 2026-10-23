@@ -144,6 +144,10 @@ TESTS = (
     'tests/client/test_preview_native_controls.py',
     'tests/client/test_office_close_returns_to_files.py',
     'tests/client/test_office_close_files_full_app.py',
+    # The WOPI boundary Collabora talks to (no CODE needed): every route refuses a missing/forged/expired token,
+    # another person's file and a token for a different file. The real-CODE round trip is
+    # tests/client/test_office_real_collabora.py -- full pass only, it needs the AppImage this runner lacks.
+    'tests/test_office_wopi_boundary.py',
     'tests/client/test_detached_sync_writer.py',
     'tests/client/test_sync_tick.py',
     'tests/test_native_window_reload_electron.py',

@@ -3316,7 +3316,24 @@ window.PCFilesFactory = function(dep){
       });
       let origBytes = null;
       try{ origBytes = await file.arrayBuffer(); }catch(_){ origBytes = null; }
+      /* WHAT THE EDITOR SAYS ABOUT ITS OWN DOCUMENT. "No changes to save" was decided from the session's bytes
+       * alone -- and those are only ever written by Collabora's PutFile. When that PutFile is REFUSED (the node
+       * answers 503, the disk is full) or Collabora has DIED, the bytes are the old ones, so a person who had just
+       * typed a page was told "no changes to save" while the editor itself showed "Document cannot be saved".
+       * Measured against the real CODE: on a refused PutFile it still answers Action_Save_Resp {success:true}
+       * (that is its LOCAL save) and then Doc_ModifiedStatus {Modified:false}, so neither message alone tells
+       * the truth. What does: the editor said Modified:true since the bytes last moved, and the bytes did not. */
+      let editorDirty = false;
       const wire = (root, shut) => {
+        const frameEl = $('.office-frame', root);
+        const onEditorMsg = ev => {
+          if(!frameEl || !frameEl.isConnected){ try{ window.removeEventListener('message', onEditorMsg); }catch(_){} return; }
+          if(ev.source !== frameEl.contentWindow) return;
+          let m = ev.data;
+          if(typeof m === 'string'){ try{ m = JSON.parse(m); }catch(_){ return; } }
+          if(m && m.MessageId === 'Doc_ModifiedStatus' && m.Values && m.Values.Modified === true) editorDirty = true;
+        };
+        try{ window.addEventListener('message', onEditorMsg); }catch(_){ }
         $('.office-launch',root).submit();
         $('#office-close',root).onclick=async()=>{ await drop(); shut(); };
         /* Ours, not Collabora's — see the comment on `session_export` in app/routers/office.py for
@@ -3346,10 +3363,17 @@ window.PCFilesFactory = function(dep){
         $('#office-save',root).onclick=async e=>{
           const b=e.currentTarget; b.disabled=true; b.textContent='Saving\u2026';
           try{
-            await askEditorToSave(root);
+            const answered = await askEditorToSave(root);
             // Its PutFile lands just after the acknowledgement; a short settle covers both paths.
             await new Promise(res=>setTimeout(res,700));
             const bytes = await (await api.contents()).arrayBuffer();
+            /* NOT SAVED IS SAID AS NOT SAVED -- see `editorDirty`. The edit is still in the editor, so the window
+             * stays open and Save can simply be pressed again once the node or the editor answers. */
+            if(_sameBytes(bytes, origBytes) && (editorDirty || !answered)){
+              toast(answered ? 'not saved: the office editor could not store your changes — they are still in the editor, which keeps retrying; press Save again in a moment'
+                             : 'not saved: the office editor is not answering — your latest changes could not be stored');
+              b.disabled=false; b.textContent='Save'; return;
+            }
             /* AND SAY SO WHEN THERE IS NOTHING TO SAVE. Uploading an unchanged document is not
              * harmless here — it mints a second blob and re-points the drive index at it — and a
              * "document saved" toast over bytes that never changed is precisely how the missing
@@ -3369,9 +3393,11 @@ window.PCFilesFactory = function(dep){
             if(_sameBytes(bytes, origBytes)){
               toast('no changes to save'); b.disabled=false; b.textContent='Save'; return;
             }
-            await saveBack(fileFromBytes(bytes,file.name,file.type));
-            origBytes = bytes;
-            toast('document saved'); b.disabled=false; b.textContent='Save';
+            const said = await saveBack(fileFromBytes(bytes,file.name,file.type));
+            origBytes = bytes; editorDirty = false;
+            toast(typeof said === 'string' && said ? said
+                  : answered ? 'document saved' : 'document saved — but the office editor did not confirm, so your very latest changes may be missing');
+            b.disabled=false; b.textContent='Save';
           }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
         };
       };
@@ -3671,14 +3697,40 @@ window.PCFilesFactory = function(dep){
         const r=await fetch(d.url); if(!r.ok) throw new Error('file HTTP '+r.status); blob=await r.blob();
       }
       const file=fileFromBytes(await blob.arrayBuffer(), d.name||'document', d.mime||blob.type);
+      /* THE VERSION THIS WINDOW REPLACES MOVES WITH EVERY SAVE. `d.sha` was the version the document was OPENED
+       * at and stayed that for the whole session -- but the first Save forgets it and indexes a new one, so the
+       * second Save of the same window found no entry (its folder read as the drive's top level) and forgot
+       * nothing: two files of the same name, the newer one moved out of its folder. Measured with the real
+       * Collabora: Save, type, Save -> two "Quarterly.docx". `cur` is what is on the drive for this window now. */
+      let cur = d.sha, curFolder = (FilesIdx.meta(d.sha)||{}).folder || FilesIdx.folderOf(d.sha) || '';
       await _officeSession(file, async (updated)=>{
-        const old=FilesIdx.meta(d.sha)||{}, folder=old.folder||FilesIdx.folderOf(d.sha)||'';
+        /* AND ANOTHER DEVICE MAY HAVE SAVED IT MEANWHILE. The drive index is one document per account, and this
+         * window's copy of it is as old as the window: the second of two devices saving the same document wrote
+         * its index over the first's and the first device's edit vanished from the drive, both told "document
+         * saved". So read the drive first; if the version this window replaces is no longer on it, somebody else
+         * replaced it -- keep theirs, store ours BESIDE it under a name that says so, and tell the person. */
+        try{ await FilesIdx.pull(); }catch(_){ }
+        let name = file.name, conflict = false;
+        if(FilesIdx._pullOk && !FilesIdx.meta(cur)){
+          conflict = true;
+          const dot = name.lastIndexOf('.'), stamp = new Date().toISOString().slice(0,16).replace('T',' ').replace(':','.');
+          name = dot > 0 ? name.slice(0,dot) + ' (edited here ' + stamp + ')' + name.slice(dot) : name + ' (edited here ' + stamp + ')';
+          updated = fileFromBytes(await updated.arrayBuffer(), name, updated.type);
+        }
+        const folder = curFolder;
         let newSha='';
         if(d.enc==='1') newSha=await uploadEncFile(updated,folder,null);
         else { const url=await uploadBlob(updated,{noCompress:true}); newSha=_shaFromUrl(url);
-          FilesIdx.setFile(newSha,{name:file.name,folder,mime:updated.type||mimeForName(file.name),size:updated.size,ts:Math.floor(Date.now()/1000)}); }
-        if(newSha && newSha!==d.sha) FilesIdx.forget(d.sha); // old blob remains recoverable on Blossom
-        renderBlossom();
+          FilesIdx.setFile(newSha,{name,folder,mime:updated.type||mimeForName(name),size:updated.size,ts:Math.floor(Date.now()/1000)}); }
+        if(!conflict && newSha && newSha!==cur) FilesIdx.forget(cur); // old blob remains recoverable on Blossom
+        if(newSha) cur = newSha;
+        /* ONLY WHEN FILES IS WHAT IS ON SCREEN. On the web the editor IS #feed (switchView('office')), and an
+         * unconditional renderBlossom() drew the Files list straight over it: every Save "closed" the document,
+         * dropped the editor frame mid-session and leaked its server session -- measured with the real
+         * Collabora, the Save button was gone a moment after "document saved". The synced-folder Save below
+         * always had this guard. */
+        if(_S.VIEW==='blossom') renderBlossom();
+        if(conflict) return 'saved as “' + name + '” — this document was changed on another device since you opened it, and that version is kept too';
       });
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }

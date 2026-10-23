@@ -118,7 +118,9 @@ class Routers:
     member, as allow_keys makes them). `paths`: the url prefixes these routers answer. `faults`: path prefix -> 503 |
     'drop' | seconds (answered that late)."""
 
-    def __init__(self, mp, routers, users, paths, overrides=None):
+    def __init__(self, mp, routers, users, paths, overrides=None, forward=()):
+        """`forward`: lowercase header names (or prefixes) passed through both ways besides the defaults -- e.g.
+        `host` and `x-wopi-` for a WOPI host whose URLs are built from the request and whose answers are headers."""
         import httpx
         from fastapi import FastAPI, HTTPException, Request
         from app import auth as app_auth
@@ -127,6 +129,7 @@ class Routers:
         from tests.member_fixtures import allow_keys
 
         self.users, self.faults, self.seen, self.faulted = users, {}, [], []
+        self.forward = tuple(forward)
         allow_keys(mp, *users)
         app = FastAPI()
         for router, prefix in routers:
@@ -214,7 +217,8 @@ class Routers:
         if f == 'drop':
             h.close_connection = True
             return True
-        headers = {k: v for k, v in h.headers.items() if k.lower() in ('authorization', 'content-type', 'accept')}
+        headers = {k: v for k, v in h.headers.items() if k.lower() in ('authorization', 'content-type', 'accept')
+                   or (self.forward and k.lower().startswith(self.forward))}
 
         async def call():
             if isinstance(f, (int, float)) and f:
@@ -229,7 +233,8 @@ class Routers:
             h.send_response(r.status_code)
             for k, v in r.headers.items():
                 if k.lower() in ('content-type', 'x-document-extension', 'content-disposition', 'cache-control',
-                                 'content-security-policy', 'referrer-policy', 'x-content-type-options'):
+                                 'content-security-policy', 'referrer-policy', 'x-content-type-options') or (
+                        self.forward and k.lower().startswith(self.forward) and k.lower() != 'host'):
                     h.send_header(k, v)
             h.send_header('Content-Length', str(len(r.content)))
             h.end_headers()
