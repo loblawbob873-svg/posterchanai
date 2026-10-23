@@ -18,6 +18,8 @@ Knobs (`STATE`), each a way the user's own layout read or write can go wrong:
   refuse_docs  a set of (pubkey, d-tag or d-prefix ending in ':'): that account's publish of it is
                answered OK=false (the relay refused it -- the client keeps it to send again)
   index_fail   a set of pubkeys whose drive-index READ the instance answers 503 (it could not ask)
+  slow_reqs    {(pubkey, kind): seconds} -- a REQ for that account's events of that kind is answered that
+               many seconds late (a slow relay); if the client has CLOSEd it by then, it is not answered at all
 Every kind-30078 event the relay is SENT is kept in STATE['pubs'], accepted or not.
 The drive index is kept PER ACCOUNT (`indexes`), and Blossom lists each account's own uploads
 (`/blossom/list/<pubkey>`, from the upload's NIP-98 auth) and honours DELETE, so several accounts
@@ -53,7 +55,7 @@ def reset():
     STATE.update(events=[], blobs={}, index=None, hold_layout=None, refuse_layout=False,
                  held=[], layout_pubs=[], hold_docs=set(), pubs=[], api={}, lock=threading.Lock(),
                  held_open={}, held_seen=0, held_closed_at=None, held_by={}, refuse_docs=set(),
-                 indexes={}, index_fail=set(), owners={})
+                 indexes={}, index_fail=set(), owners={}, slow_reqs={})
 
 
 reset()
@@ -105,6 +107,13 @@ def _held_doc_req(filters):
                 if (pk is None or not authors or pk in authors) and (d == h or (h.endswith(':') and str(d).startswith(h))):
                     return True
     return False
+
+
+def _slow_for(filters):
+    """How many seconds late `slow_reqs` says this REQ is answered (0: at once)."""
+    slow = STATE.get('slow_reqs') or {}
+    return max([s for (pk, kind), s in slow.items() for f in filters
+                if kind in (f.get('kinds') or []) and pk in (f.get('authors') or [])] or [0])
 
 
 def _authors(filters):
@@ -173,6 +182,12 @@ class Relay:
         except websockets.ConnectionClosed:
             pass
 
+    async def _late(self, ws, subid, filters, seconds):
+        """A slow relay: answer `seconds` from now, unless the client has given up (CLOSEd) by then."""
+        await asyncio.sleep(seconds)
+        if (ws, subid) in self.subs:
+            await self.answer(ws, subid, filters)
+
     async def handler(self, ws):
         try:
             async for raw in ws:
@@ -197,6 +212,8 @@ class Relay:
                                                                                _authors(filters))
                         STATE['held_seen'] = STATE.get('held_seen', 0) + 1
                         _held_note(_authors(filters), 'seen')
+                    elif _slow_for(filters):
+                        asyncio.ensure_future(self._late(ws, subid, filters, _slow_for(filters)))
                     else:
                         await self.answer(ws, subid, filters)
                 elif m[0] == 'CLOSE':

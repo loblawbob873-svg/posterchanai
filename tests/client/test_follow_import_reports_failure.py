@@ -27,9 +27,13 @@ def _fn(src: str, head: str) -> str:
 def _run(publish_result, opts, follows=("a",)):
     if not shutil.which("node"):
         pytest.skip("node not installed")
-    body = _fn((ROOT / "static/js/client/app.js").read_text(), "async function followMany(")
+    app = (ROOT / "static/js/client/app.js").read_text()
+    body = "\n".join(_fn(app, head) for head in (
+        "function _followsAt(", "function _setFollowsAt(", "function _followEditBase(", "function _adoptFollows(",
+        "function _followReadAnswered(", "async function followMany("))
     script = f"""
 const ME={{pubkey:'me'}}; const FOLLOWS=new Set({json.dumps(list(follows))}); let persisted=0, pub=null;
+const _cs={{}}; const ClientSettings={{get:(k,d)=>k in _cs?_cs[k]:d,set:(k,v)=>{{_cs[k]=v}}}}; const toast=()=>{{}};
 const Relay={{query:async()=>[{{kind:3,created_at:1,content:'',tags:[['p','a']]}}]}};
 async function publish(k,c,t,o){{ pub=t; return {json.dumps(publish_result)}; }}
 function _persistFollows(){{ persisted++; }}

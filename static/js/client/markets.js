@@ -14,7 +14,11 @@
     let _gen = 0, _report = null, _retryT = null, _tries = 0;
 
     async function fetchReport(){
-      try{ const r = await authFetch('/api/markets'); return await r.json(); }
+      /* AN ERROR STATUS IS NOT A REPORT. The node answers "could not ask" as a 503 with a JSON body
+         ({detail}), which has no `coins` -- and an empty body paints "Building today's market digest",
+         a promise nobody is keeping. Anything but a 2xx is "can't reach the server" (null), which says
+         so and keeps retrying. */
+      try{ const r = await authFetch('/api/markets'); if(!r.ok) return null; return await r.json(); }
       catch(_){ return null; }
     }
     function fmtWhen(ts){ if(!ts) return ''; try{ return new Date(ts*1000).toLocaleString(); }catch(_){ return ''; } }

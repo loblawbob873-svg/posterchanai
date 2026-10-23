@@ -58,7 +58,7 @@ def test_the_pool_row_renders_as_received():
 def test_the_user_wallet_asks_for_its_own_history():
     assert "/api/wallet/xmr/me/history?limit=50" in SRC
     # It must not decide whether the wallet is usable.
-    probe = SRC[SRC.index("async function meProbe("):SRC.index("async function meProbe(") + 1800]
+    probe = SRC[SRC.index("async function _meProbe("):SRC.index("async function _meProbe(") + 1800]
     assert ".catch(" in probe, "a failed history request would break the whole wallet probe"
 
 

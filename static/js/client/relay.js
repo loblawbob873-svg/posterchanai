@@ -631,9 +631,11 @@
         // everything I hold" — see homeAnswered().
         if (typ === 'EOSE') (sub.answered || (sub.answered = new Set())).add(conn.url);
         if (sub.onEose && this._eoseDone(sub)){
-          // for untrusted relays, drain pending verifications so the last events aren't lost
+          // for untrusted relays, drain pending verifications so the last events aren't lost -- the QUEUED ones
+          // and the ones a batch already took off the queue and is still verifying (see _drained)
           const fire = () => this._fireEose(sub);
-          this._vq.length ? this._flush().then(fire) : fire();
+          const drained = this._drained();
+          drained ? drained.then(fire, fire) : fire();
         }
       } else if (typ === 'OK'){
         const w = this._okWaiters.get(m[1]);
@@ -720,7 +722,30 @@
       const old=sub.pageBounds.get(url), at=[ev.created_at,ev.id];
       if(!old || at[0]<old[0] || at[0]===old[0]&&at[1]<old[1])sub.pageBounds.set(url,at);
     },
-    async _flush(){
+    /* AN EOSE CAN OVERTAKE ITS OWN EVENTS. An untrusted relay's events wait in _vq for a batch verification, and
+     * the 40 ms timer (or any other subscription's events arming it) takes the batch off the queue BEFORE the worker
+     * answers. An EOSE landing in that window used to find _vq empty and fire at once: the one-shot query resolved,
+     * closed its subscription, and the verified event arrived to nobody -- an EMPTY answer marked complete. Measured
+     * with "use my own relays" on: a device re-opening its profile got [] (complete) for the kind 0 another device
+     * had just saved, about half the time. So "drained" waits for the batches in flight too -- for at most a
+     * second: the worker has no deadline of its own, and a wedged one must cost an answer its last events, never
+     * the answer itself. */
+    _drained(){
+      const flights = [...(this._vflights || [])];
+      const queued = this._vq.length ? this._flush() : null;
+      if (!flights.length) return queued;
+      const inFlight = Promise.race([Promise.allSettled(flights), new Promise(r => setTimeout(r, 1000))]);
+      return queued ? Promise.allSettled([queued, inFlight]) : inFlight;
+    },
+    _flush(){
+      const run = this._flushNow();
+      const flights = this._vflights || (this._vflights = new Set());
+      flights.add(run);
+      const done = () => flights.delete(run);
+      run.then(done, done);
+      return run;
+    },
+    async _flushNow(){
       if (this._vt){ clearTimeout(this._vt); this._vt = null; }
       const batch = this._vq.splice(0, this._vq.length);
       if (!batch.length) return;

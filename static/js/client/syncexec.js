@@ -1151,8 +1151,16 @@
            * So: keep the file, publish NOTHING, and NAME the path. A person who really does want
            * this copy sent has the resend (`mustSend`), which is exempt above — that is somebody
            * answering the question rather than an inference from a timestamp. */
+          /* ONLY ON A PLATFORM THAT REWRITES DOWNLOADS (`fs.rewritesDownloads`: Android's adapter).
+           * Applied everywhere, this held back every EDIT a person made on a desktop to a file that
+           * had arrived from another device: the sweep journalled the edit as "settled", the card
+           * went back to "in step · nothing to sync", and the other devices never got it — the one
+           * thing a synced folder exists to do (tests/client/test_folder_sync_between_two_devices_
+           * full_app.py). The desktop bridge stamps a download with the source's own mtime and
+           * nothing on a desktop rewrites it behind the person's back, so there a changed download
+           * IS an edit. */
           const _idx = index[u.path];
-	          if(!u.mustSend && _R && !_R.deletedAt && _idx && _idx.local && _idx.local.dl
+	          if(fs.rewritesDownloads && !u.mustSend && _R && !_R.deletedAt && _idx && _idx.local && _idx.local.dl
 	             && E.versionOf(_R) === _idx.local.dl){
 	            /* During a fresh/incomplete join (`thin`) this is Android finishing the copy it was
 	             * just handed — media providers commonly rewrite image metadata. It is still held

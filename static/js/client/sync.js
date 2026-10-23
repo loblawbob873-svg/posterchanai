@@ -2390,6 +2390,16 @@
         setStatus(f.id, summarise(rep, decision), rep);
         return rep;
       }catch(e){
+        /* A SWEEP THAT THREW DID NOT FINISH EITHER, and leaves the folder due exactly like the
+         * incomplete one above. Only the success path set `_dirty`, so a sweep the server refused
+         * (a 503 on the upload, a read that failed) kept the last good sweep's `lastSyncAt` and a
+         * clean flag: the next `online`/focus/heartbeat was declined as "nothing changed since the
+         * last sweep" — over the failure, on the card — for a quarter of an hour, with the file
+         * still not sent (tests/client/test_folder_sync_between_two_devices_full_app.py). */
+        if(!o.dryRun){
+          try{ saveFolders(folders().map(x => x.id === f.id ? Object.assign(x, { _dirty: true }) : x)); }catch(_){}
+          f._dirty = true;
+        }
         setStatus(f.id, 'failed: ' + ((e && e.message) || e));
         throw e;
       } finally {

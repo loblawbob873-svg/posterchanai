@@ -160,6 +160,8 @@ function device(name, sky, opts){
 
   const fs = {
     chunkBytes: CH,
+    // Android's adapter says it rewrites what it downloads (fs-android.js); the desktop bridge does not.
+    rewritesDownloads: o.rewritesDownloads !== undefined ? !!o.rewritesDownloads : name === 'phone',
     scanPage: async (id, so, off, lim) => {
       if(o.scanFails) throw new Error('the folder is no longer readable');
       /* `.pc-trash` IS NOT PART OF THE FOLDER, and both real adapters already know it: the desktop
@@ -417,6 +419,30 @@ scenario('a device that rewrites what it downloads does not start a round trip',
   const r3 = await A2.sweep();
   t.eq(r3.uploaded.length, 0, 'the desktop republished after the phone was held back');
   t.eq(r3.downloaded.length, 0, 'the desktop fetched the rewrite');
+});
+
+scenario('an edit made on a desktop to a file it downloaded reaches the other devices', async (t) => {
+  /* The rewrite guard above is for a platform that rewrites what it is handed (Android's media
+   * scanner). Applied to a desktop it held back every EDIT a person made to a file that had come
+   * down from another device -- journalled as settled, the card "in step", the other devices never
+   * told. Driven end to end in tests/client/test_folder_sync_between_two_devices_full_app.py. */
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(3, 'Docs/') });
+  await A.sweep();
+  const B = device('laptop', sky, {});
+  await B.sweep();
+  t.eq(identical(A.disk, B.disk), null, 'the laptop did not end up with the desktop\'s files');
+  const doc = Object.keys(B.disk).sort()[0];
+  B.disk[doc] = Buffer.from('edited by a person on the laptop');
+  const B2 = device('laptop', sky, { disk: B.disk, index: B.st.index, baseline: B.st.baseline,
+                                     mtimes: { [doc]: 987654 } });
+  const r = await B2.sweep();
+  t.eq(r.uploaded.length, 1, 'the laptop did not publish the edit (held back as a "rewrite": '
+       + JSON.stringify(r.rewrittenAfterDownload || []) + ')');
+  t.eq(sky.recs[doc].v, 2, 'the record did not move to the edited version');
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  await A2.sweep();
+  t.eq(String(A2.disk[doc]), 'edited by a person on the laptop', 'the desktop never received the edit');
 });
 
 scenario('a fresh phone settles Android rewrites quietly and finishes its first sync', async (t) => {

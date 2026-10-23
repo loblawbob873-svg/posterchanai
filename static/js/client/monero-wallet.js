@@ -252,9 +252,11 @@
          every route, the probe catches it, and the screen said "Local wallet unavailable · Retry
          local wallet" — which reads as a wallet service that is down and sent everyone looking at
          the daemon, the RPC and the client's own auth. It is neither: it is this account. */
+      /* `refused` travels with it: the wallet screen must tell "this account may not" from "the wallet
+         did not answer", because only the second is worth saying about a member's OWN wallet. */
       if(res.status===401||res.status===403)
-        throw new Error('this account cannot open the node wallet — sign in as the node operator'
-                        + ' (the wallet is admin-only)');
+        throw Object.assign(new Error('this account cannot open the node wallet — sign in as the node operator'
+                        + ' (the wallet is admin-only)'), {refused:true});
       if(!res.ok) throw new Error(body.detail||body.error||body.message||('wallet service returned '+res.status));
       return body;
     }finally{clearTimeout(timer);}
@@ -358,7 +360,7 @@
       /* THE SERVER'S OWN WORDING COUNTS. This matched three phrases and the node says a FOURTH —
          "The wallet is not caught up with the Monero network yet" — so a wallet that was merely
          catching up was reported as unavailable. Two surfaces, one state, different vocabulary. */
-      const _fail={available:false,error:detail,network:'stagenet',
+      const _fail={available:false,error:detail,network:'stagenet',refused:!!(e&&e.refused),
              busy:/did not answer|is busy|still reading the chain|not caught up|catching up|scanning/i
                     .test(String(detail||''))};
       if(seq === _probeSeq) state=_fail;
@@ -755,6 +757,18 @@
       + '</section></div>';
   }
 
+  function meFailHtml(error){
+    const busy = /did not answer|is busy|still reading the chain|not caught up|catching up|scanning/i.test(String(error||''));
+    return '<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">\u0271</span>'
+      + '<div><h2>Monero Wallet</h2><span class="mw-net">YOUR WALLET</span></div></header>'
+      + '<section class="mw-card mw-unavailable"><h3>' + (busy ? 'Your wallet is busy' : 'Your wallet could not be reached') + '</h3>'
+      + '<p>' + (busy ? 'This server\u2019s wallet is catching up and did not answer in time. Nothing is lost.'
+                       : 'This server keeps a wallet for you, and it did not answer just now. Nothing was sent.')
+      + ' Tips still open your own wallet meanwhile.</p>'
+      + '<p class="muted small mw-error">' + esc(error) + '</p>'
+      + '<button class="btn btn-cyan" id="mw-retry">Try again</button></section></div>';
+  }
+
   function meBind(s){
     const by = id => document.getElementById(id);
     if(by('mw-refresh')) by('mw-refresh').onclick = () => { _meAt = 0; render(true); };
@@ -899,7 +913,16 @@
      * and updates it in place. The spinner is kept for the one case it is honest about: a view
      * that has never been read, where there is nothing to show. */
     const f=PC.$&&PC.$('#feed');
-    if(state) paint(state);
+    /* A MEMBER'S SCREEN IS THEIR WALLET, FROM THE FIRST PAINT. For everybody but the operator `state` is
+       the node wallet's REFUSAL, so painting it here put "sign in as the node operator (the wallet is
+       admin-only)" on screen for as long as their own wallet took to answer -- on every Refresh, and for
+       seconds while it was busy. What they last saw of their own wallet is the honest early paint; with
+       nothing of theirs held, the spinner is (the refusal is never their answer). */
+    if(state && !state.available && state.refused){
+      if(_meState && _meState.enabled && f){ f.innerHTML = meWalletHtml(_meState); meBind(_meState); }
+      else if(f) f.innerHTML='<div class="spinner"></div>';
+    }
+    else if(state) paint(state);
     else if(f) f.innerHTML='<div class="spinner"></div>';
     /* BOUNDED HERE TOO. The deadline was put on `tip()` and `meTip()` and NOT on this, so opening
        the wallet screen still awaited a probe that begins with `ensureAiSession()` — which for a
@@ -960,6 +983,17 @@
           if(PC.VIEW!=='wallet')return;
           const f2 = document.getElementById('feed');
           if(f2){ f2.innerHTML = meWalletHtml(me); meBind(me); }
+          return;
+        }
+        /* THEIR WALLET DID NOT ANSWER -- say THAT. This fell through to paint(s), the node wallet's
+           admin-only refusal, so a member whose wallet was down or busy was told to sign in as the
+           operator: true of a wallet they never asked about, and nothing about their own money. A
+           refusal of the member route (not a member) and a node with no user wallets keep the old
+           message, which is the honest one there. */
+        if(s.refused && me && !me.enabled && me.error && !me.refused){
+          const f2 = document.getElementById('feed');
+          if(f2){ f2.innerHTML = meFailHtml(me.error); const r = document.getElementById('mw-retry');
+                  if(r) r.onclick = () => { _meAt = 0; render(true); }; }
           return;
         }
       }catch(_){ }
@@ -1070,14 +1104,27 @@
    * pooled wallet. It is CUSTODIAL and the UI says so where it matters. It is tried AFTER the
    * operator's wallet and BEFORE the external flow, and it declines quietly whenever it cannot
    * help, so the non-custodial path is always still there. */
-  let _meState = null, _meAt = 0, _meSeq = 0, _meSpendLockUntil = 0;
-  async function meProbe(force){
+  let _meState = null, _meAt = 0, _meSeq = 0, _meSpendLockUntil = 0, _mePending = null;
+  /* A SUPERSEDED PROBE HANDS OVER TO THE ONE THAT SUPERSEDED IT, never to "whatever is cached".
+   *
+   * Two probes overlap whenever somebody opens the wallet right after signing in: the module's own
+   * warm-up retries every 1.5s until there is a viewer, and a tip (ɱ) asks too. The older one used to
+   * answer `_meState` -- still null on a first read -- so the wallet SCREEN, whose probe it was, got
+   * nothing, fell through to the node wallet's 403 and told a member to "sign in as the node operator"
+   * for good (nothing re-probes a member's screen). It now waits for the newer answer instead. */
+  function meProbe(force){
+    const p = _meProbe(force);
+    _mePending = p;
+    p.then(() => { if(_mePending === p) _mePending = null; }, () => { if(_mePending === p) _mePending = null; });
+    return p;
+  }
+  async function _meProbe(force){
     const owner=syncWalletOwner();
     if(!owner) return null;
     if(!force && _meState && Date.now() - _meAt < 30000) return _meState;
     const seq=++_meSeq;
     const current=()=>syncWalletOwner()===owner && seq===_meSeq;
-    const latest=()=>walletOwner()===owner ? _meState : null;
+    const latest=()=>walletOwner()!==owner ? null : (_mePending || _meState);
     try{
       const st = await request('/api/wallet/xmr/me/status');
       if(!current()) return latest();
@@ -1105,7 +1152,7 @@
       /* A FAILURE IS NOT A DURABLE ANSWER — the same latch that made the node wallet stop working
          for the life of a page. Only a positive result is cached. */
       _meState = null; _meAt = 0;
-      return {enabled:false, error:(e && e.message) || String(e)};
+      return {enabled:false, error:(e && e.message) || String(e), refused:!!(e && e.refused)};
     }
     _meAt = Date.now();
     return _meState;

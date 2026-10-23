@@ -1050,20 +1050,32 @@ window.PCProfileFactory = function(dep){
    * so the next Save would have deleted it. So the editor asks the relay for the latest kind-0 first
    * (bounded, so a dead relay costs seconds, not the editor) and opens with whatever is newest; the
    * Store keeps the newest by created_at, so an older answer can never downgrade it. */
+  /* …AND NEVER FROM NOTHING. A device that holds no copy of the profile at all (a fresh one) and whose read did
+   * not come back used to open the editor BLANK -- and Save publishes the whole form, so typing one new About line
+   * on a phone over a slow link replaced the name, the picture and everything else with empty strings, on every
+   * device. With nothing to start from and no answer, the editor says so and stays shut; a relay that answered
+   * "you have no profile" (a new account) still opens it empty. */
   async function editProfile(p){
     const me = S.ME && S.ME.pubkey;
+    let answered = false;
     if(me){
       const within = (ms, work) => Promise.race([work, new Promise(r => setTimeout(() => r(null), ms))]);
       try{
         if(window.Relay && Relay.ready) await within(2500, Relay.ready());
         const evs = await within(4000, Relay.query([{authors:[me], kinds:[0], limit:1}]));
         for(const e of (evs || [])) if(e && e.pubkey === me) Store.saveProfile(e);
+        answered = !!evs && (evs.complete === true || (Relay.homeAnswered && Relay.homeAnswered(evs)));
       }catch(_){ /* offline: the freshest cached copy below is still better than the painted one */ }
     }
     // RAW: the editor republishes this, so it must hold the name as the owner wrote it, not as it is
     // shown (Store.profile tames Zalgo names for display).
     const fresh = me ? (Store.profileRaw ? Store.profileRaw(me) : Store.profile(me)) : null;
-    return _openProfileEditor(fresh || p || {});
+    const known = fresh || (p && Object.keys(p).length ? p : null);
+    if(me && !known && !answered){
+      toast('Couldn’t load your profile — your relays haven’t answered. Try Edit again in a moment.');
+      return;
+    }
+    return _openProfileEditor(known || {});
   }
   function _openProfileEditor(p){
     /* Sticky for the same reason as the composers: a bio and a set of links are typed once, exist
