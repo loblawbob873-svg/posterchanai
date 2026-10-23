@@ -849,6 +849,16 @@ would have handled it fine).
   `stopSelf()` — read off the instance, the panel answered "nothing has played this session" about
   the very press being investigated.
   `tests/test_android_music_controls.py` guards the wiring (the Gradle build only runs in CI).
+  **CAR BUTTONS THAT DO "NOTHING AT ALL" (2026-10-23): `onTaskRemoved` fires for ANY task of this app.**
+  Texts and the Phone app have task affinities of their own, so swiping one of THEM out of Recents used to
+  `shutdown()` the media session under a song that played on in the untouched WebView task — no session,
+  so the car's AVRCP keys reached nothing. `TaskRemoval.endsPlayer` (alias-resolved, unknown = old
+  behaviour) decides now. The standby session's PAUSE is handed over (it was a no-op), and the cold path
+  pauses a listening page. **Instruments:** every press is logged — `adb logcat -s PosterChanMusic` — and
+  kept in `PressLog` (last 10: action, which session/surface delivered it, answered or not), shown with the
+  session state in Settings → Phone → "Music & car controls" (`#us-music-refresh`, `#us-music-copy`).
+  Device proof: `MusicCarButtonsDeviceTest` (AudioManager.dispatchMediaKeyEvent + TransportControls, app in
+  the background, another task closed, standby switch on); off-device `tests/test_android_music_car_buttons.py`.
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate

@@ -254,7 +254,7 @@ def test_a_press_that_should_make_sound_is_checked_for_a_receipt():
     # press takes the same dead branch. What pause must NOT do is wake the app: hush(), not press().
     pause = re.search(r"public void onPause\(\) \{([^}]*)\}", cb)
     assert pause and "hush(" in pause.group(1), "onPause must be receipt-checked"
-    hush = re.search(r"private void hush\(final String action\) \{(.*?)\n  \}", SERVICE, re.S)
+    hush = re.search(r"private void hush\(final String action, final String via\) \{(.*?)\n  \}", SERVICE, re.S)
     assert hush and "revive(" not in hush.group(1), \
         "a pause must never open the app — that is a car stereo launching an app to stop silence"
     assert "markGone()" in hush.group(1), "…but it must clear `playing`, or the toggle stays stuck"

@@ -206,7 +206,23 @@ public class MusicPlugin extends Plugin {
     r.put("unanswered", MusicService.unanswered);
     r.put("revived", MusicService.revived);
     r.put("note", MusicService.note);
+    /* WHICH SESSION THE CAR CAN REACH, AND WHAT THE LAST PRESSES DID. Settings -> Phone -> "Music & car
+     * controls" shows these; the same lines go to `adb logcat -s PosterChanMusic`. */
+    r.put("standbySession", MusicService.standbySession);
+    r.put("pageListening", MusicService.pageListening());
+    r.put("logTag", MusicService.TAG);
+    com.getcapacitor.JSArray presses = new com.getcapacitor.JSArray();
+    for (PressLog.Entry e : PressLog.recent()) {
+      JSObject p = new JSObject();
+      p.put("at", e.at);
+      p.put("action", e.action);
+      p.put("via", e.via);
+      p.put("outcome", e.outcome);
+      presses.put(p);
+    }
+    r.put("presses", presses);
     if (svc != null) {
+      r.put("sessionActive", svc.sessionActive());
       r.put("playing", svc.isPlaying());
       r.put("webSilenceMs", svc.webSilenceMs());
       r.put("webGone", svc.webGone());

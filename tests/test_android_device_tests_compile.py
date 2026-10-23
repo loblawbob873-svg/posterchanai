@@ -132,6 +132,12 @@ public class MusicService {
   public static String nowTitle() { return ""; }
   public static String nowArtist() { return ""; }
   public static boolean nowPlaying() { return false; }
+  // MusicCarButtonsDeviceTest reads these (real ones in MusicService; CI's assembleDebug checks them).
+  static volatile boolean standbySession = false;
+  static volatile String note = "";
+  public static void setAutoplayBluetooth(android.content.Context c, boolean on) { }
+  static boolean pageListening() { return false; }
+  boolean sessionActive() { return false; }
 }
 """,
             "androidx/test/runner/lifecycle/Stage.java": """

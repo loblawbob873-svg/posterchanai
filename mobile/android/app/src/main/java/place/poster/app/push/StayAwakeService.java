@@ -175,9 +175,24 @@ public class StayAwakeService extends Service {
       standby = new MediaSessionCompat(this, "PosterChanStandby");
       standby.setCallback(new MediaSessionCompat.Callback() {
         @Override public void onPlay() { handOff(MusicService.ACTION_PLAY); }
-        @Override public void onPause() { /* nothing is playing; a pause here is a no-op, not a wake */ }
+        /* NOT a no-op any more. "Nothing is playing" is what this session BELIEVES, and it is wrong
+         * whenever the page plays without a PosterChanMusic session (its foreground start refused,
+         * or that session closed under a live WebView). A car that routes its PAUSE here then had
+         * no way to stop the music at all. MusicService's cold path hands a pause to a page that is
+         * listening and drops it otherwise -- never a wake-up. */
+        @Override public void onPause() { handOff(MusicService.ACTION_PAUSE); }
         @Override public void onSkipToNext() { handOff(MusicService.ACTION_NEXT); }
         @Override public void onSkipToPrevious() { handOff(MusicService.ACTION_PREV); }
+        @Override public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
+          try {
+            android.view.KeyEvent ev = mediaButtonEvent == null ? null
+                : mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+            if (ev != null && ev.getAction() == android.view.KeyEvent.ACTION_DOWN)
+              android.util.Log.i(MusicService.TAG, "key " + android.view.KeyEvent.keyCodeToString(ev.getKeyCode())
+                  + " reached the STANDBY session (PosterChanStandby)");
+          } catch (Throwable ignored) { }
+          return super.onMediaButtonEvent(mediaButtonEvent);
+        }
       });
       /* The actions are what the car DRAWS. Declaring none leaves a head unit with a media app it
        * can see and cannot operate, which is indistinguishable from the app being absent. */
@@ -195,6 +210,7 @@ public class StayAwakeService extends Service {
           .build());
       standby.setActive(true);
       MusicService.setStandbySession(true);
+      android.util.Log.i(MusicService.TAG, "standby session opened (no player session exists)");
     } catch (Throwable t) {
       standby = null;
       MusicService.setStandbySession(false);
@@ -204,7 +220,8 @@ public class StayAwakeService extends Service {
   /** Hand a press to the existing cold path rather than growing a second one. */
   private void handOff(String action) {
     try {
-      startService(new Intent(this, MusicService.class).setAction(action));
+      startService(new Intent(this, MusicService.class).setAction(action)
+          .putExtra(MusicService.EXTRA_VIA, "standby session (PosterChanStandby)"));
     } catch (Throwable ignored) {}
   }
 
@@ -213,6 +230,7 @@ public class StayAwakeService extends Service {
     try { standby.setActive(false); standby.release(); } catch (Throwable ignored) {}
     standby = null;
     MusicService.setStandbySession(false);
+    android.util.Log.i(MusicService.TAG, "standby session closed");
   }
 
   @Override
