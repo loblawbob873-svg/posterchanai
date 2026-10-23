@@ -172,7 +172,9 @@ def clean(errors):
 def test_two_people_watch_a_live_stream_and_chat_on_it():
     async def scenario(n, hls):
         live = stream(CAROL, 'carol-live', 'Carol live', 'live', hls.base + '/ok/index.m3u8', ago=30)
-        ended = stream(CAROL, 'carol-old', 'Carol last week', 'ended', hls.base + '/ok/gone.m3u8', ago=7 * 86400)
+        # Ended by Go Live: `streaming` still names this app's HLS proxy path for the stopped feed.
+        ended = stream(CAROL, 'carol-old', 'Carol last week', 'ended', hls.base + '/api/streams/hls/carol/index.m3u8',
+                       ago=7 * 86400)
         n.home.add([live, ended])
         R.NODE['api']['/api/streams/vods/by-token/carol-old'] = {'vods': []}
         async with R.Device(n, ALICE) as alice, R.Device(n, BOB) as bob:
@@ -205,9 +207,53 @@ def test_two_people_watch_a_live_stream_and_chat_on_it():
             title = await bob.b.js("document.querySelector('.stream-view').innerText")
             assert '● LIVE' not in title and '· ended' in title, title
             assert not await bob.b.js(VIDEO_SHOWN), 'an ended stream with nothing to play still shows a black player'
-            assert '/ok/gone.m3u8' not in hls.hits, 'the ended stream tried to play its dead live feed'
+            assert '/api/streams/hls/carol/index.m3u8' not in hls.hits, 'the ended stream tried to play its dead live feed'
             for d in (alice, bob):
                 assert not clean(await d.b.js('__errors')), await d.b.js('__errors')
+    run(scenario)
+
+
+# ------------------------------------------------------------------------------------------------ ended elsewhere
+SAID_CANT_PLAY = r'''
+window.__cantPlay=[];
+new MutationObserver(()=>{const n=document.querySelector('#st-note');
+  if(n&&/could not play|isn\u2019t answering/i.test(n.textContent))window.__cantPlay.push(n.textContent);})
+  .observe(document,{childList:true,subtree:true,characterData:true});
+'''
+
+
+@CHROME
+def test_an_ended_stream_whose_replay_is_at_its_streaming_url_plays_it():
+    """Another NIP-53 host serves an ended stream's replay at the `streaming` URL (no `recording` tag, no recording on
+    this node): it PLAYS. Go Live's own ended feed (this node's HLS proxy path) is never tried -- its replay is the
+    recording this node keeps -- and another host's dead feed ends in the plain "ended" message, never in "could not
+    play" and never a black player."""
+    async def scenario(n, hls):
+        replay = stream(CAROL, 'elsewhere-replay', 'Replay elsewhere', 'ended', hls.base + '/ok/index.m3u8', ago=86400)
+        dead = stream(CAROL, 'elsewhere-dead', 'Dead elsewhere', 'ended', hls.base + '/missing/gone.m3u8', ago=86400)
+        ours = stream(CAROL, 'ours-ended', 'Ours ended', 'ended', hls.base + '/api/streams/hls/ours/index.m3u8', ago=86400)
+        n.home.add([replay, dead, ours])
+        for d in ('elsewhere-replay', 'elsewhere-dead', 'ours-ended'):
+            R.NODE['api']['/api/streams/vods/by-token/' + d] = {'vods': []}
+        async with R.Device(n, BOB) as bob:
+            await bob.b.js(SAID_CANT_PLAY)
+            await open_streams(bob)
+            await open_card(bob, 'Replay elsewhere')
+            await R.wait(bob.b, "(()=>{const v=document.querySelector('#st-video');return v&&v.readyState>=2&&v.videoWidth===160})()",
+                         30, 'the replay decoded on screen', state="({note:%s,hits:%s})" % (NOTE, json.dumps(hls.hits[-5:])))
+            assert await bob.b.js(VIDEO_SHOWN), 'the replay plays in a hidden player'
+            assert 'no recording' not in await bob.b.js(NOTE)
+            await bob.b.js("document.querySelector('#st-back').click();true")
+            for title in ('Dead elsewhere', 'Ours ended'):
+                await open_card(bob, title)
+                await R.wait(bob.b, NOTE + "==='This stream ended — no recording available.'", 25,
+                             '%r says it ended with no recording' % title, state="({note:%s,video:%s})" % (NOTE, VIDEO_SHOWN))
+                assert not await bob.b.js(VIDEO_SHOWN), '%r: a black player under the message' % title
+                await bob.b.js("document.querySelector('#st-back').click();true")
+                await R.wait(bob.b, "!!document.querySelector('.stream-grid')", 20, 'back on the list')
+            assert not await bob.b.js('window.__cantPlay'), await bob.b.js('window.__cantPlay')
+            assert '/api/streams/hls/ours/index.m3u8' not in hls.hits, "Go Live's own ended feed was tried"
+            assert not clean(await bob.b.js('__errors')), await bob.b.js('__errors')
     run(scenario)
 
 
