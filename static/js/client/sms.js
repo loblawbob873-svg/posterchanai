@@ -3215,6 +3215,10 @@
       S.emptyWhy = 'Android is not offering the prompt any more. Open Settings \u2192 Apps \u2192 '
                  + 'PosterChan \u2192 Permissions \u2192 SMS and allow it there.';
       S.emptyFix = '';
+      /* AND SAID WHERE IT CAN BE SEEN. `emptyWhy` is drawn only by the EMPTY list, and the header's
+       * copy of this button exists for the screen that is NOT empty (an older archive on show) --
+       * so a refusal there re-enabled the button and changed nothing on screen. */
+      PC.toast(S.emptyWhy);
       if(btn) btn.disabled = false;
       paint();
       return;
@@ -3225,6 +3229,7 @@
       S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
                  + 'answer. Your messages have not been changed.';
       S.emptyFix = '';
+      PC.toast(S.emptyWhy);
     }
     if(btn) btn.disabled = false;
     paint();
@@ -3234,22 +3239,28 @@
    * while on a long history, and a button that looks dead for a minute is a button people press
    * again. */
   let _bfRunning = false;
+  /* THE RESULT LIVES HERE, NOT IN THE ELEMENT. The note was written into the span and then
+   * `paint()` -- the very next line -- rebuilt the list and drew a fresh, empty one, so every
+   * back-fill ended in silence: "how it went" was on screen for zero frames. paint() draws this. */
+  let _bfNote = '';
+  function bfSay(text){
+    _bfNote = text;
+    const note = PC.$('#sms-deep-note');
+    if(note) note.textContent = text;
+  }
   async function runBackfill(btn){
     if(_bfRunning) return;
     _bfRunning = true;
-    const note = PC.$('#sms-deep-note');
     if(btn) btn.disabled = true;
-    if(note) note.textContent = 'reading\u2026';
+    bfSay('reading\u2026');
     let r = null;
-    try{ r = await importAll((n) => { if(note) note.textContent = n + ' brought in\u2026'; }); }
+    try{ r = await importAll((n) => bfSay(n + ' brought in\u2026')); }
     catch(e){ r = { published: 0, why: String((e && e.message) || e) }; }
     _bfRunning = false;
     if(btn) btn.disabled = false;
-    if(note){
-      note.textContent = r && r.published
+    bfSay(r && r.published
         ? r.published + ' older message' + (r.published === 1 ? '' : 's') + ' brought in'
-        : (r && r.why) || 'nothing older found';
-    }
+        : (r && r.why) || 'nothing older found');
     paint();
   }
 
@@ -3904,7 +3915,7 @@
         </div>
         <div id="sms-backfill" style="display:none;margin-top:8px">
           <button class="btn small" id="sms-deep2">Bring in older messages</button>
-          <span class="muted small" id="sms-deep-note" style="margin-left:8px"></span>
+          <span class="muted small" id="sms-deep-note" style="margin-left:8px">${enc(_bfNote)}</span>
         </div>
         ${S.showArchived && !S.q ? `<div class="sms-arc-head"><button class="btn small" id="sms-arc-back">${ICO('arrow-left','b-ic')}</button>
           <span>Archived conversations</span></div>` : ''}
@@ -3952,9 +3963,14 @@
     /* Bound whether or not the bar is visible right now — `noteWhere` reveals it asynchronously,
        after this runs, and a button revealed with no handler is the dead-button bug one layer on. */
     { const rb = PC.$('#sms-role2'); if(rb) rb.onclick = () => askForRole(rb); }
-    { const retry = PC.$('#sms-archive-retry'); if(retry) retry.onclick = async () => {
-        retry.disabled = true;
-        await mirror();
+    /* `#sms-now` HAD NO HANDLER AT ALL -- "Copy my messages across" was drawn under "Nothing has
+     * been copied across yet" and bound nowhere. It runs the copy that sentence is about, then
+     * asks again why the list is empty, so the screen stops claiming nothing was copied. */
+    { const nb = PC.$('#sms-now'); if(nb) nb.onclick = async () => {
+        nb.disabled = true;
+        try{ await mirror(); }catch(_){ }
+        try{ const e = await emptyWhy(); S.emptyWhy = e.why; S.emptyFix = e.fix || ''; }catch(_){ }
+        paint();
       }; }
     /* `#sms-deep` HAD NO HANDLER AT ALL. It was drawn in the empty state and bound nowhere, so
      * `importAll` — the only thing that fetches messages OLDER than the first sync — was defined,
@@ -4085,6 +4101,13 @@
         archive.style.display = '';
         archive.innerHTML = 'Message backup stopped: ' + PC.enc(S.archive.error)
           + ' <button class="btn small" id="sms-archive-retry">Retry now</button>';
+        /* BOUND HERE, WHERE IT IS DRAWN. paint() used to bind it, but this function runs after
+         * paint() and an await later, so paint() never found the button and "Retry now" was dead. */
+        const retry = archive.querySelector('#sms-archive-retry');
+        if(retry) retry.onclick = async () => {
+          retry.disabled = true;
+          await mirror();
+        };
       }else if(S.archive.refused){
         /* Not an alarm: everything else was copied and the sweep is still moving. Says what was
          * skipped, and offers the one thing that offers them to the phone again. */
