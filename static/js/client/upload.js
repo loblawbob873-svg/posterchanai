@@ -445,6 +445,19 @@ window.PCUploadFactory = function(dep){
     try{ return await pending; }
     catch(e){ _listAuth.delete(pk); return {}; }   // no signature: the request goes unsigned and the server says why
   }
+  /* What a refused upload SAYS. BUD-06's X-Reason first; then the body -- and a body is often JSON (this node's own
+   * 503 is `{"detail":"Temporarily unavailable; try again shortly"}`), which every caller printed verbatim as
+   * "upload failed: {"detail": ...}". Read the sentence out of it; a bare status when there is none. */
+  function _uploadRefusal(status, reason, body){
+    if(reason) return String(reason);
+    let t = String(body || '').trim();
+    if(t && /^[\[{]/.test(t)){
+      try{ const j = JSON.parse(t); const m = j && (j.detail || j.message || j.error || j.reason);
+        t = (typeof m === 'string') ? m : ''; }catch(_){ }
+    }
+    if(t && t.length <= 300 && !/^\s*</.test(t)) return t;
+    return 'the media server refused the upload (HTTP ' + status + ')';
+  }
   async function uploadBlob(file, opts){
     if(opts && opts.ciphertext) return _uploadCiphertext(file, opts);
     // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
@@ -504,7 +517,7 @@ window.PCUploadFactory = function(dep){
         x.upload.onprogress = e => { try{ opts.onProgress({ loaded: e.loaded, total: e.total || file.size }); }catch(_){} };
         x.onload = () => {
           if(x.status>=200 && x.status<300){ let j={}; try{ j=JSON.parse(x.responseText); }catch(_){} resolve(j); }
-          else reject(new Error(x.getResponseHeader('x-reason') || x.responseText || ('upload failed: HTTP '+x.status)));
+          else reject(new Error(_uploadRefusal(x.status, x.getResponseHeader('x-reason'), x.responseText)));
         };
         x.onerror = () => reject(new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`));
         x.send(file);
@@ -519,7 +532,7 @@ window.PCUploadFactory = function(dep){
         // a custom server — it doesn't send CORS headers allowing this site to upload to it.
         throw new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`);
       }
-      if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
+      if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(_uploadRefusal(res.status, res.headers.get('x-reason'), t)); }
       d=await res.json();
     }
     // The URL must carry a file extension so clients (incl. linkify below) can detect the media type

@@ -83,8 +83,16 @@
   const MAX_DUR = 1800;
   async function _renderRemote(edit, signal, what){
     const auth=await selfProof();
-    const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }), signal });
+    let r;
+    try{
+      r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }), signal });
+    }catch(e){
+      // fetch REJECTS only when no answer came at all (a dropped connection, the node restarting, offline). Its own
+      // words for that are the browser's -- "Failed to fetch" -- which is what the Result pane used to show.
+      if(e && e.name==='AbortError') throw e;
+      throw new Error('could not reach the server to '+what+' — check your connection and try again');
+    }
     if(!r.ok){
       let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
       throw new Error(msg||(what+' failed ('+r.status+')'));
@@ -290,16 +298,36 @@
     // here too: attaching it to the handful of call sites that happen to change the length today is how it
     // came to fire on "add a layer" and nothing else. A new way to re-time a clip now gets it for free.
     _syncMusicBeds();
-    try{ localStorage.setItem('pc_meme_project', JSON.stringify(P)); _saveWarned = false; }
+    try{ const pk = _projOwner(); if(pk && P) P.owner = pk;
+      localStorage.setItem('pc_meme_project', JSON.stringify(P)); _saveWarned = false; }
     catch(err){
       if(!_saveWarned){ _saveWarned = true;
         try{ toast('⚠ can’t auto-save this build in the browser (storage full/blocked) — use 💾 Save to keep it'); }catch(_){ }
       }
     }
   }
+  /* THE BUILD IN PROGRESS BELONGS TO AN ACCOUNT, NOT TO THE DEVICE. It was one `pc_meme_project` for whoever was
+   * signed in, so switching accounts opened the other account's meme -- its captions, its uploads and the post it was
+   * going to reply to, which a Reply then published under the account that never made it. The slot still holds the
+   * build being worked on, now stamped with its `owner`; another account's build is PARKED under
+   * `pc_meme_project:<owner>` (never dropped) and comes back when that account does. A build with no owner predates
+   * this and is adopted by whoever opens it -- the one time there is no way to tell. */
+  const _PROJ = 'pc_meme_project';
+  function _projOwner(){ try{ const m = (PC && PC.ME) || ME; return (m && m.pubkey) || ''; }catch(_){ return ''; } }
   function load(){
-    try{ const r=JSON.parse(localStorage.getItem('pc_meme_project')||'null');
-      if(r && Array.isArray(r.layers)){ _healLayers(r); return r; } }catch(_){ }
+    const pk = _projOwner();
+    try{
+      const raw = localStorage.getItem(_PROJ);
+      let r = JSON.parse(raw || 'null');
+      if(r && r.owner && pk && r.owner !== pk){
+        localStorage.setItem(_PROJ + ':' + r.owner, raw);          // park the other account's build, intact
+        const mine = localStorage.getItem(_PROJ + ':' + pk);
+        r = JSON.parse(mine || 'null');
+        if(mine){ localStorage.setItem(_PROJ, mine); localStorage.removeItem(_PROJ + ':' + pk); }
+        else localStorage.removeItem(_PROJ);
+      }
+      if(r && Array.isArray(r.layers)){ _healLayers(r); return r; }
+    }catch(_){ }
     return blank();
   }
   // Repair coordinates saved by older builds. Text used to be positioned against a box that was up to 92%

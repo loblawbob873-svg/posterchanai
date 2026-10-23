@@ -170,9 +170,17 @@ async def put_card(body: CardIn, current_user: User = Depends(get_current_user),
 async def delete_card(book: str = Query(...), uid: str = Query(...),
                       current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_enabled()
-    out = await caldav_store.delete_item(db, current_user, book, uid)
+    # A delete the relay REFUSED, or one it could not be asked about, is an error the client can show --
+    # it used to be a 200 carrying `ok: false` (or, unreachable, `ok: true`), and the screen said "deleted"
+    # over a contact that came straight back on the next load.
+    try:
+        out = await caldav_store.delete_item(db, current_user, book, uid, strict=True)
+    except Exception as e:
+        raise _unreachable(f"contact {uid!r}", e)
+    if not out:
+        raise HTTPException(status_code=502, detail="Could not delete the contact — try again.")
     _forget(current_user.username)
-    return {"ok": out}
+    return {"ok": True}
 
 
 @router.get("/export", response_class=PlainTextResponse)

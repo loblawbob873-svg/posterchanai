@@ -31,6 +31,20 @@ class TGError(Exception):
     """A refusal a person can act on — its text is shown as-is."""
 
 
+class TGUnreachable(TGError):
+    """Telegram itself could not be reached from this server. Not a refusal and not "signed out": the saved session is
+    kept and the router answers 503, so the screen says this and keeps retrying (and shows what the device holds)."""
+
+
+# HOW LONG ONE CONNECT MAY TAKE. Telethon's own connect() retries for up to ~a minute (5 x 10 s), and it runs while the
+# account's lock is held -- so a connect to a Telegram that is not answering held EVERY request of that account for
+# that long, Retry included: the screen gave up at 15 s and Retry waited on the same lock. Bounded, the next request
+# makes a fresh attempt. Under the client's own 15 s, so the person reads why rather than "did not answer".
+CONNECT_LIMIT = 12
+UNREACHABLE = ("This server cannot reach Telegram right now. Your sign-in is kept — it will connect again "
+               "by itself.")
+
+
 def parse_api_credentials(raw_id, raw_hash):
     """The api_id and api_hash as Telegram wants them, from what an admin PASTED.
 
@@ -209,7 +223,12 @@ class Manager:
         if a.client is None:
             a.client = self._factory(session, api)
         if not a.client.is_connected():
-            await a.client.connect()
+            try:
+                await asyncio.wait_for(a.client.connect(), CONNECT_LIMIT)
+            except (OSError, asyncio.TimeoutError) as e:      # ConnectionError is an OSError
+                logger.info("[tgc] Telegram unreachable: %s", type(e).__name__)
+                await _safe(a.client.disconnect())
+                raise TGUnreachable(UNREACHABLE) from e
         return a.client
 
     async def resume(self, db, user) -> Account:

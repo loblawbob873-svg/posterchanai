@@ -56,6 +56,18 @@
   const keep = () => { const P = PC(); return P.deviceCache ? P.deviceCache('pc-tg-v1') : null; };
   const KEPT = /^\/api\/tgc\/(status|dialogs\?limit=200|messages\/-?\d+\?limit=50)$/;
   const unreachable = e => !!(e && (e.offline || e.name === 'TypeError' || /^HTTP 5\d\d$/.test(e.message || '')));
+  /* WHAT HAPPENED, IN WORDS. A node that answered 503, a dropped connection and a node that cannot reach Telegram all
+   * reached the screen as "HTTP 503" / "Failed to fetch" -- under "Telegram is not available", and as the toast of a
+   * send that did not go. The node's own sentence (a TGError: "This server cannot reach Telegram right now ...") is
+   * shown when it gave one; any other 5xx or a network failure gets a sentence of ours. Still `offline`, so the
+   * device copy and the automatic retry behave exactly as before. */
+  function unreachableError(status, j){
+    const said = j && typeof j.error === 'string' && j.error;
+    const e = new Error(said || (status ? 'This server is not answering right now — it will be asked again shortly.'
+                                        : 'Can’t reach this server — check the connection; it will be asked again shortly.'));
+    e.offline = true; e.status = status || 0;
+    return e;
+  }
   /* HOW LONG BEFORE "TELEGRAM DID NOT ANSWER". The 15 s limit is for READS -- a screen that would otherwise wait for
    * ever on a node that is restarting. A SEND is different: an attachment goes device -> node -> Telegram, and giving up
    * on it does not stop it (2026-10-22: "trying to send telegram attachment: telegram did not answer" -- the node's log
@@ -97,8 +109,8 @@
       r = await Promise.race([req, new Promise((_, no) => { timer = setTimeout(() => { const e = new Error('Telegram did not answer'); e.offline = true; no(e); }, patience(path, opts)); })])
         .finally(() => clearTimeout(timer));
       try{ j = await r.json(); }catch(_){}
-      if(!r.ok && r.status >= 500) throw new Error('HTTP ' + r.status);
-    }catch(e){ if(unreachable(e)) return fromDevice(e); throw e; }
+      if(!r.ok && r.status >= 500) throw unreachableError(r.status, j);
+    }catch(e){ if(unreachable(e)) return fromDevice(e.name === 'TypeError' ? unreachableError(0) : e); throw e; }
     if(!r.ok || (j && j.ok === false)) throw new Error((j && (j.error || j.detail)) || ('HTTP ' + r.status));
     if(read){ st.offline = false; const c = keep(); if(c) c.put(path, j || {}); }
     return j || {};

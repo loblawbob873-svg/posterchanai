@@ -93,9 +93,11 @@ async def get_items(db, user, calendar: str, *, strict: bool = False) -> list:
     return out
 
 
-async def delete_item(db, user, calendar: str, uid: str) -> bool:
+async def delete_item(db, user, calendar: str, uid: str, *, strict: bool = False) -> bool:
+    """False when the relay refused the deletion. `strict` RAISES when it could not be asked whether the
+    item exists -- loosely that reads as "nothing to delete" and answers True (see nostr_store.delete_doc)."""
     sk = user_storage_seckey(db, user)
-    return await store.delete_doc(_port(db), sk, f"{NS_ITEM}{calendar}:{uid}")
+    return await store.delete_doc(_port(db), sk, f"{NS_ITEM}{calendar}:{uid}", strict=strict)
 
 
 # ---------------------------------------------------------------------------------- calendars

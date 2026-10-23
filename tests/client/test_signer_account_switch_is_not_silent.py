@@ -89,7 +89,7 @@ class SignerAccountSwitch(unittest.TestCase):
     def test_a_signature_from_another_account_is_refused(self):
         """THE REPORTED CASE: the phone switched, so the key coming back is not this session's."""
         a, b = "a" * 64, "b" * 64
-        out = self.run_sign(expected=a, returned={"kind": 1, "pubkey": b, "sig": "00"})
+        out = self.run_sign(expected=a, returned={"kind": 1, "content": "x", "tags": [], "pubkey": b, "sig": "00"})
         self.assertFalse(out["ok"], "the desktop accepted an event signed by a different account")
         self.assertTrue(out.get("mismatch"), "the refusal does not say which keys disagreed")
         self.assertEqual(a, out["mismatch"]["expected"])
@@ -97,7 +97,7 @@ class SignerAccountSwitch(unittest.TestCase):
 
     def test_it_says_so_on_screen(self):
         """Silence is the actual defect — a machine that 'stopped working' with nothing said."""
-        out = self.run_sign(expected="a" * 64, returned={"kind": 1, "pubkey": "b" * 64})
+        out = self.run_sign(expected="a" * 64, returned={"kind": 1, "content": "x", "tags": [], "pubkey": "b" * 64})
         self.assertTrue(out.get("toast"), "nothing was shown to the person using the machine")
         self.assertRegex(out["toast"].lower(), r"different account|switch",
                          "the message does not name the cause or the way out")
@@ -105,14 +105,14 @@ class SignerAccountSwitch(unittest.TestCase):
     def test_the_ordinary_case_is_untouched(self):
         """Same key: signing must be exactly as before, no extra request, no warning."""
         a = "a" * 64
-        out = self.run_sign(expected=a, returned={"kind": 1, "pubkey": a, "sig": "00"})
+        out = self.run_sign(expected=a, returned={"kind": 1, "content": "x", "tags": [], "pubkey": a, "sig": "00"})
         self.assertTrue(out["ok"], out.get("err"))
         self.assertEqual(a, out["pubkey"])
         self.assertIsNone(out.get("toast"), "a normal signature warned about nothing")
 
     def test_a_session_with_no_expectation_yet_still_signs(self):
         """Before connect has answered, `userPk` is empty; that is not a mismatch."""
-        out = self.run_sign(expected="", returned={"kind": 1, "pubkey": "b" * 64, "sig": "00"})
+        out = self.run_sign(expected="", returned={"kind": 1, "content": "x", "tags": [], "pubkey": "b" * 64, "sig": "00"})
         self.assertTrue(out["ok"], "an unconnected session refused its own first signature")
 
 

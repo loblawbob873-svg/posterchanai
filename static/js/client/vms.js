@@ -1508,12 +1508,28 @@
     </button>`;
   }
 
+  /* THE SAVED LIST COULD NOT BE READ — SAY SO, never leave the hosts it holds silently missing (a fresh device
+   * whose relays did not answer showed only this server's host, or "No VM hosts yet", with nothing to say the
+   * rest exist), and offer the read again. Entering the screen again re-reads it too (render). */
+  const docUnread = () => S.doc.read && !S.doc.ok;
+  function docNotice(){
+    if(!docUnread()) return '';
+    return `<div class="vms-noanswer vms-docerr">Your saved host list could not be read from your relays — hosts you added are missing here until it is. <button class="btn small" data-act="doc-retry">Retry</button></div>`;
+  }
+  function rereadDoc(){
+    if(!docUnread()) return;
+    S.doc.read = false;
+    paint();
+    readDoc();
+  }
+
   function hostsScreen(){
     if(!S.hosts.length){
       if(!S.doc.read) return `<div class="vms-cold"><div class="spinner"></div><div class="vms-seen">Looking for your VM hosts…</div></div>`;
+      if(docUnread()) return docNotice();
       return `<div class="empty vms-empty">No VM hosts yet.<br><small>A host is a PosterChan server with VM hosting turned on (Admin → VMs).</small><br><button class="btn btn-ghost" data-act="add">Add a host</button> <button class="btn btn-ghost" data-act="find">Find hosts</button></div>`;
     }
-    return `<div class="vms-hosts">${S.hosts.map(hostCard).join('')}</div>
+    return `${docNotice()}<div class="vms-hosts">${S.hosts.map(hostCard).join('')}</div>
       <div class="vms-actions"><button class="btn btn-ghost small" data-act="add">+ Add host</button><button class="btn btn-ghost small" data-act="find">Find hosts</button></div>`;
   }
 
@@ -1537,6 +1553,7 @@
     }).join('');
     return `<aside class="vms-rail vmx-tree" aria-label="VM hosts">
       <div class="vms-head"><h2>VM hosts</h2><span class="vms-sp"></span><button class="btn small" data-act="find">Find</button><button class="btn small" data-act="add">+ Add</button></div>
+      ${docNotice()}
       ${S.hosts.length > 1 ? `<button class="vmx-dc${S.screen === 'all' ? ' sel' : ''}" data-act="all">${ic('i-drive')}<b>All hosts</b><span class="vmx-count">${running}/${total}</span></button>` : ''}
       ${S.hosts.length ? rows : (S.doc.read ? '<div class="vms-seen">No hosts yet.</div>' : '<div class="spinner"></div>')}
     </aside>`;
@@ -2049,6 +2066,7 @@ html.pc-oswin .vmc{top:38px}
     const on = (sel, fn) => feed.querySelectorAll(sel).forEach(el => { el.onclick = (e) => { e.preventDefault(); fn(el, e); }; });
     on('[data-host]:not([data-act])', el => { S.host = el.dataset.host; S.screen = 'host'; S.vm = ''; S.filter = 'all'; paint(); refresh(S.host); });
     on('[data-act=retry]', el => { refresh(el.dataset.host || S.host); paint(); });
+    on('[data-act=doc-retry]', () => rereadDoc());
     on('[data-act=add]', () => addHost());
     on('[data-act=remove-host]', () => removeHost(S.host));
     on('[data-act=back]', () => {
@@ -2156,6 +2174,7 @@ html.pc-oswin .vmc{top:38px}
       readDoc();
     }else{
       for(const h of S.hosts) if(!(S.data[h.pubkey] || {}).inflight) refresh(h.pubkey);
+      rereadDoc();                                       // a list that could not be read is asked for again on return
     }
   }
 
