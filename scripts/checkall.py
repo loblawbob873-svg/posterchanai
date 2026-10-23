@@ -152,6 +152,9 @@ CHECKS = {
     "check_drive_fresh_pair":          dict(group="live", secs=600, serial=True),
     "check_sync_card":                 dict(group="live", secs=420, serial=True),
     "check_concord_live_invite":       dict(group="live", secs=420, serial=True, live_args=[]),
+    # By hand only: it creates (and dissolves) a community on public relays and calls through two production SFUs.
+    "check_armada_call_interop":       dict(group="manual", secs=1260, serial=True,
+                                            why="run by hand: scripts/check_armada_call_interop.py https://poster.place"),
     "check_signer_transport":          dict(group="live", secs=420, serial=True, live_args=[]),
     "check_client_icon_themes":        dict(group="live", secs=600),
     "check_client_mobile":             dict(group="live", secs=600),
