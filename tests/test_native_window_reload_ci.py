@@ -120,3 +120,32 @@ exit 0
     assert len(installs) == min(failures + 1, 3), args
     if not expect_ok:
         assert 'no test ran' in res.stdout, res.stdout
+
+
+def test_the_last_good_install_is_reused_instead_of_the_mirror(tmp_path):
+    """2026-10-23 the mirror served pulseaudio's codecs at ~50 KB/s and the step timed out mid-download. RUN the
+    shipped step: cached .debs go into apt's archive BEFORE apt runs, and a good install saves its .debs back."""
+    import os
+    import subprocess
+    step, run = _install_step()
+    wf = (ROOT/'.github/workflows/desktop.yml').read_text()
+    cache = wf.split('      - name: Cached desktop regression packages', 1)[1].split('      - name: ', 1)[0]
+    assert 'actions/cache@' in cache and '${{ runner.temp }}/apt-debs' in cache
+    debs, archives, bindir = tmp_path/'apt-debs', tmp_path/'archives', tmp_path/'bin'
+    for d in (debs, archives, bindir):
+        d.mkdir()
+    (debs/'libavcodec62.deb').write_text('cached')
+    (bindir/'sudo').write_text('#!/bin/sh\nexec "$@"\n'); (bindir/'sudo').chmod(0o755)
+    (bindir/'apt-get').write_text(f"""#!/bin/sh
+case "$*" in *install*)
+  [ -f {archives}/libavcodec62.deb ] || {{ echo "would download libavcodec62 from the mirror"; exit 100; }}
+  echo fetched > {archives}/pulseaudio.deb ;;
+esac
+exit 0
+""")
+    (bindir/'apt-get').chmod(0o755)
+    res = subprocess.run(['bash', '-c', run], cwd=tmp_path, capture_output=True, text=True, timeout=20,
+                         env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
+                              'RUNNER_TEMP': str(tmp_path), 'APT_ARCHIVES': str(archives)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert (debs/'pulseaudio.deb').read_text() == 'fetched\n', 'a good install did not save its packages for the next run'

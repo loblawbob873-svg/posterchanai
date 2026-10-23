@@ -233,16 +233,31 @@ jobs:
       # single test having run -- indistinguishable, from the run list, from a real regression. A stalled
       # connection is now dropped after 30s and retried, the whole install is tried three times, and
       # none of it is charged to the tests' own time limit.
+      # THE .debs OF THE LAST GOOD INSTALL, FROM THE ACTIONS CACHE (2026-10-23). Retries do not help when the mirror
+      # itself crawls: run 39913752564 fetched pulseaudio's codec dependencies at ~50 KB/s and hit the 12-minute limit
+      # mid-download. apt finds these files already in its archive and fetches only what changed since.
+      - name: Cached desktop regression packages
+        if: matrix.name == 'linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/apt-debs
+          key: desktop-apt-${{ runner.os }}-${{ hashFiles('.github/workflows/desktop.yml') }}
+          restore-keys: desktop-apt-${{ runner.os }}-
+
       - name: Install desktop regression packages
         if: matrix.name == 'linux'
         timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
-          APT_OPTS=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          APT_OPTS=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Keep-Downloaded-Packages=true)
+          DEBS="${RUNNER_TEMP:-$PWD}/apt-debs" ARCHIVES="${APT_ARCHIVES:-/var/cache/apt/archives}"
+          if compgen -G "$DEBS/*.deb" >/dev/null; then sudo cp "$DEBS"/*.deb "$ARCHIVES"/; fi
           for attempt in 1 2 3; do
             if sudo apt-get "${APT_OPTS[@]}" update -qq \
                && sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv squashfs-tools pulseaudio pulseaudio-utils; then
+              mkdir -p "$DEBS"
+              if compgen -G "$ARCHIVES/*.deb" >/dev/null; then cp "$ARCHIVES"/*.deb "$DEBS"/; fi
               exit 0
             fi
             echo "apt attempt $attempt failed -- retrying in $((attempt * 20))s"
