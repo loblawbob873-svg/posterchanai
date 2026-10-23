@@ -166,6 +166,14 @@ class DeleteRefused(Exception):
         self.deleted = deleted
 
 
+class DeleteCutShort(Exception):
+    """The relay stopped answering part-way through a strict delete (the cause is chained). `deleted` is how many
+    documents went before it did -- a caller holding a cache of the collection must drop it when that is > 0."""
+    def __init__(self, msg: str, deleted: int = 0):
+        super().__init__(msg)
+        self.deleted = deleted
+
+
 async def delete_calendar(db, user, calendar: str, *, strict: bool = False) -> int:
     """Drop a calendar and every item in it. Returns how many events were deleted.
 
@@ -177,17 +185,24 @@ async def delete_calendar(db, user, calendar: str, *, strict: bool = False) -> i
     port = _port(db)
     n = refused = 0
     docs = await store.list_docs(port, f"{NS_ITEM}{calendar}:", seckey=sk, limit=_SCAN_LIMIT, strict=strict)
-    for d in docs:
-        if await store.delete_doc(port, sk, d, strict=strict):
+    try:
+        for d in docs:
+            if await store.delete_doc(port, sk, d, strict=strict):
+                n += 1
+            else:
+                refused += 1
+        if strict and refused:
+            raise DeleteRefused(f"{refused} of {len(docs)} items refused", n)
+        if await store.delete_doc(port, sk, f"{NS_META}{calendar}", strict=strict):
             n += 1
-        else:
-            refused += 1
-    if strict and refused:
-        raise DeleteRefused(f"{refused} of {len(docs)} items refused", n)
-    if await store.delete_doc(port, sk, f"{NS_META}{calendar}", strict=strict):
-        n += 1
-    elif strict:
-        raise DeleteRefused("the collection itself was refused", n)
+        elif strict:
+            raise DeleteRefused("the collection itself was refused", n)
+    except DeleteRefused:
+        raise
+    except Exception as e:
+        # Only strict mode raises here. Say how much already went, or the caller cannot tell "nothing changed"
+        # from "half the collection is gone" and leaves CalDAV serving what was deleted.
+        raise DeleteCutShort(f"the relay stopped answering after {n} of {len(docs) + 1} deletes", n) from e
     return n
 
 
