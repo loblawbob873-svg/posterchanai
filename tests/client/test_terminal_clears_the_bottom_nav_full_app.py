@@ -105,3 +105,43 @@ def test_text_size_more_menu_and_split_panes():
         assert not await b.js("__errors"), await b.js("__errors")
 
     asyncio.run(desktop.with_browser('online', '', check))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_history_from_another_device_is_typed_in_and_detach_leaves_the_shell_running():
+    """The history button appears once a command arrives from ANOTHER terminal of this account (an encrypted ephemeral
+    21078 to yourself); its panel names the command and the device, and pressing a row TYPES it at the prompt -- never
+    runs it, since a command from another machine may name a path this one does not have. More → Detach leaves the
+    shell running (the local session is detached, not closed)."""
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=860, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        # Another device ran a command: its encrypted history event is on the relay when this terminal subscribes.
+        await b.js(r"""(async()=>{const me=__PC.me().pubkey,at=Date.now()+2000;
+          const content=await __PC.nip44enc(me,JSON.stringify({c:'make deploy-check',at,d:'Laptop'}));
+          const ev=await __PC.signTemplate({kind:PCTermHistory.KIND||21078,created_at:Math.floor(at/1000),tags:[],content});
+          (window.__events=window.__events||[]).push(ev);})()""")
+        await b.js("__PC.switchView('terminal'); true")
+        await b.until("!!document.querySelector('.xterm-viewport') && document.querySelector('.xterm-screen').getBoundingClientRect().height>100")
+        await b.js("(()=>{window.__detached=[];window.__closed=[];const d=pcTerm.detach,c=pcTerm.close;"
+                   "pcTerm.detach=async(...a)=>{__detached.push(a);return d(...a)};pcTerm.close=async(...a)=>{__closed.push(a);return c(...a)};})()")
+        await b.until("!document.querySelector('#tty-hist').classList.contains('hidden')")
+        await b.js("document.querySelector('#tty-hist').click(); 1")
+        await b.until("!document.querySelector('#tty-hist-panel').hidden && document.querySelector('#tty-hist-panel').innerText.includes('make deploy-check')")
+        assert 'Laptop' in await b.js("document.querySelector('#tty-hist-panel').innerText")
+        before = await b.js("__localWrites.length")
+        await b.js("document.querySelector('#tty-hist-panel .tty-hist-row').click(); 1")
+        await b.until(f"__localWrites.slice({before}).join('').includes('make deploy-check')")
+        typed = await b.js(f"__localWrites.slice({before}).join('')")
+        assert '\r' not in typed and '\n' not in typed, ('a command from another device was RUN, not typed in', typed)
+        assert await b.js("document.querySelector('#tty-hist-panel').hidden")
+
+        await b.js("document.querySelector('#tty-more').click(); 1")
+        await b.until("!document.querySelector('#tty-more-menu').hidden && !document.querySelector('#tty-stop').classList.contains('hidden')")
+        await b.js("document.querySelector('#tty-stop').click(); 1")
+        await b.until("__detached.length>0 || !PCTerm.connected()")
+        assert not await b.js("__closed.length"), 'Detach closed the shell'
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    asyncio.run(desktop.with_browser('online', '', check))

@@ -263,8 +263,11 @@
        * at all — `since` says which of those two we are relying on. */
       try{
         if(!window.Relay || typeof Relay.subscribe !== 'function') return;
+        /* `{ onEvent }`, never a bare callback: Relay.subscribe destructures its second argument, so a function handed
+         * to it was silently ignored -- every terminal published its commands and none ever heard another's
+         * (2026-10-22; the history button never appeared from another device). */
         histOff = Relay.subscribe([{ kinds: [H.KIND], authors: [me], since: Math.floor(Date.now() / 1000) }],
-          async (ev) => {
+          { onEvent: async (ev) => {
             if(!ev || !ev.id || histSeen.has(ev.id)) return;
             histSeen.add(ev.id);
             let o = null;
@@ -272,7 +275,7 @@
             if(!o || !o.c) return;
             ring.add(String(o.c), Number(o.at) || (ev.created_at * 1000), String(o.d || ''));
             _histPaint();
-          });
+          } });
       }catch(_){ histOff = null; }
     }
 
