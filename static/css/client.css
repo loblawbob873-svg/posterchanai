@@ -10515,6 +10515,7 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .sms-arc-open{align-self:center;margin:10px auto 4px}
 .sms-arc-head{display:flex;gap:10px;align-items:center;font-weight:700;margin:8px 0}
 .sms-thread.sms-archived{opacity:.8}
+.sms-msgs .bubble.sms-hit{outline:2px solid var(--accent);outline-offset:2px}
 .sms-arc-item{font-size:.92rem}
 .sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .sms-thread{display:flex;gap:12px;align-items:center;width:100%;text-align:left;

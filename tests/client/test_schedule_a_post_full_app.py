@@ -176,3 +176,54 @@ def test_an_error_page_from_the_instance_says_not_scheduled_not_unexpected_token
     """"scheduled posts is giving invalid json, scheduled failed, unexpected token" (2026-10-16): the instance
     answered with nginx's HTML 502 (the app restarting for a deploy) and the client parsed it as JSON."""
     asyncio.run(desktop.with_browser('online', '', _schedule_into_a_gateway_page, extra_init=RELAY + GATEWAY_PAGE))
+
+
+UNREADABLE = r'''
+window.__listFail=true;window.__cancelFail=false;window.__listCalls=0;window.__cancels=[];
+window.__posts=[{id:700,status:'pending',scheduled_at:Math.floor(Date.now()/1000)+7200,preview:'STILL GOING OUT AT NINE'}];
+{const f0=window.fetch;window.fetch=function(url,opts){const u=String(url);
+ const json=(d,s)=>Promise.resolve(new Response(JSON.stringify(d),{status:s||200,headers:{'Content-Type':'application/json'}}));
+ const down=()=>json({ok:false,error:'scheduled posts are unavailable right now — this node’s datastore could not be asked; try again shortly'},503);
+ if(u.includes('/client/scheduled/list')){__listCalls++;return __listFail?down():json({ok:true,posts:__posts});}
+ if(u.includes('/client/scheduled/cancel')){__cancels.push(JSON.parse(opts.body).id);return __cancelFail?down():json({ok:true});}
+ if(u.includes('/client/drafts'))return json({ok:true,drafts:[]});
+ return f0.apply(this,arguments);};}
+'''
+
+
+async def _unreadable_schedule_is_said(b):
+    await desktop.login(b)
+    await b.js("window.__toasts=[];new MutationObserver(()=>{document.querySelectorAll('.toast').forEach(t=>__toasts.push(t.textContent))})"
+               ".observe(document.body,{childList:true,subtree:true});")
+    # A fresh device opens Drafts while the node cannot read the schedule: it SAYS so -- never an empty section.
+    await b.js("__PC.switchView('drafts')")
+    await b.until("__listCalls>=1 && !!document.querySelector('#sched-section #sched-unreadable')")
+    said = await b.js("document.querySelector('#sched-unreadable').innerText")
+    assert 'Couldn’t load your scheduled posts' in said and 'still scheduled' in said, said
+    assert 'unavailable right now' in said, ('the reason is not said', said)
+    assert not await b.js("!!document.querySelector('#sched-section .sched-card')")
+    # The node answers again: Try again shows what is scheduled, and the notice goes.
+    await b.js("__listFail=false; document.querySelector('#sched-retry').click()")
+    card = '#sched-section .sched-card[data-sid="700"]'
+    await b.until(f"!!document.querySelector({json.dumps(card)}) && !document.querySelector('#sched-unreadable')")
+    # A cancel the node could not take: said as such, and the post is still listed as scheduled.
+    await b.js("__cancelFail=true")
+    await b.js(f"document.querySelector({json.dumps(card)} + ' [data-act=cancel]').click()")
+    await _confirm(b)
+    await b.until("__cancels.length===1 && __toasts.some(t=>/STILL SCHEDULED/.test(t))")
+    toasts = await b.js("__toasts")
+    assert not [t for t in toasts if 'too late' in t], ('a cancel that never reached the node was called "already posted"', toasts)
+    await b.until(f"!!document.querySelector({json.dumps(card)}) && !document.querySelector({json.dumps(card)} + ' [data-act=cancel]').disabled")
+    # ...and once it can, the same button cancels it.
+    await b.js("__cancelFail=false;__posts=[]")
+    await b.js(f"document.querySelector({json.dumps(card)} + ' [data-act=cancel]').click()")
+    await _confirm(b)
+    await b.until(f"__cancels.length===2 && !document.querySelector({json.dumps(card)})")
+    assert not await b.js('__errors'), await b.js('__errors')
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_schedule_the_node_cannot_read_is_said_and_a_failed_cancel_is_not_called_too_late():
+    """Drafts showed NOTHING when /client/scheduled/list failed -- the look of "nothing scheduled" -- and every
+    failed cancel was toasted "too late — it already posted" about a post that was still going out."""
+    asyncio.run(desktop.with_browser('online', '', _unreadable_schedule_is_said, extra_init=RELAY + UNREADABLE))
