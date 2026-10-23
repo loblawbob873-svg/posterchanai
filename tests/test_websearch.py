@@ -324,14 +324,24 @@ class RedirectSsrfTests(unittest.TestCase):
         class _Resp:
             def __init__(self, url, status, headers, body):
                 self.url, self.status_code, self.headers, self.text = url, status, headers, body
+                self.encoding = "utf-8"
             def raise_for_status(self):
                 if self.status_code >= 400:
                     raise httpx.HTTPStatusError("boom", request=None, response=None)
+            async def aiter_bytes(self):
+                yield self.text.encode()
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
         seen = []
         class _Client:
             async def __aenter__(self_inner): return self_inner
             async def __aexit__(self_inner, *a): return False
             async def get(self_inner, url, headers=None):
+                seen.append(url)
+                st, hd, body = pages[url]
+                return _Resp(url, st, hd, body)
+            def stream(self_inner, method, url, headers=None):
+                # The fetchers STREAM (a byte cap that holds), so the fake answers the same call.
                 seen.append(url)
                 st, hd, body = pages[url]
                 return _Resp(url, st, hd, body)
@@ -808,7 +818,7 @@ def test_bot_challenge_is_reported_as_a_refusal_not_as_a_js_page():
 def test_plain_error_status_says_the_site_refused():
     from app.routers.websearch import _refused_page
     out = _refused_page("https://example.com/x", 403, "<html><body>no</body></html>")
-    assert "refused this request (403)" in out
+    assert "refused this request (HTTP 403)" in out
 
 
 def test_a_genuinely_script_built_page_still_gets_the_js_message():

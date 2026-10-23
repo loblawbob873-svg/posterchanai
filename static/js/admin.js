@@ -312,7 +312,6 @@ async function loadUsers() {
                                    value="${quota_mb === '∞' ? '0' : quota_mb}" step="0.1" min="0"
                                    placeholder="MB (0=unlimited)">
                             <button class="btn-secondary btn-small" onclick="updateStorageQuota(${u.id}, '${escapeHtml(u.username)}')">Set</button>
-                            <button class="btn-secondary btn-small" onclick="generateThumbnailsForUser(${u.id}, '${escapeHtml(u.username)}')" title="Generate thumbnails for this user's images">🖼️ Thumbnails</button>
                         </div>
                         <div class="user-control-row">
                             <span class="user-control-label">Access</span>
@@ -437,70 +436,6 @@ async function updateCapabilities(userId, username) {
 // Storage scanning moved to user-level - users can scan their own storage from User Settings
 // Removed rescanUserStorage function - users should use the scan button in their own User Settings
 
-async function generateThumbnailsForUser(userId, username) {
-    if (!(await pcConfirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`))) {
-        return;
-    }
-    
-    try {
-        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${userId}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.results && data.results.length > 0) {
-                const result = data.results[0];
-                if (result.status === 'success') {
-                    pcAlert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
-                } else {
-                    pcAlert(`Error rescanning storage for ${username}: ${result.error || 'Unknown error'}`);
-                }
-            } else {
-                pcAlert(data.message || 'Storage rescanned');
-            }
-        } else {
-            const error = await response.json();
-            pcAlert(`Error: ${error.detail || 'Failed to rescan storage'}`);
-        }
-    } catch (err) {
-        console.error('Storage rescan error:', err);
-        pcAlert(`Error: ${err.message}`);
-    }
-}
-
-// Generate thumbnails for a specific user
-async function generateThumbnailsForUser(userId, username) {
-    if (!(await pcConfirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`))) {
-        return;
-    }
-    
-    try {
-        const response = await csrfFetch(`/api/admin/generate-thumbnails?user_id=${userId}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.results && data.results.length > 0) {
-                const result = data.results[0];
-                if (result.status === 'success') {
-                    pcAlert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
-                } else {
-                    pcAlert(`Error generating thumbnails for ${username}: ${result.error || 'Unknown error'}`);
-                }
-            } else {
-                pcAlert(data.message || 'Thumbnail generation completed');
-            }
-        } else {
-            const error = await response.json();
-            pcAlert(`Error: ${error.detail || 'Failed to generate thumbnails'}`);
-        }
-    } catch (err) {
-        console.error('Thumbnail generation error:', err);
-        pcAlert(`Error: ${err.message}`);
-    }
-}
 
 // Create user
 // Users tab retired — guard so a missing #createUserForm doesn't abort the whole script.

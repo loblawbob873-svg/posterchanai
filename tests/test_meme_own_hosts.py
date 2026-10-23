@@ -110,7 +110,8 @@ class TestGuardHonoursOwnHosts(unittest.TestCase):
         vals = {"blossom_public_url": "", "nostr_dvm_blossom_url": "", "media_own_hosts": own_hosts}
         with mock.patch.object(search_service.settings_store, "get",
                                lambda k, *a, **kw: vals.get(k, "")), \
-             mock.patch.object(search_service.socket, "gethostbyname", return_value="192.168.0.1"):
+             mock.patch.object(search_service.socket, "getaddrinfo",
+                               return_value=[(2, 1, 6, "", ("192.168.0.1", 443))]):
             return search_service.is_safe_url(url)
 
     def test_a_listed_own_host_is_allowed_despite_the_private_address(self):

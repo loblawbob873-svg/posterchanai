@@ -65,9 +65,15 @@ class PinnedTransport(httpx.AsyncHTTPTransport):
         httpx.AsyncClient(transport=redirect_guard.PinnedTransport(), event_hooks=redirect_guard.HOOKS, ...)
     """
 
+    def __init__(self, *args, trust=None, **kwargs):
+        """`trust(host) -> bool`: a caller's OWN exemptions (names its guard already passes as this deployment's
+        own, e.g. `search_service`'s trusted domains), connected to as resolved exactly like `_own_media`."""
+        super().__init__(*args, **kwargs)
+        self._trust = trust
+
     async def handle_async_request(self, request):
         host = request.url.host
-        if _own_media(host):
+        if _own_media(host) or (self._trust is not None and host and self._trust(host)):
             return await super().handle_async_request(request)
         if not host or host.lower() == "localhost" or host.lower().endswith((".local", ".internal", ".lan")):
             raise RedirectRefused(f"refused: {host} is not a public address", request=request)

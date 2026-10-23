@@ -228,7 +228,8 @@ class Routers:
         try:
             h.send_response(r.status_code)
             for k, v in r.headers.items():
-                if k.lower() in ('content-type', 'x-document-extension', 'content-disposition', 'cache-control'):
+                if k.lower() in ('content-type', 'x-document-extension', 'content-disposition', 'cache-control',
+                                 'content-security-policy', 'referrer-policy', 'x-content-type-options'):
                     h.send_header(k, v)
             h.send_header('Content-Length', str(len(r.content)))
             h.end_headers()
