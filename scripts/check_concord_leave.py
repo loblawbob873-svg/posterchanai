@@ -247,6 +247,15 @@ async def drive(url):
                    and doc is after["vault"][-1]):
                 problems.append(f"{label} the newest vault document still carries the left community")
 
+            # --- 1b. A write that is NOT a join must not undo the Leave (2026-10-22). -----------
+            # A rekey/dissolution adopted, a staff grant, the backfill, the instance auto-join: each
+            # writes the room again from a device list that can be older than the Leave, and every
+            # one used to stamp itself past the tombstone -- a fresh device then showed it again.
+            await evaluate(ws, r"""PCConcord.persistArmadaMembership(window.__PC,{...room,
+              cord:{bundle:{community_id:'c'.repeat(64),owner:'a'.repeat(64),owner_salt:'2'.repeat(64),root_epoch:0,
+                community_root:'d'.repeat(64),channels:[{id:'e'.repeat(64),key:'f'.repeat(64),epoch:0,name:'general'}],
+                relays:['wss://relay.test']}}}).then(()=>1)""")
+
             # --- 2. A FRESH DEVICE on the same account must stay out. ------------------------
             await evaluate(ws, "window.__becomeFreshDevice()")
             if not await boot(ws, url, "!!window.__ready && !!document.querySelector('.cc-app')"):
@@ -281,7 +290,7 @@ async def drive(url):
                   community_root:'d'.repeat(64),
                   channels:[{id:'e'.repeat(64),key:'f'.repeat(64),epoch:0,name:'general'}],relays:['wss://relay.test']}}};
               localStorage.setItem('pc.concord.rooms.v1.'+OWNER,JSON.stringify([fresh]));
-              const ok=await PCConcord.persistArmadaMembership(window.__PC,fresh);
+              const ok=await PCConcord.persistArmadaMembership(window.__PC,fresh,{join:true});
               return {ok,left:PCConcord.leftCommunities('a'.repeat(64)).length};})()""")
             if not rejoined["ok"]:
                 problems.append(f"{label} re-joining could not publish membership")
