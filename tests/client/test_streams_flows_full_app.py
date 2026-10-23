@@ -32,7 +32,6 @@ import json
 import os
 import shutil
 import socket
-import subprocess
 import tempfile
 import threading
 import time
@@ -44,7 +43,11 @@ import websockets
 from tests.client import realnode_harness as R
 from tests.client import wallpaper_harness as H
 
-CHROME = pytest.mark.skipif(not R.chrome_ok() or not shutil.which('ffmpeg'), reason='Chrome and ffmpeg required')
+CHROME = pytest.mark.skipif(not R.chrome_ok(), reason='Chrome required')
+# A committed stream, not one made by ffmpeg at test time (the desktop CI runner has no ffmpeg; a skip there fails the
+# build). Made once with: ffmpeg -f lavfi -i testsrc=size=160x120:rate=10 -t 6 -c:v libx264 -pix_fmt yuv420p -g 10
+#   -f hls -hls_time 1 -hls_list_size 0 tests/fixtures/hls_stream/index.m3u8
+HLS_FIXTURE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'fixtures', 'hls_stream')
 ALICE, BOB, CAROL = 31, 32, 33        # account keys not used by other suites
 CFG = {'wot_enabled': True}
 
@@ -55,10 +58,8 @@ class HlsServer:
 
     def __init__(self):
         self.dir = tempfile.mkdtemp(prefix='pc-hls-')
-        subprocess.run(['ffmpeg', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10',
-                        '-t', '6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '10', '-f', 'hls',
-                        '-hls_time', '1', '-hls_list_size', '0', os.path.join(self.dir, 'index.m3u8')],
-                       check=True, timeout=60)
+        for name in os.listdir(HLS_FIXTURE):
+            shutil.copyfile(os.path.join(HLS_FIXTURE, name), os.path.join(self.dir, name))
         self.release = threading.Event()
         self.hits = []
         outer = self

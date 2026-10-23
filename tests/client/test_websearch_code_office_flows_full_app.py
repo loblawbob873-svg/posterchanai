@@ -259,15 +259,22 @@ async def a_node_that_cannot_answer_never_costs_an_edit(S):
     path = os.path.join(ws, 'plan.txt')
     with open(path, 'w') as f:
         f.write('step one\n')
-    # The node cannot list the folder: Code says so -- never an empty workspace, never a spinner for ever.
+    # The node does not answer at all: Code says it could not reach it and offers Try again -- which asks again.
+    api.fail('/api/code/config', 503, tag)
     api.fail('/api/code/tree', 503, tag)
     d = await S.device(0, tag=tag)
-    await open_code(d)
+    await d.b.js("__PC.switchView('code');true")
+    await F.wait(d, "!!document.querySelector('#pcc-gate-retry')", 40, 'Try again on an unreachable node')
+    api.heal('/api/code/config', tag)
+    await d.b.js("document.querySelector('#pcc-gate-retry').click();true")
+    # Then it cannot list the folder: Code says so -- never an empty workspace, never a spinner for ever. (Waited for
+    # in place: re-entering the screen retries by itself, which would pass without the button doing anything.)
+    await F.wait(d, "!!document.querySelector('#pcc-tree .pcc-note')", 20, 'the tree read after Try again')
     note = await d.b.js("(document.querySelector('#pcc-tree .pcc-note')||{}).textContent||''")
     assert note and 'empty' not in note.lower(), note
     api.heal('/api/code/tree', tag)
-    await d.b.js("__PC.switchView('home');true")
-    await open_code(d)
+    await d.b.js("document.querySelector('#pcc-tree-retry').click();true")
+    await F.wait(d, "!!document.querySelector('#pcc-tree .pcc-item')", 20, 'the tree after Try again')
     await open_file(d, 'plan.txt')
     await type_text(d, 'step one\nstep two\n')
     # The save is refused: the edit stays in the tab, unsaved, and the file on disk is untouched.

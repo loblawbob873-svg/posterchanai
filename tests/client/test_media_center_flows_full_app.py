@@ -17,15 +17,18 @@ Fail-first: PC_JOURNEY_OVERRIDE="/static/js/client/mediacenter.js=<copy>" serves
 import asyncio
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from tests.client import test_desktop_offline_full_app as desktop
 
-pytestmark = pytest.mark.skipif(not (Path('/opt/google/chrome/chrome').exists() and shutil.which('ffmpeg')),
-                                reason='Chrome and ffmpeg required')
+pytestmark = pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+# A committed clip, not one made by ffmpeg at test time: the desktop CI runner has no ffmpeg, and a test that skips
+# there fails the build (tests/test_ci_required_tests_need_only_runner_tools.py). Made once with:
+#   ffmpeg -f lavfi -i testsrc=size=160x120:rate=10 -f lavfi -i sine=frequency=440 -t 4 -c:v libx264 -pix_fmt yuv420p
+#          -c:a aac -hls_time 1 -hls_playlist_type vod tests/fixtures/hls_mediacenter/master.m3u8
+HLS_FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures' / 'hls_mediacenter'
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -35,12 +38,7 @@ def bundled_assets():
         for pair in filter(None, os.environ.get('PC_JOURNEY_OVERRIDE', '').split(',')):
             path, _, src = pair.partition('=')
             shutil.copyfile(src, root / path.lstrip('/'))
-        hls = root / 'hls'
-        hls.mkdir()
-        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10', '-f', 'lavfi',
-                        '-i', 'sine=frequency=440', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
-                        '-hls_time', '1', '-hls_playlist_type', 'vod', str(hls / 'master.m3u8')],
-                       check=True, timeout=60)
+        shutil.copytree(HLS_FIXTURE, root / 'hls')
         yield
 
 
