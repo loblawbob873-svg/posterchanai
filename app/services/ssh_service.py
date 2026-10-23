@@ -122,6 +122,30 @@ def _mux_command(name: str, screen_marker: str = "") -> str:
     )
 
 
+def _locked_key(path: str, err: Exception):
+    """The passphrase error hidden behind `err`, when the configured key file is passphrase-protected.
+
+    paramiko tries a key FILE as each key type in turn (RSA, ECDSA, Ed25519) and re-raises the LAST type's
+    complaint. For a passphrase-protected PEM key (`BEGIN RSA PRIVATE KEY` + `Proc-Type: 4,ENCRYPTED`, what
+    `ssh-keygen -m PEM` and openssl write) the RSA attempt says "Private key file is encrypted" and the Ed25519
+    one then overwrites it with "encountered RSA key, expected OPENSSH key" -- which the terminal could only
+    call "the SSH handshake failed". So ask the file directly, once, and only when the connect already failed
+    for a reason that is not authentication or the host's key."""
+    import paramiko
+    if not path or isinstance(err, (paramiko.AuthenticationException, paramiko.BadHostKeyException, OSError)):
+        return None
+    if "known_hosts" in str(err):
+        return None
+    for cls in (paramiko.RSAKey, paramiko.ECDSAKey, paramiko.Ed25519Key):
+        try:
+            cls.from_private_key_file(path)
+        except paramiko.PasswordRequiredException as e:
+            return e
+        except Exception:
+            continue
+    return None
+
+
 def multiplex_enabled() -> bool:
     return (_get("ssh_terminal_multiplex", "true") or "true").strip().lower() != "false"
 
@@ -444,7 +468,16 @@ class SshSession:
                 kwargs["key_filename"] = h.key
             if password:
                 kwargs["password"] = password
-            cli.connect(**kwargs)
+            try:
+                cli.connect(**kwargs)
+            except Exception as e:
+                # HANG UP. A refused connect left paramiko's transport running -- a thread here and a TCP
+                # connection "awaiting auth" on the host -- for EVERY failed attempt, and the client retries.
+                cli.close()
+                locked = _locked_key(h.key, e)
+                if locked is not None:
+                    raise locked from e
+                raise
             if mux:
                 # A PTY running the multiplexer, rather than invoke_shell's login shell. Same channel
                 # shape either way — `get_pty` + `exec_command` IS what invoke_shell does, with a

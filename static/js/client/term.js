@@ -1390,7 +1390,12 @@
           }
     }
 
-    const _FINAL = /not allowed|switched off|no such host|maximum number|too many terminals|no shell of its own|origin may not|expected an open frame/i;
+    /* A HOST'S CONFIGURATION IS FINAL TOO. "could not connect" alone reads as too early, but its KEY reasons cannot
+     * get better by waiting: a passphrase-protected or .pub key file, a missing one, a key the host refuses, a host
+     * key nobody recorded. Retried, a keyed host showed "not ready yet — retrying" for ~40s with the reason hidden
+     * in a tooltip, and dialled the host nine times with the same bad key
+     * (tests/client/test_terminal_calculator_flows_full_app.py::test_a_keyed_host_connects_and_each_key_failure_says_which). */
+    const _FINAL = /not allowed|switched off|no such host|maximum number|too many terminals|no shell of its own|origin may not|expected an open frame|refused those credentials|passphrase-protected|not a usable private key|key file configured|know that host's key|host key changed/i;
     function _tooEarly(msg){
       const t = String(msg || '');
       if(_FINAL.test(t)) return false;

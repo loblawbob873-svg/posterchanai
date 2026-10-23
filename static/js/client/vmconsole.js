@@ -67,7 +67,11 @@
     ws.onmessage = (e) => {
       if(typeof e.data !== 'string') return;          // nothing binary may arrive before `go`
       let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-      if(m.t === 'err'){ status('error', m.m || 'The host refused the console'); try{ ws.close(); }catch(_){} return; }
+      /* THE REFUSAL IS THE LAST WORD. Without `closed` set here, the socket closing right behind it (the host
+       * closes after every refusal) ran onclose's "The console closed" over the reason -- so a dead display, an
+       * expired ticket or a VM stopped meanwhile all read as an ordinary close
+       * (tests/client/test_vms_screen_flows_full_app.py::test_a_console_on_a_vm_that_stopped_or_a_dead_display*). */
+      if(m.t === 'err'){ closed = true; status('error', m.m || 'The host refused the console'); try{ ws.close(); }catch(_){} return; }
       if(m.t !== 'ok' || rfb) return;
       try{
         rfb = new RFB(o.target, ws, { credentials: { password: o.password || '' }, shared: true });

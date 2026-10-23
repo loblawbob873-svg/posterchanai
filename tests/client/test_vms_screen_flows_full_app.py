@@ -15,6 +15,13 @@ boundary, the `virsh` command line.
            host that drops strangers look identical), a host that answers LATE, and the home relay never
            answering one device's read of the host list (discover_flows_harness.Gate).
 
+  Console  the VM's screen: Console -> console.ticket over Nostr -> the shipped vmconsole.js + vendored noVNC ->
+           /ws/vmconsole on the node (spliced byte for byte to the SHIPPED app/routers/vmhost.py on uvicorn, as nginx
+           routes it) -> the display `virsh dumpxml` names, which is a VNC server speaking real RFB 3.8 with VNC
+           authentication against the password the host set over QMP (`virsh qemu-monitor-command set_password`,
+           answered with the captured reply). Keys typed on the console's keyboard arrive as RFB KeyEvents; Close
+           ends the TCP connection and the host's live-console registry.
+
 There is no HTTP endpoint on this screen to fail with a 503: listing and power go over Nostr; the router
 (app/routers/vmhost.py) only carries the console WebSocket, ISO upload and migration transfer.
 
@@ -22,21 +29,33 @@ Harness: tests/client/discover_flows_harness.py. Fail-first: PC_JOURNEY_OVERRIDE
 """
 import asyncio
 import json
+import os
 import re
 import shutil
+import socket
+import socketserver
+import struct
+import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from tests.client import discover_flows_harness as F
 from tests.client import realnode_harness as R
+from tests.client import wallpaper_harness as H
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import vmhost_rfb  # noqa: E402  (the probe's VNC DES -- independent of noVNC's, which is what is being tested)
 
 CHROME = pytest.mark.skipif(not R.chrome_ok(), reason='Chrome required')
 FEATURE_COVERS = ('vms',)
 FIRST_FILL = 60           # 60 .. 83 (account keys are one byte)
 SCENARIOS = {}
-COST = {'a_host_that_stops_answering_keeps_the_last_list_and_says_so': 45,
+COST = {'a_console_on_a_vm_that_stopped_or_a_dead_display_or_a_silent_host_says_which': 50,
+        'a_host_that_stops_answering_keeps_the_last_list_and_says_so': 45,
         'a_fresh_device_whose_host_list_read_is_unanswered_never_writes_over_it': 40,
         'an_added_host_reaches_a_fresh_device_of_the_same_account': 30}
 CAP = Path(__file__).resolve().parents[1] / 'fixtures' / 'vmhost_real'
@@ -57,6 +76,102 @@ def vm_uuid(base, k):
     return '%08d-0000-4000-8000-%012d' % (base, k)
 
 
+# ------------------------------------------------------------------------------------------------ the VM's display
+class Display:
+    """A VM's VNC display as QEMU serves it on loopback: RFB 3.8, VNC authentication against the password the host
+    last set over QMP, a 64x48 framebuffer. Records what a console sends: `auth` (ok?), `keys` (keysym, down)."""
+    W, H = 64, 48
+
+    def __init__(self):
+        disp = self
+        self.password = None
+        self.auth, self.keys, self.live, self.closed = [], [], 0, 0
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                disp.live += 1
+                try:
+                    disp._serve(self.request)
+                except (OSError, ValueError):
+                    pass
+                finally:
+                    disp.live -= 1
+                    disp.closed += 1
+
+        class Server(socketserver.ThreadingTCPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+        self.server = Server(('127.0.0.1', 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    @staticmethod
+    def _read(sock, n):
+        b = b''
+        while len(b) < n:
+            c = sock.recv(n - len(b))
+            if not c:
+                raise ValueError('closed')
+            b += c
+        return b
+
+    def _serve(self, sock):
+        rd = lambda n: self._read(sock, n)
+        sock.sendall(b'RFB 003.008\n')
+        rd(12)
+        sock.sendall(bytes([1, 2]))                              # one security type: VNC authentication
+        if rd(1) != b'\x02':
+            return
+        challenge = os.urandom(16)
+        sock.sendall(challenge)
+        answer = rd(16)
+        ok = bool(self.password) and answer == vmhost_rfb.vnc_auth_response(self.password, challenge)
+        self.auth.append(ok)
+        if not ok:
+            why = b'Authentication failed'
+            sock.sendall(struct.pack('>II', 1, len(why)) + why)
+            return
+        sock.sendall(struct.pack('>I', 0))
+        rd(1)                                                    # ClientInit
+        name = b'pc-test-vm'
+        sock.sendall(struct.pack('>HH', self.W, self.H) + bytes([32, 24, 0, 1]) + struct.pack('>HHH', 255, 255, 255)
+                     + bytes([16, 8, 0, 0, 0, 0]) + struct.pack('>I', len(name)) + name)
+        drawn = False
+        while True:
+            t = rd(1)[0]
+            if t == 0:
+                rd(19)
+            elif t == 2:
+                n = struct.unpack('>xH', rd(3))[0]
+                rd(4 * n)
+            elif t == 3:
+                incremental = rd(9)[0]
+                if not drawn or not incremental:
+                    drawn = True
+                    sock.sendall(struct.pack('>BxH', 0, 1) + struct.pack('>HHHHi', 0, 0, self.W, self.H, 0)
+                                 + b'\x40\x80\xc0\x00' * (self.W * self.H))
+            elif t == 4:
+                down, key = struct.unpack('>BxxI', rd(7))
+                self.keys.append((key, bool(down)))
+            elif t == 5:
+                rd(5)
+            elif t == 6:
+                n = struct.unpack('>xxxI', rd(7))[0]
+                rd(n)
+            elif t == 150:
+                rd(9)
+            else:
+                return                                           # a message this display does not speak
+
+    def typed(self):
+        """The characters pressed (key-down events of printable keysyms), in order."""
+        return ''.join(chr(k) for k, down in self.keys if down and 32 <= k < 127)
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
 # ------------------------------------------------------------------------------------------------ the hypervisor
 class Virsh:
     """The `virsh` CLI as VirshBackend runs it. `fail[(verb, uuid)]` = stderr of a refused command;
@@ -66,6 +181,8 @@ class Virsh:
         self.domains = {}        # uuid -> dict(name, state, vcpus, kib, meta)
         self.fail = {}
         self.calls = []
+        self.displays = {}       # uuid -> Display (a running domain's VNC); `ports` overrides where dumpxml says it is
+        self.ports = {}
 
     def add(self, uuid, name, assigned, state='shut off'):
         from app.services.vmhost import domainxml
@@ -111,6 +228,17 @@ class Virsh:
             return 0, (' Type   Device   Target   Source\n' + '-' * 60 + '\n file   disk     vda      /var/lib/posterchan/vms/%s/disk-vda.qcow2\n\n' % u), ''
         if verb == 'domiflist':
             return 0, cap('virsh-domiflist-inactive'), ''
+        if verb == 'dumpxml' and '--inactive' not in args and d['state'] == 'running':
+            # the captured RUNNING definition: libvirt reports the display it bound (loopback, an allocated port)
+            port = self.ports.get(u) or (self.displays[u].port if u in self.displays else 5900)
+            x = cap('virsh-dumpxml-running').replace('pcprobe-d14cd2', d['name'])
+            x = x.replace('00000000-0000-4000-8000-000000000002', u).replace("port='5900'", "port='%d'" % port)
+            return 0, x, ''
+        if verb == 'qemu-monitor-command':   # QMP: what the console ticket sets on the display, and the real reply
+            cmd = json.loads(args[2])
+            if cmd.get('execute') == 'set_password' and u in self.displays:
+                self.displays[u].password = cmd['arguments']['password']
+            return 0, cap('qmp-set-password'), ''
         if verb == 'dumpxml':             # the captured definition, renamed to this domain
             x = cap('virsh-dumpxml-inactive-efi').replace('pcprobe-d14cd2', d['name'])
             x = x.replace('00000000-0000-4000-8000-000000000002', u)
@@ -207,10 +335,52 @@ class Ctx:
             self.inst.virsh.add(vm_uuid(base, 1), 'alpha-%d' % base, [me])
             self.inst.virsh.add(vm_uuid(base, 2), 'beta-%d' % base, [me])
             self.lab.virsh.add(vm_uuid(base, 3), 'lab-%d' % base, [me], state='running')
+            self.inst.virsh.add(vm_uuid(base, 4), 'gamma-%d' % base, [me], state='running')
+            self.inst.virsh.displays[vm_uuid(base, 4)] = Display()
         for h in (self.inst, self.lab):
             n.loop.run(h.svc.refresh_index())
+        self.console_router()
+
+    def console_router(self):
+        """The SHIPPED console route (app/routers/vmhost.py) on uvicorn, reached at the node's own /ws/vmconsole --
+        the address the instance host's console ticket names (`vmhost_public_url` = this node)."""
+        import uvicorn
+        from fastapi import FastAPI
+        from app.routers import vmhost as vmhost_router
+        from app.services.vmhost import service as vmsvc
+        self.inst.svc.cfg.public_url = self.n.origin
+        vmsvc.set_current(self.inst.svc)
+        app = FastAPI()
+        app.include_router(vmhost_router.ws_router)
+        s = socket.socket()
+        s.bind(('127.0.0.1', 0))
+        self.ws_port = s.getsockname()[1]
+        s.close()
+        self.uv = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=self.ws_port, log_level='warning',
+                                                ws='websockets', lifespan='off'))
+        threading.Thread(target=self.uv.run, daemon=True).start()
+        for _ in range(100):
+            if self.uv.started:
+                break
+            time.sleep(.05)
+        H.ROUTES.insert(0, self.route)
+
+    def route(self, h, method, path, body):
+        if path.split('?')[0] == '/ws/vmconsole':
+            h._splice_to(self.ws_port)               # the upgrade, byte for byte, as nginx routes it
+            return True
+        return False
 
     def stop(self):
+        from app.services.vmhost import service as vmsvc
+        try:
+            H.ROUTES.remove(self.route)
+        except ValueError:
+            pass
+        vmsvc.set_current(None)
+        self.uv.should_exit = True
+        for disp in self.inst.virsh.displays.values():
+            disp.stop()
         self.inst.stop()
         self.lab.stop()
 
@@ -438,3 +608,143 @@ async def a_fresh_device_whose_host_list_read_is_unanswered_never_writes_over_it
 @CHROME
 def test_a_fresh_device_whose_host_list_read_is_unanswered_never_writes_over_it(ran):
     ran('a_fresh_device_whose_host_list_read_is_unanswered_never_writes_over_it')
+
+
+# ------------------------------------------------------------------------------------------------ the console
+CONSOLE = "(document.getElementById('vms-console')||{dataset:{}})"
+CONSOLE_ST = "((document.querySelector('#vms-console .vmc-st')||{}).textContent||'')"
+
+
+async def press_console(d):
+    await F.wait(d, "(b=>b&&!b.disabled)(document.querySelector('#feed [data-act=console]'))", 20, 'the Console button')
+    await d.b.js("document.querySelector('#feed [data-act=console]').click();true")
+    await F.wait(d, "!!document.getElementById('vms-console')", 10, 'the console overlay')
+
+
+@scenario
+async def a_running_vms_console_connects_takes_typing_and_closes_clean(S):
+    """Console on a running VM: the ticket comes over Nostr, noVNC authenticates to the VM's display with the
+    password the host set over QMP -- through the node's /ws/vmconsole -- keys typed on the console's keyboard
+    reach the VM, and Close ends the display connection and the host's record of a live console."""
+    host = S.ctx.inst
+    u = vm_uuid(S.base, 4)
+    disp = host.virsh.displays[u]
+    d = await S.device(0)
+    await open_vms(d)
+    await open_host(d, host.pk)
+    await open_vm(d, u)
+    assert await pill(d) == 'Running'
+    await press_console(d)
+    await R.wait(d.b, "%s.dataset.state==='connected'" % CONSOLE, 40, 'the console connected',
+                 state="({st:%s,state:%s.dataset.state})" % (CONSOLE_ST, CONSOLE))
+    assert disp.auth == [True], ('the display was not reached with the ticket\'s password', disp.auth)
+    assert any(c[0] == 'qemu-monitor-command' and c[1] == u for c in host.virsh.calls), 'no QMP password was set'
+    await F.wait(d, "!!document.querySelector('#vms-console .vmc-screen canvas')", 10, 'the VM\'s screen drawn')
+    assert host.svc.consoles.live_count(u) == 1
+    await d.b.js("document.querySelector('#vms-console [data-c=kbd]').click();true")    # the on-screen keyboard
+    await d.b.call('Input.insertText', {'text': 'ls'})
+    await F.until(lambda: disp.typed() == 'ls', 10, 'the typed keys at the VM', d)
+    await d.b.js("document.querySelector('#vms-console [data-c=close]').click();true")
+    await F.wait(d, "!document.getElementById('vms-console')", 10, 'the console closed')
+    await F.until(lambda: disp.live == 0, 10, 'the display connection ended', d)
+    await F.until(lambda: host.svc.consoles.live_count(u) == 0, 10, 'the host forgot the live console', d)
+
+
+@CHROME
+def test_a_running_vms_console_connects_takes_typing_and_closes_clean(ran):
+    ran('a_running_vms_console_connects_takes_typing_and_closes_clean')
+
+
+@scenario
+async def a_console_on_a_vm_that_stopped_or_a_dead_display_or_a_silent_host_says_which(S):
+    """Three ways a console cannot open, each said in the overlay: the VM was stopped behind the screen's back,
+    its display does not answer, the host does not answer at all. None leaves a live console behind."""
+    host = S.ctx.inst
+    u = vm_uuid(S.base, 4)
+    disp = host.virsh.displays[u]
+    d = await S.device(0)
+    await open_vms(d)
+    await open_host(d, host.pk)
+    await open_vm(d, u)
+    assert await pill(d) == 'Running'
+    host.virsh.domains[u]['state'] = 'shut off'            # powered off from inside the guest, say
+    await press_console(d)
+    await R.wait(d.b, "%s.includes('start the VM before opening its console')" % CONSOLE_ST, 30, 'a stopped VM said',
+                     state="({st:%s})" % CONSOLE_ST)
+    assert disp.auth == []
+    await d.b.js("document.querySelector('#vms-console [data-c=close]').click();true")
+    host.virsh.domains[u]['state'] = 'running'
+    dead = socket.socket()
+    dead.bind(('127.0.0.1', 0))
+    host.virsh.ports[u] = dead.getsockname()[1]           # bound, never listening: a display that is gone
+    try:
+        await press_console(d)
+        await R.wait(d.b, "%s.includes('display is not answering')" % CONSOLE_ST, 30, 'a dead display said',
+                     state="({st:%s})" % CONSOLE_ST)
+        await d.b.js("document.querySelector('#vms-console [data-c=close]').click();true")
+    finally:
+        host.virsh.ports.pop(u, None)
+        dead.close()
+    host.silent.add(S.pk())
+    try:
+        await press_console(d)
+        await R.wait(d.b, "%s.includes('No answer from the host')" % CONSOLE_ST, 40, 'a silent host said',
+                     state="({st:%s})" % CONSOLE_ST)
+    finally:
+        host.silent.discard(S.pk())
+    await d.b.js("document.querySelector('#vms-console [data-c=close]').click();true")
+    assert host.svc.consoles.live_count(u) == 0 and disp.auth == []
+
+
+@CHROME
+def test_a_console_on_a_vm_that_stopped_or_a_dead_display_or_a_silent_host_says_which(ran):
+    ran('a_console_on_a_vm_that_stopped_or_a_dead_display_or_a_silent_host_says_which')
+
+
+ADMIN_OPS = ('vm.create', 'vm.delete', 'vm.assign', 'vm.update', 'vm.snapshot.create', 'host.access.set',
+             'iso.fetch', 'iso.upload_ticket')
+READ_VERBS = {'version', 'nodeinfo', 'nodememstats', 'net-list', 'list', 'dominfo', 'metadata', 'domblklist',
+              'domiflist', 'dumpxml', 'domifaddr'}
+
+
+@scenario
+async def a_member_cannot_do_what_only_an_admin_may_even_by_asking_the_host_directly(S):
+    """The member's screen offers no Delete/Assign/Create -- and the HOST refuses them too: each admin op, sent
+    straight through the client's own RPC with the member's real signature, is answered `forbidden`, and the
+    hypervisor is asked nothing that changes anything."""
+    host, v = S.ctx.inst, S.ctx.inst.virsh
+    u = vm_uuid(S.base, 2)
+    d = await S.device(0)
+    await open_vms(d)
+    await open_host(d, host.pk)
+    await open_vm(d, u)
+    for sel in ('[data-act=delete]', '[data-act=assign]', '[data-act=create]', '[data-act=edit]'):
+        assert not await d.b.js("!!document.querySelector('#feed %s')" % sel), ('an admin control shown to a member', sel)
+    before = len(v.calls)
+    me = S.pk()
+    args = {'vm.create': {'name': 'sneaky-%d' % S.base, 'vcpus': 1, 'ram_mib': 512, 'disk_gib': 1},
+            'vm.delete': {'vm': u, 'confirm': 'beta-%d' % S.base}, 'vm.assign': {'vm': u, 'pubkey': me, 'on': True},
+            'vm.update': {'vm': u, 'vcpus': 4}, 'vm.snapshot.create': {'vm': u, 'name': 's1'},
+            'host.access.set': {'allowed': [me]}, 'iso.fetch': {'url': 'https://example.invalid/x.iso'},
+            'iso.upload_ticket': {'name': 'x.iso', 'size': 1}}
+    for op in ADMIN_OPS:
+        await asyncio.sleep(1.2)          # a member's token bucket refills at 1/s; a burst past it is DROPPED unanswered
+        r = await d.b.js("PCVms._call(%s,%s,%s,{retries:0}).then(r=>JSON.stringify(r))"
+                         % (json.dumps(host.pk), json.dumps(op), json.dumps(args[op])))
+        r = json.loads(r)
+        assert r.get('ok') is False and (r.get('error') or {}).get('code') == 'forbidden', (op, r)
+    # and somebody else's VM is not even there to be asked about: a console ticket for it is `not_found`
+    theirs = vm_uuid(FIRST_FILL + 4 if S.base == FIRST_FILL else FIRST_FILL, 4)
+    await asyncio.sleep(1.2)
+    r = json.loads(await d.b.js("PCVms._call(%s,'console.ticket',{vm:%s},{retries:0}).then(r=>JSON.stringify(r))"
+                                % (json.dumps(host.pk), json.dumps(theirs))))
+    assert r.get('ok') is False and r['error']['code'] == 'not_found', r
+    others = set(v.domains) - {u}             # other scenarios share this hypervisor and run alongside
+    changed = [c for c in v.calls[before:] if c[0] not in READ_VERBS and not (len(c) > 1 and c[1] in others)]
+    assert not changed, ('a member\'s admin request reached the hypervisor', changed)
+    assert u in v.domains and 'sneaky-%d' % S.base not in [x['name'] for x in v.domains.values()]
+
+
+@CHROME
+def test_a_member_cannot_do_what_only_an_admin_may_even_by_asking_the_host_directly(ran):
+    ran('a_member_cannot_do_what_only_an_admin_may_even_by_asking_the_host_directly')
