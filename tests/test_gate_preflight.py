@@ -97,3 +97,17 @@ def test_files_the_preflight_passed_are_not_run_again(monkeypatch):
     assert G["run_preflight"]("r", {}, "d")[3] == set()
     src = (ROOT / "scripts/deploy_regression_gate.py").read_text() if "ROOT" in globals() else open("scripts/deploy_regression_gate.py").read()
     assert "f not in whole and f not in preflight_passed" in src
+
+
+def test_a_server_only_deploy_whose_only_changed_test_drives_a_browser_is_not_an_abort(monkeypatch):
+    """Deploy #35 changed one test file, a browser test; the server-only deploy skips browser tests, so the
+    preflight ran an EMPTY selection, got "no test files discovered" and aborted before any test ran."""
+    files = ["tests/test_%d.py" % i for i in range(10)]
+    g = G["run_preflight"].__globals__
+    monkeypatch.setitem(g, "discover_test_files", lambda root: files)
+    monkeypatch.setitem(g, "deploy_changes", lambda root: ["tests/test_0.py"])
+    monkeypatch.setitem(g, "affected_test_files", lambda root, p, f: ["tests/test_0.py"])
+    monkeypatch.setitem(g, "browser_test_files", lambda root: {"tests/test_0.py"})
+    monkeypatch.setitem(g, "run_full_suite", lambda *a, **k: (False, "no test files discovered"))
+    did, ok, msg, _ = G["run_preflight"]("r", {}, "d", skip_browser=True)
+    assert (did, ok) == (False, True), msg

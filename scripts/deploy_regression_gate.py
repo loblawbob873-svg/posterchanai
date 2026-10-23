@@ -655,6 +655,10 @@ def run_preflight(root, env, directory, jobs=None, skip_browser=False):
         return False, True, 'preflight: nothing changed to select by', set()
     files = discover_test_files(root)
     sel = set(affected_test_files(root, paths, files))
+    if skip_browser and sel:
+        # deploy #35: the one changed test was a browser test on a server-only deploy -- nothing was left to run,
+        # and run_full_suite's "no test files discovered" aborted the deploy before a single test ran.
+        sel -= browser_test_files(root)
     if not sel:
         return False, True, 'preflight: no test names a changed file', set()
     if len(sel) > PREFLIGHT_MAX_SHARE * len(files):
