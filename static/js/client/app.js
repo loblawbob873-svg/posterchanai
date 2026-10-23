@@ -5780,6 +5780,28 @@
       if(feed && !_restoreTlAnchor(feed,place)) feed.scrollTop=top;
     } else _drawTimeline(true);
   }
+  /* WHICH VERSION OF THE FOLLOW LIST THIS DEVICE'S FOLLOWS IS BUILT ON (its created_at): the one adopted from a
+   * relay, or the one this device last published. A follow/unfollow edit unions the relay's list with FOLLOWS
+   * because a relay read can be STALE -- but a list NEWER than this base is another device's edit, not a stale read,
+   * and unioned with FOLLOWS it put back every person that device had just unfollowed (one device open since
+   * morning, an unfollow on the phone, a follow on the laptop: the unfollow was undone). Kept per account. */
+  function _followsAt(){ const m=ClientSettings.get('followsAt',{}); return Number(m && ME && m[ME.pubkey])||0; }
+  function _setFollowsAt(t){ t=Number(t)||0; if(!ME || t<=_followsAt()) return;
+    const m=Object.assign({}, ClientSettings.get('followsAt',{})||{}); m[ME.pubkey]=t; ClientSettings.set('followsAt', m); }
+  /* The set an edit is built on: the relay's newest list, plus what this device holds only when that list is NOT
+   * newer than what this device last saw or wrote (a stale read must not drop a follow made here). */
+  function _followEditBase(cur){
+    const fromRelay = cur ? cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]) : [];
+    if(cur && Number(cur.created_at) > _followsAt()) return new Set(fromRelay);
+    return new Set([...FOLLOWS, ...fromRelay]);
+  }
+  /* "Could not read the list" is not "the list is empty": a fresh device whose read did not come back holds no
+   * follows, and a follow built on that published a list of ONE over everybody the account follows. */
+  // After a publish lands, this device holds exactly the list it published (in place: FOLLOWS is shared).
+  function _adoptFollows(pset){ const me=FOLLOWS.has(ME.pubkey); FOLLOWS.clear(); pset.forEach(p=>FOLLOWS.add(p)); if(me) FOLLOWS.add(ME.pubkey); }
+  function _followReadAnswered(evs){
+    return !!evs && (evs.complete===true || !!(Relay.homeAnswered && Relay.homeAnswered(evs)));
+  }
   async function fetchFollows({repaint=true}={}){
     const owner=ME.pubkey, before=new Set(FOLLOWS);
     (ClientSettings.get('followsCache',[])||[]).forEach(p=>FOLLOWS.add(p));   // seed → never an empty base
@@ -5828,7 +5850,7 @@
           toast('A relay keeps sending back a partial follow list ('+incoming.size+' of '+held
                 +'). Your follows are intact — check your relays in Settings if this continues.'); }
         console.warn('[follows] refused a shrinking read:',incoming.size,'<',held,'from',ev.id);
-      } else { FOLLOWS = incoming; _persistFollows(); }
+      } else { FOLLOWS = incoming; _persistFollows(); _setFollowsAt(ev.created_at); }
     }
     FOLLOWS.add(ME.pubkey);
     // Prefetch follows' profiles for @-autocomplete — but NOT in data saver: pulling ~hundreds of kind-0
@@ -6256,9 +6278,13 @@
     // follow republished from a stale base and dropped the previous one). The union can never silently
     // lose a follow/mute we already know about. Non-p tags (kind-3 relay hints, kind-10000 muted words)
     // are preserved from cur, or rebuilt from memory when the relay returned nothing.
+    if(kind===3 && !cur && !_followReadAnswered(evs)){
+      toast('Couldn’t read your follow list from your relays — nothing was changed. Try again in a moment.');
+      return false;
+    }
     const inmem = kind===3 ? FOLLOWS : kind===10000 ? MUTED : new Set();
     const fromRelay = cur ? cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]) : [];
-    const pset = new Set([...inmem, ...fromRelay]);
+    const pset = kind===3 ? _followEditBase(cur) : new Set([...inmem, ...fromRelay]);
     if (add) pset.add(pk); else pset.delete(pk);
     // A PRIVATE mute stays in the encrypted content: never copy one into the public tags.
     if(kind===10000) MUTED_PRIVATE.forEach(p=>pset.delete(p));
@@ -6280,6 +6306,11 @@
                : undefined;
     const r = await publish(kind, content, tags, opts);
     if(r && r.ok && kind===10000 && !add) MUTED_PRIVATE.delete(pk);
+    if(r && r.ok && kind===3){
+      // This device now holds exactly what it published (another device's edits it built on included).
+      _adoptFollows(pset); if(add) FOLLOWS.add(pk); else FOLLOWS.delete(pk);
+      _setFollowsAt(r.ev && r.ev.created_at);
+    }
     return !!(r && r.ok);   // callers apply the local change + toast ONLY on success (no ghost follow/mute)
   }
   // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
@@ -6292,8 +6323,13 @@
      * list that was signed but never stored (a failed publish whose optimistic copy survived a
      * reload) leaves FOLLOWS holding people no relay knows about -- and judged against FOLLOWS, every
      * retry of the same import found "nothing new", published nothing, and reported success. */
+    if(!cur && !_followReadAnswered(evs)){
+      if(opts && opts.throwOnFail) throw new Error('your follow list could not be read from your relays — nothing was changed');
+      toast('Couldn’t read your follow list from your relays — nothing was changed. Try again in a moment.');
+      return 0;
+    }
     const held = new Set(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[]);
-    const pset = new Set([...FOLLOWS, ...held]);
+    const pset = _followEditBase(cur);
     let added=0; const fresh=[];
     for(const pk of pks){ if(pk && pk!==ME.pubkey && !held.has(pk)){ added++; if(!pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); fresh.push(pk); } } }
     if(!added) return 0;
@@ -6302,6 +6338,7 @@
     if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk));   // relay didn't store it → revert the local adds
       if(opts && opts.throwOnFail) throw new Error(r && r.cancelled ? 'cancelled' : ((r && r.msg) || 'your follow list was not saved — no relay accepted it'));
       return 0; }
+    _adoptFollows(pset); _setFollowsAt(r.ev && r.ev.created_at);
     _persistFollows();
     return added;
   }

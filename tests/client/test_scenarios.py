@@ -46,6 +46,7 @@ REQUIRED = [
     "the era changing mid-sweep",
     "a name Windows cannot hold",           # Linux creates notes:v2.txt, Windows can never write it
     "a blob deleted out from under a seed", # the mid-seed reclaim heals with no buttons
+    "an edit made on a desktop to a file it downloaded",   # held back as an Android "rewrite"
 ]
 
 

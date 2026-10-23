@@ -110,6 +110,11 @@
 
   window.pcFs = {
     chunkBytes: CHUNK_BYTES,
+    /* THIS PLATFORM REWRITES WHAT IT IS HANDED — the media scanner and gallery apps restamp and
+     * rewrite a downloaded photo's metadata in place. It is what arms the executor's "rewritten
+     * after downloading — not published" guard (syncexec.js), and ONLY here: on the desktop nothing
+     * rewrites a download, so a downloaded file that changed is a person's edit and must be sent. */
+    rewritesDownloads: true,
     list: () => P.list().then(r => r.roots || []),
     // {} when the user backed out of the system picker — a cancel is not an error.
     pick: () => P.pick().then(r => (r && r.id) ? r : null),
