@@ -267,13 +267,13 @@ class Scenario:
     def pk(self, i=0):
         return R.pubkey(self.fill(i))
 
-    async def device(self, i=0, phone=False, pre_init='', tag='', login=True):
+    async def device(self, i=0, phone=False, pre_init='', tag='', login=True, args=()):
         """A device signed in to account `i` (a FRESH Chrome profile each time). `tag` names its relay sockets
         for Gate rules (device_of)."""
         js = pre_init + CLIENT_INIT
         if tag:
             js += TAG_JS.replace('__HOME__', str(self.n.home.port)).replace('__TAG__', tag)
-        d = R.Device(self.n, self.fill(i), phone=phone, pre_init=js, login=login)
+        d = R.Device(self.n, self.fill(i), phone=phone, pre_init=js, login=login, args=args)
         await d.__aenter__()
         self.open.append(d)
         return d

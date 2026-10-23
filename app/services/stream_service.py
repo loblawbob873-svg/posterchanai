@@ -288,6 +288,14 @@ def hls_port() -> str:
     return _port(settings_store.all_settings(), "stream_hls_port", "8888")
 
 
+def webrtc_port() -> str:
+    """The MediaMTX WebRTC/WHIP port, validated exactly as the generated config validates it. The WHIP proxy POSTs
+    the streamer's stream KEY to it, so a raw value would be worse than a mismatch: `1@host` makes the proxy send the
+    key to that host, and a junk value the config replaced with 8889 makes every browser go-live 502 against a port
+    MediaMTX never bound."""
+    return _port(settings_store.all_settings(), "stream_webrtc_port", "8889")
+
+
 def _rtsp_port(cfg: dict) -> str:
     return _port(cfg, "stream_rtsp_port", "8554")
 

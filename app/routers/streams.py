@@ -632,6 +632,10 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     record_on = (cfg.get("stream_record_enabled", "") or "").strip().lower() == "true"
     return {
         "enabled": enabled,
+        # Is the media server ANSWERING? Go Live asks before it announces for OBS: announcing a stream while
+        # MediaMTX is down tells the network you are live with nowhere for the encoder to send to -- and the
+        # reaper cannot retire it while MediaMTX is down ("could not ask" is never "ended").
+        "server_up": _media_server_answers() if enabled else False,
         "rtmp_url": f"rtmp://{host}:{rtmp_port}",
         "stream_key": f"{token}?key={api_key}",
         "token": token,
@@ -656,6 +660,18 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
         # proxy — avoids mixed-content and keeps the key server-side (session-authed).
         "whip_url": f"{origin}/api/streams/whip/{token}",
     }
+
+
+def _media_server_answers() -> bool:
+    """MediaMTX's loopback control API answered (any status) -- the one probe that means "the media server is
+    running" for every ingest. Bounded short: it is asked when the Go Live sheet opens."""
+    import httpx
+    try:
+        with httpx.Client(timeout=httpx.Timeout(1.5, connect=1.0)) as c:
+            c.get(f"http://127.0.0.1:{stream_service.api_port()}/v3/paths/list")
+        return True
+    except Exception:
+        return False
 
 
 def _prefer_h264(sdp: str) -> str:
@@ -737,8 +753,8 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
         key = await _aobs_key(db, current_user)
     except Unavailable:
         return JSONResponse({"error": "stream keys cannot be read right now; try again shortly"}, status_code=503)
-    webrtc_port = (settings_store.get("stream_webrtc_port", "8889") or "8889").strip()
-    upstream = f"http://127.0.0.1:{webrtc_port}/{token}/whip?key={key}"
+    # Validated like the config's own port (never the raw setting): this request carries the stream key.
+    upstream = f"http://127.0.0.1:{stream_service.webrtc_port()}/{token}/whip?key={key}"
     import httpx
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=4.0)) as client:

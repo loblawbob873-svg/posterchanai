@@ -491,9 +491,12 @@ class Device:
     """One Chrome profile = one phone or one desktop. `async with Device(node, sk_fill, phone=True) as d:`
     signs in by typing an nsec into the login screen and yields `d` (`d.b` is the CDP browser)."""
 
-    def __init__(self, node: Node, sk_fill=1, phone=False, pre_init='', port=None, profile=None, url=None, login=True):
-        """`login=False`: stop at the login screen (a device that signs in some other way, e.g. a remote signer)."""
+    def __init__(self, node: Node, sk_fill=1, phone=False, pre_init='', port=None, profile=None, url=None, login=True,
+                 args=()):
+        """`login=False`: stop at the login screen (a device that signs in some other way, e.g. a remote signer).
+        `args`: extra Chrome switches (e.g. a fake camera: --use-fake-device-for-media-stream)."""
         self.node, self.sk_fill, self.phone, self.login = node, sk_fill, phone, login
+        self.args = tuple(args)
         self.url = url or node.origin + '/client'
         self.width, self.height = (390, 844) if phone else (1440, 900)
         self.pre_init = pre_init
@@ -506,7 +509,7 @@ class Device:
         port_arg = str(self.port) if self.port else '0'
         self.proc = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', '--disable-gpu',
                                       '--remote-debugging-port=' + port_arg, '--user-data-dir=' + prof,
-                                      'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                      *self.args, 'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         cdp = None
         for _ in range(300):
             if self.port:

@@ -243,6 +243,9 @@ window.PCStreamsFactory = function(dep){
     // mp4/fmp4 straight into <video>. `openStream._tok` guards against a race if you tap another stream
     // before the fetch resolves.
     openStream._view=e.id;   // guard on the (unique) event id, not the d-tag which can be empty
+    openStream._addr=`${e.pubkey}:${dtag}`;   // WHICH broadcast is on screen -- _endLive repaints it when it ends
+    openStream._ev=e;
+    const _seq=openStream._seq=(openStream._seq||0)+1;   // THIS opening -- the event id alone recurs (see below)
     if(st==='live') _startStreamViewers(hpk, dtag, e.id);   // only a live stream's headcount moves
     if(st==='ended'){
       const _view=e.id; { const n0=$('#st-note'); if(n0) n0.textContent='Loading recording…'; }
@@ -284,7 +287,10 @@ window.PCStreamsFactory = function(dep){
           if(n3) n3.textContent = _fresh
             ? 'Saving your recording — about a minute. You can close the app; it finishes on the server.'
             : 'This stream ended — no recording available.';
-          if(_fresh) setTimeout(()=>{ if(S.VIEW==='stream' && openStream._view===_view) openStream(e); }, 20000);
+          /* Re-check for the recording -- but only on THIS opening of the page. Guarded on the event id, a timer
+           * armed before you went back to the list and opened the same stream again fired into the new page: it
+           * re-rendered under a replay you had just started, and the video jumped back to 0, paused. */
+          if(_fresh) setTimeout(()=>{ if(S.VIEW==='stream' && openStream._seq===_seq) openStream(e); }, 20000);
         };
         if(!recUrl && !tryFeed){ noRecording(); return; }
         if(!recUrl){
@@ -999,6 +1005,14 @@ window.PCStreamsFactory = function(dep){
         try{ ClientSettings.set('livePostLast', info.post); }catch(_){}
         if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
         if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
+        /* OBS: the announcement goes out BEFORE the encoder starts (that is the instruction on this sheet), so it is
+         * the one path where nothing has proved the media server is there. Ask now, not when the sheet opened: with
+         * MediaMTX down this said "you're live" and published a stream nobody could ever reach -- which the server
+         * cannot retire either while MediaMTX is down. Only a definite "not answering" stops it; a sheet that could
+         * not re-ask goes ahead as before. */
+        try{ const fresh=await _fetchTimeout('/api/streams/ingest',{headers:S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}}, 8000).then(r=>r.json());
+          if(fresh && fresh.server_up===false){ revive(); toast('couldn’t announce — the stream server isn’t answering, so OBS has nowhere to stream to. Try again in a minute.'); return; }
+        }catch(_){ }
         try{ const ev=await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
           if(a) await _announceStreamPost(info, t);
           closeModal(); toast('🔴 you’re live — announced on Nostr'); _afterGoLive(ev, false);
@@ -1403,6 +1417,19 @@ window.PCStreamsFactory = function(dep){
       pc.addEventListener('icegatheringstatechange',chk); to=setTimeout(finish, 3000);
     });
   }
+  /* WHY THE STREAM SERVER SAID NO, in words. This was "stream server rejected the connection (WHIP 502)" for every
+   * refusal -- the same sentence for "the media server is not running", "your account may not stream" and "the
+   * stream keys could not be read", which send a person to three different places (wait, ask an admin, retry).
+   * The statuses are the app's WHIP proxy's own (app/routers/streams.py stream_whip) and what MediaMTX answers
+   * when the app's auth hook refuses the publish. Nothing is announced on any of these paths. */
+  function _whipRefusal(status){
+    if(status===502 || status===504) return 'the stream server isn’t answering — it may be restarting. Try again in a minute.';
+    if(status===403) return 'this account isn’t allowed to stream (or the stream key isn’t yours) — ask an admin for streaming access.';
+    if(status===404) return 'streaming is turned off on this server.';
+    if(status===503) return 'the stream server couldn’t check your stream key just now — try again shortly.';
+    if(status===401 || status===400) return 'the stream server refused your stream key — try again; if it keeps happening, tell an admin.';
+    return 'the stream server refused the connection (error '+status+').';
+  }
   // Go live straight from the phone/browser camera via WHIP (WebRTC ingest to the built-in MediaMTX).
   async function _phoneGoLive(info, title, doAnnounce, cover, opts){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
@@ -1456,7 +1483,7 @@ window.PCStreamsFactory = function(dep){
       const r=await fetch(info.whip_url, { method:'POST',
         headers:Object.assign({'Content-Type':'application/sdp'}, S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}),
         body:pc.localDescription.sdp });
-      if(!r.ok) throw new Error('stream server rejected the connection (WHIP '+r.status+')');
+      if(!r.ok) throw new Error(_whipRefusal(r.status));
       await pc.setRemoteDescription({type:'answer', sdp:await r.text()});
       // Bandwidth saving: the browser already hardware-encodes; cap the upload bitrate/framerate so a
       // phone on mobile data doesn't blast a huge stream (and viewers get a lighter feed).
@@ -2038,8 +2065,10 @@ window.PCStreamsFactory = function(dep){
     _stopLiveHb();
     _teardownPhoneStream();
     const s=_liveStream; _liveStream=null;
+    let endedEv=null;
     if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
       try{ const r=await publish(30311, '', _liveBase(s).concat([['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+        endedEv=r && r.ev;
         _mirrorStream(r);      // or the stream sits ● LIVE forever on every client that saw go-live
         _clearEndSentinel(); }catch(_){}
       // The recording does not exist yet (concat + Blossom upload take a while). Watch for it and stamp
@@ -2060,6 +2089,11 @@ window.PCStreamsFactory = function(dep){
       ? 'Stream ended — saving your recording, about a minute. You can close the app; it finishes on the server.'
       : 'stream ended');
     if(S.VIEW==='streams') renderStreams();
+    /* Go Live LANDS the streamer on their own stream page (_afterGoLive), so that is where most people press
+     * Stop -- and the page went on saying "● LIVE · You're broadcasting" over a stream that had ended, because
+     * only the LIST was repainted. Repaint the page with the ended event, which also says the recording is
+     * being saved. */
+    else if(S.VIEW==='stream' && endedEv && S.ME && openStream._addr===`${S.ME.pubkey}:${s.d||s.token}`) openStream(endedEv);
   }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
@@ -2108,6 +2142,12 @@ window.PCStreamsFactory = function(dep){
       let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], authors:[hpk], '#d':[dtag], limit:1 }]); }catch(_){ return; }
       const fresh=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0]; if(!fresh) return;
       if(S.VIEW!=='stream' || openStream._view!==viewId) return;   // navigated away during the query
+      /* THE STREAM ENDED WHILE YOU WATCHED IT. The page went on saying "● LIVE" over a player that had failed
+       * ("Could not play this stream here — try the Open stream URL link"), which reads as OUR player being broken
+       * and sends people to a link that is just as dead. The host's own `ended` is already on the relay this re-reads,
+       * so show the ended stream: it says it ended, and offers the recording once there is one. */
+      if(streamStatus(fresh)==='ended' && fresh.created_at>=((openStream._ev||{}).created_at||0)){
+        _stopStreamViewers(); openStream(fresh); return; }
       const n=_viewersTag(fresh); const el=document.getElementById('st-viewers');
       if(el) el.textContent = n ? ` · 👁 ${n} watching` : '';
     };
@@ -2265,8 +2305,12 @@ window.PCStreamsFactory = function(dep){
    * answered at all -- how an ended stream tries its old feed without ever showing a dead player's error. */
   function attachStream(url, onFail){
     const v=$('#st-video'); if(!v) return;
-    _disposeInlineHls();   // drop any previous inline hls before attaching a new one — unconditional:
-                           // this window is about to replace the player it owns, parked or not
+    // Drop any previous inline hls before attaching a new one — unconditional: this window is about to replace
+    // the player it owns, parked or not. ONLY the hls: this used to be _disposeInlineHls(), which also stops the
+    // stream's re-read timer -- and openStream starts that timer BEFORE it attaches the player, so every live
+    // stream's poll died the instant it began: the headcount froze at its first reading and a stream that ENDED
+    // under a viewer was never noticed (the page sat on "● LIVE" over a failed player).
+    if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; }
     const isHls=/\.m3u8(\?|#|$)/i.test(url);
     /* A SOURCE THAT NEVER ANSWERS MUST NOT LOOK LIKE A SLOW ONE FOR EVER. hls.js gives up on a manifest
      * that accepts the connection and sends nothing only after 3 x 20s, and a <video> src that hangs
