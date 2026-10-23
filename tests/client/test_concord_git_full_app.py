@@ -322,3 +322,82 @@ def test_projects_paints_from_the_repository_relays_without_waiting_for_the_inde
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_git_dialogs_buttons_do_what_they_say():
+    """Event JSON → Copy hands the event's exact JSON to the clipboard helper; New issue → Attach opens the file picker
+    and a picked file is uploaded and linked in the body, and Cancel publishes nothing; the repository picker's Cancel
+    answers "nothing picked"; the channel chooser's Cancel attaches nothing."""
+    fx = fixture()
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=860, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js(r'''(()=>{
+          const FX=%s;
+          const ngit={id:'ch-ngit',name:'ngit',streamPubkeys:[],repositories:[{address:FX.coord,relayHints:['wss://git.fixture.invalid'],attachedAt:FX.attachedAt}]};
+          const general={id:'ch-general',name:'general',streamPubkeys:[]};
+          const room={name:'Git room',communityId:'c'.repeat(64),naddr:'fixture-community',url:'https://fixture.invalid/invite/x#s',
+            channels:[general,ngit],cord:{bundle:{owner:FX.viewer,relays:['wss://fixture.invalid']},hydrated:true}};
+          window.__room=room;window.__published=[];window.__copied=[];window.__uploads=[];window.__fileClicks=0;
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+          localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+          window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[general,ngit]}),inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};
+          const match=(ev,f)=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.authors||f.authors.includes(ev.pubkey))
+            &&Object.keys(f).filter(k=>k[0]==='#').every(k=>ev.tags.some(t=>t[0]===k.slice(1)&&f[k].includes(t[1])));
+          const door={queryFrom:async(urls,filters)=>FX.events.filter(ev=>filters.some(f=>match(ev,f))),
+            publishTo:async(urls,ev)=>{__published.push(ev);return {ok:true,accepted:1};},subscribeFrom:()=>({close(){}})};
+          Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return door;}});
+          __PC.copyValue=v=>{__copied.push(String(v));return Promise.resolve(true);};
+          __PC.uploadBlob=async(f,o)=>{__uploads.push({name:f.name,folder:o&&o.folder});return 'https://blobs.invalid/'+encodeURIComponent(f.name);};
+          {const c=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.id==='ccg-ni-file'){__fileClicks++;return;}return c.call(this);};}
+          __PC.switchMessagesTab('concord');
+        })()''' % json.dumps(fx))
+        await b.until("!!document.querySelector('[data-cc-channel=\"ngit\"]')")
+        await press(b, '[data-cc-channel="ngit"]')
+        await b.until("!!document.querySelector('.ccg-ticket .ccg-subject')")
+
+        # Event JSON → Copy.
+        await press(b, '.ccg-ticket .ccg-subject')
+        await b.until("!!document.querySelector('#ccg-panel [data-ccg-json]')")
+        await b.js("document.querySelector('#ccg-panel [data-ccg-json]').click(); 1")
+        await b.until("!!document.querySelector('#ccg-json-copy')")
+        await b.js("document.querySelector('#ccg-json-copy').click(); 1")
+        await b.until("__copied.length===1")
+        assert json.loads(await b.js("__copied[0]"))['id'] == fx['ids']['issue']
+        await b.js("__PC.closeModal(); PCConcordGit.closePanel(); 1")
+
+        # New issue → Attach, then Cancel.
+        await b.js("PCConcordGit.newIssue(__room); 1")
+        await b.until("!!document.querySelector('#ccg-ni-attach')")
+        await b.js("document.querySelector('#ccg-ni-attach').click(); 1")
+        await b.until("__fileClicks===1")
+        await b.js(r'''(()=>{const dt=new DataTransfer();dt.items.add(new File(['log line'],'crash.log',{type:'text/plain'}));
+          const f=document.querySelector('#ccg-ni-file');f.files=dt.files;f.dispatchEvent(new Event('change',{bubbles:true}));})()''')
+        await b.until("document.querySelector('#ccg-ni-body').value.includes('https://blobs.invalid/crash.log')")
+        assert await b.js("__uploads") == [{'name': 'crash.log', 'folder': 'Posts'}]
+        await b.js("document.querySelector('#ccg-ni-title').value='Never sent'; document.querySelector('#ccg-ni-cancel').click(); 1")
+        await b.until("!document.querySelector('#ccg-ni-cancel')")
+        assert not await b.js("__published.filter(e=>e.kind===1621).length"), 'Cancel published the issue'
+
+        # Picker → Cancel answers null.
+        await b.js("window.__picked='pending';PCConcordGit.pickRepository().then(v=>{window.__picked=v;}); 1")
+        await b.until("!!document.querySelector('#ccg-pick-cancel')")
+        await b.js("document.querySelector('#ccg-pick-cancel').click(); 1")
+        await b.until("window.__picked===null")
+
+        # Connect → pick → channel chooser → Cancel: nothing is attached.
+        await b.js(r'''(()=>{window.__edits=[];const bare={...__room,channels:[{id:'ch-general',name:'general',streamPubkeys:[]}]};
+          PCConcordGit.connectFlow(bare,async(id,ch)=>{__edits.push([id,ch]);});})()''')
+        await b.until("!!document.querySelector('#ccg-pick-list [data-ccg-pick]:not([disabled])')")
+        await b.js("document.querySelector('#ccg-pick-list [data-ccg-pick]:not([disabled])').click(); 1")
+        await b.until("!!document.querySelector('#ccg-ch-cancel')")
+        await b.js("document.querySelector('#ccg-ch-cancel').click(); 1")
+        await b.until("!document.querySelector('#ccg-ch-cancel')")
+        await asyncio.sleep(.3)
+        assert await b.js("__edits.length") == 0, 'the channel chooser\'s Cancel attached the repository'
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))
