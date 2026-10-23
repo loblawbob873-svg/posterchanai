@@ -120,11 +120,12 @@ class GameWorld:
         import types
         sys.modules.pop(module, None)
         self.game = importlib.import_module(module)
-        for attr in ("_IDS_FILE", "_DM_IDS_FILE", "_LOCK_FILE"):
+        for attr in ("_IDS_FILE", "_DM_IDS_FILE", "_CMD_IDS_FILE", "_LOCK_FILE"):
             if hasattr(self.game, attr):
                 monkeypatch.setattr(self.game, attr, str(tmp_path / f"{module}{attr}"))
-        if hasattr(self.game, "script_dir"):
-            monkeypatch.setattr(self.game, "script_dir", str(tmp_path))
+        for attr in ("script_dir", "_STATE_DIR"):    # where a claim writes its temp file before the rename
+            if hasattr(self.game, attr):
+                monkeypatch.setattr(self.game, attr, str(tmp_path))
         # The bot reads the SAME clock (without advancing it): its pointer timestamps and the players'
         # DM timestamps have to be comparable, or "sent before the pointer" means nothing here.
         import time as _real

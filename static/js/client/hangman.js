@@ -89,7 +89,10 @@
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).filter(g=>['active','awaiting_word'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.started||0)-(a.started||0));
+      // In-progress games (incl. a challenge still waiting for its word) AND recently-finished ones (last 2 days):
+      // a game that vanished the moment it ended meant nobody ever saw whether the word was guessed.
+      const _recent = Math.floor(Date.now()/1000) - 2*86400;
+      const games=Object.values(byGame).filter(g=> g.status==='active' || g.status==='awaiting_word' || (g._t||0) > _recent).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.started||0)-(a.started||0));
       if(!games.length){ list.innerHTML='<div class="empty">No games yet. Start one above.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
       games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
@@ -123,9 +126,21 @@
       const iGuess = g.guesser===PC.ME.pubkey;
       const tried = new Set([...(g.guessed||[]), ...(g.wrong_letters||[])].map(x=>x.toLowerCase()));
       const active = g.status==='active';
+      // A CHALLENGE starts with no word: the challenger (setter) picks it. That is not a finished game -- it used to
+      // fall into the game-over branch below and tell both players "You lost" before anyone had played.
+      const awaiting = g.status==='awaiting_word';
+      const iSet = !iGuess && g.setter===PC.ME.pubkey;
       let statusLine, badge, banner='';
-      if(!active){
-        const iWon = g.status==='won' || g.winner_pk===PC.ME.pubkey;
+      if(awaiting){
+        statusLine = iSet ? 'Pick the secret word' : `Waiting for ${g.setter_name||'them'} to pick a word`;
+        badge = iSet ? 'you' : 'wait';
+      }
+      else if(!active){
+        // Whose win it is depends on the side: the guesser wins by solving it, the challenger who SET the word wins
+        // when it is not solved. (It read the guesser's result to both, so a challenger whose word was guessed
+        // was told "You won".)
+        const solved = g.status==='won';
+        const iWon = iGuess ? solved : !solved;
         statusLine = iWon ? 'You won! 🎉' : 'You lost';
         badge = iWon ? 'you' : 'done';
         banner = `<div class="chess-result ${iWon?'win':'loss'}">${iWon?'🏆 You won!':'💀 You lost'}<span class="muted small"> · ${enc(g.result||'')}</span></div>`;
@@ -133,6 +148,9 @@
       else if(iGuess){ statusLine='Your turn — pick a letter'; badge='you'; }
       else { statusLine='Watching'; badge='wait'; }
       const display = enc(g.display||'');
+      const setBox = (awaiting && iSet) ? `<div class="chess-move-row">
+          <input class="input hm-setword-in" placeholder="secret word (or: word | a clue)" autocomplete="off">
+          <button class="btn btn-neon small hm-setword-go">Set word ▶</button></div>` : '';
       const kb = (iGuess && active) ? '<div class="hm-keys">'+'abcdefghijklmnopqrstuvwxyz'.split('').map(L=>
         `<button class="hm-key${tried.has(L)?' used':''}" data-l="${L}"${tried.has(L)?' disabled':''}>${L.toUpperCase()}</button>`).join('')+'</div>' : '';
       card.innerHTML = `<div class="chess-card-hd">
@@ -143,8 +161,17 @@
         ${banner}
         ${g.hint?`<div class="hm-hint muted small" style="text-align:center;margin:2px 0 6px">💡 Clue: ${enc(g.hint)}</div>`:''}
         <div class="hm-game">${_gallows(g.wrong||0)}<div class="hm-word">${display||'…'}</div></div>
-        ${kb}`;
+        ${kb}${setBox}`;
       { const q=card.querySelector('.chess-quit'); if(q) q.onclick=(e)=>{ e.stopPropagation(); quitGame(g); }; }
+      if(awaiting && iSet){
+        // The word goes to the bot exactly as a reply to its "send me the word" DM would (the bot reads the
+        // setter's first DM for this game as the word); the g:<root> marker names the game.
+        const inp=card.querySelector('.hm-setword-in'), go=card.querySelector('.hm-setword-go');
+        let busy=false;
+        const send=()=>{ const w=(inp.value||'').trim(); if(!w||busy) return; busy=true; go.disabled=true; guess(g, w); };
+        go.onclick=send;
+        inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+      }
       if(iGuess && active){
         let busy=false;
         card.querySelectorAll('.hm-key:not(.used)').forEach(b=> b.onclick=()=>{

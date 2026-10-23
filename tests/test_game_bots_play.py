@@ -269,3 +269,30 @@ def test_chess_the_bot_answers_with_a_legal_move(chs):
     board = chess.Board(st["fen"])
     assert len(st["moves"]) == 2 and board.turn == chess.WHITE, "the bot did not reply with a move"
     assert board.is_valid()
+
+
+# ================================ the table bots' first-run seed ===================================
+# blackjack and hold'em SEED their dedup on a first run (no dedup file: claim history WITHOUT acting on it, or a
+# redeploy re-deals every table in the lookback window). The seed used to last until the first claim created the
+# file, so on a node with no history the FIRST table note / command / DM the bot ever saw was claimed as history
+# and dropped -- the first person to press Deal got nothing. Browser half:
+# tests/client/test_table_games_between_two_accounts_full_app.py.
+
+@pytest.mark.parametrize("module,loop,word", [("blackjackListener", "process_blackjack", "blackjack"),
+                                              ("holdemListener", "process_holdem", "holdem")])
+def test_a_fresh_table_bot_deals_the_first_table_but_never_replays_history(monkeypatch, tmp_path, module, loop, word):
+    import asyncio
+    from app.services.nostr import event as E
+    from tests.botgame_harness import BOT_PK as BOT
+    w = GameWorld(monkeypatch, tmp_path, module, loop)
+    alice, bob = w.player("alice"), w.player("bob")
+    w.tick()                                    # a brand-new node: the bot polls and there is nothing yet
+    started = getattr(w.game, "_SEED_BEFORE", None) or int(__import__("time").time())
+    old = E.build_event(alice.sk, 1, f"{word} from before the bot started", tags=[["p", BOT], ["p", bob.pk]],
+                        created_at=started - 120)
+    asyncio.run(w.relay.publish(None, old))     # ...but the relay holds a table note older than the bot
+    gid = w.mention(alice, word, tag=[bob])     # and somebody presses Deal
+    w.tick()
+    assert w.state(old["id"]) is None, "a table note from before the bot started was dealt (history replayed)"
+    st = w.state(gid)
+    assert st and alice.pk in st["seats"] and bob.pk in st["seats"], "the first table note was swallowed by the seed"
