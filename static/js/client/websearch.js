@@ -85,7 +85,13 @@
       let body = null;
       try{ body = await r.json(); }catch(_){}
       if(!r.ok){
-        const detail = (body && (body.detail || body.error)) || '';
+        /* FastAPI's `detail` is a STRING for an HTTPException and a LIST OF OBJECTS for a 422 (a query
+         * over the 300-character limit is one) -- pasted into the page as-is it read "[object Object]". */
+        const d = body && (body.detail || body.error);
+        const detail = Array.isArray(d)
+          ? (d.some(x => x && /at most/i.test(String(x.msg||''))) ? 'That search is too long — shorten it and try again.'
+             : d.map(x => (x && x.msg) || '').filter(Boolean).join('; '))
+          : (typeof d === 'string' ? d : (d ? JSON.stringify(d) : ''));
         throw new Error(detail || ('HTTP ' + r.status));
       }
       return body || {};

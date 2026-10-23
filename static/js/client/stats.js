@@ -23,6 +23,12 @@
     const TABS = [['stats','📊 Activity'],['relay','🛰️ Relay'],['uptime','📡 Uptime'],['fedi','🌐 Fediverse']];
     let _range = 'hour', _data = null, _timer = null, _busy = false;
     let _tab = 'stats', _up = null, _upBusy = false;
+    /* The last ask FAILED (a 503, a dropped connection, an error body). With no earlier snapshot to show, the
+     * page used to keep its spinner for ever -- "loading" about a server that had already said no. */
+    let _err = false, _upErr = false;
+    const _again = new Set();      // tabs whose Try again arrived while their ask was in flight
+    const failedBox = what => `<div class="empty st-failed">Couldn’t load ${what} — the server didn’t answer just now.<br>
+      <button class="btn btn-cyan small st-retry" style="margin-top:10px">Try again</button></div>`;
     // Fediverse tab: _fed is the last ANSWER, _fedUnknown says the last ask was not answered. They are
     // separate on purpose: a 503 must never render as the zeros of an empty payload, nor as green.
     let _fed = null, _fedUnknown = false, _fedBusy = false;
@@ -146,7 +152,7 @@
     /* The Activity tab's body (everything below the shared header/tabs). Returns a string; the
        caller owns the wrapper, so switching tabs never re-paints the header. */
     function activityBody(){
-      if(!_data) return `<div class="spinner"></div>`;
+      if(!_data) return _err ? failedBox('the server’s stats') : `<div class="spinner"></div>`;
       // Say so out loud rather than rendering an empty page: a payload without `windows` means the
       // endpoint isn't the stats one (this is exactly what a route-name collision looked like — the
       // page silently drew nothing while the fetch returned 200).
@@ -305,7 +311,7 @@
     }
 
     function relayBody(){
-      if(!_data) return `<div class="spinner"></div>`;
+      if(!_data) return _err ? failedBox('the relay’s stats') : `<div class="spinner"></div>`;
       const R = _data.relay;
       if(!R){
         return `<p class="muted">This server isn't reporting relay activity yet — it may need a
@@ -478,7 +484,7 @@
     }
 
     function uptimeBody(){
-      if(!_up) return `<div class="spinner"></div>`;
+      if(!_up) return _upErr ? failedBox('the uptime monitors') : `<div class="spinner"></div>`;
       if(!_up.enabled){
         return `<p class="muted">Uptime monitoring is off on this server. An admin can turn it on and
           add endpoints in <b>Admin → Nodes → Uptime Monitoring</b>.</p>`;
@@ -580,6 +586,7 @@
       </div>`;
 
       feed.querySelectorAll('.st-range').forEach(b=> b.onclick = ()=>{ _range = b.dataset.range; render(); });
+      feed.querySelectorAll('.st-retry').forEach(b=> b.onclick = ()=>{ _err = _upErr = false; render(); load(); });
       feed.querySelectorAll('.st-tab').forEach(b=> b.onclick = ()=>{
         if(_tab === b.dataset.tab) return;
         _tab = b.dataset.tab;
@@ -602,21 +609,27 @@
         }catch(_){ _fedUnknown = true; }
         finally{ _fedBusy = false; }
       }else if(_tab === 'uptime'){
-        if(_upBusy) return; _upBusy = true;
+        if(_upBusy){ _again.add('uptime'); return; } _upBusy = true;
         try{
           const r = await fetch('/client/uptime', {credentials:'include'});
-          if(r.ok){ const d = await r.json(); if(!d.error) _up = d; }
-        }catch(_){ }
+          const d = r.ok ? await r.json() : null;
+          if(d && !d.error){ _up = d; _upErr = false; } else _upErr = true;
+        }catch(_){ _upErr = true; }
         finally{ _upBusy = false; }
       }else{
-        if(_busy) return; _busy = true;
+        if(_busy){ _again.add('stats'); return; } _busy = true;
         try{
           const r = await fetch('/client/server-stats', {credentials:'include'});
-          if(r.ok){ const d = await r.json(); if(!d.error) _data = d; }
-        }catch(_){ }
+          const d = r.ok ? await r.json() : null;
+          if(d && !d.error){ _data = d; _err = false; } else _err = true;
+        }catch(_){ _err = true; }
         finally{ _busy = false; }
       }
       if(inView()) render();
+      /* A TRY AGAIN PRESSED WHILE AN ASK WAS STILL OUT is asked again once it lands -- it used to return
+         early, so the press did nothing and the in-flight failure painted the same error back. */
+      const k = _tab === 'uptime' ? 'uptime' : _tab === 'fedi' ? '' : 'stats';
+      if(k && _again.delete(k) && inView()) return load();
     }
 
     /* Poll only while the page is actually open AND the tab is visible — a backgrounded phone must

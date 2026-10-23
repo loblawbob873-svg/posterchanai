@@ -74,7 +74,10 @@
         }
         return;
       }
-      if(e.kind===1){
+      /* A REPLY IS A KIND 1111 NOW. This client answers a note with a NIP-22 comment (replyKindFor), so asking
+         for kind 1 alone counted none of the replies people made here -- "Replies 0" under a busy post. */
+      if(e.kind===1111) row.replies++;
+      else if(e.kind===1){
         /* A tip note is a kind 1 too — count it as support, never as a reply. */
         const tk=tipOf(e);
         if(tk==='xmr'){ row.xmr+=tagAmount(e,'amount_xmr'); row.tips++; }
@@ -125,10 +128,20 @@
       f.querySelectorAll('[data-days]').forEach(b=>b.onclick=()=>{range=+b.dataset.days;load();});
       f.querySelectorAll('[data-note]').forEach(b=>b.onclick=()=>PC.openNote(b.dataset.note));
     }
+    /* AN UNANSWERED READ IS NOT ZERO. relayQuery never rejects -- nobody answering is [] with complete:false --
+       so a relay that never spoke used to paint "Publish your first post to light this up" over somebody's whole
+       posting history, and a reaction read nobody answered painted 0 reactions as a fact. An answer is every
+       relay's EOSE, or this node's relay's (the rule every screen here uses); anything less is the error card. */
+    function answered(got){
+      const R=window.Relay;
+      if(!got || got.complete!==false) return true;
+      try{ return !!(R && R.homeAnswered && R.homeAnswered(got)); }catch(_){ return false; }
+    }
+    async function ask(filters){ const got=await PC.relayQuery(filters,9000); if(!answered(got)) throw new Error('your relays did not answer'); return got; }
     async function load(){ const mine=++serial,viewer=PC.viewer(),f=PC.$('#feed'); if(!viewer.pubkey){f.innerHTML=empty('Sign in to see your analytics.');return;}
       f.innerHTML='<div class="spinner"></div>'; const since=Math.floor(Date.now()/1000)-range*DAY;
-      try{ const posts=(await PC.relayQuery([{kinds:[1],authors:[viewer.pubkey],since,limit:500}],9000)).filter(p=>!(p.tags||[]).some(t=>t[0]==='e')); if(mine!==serial||!PC.isView('analytics'))return;
-        const ids=posts.map(p=>p.id), events=[]; for(let i=0;i<ids.length;i+=100){ const chunk=ids.slice(i,i+100); if(!chunk.length)continue; const got=await PC.relayQuery([{kinds:[1,6,7,9735],'#e':chunk,limit:1000}],9000); events.push(...got); }
+      try{ const posts=(await ask([{kinds:[1],authors:[viewer.pubkey],since,limit:500}])).filter(p=>!(p.tags||[]).some(t=>t[0]==='e')); if(mine!==serial||!PC.isView('analytics'))return;
+        const ids=posts.map(p=>p.id), events=[]; for(let i=0;i<ids.length;i+=100){ const chunk=ids.slice(i,i+100); if(!chunk.length)continue; const got=await ask([{kinds:[1,1111,6,7,9735],'#e':chunk,limit:1000}]); events.push(...got); }
         /* ASKED FOR SEPARATELY, BECAUSE THE `#e` QUERY CANNOT REACH THEM. It is keyed on the posts
            in the range, so a tip to your profile (no `e` tag at all) and a tip sent this week on a
            post from last year are both outside it — see the note on `compute`. Same window, so it
