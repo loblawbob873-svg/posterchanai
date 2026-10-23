@@ -150,5 +150,7 @@ class TestABrokenSweepStaysDue(unittest.TestCase):
         self.assertIn("if(decision.mode === 'full') f.lastFullScanAt = Date.now();", self.body)
 
     def test_coming_back_online_asks_for_a_sweep(self):
-        self.assertIn("window.addEventListener('online', () => nudge('online'));", self.src,
+        # retryNow: the network itself changed, so a folder waiting out a failure backoff retries at once
+        # (the backoff is measured in tests/client/test_folder_sync_between_two_devices_full_app.py).
+        self.assertIn("window.addEventListener('online', () => nudge('online', false, true));", self.src,
                       "nothing retries when the network comes back")

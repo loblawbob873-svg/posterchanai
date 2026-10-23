@@ -2078,6 +2078,30 @@
     return p;
   }
 
+  /* A FAILED SWEEP IS RETRIED ON A BACKOFF, NOT ON EVERY NUDGE. A sweep that failed (threw, or left transfers
+   * failed) must be retried well inside the normal 15-minute interval -- the failed upload is real work still
+   * outstanding -- but "retry on the next nudge" turns a PERMANENT failure (a revoked grant, a server that refuses
+   * for good) into a full sweep per focus/resume/watcher event: measured, 30 sweeps a minute on a desktop being
+   * alt-tabbed. So the retry is TIMED: 30 s after the first failure, doubling, capped at the normal interval; any
+   * automatic sweep before then is declined, a person pressing Sync is never refused, and `online` (the network
+   * itself changed -- the commonest cure) retries at once. A clean sweep clears it. */
+  const _RETRY_FIRST_MS = 30 * 1000, _RETRY_MAX_MS = 15 * 60 * 1000;
+  const _retryTimers = new Map();
+  function _retryDelay(fails){ return Math.min(_RETRY_FIRST_MS * Math.pow(2, Math.max(0, fails - 1)), _RETRY_MAX_MS); }
+  function _sweepFailed(f){
+    const fails = (f._fails || 0) + 1, wait = _retryDelay(fails);
+    f._fails = fails; f._retryAt = Date.now() + wait; f._dirty = true;
+    clearTimeout(_retryTimers.get(f.id));
+    _retryTimers.set(f.id, setTimeout(() => {
+      _retryTimers.delete(f.id);
+      const cur = folders().find(x => x.id === f.id); if(cur) swept(cur, {});
+    }, wait + 250));
+  }
+  function _sweepClean(f){
+    f._fails = 0; f._retryAt = 0;
+    clearTimeout(_retryTimers.get(f.id)); _retryTimers.delete(f.id);
+  }
+
   async function sweep(f, opts){
     const o = opts || {};
     if(window.pcShell && window.pcShell.backgroundOwner === false){
@@ -2160,10 +2184,15 @@
              throw new Error('this device has no filesystem access'); }
 
     const p = await power();
-    const decision = RUN.due(Object.assign({}, p, {
-      now: Date.now(), manual: !!o.manual, deep: !!o.deep, dirty: !!f._dirty,
-      lastSyncAt: f.lastSyncAt || 0, lastFullScanAt: f.lastFullScanAt || 0,
-    }), prefs(f));
+    const _backoff = (!o.manual && !o.retryNow && !o.dryRun && f._retryAt) ? f._retryAt - Date.now() : 0;
+    const decision = _backoff > 0
+      ? { run: false, mode: 'none', why: 'retrying in ' + (_backoff >= 90000 ? Math.round(_backoff / 60000) + ' min'
+                                                                              : Math.ceil(_backoff / 1000) + ' s'),
+          backoff: true }
+      : RUN.due(Object.assign({}, p, {
+          now: Date.now(), manual: !!o.manual, deep: !!o.deep, dirty: !!f._dirty,
+          lastSyncAt: f.lastSyncAt || 0, lastFullScanAt: f.lastFullScanAt || 0,
+        }), prefs(f));
     // liveOnly: a decline is ONE LINE of text, and it is the commonest outcome there is — the watcher
     // fires for every file a sweep itself writes, so a folder downloading a thousand files asks a
     // thousand times and is told no a thousand times. Rebuilding the screen for each of those is what
@@ -2174,8 +2203,10 @@
        * 11,950 files checked" and read as the sync having died. A folder with a clean standing
        * state keeps it on the card; the decline rides behind it in parentheses. */
       const _prev = status.get(f.id);
-      const _base = _prev && _prev.text ? String(_prev.text).split(' · watching (')[0] : '';
-      const _line = /^in step/.test(_base) ? _base + ' · watching (' + decision.why + ')' : decision.why;
+      const _base = _prev && _prev.text ? String(_prev.text).split(' · watching (')[0].split(' · retrying in ')[0] : '';
+      // A backoff decline keeps the failure on the card -- it is the reason there is a retry at all.
+      const _line = decision.backoff ? (_base ? _base + ' · ' + decision.why : decision.why)
+        : /^in step/.test(_base) ? _base + ' · watching (' + decision.why + ')' : decision.why;
       setStatus(f.id, _line, null, true);
       if(!o.dryRun){ running.delete(f.id); _drainSyncQueue(); }
       return { skipped:true, why:decision.why };
@@ -2385,6 +2416,10 @@
           if(rep && !rep.skipped) f.lastScanOkAt = Date.now();
           if(decision.mode === 'full') f.lastFullScanAt = Date.now();
           f._dirty = !clean;
+          // Failed transfers retry on the backoff; a sweep merely STOPPED (handed to the background, the page
+          // hidden) has failed nothing and is resumed by the next nudge as before.
+          if(clean) _sweepClean(f);
+          else if(!(rep && rep.ok) || (rep.failed || []).length) _sweepFailed(f);
           const all = folders().map(x => x.id === f.id ? f : x); saveFolders(all);
         }
         setStatus(f.id, summarise(rep, decision), rep);
@@ -2397,8 +2432,9 @@
          * last sweep" — over the failure, on the card — for a quarter of an hour, with the file
          * still not sent (tests/client/test_folder_sync_between_two_devices_full_app.py). */
         if(!o.dryRun){
-          try{ saveFolders(folders().map(x => x.id === f.id ? Object.assign(x, { _dirty: true }) : x)); }catch(_){}
-          f._dirty = true;
+          _sweepFailed(f);
+          try{ saveFolders(folders().map(x => x.id === f.id
+            ? Object.assign(x, { _dirty: true, _fails: f._fails, _retryAt: f._retryAt }) : x)); }catch(_){}
         }
         setStatus(f.id, 'failed: ' + ((e && e.message) || e));
         throw e;
@@ -4299,15 +4335,17 @@
    * The flag therefore belongs to the PENDING nudge, not to the call that scheduled it: once
    * anything has asked to bypass the idle test, coalescing more triggers into it cannot un-ask. */
   let _nudgeForce = false;
-  function nudge(why, force){
+  let _nudgeRetry = false;
+  function nudge(why, force, retryNow){
     clearTimeout(_nudgeT);
     _nudgeForce = _nudgeForce || !!force;
+    _nudgeRetry = _nudgeRetry || !!retryNow;     // `online`: the network changed, so a failed folder retries now
     // Coalesced: resume, visible and online all fire together when a laptop lid opens.
     _nudgeT = setTimeout(() => {
-      const forced = _nudgeForce;
-      _nudgeForce = false;
+      const forced = _nudgeForce, retry = _nudgeRetry;
+      _nudgeForce = false; _nudgeRetry = false;
       if(!forced && _idle()) return;
-      folders().forEach(f => { swept(f, {}); });
+      folders().forEach(f => { swept(f, retry ? { retryNow: true } : {}); });
     }, 1500);
   }
 
@@ -4378,7 +4416,7 @@
         foregroundNudge('visible');
       }
     });
-    window.addEventListener('online', () => nudge('online'));
+    window.addEventListener('online', () => nudge('online', false, true));
     window.addEventListener('focus', () => foregroundNudge('focus'));
     window.addEventListener('pageshow', () => foregroundNudge('pageshow'));
     // Capacitor's own resume is more reliable than visibilitychange in a WebView that the OS froze.

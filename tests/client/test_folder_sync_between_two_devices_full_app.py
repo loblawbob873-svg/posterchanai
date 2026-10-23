@@ -68,7 +68,8 @@ COST = {'an_edit_and_a_deletion_on_one_device_reach_the_other': 40,
         'a_folder_reaches_a_fresh_device_byte_for_byte': 30,
         'a_server_that_does_not_answer_writes_nothing_and_says_so': 40,
         'a_slow_server_still_completes_the_join': 35,
-        'a_server_that_refuses_a_write_keeps_the_file_and_says_so': 25}
+        'a_server_that_refuses_a_write_keeps_the_file_and_says_so': 25,
+        'a_server_that_keeps_refusing_is_retried_on_a_backoff_not_on_every_focus': 90}
 PAIR = 'Documents'
 
 
@@ -508,6 +509,38 @@ async def a_server_that_refuses_a_write_keeps_the_file_and_says_so(S):
 
 def test_a_server_that_refuses_a_write_keeps_the_file_and_says_so(ran):
     ran('a_server_that_refuses_a_write_keeps_the_file_and_says_so')
+
+
+@scenario
+async def a_server_that_keeps_refusing_is_retried_on_a_backoff_not_on_every_focus(S):
+    """A PERMANENT failure (the server refuses every write, for good) while the window keeps getting focus -- a
+    desktop being alt-tabbed every 2 s for a minute: the failed folder is retried soon after the failure, then at
+    growing intervals -- never one full sweep per focus. Counted at the server: one refused write = one sweep."""
+    da = Disk(FILES)
+    try:
+        a = await device(S, da)
+        await add_folder(a)
+        NODE.no_writes.add(S.pk)
+        n0 = len([c for c in NODE.calls if c == (S.pk, 503)])
+        da.write('new.txt', b'written while the server refuses writes for good\n')
+        await until(lambda: len([c for c in NODE.calls if c == (S.pk, 503)]) > n0, 60, 'the first refused sweep')
+        n1 = len([c for c in NODE.calls if c == (S.pk, 503)])
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 60:
+            await a.js("window.dispatchEvent(new Event('focus'));true")
+            await asyncio.sleep(2)
+        sweeps = len([c for c in NODE.calls if c == (S.pk, 503)]) - n1
+        print('PERMANENT-FAILURE sweeps in 60 s of focus every 2 s: %d' % sweeps)
+        assert sweeps <= 3, ('a permanently failing folder re-swept on focus', sweeps)
+        assert sweeps >= 1, 'the failed upload was never retried within a minute'
+        assert da.snapshot()['new.txt'].startswith(b'written while')
+    finally:
+        NODE.no_writes.discard(S.pk)
+        da.close()
+
+
+def test_a_server_that_keeps_refusing_is_retried_on_a_backoff_not_on_every_focus(ran):
+    ran('a_server_that_keeps_refusing_is_retried_on_a_backoff_not_on_every_focus')
 
 
 pytestmark = CHROME
