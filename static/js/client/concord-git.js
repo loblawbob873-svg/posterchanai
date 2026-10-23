@@ -418,13 +418,22 @@
     const address=parseAddress(coord);if(!address)return 0;
     s.loading=(async()=>{
       let added=0;
-      const annRelays=unique([...relaysFor(coord,hints),DISCOVERY_RELAY]);
-      added+=absorb(coord,s,await query(annRelays,[{kinds:[ANN],authors:[address.owner],'#d':[address.identifier],limit:4}]));
-      const relays=relaysFor(coord,hints);if(!relays.length){s.loadedAt=Date.now();return added;}
+      /* THE REPOSITORY'S OWN RELAYS FIRST; THE INDEX ALONGSIDE, NEVER IN FRONT. index.ngit.dev is an outside relay,
+       * i.e. a tunnelled dial (Tor), and this used to ask it for the announcement -- waiting up to 8s -- before asking
+       * the relays that actually hold the issues: "the projects page ... all 0's", then "finally loaded -- took
+       * forever" (2026-10-22). Only a repository whose relays are not known yet has to wait for it. Each step that
+       * brings something repaints (`progress`), so the issues are on screen before their comments arrive. */
+      const annF=[{kinds:[ANN],authors:[address.owner],'#d':[address.identifier],limit:4}];
+      const fromIndex=query([DISCOVERY_RELAY],annF);
+      let relays=relaysFor(coord,hints);
+      if(relays.length)added+=absorb(coord,s,await query(relays,annF));
+      else{added+=absorb(coord,s,await fromIndex);relays=relaysFor(coord,hints);}
+      if(!relays.length){s.loadedAt=Date.now();return added;}
+      relays=relaysFor(coord,hints);
       const pages=deep?5:1;let until=0;
       for(let i=0;i<pages;i++){
         const f={kinds:TICKET_KINDS,'#a':[coord],limit:deep?100:300};if(until)f.until=until;
-        const got=await query(relays,[f,...(i===0?[{kinds:CI_KINDS,'#a':[coord],limit:200}]:[])]);added+=absorb(coord,s,got);
+        const got=await query(relays,[f,...(i===0?[{kinds:CI_KINDS,'#a':[coord],limit:200}]:[])]);const n=absorb(coord,s,got);added+=n;if(n)progress();
         const roots=got.filter(e=>TICKET_KINDS.includes(e.kind));if(roots.length<f.limit)break;until=Math.min(...roots.map(e=>e.created_at))-1;
       }
       const rootIds=[...s.events.values()].filter(e=>TICKET_KINDS.includes(e.kind)).map(e=>e.id);
@@ -432,12 +441,15 @@
         added+=absorb(coord,s,await query(relays,[{kinds:[COMMENT],'#E':ids,limit:2000},{kinds:STATUS_KINDS,'#e':ids,limit:2000}]));}
       const all=[...s.events.values()].filter(e=>e.kind!==ANN&&e.kind!==DELETION).map(e=>e.id);
       for(let i=0;i<all.length;i+=200)added+=absorb(coord,s,await query(relays,[{kinds:[DELETION],'#e':all.slice(i,i+200),limit:2000}]));
+      added+=absorb(coord,s,await fromIndex);   // a newer announcement the repository's relays did not have
       s.loadedAt=Date.now();
       if(added)saveCache(coord,s);
       return added;
     })().finally(()=>{s.loading=null;});
     return s.loading;
   }
+  /* A step of a refresh brought events: show them now, not when the whole refresh is done. */
+  function progress(){if(projectsOpen)renderProjects();if(host&&host.repaint)host.repaint();}
   function eventsOf(coords){const out=[];for(const c of coords){const s=repoState.get(c);if(s)out.push(...s.events.values());}return out;}
   function annsOf(coords){return coords.map(c=>repoState.get(c)&&repoState.get(c).ann).filter(Boolean);}
 
@@ -588,6 +600,23 @@
     return mergeTimeline(list,acts).map(x=>x&&x.ccGit?{ccGit:true,at:x.at,html:rowHtml(x)}:x);
   }
   function channelHasGit(channel){return attachmentsOf(channel).length>0;}
+  /* WHAT A REPOSITORY CHANNEL IS, AT ITS TOP. The channel shows only activity from INSIDE its attachment interval
+   * (Armada's rule, kept so an Armada member sees the same channel) -- so one connected a minute ago is EMPTY however
+   * many issues the repository has, and with no messages it did not even draw the channel's welcome: "the Git channel
+   * is empty in concord after connecting the repo" (2026-10-22, 93 issues on its relays). This names the repository,
+   * says what will appear here and since when, and opens the existing issues. One card per ACTIVE attachment. */
+  function channelIntroHtml(room,channel){
+    const atts=attachmentsOf(channel).filter(isActive);if(!atts.length)return '';
+    return atts.map(a=>{const coord=a.address.coordinate;relaysFor(coord,a.relayHints);want([a.address.owner]);
+      const s=stateOf(coord),items=projectItems(eventsOf([coord]),repoList([{address:a.address}])),
+        issues=items.filter(x=>x.ticket.type!=='pull-request'),open=issues.filter(x=>x.status==='open').length,prs=items.length-issues.length;
+      const since=new Date(a.attachedAt*1000).toLocaleDateString([],{year:'numeric',month:'short',day:'numeric'});
+      const counts=items.length?`${open} open of ${issues.length} issue${issues.length===1?'':'s'}${prs?` · ${prs} pull request${prs===1?'':'s'}`:''}`
+        :(s.loading||!s.loadedAt?'Loading repository activity…':'No issues yet');
+      return `<div class="ccg-intro" data-ccg-intro="${enc(coord)}"><img src="${enc(avatarOf(a.address.owner))}" alt=""><div><b>${enc(nameOf(a.address.owner))} / ${enc(repoName(coord))}</b>`
+        +`<small>${enc(counts)}</small><small>New issues, comments and status changes appear in this channel from ${enc(since)}, when the repository was connected.</small></div>`
+        +`<button type="button" class="btn btn-ghost small" data-ccg-intro-open="${enc(coord)}">Issues</button></div>`;}).join('');
+  }
 
   /* ───────────────────────────── ticket panel ───────────────────────────── */
   const panel={ticket:null,room:null,editing:'',sending:false};
@@ -984,6 +1013,10 @@
 
   /* ───────────────────────────── wiring ───────────────────────────── */
   document.addEventListener('click',e=>{
+    const io=e.target&&e.target.closest&&e.target.closest('[data-ccg-intro-open]');
+    if(io){e.preventDefault();const room=host&&host.room&&host.room();if(!room)return;
+      const ch=(room.channels||[]).find(c=>attachmentsOf(c).some(a=>isActive(a)&&a.address.coordinate===io.dataset.ccgIntroOpen));
+      openProjects(room,{channel:ch,tab:'issues'});return;}
     const t=e.target&&e.target.closest&&e.target.closest('.ccg-row [data-ccg-ticket]');
     if(t){e.preventDefault();openTicket(t.dataset.ccgTicket,host&&host.room&&host.room());return;}
     const pr=e.target&&e.target.closest&&e.target.closest('.ccg-row [data-ccg-profile]');
@@ -994,7 +1027,7 @@
   root.PCConcordGit={core,
     /* concord.js hands in what only it knows. */
     bindHost(h){host=h;},
-    paneRows,channelHasGit,hasRepos,activeRepos,latestAt,watch,openTicket,closePanel,openProjects,closeProjects,
+    paneRows,channelHasGit,channelIntroHtml,hasRepos,activeRepos,latestAt,watch,openTicket,closePanel,openProjects,closeProjects,
     newIssue,pickRepository,connectFlow,settingsHtml,bindSettings,attachmentsOf,
     /* For tests and the harness. */
     _state:repoState,_absorb:(coord,evs)=>absorb(coord,stateOf(coord),evs),_md:md,_rowHtml:rowHtml};

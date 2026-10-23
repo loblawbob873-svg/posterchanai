@@ -276,3 +276,49 @@ def test_the_repository_picker_finds_an_old_repository():
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_projects_paints_from_the_repository_relays_without_waiting_for_the_index():
+    """2026-10-22: "the projects page after you add a git repo is empty ... all 0's", then "finally loaded -- took
+    forever". The refresh ran in strict sequence and its FIRST step asked index.ngit.dev -- an outside relay, i.e. a
+    Tor-tunnelled dial -- for the announcement, waiting up to 8s before even asking the repository's own relays for
+    its issues. Here those relays answer at once and the index only at its timeout: the issues must be on screen
+    in well under the index's timeout."""
+    fx = fixture()
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1280, height=860, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js(r'''(()=>{
+          const FX=%s;
+          const ngit={id:'ch-ngit',name:'ngit',streamPubkeys:[],repositories:[{address:FX.coord,relayHints:['wss://git.fixture.invalid'],attachedAt:FX.attachedAt}]};
+          const general={id:'ch-general',name:'general',streamPubkeys:[]};
+          const room={name:'Git room',communityId:'c'.repeat(64),naddr:'fixture-community',url:'https://fixture.invalid/invite/x#s',
+            channels:[general,ngit],cord:{bundle:{owner:FX.viewer,relays:['wss://fixture.invalid']},hydrated:true}};
+          localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+          localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+          window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[general,ngit]}),
+            inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]})};
+          const match=(ev,f)=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.authors||f.authors.includes(ev.pubkey))
+            &&Object.keys(f).filter(k=>k[0]==='#').every(k=>ev.tags.some(t=>t[0]===k.slice(1)&&f[k].includes(t[1])));
+          // The index answers only when the caller gives up on it, as a slow tunnelled dial does.
+          const door={queryFrom:async(urls,filters,o)=>{
+              const fast=urls.filter(u=>!/index\.ngit\.dev/.test(u));
+              if(!fast.length)await new Promise(r=>setTimeout(r,(o&&o.timeout)||8000));
+              else if(fast.length<urls.length)await new Promise(r=>setTimeout(r,(o&&o.timeout)||8000));
+              return FX.events.filter(ev=>filters.some(f=>match(ev,f)));},
+            publishTo:async()=>({ok:true,accepted:1}),subscribeFrom:()=>({close(){}})};
+          Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return door;}});
+          __PC.switchMessagesTab('concord');
+        })()''' % json.dumps(fx))
+        await b.until("!!document.querySelector('#ccg-projects-open')")
+        t0 = await b.js("performance.now()")
+        await b.js("document.querySelector('#ccg-projects-open').click()")
+        await b.until("!!document.querySelector('#ccg-projects') && document.querySelector('#ccg-projects').innerText.includes('Push hangs on large packs')")
+        took = await b.js("performance.now()") - t0
+        print('projects painted after ms', round(took))
+        assert took < 3000, ('Projects waited on the index relay before showing the repository\'s own issues', round(took))
+
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))

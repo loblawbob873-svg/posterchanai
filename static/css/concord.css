@@ -647,6 +647,11 @@ svg.ic.cc-starred{fill:currentColor}
 /* ── Concord × git (concord-git.js): repository activity rows, the ticket panel, Projects ──
  * Panels are fixed to the viewport (they outlive a room repaint): a right-hand sheet on a desktop,
  * the whole screen on a phone. Below modals (100) so a confirm or the JSON view opens above them. */
+.ccg-intro{display:flex;gap:10px;align-items:center;padding:10px 12px;margin:6px 0 10px;border:1px solid rgba(var(--cct-accent-rgb),.35);border-radius:calc(10px*var(--cct-round));background:rgba(var(--cct-tint-rgb),.05);color:var(--cct-text);font-size:13px}
+.ccg-intro img{width:32px;height:32px;border-radius:50%;flex:none;object-fit:cover}
+.ccg-intro>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ccg-intro small{color:var(--cct-muted,inherit);opacity:.8;overflow-wrap:anywhere}
+.ccg-intro .btn{flex:none}
 .ccg-row{display:flex;gap:9px;align-items:flex-start;padding:7px 4px;margin:2px 0;border-inline-start:2px solid rgba(var(--cct-accent-rgb),.45);border-radius:0 calc(8px*var(--cct-round)) calc(8px*var(--cct-round)) 0;background:rgba(var(--cct-tint-rgb),.03);color:var(--cct-text);font-size:13px}
 .ccg-row:hover{background:rgba(var(--cct-tint-rgb),.06)}
 .ccg-ico{flex:0 0 26px;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:rgba(var(--cct-accent-rgb),.12);font-size:13px;line-height:1}
