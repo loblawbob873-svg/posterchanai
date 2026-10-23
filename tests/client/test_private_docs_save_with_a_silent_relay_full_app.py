@@ -115,9 +115,15 @@ class Scenario:
 @pytest.fixture(scope='module')
 def ran(request):
     """Runs every SELECTED scenario of this module (LANES at a time) once, and hands each test its own outcome."""
+    return run_scenarios(request, SCENARIOS, COST, FIRST_FILL)
+
+
+def run_scenarios(request, scenarios, cost, first_fill, lanes=LANES):
+    """The runner, shared with the sibling cross-device file: each selected scenario on its own account
+    (`first_fill`, `first_fill`+1, ... in the order `scenarios` were declared), the longest first, `lanes` at a time."""
     wanted = [i.name[len('test_'):] for i in request.session.items
               if getattr(i, 'module', None) is request.module and i.name.startswith('test_')]
-    missing = [w for w in wanted if w not in SCENARIOS]
+    missing = [w for w in wanted if w not in scenarios]
     assert not missing, ('a test with no scenario', missing)
     H.start()
     H.OVERRIDES.clear()
@@ -126,8 +132,8 @@ def ran(request):
     for pair in filter(None, os.environ.get('PC_WALLPAPER_OVERRIDE', '').split(',')):
         path, _, src = pair.partition('=')
         H.OVERRIDES[path] = src
-    fills = {name: FIRST_FILL + i for i, name in enumerate(SCENARIOS)}
-    queue = sorted(wanted, key=lambda n: -COST.get(n, 15))
+    fills = {name: first_fill + i for i, name in enumerate(scenarios)}
+    queue = sorted(wanted, key=lambda n: -cost.get(n, 15))
     outcome = {}
 
     async def lane():
@@ -135,7 +141,7 @@ def ran(request):
             name = queue.pop(0)
             S = Scenario(name, fills[name])
             try:
-                await SCENARIOS[name](S)
+                await scenarios[name](S)
                 outcome[name] = None
             except BaseException as e:          # noqa: B036 -- kept for that scenario's own test to raise
                 outcome[name] = e
@@ -146,7 +152,7 @@ def ran(request):
                     pass
 
     async def main():
-        await asyncio.gather(*(lane() for _ in range(LANES)))
+        await asyncio.gather(*(lane() for _ in range(lanes)))
     asyncio.run(main())
 
     def check(name):
