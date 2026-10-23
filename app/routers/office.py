@@ -128,6 +128,10 @@ def _token(file_id: str, expires: int) -> str:
 
 
 async def _authorize(file_id: str, token: str) -> dict:
+    # A MISSING token is 401 like any other bad one -- WOPI's answer, and what CODE reports as "unauthorized".
+    # It was a required Query, so FastAPI answered 422 with a validation body naming the parameter it wanted.
+    if not token or not isinstance(token, str):
+        raise HTTPException(401, "missing office token")
     try:
         expires_s, sig = token.split(".", 1)
         expires = int(expires_s)
@@ -293,7 +297,7 @@ async def create_session(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/client/office/session/{file_id}/contents")
-async def session_contents(file_id: str, access_token: str = Query(...)):
+async def session_contents(file_id: str, access_token: str = Query("")):
     meta = await _authorize(file_id, access_token)
     return FileResponse(_dir(file_id) / "document", media_type="application/octet-stream",
                         filename=meta["name"])
@@ -321,7 +325,7 @@ _EXPORT = {"pdf": "application/pdf",
 
 
 @router.get("/client/office/session/{file_id}/export/{fmt}")
-async def session_export(file_id: str, fmt: str, access_token: str = Query(...)):
+async def session_export(file_id: str, fmt: str, access_token: str = Query("")):
     meta = await _authorize(file_id, access_token)
     fmt = fmt.lower()
     if fmt not in _EXPORT:
@@ -350,7 +354,7 @@ async def session_export(file_id: str, fmt: str, access_token: str = Query(...))
 
 
 @router.delete("/client/office/session/{file_id}")
-async def delete_session(file_id: str, access_token: str = Query(...)):
+async def delete_session(file_id: str, access_token: str = Query("")):
     await _authorize(file_id, access_token)
     shutil.rmtree(_dir(file_id), ignore_errors=True)
     with _MU:
@@ -359,7 +363,7 @@ async def delete_session(file_id: str, access_token: str = Query(...)):
 
 
 @router.get("/wopi/files/{file_id}")
-async def check_file_info(file_id: str, request: Request, access_token: str = Query(...)):
+async def check_file_info(file_id: str, request: Request, access_token: str = Query("")):
     meta = await _authorize(file_id, access_token)
     base = _public_base(request)
     return {"BaseFileName": meta["name"], "Size": meta["size"],
@@ -373,14 +377,14 @@ async def check_file_info(file_id: str, request: Request, access_token: str = Qu
 
 
 @router.get("/wopi/files/{file_id}/contents")
-async def get_file(file_id: str, access_token: str = Query(...)):
+async def get_file(file_id: str, access_token: str = Query("")):
     meta = await _authorize(file_id, access_token)
     return FileResponse(_dir(file_id) / "document", media_type="application/octet-stream",
                         headers={"X-WOPI-ItemVersion": str(meta["version"])})
 
 
 @router.post("/wopi/files/{file_id}/contents")
-async def put_file(file_id: str, request: Request, access_token: str = Query(...),
+async def put_file(file_id: str, request: Request, access_token: str = Query(""),
                    x_wopi_lock: str | None = Header(None)):
     meta = await _authorize(file_id, access_token)
     if meta["readonly"]:
@@ -409,7 +413,7 @@ async def put_file(file_id: str, request: Request, access_token: str = Query(...
 
 
 @router.post("/wopi/files/{file_id}")
-async def file_operation(file_id: str, access_token: str = Query(...),
+async def file_operation(file_id: str, access_token: str = Query(""),
                    x_wopi_override: str = Header(""), x_wopi_lock: str = Header(""),
                    x_wopi_oldlock: str = Header("")):
     await _authorize(file_id, access_token)

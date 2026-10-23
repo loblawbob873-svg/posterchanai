@@ -37,7 +37,7 @@ class TheEditorIsAskedToSave(unittest.TestCase):
 
     def _save_handler(self) -> str:
         start = APP.index("$('#office-save',root).onclick=async e=>{")
-        return APP[start:start + 2200]
+        return APP[start:start + 4000]
 
     def test_save_asks_before_it_reads(self):
         body = self._save_handler()
