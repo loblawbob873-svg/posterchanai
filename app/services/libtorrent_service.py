@@ -75,8 +75,15 @@ class LibtorrentService:
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create libtorrent session
-        self.session = lt.session()
+        # Create libtorrent session. Born with DHT, LSD and uTP OFF: a bare `lt.session()` starts with
+        # libtorrent's defaults -- DHT bootstrapping to public routers, LSD multicasting -- and they ran
+        # UNPROXIED until `apply_settings` below, which only happens after the proxy probe (up to ~30s of
+        # retries when the proxy is slow to come up). Measured: an `lsd_error_alert` from a session
+        # whose settings say enable_lsd False. The full settings are still applied below.
+        self.session = lt.session({
+            'enable_dht': False, 'enable_lsd': False,
+            'enable_outgoing_utp': False, 'enable_incoming_utp': False,
+        })
 
         # Configure session settings for STRICT Tor-only operation:
         # ALL peer connections MUST go through HTTP proxy -> Tor
@@ -317,6 +324,46 @@ class LibtorrentService:
             pass
         return str(handle.info_hash())
 
+    def _alert_forms(self, alert) -> tuple[str, set[str]]:
+        """(filename hash, every hash form) for a save_resume_data_alert, read from the RESUME DATA.
+
+        Never from `alert.handle` alone: a save requested just before a removal (the periodic loop's, or
+        shutdown's) is answered AFTER `remove_torrent`, when that handle is no longer valid -- and an invalid
+        handle answers the all-zeros hash. Measured against libtorrent 2.1: the late answer for a removed
+        torrent was written as `0000…0000.resume`, which no tombstone names and no purge finds, and the next
+        start re-added the torrent and "self-healed" the file to its real name -- removed, back after the
+        restart. The params carry the torrent's own v1/v2 hashes whatever state the handle is in."""
+        forms: set[str] = set()
+        try:
+            ihs = alert.params.info_hashes
+            for _h in (getattr(ihs, "v1", None), getattr(ihs, "v2", None)):
+                if _h is not None and not _h.is_all_zeros():
+                    forms.add(str(_h))
+            v1 = getattr(ihs, "v1", None)
+            if v1 is not None and not v1.is_all_zeros():
+                return str(v1), forms
+            if forms:
+                return next(iter(forms)), forms
+        except Exception:
+            pass
+        ih = self._stable_ih(alert.handle)
+        if ih.strip("0"):
+            forms.add(ih)
+        return ih, forms
+
+    def _write_alert_resume(self, alert) -> Optional[str]:
+        """Write one save_resume_data_alert to disk unless its torrent was removed. Returns the hash written
+        (or skipped), None when nothing could be identified."""
+        info_hash, forms = self._alert_forms(alert)
+        if not forms:
+            # Not identifiable: writing it would create exactly the nameless file that resurrects.
+            logger.warning("[BT] Resume data with no usable info-hash ignored")
+            return None
+        if forms & self._removed:
+            return info_hash
+        (self.resume_dir / f"{info_hash}.resume").write_bytes(lt.write_resume_data_buf(alert.params))
+        return info_hash
+
     def _save_resume_data(self):
         """Save resume data for all torrents."""
         logger.info("[BT] Saving resume data for all torrents...")
@@ -337,22 +384,17 @@ class LibtorrentService:
             alerts = self.session.pop_alerts()
             for alert in alerts:
                 if isinstance(alert, lt.save_resume_data_alert):
-                    info_hash = self._stable_ih(alert.handle)
-                    # Skip late alerts for torrents removed just before shutdown (a periodic
-                    # save request still in flight) — writing them here resurrects the .resume
-                    # file so the removed torrent comes back on the next restart. Mirrors the
-                    # same tombstone guard in _process_alerts.
-                    if info_hash in self._removed:
-                        continue
+                    # Late alerts for torrents removed just before shutdown (a periodic save request
+                    # still in flight) are skipped inside _write_alert_resume -- writing them
+                    # resurrects the torrent on the next restart. Same path as _process_alerts.
                     try:
-                        resume_file = self.resume_dir / f"{info_hash}.resume"
-                        resume_data = lt.write_resume_data_buf(alert.params)
-                        resume_file.write_bytes(resume_data)
-                        count += 1
-                        pending.discard(info_hash)
-                        logger.debug(f"[BT] Saved resume data: {info_hash}")
+                        info_hash = self._write_alert_resume(alert)
+                        if info_hash:
+                            count += 1
+                            pending.discard(info_hash)
+                            logger.debug(f"[BT] Saved resume data: {info_hash}")
                     except Exception as e:
-                        logger.error(f"[BT] Failed to write resume data for {info_hash}: {e}")
+                        logger.error(f"[BT] Failed to write resume data: {e}")
                 elif isinstance(alert, lt.save_resume_data_failed_alert):
                     info_hash = self._stable_ih(alert.handle)
                     pending.discard(info_hash)
@@ -545,15 +587,12 @@ class LibtorrentService:
                 # shutdown-only _save_resume_data (which raced the loop and saved partial state).
                 if isinstance(alert, lt.save_resume_data_alert):
                     try:
-                        info_hash = self._stable_ih(alert.handle)
                         # Ignore late resume-save alerts for torrents removed between the
                         # periodic save request and this alert — otherwise the .resume file
                         # is resurrected and the torrent comes back on the next restart.
                         # Tombstone-keyed (not "in self.torrents") so an active torrent whose
                         # _stable_ih drifts from its dict key is still persisted.
-                        if info_hash not in self._removed:
-                            (self.resume_dir / f"{info_hash}.resume").write_bytes(
-                                lt.write_resume_data_buf(alert.params))
+                        self._write_alert_resume(alert)
                     except Exception as e:
                         logger.error(f"[BT] Failed to write resume data: {e}")
                     continue

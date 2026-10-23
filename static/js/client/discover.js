@@ -388,11 +388,27 @@ window.PCDiscoverFactory = function(dep){
   let _torTab = 'dl';
   let _torPollT = 0;
 
+  /* A READ that never answers must end. The node forwards to the engine node with a 30s budget of its
+   * own, and an engine that accepts and then says nothing (a wedged libtorrent, a NAS mid-reboot)
+   * left the Downloads screen on its spinner for as long as that took — and with nothing in flight
+   * bounded, every 2s poll stacked another request behind it. Writes are NOT timed out here: giving up
+   * on an /add or /remove the server is still carrying out would report a failure for something that
+   * then happens. */
+  const _TOR_READ_MS = 12000;
   async function _torApi(path, opts){
     try{ await ensureAiSession(); }catch(_){}   // the APK has no cookie; the bearer token is the auth
-    const r = await fetch('/api/torrent'+path, { credentials:'include', ...(opts||{}),
-      headers:{ 'Content-Type':'application/json', ...((opts&&opts.headers)||{}),
-                ...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}) } });
+    const read = !(opts && opts.method && opts.method!=='GET');
+    const ac = read && typeof AbortController==='function' ? new AbortController() : null;
+    const tm = ac ? setTimeout(()=>ac.abort(), _TOR_READ_MS) : 0;
+    let r;
+    try{
+      r = await fetch('/api/torrent'+path, { credentials:'include', ...(opts||{}), ...(ac?{signal:ac.signal}:{}),
+        headers:{ 'Content-Type':'application/json', ...((opts&&opts.headers)||{}),
+                  ...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}) } });
+    }catch(err){
+      const e=new Error(ac && ac.signal.aborted ? 'the torrent client did not answer in time' : 'the server could not be reached');
+      e.detail=e.message; e.status=0; throw e;
+    }finally{ if(tm) clearTimeout(tm); }
     if(!r.ok){
       const e=new Error('http '+r.status); e.status=r.status;
       // FastAPI returns `detail` as a STRING for an HTTPException and as a LIST OF OBJECTS for a
@@ -474,20 +490,34 @@ window.PCDiscoverFactory = function(dep){
     });
   }
 
+  let _torBusy = false;
   async function _torRefresh(force){
     const box=$('#tm-list'); if(!box || S.VIEW!=='torrents' || _torTab!=='dl') return;
+    // A poll never queues behind one still in flight (a slow engine would otherwise collect a request
+    // every two seconds); an explicit refresh always goes.
+    if(_torBusy && !force) return;
     let j=null;
+    _torBusy=true;
     try{ j=await _torApi('/list'); }
     catch(err){
+      _torBusy=false;
       if(S.VIEW!=='torrents') return;
-      // 503 is "no torrent client on this node", which is a SETTING, not a fault — say which.
-      box.innerHTML = err.status===503
+      // The error REPLACES the rows, so the signature describing them must go too: otherwise the
+      // engine coming back with the same torrents takes the repaint-in-place branch below, finds no
+      // row to repaint, and the error stays on screen for as long as the list does not change shape.
+      delete box.dataset.sig;
+      // 503 "Torrent client not configured" is a SETTING, not a fault — say which. Every other 503 (the
+      // engine node this one forwards to is down: "Cannot reach remote torrent server") is a fault:
+      // sending the user to an admin about a switch that is already on tells them nothing true.
+      const notConfigured = err.status===503 && /not configured/i.test(err.detail||'');
+      box.innerHTML = notConfigured
         ? `<div class="empty">This server has no torrent client enabled.<br><span class="muted small">An admin turns it on in Admin → Tools.</span></div>`
         : (err.status===401 || err.status===403
             ? '<div class="empty">You don\'t have access to the torrent client on this server.</div>'
             : `<div class="empty">Couldn\'t reach the torrent client.<br><span class="muted small">${enc(err.detail||err.message)}</span></div>`);
       return;
     }
+    _torBusy=false;
     if(S.VIEW!=='torrents' || _torTab!=='dl') return;
     const list=(j&&j.torrents)||[];
     // Repaint in place while the list is unchanged in SHAPE, so a click target does not move under

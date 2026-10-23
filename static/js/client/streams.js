@@ -69,6 +69,14 @@ window.PCStreamsFactory = function(dep){
      * the relay's version wins whenever it has one. */
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(S.VIEW!=='streams') return;
+    /* WHAT AN EMPTY LIST MEANS DEPENDS ON WHETHER ANYBODY ANSWERED. Painting "No live streams right
+     * now." before the relay had spoken, and leaving it there when it never did, stated as a fact
+     * something nobody had checked -- a fresh device on a relay that hangs read exactly like a quiet
+     * network. `heard`: null = still asking, true = a relay EOSE'd, false = the read gave up. */
+    let heard=null;
+    const emptyHtml=()=> heard===true ? '<div class="empty">No live streams right now.</div>'
+      : heard===null ? '<div class="empty">Looking for live streams…</div>'
+      : `<div class="empty">Your relays didn’t answer, so live streams can’t be listed right now.<br><button class="btn btn-ghost small" id="streams-retry" style="margin-top:8px">Retry</button></div>`;
     const paint=()=>{
       if(S.VIEW!=='streams') return;
       const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
@@ -82,7 +90,12 @@ window.PCStreamsFactory = function(dep){
       const top=`<div class="streams-top">${_liveStream
         ? `<span class="live-badge">● LIVE</span><span class="muted small" id="stream-viewers">👁 …</span><button class="btn btn-ghost small" id="stream-end"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>End stream</button>`
         : (!S.GUEST ? `<button class="btn btn-neon small" id="stream-golive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</button>` : '')}</div>`;
-      feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No live streams right now.</div>');
+      // The one-tap Announce banner (_maybeOfferAnnounce) lives between the header and the grid; a repaint
+      // must carry it over, or the list arriving from the relay wipes the offer it was showing.
+      const ib=feed.querySelector('#ingest-banner');
+      feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : emptyHtml());
+      if(ib && !_liveStream){ const t=feed.querySelector('.streams-top'); if(t) t.after(ib); }
+      { const rt=$('#streams-retry',feed); if(rt) rt.onclick=()=>renderStreams(); }
       decorateProfiles();
       { const gl=$('#stream-golive',feed); if(gl) gl.onclick=_goLive; const ge=$('#stream-end',feed); if(ge) ge.onclick=_endLive; }
       $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
@@ -98,9 +111,11 @@ window.PCStreamsFactory = function(dep){
         new Promise((_,reject)=>setTimeout(()=>reject(new Error('stream relay timed out')),8000))
       ]);
     }catch(_){ fresh=[]; }
-    if(fresh && fresh.length && S.VIEW==='streams'){
+    if(readSignal&&readSignal.aborted) return;   // a newer renderStreams (Retry, re-entry) owns the screen now
+    heard = !!(fresh && (fresh.complete===true || Relay.homeAnswered(fresh) || fresh.length));
+    if(S.VIEW==='streams'){
       const have=new Set(evs.map(e=>e.id));
-      fresh.forEach(e=>{ if(!have.has(e.id)){ have.add(e.id); evs.push(e); }
+      (fresh||[]).forEach(e=>{ if(!have.has(e.id)){ have.add(e.id); evs.push(e); }
         Store.saveEvent(e); needProfile(e.pubkey); });
       paint();
     }
@@ -235,11 +250,23 @@ window.PCStreamsFactory = function(dep){
         // Resolve THIS broadcast's recording. Was `vods[0]` — the newest VOD for the publish token,
         // which on a token that has streamed more than once is somebody else's session: opening an old
         // stream played (and would have stamped) the latest recording.
-        let vurl='';
+        let vurl='', vodUnknown=false;
         const _starts=(e.tags.find(t=>t[0]==='starts')||[])[1]||'';
-        if(dtag){ try{ vurl = await _vodUrlFor(_tokenOfD(dtag), _starts); }catch(_){} }
+        if(dtag){ try{ const vods=await _vodList(_tokenOfD(dtag));
+                       if(vods===null) vodUnknown=true; else vurl=_vodPick(vods, _starts); }catch(_){ vodUnknown=true; } }
         if(S.VIEW!=='stream'||openStream._view!==_view) return;   // navigated away / opened another stream
-        const playUrl=vurl||url; const n2=$('#st-note');
+        /* ONLY A RECORDING IS PLAYABLE ONCE A STREAM HAS ENDED. Falling back to `streaming` handed the
+         * player the stopped live feed -- and every stream Go Live ever ended keeps that tag (_liveBase),
+         * so OUR OWN ended streams never reached the branch below: no "saving your recording", no "no
+         * recording available", just a dead HLS load and "could not play this stream here". */
+        const playUrl=vurl||_tag('recording'); const n2=$('#st-note');
+        const v0=$('#st-video');
+        if(!playUrl && v0) v0.hidden=true;   // nothing to play: no black box under the message
+        if(!playUrl && vodUnknown){
+          // "Could not ask" is not "there is none" -- the recordings list did not answer (503, timeout).
+          if(n2) n2.textContent='This stream ended. Couldn\u2019t check for a recording right now \u2014 the server didn\u2019t answer.';
+          return;
+        }
         if(!playUrl){
           /* "no recording available" was stated flatly from the instant a stream ended — but the
            * recording does not exist for another ~60-90s (server-side concat + upload), so for that
@@ -388,7 +415,13 @@ window.PCStreamsFactory = function(dep){
     const hit = _vodLists.get(token);
     if(hit && (now - hit.at) < _VOD_TTL) return hit.p;
     const p = (async () => {
-      const r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token));
+      // Bounded: a recordings endpoint that never answers left "Loading recording…" on screen for ever.
+      const ac = typeof AbortController==='function' ? new AbortController() : null;
+      const tm = setTimeout(()=>{ try{ ac && ac.abort(); }catch(_){} }, 10000);
+      let r = null;
+      try{ r = await _streamFetch('/api/streams/vods/by-token/' + encodeURIComponent(token), ac?{signal:ac.signal}:{}); }
+      catch(_){ r = null; }
+      finally{ clearTimeout(tm); }
       if(!(r && r.ok)){ _vodLists.delete(token); return null; }   // null = ask again, not "none exist"
       try{ return ((await r.json()) || {}).vods || []; }
       catch(_){ _vodLists.delete(token); return null; }
@@ -402,6 +435,11 @@ window.PCStreamsFactory = function(dep){
   async function _vodUrlFor(token, starts){
     if(!token) return '';
     const vods = await _vodList(token);
+    return _vodPick(vods, starts);
+  }
+  // The matching half, apart from the fetch: openStream must tell "the list could not be read" (null)
+  // from "no recording matches", which _vodUrlFor flattens into the same ''.
+  function _vodPick(vods, starts){
     if(!vods || !vods.length) return '';
     const s = parseInt(starts, 10);
     if(!s) return vods[0].url || '';
@@ -2217,6 +2255,17 @@ window.PCStreamsFactory = function(dep){
     _disposeInlineHls();   // drop any previous inline hls before attaching a new one — unconditional:
                            // this window is about to replace the player it owns, parked or not
     const isHls=/\.m3u8(\?|#|$)/i.test(url);
+    /* A SOURCE THAT NEVER ANSWERS MUST NOT LOOK LIKE A SLOW ONE FOR EVER. hls.js gives up on a manifest
+     * that accepts the connection and sends nothing only after 3 x 20s, and a <video> src that hangs
+     * never errors at all -- so the viewer sat in front of a black box with no word on it. Say we are
+     * connecting, clear that the moment the source answers, and say plainly when it has not. */
+    const CONNECTING='Connecting to the stream\u2026';
+    const n0=$('#st-note'); if(n0 && !n0.textContent) n0.textContent=CONNECTING;
+    const okd=()=>{ const n=$('#st-note'); if(n && n.textContent===CONNECTING) n.textContent=''; };
+    v.addEventListener('loadedmetadata', okd, {once:true});   // metadata = the source answered; a paused VOD stops there
+    setTimeout(()=>{ if($('#st-video')!==v || v.readyState>=1) return;
+      const n=$('#st-note'); if(n && (n.textContent===CONNECTING || !n.textContent))
+        n.textContent='The stream isn\u2019t answering \u2014 it may have ended, or its server can\u2019t be reached. Try the \u201cOpen stream URL\u201d link below.'; }, 15000);
     const native=()=>{ v.onerror=()=>_streamNote('Could not play this video here — try the \u201cOpen stream URL\u201d link below.'); v.src=url; };
     if(!isHls){ native(); return; }   // mp4/webm VOD — <video> plays it directly
     // HLS: try hls.js FIRST, and fall back to native ONLY when it isn't usable. The reverse order (the old

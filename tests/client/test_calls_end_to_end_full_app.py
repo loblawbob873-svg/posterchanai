@@ -85,7 +85,7 @@ class Relay:
         return [e for e in self.log if e['kind'] == kind]
 
 
-def _init(relay_url):
+def _init(relay_url, extra=''):
     # The instance: its relay is the test relay, calls get no TURN (host candidates on loopback).
     # RTCPeerConnection is wrapped ONLY to keep a list of them, so a test can read real getStats().
     return FIRST_RUN_DONE + r'''
@@ -103,7 +103,7 @@ window.fetch=async function(url,opts={}){
 window.__pcs=[];
 const _PC=window.RTCPeerConnection;
 window.RTCPeerConnection=class extends _PC{constructor(...a){super(...a);__pcs.push(this);}};
-'''.replace('RELAY', json.dumps(relay_url))
+'''.replace('RELAY', json.dumps(relay_url)) + extra
 
 
 class Person:
@@ -157,7 +157,7 @@ class Person:
         return await self.js("JSON.parse(localStorage.getItem('pc_missed_calls')||'[]').map(x=>x.pk)")
 
 
-async def _open(stack, http_port, relay_url, key_byte, name):
+async def _open(stack, http_port, relay_url, key_byte, name, extra=''):
     profile = stack.enter_context(tempfile.TemporaryDirectory(prefix='pc-call-', ignore_cleanup_errors=True))
     proc = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', '--disable-gpu', '--window-size=1100,900',
                              '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
@@ -190,7 +190,7 @@ async def _open(stack, http_port, relay_url, key_byte, name):
     await b.call('Page.enable')
     await b.call('Network.enable')
     await b.call('Network.setBlockedURLs', {'urls': ['https://*', 'wss://*']})
-    await b.call('Page.addScriptToEvaluateOnNewDocument', {'source': _init(relay_url)})
+    await b.call('Page.addScriptToEvaluateOnNewDocument', {'source': _init(relay_url, extra)})
     await b.call('Page.navigate', {'url': f'http://127.0.0.1:{http_port}/client'})
     p = Person(b, name)
     await p.until("!!window.__PC && !!window.NostrTools && document.readyState==='complete'", timeout=40, what='the client to boot')
@@ -204,18 +204,21 @@ async def _open(stack, http_port, relay_url, key_byte, name):
     return p
 
 
-def scenario(*people):
-    """Run `check(relay, *persons)` with one browser per (key_byte, name)."""
+def scenario(*people, extra='', relay_cls=None, handler=None):
+    """Run `check(relay, *persons)` with one browser per (key_byte, name). `extra` is appended to every device's
+    init script, `relay_cls` replaces the relay, `handler` the instance's HTTP handler."""
     def wrap(check):
         async def run():
-            relay = Relay()
+            relay = (relay_cls or Relay)()
             server = await websockets.serve(relay.handler, '127.0.0.1', 0)
             relay_url = 'ws://127.0.0.1:%d' % server.sockets[0].getsockname()[1]
-            http = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            http = ThreadingHTTPServer(('127.0.0.1', 0), handler or Handler)
             threading.Thread(target=http.serve_forever, daemon=True).start()
             try:
                 async with contextlib.AsyncExitStack() as stack:
-                    ps = await asyncio.gather(*[_open(stack, http.server_port, relay_url, k, n) for k, n in people])
+                    ps = await asyncio.gather(*[_open(stack, http.server_port, relay_url, k, n, extra) for k, n in people])
+                    # A test may bring another device online later: relay.open(key_byte, name).
+                    relay.open = lambda k, n: _open(stack, http.server_port, relay_url, k, n, extra)
                     # Every device has subscribed for its own call frames before anyone dials.
                     def armed(p):
                         return any(p.pubkey in f.get('#p', []) and 25050 in f.get('kinds', [])

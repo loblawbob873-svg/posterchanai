@@ -737,11 +737,13 @@ window.PCMediaCenterFactory = function(dep){
               video.ontimeupdate=()=>{if(Date.now()-lastProgress>=15000)savePosition();};
               video.onpause=savePosition;video.onended=savePosition;
               video.addEventListener('loadedmetadata',()=>{if(resumeAt>0)video.currentTime=resumeAt;},{once:true});
-              await api('/'+lib.id+'/progress/'+item.id,'POST',{position:resumeAt});
+              // The "watched from" save and the track list are side work around the movie, not the movie: a
+              // media node that refuses either one must not leave an opened, EMPTY player saying "request failed".
+              await api('/'+lib.id+'/progress/'+item.id,'POST',{position:resumeAt}).catch(()=>{});
               let source=new URL(session.url,_instanceBase()||location.origin).href;
               const audio=$('#mc-audio'),subtitles=$('#mc-subtitles');
               audio.replaceChildren(new Option('Default','-1'));subtitles.replaceChildren(new Option('Off','-1'));
-              const trackData=await api('/'+lib.id+'/tracks/'+item.id);
+              const trackData=await api('/'+lib.id+'/tracks/'+item.id).catch(()=>({tracks:[]}));
               if(S.VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration)return;
               const languages={eng:'English',jpn:'Japanese',spa:'Spanish',fra:'French',deu:'German',ita:'Italian',zho:'Chinese',kor:'Korean',rus:'Russian',ara:'Arabic',por:'Portuguese',und:'Unknown language'};
               const label=track=>[languages[track.language]||track.language,track.title,track.codec].filter(Boolean).join(' · ');
