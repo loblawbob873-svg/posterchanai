@@ -114,7 +114,11 @@
   }
   async function _load(){
     let ev=null, sawRelay=false;
-    for(let a=0; a<3 && !ev; a++){
+    /* AN ANSWER OF "NOTHING" IS AN ANSWER: once a relay that holds the budget has answered (sawRelay), retrying asks
+     * the same question again and waits out every silent relay in the list once more -- three 6s timeouts, ~19.5s of
+     * spinner before a NEW account could add its first bill (measured 2026-10-22). Retry only while nobody answered,
+     * which is the warming-socket case the retry exists for. */
+    for(let a=0; a<3 && !ev && !sawRelay; a++){
       if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{
         const evs = await Relay().query([{ authors:[ME().pubkey], kinds:[KIND], '#d':[D_TAG], limit:1 }]);

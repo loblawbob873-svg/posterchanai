@@ -222,8 +222,14 @@ async def open_budget(b, seconds=60):
 @scenario
 async def a_budget_bill_saves_and_reaches_a_fresh_device(S):
     a = await S.device()
+    import time
+    t0 = time.monotonic()
     await open_budget(a)
+    took = time.monotonic() - t0
     assert await a.js("!!document.querySelector('#bg-n')"), await a.js("document.querySelector('#feed').innerText")
+    # "No budget yet" answered by this node's relay is an answer: one read, not three, even with a silent relay in
+    # the list (it took ~19.5s before 2026-10-22).
+    assert took < 10, ('Budget kept re-asking after the home relay answered', round(took, 1))
     await a.js("(()=>{document.querySelector('#bg-n').value='Electric company';"
                "document.querySelector('#bg-a').value='42.50';document.querySelector('#bg-save').click();return true})()")
     await S.until(a, lambda: S.docs('pcai:budget'), 60, 'pcai:budget on the home relay')
