@@ -122,3 +122,31 @@ def test_sender_card_finds_their_messages_and_copies_the_address():
         await b.until(f"__mailReq.slice({before}).some(r=>r.includes('alice%40x.test')||r.includes('alice@x.test'))")
         assert not await b.js("__errors"), await b.js("__errors")
     _run(check)
+
+
+# The node's answer to "summarize this email" (the AI itself is out of scope; the Copy under its answer is not).
+SUMMARY = r'''window.__aiAsked=[];const __sumFetch=window.fetch;
+window.fetch=(url,opts)=>{if(String(url).includes('/api/mail/ai')){__aiAsked.push(JSON.parse(opts.body));
+  return Promise.resolve(new Response(JSON.stringify({content:'Alice says hello and wants nothing.'}),{status:200,headers:{'Content-Type':'application/json'}}));}
+  return __sumFetch(url,opts);};'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_copy_under_a_summary_copies_the_summary():
+    """✨ → Summarize this email shows the summary with a Copy button (#ma-copy); Copy puts exactly that text on the
+    clipboard."""
+    async def check(b):
+        await _boot(b, SUMMARY)
+        await b.until("document.querySelectorAll('#mail-items .mail-item').length>0")
+        await b.js("document.querySelector('#mail-items .mail-item .mi-content').click(); 1")
+        await b.until("!!document.querySelector('#mail-read [data-act=\"ai\"]')")
+        await b.js("document.querySelector('#mail-read [data-act=\"ai\"]').click(); 1")
+        await b.until("!!document.querySelector('.uipick[data-v=\"sum\"]')")
+        await b.js("document.querySelector('.uipick[data-v=\"sum\"]').click(); 1")
+        await b.until("!!document.querySelector('#ma-copy')")
+        assert await b.js("__aiAsked[0].mode") == 'summarize' and 'hello' in await b.js("__aiAsked[0].text")
+        assert await b.js("__copied.length") == 0
+        await click(b, '#ma-copy')
+        await b.until("__copied.includes('Alice says hello and wants nothing.')")
+        assert not await b.js("__errors"), await b.js("__errors")
+    _run(check)

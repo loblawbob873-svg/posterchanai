@@ -7,6 +7,7 @@ duplicate, pick one feed, remove it, import feeds from pasted OPML, and export w
 summary button is out of scope ("not AI at this time"). Real login, DOM and news.js.
 """
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,6 @@ def bundled_assets():
 
 
 async def _set(b, sel, value):
-    import json
     await b.js(f"(()=>{{const e=document.querySelector({json.dumps(sel)});e.value={json.dumps(value)};e.dispatchEvent(new Event('input',{{bubbles:true}}));}})()")
 
 
@@ -95,3 +95,33 @@ def test_feeds_add_pick_remove_import_and_export():
         names = await b.js("[...document.querySelectorAll('.news-mrow span')].map(s=>s.textContent)")
         assert "One" not in names and len(names) == 2, names
     asyncio.run(desktop.with_browser('online', '', check, FEED))
+
+
+# The browser's file picker: record what opened it rather than showing a native dialog nobody can answer.
+PICKER = r'''
+window.__picked=[];
+const __iclick=HTMLInputElement.prototype.click;
+HTMLInputElement.prototype.click=function(){if(this.type==='file'){__picked.push(this.id);return;}return __iclick.call(this);};
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_import_opml_file_opens_the_picker_and_adds_its_feeds():
+    """Manage feeds → "⬆ Import OPML file" (#news-import) opens the file picker; the chosen .opml's feeds are added
+    and saved."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js("__PC.switchView('news'); 1")
+        await b.until("!!document.querySelector('.news-add')")
+        await b.js("document.querySelector('.news-add').click(); 1")
+        await b.until("!!document.querySelector('#news-import')")
+        await b.js("document.querySelector('#news-import').click(); 1")
+        await b.until("__picked.includes('news-opml-file')")
+        await b.js("(()=>{const i=document.querySelector('#news-opml-file');const dt=new DataTransfer();"
+                   f"dt.items.add(new File([{json.dumps(OPML)}],'feeds.opml',{{type:'text/xml'}}));"
+                   "i.files=dt.files;i.dispatchEvent(new Event('change'));})(); 1")
+        await b.until("/imported 2 feeds/.test(document.body.innerText)")
+        await b.until("!document.querySelector('#news-import')")              # the dialog closed on success
+        saved = await b.js("JSON.parse(__sentEvents.filter(e=>e.kind===30078&&(e.tags||[]).some(t=>t[1]==='pcai:news-feeds')).pop().content)")
+        assert {f["url"] for f in saved} >= {"https://two.example/rss", "https://three.example/rss"}, saved
+    asyncio.run(desktop.with_browser('online', '', check, FEED + PICKER))

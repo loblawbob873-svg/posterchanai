@@ -102,3 +102,34 @@ def test_seating_a_friend_and_dealing_tags_them_in_the_table_note(view, key, ids
         ps = await b.js(f"{sent}.tags.filter(t=>t[0]==='p').map(t=>t[1])")
         assert bot in ps and friend in ps, ps
     asyncio.run(desktop.with_browser('online', '', check, RECORD))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_clear_all_leaves_every_blackjack_table_and_empties_the_list():
+    """"✕ Clear all" (#bj-clear) on two tables you sit at: confirmed, it sends the bot a LEAVE for EACH table (spaced
+    out, the command channel is one replaceable event), hides both locally, and the list says it is empty."""
+    async def check(b):
+        await desktop.login(b)
+        bot = await b.js("NostrTools.getPublicKey(new Uint8Array(32).fill(9))")
+        await b.js("""(()=>{const sk=new Uint8Array(32).fill(9),me=__PC.me().pubkey,now=Math.floor(Date.now()/1000);
+            window.__publishOK=true;
+            window.__events=['g1','g2'].map((g,i)=>NostrTools.finalizeEvent({kind:30388,created_at:now-i,
+              tags:[['d','pcai:blackjack:'+g]],content:JSON.stringify({root:g,status:'playing',seats:[me,NostrTools.getPublicKey(sk)],
+              hands:{},stacks:{},bet:{},done:{}})},sk));})(); 1""")
+        await b.js(f"__PC.CFG.blackjack_bot_npub=NostrTools.nip19.npubEncode({json.dumps(bot)}); __PC.switchView('blackjack'); 1")
+        await b.until("document.querySelectorAll('#bj-games .chess-game-card').length===2")
+        await b.until("getComputedStyle(document.querySelector('#bj-clear')).display!=='none'")
+        await b.js("document.querySelector('#bj-clear').click(); 1")
+        await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
+        await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
+        leaves = ("__sentEvents.filter(e=>e.kind===30388&&(e.tags||[]).some(t=>t[0]==='t'&&t[1]==='blackjackcmd'))"
+                  ".map(e=>JSON.parse(e.content)).filter(c=>c.action==='leave').map(c=>c.gameid)")
+        await b.until(f"{leaves}.length===1")
+        # The second LEAVE waits out the bot's poll (11s) so it does not overwrite the first.
+        await b.until(f"{leaves}.length===2")
+        assert sorted(await b.js(leaves)) == ["g1", "g2"]
+        await b.until("/cleared/.test(document.body.innerText)")
+        await b.until("/No tables yet/.test(document.querySelector('#bj-games').innerText)")
+        assert sorted(await b.js("JSON.parse(localStorage.getItem('pc_bj_hidden')||'[]')")) == ["g1", "g2"]
+        assert await b.js("getComputedStyle(document.querySelector('#bj-clear')).display") == "none"
+    asyncio.run(desktop.with_browser('online', '', check, RECORD))

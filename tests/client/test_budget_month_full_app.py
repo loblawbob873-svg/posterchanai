@@ -107,3 +107,46 @@ def test_a_month_in_budget():
         await b.js("[...document.querySelectorAll('.uiconfirm-btns button')].pop().click(); 1")   # "Import 1 bill(s)…?"
         await b.until("!!(" + ROW % json.dumps("Phone") + ") && !!(" + ROW % json.dumps("Rent (flat)") + ")")
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+# The budget's relay read, made deaf on demand: a REQ for the `pcai:budget` doc that nobody ever answers.
+DEAF = r'''
+window.__budgetDeaf=false;
+const __dSend=WebSocket.prototype.send;
+WebSocket.prototype.send=function(raw){try{const m=JSON.parse(raw);
+  if(window.__budgetDeaf&&m[0]==='REQ'&&m.slice(2).some(f=>(f['#d']||[]).includes('pcai:budget')))return;}catch(_){}
+  return __dSend.call(this,raw)};
+'''
+
+
+async def wait(b, expr, secs):
+    for _ in range(int(secs * 10)):
+        if await b.js(expr):
+            return
+        await asyncio.sleep(.1)
+    raise AssertionError({'waiting': expr, 'body': await b.js("document.body.innerText.slice(-800)")})
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_retry_after_the_relay_never_answered_loads_the_budget():
+    """No relay answers the budget read: Budget says so (never an empty budget that a save would publish over the real
+    one), and Retry (#bg-retry) once the relay is back reads and draws the person's encrypted bills."""
+    async def check(b):
+        await desktop.login(b)
+        # The person's real budget on the relay, sealed to their own (fixture) key.
+        await b.js("""(async()=>{const sk=new Uint8Array(32).fill(1),me=NostrTools.getPublicKey(sk),N=NostrTools.nip44.v2||NostrTools.nip44;
+            const doc={v:1,lastReset:'',cats:[],items:[],bills:[{id:'b1',name:'Water bill',cost:42,paid:'N',payment_method:'',
+              is_income:false,is_recurring:true,sort_order:0,hidden_month:''}]};
+            const ct=N.encrypt(JSON.stringify(doc),N.utils?N.utils.getConversationKey(sk,me):N.getConversationKey(sk,me));
+            window.__events=[NostrTools.finalizeEvent({kind:30078,created_at:Math.floor(Date.now()/1000),tags:[['d','pcai:budget']],content:ct},sk)];
+            window.__publishOK=true; window.__budgetDeaf=true; __PC.switchView('budget');})(); 1""")
+        # Three reads of 6s each, nobody answers: an error with Retry, not a blank budget.
+        await wait(b, "!!document.querySelector('#bg-retry')", 40)
+        assert 'relay unreachable' in await b.js("document.querySelector('.bg-err').innerText")
+        assert not await b.js("!!document.querySelector('#bg-n')"), "an unread budget was drawn as an empty one"
+        assert not await b.js("__sentEvents.some(e=>e.kind===30078&&(e.tags||[]).some(t=>t[1]==='pcai:budget'))"), \
+            "a budget nobody could read was written over"
+        await b.js("window.__budgetDeaf=false; document.querySelector('#bg-retry').click(); 1")
+        await wait(b, "!!(" + ROW % json.dumps("Water bill") + ")", 20)
+        assert not await b.js("!!document.querySelector('#bg-retry')")
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE + DEAF))

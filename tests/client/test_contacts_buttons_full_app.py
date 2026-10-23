@@ -138,3 +138,26 @@ def test_share_and_delete_a_contact():
         await b.until("!document.querySelector('#cc-del') && !document.querySelector('.ct-row[data-uid=alice]')")
         assert not await b.js("__errors"), await b.js("__errors")
     _run(check)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_phone_sync_try_again_finds_a_bridge_that_arrived_late():
+    """On the Android app with the ContactSync plugin not (yet) registered, ☰ says so and offers "Try again"
+    (#ctb-phoneretry). Once the plugin is there, Try again asks the phone again and shows the real switch."""
+    async def check(b):
+        await contacts(b)
+        await b.until("!!document.querySelector('#ct-menu')")
+        # The packaged app, its plugin map populated, ContactSync missing from it.
+        await b.js("window.__statusCalls=0; window.Capacitor={getPlatform:()=> 'android',Plugins:{App:{}}}; 1")
+        await b.js("document.querySelector('#ct-menu').click(); 1")
+        await b.until("!!document.querySelector('#ctb-phoneretry')")
+        assert 'Update the app' in await b.js("document.querySelector('.ct-phonebook').innerText")
+        assert not await b.js("!!document.querySelector('#ctb-phonebook')")
+        # The bridge comes up; Try again re-asks and the switch appears in place of the apology.
+        await b.js("Capacitor.Plugins.ContactSync={status:async()=>{__statusCalls++;return {count:0,granted:false,account:false};},"
+                   "enable:async()=>({granted:false}),begin:async()=>({}),pull:async()=>({}),disable:async()=>({})}; 1")
+        await b.js("document.querySelector('#ctb-phoneretry').click(); 1")
+        await b.until("!!document.querySelector('#ctb-phonebook') && !document.querySelector('#ctb-phoneretry')")
+        assert await b.js("__statusCalls") >= 1
+        assert await b.js("document.querySelector('#ctb-phonebook').checked") is False
+    _run(check)
