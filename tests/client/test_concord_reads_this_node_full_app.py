@@ -335,3 +335,81 @@ def test_a_listing_s_picture_is_its_avatar_in_discover():
         await asyncio.sleep(2)
         assert not await b.js("__errors"), await b.js("__errors")
     asyncio.run(desktop.with_browser('online', '', check, init(__dirMode='serve', __dirHold=True)))
+
+
+# --- Sorsmenedék (poster.place 2026-10-22: "many of the rooms are not populating") ---------------------------
+
+# A community that lives ELSEWHERE whose history is ONLY on its own relays (both up): this node holds none of it.
+MINT_ONLY_UPSTREAM = r'''(async()=>{
+  const relays=['wss://ext-a.invalid','wss://ext-b.invalid'];
+  const made=await PosterCord.createCommunity({owner:__PC.me().pubkey,name:'Only upstream',relays,base:'https://cord.invalid',signEvent:__PC.signTemplate});
+  const bundle={...PosterCord.openInvite(made.url,made.events).bundle,control_root:made.secrets.controlRoot};
+  const controls=made.events.filter(e=>e.kind===1059);
+  const info=PosterCordReader.inspectControl(bundle,controls);
+  const general=info.channels.find(c=>c.name==='general');
+  const msg=await PosterCordReader.createChatWrap(bundle,controls,general.id,'Hello from its own relays',__PC.me().pubkey,__PC.signTemplate);
+  window.__upHeld=[...made.events,msg.wrap].flatMap(ev=>relays.map(url=>({url,ev})));
+  await PCConcordCache.put(JSON.stringify([made.communityId,'control']),controls);
+  const room={name:'Only upstream',communityId:made.communityId,naddr:'cord-only-upstream',url:made.url,channels:info.channels.map(c=>({name:c.name,id:c.id,private:!!c.private})),cord:{bundle}};
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+  const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('pc-concord-mirror:'+made.communityId));
+  window.__group=[...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return {relays,streams:[...info.controlPubkeys,...info.channels.flatMap(c=>c.streamPubkeys)],group:window.__group};
+})()'''
+
+UP = ['wss://ext-a.invalid', 'wss://ext-b.invalid']
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_a_community_this_node_does_not_mirror_populates_from_its_own_relays():
+    """The node refuses to mirror it (no registration in force) and holds none of its history: the channel is
+    read from the community's own relays and shows its messages -- this node is never asked for its streams."""
+    async def check(b):
+        await open_concord(b)
+        minted = await b.js(MINT_ONLY_UPSTREAM)
+        await b.js('PCConcord.render()')
+        await wait_for(b, "document.body.innerText.includes('Hello from its own relays')", 45)
+        streams = json.dumps(minted['streams'])
+        assert await b.js("!__home.length&&__registrations.length>0"), 'the node was never asked to mirror it'
+        assert not await b.js(f"Object.values(PCConcord.mirrorStateFor(__PC.me().pubkey).groups).some(g=>(g.authors||[]).some(a=>{streams}.includes(a)))")
+    asyncio.run(desktop.with_browser('online', '', check,
+                                     init(__upRelays=UP, __regRefuse='unavailable: this node has no outbound proxy')))
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_a_stream_the_node_stopped_mirroring_is_read_from_the_communitys_relays():
+    """This device's record says the node mirrors the community; the node has since deleted its copy (another
+    device's registration dropped the streams) and answers `unavailable: this node no longer mirrors this stream`.
+    The room falls back to its own relays and shows its history -- never the node's empty store."""
+    async def check(b):
+        await open_concord(b)
+        await b.js(MINT_ONLY_UPSTREAM)
+        await b.js('PCConcord.render()')
+        await wait_for(b, "document.body.innerText.includes('Hello from its own relays')", 45)
+        assert await b.js("__registrations.some(r=>r.op==='mirror')")
+        assert await b.js("__dials.some(u=>u.startsWith('wss://ext-'))")
+    asyncio.run(desktop.with_browser('online', '', check, init(__upRelays=UP, __homeMirror='unavailable')))
+
+
+@pytest.mark.skipif(not CHROME, reason='Chrome required')
+def test_a_device_seeded_from_the_node_never_shrinks_the_nodes_registration():
+    """The trigger measured on poster.place 2026-10-22: Sorsmenedék's registration went 22 -> 4 -> 22 streams within
+    11 s (13:16:46/54 and 15:40:04/15), and the node deleted its copy of every stream the short one left out. A
+    device seeded from the node (`seedMirrorFromNode`: relays [] -- the node does not say them) compared relays,
+    found them "different", and registered ONLY the streams it could derive from what it had cached -- replacing
+    the account's full registration. Streams the node says it holds for this account stay named."""
+    async def check(b):
+        await open_concord(b)
+        minted = await b.js(MINT_ONLY_UPSTREAM)
+        held = 'ab' * 32                    # a stream the node holds for this account that this device cannot derive
+        authors = json.dumps(minted['streams'] + [held])
+        await b.js("(()=>{const k='pc.concord.mirror.v2.'+__PC.me().pubkey;localStorage.setItem(k,JSON.stringify({groups:{[__group]:"
+                   "{relays:[],authors:" + authors + ",at:Date.now(),seeded:true}}}));})()")
+        await b.js('PCConcord.render()')
+        await wait_for(b, "__registrations.some(r=>r.op==='mirror'&&r.group===__group)", 45)
+        reg = await b.js("__registrations.filter(r=>r.op==='mirror'&&r.group===__group).pop()")
+        assert held in reg['authors'], ('the registration dropped a stream the node holds', len(reg['authors']))
+        assert set(minted['streams']) <= set(reg['authors']), reg
+        assert sorted(reg['relays']) == sorted(minted['relays']), reg
+    asyncio.run(desktop.with_browser('online', '', check, init(__upRelays=UP)))

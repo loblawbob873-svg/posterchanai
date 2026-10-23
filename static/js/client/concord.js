@@ -408,7 +408,12 @@
       const group=await mirrorGroup(bundle.community_id);if(!group)return false;
       const want=mirrorAuthorsOf(bundle,wraps);if(!want.length)return false;
       const st=mirrorState(pk),prior=st.groups[group],now=Date.now();
-      const same=!!prior&&JSON.stringify(prior.relays||[])===JSON.stringify(relays);
+      /* A record SEEDED from the node (seedMirrorFromNode) has no relays -- the node does not say them -- and is not
+       * "different relays": its streams are what the node holds for this account RIGHT NOW. Read as different, this
+       * device registered only the streams it could derive from its cache and REPLACED the account's registration;
+       * the node deleted its copy of every stream left out (Sorsmenedék, poster.place 2026-10-22: 22 -> 4 -> 22
+       * streams in 11 s, and its channels blank). */
+      const same=!!prior&&(JSON.stringify(prior.relays||[])===JSON.stringify(relays)||(prior.seeded&&!(prior.relays||[]).length));
       if(same&&now-Number(prior.at||0)<MIRROR_FRESH_MS&&want.every(a=>(prior.authors||[]).includes(a))&&Array.isArray(prior.direct))return true;
       const refused=mirrorRefused.get(key);if(refused&&now-refused<MIRROR_REFUSED_MS)return false;
       const authors=[...new Set([...(same&&now-Number(prior.at||0)<MIRROR_TRUST_MS?prior.authors||[]:[]),...want])].slice(0,MIRROR_MAX_AUTHORS);

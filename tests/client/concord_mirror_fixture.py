@@ -7,7 +7,7 @@ replaces `WebSocket` instead, so the SHIPPED relay.js (queryFrom, subscribeFrom,
 
   * HOME (`wss://fixture.invalid`, the instance's relay_url in the shared network fixture): stores what it
     is sent, answers REQs from its store, accepts kind-27059 mirror registrations (recorded in
-    `__registrations`), and answers the Concord DIRECTORY searches according to `__dirMode`
+    `__registrations`; refused with `__regRefuse` as the reason when that is set), and answers the Concord DIRECTORY searches according to `__dirMode`
     ('serve' | 'unavailable' | 'empty'). `__homeMirror='unavailable'` makes it refuse stream REQs the
     way the server does while its mirror is not in step.
   * THE DIRECTORY RELAY (`wss://relay.dreamith.to`): up when `__dirRelayUp`, serving `__directory`.
@@ -62,7 +62,7 @@ class NetSocket extends EventTarget{
     if(m[0]==='CLOSE'){for(const s of [...subs])if(s.ws===this&&s.id===m[1])subs.delete(s);return;}
     if(m[0]==='EVENT'){
       const ev=m[1];
-      if(ev.kind===27059){let body={};try{body=JSON.parse(ev.content);}catch(_){}__registrations.push({...body,pubkey:ev.pubkey});reply(['OK',ev.id,true,window.__regReply||'mirroring']);return;}
+      if(ev.kind===27059){let body={};try{body=JSON.parse(ev.content);}catch(_){}__registrations.push({...body,pubkey:ev.pubkey});reply(window.__regRefuse?['OK',ev.id,false,window.__regRefuse]:['OK',ev.id,true,window.__regReply||'mirroring']);return;}
       if(!__home.some(x=>x.id===ev.id))__home.push(ev);__homeWrites.push(ev);reply(['OK',ev.id,true,'']);
       for(const s of [...subs])if(s.fs.some(f=>match({...f,since:undefined,until:undefined},ev)))setTimeout(()=>{if(s.ws.readyState===1)s.ws.fire('message',['EVENT',s.id,ev]);},20);
     }
