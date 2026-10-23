@@ -30,11 +30,15 @@ window.PCSignerFactory = function(dep){
    * content, the app toasted "posted" over words the user never typed (through NIP-46, and through Amber, which
    * also toasted "posted" when it answered with another kind). Worse, every guard in publish() (the follow/mute-list shrink guard above all) ran
    * on the TEMPLATE, before signing, so a returned kind 3 skipped all of them. The id commits to these fields, so
-   * comparing them is the whole check; created_at only when we set one (signers may stamp their own clock). */
+   * comparing them is the whole check. created_at is NOT compared exactly: publish() always sets one, and a signer
+   * may stamp its own clock (a phone a few seconds off, a bunker that re-stamps) -- an exact match refused every
+   * post such a signer made (code review, 2026-10-23). Only a time far from the one asked for (back- or
+   * forward-dating, beyond any clock skew) is treated as altered. */
+  const SIGNER_CLOCK_SKEW_S = 900;
   function _signedWhatWasAsked(ev, tpl){
     if(!ev || ev.kind !== tpl.kind || String(ev.content == null ? '' : ev.content) !== String(tpl.content == null ? '' : tpl.content)
        || JSON.stringify(ev.tags || []) !== JSON.stringify(tpl.tags || [])
-       || (tpl.created_at && ev.created_at !== tpl.created_at)){
+       || (tpl.created_at && !(Math.abs(Number(ev.created_at) - Number(tpl.created_at)) <= SIGNER_CLOCK_SKEW_S))){
       try{ toast('Your signer returned something other than what you asked it to sign — nothing was published.'); }catch(_){}
       throw new Error('the signer altered the event it was asked to sign');
     }

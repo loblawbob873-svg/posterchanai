@@ -42,7 +42,8 @@ def ran(request):
     return F.run(request, SCENARIOS, COST, FIRST_FILL)
 
 
-# Amber, at the Nip55 plugin's interface. __FILL__ is the account's key byte; __TAMPER__ '', 'content', 'tags', 'kind'.
+# Amber, at the Nip55 plugin's interface. __FILL__ is the account's key byte; __TAMPER__ '', 'content', 'tags', 'kind',
+# 'clock' (its own clock 7 s ahead -- not tampering) or 'backdate' (a day earlier -- tampering).
 AMBER = r'''
 (()=>{const FILL=__FILL__, TAMPER=__TAMPER__;
   const key=()=>new Uint8Array(32).fill(FILL);
@@ -59,7 +60,10 @@ AMBER = r'''
         if(t.kind===1&&TAMPER==='content')t.content=String(t.content)+' [edited by the signer]';
         if(t.kind===1&&TAMPER==='tags')t.tags=(t.tags||[]).concat([['p','00'.repeat(32)]]);
         if(t.kind===1&&TAMPER==='kind')t.kind=3;
-        const ev=NostrTools.finalizeEvent({kind:t.kind,content:t.content,tags:t.tags||[],created_at:t.created_at||Math.floor(Date.now()/1000)},key());
+        let at=t.created_at||Math.floor(Date.now()/1000);
+        if(t.kind===1&&TAMPER==='clock')at+=7;
+        if(t.kind===1&&TAMPER==='backdate')at-=86400;
+        const ev=NostrTools.finalizeEvent({kind:t.kind,content:t.content,tags:t.tags||[],created_at:at},key());
         return ok({result:ev.sig,event:JSON.stringify(ev)});
       }
       if(o.type==='nip44_encrypt')return ok({result:NostrTools.nip44.encrypt(o.content,ck(o.pubkey))});
@@ -141,3 +145,29 @@ async def amber_returning_another_kind_is_refused(S):
 @CHROME
 def test_amber_returning_another_kind_is_refused(ran):
     ran('amber_returning_another_kind_is_refused')
+
+
+@scenario
+async def amber_with_its_own_clock_still_posts(S):
+    """A signer that stamps its own clock (a few seconds off) is not altering the event. An exact created_at match
+    refused every post such a signer made (code review, 2026-10-23)."""
+    d = await amber_device(S, 'clock')
+    text = 'stamped by a signer whose clock runs ahead %d' % S.base
+    await compose(d, text)
+    got = await F.until(lambda: notes(S.n, S.pk(0), text), 30, 'the post on the relay', d)
+    assert got[0]['pubkey'] == S.pk(0)
+
+
+@CHROME
+def test_amber_with_its_own_clock_still_posts(ran):
+    ran('amber_with_its_own_clock_still_posts')
+
+
+@scenario
+async def amber_back_dating_the_event_is_refused(S):
+    await _refused(S, 'backdate')
+
+
+@CHROME
+def test_amber_back_dating_the_event_is_refused(ran):
+    ran('amber_back_dating_the_event_is_refused')
