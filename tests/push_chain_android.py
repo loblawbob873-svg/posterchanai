@@ -38,15 +38,21 @@ def _json_runtime() -> dict:
     sys.path.insert(0, str(ROOT / "tests"))
     from sms_java_event import JSON_RUNTIME
     rt = dict(JSON_RUNTIME)
-    extra = r"""
-  public JSONObject optJSONObject(String k) { Object v = m.get(k); return v instanceof JSONObject ? (JSONObject) v : null; }
-  public boolean isNull(String k) { return m.get(k) == null; }
-  public boolean optBoolean(String k, boolean f) { Object v = m.get(k); if (v instanceof Boolean) return (Boolean) v;
-    if (v instanceof String) { if ("true".equalsIgnoreCase((String) v)) return true; if ("false".equalsIgnoreCase((String) v)) return false; } return f; }
-  @Override public String toString() {"""
+    # Only what the shared stand-in lacks: sms_java_event grows too (2026-10-22 it gained isNull/optJSONObject/
+    # optBoolean and a JSONObject.NULL with its own toString), and a duplicate method is a javac error in BOTH harnesses.
+    wanted = {
+        "public JSONObject optJSONObject(String k)":
+            "  public JSONObject optJSONObject(String k) { Object v = m.get(k); return v instanceof JSONObject ? (JSONObject) v : null; }\n",
+        "public boolean isNull(String k)": "  public boolean isNull(String k) { return m.get(k) == null; }\n",
+        "public boolean optBoolean(String k, boolean f)":
+            "  public boolean optBoolean(String k, boolean f) { Object v = m.get(k); if (v instanceof Boolean) return (Boolean) v;\n"
+            "    if (v instanceof String) { if (\"true\".equalsIgnoreCase((String) v)) return true; if (\"false\".equalsIgnoreCase((String) v)) return false; } return f; }\n",
+    }
     src = rt["org/json/JSONObject.java"]
-    assert src.count("  @Override public String toString() {") == 1
-    rt["org/json/JSONObject.java"] = src.replace("  @Override public String toString() {", extra, 1)
+    extra = "".join(body for sig, body in wanted.items() if sig not in src)
+    anchor = src.rfind("  @Override public String toString() {")      # the class's own, after NULL's
+    assert anchor > 0
+    rt["org/json/JSONObject.java"] = src[:anchor] + extra + src[anchor:]
     return rt
 
 
