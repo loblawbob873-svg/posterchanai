@@ -159,3 +159,45 @@ def test_this_nodes_admins_are_told_only_when_asked():
     assert got['reports'] == 0, got
     assert got['to'] == got['expect'], got
     assert got['leaked'] == [], got
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_after_reporting_a_member_the_rooms_owner_can_ban_them_from_the_sheet():
+    """The report sheet's "🚫 Ban from this community" (menus.js `#rep-ban`, `opts.ban`) existed and was never offered:
+    Concord passed no `ban`, though the sheet's own note tells a moderator to "ban the member yourself" (2026-10-22).
+    Now the room's owner gets it after the report goes out, and it asks to ban exactly the reported member -- the same
+    ban the member menu performs. An ordinary member is never offered it."""
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': 1280, 'height': 820, 'deviceScaleFactor': 1, 'mobile': False})
+        await desktop.login(b)
+        # The viewer OWNS the room this time; the report goes to the other moderator.
+        await b.js(ROOM.replace("owner:__owner,", "owner:__PC.me().pubkey,"))
+        await b.until("!!document.querySelector('#cc-input')")
+        await b.until("[...document.querySelectorAll('.cc-message')].some(m=>m.textContent.includes('PRIVATE-ROOM-SECRET-TEXT'))")
+        await _open_report(b)
+        await _submit(b)
+        await b.until("!!document.querySelector('#rep-ban')")
+        await b.js("window.__bansBefore=__published.length; document.querySelector('#rep-ban').click(); 1")
+        await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
+        ask = await b.js("document.querySelector('.uiconfirm-msg').textContent")
+        assert 'from this community' in ask and 'Ban' in ask, ask
+        bob = await b.js("NostrTools.nip19.npubEncode(__bob).slice(0,12)")
+        assert bob in ask or 'npub' in ask, ('the ban does not name the reported member', ask)
+        # Cancel: nothing is published.
+        await b.js("document.querySelector('.uiconfirm-btns [data-uc]:not([data-uc=\"1\"])').click(); 1")
+        await asyncio.sleep(.5)
+        assert await b.js("__published.length") == await b.js("__bansBefore"), 'cancelling the ban published something'
+        assert not await b.js("__errors"), await b.js("__errors")
+
+    asyncio.run(desktop.with_browser('online', '', check, EXTRA))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_an_ordinary_member_is_not_offered_ban_after_reporting():
+    async def check(b):
+        await _in_room(b, 1280)
+        await _open_report(b)
+        await _submit(b)
+        assert not await b.js("!!document.querySelector('#rep-ban')"), 'a member who cannot ban was offered Ban'
+
+    asyncio.run(desktop.with_browser('online', '', check, EXTRA))
