@@ -33,6 +33,7 @@ import websockets
 
 from tests.client import test_effects_full_app as full
 from tests.client import test_social_offline_refresh_full_app as soc
+from tests.client.test_desktop_offline_full_app import advance
 
 CHROME = "/opt/google/chrome/chrome"
 
@@ -45,13 +46,19 @@ window.__published=[];
  Orig.prototype.send=function(raw){let m;try{m=JSON.parse(raw);}catch(_){return send.call(this,raw);}
    if(Array.isArray(m)&&m[0]==='EVENT'&&m[1]&&m[1].kind===30078){window.__published.push(m[1]);}
    if(Array.isArray(m)&&m[0]==='REQ'&&m.slice(2).some(f=>(f.kinds||[]).includes(30078))){
-     let dark=false;try{dark=localStorage.getItem('__sbDark')==='1';}catch(_){}
-     if(dark)return;
      const want=m.slice(2).filter(f=>(f.kinds||[]).includes(30078));
+     let dark=false;try{dark=localStorage.getItem('__sbDark')==='1';}catch(_){}
+     if(dark){if(want.some(f=>(f['#d']||[]).includes('pcai:client-prefs')))(window.__darkReads=window.__darkReads||[]).push(performance.now());return;}
      const seed=(window.__seedPrefs||[]).filter(ev=>want.some(f=>(!f['#d']||f['#d'].includes((ev.tags.find(t=>t[0]==='d')||[])[1]))));
      setTimeout(()=>{for(const ev of seed)this.fire('message',['EVENT',m[1],ev]);this.fire('message',['EOSE',m[1]]);},10);
      return;}
    return send.call(this,raw);};})();
+// When the account's prefs restore has FINISHED: the lazily built blossom module's own restore, wrapped.
+window.__restored=0;
+(()=>{let factory;Object.defineProperty(window,'PCBlossomFactory',{configurable:true,get:()=>factory,set(f){
+  factory=function(){const m=f.apply(this,arguments),restore=m&&m.restoreClientPrefsNostr;
+    if(typeof restore==='function')m.restoreClientPrefsNostr=function(){return Promise.resolve(restore.apply(this,arguments)).finally(()=>{window.__restored++;});};
+    return m;};}});})();
 window.__sbScroll=async(dy,steps=8)=>{const f=document.querySelector('#feed');
   for(let i=0;i<steps;i++){f.scrollTop+=dy/steps;
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));}
@@ -102,27 +109,36 @@ async def device(act, *, width=390, height=780, mobile=True, seed=(), reduced=Fa
         async with websockets.connect(next(x for x in pages if x["type"] == "page")["webSocketDebuggerUrl"],
                                       max_size=20_000_000) as ws:
             b = full.Browser(ws)
-            await b.call("Page.enable")
-            # A real phone's page has focus; headless Chrome's does not, and without it no `focus` event fires.
-            await b.call("Emulation.setFocusEmulationEnabled", {"enabled": True})
-            await b.call("Network.setBlockedURLs", {"urls": ["https://*", "wss://*"]})
-            await b.call("Emulation.setDeviceMetricsOverride", dict(width=width, height=height, deviceScaleFactor=1,
-                                                                    mobile=mobile, screenWidth=width,
-                                                                    screenHeight=height))
-            if reduced:
-                await b.call("Emulation.setEmulatedMedia",
-                             {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]})
-            await b.call("Page.addScriptToEvaluateOnNewDocument",
-                         {"source": soc.INIT + PREFS + "window.__seedPrefs=" + json.dumps(list(seed)) + ";"})
-            b.base = f"http://127.0.0.1:{server.server_port}/client"
-            await b.call("Page.navigate", {"url": b.base})
-            await boot(b)
+            b.port, b.target = port, next(x for x in pages if x["type"] == "page")["id"]
+            b.open = dict(base=f"http://127.0.0.1:{server.server_port}/client", width=width, height=height,
+                          mobile=mobile, reduced=reduced, seed=seed)
+            await start(b)
             return await act(b)
     finally:
         p.terminate()
         p.wait(timeout=10)
         server.shutdown()
         tmp.cleanup()
+
+
+async def start(b):
+    """Set up a page of this device (its fixture, its screen) and load the client in it."""
+    o = b.open
+    await b.call("Page.enable")
+    # A real phone's page has focus; headless Chrome's does not, and without it no `focus` event fires.
+    await b.call("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    await b.call("Network.setBlockedURLs", {"urls": ["https://*", "wss://*"]})
+    await b.call("Emulation.setDeviceMetricsOverride", dict(width=o["width"], height=o["height"], deviceScaleFactor=1,
+                                                            mobile=o["mobile"], screenWidth=o["width"],
+                                                            screenHeight=o["height"]))
+    if o["reduced"]:
+        await b.call("Emulation.setEmulatedMedia",
+                     {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]})
+    await b.call("Page.addScriptToEvaluateOnNewDocument",
+                 {"source": soc.INIT + PREFS + "window.__seedPrefs=" + json.dumps(list(o["seed"])) + ";"})
+    b.base = o["base"]
+    await b.call("Page.navigate", {"url": b.base})
+    await boot(b)
 
 
 async def boot(b):
@@ -134,7 +150,7 @@ async def boot(b):
     await b.until('!!__PC.me() && Relay.status==="ok"')
     await b.js("__PC.switchView('global')")
     await b.until("window.__feedCards() >= 12")
-    await asyncio.sleep(2.5)            # the account's prefs are restored after sign-in
+    await b.until("window.__restored>=1")  # the account's prefs are restored after sign-in
 
 
 async def state(b):
@@ -287,26 +303,45 @@ def test_the_choice_follows_the_account_to_a_fresh_device():
 
 @needs_chrome
 def test_a_change_made_while_the_relays_cannot_answer_is_kept_and_sent_later():
-    # One browser process throughout: the "next start" is a reload of the same page, which keeps this
-    # device's localStorage (a killed headless Chrome does not reliably flush it to the profile).
+    # One browser process throughout: the "next start" is a new page of the same browser, which shares
+    # this device's localStorage (a killed headless Chrome does not reliably flush it to the profile).
     async def act(b):
         out = {}
         await b.js("localStorage.setItem('__sbDark','1')")
         await choose(b, "show")
-        await asyncio.sleep(12)               # the save's read gives up: nothing may be published
         await b.js("window.__sbScroll(900)")
+        out["down"] = await state(b)
+        # The save's read runs to the end on the PAGE's clock (Chrome virtual time): three attempts, each
+        # given 6 s, with a back-off between them (~19.4 s) -- then 5 s more after the last one gave up,
+        # and nothing may be published in all that time (a save that publishes when its read failed does
+        # it the moment the read gives up). The page's clock stays paused afterwards, so the "next start"
+        # below is a fresh page of the same browser, not a reload of this one.
+        out["dark_ms"] = await advance(b, 21000)
+        reads = await b.js("window.__darkReads||[]")
+        if len(reads) >= 3:
+            more = reads[2] + 6000 + 5000 - await b.js("performance.now()")
+            if more > 0:
+                out["dark_ms"] += await advance(b, round(more))
+        out["dark_reads"] = len(reads)
         out["dark_published"] = await b.js("window.__published")
         out["stored"] = await b.js("ClientSettings.get('searchBar')")
-        out["down"] = await state(b)
+        out["down_after"] = await state(b)
         # The relays answer again; the device starts again.
         await b.js("localStorage.setItem('__sbDark','0')")
-        await b.call("Page.reload", {})
-        await asyncio.sleep(1)
-        await boot(b)
-        await b.until("window.__published.some(e=>(e.tags||[]).some(t=>t[0]==='d'&&t[1]==='pcai:client-prefs'))")
-        out["published"] = await b.js("window.__published")
+        async with httpx.AsyncClient() as h:
+            new = (await h.put(f"http://127.0.0.1:{b.port}/json/new?about:blank")).json()
+            await h.get(f"http://127.0.0.1:{b.port}/json/close/{b.target}")
+        async with websockets.connect(new["webSocketDebuggerUrl"], max_size=20_000_000) as ws:
+            b2 = full.Browser(ws)
+            b2.open = b.open
+            await start(b2)
+            await b2.until("window.__published.some(e=>(e.tags||[]).some(t=>t[0]==='d'&&t[1]==='pcai:client-prefs'))")
+            out["published"] = await b2.js("window.__published")
         return out
     res = asyncio.run(device(act))
+    assert res["dark_ms"] >= 20999, ("the page clock did not run the whole dark window", res["dark_ms"])
+    assert res["dark_reads"] >= 3, ("the save did not try all three of its reads in the dark window", res["dark_reads"])
+    assert res["down_after"]["shown"], ("the bar was hidden after the save could not run", res["down_after"])
     assert not [e for e in res["dark_published"] if (_prefs_of([e]) or {}).get("searchBar")], (
         "the fixture did not keep the relays dark", res["dark_published"])
     assert res["stored"] == "show" and res["down"]["shown"], (
