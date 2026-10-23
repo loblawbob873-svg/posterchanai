@@ -100,21 +100,33 @@ app.whenReady().then(async()=>{
                     assert time.monotonic() < deadline, 'isolated compositor timed out'
                     time.sleep(.05)
                 env['WAYLAND_DISPLAY'] = next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
-            readfd, writefd = os.pipe()
-            try:
-                command = ([xvfb, '-displayfd', str(writefd), '-screen', '0', '1280x800x24', '-nolisten', 'tcp', '-ac', '-noreset'] if xvfb else
-                           ['Xwayland', '-displayfd', str(writefd), '-nolisten', 'tcp', '-ac', '-noreset', '-shm'])
-                xserver = _native_popen(command, env=env, pass_fds=(writefd,), stdout=log, stderr=log)
-                processes.append(xserver)
-                os.close(writefd)
-                writefd = None
-                assert select.select([readfd], [], [], 10)[0], 'isolated display timed out'
-                display = os.read(readfd, 32).decode().strip()
-                assert display.isdigit()
-            finally:
-                os.close(readfd)
-                if writefd is not None:
+            # THE X SERVER MUST BE ALIVE, NOT JUST HAVE NAMED A DISPLAY (desktop CI, 2026-10-23): Xvfb handed back a display
+            # number and then died ("Fatal server error: Cannot write display number to fd 13"); Electron then failed
+            # with "Missing X server or $DISPLAY" and the desktop build was not published. Confirm the server is still
+            # running with its socket in place, and start it once more if it is not.
+            for attempt in range(2):
+                readfd, writefd = os.pipe()
+                try:
+                    command = ([xvfb, '-displayfd', str(writefd), '-screen', '0', '1280x800x24', '-nolisten', 'tcp', '-ac', '-noreset'] if xvfb else
+                               ['Xwayland', '-displayfd', str(writefd), '-nolisten', 'tcp', '-ac', '-noreset', '-shm'])
+                    xserver = _native_popen(command, env=env, pass_fds=(writefd,), stdout=log, stderr=log)
+                    processes.append(xserver)
                     os.close(writefd)
+                    writefd = None
+                    assert select.select([readfd], [], [], 10)[0], 'isolated display timed out'
+                    display = os.read(readfd, 32).decode().strip()
+                    assert display.isdigit()
+                finally:
+                    os.close(readfd)
+                    if writefd is not None:
+                        os.close(writefd)
+                deadline = time.monotonic() + 5
+                while xserver.poll() is None and not Path('/tmp/.X11-unix/X' + display).exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                time.sleep(.2)
+                if xserver.poll() is None and Path('/tmp/.X11-unix/X' + display).exists():
+                    break
+                assert attempt == 0, 'the isolated X server died twice after naming its display:\n' + (tmp_path / 'native.log').read_text()
             env.update(DISPLAY=':' + display, GDK_BACKEND='x11')
             pulse = _native_popen(['pulseaudio', '--daemonize=no', '--use-pid-file=no', '--exit-idle-time=-1', '--disable-shm=yes', '-n',
                                   '--load=module-native-protocol-unix socket=' + str(runtime / 'pulse-test.sock') + ' auth-anonymous=1',

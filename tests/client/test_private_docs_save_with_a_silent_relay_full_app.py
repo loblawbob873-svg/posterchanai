@@ -74,6 +74,10 @@ class Scenario:
         b = await d.__aenter__()
         self.open.append(d)
         assert await b.js('__PC.me().pubkey') == self.pk
+        # Every device HAS FOCUS, as a window somebody is reading does. Notifications are marked read only while the
+        # page is focused, and headless Chrome hands focus to one window at most with scenarios running three at a
+        # time -- two read-marker scenarios failed in CI on it ("focus: False", desktop builds of 2026-10-23).
+        await b.call('Emulation.setFocusEmulationEnabled', {'enabled': True})
         return b
 
     async def close(self):
@@ -389,10 +393,6 @@ async def seed_mention(S, b):
 @scenario
 async def notifications_read_here_are_read_on_a_fresh_device(S):
     a = await S.device()
-    # Opening Notifications marks them read only while the page HAS FOCUS (an unfocused window is not being read).
-    # Headless Chrome hands focus to one window at most, and scenarios run three at a time -- so this one lost it and
-    # failed in CI ("focus: False", the read marker never made; it blocked the desktop build of 2026-10-23).
-    await a.call('Emulation.setFocusEmulationEnabled', {'enabled': True})
     ev = await seed_mention(S, a)
     await a.js("__PC.switchView('notifications');true")
     await H.wait(a, "document.querySelector('#feed').innerText.includes('hello from another account')", 60)
