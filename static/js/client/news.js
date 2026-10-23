@@ -1,4 +1,4 @@
-// HOME-RELAY WRITE GATE: none -- the feed list and read ids are published from this device's copy and are NOT gated on any read today (a separate, known gap: a save after a read nobody answered publishes this device's list), so there is no completeness gate here to widen to the home relay (tests/client/test_private_doc_write_gates_hear_the_home_relay.py).
+// HOME-RELAY WRITE GATE: none -- not driven by the node runner, but gated the same way: the feed list and read ids are published only once a read of them was ANSWERED (this node's relay, or the whole pool) or from this device's own cached copy; a fresh device nobody answered writes nothing and says so (tests/client/test_news_stats_analytics_flows_full_app.py drives it in the browser).
 /* #news — the built-in RSS News reader for the Nostr client. Kept OUT of app.js (own file, like the
  * games) to avoid bloating the core. Uses app.js's shared surface window.__PC + window.Relay/Store.
  * Feeds are fetched SERVER-SIDE (/api/rss — proxy→direct, shared cache, structured JSON). Your feed
@@ -139,7 +139,7 @@
       // publish() is asynchronous: a surrounding try/catch only catches a synchronous call-site
       // error and leaves signer/relay rejections as global `unhandledrejection` events. News read
       // receipts are background best-effort state, so explicitly observe that promise.
-      _readSaveT = setTimeout(()=>{ try{ Promise.resolve(publish(30078, JSON.stringify(_readIds), [['d', READ_D]])).catch(()=>{}); }catch(_){} }, 5000);
+      _readSaveT = setTimeout(()=>{ if(_feedsUnknown) return; try{ Promise.resolve(publish(30078, JSON.stringify(_readIds), [['d', READ_D]])).catch(()=>{}); }catch(_){} }, 5000);
     }
 
     // ---- feed list: local cache first, then hydrate from the relay ----
@@ -150,10 +150,16 @@
     // hydrated their own kind-30078 doc, and the next saveFeeds() would publish those defaults over
     // their real list. Re-hydrate whenever the identity changes.
     let _feedsPk = null;
+    /* WHETHER THIS DEVICE KNOWS THE ACCOUNT'S FEED LIST. A fresh device whose read of the list nobody answered
+     * holds NOTHING -- not "no feeds". It used to say "No feeds yet — tap ＋", and the feed the person then added
+     * was published as their WHOLE list, replacing the real one on every device (the replaceable-doc wipe). Until
+     * a relay answers (or this browser has its own cached copy) the screen says it could not load the list, and
+     * nothing -- feed list or read marks -- is written. */
+    let _feedsUnknown = false;
     function _curPk(){ try{ return (window.__PC && window.__PC.ME && window.__PC.ME.pubkey) || ''; }catch(_){ return ''; } }
     async function ensureState(){
       const pk = _curPk();
-      if(_feeds && _feedsPk === pk) return;
+      if(_feeds && _feedsPk === pk && !_feedsUnknown) return;
       _feeds = null; _readIds = []; _readSet = new Set();   // drop the previous identity's state
       await loadState();
       _feedsPk = pk;
@@ -161,21 +167,31 @@
 
     async function loadState(){
       _loadReadLocal();
-      _feeds = _feedsLocal() || DEFAULTS.slice();
+      const local = _feedsLocal();
+      _feeds = local || DEFAULTS.slice();
+      _feedsUnknown = false;
       const me = window.__PC.ME;
       if(!me || !me.pubkey) return;   // not logged in → don't hydrate or CACHE defaults (would leak to the real user)
       // hydrate both lists from Nostr (may override local)
+      let answered = false;
       try{
         const evs = await Relay.query([{ authors:[me.pubkey], kinds:[30078], '#d':[FEEDS_D, READ_D] }]);
+        answered = !!evs && (evs.complete !== false || !!(Relay.homeAnswered && Relay.homeAnswered(evs)));
         for(const e of (evs||[])){
           const d = (e.tags.find(t=>t[0]==='d')||[])[1];
           if(d===FEEDS_D){ try{ const c=JSON.parse(e.content||'[]'); if(Array.isArray(c)&&c.length) _feeds=c; }catch(_){} }
           else if(d===READ_D){ try{ const c=JSON.parse(e.content||'[]'); if(Array.isArray(c)){ for(const id of c){ if(!_readSet.has(id)){ _readSet.add(id); _readIds.push(id);} } while(_readIds.length>READ_CAP){ _readSet.delete(_readIds.shift()); } } }catch(_){} }
         }
       }catch(_){}
+      // Nobody answered and this browser holds no copy of its own: the list is UNKNOWN (cache nothing, write nothing).
+      if(!answered && !local && !_feeds.length){ _feedsUnknown = true; return; }
       try{ _lsSet('feeds', JSON.stringify(_feeds)); }catch(_){}
     }
-    async function saveFeeds(){ try{ _lsSet('feeds', JSON.stringify(_feeds)); }catch(_){} try{ await publish(30078, JSON.stringify(_feeds), [['d', FEEDS_D]]); }catch(_){} }
+    async function saveFeeds(){
+      if(_feedsUnknown){ toast('Your feed list hasn’t loaded from your relays yet — nothing was changed. Try again in a moment.'); return false; }
+      try{ _lsSet('feeds', JSON.stringify(_feeds)); }catch(_){} try{ await publish(30078, JSON.stringify(_feeds), [['d', FEEDS_D]]); }catch(_){}
+      return true;
+    }
 
     // ---- OPML import/export (Miniflux + any reader export/import via the universal OPML format) ----
     function parseOpml(text){
@@ -197,6 +213,7 @@
     }
     async function importOpml(text){
       const found=parseOpml(text); if(!found.length){ toast('no feeds found in that OPML'); return; }
+      if(_feedsUnknown){ await saveFeeds(); return; }
       const have=new Set(_feeds.map(f=>f.url)); let added=0;
       for(const f of found){ if(!have.has(f.url)){ _feeds.push(f); have.add(f.url); added++; } }
       if(added){ await saveFeeds(); toast('imported '+added+' feed'+(added>1?'s':'')); closeNews(); renderNews(); }
@@ -231,8 +248,11 @@
       // CHUNK the feed list (a big imported OPML would blow the server's URL-length limit / 30-feed cap).
       const chunks=[]; for(let i=0;i<all.length;i+=12) chunks.push(all.slice(i,i+12));
       const nameOf = u => (_feeds.find(f=>f.url===u)||{}).name || (u.split('/')[2]||u);
+      /* A chunk the server did not answer (a 503, a dropped connection) is a FAILURE, never an empty feed: if no
+       * chunk answered, the screen says it could not fetch rather than "No articles". */
       const results = await Promise.all(chunks.map(c=>
-        fetch('/api/rss/feeds?urls='+encodeURIComponent(c.join(','))).then(r=>r.json()).catch(()=>({feeds:[]}))));
+        fetch('/api/rss/feeds?urls='+encodeURIComponent(c.join(','))).then(r=>r.ok ? r.json() : ({feeds:[], failed:true})).catch(()=>({feeds:[], failed:true}))));
+      const failed = results.every(r=>r && r.failed);
       let items=[], stale=false;
       for(const r of results) for(const fd of (r.feeds||[])){ if(fd.stale) stale = true; for(const it of (fd.items||[])) items.push({ ...it, feed:fd.url, feedName: nameOf(fd.url) }); }
       // Carry over the previous snapshot's items for any STILL-SUBSCRIBED feed that returned NOTHING this round
@@ -241,8 +261,8 @@
       for(const it of _lastAll){ if(it.feed && urls.has(it.feed) && !got.has(it.feed)) items.push(it); }
       items.sort((a,b)=> (b.ts||0)-(a.ts||0));
       if(items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS);   // retention: keep newest 2000, drop older
-      if(items.length){ _lastAll = items; _saveSnap(items); }           // update the badge basis + persist for instant next-open paint
-      return { items, stale };
+      if(items.length && !failed){ _lastAll = items; _saveSnap(items); }  // update the badge basis + persist for instant next-open paint
+      return { items, stale, failed };
     }
     // Returns {items, stale} (does NOT assign _items) — renderNews assigns only after its generation check,
     // so a slow superseded fetch can't clobber a newer feed's _items (share/summarize/mark-read).
@@ -251,11 +271,11 @@
       try{
         if(_active==='all') return await _fetchAllItems();
         const fd = _feeds.find(f=>f.url===_active) || { url:_active, name:_active };
-        const r = await fetch('/api/rss/feed?url='+encodeURIComponent(_active)).then(r=>r.json()).catch(()=>({items:[]}));
+        const r = await fetch('/api/rss/feed?url='+encodeURIComponent(_active)).then(r=>r.ok ? r.json() : ({items:[], failed:true})).catch(()=>({items:[], failed:true}));
         let items = (r.items||[]).map(it=>({ ...it, feed:fd.url, feedName: fd.name }));
         items.sort((a,b)=> (b.ts||0)-(a.ts||0));
         if(items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS);
-        return { items, stale: !!r.stale };
+        return { items, stale: !!r.stale, failed: !!r.failed };
       } finally { _loading = false; }
     }
     // Background "steady refresh": keeps the unread badge current (and freshens an OPEN feed at the top) by
@@ -336,9 +356,15 @@
         const m=$('#news-fmanage',root); if(m) m.onclick=()=>{ closeNews(); manageFeeds(); };
       });
     }
+    let _fetchFailed = false;
     function renderList(){
       const list = $('#news-list'); if(!list) return;
       if(_loading && !_items.length){ list.innerHTML='<div class="spinner"></div>'; return; }
+      if(_fetchFailed && !_items.length){
+        list.innerHTML='<div class="empty">Couldn’t fetch your feeds just now — the server didn’t answer.<br><button class="btn btn-cyan small" id="news-retry" style="margin-top:10px">Try again</button></div>';
+        { const rb=$('#news-retry',list); if(rb) rb.onclick=()=>renderNews(); }
+        return;
+      }
       // Distinguish "you have no feeds" from "your feeds returned nothing" — with no starter feeds,
       // the first is now the normal first-run state and has to say what to do about it.
       list.innerHTML = _items.length ? _items.map(_card).join('')
@@ -373,6 +399,12 @@
       await ensureState();
       if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
       const head = $('#news-head'); if(!head) return;
+      if(_feedsUnknown){
+        head.innerHTML = '';
+        $('#news-list').innerHTML = '<div class="empty">Couldn’t load your feed list from your relays — this is not “no feeds”.<br><button class="btn btn-cyan small" id="news-retry" style="margin-top:10px">Try again</button></div>';
+        { const rb=$('#news-retry'); if(rb) rb.onclick=()=>renderNews(); }
+        return;
+      }
       head.innerHTML = _chips();
       { const p=$('#news-pick', feed); if(p) p.onclick=()=>openFeedPicker(); }
       $$('.news-baracts .news-chip', feed).forEach(b=> b.onclick=()=>{
@@ -380,8 +412,10 @@
       // INSTANT paint: show the last saved snapshot immediately (no blank spinner) on the default 'all' view while
       // the live fetch runs; the fresh result swaps in below. Only when we have nothing yet this session.
       if(_active==='all' && !_items.length){ const snap=_loadSnap(); if(snap){ _items=snap; if(!_lastAll.length) _lastAll=snap; renderList(); } }
-      const { items, stale } = await fetchActive();
+      const { items, stale, failed } = await fetchActive();
       if(gen!==_gen || !inView()) return;       // navigated away / a newer feed-switch won the race
+      _fetchFailed = !!failed;
+      if(failed && !items.length && _items.length){ renderList(); return; }   // keep what is on screen (the snapshot)
       _items = items;                           // assign ONLY as the winning render (stale fetch is discarded)
       _loaded = true;
       renderList();
@@ -440,12 +474,13 @@
           <textarea class="input" id="news-opml-text" rows="4" placeholder="&lt;opml&gt;…&lt;/opml&gt;" style="margin-top:6px"></textarea>
           <button class="btn btn-ghost small" id="news-import-text" style="margin-top:6px">Import pasted OPML</button>
         </details>`, root=>{
-        $$('.news-del',root).forEach(b=> b.onclick=async()=>{ const i=+b.dataset.i; const rm=_feeds[i]; _feeds.splice(i,1); if(rm && _active===rm.url) _active='all'; await saveFeeds(); renderNews(); closeNews(); manageFeeds(); });
+        $$('.news-del',root).forEach(b=> b.onclick=async()=>{ if(_feedsUnknown){ await saveFeeds(); return; } const i=+b.dataset.i; const rm=_feeds[i]; _feeds.splice(i,1); if(rm && _active===rm.url) _active='all'; await saveFeeds(); renderNews(); closeNews(); manageFeeds(); });
         $('#news-addbtn',root).onclick=async()=>{
           let url=($('#news-newurl',root).value||'').trim(); if(!url) return;
           if(!/^https?:\/\//i.test(url)) url='https://'+url;
           const name=($('#news-newname',root).value||'').trim() || (url.split('/')[2]||url);
           if(_feeds.some(f=>f.url===url)){ toast('already added'); return; }
+          if(_feedsUnknown){ await saveFeeds(); return; }
           _feeds.push({ url, name }); await saveFeeds(); closeNews(); toast('feed added'); renderNews();
         };
         $('#news-export',root).onclick=exportOpml;
@@ -511,6 +546,7 @@
      * null and the localStorage cache is empty because it is written per-BROWSER. Answering 0 there
      * put "No feeds yet — add them in News" in front of people who have twenty. */
     function feedCount(){
+      if(_feedsUnknown) return -1;
       if(_feeds) return _feeds.length;
       const c = _feedsLocal();
       if(c) return c.length;

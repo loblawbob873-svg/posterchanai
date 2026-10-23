@@ -622,6 +622,7 @@
         S.gate = e.status === 403
           ? (e.message || 'PosterChan Code is limited to administrators.')
           : ('Could not reach this node: ' + e.message);
+        S.gateRetry = e.status !== 403;   // an answer we can ask again (a 503, a timeout) -- not a refusal
       }
       S.ready = true;
     }
@@ -1081,7 +1082,8 @@
     const noFolder = () => !!(window.pcHost && window.pcHost.pickDirectory) && !S.hostRoot;
 
     function treeHtml(){
-      if(S.treeErr) return '<div class="pcc-note err">' + enc(S.treeErr) + '</div>';
+      if(S.treeErr) return '<div class="pcc-note err">' + enc(S.treeErr) +
+        (S.hostRoot ? '' : '<br><br><button class="btn btn-ghost small" id="pcc-tree-retry">Try again</button>') + '</div>';
       /* "This folder is empty" was drawn for BOTH an empty folder and no folder at all, and the two
        * need opposite things from the reader: one is a fact about a project, the other is the app
        * waiting to be told which project. Nothing on the screen distinguished them, so a fresh
@@ -1228,7 +1230,9 @@
 
       if(!S.ready){ feed.innerHTML = '<div class="spinner"></div>'; return; }
       if(S.gate){
-        feed.innerHTML = '<div class="empty">' + enc(S.gate) + '</div>';
+        feed.innerHTML = '<div class="empty">' + enc(S.gate) + (S.gateRetry
+          ? '<br><button class="btn btn-cyan small" id="pcc-gate-retry" style="margin-top:10px">Try again</button>' : '') + '</div>';
+        const rb = $('#pcc-gate-retry', feed); if(rb) rb.onclick = () => retryNode();
         return;
       }
 
@@ -1463,6 +1467,7 @@
       });
 
       on('#pcc-save', 'click', saveDoc);
+      on('#pcc-tree-retry', 'click', () => loadTree(S.cwd));
       on('#pcc-open-empty', 'click', () => { const b=$('#pcc-open-folder'); if(b) b.click(); });
       on('#pcc-open-folder', 'click', async()=>{
         const h=window.pcHost;
@@ -1943,8 +1948,22 @@
       document.addEventListener('visibilitychange', () => { if(document.hidden) flush(); });
     }
 
+    /* A NODE THAT DID NOT ANSWER IS ASKED AGAIN. `S.ready` latches after the first entry (so returning to the
+     * screen repaints from `S` instead of refetching), which also latched a FAILED first ask: a 503 while the
+     * node restarted left "Could not reach this node" -- or a tree reading "Temporarily unavailable" -- on
+     * this screen for the rest of the session, with nothing to press. Re-entering, or Try again, asks again;
+     * a refusal (403) is an answer and is not re-asked. */
+    async function retryNode(){
+      if(S.gate && S.gateRetry){ S.gate = ''; S.gateRetry = false; S.ready = false; paint();
+        try{ await loadConfig(); }catch(_){ }
+        S.ready = true;
+        if(!S.gate) await loadTree(S.cwd); else paint();
+        return; }
+      if(S.treeErr && !S.hostRoot) await loadTree(S.cwd);
+    }
     async function render(){
       hooks();
+      if(S.ready && ((S.gate && S.gateRetry) || (S.treeErr && !S.hostRoot))){ paint(); return retryNode(); }
       if(!S.ready){
         if(!_incoming) restore();  // ← never overwrite a file Files just handed us with an old tab
         _incoming = false;

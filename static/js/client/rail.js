@@ -74,9 +74,13 @@ window.PCRailFactory = function(dep){
     el.innerHTML=`<div class="tag-cloud">${chips.join('')}</div>`;
     el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
   }
+  /* Resolves TRUE when the posts asked for are now known to be what the relays hold (nothing was missing, or a
+   * relay answered -- this node's counts), FALSE when nobody answered: "could not fetch" is not "does not exist",
+   * and Trending must not turn a ranking whose posts it could not load into "nothing trending". */
   async function fetchNotes(ids){
-    const miss=ids.filter(id=>!Store.get(id)); if(!miss.length) return;
-    try{ const notes=await Relay.query([{ ids:miss }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
+    const miss=ids.filter(id=>!Store.get(id)); if(!miss.length) return true;
+    try{ const notes=await Relay.query([{ ids:miss }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+      return notes.complete !== false || !!(Relay.homeAnswered && Relay.homeAnswered(notes)); }catch(_){ return false; }
   }
   // ---- Notifications in the rail, actionable -----------------------------------------------
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications

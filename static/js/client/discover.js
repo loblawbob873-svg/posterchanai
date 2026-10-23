@@ -31,8 +31,12 @@ window.PCDiscoverFactory = function(dep){
     const feed=$('#feed');
     feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="art-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Write article</button></div><div id="art-drafts"></div><div id="art-list"><div class="spinner"></div></div>`;
     $('#art-new').onclick=()=>renderArticleEditor();
-    let evs=[], drafts=[];
-    try{ evs=await Relay.query([{ kinds:[30023], limit:80 }]); }catch(_){}
+    let evs=[], drafts=[], answered=false;
+    /* AN UNANSWERED READ IS NOT AN EMPTY SHELF. `query` never rejects: nobody answering is `[]` with
+     * complete:false, and this screen used to greet that with "No articles yet. Tap Write article to publish
+     * the first one" -- on a fresh device whose relay was slow, a reader was told there was nothing to read. */
+    try{ evs=await Relay.query([{ kinds:[30023], limit:80 }]);
+         answered = evs.complete !== false || !!(Relay.homeAnswered && Relay.homeAnswered(evs)); }catch(_){}
     try{ drafts=await Relay.query([{ kinds:[30024], authors:[S.ME.pubkey], limit:50 }]); }catch(_){}   // my NIP-23 drafts
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     drafts.forEach(e=>Store.saveEvent(e));
@@ -53,7 +57,10 @@ window.PCDiscoverFactory = function(dep){
     }
     const arts=_dedupAddr(evs).sort((a,b)=>artTime(b)-artTime(a));
     const list=$('#art-list'); if(!list) return;
-    list.innerHTML = arts.length ? arts.map(articleCard).join('') : '<div class="empty">No articles yet. Tap “Write article” to publish the first one.</div>';
+    list.innerHTML = arts.length ? arts.map(articleCard).join('')
+      : answered ? '<div class="empty">No articles yet. Tap “Write article” to publish the first one.</div>'
+      : '<div class="empty">Your relays didn’t answer in time — this is not “no articles”.<br><button class="btn btn-cyan small" id="art-retry" style="margin-top:10px">Try again</button></div>';
+    { const rb=$('#art-retry',list); if(rb) rb.onclick=()=>renderArticles(); }
     decorateProfiles();
     $$('.article-card',list).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     if(arts.length) _fillArticleCommentCounts(arts, list);
@@ -239,13 +246,21 @@ window.PCDiscoverFactory = function(dep){
       </div>
       <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="ae-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save draft</button><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
     </div>`;
-    $('#ae-back').onclick=()=>switchView('articles');
-    const body=$('#ae-body');
+    $('#ae-back').onclick=()=>{ clearTimeout(_aeDraftT); switchView('articles'); };
+    const editor=$('.article-editor',feed), body=$('#ae-body');
     // Slug (d-tag): reused when editing a published article OR resuming a draft, so saving updates
     // the SAME 30024 (not a duplicate). Generated on first save for a brand-new article.
     let _aeSlug = g('d') || null;
     const _grabArticle=()=>({title:$('#ae-title').value, summary:$('#ae-sum').value, image:$('#ae-img').value, body:body.value});
+    /* THE AUTOSAVE BELONGS TO THIS EDITOR AND DIES WITH IT. It fires 4 s after the last keystroke, and the most
+     * common last keystroke is the one just before Publish: it then ran over a closed editor ("⚠ action failed:
+     * Cannot read properties of null") after every quick publish, and while an editor WAS still open it re-saved a
+     * draft the publish had just deleted -- a published article listed under Drafts again on every device. So an
+     * explicit save, a publish and leaving the editor each cancel it, and a save with no editor on screen does
+     * nothing. */
     async function _doSaveDraft(announce){
+      clearTimeout(_aeDraftT);
+      if(!editor.isConnected) return;     // this editor was closed (or replaced by another one)
       const a=_grabArticle();
       if(!(a.title||a.body||a.image||a.summary)){ if(announce) toast('nothing to save yet'); return; }
       if(!_aeSlug) _aeSlug=_slugFor(a.title);
@@ -299,7 +314,7 @@ window.PCDiscoverFactory = function(dep){
     $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f,{folder:'Posts'}); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
     $('#ae-insert').onclick=()=>$('#ae-body-file').click();
     $('#ae-body-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#ae-status').textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i],{folder:'Posts'}); _insertAt(body, `\n![](${url})\n`); }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; return; } } $('#ae-status').textContent=''; ev.target.value=''; };
-    $('#ae-pub').onclick=()=>publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:_aeSlug });
+    $('#ae-pub').onclick=()=>{ clearTimeout(_aeDraftT); return publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:_aeSlug }); };
   }
   async function deleteArticle(e){
     // NIP-09: a kind-5 deletion referencing the article by event id AND addressable coordinate.
@@ -1243,7 +1258,7 @@ window.PCDiscoverFactory = function(dep){
       // Over-fetch candidates: a ranked id whose note isn't on this relay (or is muted) renders nothing,
       // so taking exactly TR_PAGE ids would yield short pages. Only CONSUMED ids leave the queue.
       const pick=_tr.queue.slice(0, TR_PAGE*3);
-      await fetchNotes(pick.map(x=>x[0]));
+      const fetched=await fetchNotes(pick.map(x=>x[0]));
       const feed=$('#feed');
       if(_tr.gen!==gen || S.VIEW!=='trending' || !feed) return 0;
       const box=_tlNotes(feed), frag=document.createDocumentFragment();
@@ -1255,8 +1270,13 @@ window.PCDiscoverFactory = function(dep){
         const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node);
         if(frag.childElementCount>=TR_PAGE) break;
       }
-      _tr.queue=_tr.queue.slice(used);
       added=frag.childElementCount;
+      /* RANKED, BUT THE POSTS NEVER CAME. The instance (or a relay) ranked these ids; the read for the posts
+       * themselves went unanswered, so nothing could be drawn. Consuming them and widening on would end in
+       * "Nothing trending yet" over a list of hot posts -- stop, keep them queued, and say the relays did not
+       * answer (the retry re-enters the view). */
+      if(!added && fetched===false){ pick.forEach(x=>_tr.shown.delete(x[0])); _tr.unreachable=_tr.unfetched=true; break; }
+      _tr.queue=_tr.queue.slice(used);
       if(added){
         // Clear the placeholder spinner / empty line AND the scroll-back sentinel first: loadSentinel
         // parks its spinner at the END of #tl-notes, so appending over it would drop the new page BELOW
@@ -1276,7 +1296,7 @@ window.PCDiscoverFactory = function(dep){
     const feed=$('#feed'); if(!feed) return;
     _feedScrollable(feed);   // a normal scrolling list view
     _tr.gen++;   // invalidate any in-flight page from the previous entry / the other tab
-    _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.unreachable=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
+    _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.unreachable=false; _tr.unfetched=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
     // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline
     // composer, the ＋ FAB and loadSentinel() all behave exactly as they do on the other two tabs.
     feed.innerHTML = _timelineHeaderHtml() + _trBarHtml() + '<div id="tl-notes"><div class="spinner"></div></div>'
@@ -1295,7 +1315,7 @@ window.PCDiscoverFactory = function(dep){
       // "The relays didn't answer" and "nothing is trending" are different screens, and only one of
       // them is worth waiting on. The retry re-enters the view, which re-arms the windows too.
       box.innerHTML = _tr.unreachable
-        ? `<div class="empty">Couldn’t reach your relays just now — nothing has been ranked yet.<br>
+        ? `<div class="empty">${_tr.unfetched ? 'Couldn’t load the trending posts from your relays just now.' : 'Couldn’t reach your relays just now — nothing has been ranked yet.'}<br>
              <button class="btn btn-cyan small" id="tr-retry" style="margin-top:10px">Try again</button></div>`
         : `<div class="empty">${_tr.tab==='follows'
             ? (S.FOLLOWS.size ? 'Nothing from your follows yet — they haven’t liked or boosted anything this month.' : 'Follow people to see what they’re into.')
