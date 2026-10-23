@@ -5794,7 +5794,13 @@
    * newer than what this device last saw or wrote (a stale read must not drop a follow made here). */
   function _followEditBase(cur){
     const fromRelay = cur ? cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]) : [];
-    if(cur && Number(cur.created_at) > _followsAt()) return new Set(fromRelay);
+    /* ...unless that newer list SHRANK below half of what this device holds: fetchFollows refuses exactly that read
+     * as a relay serving a truncated copy (and so never advances followsAt past it), and building an edit on it alone
+     * either published the truncated list or had publish()'s shrink guard refuse every follow, silently (code
+     * review, 2026-10-23). Same rule here as there: such a list is a short read, unioned like a stale one. */
+    const held=[...FOLLOWS].filter(p=>p!==(ME&&ME.pubkey)).length;
+    const shortRead = held>=8 && new Set(fromRelay).size < Math.floor(held/2);
+    if(cur && Number(cur.created_at) > _followsAt() && !shortRead) return new Set(fromRelay);
     return new Set([...FOLLOWS, ...fromRelay]);
   }
   /* "Could not read the list" is not "the list is empty": a fresh device whose read did not come back holds no

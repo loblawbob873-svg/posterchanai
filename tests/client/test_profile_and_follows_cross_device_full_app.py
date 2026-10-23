@@ -341,3 +341,33 @@ async def a_follow_on_a_fresh_device_with_a_slow_relay_keeps_every_other_follow(
 
 def test_a_follow_on_a_fresh_device_with_a_slow_relay_keeps_every_other_follow(ran):
     ran('a_follow_on_a_fresh_device_with_a_slow_relay_keeps_every_other_follow')
+
+
+def _kind3(b, S, pks, age):
+    """This account's follow list holding `pks`, signed in the page with the account's key, `age` seconds old."""
+    tags = json.dumps([['p', p] for p in pks])
+    return b.js("""NostrTools.finalizeEvent({kind:3,created_at:Math.floor(Date.now()/1000)-%d,tags:%s,content:''},
+        new Uint8Array(32).fill(%d))""" % (age, tags, S.fill))
+
+
+@scenario
+async def a_follow_after_a_truncated_newer_list_keeps_every_follow(S):
+    """Code review, 2026-10-23: fetchFollows REFUSES a newer list that shrank below half (a relay serving a truncated
+    copy) and so leaves followsAt behind -- and the next follow then built ONLY on that truncated list, because it
+    was 'newer than this device's base'. Either a list of three went out over ten, or publish()'s guard refused every
+    follow. A newer list that shrank like that is the same short read here as it is there."""
+    many = [_pubkey(f) for f in range(150, 160)]                       # ten people this account follows
+    a = await device(S)
+    await seed_people(a)
+    H.RELAY._store(await _kind3(a, S, many, 120))
+    b = await device(S)                                                  # adopts the ten
+    await shows(b, many[0], 'Unfollow')
+    H.RELAY._store(await _kind3(a, S, many[:2], 60))                    # a newer, truncated copy: two of ten
+    await press_follow(b, PK['zed'])
+    await until(lambda: PK['zed'] in (_follows(S.pk) or set()), 30, 'the follow landed', b)
+    got = _follows(S.pk)
+    assert set(many) <= got, ('the follow was built on a truncated list', len(got), sorted(got)[:4])
+
+
+def test_a_follow_after_a_truncated_newer_list_keeps_every_follow(ran):
+    ran('a_follow_after_a_truncated_newer_list_keeps_every_follow')
