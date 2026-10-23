@@ -67,6 +67,10 @@ const PLUGIN = {
   // phone that is not the default SMS app: the list cannot be asked, answered as null.
   async setBlocked({ number, block }){
     calls.push(['setBlocked', number, block]);
+    /* THE PHONE'S OWN ANSWER (tests/sms_java_phone.py): the shipped SmsPlugin.setBlocked ->
+     * Blocklist.set run on a JVM with these exact arguments, instead of a reply typed here. */
+    if(opt.blockArgv) return JSON.parse(require('child_process').execFileSync(opt.blockArgv[0],
+      opt.blockArgv.slice(1), {input:JSON.stringify({number, block}), encoding:'utf8'}).trim().split('\n').pop()).resolved;
     return { blocked: opt.blockable === false ? null : !!block, available: opt.blockable !== false };
   },
   async status(){
@@ -387,7 +391,7 @@ global.__PC = {
     calls.push(['uploadEncFile', file.name, folder]);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
-    uploads[sha] = { folder, name:file.name, type:file.type,
+    uploads[sha] = { folder, name:file.name, type:file.type, b64:Buffer.from(bytes).toString('base64'),
                      text:Buffer.from(bytes).toString('utf8') };
     driveFolders.add(String(folder));
     driveFiles.push({ sha, folder:String(folder), name:String(file.name) });
@@ -519,10 +523,64 @@ if(opt.nativeEvents){
   global.__PC.toast = msg => { calls.push(['toast', String(msg)]); };
 }
 
+/* ---- REAL KEYS, opt-in (`realKey`: a secret in hex) -------------------------------------------
+ *
+ * Everything above encrypts as 'enc:' + plaintext, which is right for the protocol tests and is
+ * exactly why no test here ever handed the PHONE what this file publishes. With a real key the
+ * account is that key, NIP-44 is the vendored nostr-tools (the bundle the client ships), and every
+ * publish is a signed event -- the bytes a relay would carry to SignerRelayService. */
+let NT = null, realSk = null;
+const phoneLog = [];
+if(opt.realKey){
+  require('vm').runInThisContext(require('fs').readFileSync(path.join(ROOT, 'static', 'vendor', 'nostr', 'nostr.bundle.js'), 'utf8'));
+  NT = global.NostrTools;
+  realSk = Uint8Array.from(Buffer.from(opt.realKey, 'hex'));
+  global.__PC.ME = { pubkey: NT.getPublicKey(realSk) };
+  const ck = pk => NT.nip44.getConversationKey(realSk, pk);
+  global.__PC.nip44enc = async (pk, s) => NT.nip44.encrypt(s, ck(pk));
+  global.__PC._nip44dec = async (pk, ct) => NT.nip44.decrypt(ct, ck(pk));
+  const plain = global.__PC.publish;
+  global.__PC.publish = async (kind, content, tags, o) => {
+    const held = relay.get(((tags || []).find(t => t[0] === 'd') || [])[1] || '');
+    const r = await plain(kind, content, tags, o);
+    if(!r || !r.ok || !r.ev || kind === 5) return r;
+    // This device's own clock; `clockAhead` (seconds) is a desktop whose clock runs ahead of the phone's.
+    // An explicit `createdAt` is honoured for 30078 exactly as app.js _publishNow honours it.
+    const ev = NT.finalizeEvent({ kind, content, tags,
+      created_at: kind === 30078 && o && Number.isSafeInteger(o.createdAt) ? o.createdAt
+                : Math.floor(Date.now() / 1000) + (Number(opt.clockAhead) || 0) }, realSk);
+    const d = dOf(ev);
+    // The relay refuses a version older than the one it holds (see relayAccepts) and says so.
+    if(held && Number(ev.created_at) < Number(held.created_at)){
+      relay.set(d, held); phoneLog.push({ refusedByRelay: d, created_at: ev.created_at, held: held.created_at });
+      return { ok:false, ev:null };
+    }
+    if(content && relay.get(d) === r.ev) relay.set(d, ev);
+    return { ok:true, ev };
+  };
+}
+/* An ADDRESSABLE event as this node's relay stores it (nostr_relay/store.py): a version older than the
+ * one held is refused -- and a refused event is never broadcast to anybody's live subscription.
+ * A same-second tie goes to the later direct write (`tie_direct`). */
+function relayAccepts(ev){
+  const held = relay.get(dOf(ev));
+  return !held || Number(ev.created_at) >= Number(held.created_at);
+}
+/* Hand events to the phone (opt.phoneArgv: tests/sms_java_phone.py `perform`) and deliver what it
+ * publishes back on THIS device's live subscription, as a relay would. */
+async function deliverLive(ev){
+  if(!relayAccepts(ev)){ phoneLog.push({ refusedByRelay: dOf(ev), created_at: ev.created_at,
+                                         held: relay.get(dOf(ev)).created_at }); return; }
+  relay.set(dOf(ev), ev);
+  if(typeof global.__smsLiveEvent !== 'function') throw new Error('Texts live subscription missing');
+  await global.__smsLiveEvent(ev);
+}
+
 require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
 
 (async () => {
   const S = global.PCSms;
+  const sms = require('fs').readFileSync(path.join(ROOT, 'static', 'js', 'client', 'sms.js'), 'utf8');
   for(const step of (opt.steps || ['load'])){
     if(step === 'load'){ await S.load(true); }
     else if(step === 'phoneLoad'){ await S.loadFromPhone(); }
@@ -560,7 +618,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
        the oversized-link decision actually turns on. */
     else if(step.slice(0, 9) === 'sendfile:'){
       const [to, size, ...rest] = step.slice(9).split(':');
-      const bytes = new Uint8Array(Number(size) || 0);
+      const bytes = opt.fileB64 ? Buffer.from(opt.fileB64, 'base64') : new Uint8Array(Number(size) || 0);
       const f = new File([bytes], opt.fileName || 'photo.jpg', { type:opt.fileType || 'image/jpeg' });
       const r = await S.send(to, rest.join(':'), f);
       calls.push(['sendFileResult', r.ok, r.where || r.error || '', r.link || '']);
@@ -625,6 +683,36 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const st = S._state(); st.msgs.clear(); st.threads.length = 0; calls.push(['forgetArchive']);
     }
     else if(step === 'absorbCached'){ await S._absorb(opt.cached || []); }
+    /* `phone` -- every Texts document the relay holds, as SmsOutbox.filter selects them, seen
+       `opt.phoneRelays` times (the same request arriving from several relays), handed to the phone;
+       its receipts come back live. */
+    else if(step === 'phone'){
+      const evs = Array.from(relay.values()).filter(e => (e.tags || []).some(t => t[0] === 'l' && t[1] === 'pcai-sms'));
+      const seen = [].concat(...Array.from({length: Number(opt.phoneRelays) || 1}, () => evs));
+      const out = JSON.parse(require('child_process').execFileSync(opt.phoneArgv[0], opt.phoneArgv.slice(1),
+        {input: JSON.stringify(seen), encoding: 'utf8'}).trim().split('\n').pop());
+      phoneLog.push({ handed: seen.length, radio: out.radio, published: out.published });
+      for(const ev of out.published || []) await deliverLive(ev);
+      await new Promise(r => setTimeout(r, 30));
+    }
+    /* `phoneSweep` -- the phone archives its provider rows (tests/sms_java_phone.py `sweep`,
+       opt.sweepArgv/opt.sweepInput; a row date of "now" is the moment of this step) and the archive
+       events arrive live, the attachments' ciphertext landing in the drive stub. */
+    else if(step === 'phoneSweep'){
+      const input = JSON.parse(JSON.stringify(opt.sweepInput));
+      for(const r of input.rows) if(r.date === 'now') r.date = Date.now();
+      const out = JSON.parse(require('child_process').execFileSync(opt.sweepArgv[0], opt.sweepArgv.slice(1),
+        {input: JSON.stringify(input), encoding: 'utf8'}).trim().split('\n').pop());
+      for(const [sha, b64] of Object.entries(out.blobs || {})) uploads[sha] = { b64, text: '' };
+      phoneLog.push({ sweep: { events: (out.events || []).length, error: out.error, attachments: out.attachments } });
+      for(const ev of out.events || []) await deliverLive(ev);
+      await new Promise(r => setTimeout(r, 30));
+    }
+    /* `deliverRaw` -- every opt.rawEvents entry on the live subscription, in order. */
+    else if(step === 'deliverRaw'){
+      for(const ev of (opt.rawEvents || [])) await deliverLive(ev);
+      await new Promise(r => setTimeout(r, 30));
+    }
     else if(step === 'liveEvent'){
       if(typeof global.__smsLiveEvent !== 'function') throw new Error('Texts live subscription missing');
       await global.__smsLiveEvent((opt.rawEvents || [])[0]);
@@ -746,6 +834,15 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe, archive, archiveProbe,
     blocks: st.blocks || {},
+    /* The thread list's block label, by the SHIPPED blockLine (lifted from sms.js, not exported). */
+    blockLabels: Object.fromEntries(Object.values(st.blocks || {}).map(v => [v.number, (() => {
+      const i = sms.indexOf('function blockLine(t)');
+      let k = sms.indexOf('{', i), depth = 0, j = k;
+      for(; j < sms.length; j++){ if(sms[j] === '{') depth++; else if(sms[j] === '}' && --depth === 0) break; }
+      return new Function('S', 'key', sms.slice(i, j + 1) + '; return blockLine;')(st, S._key)({address: v.number});
+    })()])),
+    phone: phoneLog,
+    relayFull: opt.realKey ? Array.from(relay.values()) : [],
     historyIncomplete:!!st.historyIncomplete,
     storage: global.localStorage._all,
     // What the phone reported about itself — see publishStatus in sms.js.

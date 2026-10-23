@@ -68,11 +68,30 @@ public class JSONObject {
   public JSONObject put(String k, int v) throws JSONException { m.put(k, v); return this; }
   public JSONObject put(String k, double v) throws JSONException { m.put(k, v); return this; }
   public JSONObject put(String k, boolean v) throws JSONException { m.put(k, v); return this; }
+  /** Android's JSONObject.NULL: what a JSON `null` parses to. `optString` on it answers "null" (sic). */
+  public static final Object NULL = new Object() {
+    @Override public boolean equals(Object o) { return o == this || o == null; }
+    @Override public int hashCode() { return 0; }
+    @Override public String toString() { return "null"; } };
   public Object opt(String k) { return m.get(k); }
   public boolean has(String k) { return m.containsKey(k); }
+  public boolean isNull(String k) { Object v = m.get(k); return v == null || v == NULL; }
   public String optString(String k) { return optString(k, ""); }
   public String optString(String k, String f) { Object v = m.get(k); return v == null ? f : String.valueOf(v); }
-  public long optLong(String k, long f) { Object v = m.get(k); return v instanceof Number ? ((Number) v).longValue() : f; }
+  public long optLong(String k) { return optLong(k, 0L); }
+  public long optLong(String k, long f) { Object v = m.get(k);
+    if (v instanceof Number) return ((Number) v).longValue();
+    if (v instanceof String) { try { return (long) Double.parseDouble((String) v); } catch (NumberFormatException e) { return f; } }
+    return f; }
+  public int optInt(String k, int f) { return (int) optLong(k, f); }
+  public boolean optBoolean(String k) { return optBoolean(k, false); }
+  public boolean optBoolean(String k, boolean f) { Object v = m.get(k);
+    if (v instanceof Boolean) return (Boolean) v;
+    if (v instanceof String && ("true".equalsIgnoreCase((String) v) || "false".equalsIgnoreCase((String) v))) return Boolean.parseBoolean((String) v);
+    return f; }
+  public JSONObject optJSONObject(String k) { Object v = m.get(k); return v instanceof JSONObject ? (JSONObject) v : null; }
+  public JSONArray optJSONArray(String k) { Object v = m.get(k); return v instanceof JSONArray ? (JSONArray) v : null; }
+  public String getString(String k) throws JSONException { Object v = m.get(k); if (v == null) throw new JSONException("no " + k); return String.valueOf(v); }
   public int length() { return m.size(); }
   public Iterator<String> keys() { return m.keySet().iterator(); }
   @Override public String toString() {
@@ -105,6 +124,8 @@ public class JSONArray {
   public JSONArray put(Object v) { a.add(v); return this; }
   public JSONArray put(long v) { a.add(v); return this; }
   public JSONArray put(int v) { a.add(v); return this; }
+  public JSONArray put(boolean v) { a.add(v); return this; }
+  public Object opt(int i) { return i < a.size() ? a.get(i) : null; }
   public int length() { return a.size(); }
   public Object get(int i) { return a.get(i); }
   public String optString(int i) { Object v = i < a.size() ? a.get(i) : null; return v == null ? "" : String.valueOf(v); }
@@ -147,7 +168,7 @@ final class Json {
         else b.append(d); } }
     int st = i; while (i < s.length() && "{}[],: \t\r\n".indexOf(s.charAt(i)) < 0) i++;
     String t = s.substring(st, i);
-    if (t.equals("true")) return Boolean.TRUE; if (t.equals("false")) return Boolean.FALSE; if (t.equals("null")) return null;
+    if (t.equals("true")) return Boolean.TRUE; if (t.equals("false")) return Boolean.FALSE; if (t.equals("null")) return JSONObject.NULL;
     if (t.contains(".") || t.contains("e") || t.contains("E")) return Double.parseDouble(t);
     return Long.parseLong(t);
   }
