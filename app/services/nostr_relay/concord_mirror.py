@@ -77,6 +77,7 @@ MAX_REGISTRATIONS = 500
 MAX_UPSTREAM_RELAYS = 64
 MAX_EVENTS_PER_COMMUNITY = 25_000
 MAX_EVENTS_TOTAL = 250_000
+MAX_DROPPED = 20_000          # streams remembered as "copy deleted here" (see ConcordMirror.dropped)
 MAX_WRAP_BYTES = 128 * 1024
 TTL_SECONDS = 14 * 86400
 REGISTER_SKEW = 600
@@ -505,7 +506,7 @@ class ConcordMirror:
         self.links: dict = {}         # relay url -> _Link
         self._stopping: set = set()   # old links being stopped in the background (kept so they are not collected)
         self.directory = _Directory(self)
-        self._seen = collections.OrderedDict()
+        self._seen = collections.OrderedDict()   # wrap id -> its stream: "already here", forgotten with the copies
         self._recent_regs: dict = {}  # member -> deque of registration times
         self._loaded = False
         self._save_task = None
@@ -515,6 +516,9 @@ class ConcordMirror:
         # Streams of communities HOSTED here, ever: their wraps are this node's originals, never mirror copies, so they
         # are never deleted when a registration lapses, never counted against a budget, never refused on a read.
         self.hosted_ever: set = set()
+        # Streams whose copy this node DELETED because no registration names them any more -> when. A device that
+        # registered one still reads it here; it is told `unavailable:`, never an EOSE over the emptied store.
+        self.dropped: dict = {}
 
     # -- configuration --------------------------------------------------------------------------------
     def enabled(self) -> bool:
@@ -547,6 +551,7 @@ class ConcordMirror:
             self.regs = {m: dict(g) for m, g in (data.get("regs") or {}).items() if isinstance(g, dict)}
             self.counts = {a: int(n) for a, n in (data.get("counts") or {}).items()}
             self.hosted_ever = {str(a) for a in (data.get("hosted") or []) if _HEX64.match(str(a))}
+            self.dropped = {str(a): float(t) for a, t in (data.get("dropped") or {}).items() if _HEX64.match(str(a))}
         except Exception as e:
             logger.warning("[concord-mirror] could not read the saved registrations (%s) — starting empty", e)
         self._loaded = True
@@ -639,7 +644,24 @@ class ConcordMirror:
             named = self.registered_authors()
             dropped = [a for a in (set(self.counts) | self._last_named) if a not in named and a not in self.hosted_ever]
             self._last_named = set(named)
+            # Named again (or expired from memory): no longer "stopped". Bounded by age and by count.
+            cutoff = time.time() - TTL_SECONDS
+            for a in [a for a, t in self.dropped.items() if a in named or t < cutoff]:
+                del self.dropped[a]
+            while len(self.dropped) > MAX_DROPPED:
+                del self.dropped[min(self.dropped, key=self.dropped.get)]
             if dropped:
+                # WHAT IS DELETED IS NO LONGER "ALREADY HERE". `_seen` let a history walk skip a wrap this process
+                # had stored or found stored; with the copies gone it made the next walk skip every one of them, so
+                # a stream dropped by one registration and named again by the next was served EMPTY, as if whole.
+                # Sorsmenedék, poster.place 2026-10-22: a device registered its 4 control streams, then 11 s later
+                # all 22 -- 5 of ~200 wraps held here until the relay restarted, every channel blank.
+                gone = set(dropped)
+                for eid in [e for e, a in self._seen.items() if a in gone]:
+                    del self._seen[eid]
+                now = time.time()
+                for a in dropped:
+                    self.dropped[a] = now
                 try:
                     await self.store.delete_pubkeys(dropped, spare_preserved=True)
                 except Exception as e:
@@ -661,7 +683,8 @@ class ConcordMirror:
             return
         try:
             await self.store.kv_set(KV_KEY, json.dumps({"regs": self.regs, "counts": self.counts,
-                                                        "hosted": sorted(self.hosted_ever)}))
+                                                        "hosted": sorted(self.hosted_ever),
+                                                        "dropped": self.dropped}))
         except Exception as e:
             logger.warning("[concord-mirror] could not save the registrations: %s", e)
 
@@ -720,7 +743,7 @@ class ConcordMirror:
                 continue
             if named is None:
                 named = self.registered_authors()
-                if not named:
+                if not named and not self.dropped:
                     return ""
             for a in authors:
                 if a in self.hosted_ever:
@@ -728,6 +751,11 @@ class ConcordMirror:
                 if a in named and not self.author_ready(a, partial):
                     return ("unavailable: this node is still catching up with this community's relays "
                             "(or cannot reach them) — read them directly")
+                if a not in named and a in self.dropped:
+                    # Its copy was deleted here: whatever the store holds now is not the room. (Sorsmenedék,
+                    # 2026-10-22: one device's 4-stream registration emptied 18 channels another device read here.)
+                    return ("unavailable: this node no longer mirrors this stream "
+                            "— read the community's relays directly")
         return ""
 
     def member_state(self, member: str) -> dict:
@@ -945,8 +973,8 @@ class ConcordMirror:
         return sent
 
     # -- upstream -> store ------------------------------------------------------------------------------
-    def _seen_add(self, eid: str) -> None:
-        self._seen[eid] = True
+    def _seen_add(self, eid: str, author: str) -> None:
+        self._seen[eid] = author
         if len(self._seen) > 50_000:
             self._seen.popitem(last=False)
 
@@ -973,7 +1001,7 @@ class ConcordMirror:
             return False
         server = self.server
         if kind == LIVE_KIND:
-            self._seen_add(eid)
+            self._seen_add(eid, author)
             if server is not None:
                 server.subs.fanout(ev, server._send, server._can_serve_event)
             return True
@@ -982,7 +1010,7 @@ class ConcordMirror:
             return False
         try:
             if await self.store.has_event(eid):
-                self._seen_add(eid)
+                self._seen_add(eid, author)
                 return False
             stored = await self.store.add_event(ev, origin="wot")
         except Exception as e:
@@ -990,7 +1018,7 @@ class ConcordMirror:
             return False
         if not stored:
             return False
-        self._seen_add(eid)
+        self._seen_add(eid, author)
         if not hosted:
             self.counts[author] = self.counts.get(author, 0) + 1
             self._dirty()

@@ -913,3 +913,96 @@ def test_a_relay_on_this_nodes_blocklist_is_not_named_for_clients_to_read_direct
             await node.close()
             await good.close()
     run(go())
+
+
+def test_a_stream_dropped_and_named_again_is_mirrored_again_not_served_empty():
+    """SORSMENEDÉK, poster.place 2026-10-22: 5 of the ~200 wraps its four relays hold, served as the whole room.
+
+    A device re-registered the community with only its 4 control streams (15:40:04) and 11 s later with all 22
+    (15:40:15). The shrink deleted the dropped streams' copies (_reconcile); the re-walk of their history then
+    skipped every wrap as already seen -- `_seen` remembered ids this process had stored or found stored, and
+    nothing forgot them when the copies went. The links were in step, so the node answered EOSE with nothing:
+    every channel empty until the relay process restarted. Measured live the same night: of 27 groups on
+    jskitty.com, every one held all its wraps here except that one (4 of 203)."""
+    channel, control, member = key(), key(), key()
+    now = int(time.time())
+    history = [wrap(channel, created_at=now - 5000 + i * 10) for i in range(12)]
+
+    async def go():
+        up = await Upstream(history + [wrap(control, created_at=now - 100)]).start()
+        node = await Node({pub(member)}).start()
+        group = "5e" * 32
+        try:
+            both = [pub(control), pub(channel)]
+            assert (await node.publish(registration(member, [up.url], both, group=group)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(channel)) and len(node.store.events) == 13)
+            # the device that knows only the control stream
+            assert (await node.publish(registration(member, [up.url], [pub(control)], group=group)))[2] is True
+            assert await until(lambda: not any(e["pubkey"] == pub(channel) for e in node.store.events.values()))
+            # ...and the full set again
+            assert (await node.publish(registration(member, [up.url], both, group=group)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(channel)))
+            await until(lambda: sum(e["pubkey"] == pub(channel) for e in node.store.events.values()) == 12, 5)
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(channel)], "limit": 100}])
+            # never a short answer presented as the room's whole history
+            assert last[0] == "CLOSED" or sorted(e["id"] for e in got) == sorted(e["id"] for e in history), \
+                (last, len(got))
+            assert sorted(e["id"] for e in got) == sorted(e["id"] for e in history), (last, len(got))
+        finally:
+            await node.close()
+            await up.close()
+    run(go())
+
+
+def test_a_stream_this_node_stopped_mirroring_is_unavailable_not_an_empty_room():
+    """The other half of the Sorsmenedék gap. A registration that no longer names a stream deletes this node's copy
+    of it -- but a device that registered it earlier still trusts this node for it (its own mirror record) and
+    reads it here. The node used to answer that read EOSE from a store it had just emptied: the room "loaded",
+    blank. A stream whose copy this node DELETED is "could not ask" -- `unavailable:` -- for every reader (a
+    `pcmp…` reader too: what it would be served is nothing). A stream it never mirrored stays the store's business
+    (test_an_upstream_that_cannot_be_reached_is_never_no_messages), and kind-1059 DMs, read by #p, are untouched."""
+    channel, control, member = key(), key(), key()
+    history = [wrap(channel) for _ in range(3)]
+
+    async def go():
+        up = await Upstream(history + [wrap(control)]).start()
+        node = await Node({pub(member)}).start()
+        group = "6d" * 32
+        try:
+            both = [pub(control), pub(channel)]
+            assert (await node.publish(registration(member, [up.url], both, group=group)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(channel)) and len(node.store.events) == 4)
+            assert (await node.publish(registration(member, [up.url], [pub(control)], group=group)))[2] is True
+            assert await until(lambda: not any(e["pubkey"] == pub(channel) for e in node.store.events.values()))
+            for prefix in ("s", "pcmp"):
+                got, last = await node.req([{"kinds": [1059], "authors": [pub(channel)]}], prefix=prefix)
+                assert last[0] == "CLOSED" and last[2].startswith("unavailable:"), (prefix, last, len(got))
+            # the stream still mirrored is served as before
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(control)]}])
+            assert last[0] == "EOSE" and len(got) == 1, last
+            # a DM gift wrap addressed to someone (#p, no authors) is the store's business, as always
+            dm = wrap(key())
+            node.store.events[dm["id"]] = dm
+            got, last = await node.req([{"kinds": [1059], "#p": [dm["tags"][0][1]]}])
+            assert last[0] == "EOSE" and [e["id"] for e in got] == [dm["id"]], last
+            # named again: in step again, every wrap back
+            assert (await node.publish(registration(member, [up.url], both, group=group)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(channel)))
+            await until(lambda: sum(e["pubkey"] == pub(channel) for e in node.store.events.values()) == 3, 5)
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(channel)]}])
+            assert last[0] == "EOSE" and len(got) == 3, (last, len(got))
+            # and the dropped set survives a restart of the relay process (it is saved with the registrations)
+            assert (await node.publish(registration(member, [up.url], [pub(control)], group=group)))[2] is True
+            assert await until(lambda: not any(e["pubkey"] == pub(channel) for e in node.store.events.values()))
+            await node.mirror._save_now()
+            fresh = cm.ConcordMirror(node.store, None, node.cfg, url_ok=lambda u, c: "",
+                                     open_ws=lambda url: websockets.connect(url, open_timeout=3))
+            await fresh.start()
+            try:
+                assert fresh.req_refusal([{"kinds": [1059], "authors": [pub(channel)]}]).startswith("unavailable:")
+            finally:
+                await fresh.stop()
+        finally:
+            await node.close()
+            await up.close()
+    run(go())
