@@ -6457,7 +6457,7 @@
   }
 
   async function refreshRoomMetadata(p,only=null){
-    if(metadataBusy){if(only)controlPending=only;return;}
+    if(metadataBusy){if(only)queueControlRefresh(only);return;}
     if(!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
     const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle&&!x.room.cord.bundle.dissolved);
     if(!eligible.length)return; metadataBusy=true;
@@ -6496,14 +6496,21 @@
       const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
       if(roomIdentity(active)===roomIdentity(room)&&activeChannel)startChatLive(p,active,activeChannel);
       if(roomIdentity(active)===roomIdentity(room))startControlLive(p,active,seed.controlPubkeys);
-    }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;if(controlPending){const next=controlPending;controlPending=null;void refreshRoomMetadata(p,next);}}
+    }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;const next=controlPending.values().next().value;if(next){controlPending.delete(next.identity);void refreshRoomMetadata(p,next);}}
   }
   /* CONTROL CHANGES ARRIVE LIVE FOR THE COMMUNITY ON SCREEN (2026-10-23). A new channel, a ban, a role or a pin used to
    * reach other members only through the rotating metadata poll (at most once a minute per community, round-robin over
    * every joined one): a channel somebody just made took a minute or more to appear, and the two-client test of it was
    * flaky under load. The open community now holds one live REQ on its control authors -- like the rekey streams -- and a
    * new control envelope refreshes that room at once, carrying the envelope in hand so no throttled read can lose it. */
-  const controlLive={key:'',close:null};let controlPending=null;
+  /* Live control envelopes that arrived while a metadata refresh was running wait here, PER COMMUNITY, and are MERGED:
+   * a single slot let the second batch (a new channel) overwrite the first (a ban), and the subscription never
+   * re-delivers an envelope it has seen -- the ban then waited for the once-a-minute read (code review, 2026-10-23). */
+  const controlLive={key:'',close:null},controlPending=new Map();
+  function queueControlRefresh(only){
+    const prev=controlPending.get(only.identity),extra=[...((prev&&prev.extra)||[]),...(only.extra||[])];
+    controlPending.set(only.identity,{identity:only.identity,extra:extra.slice(-200)});
+  }
   function stopControlLive(){try{if(controlLive.close)controlLive.close();}catch(_){}controlLive.key='';controlLive.close=null;}
   function startControlLive(p,room,authors){
     const R=(window.PCConcordRelay||window.Relay),bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
