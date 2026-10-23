@@ -71,7 +71,17 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: payload measured by this file went 9.17 -> 8.04 MB without removing a single feature, so the
 #: ceilings below are no longer the ones being pressed against — the next person to raise one should
 #: re-baseline them DOWN to just above what is measured, the way the notes above did on the way up.
-BUDGET_MB = 9.2
+#:
+#: LOWERED 9.2 -> 8.15 on 2026-10-23: THE CORD-READER RECLAIM NAMED ABOVE, DONE. The ceiling had been
+#: reached again (9,648,782 B = 9.20 MB at 8999c0c1b, ~+40 KB of a night's bug fixes over a dozen
+#: files), and the answer was this reclaim, not a third raise. cord-reader.js (1,127,446 B) left the
+#: page: concord.js loads it at its doors (`cordReaderReady` -- the Communities screen, the background
+#: unread sweep, a cold invite link, a mini app's room transport) and sw.js still precaches it
+#: (test_cord_reader_stays_precached... below). The doors cost +3,288 B in concord.js and +959 B in
+#: app.js (the shared loader, now versioned and retried), so:
+#:     9,648,782 - 1,127,446 + 3,288 + 959 = 8,525,583 B = 8.131 MB measured.
+#: 8.15 leaves ~20 KB -- a drift detector, as the 2.85 note below argues, not headroom to spend.
+BUDGET_MB = 8.15
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
@@ -144,3 +154,17 @@ def test_pdfjs_stays_precached_even_though_the_page_does_not_load_it():
         assert needed in shell, (
             f"{needed} left the precache — that is the offline-PDF failure the comment beside it "
             f"records, back again")
+
+
+def test_cord_reader_stays_precached_even_though_the_page_does_not_load_it():
+    """The second deliberate exception, by name, for PDF.js's reason. cord-reader.js is fetched by
+    concord.js on first need, so it reads like a module the precache can drop -- but a phone that
+    opens Communities offline has nothing else to read its rooms with. And it must stay OUT of the
+    page: the 1.1 MB it cost every cold load is what BUDGET_MB above was lowered by."""
+    sw = (ROOT / "static/js/client/sw.js").read_text(encoding="utf-8")
+    shell = sw[sw.index("const SHELL = ["):]
+    shell = shell[:shell.index("\n];")]
+    assert "'/static/js/client/cord-reader.js'" in shell, "cord-reader.js left the precache -- Communities stops opening offline"
+    assert not any(p.endswith("/cord-reader.js") for _, p in boot_assets()), (
+        "cord-reader.js is a <script> tag in client.html again -- 1.1 MB back on every cold load; concord.js "
+        "loads it on demand (cordReaderReady)")

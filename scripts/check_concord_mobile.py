@@ -45,7 +45,8 @@ window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord',
  osNotify:()=>{},askOsNotify:async()=> 'granted',copyValue:()=>{},startGroupCall:()=>{},
  uploadBlob:async()=>'',openEmojiPopover:()=>{},insertAt:()=>{},blossomPicker:null,modal:null,
  uiConfirm:async()=>true};
-</script><script src="/static/js/client/concord.js"></script>
+</script><!-- the reader is a page tag no longer (concord.js loads it at its door); this harness stubs __PC without the loader, so it supplies it -->
+<script src="/static/js/client/cord-reader.js"></script><script src="/static/js/client/concord.js"></script>
 <script>PCConcord.render();window.__ready=true;</script></body></html>"""
 
 

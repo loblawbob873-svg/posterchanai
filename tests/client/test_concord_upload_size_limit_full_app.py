@@ -39,7 +39,7 @@ def test_a_30_mb_game_uploads_and_a_100_mb_file_is_refused_naming_the_limit():
     async def check(b):
         await desktop.login(b)
         await b.js("__PC.switchView('concord')")
-        await b.until("!!window.PCConcord && !!window.PosterCord && document.body.classList.contains('concord-view')")
+        await b.until("!!window.PCConcord && !!window.PosterCord && !!window.PosterCordReader && document.body.classList.contains('concord-view')")
         await b.js(ROOM)
         await b.js(INSTANT)
         await b.js("__PC.switchView('concord')")

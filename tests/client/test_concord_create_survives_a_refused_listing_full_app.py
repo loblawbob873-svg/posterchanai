@@ -69,7 +69,7 @@ async def open_concord(b, refuse=0, served=None):
     await b.js('window.__refuseListing=%d;window.__served=%s;1' % (refuse, json.dumps(served or [])))
     await b.js(STUBS)
     await b.js("__PC.switchView('concord')")
-    await b.until("!!window.PCConcord && !!window.PosterCord && document.body.classList.contains('concord-view')")
+    await b.until("!!window.PCConcord && !!window.PosterCord && !!window.PosterCordReader && document.body.classList.contains('concord-view')")
 
 
 async def create(b, name):

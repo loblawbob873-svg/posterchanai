@@ -8,6 +8,46 @@
     l.href='/static/css/concord.css?v=27'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>cordDeps(window.__PC);
+  /* CORD-READER.JS IS NOT A PAGE TAG — THIS IS ITS DOOR.
+   *
+   * The reader (1.1 MB, the CORD wire protocol) was 12% of every cold load, paid by every visitor
+   * whether or not they have ever opened Communities. It is fetched here on first need instead,
+   * through app.js's shared loader (so dms.js's invitation path and this one never fetch it twice),
+   * and it stays precached in sw.js so it is on the device offline.
+   *
+   * The ~60 `window.PosterCordReader` reads below stay synchronous ON PURPOSE: every one of them is
+   * reached through one of the doors that await this first —
+   *   * render()            — the Communities screen (and so every handler it binds) — readerDoor;
+   *   * the sweep timer     — unread badges and mention notifications on a page where Communities
+   *                           was never opened; it would otherwise skip forever, since its guard
+   *                           `if(!reader) return` was only ever passing because the tag was there;
+   *   * openInviteLink      — an invite URL opened before the screen exists;
+   *   * webxdcCordParts     — a mini app's transport into a room.
+   * A new entry point that reads the reader without going through one of these is the bug. */
+  let readerWait=null;
+  function cordReaderReady(){
+    if(window.PosterCordReader)return Promise.resolve(window.PosterCordReader);
+    if(!readerWait){
+      const p=PC();
+      if(!p||typeof p.loadModule!=='function')return Promise.resolve(null);
+      readerWait=Promise.resolve().then(()=>p.loadModule('cord-reader.js','PosterCordReader')).catch(()=>null)
+        .then(r=>{ readerWait=null; return r||window.PosterCordReader||null; });   // a failure is retried at the next door
+    }
+    return readerWait;
+  }
+  let readerDoorWaiting=false;
+  function readerDoor(p,feed){
+    ccTheme.forOwner(p.viewer?.()?.pubkey);   // whose Concord this is is known already: theme the wait too
+    if(!feed.querySelector('.cc-reader-wait'))feed.innerHTML='<div class="spinner cc-reader-wait" role="status" aria-label="Loading Communities"></div>';
+    if(readerDoorWaiting)return; readerDoorWaiting=true;
+    cordReaderReady().then(reader=>{
+      readerDoorWaiting=false;
+      if(reader){ render(); return; }
+      const q=PC(),f=q&&q.isView&&q.isView('concord')&&q.$('#feed'); if(!f)return;
+      f.innerHTML='<div class="empty cc-reader-failed">Communities could not load — check the connection. <button type="button" class="btn" data-cc-reader-retry>Try again</button></div>';
+      const again=f.querySelector('[data-cc-reader-retry]'); if(again)again.onclick=()=>render();
+    });
+  }
   /* CONCORD THEMES. How Concord looks to ME (per account, never per community): a preset name plus an
    * optional accent and background. The palette itself is CSS (concord.css, "CONCORD THEMES"); this only
    * puts `data-cc-theme` and any custom colours on <html>, so the menus and sheets Concord opens outside
@@ -3685,6 +3725,9 @@
    * enrols somebody is not worth keeping for a caller that does not exist. */
   function openInviteLink(raw){
     const parsed=inviteParts(raw); if(!parsed)return false;
+    /* A cold invite link lands here before render() has drawn the join panel (it is behind the
+     * reader's door), so the link would be dropped. Wait for the reader, draw, then open it. */
+    if(!window.PosterCordReader){ void cordReaderReady().then(r=>{ if(r){ render(); openInviteLink(raw); } }); return true; }
     const panel=document.querySelector('#cc-join'),input=document.querySelector('#cc-invite-url');
     if(!panel||!input)return false;
     // Opening it again is reconsidering it — see forgetDeclinedInvite.
@@ -6113,7 +6156,7 @@
    * in Firefox (2026-10-16, measured per window over a minute). A window that is not Communities leaves it to the
    * desktop page (whose badge it is) and to the Communities window. */
   function sweepHere(){ try{ const W=window.PCOSWin; return !(W&&W.isWindow&&W.isWindow()&&W.viewOf&&W.viewOf()!=='concord'); }catch(_){ return true; } }
-  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||liveResting())return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ startRoomsLive(p); sweepOtherRooms(p); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
+  if(typeof setInterval==='function'){ const sweepTimer=setInterval(()=>{ try{ const p=PC(); if(document.hidden||liveResting())return; if(!liveTimer&&sweepHere()&&p&&p.viewer&&p.viewer()&&p.viewer().pubkey&&saved().length){ if(window.PosterCordReader){ startRoomsLive(p); sweepOtherRooms(p); } else void cordReaderReady().then(r=>{ const q=PC(); if(r&&q&&!liveTimer){ startRoomsLive(q); sweepOtherRooms(q); } }); } }catch(_){ } },SWEEP_MS); try{ if(sweepTimer&&sweepTimer.unref)sweepTimer.unref(); }catch(_){ } }   // never keep a process alive
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy&&Date.now()-liveRun.at>LIVE_STUCK_MS){
@@ -6785,6 +6828,7 @@
     if(window.PCOS && PCOS.isOn && PCOS.isOn() &&
        (!PCOS.ownsFeedView || !PCOS.ownsFeedView('concord'))) return;
     const feed=p.$('#feed'); if(!feed) return;
+    if(!window.PosterCordReader){ readerDoor(p,feed); return; }   // the door: see cordReaderReady
     if(!socialEmojisWarmed && p.loadCustomEmojis){
       socialEmojisWarmed = true;
       p.loadCustomEmojis().then(rows => { if(rows?.length) backgroundRender(); }).catch(()=>{});
@@ -8140,6 +8184,7 @@
     $$('[data-cc-zap]').forEach(b=>b.onclick=()=>{closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),target=messages.find(m=>messageId(m)===b.dataset.ccZap);if(!target)return;const lightning=async amount=>{b.disabled=true;let proof=null;try{p.toast('paying private zap…');proof=await p.payPrivateConcordZap(target.pubkey,amount);const tags=[['e',messageId(target)],['p',target.pubkey],['k',String(target.kind||9)],['amount',String(proof.amountMsats)],['bolt11',proof.bolt11],['preimage',proof.preimage]];const made=await publishCordNative(p,room,state.channel,'',tags,9735);target.zaps=[...(target.zaps||[]),{id:made.rumorId,pubkey:(p.viewer&&p.viewer().pubkey)||'',sats:amount,comment:'',rail:'lightning'}];saveTestMessages(storeId,messages);preserveChatScroll(()=>render());p.toast('⚡ privately zapped '+amount+' sats');}catch(e){b.disabled=false;p.toast((proof?'payment succeeded, but the private tally was not posted: ':'private zap failed: ')+(e&&e.message||e));}};return p.startConcordTip(target.pubkey,lightning);});
   }
   async function webxdcCordParts(ctx){
+    await cordReaderReady();
     const p=PC(),room=saved().find(r=>roomIdentity(r)===ctx.room),reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle,
       channel=room&&(room.channels||[]).find(c=>c.id===ctx.channelId||c.name===ctx.channel);
     if(!p||!room||!reader||!bundle||!channel)throw new Error('Concord Webxdc channel is unavailable');
@@ -8370,6 +8415,7 @@
                                     if(v&&v.controls)roomControls.set(v.controls[0],v.controls[1]);
                                     return state; };
   window.PCConcord.notificationsOn=()=>concordNotifyOn();
+  window.PCConcord.readerReady=()=>cordReaderReady();
   window.PCConcord.__testInvite=v=>{ pendingInvite=v||null; render(); };
   window.PCConcord.__instanceJoin=(hydrate)=>{ instanceJoinSession=''; return joinInstanceCommunity(PC(),hydrate); };   // the instance community, with a fixture invite reader   // an invitation on screen without fetching one
   window.PCConcord.__voiceWatch=()=>({key:voiceWatch.key,room:voiceWatch.room,listening:voiceWatch.key?Date.now()-voiceWatch.since:0,channels:[...voiceWatch.rows].map(([id,rows])=>[id,rows.size]),active:voiceActive});   // what the channel list believes about calls

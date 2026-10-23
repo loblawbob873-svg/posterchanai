@@ -55,7 +55,9 @@ async def open_concord(b):
     await b.call('Emulation.setDeviceMetricsOverride', dict(width=390, height=844, deviceScaleFactor=2, mobile=True))
     await desktop.login(b)
     await b.js("__PC.switchView('concord')")
-    await b.until("!!window.PCConcord && !!window.PosterCord && document.body.classList.contains('concord-view')")
+    # The reader is not a page tag (concord.js loads it at Communities' door), and the fixtures below
+    # call it directly, so wait for the door rather than the body class switchView sets at once.
+    await b.until("!!window.PCConcord && !!window.PosterCord && !!window.PosterCordReader && document.body.classList.contains('concord-view')")
     await b.js(STUBS)
 
 

@@ -83,7 +83,7 @@ async def open_settings(b):
     await b.call('Emulation.setDeviceMetricsOverride', dict(width=390, height=844, deviceScaleFactor=2, mobile=True))
     await desktop.login(b)
     await b.js("__PC.switchView('concord')")
-    await b.until("!!window.PCConcord && !!window.PosterCord && document.body.classList.contains('concord-view')")
+    await b.until("!!window.PCConcord && !!window.PosterCord && !!window.PosterCordReader && document.body.classList.contains('concord-view')")
     await b.js(ROOM)
     await b.js("__PC.switchView('concord')")
     await b.until("!!document.querySelector('[data-cc-server]')")
