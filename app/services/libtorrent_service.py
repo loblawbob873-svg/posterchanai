@@ -342,23 +342,24 @@ class LibtorrentService:
             forms.add(ih)
         return ih, forms
 
-    def _write_alert_resume(self, alert) -> Optional[str]:
-        """Write one save_resume_data_alert to disk unless its torrent was removed. Returns the hash written
-        (or skipped), None when nothing could be identified."""
+    def _write_alert_resume(self, alert) -> tuple[Optional[str], bool]:
+        """Write one save_resume_data_alert to disk unless its torrent was removed. Returns (info_hash, written):
+        (hash, True) written, (hash, False) SKIPPED because the torrent was removed, (None, False) when nothing
+        could be identified. A skip is not a save, and callers must not count or log it as one."""
         info_hash, forms = self._alert_forms(alert)
         if not forms:
             # Not identifiable: writing it would create exactly the nameless file that resurrects.
             logger.warning("[BT] Resume data with no usable info-hash ignored")
-            return None
+            return None, False
         if forms & self._removed:
-            return info_hash
+            return info_hash, False
         (self.resume_dir / f"{info_hash}.resume").write_bytes(lt.write_resume_data_buf(alert.params))
-        return info_hash
+        return info_hash, True
 
     def _save_resume_data(self):
         """Save resume data for all torrents."""
         logger.info("[BT] Saving resume data for all torrents...")
-        count = 0
+        saved, skipped = set(), set()
         for info_hash, handle in list(self.torrents.items()):
             try:
                 if not handle.is_valid():
@@ -379,11 +380,16 @@ class LibtorrentService:
                     # still in flight) are skipped inside _write_alert_resume -- writing them
                     # resurrects the torrent on the next restart. Same path as _process_alerts.
                     try:
-                        info_hash = self._write_alert_resume(alert)
+                        info_hash, written = self._write_alert_resume(alert)
                         if info_hash:
-                            count += 1
                             pending.discard(info_hash)
-                            logger.debug(f"[BT] Saved resume data: {info_hash}")
+                            if written:
+                                if info_hash not in saved:
+                                    logger.debug(f"[BT] Saved resume data: {info_hash}")
+                                saved.add(info_hash)
+                            elif info_hash not in skipped:
+                                skipped.add(info_hash)
+                                logger.debug(f"[BT] Resume data skipped for removed torrent: {info_hash}")
                     except Exception as e:
                         logger.error(f"[BT] Failed to write resume data: {e}")
                 elif isinstance(alert, lt.save_resume_data_failed_alert):
@@ -392,7 +398,8 @@ class LibtorrentService:
                     logger.warning(f"[BT] Resume data failed for {info_hash}: {alert.error}")
             time.sleep(0.1)
 
-        logger.info(f"[BT] Saved resume data for {count} torrents")
+        logger.info(f"[BT] Saved resume data for {len(saved)} torrents"
+                    + (f" (skipped {len(skipped)} removed)" if skipped else ""))
 
     def _load_resume_data(self):
         """Load resume data and re-add torrents."""
