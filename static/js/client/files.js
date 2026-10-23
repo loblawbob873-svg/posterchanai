@@ -2665,6 +2665,11 @@ window.PCFilesFactory = function(dep){
       }
     });
   }
+  /* An Office SAVE re-reads the drive index first (another device may have replaced this document meanwhile). Kept
+   * OUT of renderPublicFiles' body on purpose: opening Files must stay cache-first with no automatic signer prompt
+   * (tests/client/test_startup_drive_work.py), and only a Save -- something the person just pressed -- may ask. */
+  async function _officeSaveReadsTheDrive(){ try{ await FilesIdx.pull(); }catch(_){ } }
+
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
@@ -3719,7 +3724,7 @@ window.PCFilesFactory = function(dep){
          * its index over the first's and the first device's edit vanished from the drive, both told "document
          * saved". So read the drive first; if the version this window replaces is no longer on it, somebody else
          * replaced it -- keep theirs, store ours BESIDE it under a name that says so, and tell the person. */
-        try{ await FilesIdx.pull(); }catch(_){ }
+        await _officeSaveReadsTheDrive();
         let name = file.name, conflict = false;
         if(FilesIdx._pullOk && !FilesIdx.meta(cur)){
           conflict = true;

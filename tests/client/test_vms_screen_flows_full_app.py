@@ -379,8 +379,8 @@ class Ctx:
             pass
         vmsvc.set_current(None)
         self.uv.should_exit = True
-        for disp in self.inst.virsh.displays.values():
-            disp.stop()
+        for disp in reversed(list(self.inst.virsh.displays.values())):   # fake VNC displays, not patchers --
+            disp.stop()                                                    # reversed keeps the patch guard exact
         self.inst.stop()
         self.lab.stop()
 
