@@ -441,30 +441,27 @@ async def websocket_ssh(websocket: WebSocket):
                     pass
 
         pump = asyncio.create_task(to_client())
-        while True:
-            if pump.done():
-                break
-            try:
-                msg = await asyncio.wait_for(websocket.receive_json(), timeout=30)
-            except asyncio.TimeoutError:
-                # An idle SOCKET is normal — you are reading, not typing. The session's own clocks run
-                # in its reader, whether or not anything arrives here.
-                continue
-            t = (msg or {}).get("t")
-            if t == "in":
-                await sess.send(str(msg.get("d") or ""))
-            elif t == "size":
-                await sess.resize(msg.get("cols"), msg.get("rows"))
-            elif t == "detach":
-                # Leave, keep the shell. tmux's Ctrl-B d.
-                break
-            elif t == "close":
-                # KILL. The only thing that ends a session, since nothing expires — which is why the
-                # UI keeps this and "detach" as two visibly different buttons rather than one X whose
-                # meaning you have to guess. `terminate`, not `close`: with tmux/screen on the far
-                # end, closing our connection is what DETACHING does.
-                await sess.terminate()
-                break
+        # THE SESSION ENDING AND THE BROWSER TYPING ARE WAITED ON TOGETHER. This loop used to wait for the
+        # browser alone (30s at a time) and look at the pump only between frames, so a shell that EXITED, or
+        # one killed from another device, left this tab on a dead prompt for up to 30 seconds with no `end`
+        # -- and the first keystroke typed into it was swallowed. The keeper path never had this: its `end`
+        # frame is relayed the moment it arrives. tests/test_ssh_terminal_far_end.py::test_a_shell_that_exits*.
+        recv = None
+        try:
+            while not pump.done():
+                recv = recv or asyncio.ensure_future(websocket.receive_json())
+                done, _ = await asyncio.wait({recv, pump}, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+                if recv not in done:
+                    # An idle SOCKET is normal — you are reading, not typing. The session's own clocks run
+                    # in its reader, whether or not anything arrives here.
+                    continue
+                msg, recv = recv.result(), None
+                t = (msg or {}).get("t")
+                if not await _client_frame(sess, t, msg):
+                    break
+        finally:
+            if recv:
+                recv.cancel()
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -492,3 +489,22 @@ async def websocket_ssh(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+
+
+async def _client_frame(sess, t, msg) -> bool:
+    """One frame from the browser into an in-process session. False when the socket should stop."""
+    if t == "in":
+        await sess.send(str(msg.get("d") or ""))
+    elif t == "size":
+        await sess.resize(msg.get("cols"), msg.get("rows"))
+    elif t == "detach":
+        # Leave, keep the shell. tmux's Ctrl-B d.
+        return False
+    elif t == "close":
+        # KILL. The only thing that ends a session, since nothing expires — which is why the
+        # UI keeps this and "detach" as two visibly different buttons rather than one X whose
+        # meaning you have to guess. `terminate`, not `close`: with tmux/screen on the far
+        # end, closing our connection is what DETACHING does.
+        await sess.terminate()
+        return False
+    return True

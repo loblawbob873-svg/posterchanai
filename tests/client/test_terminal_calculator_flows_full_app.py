@@ -13,15 +13,21 @@
             device does not see the first account's tape (it is a log of what somebody calculated); and it works
             with the relay saying nothing at all (it needs no network).
 
-Multiplexing (tmux/screen on the far end) is OFF here: the far end is this machine, and `screen -xRR` would leave
-real screen sessions behind on it. ssh_service's resume (the PTY outliving the socket) is what is exercised.
+KEYED HOSTS: a host that names a private key FILE on the server connects without asking for anything, and one whose
+key is passphrase-protected, a .pub, missing, not accepted, or whose host key nobody recorded says WHICH on screen at
+once -- never "not ready yet, retrying" while it dials the host again with the same bad key -- and the key's path
+never reaches the page.
+
+Multiplexing (tmux/screen on the far end) is OFF here, because the desktop CI runner has neither; it is driven
+against a real tmux/screen in an isolated far end by tests/test_ssh_terminal_far_end.py, which also covers the shell
+keeper. The SSH server is tests/ssh_real_box.py. ssh_service's resume (the PTY outliving the socket) is exercised here.
 Harness: tests/client/discover_flows_harness.py. Fail-first: PC_JOURNEY_OVERRIDE="/static/js/client/term.js=/tmp/x.js".
 """
 import asyncio
 import json
 import os
+import shutil
 import socket
-import subprocess
 import tempfile
 import threading
 import time
@@ -31,12 +37,14 @@ import pytest
 from tests.client import discover_flows_harness as F
 from tests.client import realnode_harness as R
 from tests.client import wallpaper_harness as H
+from tests.ssh_real_box import Keys, SshBox
 
 CHROME = pytest.mark.skipif(not R.chrome_ok(), reason='Chrome required')
 FEATURE_COVERS = ('terminal', 'calculator')
 FIRST_FILL = 110
 SCENARIOS = {}
-COST = {'a_fresh_device_finds_the_running_shell_and_attaches_to_it': 30,
+COST = {'a_keyed_host_connects_and_each_key_failure_says_which': 40,
+        'a_fresh_device_finds_the_running_shell_and_attaches_to_it': 30,
         'a_command_runs_and_a_reload_comes_back_to_the_same_shell': 30}
 PASSWORD = 'pc-test-ssh-%d' % os.getpid()
 FORCE_DOM = "try{localStorage.setItem('pc_term_gl_lost',String(Date.now()))}catch(_){}\n"   # read rows off the DOM
@@ -45,142 +53,6 @@ FORCE_DOM = "try{localStorage.setItem('pc_term_gl_lost',String(Date.now()))}catc
 def scenario(fn):
     SCENARIOS[fn.__name__] = fn
     return fn
-
-
-# ------------------------------------------------------------------------------------------------ the SSH host
-class SshBox:
-    """An SSH server (paramiko's server side) on loopback: password auth, a PTY, a real bash per channel."""
-
-    def __init__(self):
-        import paramiko
-        self.paramiko = paramiko
-        self.key = paramiko.RSAKey.generate(2048)
-        self.home = tempfile.mkdtemp(prefix='pc-ssh-home-')
-        self.sock = socket.socket()
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('127.0.0.1', 0))
-        self.sock.listen(16)
-        self.port = self.sock.getsockname()[1]
-        self.known_hosts = os.path.join(self.home, 'known_hosts')
-        with open(self.known_hosts, 'w') as f:
-            f.write('[127.0.0.1]:%d %s %s\n' % (self.port, self.key.get_name(), self.key.get_base64()))
-        self.procs, self.transports, self.stopped = [], [], False
-        threading.Thread(target=self._accept, daemon=True).start()
-
-    def _accept(self):
-        while not self.stopped:
-            try:
-                conn, _ = self.sock.accept()
-            except OSError:
-                return
-            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
-
-    def _serve(self, conn):
-        paramiko, box = self.paramiko, self
-        shell = threading.Event()
-        size = {'cols': 80, 'rows': 24, 'fd': None}
-
-        class Iface(paramiko.ServerInterface):
-            def get_allowed_auths(self, username):
-                return 'password'
-
-            def check_auth_password(self, username, password):
-                ok = username == 'tester' and password == PASSWORD
-                return paramiko.AUTH_SUCCESSFUL if ok else paramiko.AUTH_FAILED
-
-            def check_channel_request(self, kind, chanid):
-                return paramiko.OPEN_SUCCEEDED if kind == 'session' else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
-
-            def check_channel_pty_request(self, channel, term, width, height, pw, ph, modes):
-                size['cols'], size['rows'] = width or 80, height or 24
-                return True
-
-            def check_channel_window_change_request(self, channel, width, height, pw, ph):
-                size['cols'], size['rows'] = width, height
-                if size['fd'] is not None:
-                    box._winsize(size['fd'], height, width)
-                return True
-
-            def check_channel_shell_request(self, channel):
-                shell.set()
-                return True
-
-        t = paramiko.Transport(conn)
-        self.transports.append(t)
-        t.add_server_key(self.key)
-        try:
-            t.start_server(server=Iface())
-        except Exception:
-            return
-        chan = t.accept(30)
-        if chan is None or not shell.wait(30):
-            return
-        master, slave = os.openpty()
-        size['fd'] = master
-        self._winsize(master, size['rows'], size['cols'])
-        env = {'HOME': self.home, 'PATH': '/usr/bin:/bin', 'TERM': 'xterm-256color', 'PS1': 'pc$ ', 'LANG': 'C.UTF-8'}
-        p = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '-i'], stdin=slave, stdout=slave, stderr=slave,
-                             env=env, cwd=self.home, start_new_session=True, close_fds=True)
-        os.close(slave)
-        self.procs.append(p)
-
-        def out():
-            try:
-                while True:
-                    d = os.read(master, 65536)
-                    if not d:
-                        break
-                    chan.sendall(d)
-            except OSError:
-                pass
-            finally:
-                try:
-                    chan.close()
-                except Exception:
-                    pass
-        threading.Thread(target=out, daemon=True).start()
-        try:
-            while True:
-                d = chan.recv(65536)
-                if not d:
-                    break
-                os.write(master, d)
-        except Exception:
-            pass
-        finally:
-            p.kill()
-            try:
-                os.close(master)
-            except OSError:
-                pass
-
-    @staticmethod
-    def _winsize(fd, rows, cols):
-        import fcntl
-        import struct
-        import termios
-        try:
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
-        except OSError:
-            pass
-
-    def stop(self):
-        self.stopped = True
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-        for p in self.procs:
-            try:
-                p.kill()
-                p.wait(5)
-            except Exception:
-                pass
-        for t in self.transports:
-            try:
-                t.close()
-            except Exception:
-                pass
 
 
 # ------------------------------------------------------------------------------------------------ the node
@@ -196,12 +68,21 @@ class Ctx:
         from app.services import ssh_service, user_table
         self.mp = mp = pytest.MonkeyPatch()
         self.n = n
-        self.box = SshBox()
+        self.keydir = tempfile.mkdtemp(prefix='pc-ssh-keys-')
+        self.keys = keys = Keys(self.keydir)
+        self.box = SshBox(password=PASSWORD, authorized=keys.accepted)       # tests/ssh_real_box.py: a real bash
+        self.stranger = SshBox(authorized=keys.accepted)                     # a host nobody recorded the key of
+        wrong = Keys(tempfile.mkdtemp(prefix='other-', dir=self.keydir))     # a key the host does not accept
         self.users = F.members(FIRST_FILL, SCENARIOS)
         by_id = {u.id: u for u in self.users.values()}
-        # The operator's settings for the terminal (Admin -> Nodes): on, one host, every member allowed.
+        # The operator's settings for the terminal (Admin -> Nodes): on, the hosts, every member allowed. `box` asks
+        # for a password (no key on the server); the rest name a key FILE on the server, as an operator writes them.
+        line = lambda name, key, port=self.box.port: '%s tester@127.0.0.1:%d key=%s' % (name, port, key)
         conf = {'ssh_terminal_enabled': 'true', 'ssh_terminal_multiplex': 'false',
-                'ssh_hosts': 'box tester@127.0.0.1:%d' % self.box.port,
+                'ssh_hosts': '\n'.join(['box tester@127.0.0.1:%d' % self.box.port, line('keyed', keys.ed),
+                                         line('locked', keys.rsa_pem_locked), line('public', keys.pub),
+                                         line('nokey', keys.missing), line('stranger', keys.ed, self.stranger.port),
+                                         line('wrongkey', wrong.ed)]),
                 'ssh_terminal_users': ' '.join(self.users)}
         mp.setattr(ssh_service, '_get', lambda k, d='': conf.get(k) or d)
         # NEVER THE LIVE KEEPER. ssh_keeper.socket_path() is <checkout>/.run/ssh-keeper.sock, and on a node (the deploy
@@ -217,6 +98,14 @@ class Ctx:
             return by_id.get(int(uid))
         mp.setattr(user_table, 'aget', aget)
         mp.setattr(ssh_service, '_sessions', {})
+        # Which hosts the node DIALLED, in order -- a spy around the shipped connect, which still runs.
+        self.dialled = dialled = []
+        real_connect = ssh_service.SshSession.connect
+
+        async def connect(sess, h, *a, **kw):
+            dialled.append(h.name)
+            return await real_connect(sess, h, *a, **kw)
+        mp.setattr(ssh_service.SshSession, 'connect', connect)
         self.tokens = {pk: app_auth.create_access_token({'sub': str(u.id)}) for pk, u in self.users.items()}
 
         def who(request: Request):
@@ -305,6 +194,8 @@ class Ctx:
                 pass
         self.server.should_exit = True
         self.box.stop()
+        self.stranger.stop()
+        shutil.rmtree(self.keydir, ignore_errors=True)
         self.http.close()
         self.mp.undo()
 
@@ -412,6 +303,59 @@ async def a_wrong_password_says_so(S):
 @CHROME
 def test_a_wrong_password_says_so(ran):
     ran('a_wrong_password_says_so')
+
+
+KEY_SENTENCES = {
+    'locked': 'could not connect: that private key is passphrase-protected',
+    'public': 'could not connect: that key file is not a usable private key',
+    'nokey': 'could not connect: the key file configured for this host is not on the server',
+    'stranger': "could not connect: this server does not know that host's key yet",
+    'wrongkey': 'could not connect: the host refused those credentials',
+}
+
+
+async def new_tab_on(d, host):
+    """The + at the end of the tab strip, then that host in its menu -- as a person opens another terminal."""
+    await d.b.js("document.getElementById('tty-tab-new').click();true")
+    sel = '#tty-new-menu [data-new=%s]' % json.dumps(host)
+    await R.wait(d.b, "!!document.querySelector(%s) && !document.getElementById('tty-new-menu').hidden" % json.dumps(sel),
+                 15, 'the %s entry in the + menu' % host)
+    await d.b.js("document.querySelector(%s).click();true" % json.dumps(sel))
+
+
+@scenario
+async def a_keyed_host_connects_and_each_key_failure_says_which(S):
+    box = S.ctx.box
+    a = await S.device(0, pre_init=FORCE_DOM)
+    await open_terminal(a)
+    await H.answer_prompt(a.b, PASSWORD, 40)           # the default host, `box`, has no key on the server
+    await connected(a)
+    first = await a.b.js("PCTerm.sessionId()")
+    await new_tab_on(a, 'keyed')
+    await R.wait(a.b, "PCTerm.connected() && !!PCTerm.sessionId() && PCTerm.sessionId()!==%s && /pc\\$ /.test(%s)"
+                 % (json.dumps(first), SCREEN), 40, 'a NEW shell, on the keyed host',
+                 state="({state:%s,screen:%s,prompt:!!document.querySelector('.uiconfirm-bg .uiprompt-in')})" % (STATE, SCREEN))
+    assert not await a.b.js("!!document.querySelector('.uiconfirm-bg .uiprompt-in')"), 'a keyed host asked for a password'
+    assert ('publickey', True) in box.auth_log, box.auth_log
+    await type_line(a, 'echo by-key-$((5*5))')
+    await shows(a, 'by-key-25', what='the keyed host\'s shell answering')
+    for host, sentence in sorted(KEY_SENTENCES.items()):
+        tries = S.ctx.dialled.count(host)
+        await new_tab_on(a, host)
+        assert not await a.b.js("!!document.querySelector('.uiconfirm-bg .uiprompt-in')"), 'a keyed host asked for a password'
+        await R.wait(a.b, "(%s).startsWith(%s)" % (STATE, json.dumps(sentence)), 15, 'the %s failure said on screen' % host,
+                     state="({state:%s,title:(document.getElementById('tty-state')||{}).title})" % STATE)
+        await asyncio.sleep(2)                         # the client's retry backoff would have dialled again by now
+        assert (await a.b.js(STATE)).startswith(sentence), ('the reason was replaced', host, await a.b.js(STATE))
+        assert S.ctx.dialled.count(host) == tries + 1, \
+            ('a configuration failure was retried against the host', host)
+    page = await a.b.js("document.documentElement.outerHTML + (document.getElementById('tty-state')||{}).title")
+    assert S.ctx.keydir not in page and 'id_ed25519' not in page and 'id_rsa' not in page, 'a key path reached the page'
+
+
+@CHROME
+def test_a_keyed_host_connects_and_each_key_failure_says_which(ran):
+    ran('a_keyed_host_connects_and_each_key_failure_says_which')
 
 
 @scenario
