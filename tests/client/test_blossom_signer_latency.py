@@ -9,7 +9,9 @@ APP = client_source()
 def test_drive_render_never_runs_an_upload_capability_probe():
     render = APP[APP.index("async function renderPublicFiles(pane){"):]
     render = render[:render.index("\n  }\n") + 4]   # its own closing brace: _vodNameMap stayed in app.js
-    assert "const canUp=true" in render
+    # The upload controls are drawn unconditionally (the never-reachable "Upload access needed" panel and its
+    # `canUp` switch are gone, 2026-10-22): a refused upload asks for access when it happens, never a probe first.
+    assert 'id="bl-drop"' in render and "canUp" not in render
     assert "await blossomCanUpload()" not in render
     assert "blossomCanUpload().then" not in render
 
