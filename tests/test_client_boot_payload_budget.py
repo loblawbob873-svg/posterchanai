@@ -81,7 +81,11 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: app.js (the shared loader, now versioned and retried), so:
 #:     9,648,782 - 1,127,446 + 3,288 + 959 = 8,525,583 B = 8.131 MB measured.
 #: 8.15 leaves ~20 KB -- a drift detector, as the 2.85 note below argues, not headroom to spend.
-BUDGET_MB = 8.15
+#: RAISED 8.15 -> 8.20 later on 2026-10-23, by the measured amount: 8.131 -> 8.152 MB (+22 KB) across the day's
+#: flow-test fixes (Texts search/delete/block, scheduled-post errors, web reader, Office save, PWA update/offline,
+#: terminal/VM errors, car-controls report) -- many files, a few hundred bytes each, no new page tag. 8.20 leaves
+#: ~50 KB: still a drift detector. The next real reclaim is another on-demand module (see the split notes above).
+BUDGET_MB = 8.20
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
