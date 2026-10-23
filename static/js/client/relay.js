@@ -1187,9 +1187,13 @@
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve({ok,uncertain:!ok&&attempted&&!rejected,msg}); };
         try { ws = new WebSocket(via?via(u):u); } catch(_){ return fin(false,'could not connect to a room relay'); }
-        tm = setTimeout(()=>fin(false,'room relay timed out',authRejected), timeout);
+        // CONNECTING HAS ITS OWN BOUND (2026-10-23). `timeout` is how long the relay gets to ANSWER an offered event; it
+        // used to run from before the socket opened, so a connection slower than 5 s (a phone radio, a loaded box) ended
+        // as "Not sent" for a message that was never offered. Now: 3x the answer time to connect, then `timeout` to answer.
+        tm = setTimeout(()=>fin(false,'could not reach the room relay in time',authRejected), timeout*3);
         const wire=JSON.stringify(['EVENT',event]);
-        const send=()=>{if(auth&&!auth.current()){fin(false,'account changed during room delivery',authRejected);return;}attempted=true;authRejected=false;ws.send(wire);};
+        const send=()=>{if(auth&&!auth.current()){fin(false,'account changed during room delivery',authRejected);return;}attempted=true;authRejected=false;
+          clearTimeout(tm);tm=setTimeout(()=>fin(false,'room relay timed out',authRejected), timeout);ws.send(wire);};
         if(includeManaged&&detailed)auth=this._externalReadAuth(ws,u,()=>!done,send,
           ()=>fin(false,'room relay authentication refused',authRejected),()=>{clearTimeout(tm);tm=setTimeout(()=>fin(false,'room relay authentication timed out',authRejected),12000);},authScope);
         ws.onopen = () => { try{send();}catch(_){fin(false,'room relay connection failed',authRejected);} };

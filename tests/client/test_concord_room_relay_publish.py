@@ -5,7 +5,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-@pytest.mark.parametrize('scenario', ['managed', 'mixed', 'legacy', 'rejected', 'unknown', 'offline', 'wrong-id', 'retry'])
+@pytest.mark.parametrize('scenario', ['managed', 'mixed', 'legacy', 'rejected', 'unknown', 'offline', 'wrong-id', 'retry', 'slow-open'])
 def test_room_delivery_stays_scoped_and_reports_real_acknowledgement(tmp_path, scenario):
     script = tmp_path / 'probe.cjs'
     script.write_text(r'''
@@ -17,7 +17,7 @@ global.location={origin:'https://fixture.test',protocol:'https:'};
 global.navigator={onLine:true};
 const mode=process.argv[3],sockets=[],sent=[];
 class Socket{
- constructor(url){this.url=url;this.readyState=0;sockets.push(this);if(mode!=='offline')setTimeout(()=>{this.readyState=1;this.onopen?.()},1);}
+ constructor(url){this.url=url;this.readyState=0;sockets.push(this);if(mode!=='offline')setTimeout(()=>{this.readyState=1;this.onopen?.()},mode==='slow-open'?60:1);}
  send(raw){const m=JSON.parse(raw);sent.push({url:this.url,event:m[1]});
   if(mode==='unknown')return;
   const reply=['OK',mode==='wrong-id'?'other':m[1].id,mode!=='rejected',mode==='rejected'?'blocked: fixture':''];
@@ -40,7 +40,9 @@ require(process.argv[2]);
   assert.equal(await Relay.publishTo([external],event,{timeout:30}),1,'legacy return remains numeric');
  }else{
   assert.deepEqual(sockets.map(s=>s.url),mode==='mixed'?[room,external]:[room]);
-  assert.equal(result.ok,['managed','mixed','retry'].includes(mode));
+  // slow-open: the socket takes 2x the OK timeout to open (a phone radio, a busy box). Connecting is not the relay
+  // failing to answer: it used to report 'Not sent' for a message that was never even offered.
+  assert.equal(result.ok,['managed','mixed','retry','slow-open'].includes(mode),JSON.stringify(result));
   assert.equal(result.accepted,mode==='mixed'?2:result.ok?1:0);
   assert.equal(result.uncertain,['unknown','wrong-id'].includes(mode));
   if(mode==='rejected')assert.match(result.msg,/blocked: fixture/);
