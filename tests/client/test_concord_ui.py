@@ -495,7 +495,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(shareableInviteUrl(p,room.url))' in CONCORD
     assert 'upgrading this room to a public relay community' in CONCORD
     assert 'mintPublicRoom(p,room.name,room.icon)' in CONCORD
-    assert 'await hydrateInvite(p,raw)' in CONCORD
+    assert 'await hydrateInvite(p,raw,null,{urgent:true})' in CONCORD   # urgent: the person is waiting (2026-10-22)
     assert 'communityId:bundle.community_id' in CONCORD
     join_handler = CONCORD.split("const go=$('#cc-join-go')", 1)[1].split("$$('[data-cc-server]')", 1)[0]
     assert 'await hydrateRoomStreams(p,state.community)' in join_handler

@@ -843,6 +843,7 @@ if(repaintedInput!==draftInput || repaintedInput.value!=='thread response '+draf
 // Focus restoration is a latch, not a focus trap. If the person deliberately focuses another
 // control after a repaint but before its rAF, the pending composer callback must not steal it back.
 const intentionalTarget=control('cc-emoji');
+intentionalTarget.closest=sel=>sel==='.cc-compose'?{}:null;   // as in the page: the emoji button sits in the composer bar
 intentionalTarget.focus();
 PCConcord.backgroundRender();
 await new Promise(resolve=>setTimeout(resolve,0));

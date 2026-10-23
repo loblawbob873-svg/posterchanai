@@ -23,7 +23,7 @@ for(const painter of ['  function render(){','  function patchMessageList(){']){
 }
 
 const el=(tag,attrs={})=>{
-  const node={tag,children:[],parent:null,value:'',isConnected:true,dataset:{},listeners:{},...attrs,
+  const node={tag,tagName:String(tag).toUpperCase(),children:[],parent:null,value:'',isConnected:true,dataset:{},listeners:{},...attrs,
     innerHTML:'',
     appendChild(c){c.parent=node;node.children.push(c);return c;},
     contains(other){for(let n=other;n;n=n.parent)if(n===node)return true;return false;},
@@ -85,6 +85,13 @@ assert.equal(pane.innerHTML,'','the pane is left for the full render');
 context.document.activeElement=context.document.body;
 assert.equal(context.backgroundRender(),true);
 assert.equal(renders,1,'with nothing to protect the whole workspace repaints as before');
+
+/* 3b. A focused BUTTON (a member row right-clicked, 2026-10-22) is nothing being typed: the full render runs, or the
+ *     member list, channel list and rail stay stale for as long as that button keeps focus. */
+const memberRow=el('button',{className:'cc-member'});feed.appendChild(memberRow);
+context.document.activeElement=memberRow;
+assert.equal(context.backgroundRender(),true,'a focused button does not hold the whole workspace still');
+assert.equal(renders,2);
 
 /* 4. On the windowed desktop the feed belongs to the focused window. */
 context.document.activeElement=composer;

@@ -117,6 +117,7 @@ class FarRelay:
 
     def __init__(self, loop: _Loop, name=''):
         self.name, self.events, self.writes, self.subs = name, [], [], {}
+        self.reqs = []         # every REQ's filters, in order
         self.down = False
         self._loop = loop
         self.server = loop.serve(self._handler, self._pr)
@@ -140,6 +141,7 @@ class FarRelay:
                 if m[0] == 'REQ':
                     sid, filters = m[1], [f for f in m[2:] if isinstance(f, dict)]
                     self.subs[(ws, sid)] = filters
+                    self.reqs.append(filters)
                     out = []
                     for f in filters:
                         hits = sorted((e for e in self.events if _match(f, e)), key=lambda e: -e['created_at'])
@@ -196,6 +198,9 @@ class Home:
         self.port = self.server.sockets[0].getsockname()[1]
         self.url = 'ws://127.0.0.1:%d' % self.port
         self.far = {}          # url (as the client names it) -> FarRelay
+        # THE PUBLIC RELAYS A TUNNEL MAY REACH: a real public url (wss://jskitty.com/nostr, ...) -> the local FarRelay
+        # that stands in for it. Empty = only loopback targets, as before (Node(internet=...)).
+        self.internet = {}
 
     async def _open(self):
         self.store.open(asyncio.get_running_loop())
@@ -254,6 +259,8 @@ class Home:
             return await self.relay.handle(ws)
         try:
             n = target.rstrip('/')
+            stand_in = self.internet.get(n)
+            n = stand_in.url if stand_in is not None else n
             if not re.match(r'^wss?://127\.0\.0\.1:\d+$', n):
                 return
             async with websockets.connect(n, max_size=None, open_timeout=10) as up:
@@ -415,11 +422,15 @@ class Instance(H.Instance):
 class Node:
     """`with Node(...) as n:` -- Home + far relays + the instance + a foreign Blossom, torn down after."""
 
-    def __init__(self, far=0, cfg=None, members=(), tunnel=True):
+    def __init__(self, far=0, cfg=None, members=(), tunnel=True, internet=()):
+        """`internet`: public relay urls the TUNNEL reaches, each played by its own FarRelay (`n.internet[url]`) --
+        e.g. CORD_PUBLIC, the relays every Concord client also reads (invites, membership vaults, backups)."""
         self.tmp = tempfile.mkdtemp(prefix='pc-realnode-')
         self.loop = _Loop()
         self.home = Home(self.loop, self.tmp, cfg, members)
         self.far = [FarRelay(self.loop, 'far%d' % i) for i in range(far)]
+        self.internet = {u.rstrip('/'): FarRelay(self.loop, u) for u in internet}
+        self.home.internet = self.internet
         self.foreign = Foreign()
         H.reset()
         H.OVERRIDES.clear()
@@ -447,7 +458,7 @@ class Node:
         except Exception:
             pass
         self.home.close()
-        for f in self.far:
+        for f in self.far + list(self.internet.values()):
             try:
                 f.server.close()
             except Exception:
@@ -644,6 +655,10 @@ def instance_is(origin: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------------- Concord
+# The public relays concord.js reads besides this node (CORD_RELAYS + DISCOVER_RELAYS + the backups
+# concord_mirror.BACKUP_RELAYS) -- what `Node(internet=CORD_PUBLIC)` stands in for.
+CORD_PUBLIC = ('wss://jskitty.com/nostr', 'wss://asia.vectorapp.io/nostr', 'wss://nostr.computingcache.com',
+               'wss://relay.dreamith.to')
 MINT_COMMUNITIES = r'''(async(relaySets,names)=>{
   const me=__PC.me().pubkey, rooms=[];
   for(let i=0;i<names.length;i++){
