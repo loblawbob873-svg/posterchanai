@@ -63,17 +63,16 @@ public class MusicBackgroundDeviceTest {
                     + "'desktop-ready'"));
 
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
-            SystemClock.sleep(900);
-            assertTrue("HOME did not background the Desktop activity",
-                    scenario.getState() == Lifecycle.State.CREATED);
+            assertTrue("HOME did not background the Desktop activity: " + stateOf(scenario),
+                    reaches(scenario, Lifecycle.State.CREATED, 5000));
             assertTrue("HOME did not show the independent native launcher", LauncherState.atHome());
 
             // MainActivity declares orientation/screenSize configChanges. A tablet rotation while
             // its separate task is behind HomeActivity must not recreate its Bridge/WebView.
             scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
             SystemClock.sleep(500);
-            assertTrue("background rotation foregrounded or destroyed Desktop",
-                    scenario.getState() == Lifecycle.State.CREATED);
+            assertTrue("background rotation foregrounded or destroyed Desktop: " + stateOf(scenario),
+                    reaches(scenario, Lifecycle.State.CREATED, 5000));
 
             // ActivityScenario.moveToState(RESUMED) only drives lifecycle callbacks; it cannot
             // remove an independent HOME task that is actually covering this singleTask activity.
@@ -176,8 +175,8 @@ public class MusicBackgroundDeviceTest {
              * two promises together. ActivityScenario reports CREATED only after this Activity has
              * actually lost the screen; when PosterChan is the configured HOME app, LauncherState
              * is set by HomeActivity.onStart and proves the native launcher owns that screen. */
-            assertTrue("PosterChan's WebView stayed visible after Home: " + scenario.getState(),
-                    scenario.getState() == Lifecycle.State.CREATED);
+            assertTrue("PosterChan's WebView stayed visible after Home: " + stateOf(scenario),
+                    reaches(scenario, Lifecycle.State.CREATED, 5000));
             assertTrue("Home backgrounded the player but did not show PosterChan's launcher",
                     LauncherState.atHome());
             assertTrue("Home dropped the foreground playback service or MediaSession",
@@ -287,6 +286,19 @@ public class MusicBackgroundDeviceTest {
      * relaunching a task returns before onResume -- so evaluating straight after it raced the resume and, on a slow
      * emulator, timed out ("WebView did not answer JavaScript"), blocking APK publication twice on 2026-10-22. Wait for
      * RESUMED, ask once more on a miss, and say the lifecycle state if it still never answers. */
+    /** True once the activity settles in {@code want} within {@code ms}; a transition still in flight (getState()
+     *  throws "transition is incomplete", CI 2026-10-23 on the tablet Home test) is "not there yet", not a failure. */
+    private static boolean reaches(ActivityScenario<MainActivity> scenario, Lifecycle.State want, long ms) {
+        for (long end = SystemClock.uptimeMillis() + ms; SystemClock.uptimeMillis() < end; SystemClock.sleep(100)) {
+            try { if (scenario.getState() == want) return true; } catch (RuntimeException midTransition) { }
+        }
+        return false;
+    }
+
+    private static String stateOf(ActivityScenario<MainActivity> scenario) {
+        try { return String.valueOf(scenario.getState()); } catch (RuntimeException e) { return "mid-transition"; }
+    }
+
     private static void waitResumed(ActivityScenario<MainActivity> scenario) {
         // getState() THROWS while a transition is in flight ("transition is incomplete. Current stage = STARTED",
         // CI 2026-10-23) -- that is "not resumed yet", so keep polling instead of failing the test on it.
