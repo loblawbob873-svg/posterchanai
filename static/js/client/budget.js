@@ -97,6 +97,11 @@
   // ---- document ---------------------------------------------------------------------------------
   const BLANK = () => ({ v:1, lastReset:'', bills:[], cats:[], items:[] });
   let _doc = null;          // in-memory copy; null = not loaded yet
+  /* WHAT THIS COPY IS BUILT ON: the document as it was read or last published (`_base`, plain data), and that
+   * event's id/created_at. A save compares the relay's newest version against it -- see _rebase. */
+  let _base = null, _evId = null, _evAt = 0;
+  const _clone = o => JSON.parse(JSON.stringify(o));
+  function _settle(doc, ev){ _base = _clone(doc); _evId = ev ? ev.id : null; _evAt = ev ? (ev.created_at||0) : 0; }
   let _tab = 'bills';       // bills | plans
   let _showHidden = false;
   let chain = Promise.resolve();
@@ -133,7 +138,7 @@
     }
     if(!ev){
       if(!sawRelay) throw new Error('relay unreachable');   // never let a dead socket masquerade as an empty budget
-      _doc = BLANK();
+      _doc = BLANK(); _settle(_doc, null);
       return _doc;
     }
     /* AN EMPTY EVENT IS CORRUPT, NOT A SIGNER REQUEST. Passing it to Firefox's NIP-07 provider
@@ -168,7 +173,63 @@
     let d; try{ d = JSON.parse(raw)||{}; }catch(_){ d = {}; }
     _doc = Object.assign(BLANK(), d);
     for(const k of ['bills','cats','items']) if(!Array.isArray(_doc[k])) _doc[k]=[];
+    _settle(_doc, ev);
     return _doc;
+  }
+
+  /* TWO DEVICES WITH BUDGET OPEN BOTH KEEP THEIR CHANGE.
+   *
+   * The document is replaceable and every save publishes the WHOLE of it, built from the copy this device loaded
+   * -- which may be an hour old. A laptop left on Budget, a bill added on the phone, then any click on the laptop
+   * published the laptop's copy over the phone's bill: gone from every device, nothing on any screen to say so.
+   * So each save first asks for the newest version (one indexed REQ; the decrypt only when another device really
+   * did write) and folds that device's changes in, row by row, before publishing: a row this device did not touch
+   * takes theirs, a row it changed keeps its own, additions on both sides are kept, a deletion stays deleted unless
+   * the other side edited the row since. A read nobody answers is not "nobody else wrote" -- the save refuses. */
+  const _same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function _mergeRows(base, mine, theirs){
+    const B = new Map(base.map(r=>[r.id, r])), M = new Map(mine.map(r=>[r.id, r])), T = new Set(theirs.map(r=>r.id));
+    const out = [];
+    for(const tr of theirs){
+      const br = B.get(tr.id), mr = M.get(tr.id);
+      if(mr){
+        // Untouched here: take theirs IN PLACE, so a menu holding this row object still edits the live one.
+        if(br && _same(mr, br)){ for(const k of Object.keys(mr)) if(!(k in tr)) delete mr[k]; Object.assign(mr, tr); }
+        out.push(mr);
+      } else if(!br || !_same(tr, br)) out.push(tr);   // added there, or edited there after this device deleted it
+    }
+    for(const mr of mine) if(!T.has(mr.id)){
+      const br = B.get(mr.id);
+      if(!br || !_same(mr, br)) out.push(mr);          // added here (or edited here after the other device deleted it)
+    }
+    return out;
+  }
+  function _merge3(base, mine, theirs){
+    const out = Object.assign(BLANK(), theirs);
+    for(const k of Object.keys(mine)) if(!['bills','cats','items'].includes(k) && !_same(mine[k], base[k])) out[k] = mine[k];
+    if(String(mine.lastReset||'') > String(out.lastReset||'')) out.lastReset = mine.lastReset;
+    for(const k of ['bills','cats','items'])
+      out[k] = _mergeRows(Array.isArray(base[k])?base[k]:[], Array.isArray(mine[k])?mine[k]:[], Array.isArray(theirs[k])?theirs[k]:[]);
+    return out;
+  }
+  async function _rebase(){
+    const evs = await Relay().query([{ authors:[ME().pubkey], kinds:[KIND], '#d':[D_TAG], limit:1 }]);
+    const answered = !!evs && (evs.complete !== false || _homeAnswered(evs));
+    const ev = (evs||[]).slice().sort((x,y)=>y.created_at-x.created_at)[0] || null;
+    if(!ev){
+      if(!answered) throw new Error('could not check for changes made on your other devices');
+      return false;
+    }
+    if(ev.id === _evId || (ev.created_at||0) < _evAt) return false;   // nothing newer than what this copy is built on
+    let theirs;
+    try{ theirs = Object.assign(BLANK(), JSON.parse(await PC.nip44dec(ME().pubkey, ev.content)) || {}); }
+    catch(_){ throw new Error('could not read the version saved on your other device'); }
+    for(const k of ['bills','cats','items']) if(!Array.isArray(theirs[k])) theirs[k]=[];
+    const merged = _merge3(_base || BLANK(), _doc, theirs);
+    for(const k of Object.keys(_doc)) delete _doc[k];
+    Object.assign(_doc, merged);                       // the same object: every closure over _doc sees the merge
+    _settle(theirs, ev);
+    return true;
   }
 
   function save(){
@@ -178,6 +239,8 @@
     // BACK to the caller keeps the rejection, so "Add to budget" can tell success from failure
     // instead of reporting a save that never landed.
     const done = chain.catch(()=>{}).then(async ()=>{
+      if(!_doc) throw new Error('budget not loaded');
+      if(await _rebase()) repaint();                   // another device's change, shown here as well
       const plain = JSON.stringify(_doc);
       const bytes = nip44Bytes(plain);
       /* NIP-44 IS A SINGLE 64 KiB ENVELOPE. Letting the provider discover this produces a raw
@@ -187,8 +250,11 @@
       if(bytes < 1 || bytes > NIP44_MAX) throw new Error(
         `your budget is ${bytes} bytes; encrypted budgets can be at most ${NIP44_MAX} bytes`);
       const ct = await PC.nip44enc(ME().pubkey, plain);
-      const r = await publish(KIND, ct, [['d', D_TAG]], {quiet:true});
+      // Strictly newer than the version it replaces: two saves in one second would otherwise tie.
+      const createdAt = Math.max(Math.floor(Date.now()/1000), _evAt + 1);
+      const r = await publish(KIND, ct, [['d', D_TAG]], {quiet:true, createdAt});
       if(!(r && r.ok)) throw new Error('relay rejected the write');
+      _settle(JSON.parse(plain), { id: r.ev && r.ev.id, created_at: (r.ev && r.ev.created_at) || createdAt });
     });
     chain = done.catch(()=>{});
     done.catch(()=>toast('couldn’t save — that change is NOT stored'));

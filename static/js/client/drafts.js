@@ -94,29 +94,40 @@ window.PCDraftsFactory = function(dep){
         try{ toast('Your drafts could not be saved to the server — they are safe on this device, but a draft you send may come back until this succeeds.'); }catch(_){ }
       }
     }, 900); },
+    /* WHAT THE LAST READ OF THE ACCOUNT'S DRAFTS SAID: {owner, ok} (ok:null while it is out). A screen built from
+     * this device's copy alone said "No drafts" to a fresh device whose node could not read the document -- the
+     * account's drafts exist, this device has simply never been told them. */
+    _read:null,
+    readState(){ const r=this._read; return (r && S.ME && r.owner===S.ME.pubkey) ? r.ok : undefined; },
     async pull(){ if(typeof S.ME==='undefined'||!S.ME) return; const owner=S.ME.pubkey;
+      this._read={owner, ok:null};
+      let ok=false;
       try{ const auth=await selfProof();
         if(!S.ME||S.ME.pubkey!==owner)return;
         const r=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:owner,auth:auth})}).then(r=>r.json());
+          body:JSON.stringify({pubkey:owner,auth:auth}),
+          // Bounded: a request that never comes back must end in "couldn't load", not a spinner for ever.
+          signal:(typeof AbortSignal!=='undefined' && AbortSignal.timeout) ? AbortSignal.timeout(20000) : undefined}).then(r=>r.json());
         if(!S.ME||S.ME.pubkey!==owner)return;
         if(r && r.ok && Array.isArray(r.drafts)){
+          ok=true;
           // union by id, newest ts wins — never drops a draft made offline on either device
+          const theirs={}; r.drafts.forEach(d=>{ if(d&&d.id) theirs[d.id]=d; });
           const map={}; [...r.drafts, ...this.all()].forEach(d=>{ if(d&&d.id&&(!map[d.id]||(d.ts||0)>=(map[d.id].ts||0))) map[d.id]=d; });
           const merged=this._cap(Object.values(map));   // live never evicted by tombstones (see _cap)
           try{ localStorage.setItem(this.key(), JSON.stringify(merged)); }catch(_){}
-          bumpDraft(); if(S.VIEW==='drafts') renderDrafts();
-          /* …AND SEND BACK WHAT ONLY THIS DEVICE HELD. A draft saved as the page went away -- the composer's
-           * pagehide save on a reload, an account switch, a closed tab, a service-worker update -- is written
-           * here and its push (`_sync`, 900 ms later) dies with the page. Nothing pushed it afterwards: the
-           * next load's pull merged it into localStorage and stopped, so it lived on this device only
-           * ("draft shows on phone, not desktop") until some unrelated draft happened to be saved. Measured:
-           * a post left in the composer at an account switch was still absent from the account's synced
-           * drafts after it came back. Only after a read that ANSWERED (r.ok above), and the server merges by
-           * id anyway, so this can only add what it lacks -- never replace what it has. */
-          const theirs={}; r.drafts.forEach(d=>{ if(d&&d.id) theirs[d.id]=d.ts||0; });
-          if(merged.some(d=>d&&d.id&&(!(d.id in theirs)||(d.ts||0)>theirs[d.id]))) this._sync(merged);
-        } }catch(_){} },
+          /* AND SEND WHAT THE NODE DOES NOT HAVE. A draft written (or deleted) while the node could not read the
+           * document was refused then and kept here -- and so was one saved as the page went away (the composer's
+           * pagehide save on a reload or an account switch, whose 900 ms push died with the page). Nothing else would
+           * ever send either, so other devices never saw them. Only after a read that ANSWERED, and the node merges
+           * by id, so this can only add what it lacks -- never replace what it has. (Found by two flow-test suites
+           * the same day: drafts under a silent node, and a post left in the composer at an account switch.) */
+          if(merged.some(d=>!theirs[d.id] || (d.ts||0)>(theirs[d.id].ts||0))) this._sync(merged);
+        } }catch(_){}
+      finally{
+        if(S.ME && S.ME.pubkey===owner && this._read && this._read.owner===owner) this._read={owner, ok};
+        if(S.ME && S.ME.pubkey===owner){ bumpDraft(); if(S.VIEW==='drafts') renderDrafts(); }
+      } },
   };
   // `#draft-badge` is the sidebar's Drafts row and stays drafts-only — it labels one thing.
   function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); bumpMoreBadge(); }
@@ -170,13 +181,20 @@ window.PCDraftsFactory = function(dep){
             <button class="btn btn-red small" data-act="del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
             <button class="btn btn-cyan small" data-act="send">Send ▶</button>
           </div></div></div>`;
-    }).join('') : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
+    }).join('') : Drafts.readState()===null ? '<div class="drafts-loading"><div class="spinner"></div></div>'
+      : Drafts.readState()===false ? ''
+      : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
+    // The node could not be asked for the account's drafts: say so (above whatever this device holds), never "No drafts".
+    const unreadHtml = Drafts.readState()===false
+      ? '<div class="empty drafts-unreachable">Couldn’t load your drafts from the server — '+(list.length?'only the drafts saved on this device are shown':'drafts saved on your other devices can’t be shown right now')+'. Nothing was changed.<div><button class="btn btn-ghost small" id="draft-retry">Try again</button></div></div>'
+      : '';
     // Delete-all only exists when there IS something to delete — a destructive button on an empty
     // screen is just a way to mis-tap.
     const clearHtml = list.length
       ? `<div class="art-top"><button class="btn btn-red small" id="draft-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all drafts (${list.length})</button></div>`
       : '';
-    feed.innerHTML = `<div id="sched-section"></div>` + clearHtml + draftsHtml;
+    feed.innerHTML = `<div id="sched-section"></div>` + unreadHtml + clearHtml + draftsHtml;
+    { const rt=$('#draft-retry'); if(rt) rt.onclick=()=>{ Drafts.pull(); renderDrafts(); }; }
     { const clr=$('#draft-clear');
       if(clr) clr.onclick=async()=>{
         const n=Drafts.live().length; if(!n) return;

@@ -610,6 +610,10 @@
     let label = '';
     let connected = false;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false;
+    /* The REFUSAL this socket reported (`err`), if any: the server always follows one with `end`, and "the session
+     * ended" written over "could not connect: authentication failed" told a person who mistyped a password that
+     * the shell had simply stopped -- the reason gone from the status line. */
+    let refusedWith = '';
     let followBottom = true, scrollingByUs = false;
     /* A handoff (or a tab switch) carries a scroll choice to reinstate once the replay has drawn. */
     let handoffScroll = null;
@@ -1142,7 +1146,7 @@
     let lastFrame = null;              // what _retryOpen re-sends when there is no session to resume yet
     function _open(frame){
       const opening = ++openEpoch;
-      want = true;
+      want = true; refusedWith = '';
       lastFrame = frame && !frame.resume ? Object.assign({}, frame, { password: '', hadPassword: !!frame.password }) : lastFrame;
       /* The cache above is per-SOCKET, not per-terminal. A reattach opens a PTY that knows nothing
        * about what this client last sent — and on the cross-device path (start on the laptop, pick it
@@ -1365,6 +1369,7 @@
              * refusal -- not allowed, switched off, no such host, too many terminals -- still stops. */
             if(_tooEarly(m.m) && _retryOpen(m.m)) return;
             want = false;                  // a refusal is not something to retry into
+            refusedWith = String(m.m || '');
             term.write('\r\n\x1b[31m' + m.m + '\x1b[0m\r\n'); _state(m.m, 'err');
             return;
           }
@@ -1378,8 +1383,9 @@
              * `if(m.m)` meant the session tore itself down in total silence — the screen simply
              * stopped being a terminal, which reads as "it did nothing". */
             const why = m.m || 'the session ended';
-            _state(why);
-            try{ term.write('\r\n\x1b[33m' + why + '\x1b[0m\r\n'); }catch(_){}
+            if(refusedWith) _state(refusedWith, 'err');    // the refusal IS why it ended; keep saying so
+            else { _state(why);
+              try{ term.write('\r\n\x1b[33m' + why + '\x1b[0m\r\n'); }catch(_){} }
             _drop(); _sessions();
           }
     }

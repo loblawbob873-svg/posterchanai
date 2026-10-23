@@ -295,7 +295,7 @@
       const r = await publish(KIND, w, [['d', D_KEY], ['l', L_TAG]], {quiet:true, noQueue:true});
       if(!(r && (r.ok || r.ev))) throw new Error('couldn’t create your vault — the key could not be saved');
       if(r.ev && !r.ok){ try{ Store().saveEvent(r.ev); }catch(_){ } queue(r.ev); }
-      _key = k; _cacheWrapped(w); _cacheRaw(k);
+      _key = k; _cacheWrapped(w); _cacheRaw(k); _mintedFor = ME()?.pubkey || '';
       return _key;
     })().finally(()=>{ _keyLoading = null; });
     return _keyLoading;
@@ -304,6 +304,10 @@
   // ---------------------------------------------------------------- data
 
   let _lib = null, _loading = null, _sub = null, _sel = null, _dirty = false;
+  /* WHO JUST CREATED A VAULT ON THIS DEVICE: that vault is empty because it is new, so "No passwords yet" is true
+   * without a list read. Everywhere else an empty library is only empty once a relay has ANSWERED the list read
+   * (`lib.answered`) -- a fresh device holds nothing because it was told nothing. */
+  let _mintedFor = '';
   let _filter = { q:'', folder:FOLDER_ALL, tag:'' };
 
   const FILTER = () => ({ kinds:[KIND], authors:[ME().pubkey], '#l':[L_TAG] });
@@ -317,7 +321,7 @@
 
   async function _loadCache(create = true){
     await ensureKey(create);
-    const lib = { items:new Map(), folders:new Map() };
+    const lib = { items:new Map(), folders:new Map(), answered: _mintedFor === (ME()?.pubkey || ''), tried:false };
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
     await _absorb(lib, cached, true);
@@ -347,6 +351,7 @@
     _refreshing = true;
     try{
       const evs = await Relay().query([Object.assign(FILTER(), { limit: 5000 })]);
+      if(evs && (evs.complete !== false || _homeAnswered(evs)) && _lib) _lib.answered = true;
       const before = _stamp();
       await _absorb(_lib, evs || [], true);
       if(_stamp() !== before){
@@ -360,7 +365,9 @@
       }
       return false;
     }catch(_){ }
-    finally{ _refreshing = false; }
+    finally{ _refreshing = false;
+      // An empty list was "loading…" until this read: show its verdict (the vault is empty, or it could not be read).
+      if(_lib){ _lib.tried = true; if(!_lib.items.size && PC.VIEW === 'vault' && !_dirty) _paint(); } }
   }
 
   function watch(){
@@ -895,11 +902,15 @@
             </span>
             ${i.totp?'<span class="pv-badge" title="Has a one-time code">2FA</span>':''}
           </button>`).join('')
-        : `<div class="empty">${total ? 'Nothing matches that.' : 'No passwords yet. Add one, or import your Bitwarden export.'}</div>`}
+        : total ? '<div class="empty">Nothing matches that.</div>'
+        : _lib.answered ? '<div class="empty">No passwords yet. Add one, or import your Bitwarden export.</div>'
+        : (!_lib.tried || _refreshing) ? '<div class="empty pv-loading"><div class="spinner"></div>Loading your passwords…</div>'
+        : '<div class="empty pv-unreachable">Couldn’t reach your relays to load your passwords. Nothing was changed.<div><button class="btn btn-ghost small" id="pv-list-retry">Try again</button></div></div>'}
       </section>
       <section class="pv-editor" aria-label="Entry"></section>
     </div>`;
 
+    { const rt = $('#pv-list-retry', feed); if(rt) rt.onclick = () => { refresh(); _paint(); }; }
     $$('.pv-new', feed).forEach(b => b.onclick = () => openItem(blankItem(_filter.folder), true));
     _wireDrawer(feed);
     $('.pv-import', feed).onclick = openImport;

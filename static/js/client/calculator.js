@@ -151,7 +151,26 @@
   const HIST_KEY = 'pc_calc_history';
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const st = { expr: '', deg: true, sci: false, hist: [], justEvaluated: false };
-  try{ const h = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); if(Array.isArray(h)) st.hist = h.slice(0, 50); }catch(_){}
+  /* THE TAPE IS PER ACCOUNT. It is a log of what somebody calculated -- a salary split, a bill, a loan -- and it was
+   * one device-wide key read once at load, so the next account signed in on the same phone or desktop opened the
+   * Calculator onto the previous account's sums. Keyed by pubkey and read at every render (an account switch
+   * re-renders); a guest/no-account device keeps the plain key. A tape from before it was per-account goes to the
+   * first account that opens the Calculator -- on almost every device that is the person who wrote it. */
+  const _who = () => { try{ const PC = window.__PC, me = PC && PC.me && PC.me(); return (me && me.pubkey) || ''; }catch(_){ return ''; } };
+  const histKey = () => { const w = _who(); return w ? HIST_KEY + ':' + w : HIST_KEY; };
+  let _histFor = null;
+  function loadHist(){
+    const k = histKey(); if(_histFor === k) return;
+    if(_histFor !== null){ st.expr = ''; st.justEvaluated = false; }   // another account: not its expression either
+    _histFor = k; st.hist = [];
+    try{
+      let raw = localStorage.getItem(k);
+      if(raw == null && k !== HIST_KEY && (raw = localStorage.getItem(HIST_KEY)) != null){
+        localStorage.setItem(k, raw); localStorage.removeItem(HIST_KEY);
+      }
+      const h = JSON.parse(raw || '[]'); if(Array.isArray(h)) st.hist = h.slice(0, 50);
+    }catch(_){}
+  }
   try{ const o = JSON.parse(localStorage.getItem(HIST_KEY + ':opts') || '{}'); if(o && typeof o === 'object'){ st.deg = o.deg !== false; st.sci = !!o.sci; } }catch(_){}
   const saveOpts = () => { try{ localStorage.setItem(HIST_KEY + ':opts', JSON.stringify({ deg: st.deg, sci: st.sci })); }catch(_){} };
 
@@ -209,7 +228,7 @@
         const v = evaluate(e, { deg: st.deg });
         const r = format(v);
         st.hist.unshift({ e, r }); st.hist = st.hist.slice(0, 50);
-        try{ localStorage.setItem(HIST_KEY, JSON.stringify(st.hist)); }catch(_){}
+        try{ localStorage.setItem(histKey(), JSON.stringify(st.hist)); }catch(_){}
         st.expr = Number.isFinite(v) ? String(parseFloat(v.toPrecision(12))) : '';
         st.justEvaluated = true;
       }catch(e2){ err(e2.message || 'error'); return; }
@@ -265,6 +284,7 @@
     const feed = document.getElementById('feed');
     if(!feed) return;
     try{ const t = document.getElementById('view-title'); if(t) t.textContent = 'Calculator'; }catch(_){}
+    loadHist();
     feed.innerHTML = `<div class="calc-app" role="application" aria-label="Calculator">
       <div class="calc-main">
         <div class="calc-screen" aria-live="polite">
@@ -288,7 +308,7 @@
       if(b.classList.contains('calc-deg')){ st.deg = !st.deg; saveOpts(); paint(); return; }
       if(b.classList.contains('calc-sci-tog')){ st.sci = !st.sci; saveOpts(); paint(); return; }
       if(b.classList.contains('calc-copy')){ copy(); return; }
-      if(b.classList.contains('calc-clear-hist')){ st.hist = []; try{ localStorage.removeItem(HIST_KEY); }catch(_){} paint(); return; }
+      if(b.classList.contains('calc-clear-hist')){ st.hist = []; try{ localStorage.removeItem(histKey()); }catch(_){} paint(); return; }
       if(b.dataset.hist != null){ const h = st.hist[+b.dataset.hist]; if(h){ st.expr = h.r.replace(/,/g, ''); st.justEvaluated = true; paint(); } }
     });
     if(onKey) document.removeEventListener('keydown', onKey, true);
