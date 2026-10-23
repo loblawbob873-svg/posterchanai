@@ -3,7 +3,6 @@ Built-in torrent client using libtorrent with HTTP proxy support.
 All traffic is routed through the configured HTTP proxy (for Tor).
 """
 
-import sys
 import threading
 import socket
 from pathlib import Path
@@ -14,25 +13,17 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# Try to import libtorrent, falling back to system site-packages if needed
+# libtorrent is the PyPI wheel in requirements.txt -- self-contained, matched to the venv's Python. NO OS package and
+# NO fallback into the system site-packages (2026-10-23, the owner: "we should not have any os-level deps for torrent
+# feature"): a distro build tracks the SYSTEM Python, and pulling its site-packages into the venv imported a library
+# built for a different interpreter (nas: system 3.14, venv 3.12 -> ImportError, "Torrent client not configured").
 try:
     import libtorrent as lt
-except ImportError:
-    # Try system site-packages (for venv without --system-site-packages)
-    import glob
-    system_paths = glob.glob("/usr/lib/python3*/site-packages")
-    for sp in system_paths:
-        if sp not in sys.path:
-            sys.path.insert(0, sp)
-    try:
-        import libtorrent as lt
-        logger.info("[BT] Loaded libtorrent from system site-packages")
-    except ImportError:
-        raise ImportError(
-            "libtorrent not found. Install system package:\n"
-            "  Gentoo: emerge net-libs/libtorrent-rasterbar\n"
-            "  Debian: apt install python3-libtorrent"
-        )
+except ImportError as e:
+    raise ImportError(
+        "libtorrent is not installed in this Python environment. It is a pip wheel, not an OS package:\n"
+        "  venv-unified/bin/python -m pip install 'libtorrent>=2.1.1'   (or re-run ./install.sh)"
+    ) from e
 
 
 @dataclass

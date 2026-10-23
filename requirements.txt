@@ -156,7 +156,7 @@ faster-whisper>=1.0.0
 # for exactly this reason. Outside that range pip has no wheel and falls back to a source build, which
 # is the ONLY situation where an OS package is relevant — and it is a trap, not a fix: the distro build
 # tracks the SYSTEM Python, so it stops importing the moment that moves past the venv's.
-libtorrent>=2.0.0
+libtorrent>=2.1.1
 torpy
 
 # Music generation (musicgeni) runs IN-PROCESS, on the same torch as image/video gen — no sidecar

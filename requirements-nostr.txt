@@ -73,7 +73,7 @@ tzdata>=2024.1
 cheroot>=10.0.0,<12.0.0
 
 # Built-in torrent client (optional feature; keep — not AI)
-libtorrent>=2.0.0
+libtorrent>=2.1.1
 torpy
 
 # PWA Web Push notifications (mentions/zaps/replies delivered when the client is closed). Nostr client
