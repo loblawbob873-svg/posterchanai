@@ -104,6 +104,21 @@ window.PCSettingsFactory = function(dep){
    * Without this the pairings were invisible: nothing on screen said an app was connected, and the
    * only way to end one was to clear site data, which ends all of them. A signer that cannot say
    * what it is signing for is not one anybody should trust with a key. */
+  /* One line, in words, from MusicControls.status(). Kept beside the row that shows it. */
+  function _musicStatusLine(r){
+    const bits=[];
+    if(!r.running) bits.push('media controls: not running (no music session — car buttons have nowhere to go)');
+    else bits.push(r.sessionActive===false ? 'media session: NOT active' : 'media session: active');
+    bits.push(r.standbySession ? 'standby session: on' : 'standby session: off');
+    bits.push('page listening: '+(r.pageListening===false ? 'no' : (r.pageListening ? 'yes' : '?')));
+    if(r.running) bits.push(r.playing ? 'playing' : 'paused');
+    if(r.webSilenceMs!=null && r.webSilenceMs>=0) bits.push('page last answered '+Math.round(r.webSilenceMs/1000)+'s ago');
+    bits.push('unanswered presses '+(r.unanswered||0)+', app wake-ups '+(r.revived||0));
+    if(r.webGone) bits.push('⚠ the player stopped responding');
+    if(r.note) bits.push('last: '+r.note);
+    return bits.join(' · ');
+  }
+
   function _renderSignerApps(){
     const box = $('#signer-apps'); if(!box) return;
     const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
@@ -862,6 +877,12 @@ window.PCSettingsFactory = function(dep){
             <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-scroll-copy">Copy scroll report</button></div>
             <div class="muted small">If the timeline jumps or resists while you scroll, copy this and send it. It records what moved the page while your finger was on it: no post text, only positions and sizes.</div>
           </div>
+          <div id="us-music-row" class="fld" style="margin-top:10px">Music &amp; car controls
+            <div class="muted small" id="us-music-sum">Checking…</div>
+            <div class="small" id="us-music-presses" style="margin-top:4px"></div>
+            <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-music-refresh">Refresh</button><button class="btn btn-ghost small" id="us-music-copy">Copy music report</button></div>
+            <div class="muted small">If a car, headset or lock-screen button does nothing, press it, then come back here: this says which part of the phone received the press and what came of it.</div>
+          </div>
           <div id="phone-shell"></div></div>` : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
@@ -1375,6 +1396,30 @@ window.PCSettingsFactory = function(dep){
             }).catch(e=>{ if(sum) sum.textContent='could not measure: '+((e&&e.message)||e); });
           read();
           if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'screen report copied'); });
+        }
+      } }
+    /* MUSIC & CAR CONTROLS (APK only): what MusicControls.status() measured -- whether the media session the
+     * car's buttons must reach exists, whether the STANDBY session is up, whether a page is listening -- and the
+     * last presses: what was pressed, which session delivered it, and whether the page answered. "Car buttons do
+     * nothing at all" is four different failures that look the same from the seat; this is where they differ.
+     * The same lines go to `adb logcat -s PosterChanMusic`. An APK older than the call loses the row. */
+    { const row=$('#us-music-row'), sum=$('#us-music-sum'), list=$('#us-music-presses'),
+            rf=$('#us-music-refresh'), cp=$('#us-music-copy');
+      const M=_capPlugin('MusicControls','status');
+      if(row){
+        if(!M){ row.remove(); }
+        else{
+          let rep=null;
+          const read=()=>Promise.resolve(M.status()).then(r=>{ rep=r||{};
+              if(sum) sum.textContent=_musicStatusLine(rep);
+              if(list){ const ps=Array.isArray(rep.presses)?rep.presses:[];
+                list.innerHTML = ps.length
+                  ? ps.map(p=>'<div class="us-music-press">'+enc(new Date(Number(p.at)||0).toLocaleTimeString())+' · <b>'+enc(p.action||'?')+'</b> via '+enc(p.via||'?')+' — '+enc(p.outcome||'')+'</div>').join('')
+                  : '<div class="muted">No presses since the app started.</div>'; }
+            }).catch(e=>{ if(sum) sum.textContent='could not read the music controls: '+((e&&e.message)||e); });
+          read();
+          if(rf) rf.onclick=()=>read();
+          if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'music report copied'); });
         }
       } }
     { const cp=$('#us-scroll-copy'), sum=$('#us-scroll-sum');

@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -22,6 +23,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
@@ -105,6 +107,15 @@ public class MusicService extends Service {
   public static final String ACTION_STOP = "place.poster.app.MUSIC_STOP";
   /** The user swiped the notification away. That one has to travel BACK to the player. */
   public static final String ACTION_DISMISS = "place.poster.app.MUSIC_DISMISS";
+
+  /** Which surface handed us a press (the standby session, the notification...), for PressLog + logcat. */
+  public static final String EXTRA_VIA = "via";
+
+  /** `adb logcat -s PosterChanMusic` -- every transport press, the session it arrived through and what
+   *  came of it. A car button that "does nothing at all" is four different failures that look the same
+   *  from the seat; this line says which one happened. */
+  public static final String TAG = "PosterChanMusic";
+  static void log(String msg) { try { Log.i(TAG, msg); } catch (Throwable ignored) { } }
 
   public static final String EXTRA_TITLE = "title";
   public static final String EXTRA_ARTIST = "artist";
@@ -200,6 +211,10 @@ public class MusicService extends Service {
   }
 
   boolean isPlaying() { return playing; }
+  /** Whether a page is subscribed to transport presses right now (MusicPlugin's bridge). */
+  static boolean pageListening() { return listener != null; }
+  /** Whether the session the car's buttons should reach is published right now. */
+  boolean sessionActive() { MediaSessionCompat ss = session; return ss != null && ss.isActive(); }
 
   /** Milliseconds since the client last said anything, or -1 if it never has. */
   long webSilenceMs() { return lastWebAt == 0 ? -1 : SystemClock.elapsedRealtime() - lastWebAt; }
@@ -266,6 +281,7 @@ public class MusicService extends Service {
    *  the one that is not playing anything. */
   private static void releaseStandby(Context ctx) {
     if (!standbySession) return;
+    log("a real session is active — asking the standby session to stand down");
     try {
       ctx.startService(new Intent(ctx, place.poster.app.push.StayAwakeService.class)
           .setAction(place.poster.app.push.StayAwakeService.ACTION_DROP_STANDBY));
@@ -359,14 +375,28 @@ public class MusicService extends Service {
    * and an unanswered one means the audio is already gone with the WebView that was playing it —
    * launching the app to tell it to stop would be a car stereo opening an app for no reason.
    */
-  private void press(final String action) {
+  private void press(final String action, final String via) {
     final long before = lastWebAt;
+    final PressLog.Entry e = record(action, via);
     emit(action, 0);
     handler.postDelayed(() -> {
-      if (lastWebAt != before) return;         // answered — the player is alive and did the work
+      if (lastWebAt != before) { settle(e, "answered — the page performed it"); return; }   // the player is alive and did the work
       unanswered++;
+      settle(e, "unanswered — asked the app to come back");
       revive(action);
     }, ANSWER_MS);
+  }
+
+  /** A press arriving, written down before anything is done with it (see PressLog). */
+  static PressLog.Entry record(String action, String via) {
+    String to = listener == null ? "no page is listening" : "sent to the page";
+    log(action + " via " + via + " -> " + to);
+    return PressLog.add(System.currentTimeMillis(), action, via, to);
+  }
+
+  static void settle(PressLog.Entry e, String outcome) {
+    PressLog.settle(e, outcome);
+    if (e != null) log(e.action + " via " + e.via + ": " + outcome);
   }
 
   /**
@@ -380,12 +410,14 @@ public class MusicService extends Service {
    * is `revive()` — dragging the app to the foreground in someone's car to tell it to stop playing
    * something that is already silent is worse than the silence.
    */
-  private void hush(final String action) {
+  private void hush(final String action, final String via) {
     final long before = lastWebAt;
+    final PressLog.Entry e = record(action, via);
     emit(action, 0);
     handler.postDelayed(() -> {
-      if (lastWebAt != before) return;
+      if (lastWebAt != before) { settle(e, "answered — the page performed it"); return; }
       unanswered++;
+      settle(e, "unanswered — the player is not answering");
       note(action + ": the player is not answering");
       markGone();                              // …which also drops `playing`, freeing the toggle
     }, ANSWER_MS);
@@ -408,10 +440,10 @@ public class MusicService extends Service {
 
   /** A widget button, routed through the same receipt check every other surface uses. */
   void fromWidget(String action) {
-    if (ACTION_NEXT.equals(action)) press("next");
-    else if (ACTION_PREV.equals(action)) press("prev");
-    else if (playing) hush("pause");
-    else press("play");
+    if (ACTION_NEXT.equals(action)) press("next", "widget");
+    else if (ACTION_PREV.equals(action)) press("prev", "widget");
+    else if (playing) hush("pause", "widget");
+    else press("play", "widget");
   }
 
   /**
@@ -494,7 +526,7 @@ public class MusicService extends Service {
       if (playing) { note("bluetooth connected — already playing"); return; }
       btAutoplays++;
       note("bluetooth connected — playing");
-      press("play");
+      press("play", "bluetooth autoplay");
     }
   };
 
@@ -536,10 +568,21 @@ public class MusicService extends Service {
       /* The car's own buttons land HERE, not in onStartCommand — the platform routes a media button
        * to the session it belongs to. So these three are the presses that most need the receipt
        * check: a steering wheel is exactly where nobody can see that nothing happened. */
-      @Override public void onPlay() { press("play"); }
-      @Override public void onPause() { hush("pause"); }
-      @Override public void onSkipToNext() { press("next"); }
-      @Override public void onSkipToPrevious() { press("prev"); }
+      @Override public void onPlay() { press("play", SESSION_VIA); }
+      @Override public void onPause() { hush("pause", SESSION_VIA); }
+      @Override public void onSkipToNext() { press("next", SESSION_VIA); }
+      @Override public void onSkipToPrevious() { press("prev", SESSION_VIA); }
+      /* Which KEY arrived, before the compat layer turns it into one of the calls above -- a head unit
+       * that sends PLAY_PAUSE, PLAY, or a long-press NEXT is told apart here, and only here. */
+      @Override public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
+        try {
+          KeyEvent ev = mediaButtonEvent == null ? null : mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+          if (ev != null && ev.getAction() == KeyEvent.ACTION_DOWN)
+            log("key " + KeyEvent.keyCodeToString(ev.getKeyCode()) + " reached the PosterChanMusic session"
+                + " (page " + (listener == null ? "not listening" : "listening") + ", playing=" + playing + ")");
+        } catch (Throwable ignored) { }
+        return super.onMediaButtonEvent(mediaButtonEvent);
+      }
       @Override public void onStop() { emit("stop", 0); }
       @Override public void onSeekTo(long pos) { emit("seekTo", pos / 1000.0); }
       @Override public void onFastForward() { emit("seekBy", 10); }
@@ -591,7 +634,20 @@ public class MusicService extends Service {
      * seconds later, so the honest move is to ask the app to come back and get out of the way. */
     if (!foreground) {
       String want = coldPress(action, intent);
+      String via = str(intent.getStringExtra(EXTRA_VIA), Intent.ACTION_MEDIA_BUTTON.equals(action)
+          ? "media button with no player session" : "a start with no player session");
+      if (want == null && isPause(action, intent)) {
+        /* A PAUSE WITH A PAGE STILL PLAYING. This branch used to drop every pause as "nothing to
+         * stop" -- true only when nothing plays. The standby session hands its pause here, and the
+         * media-button receiver does when no session holds the buttons: with a live page listening,
+         * the music IS playing and the pause is the one thing the driver asked for. Never a wake-up. */
+        PressLog.Entry e = record("pause", via);
+        if (listener != null) { emit("pause", 0); settle(e, "handed to the page"); }
+        else settle(e, "ignored — no page, nothing to pause");
+      }
       if (want != null) {
+        PressLog.Entry e = record(want, via);
+        settle(e, listener != null ? "handed to the page (no player session)" : "no page — asked the app to come back");
         /* A LIVE CLIENT IS STILL A CLIENT, even though this service instance has no state. `listener`
          * is non-null only while a page is loaded with the transport handler armed, so handing it the
          * press is both cheaper and less rude than launching an activity at somebody — it will start
@@ -604,11 +660,13 @@ public class MusicService extends Service {
       return START_NOT_STICKY;
     }
 
-    if (ACTION_TOGGLE.equals(action)) { if (playing) hush("pause"); else press("play"); }
-    else if (ACTION_PLAY.equals(action)) press("play");
-    else if (ACTION_PAUSE.equals(action)) hush("pause");
-    else if (ACTION_NEXT.equals(action)) press("next");
-    else if (ACTION_PREV.equals(action)) press("prev");
+    // The notification's buttons, or a press the STANDBY session handed over (it says so in EXTRA_VIA).
+    String via = str(intent.getStringExtra(EXTRA_VIA), "notification");
+    if (ACTION_TOGGLE.equals(action)) { if (playing) hush("pause", via); else press("play", via); }
+    else if (ACTION_PLAY.equals(action)) press("play", via);
+    else if (ACTION_PAUSE.equals(action)) hush("pause", via);
+    else if (ACTION_NEXT.equals(action)) press("next", via);
+    else if (ACTION_PREV.equals(action)) press("prev", via);
     else MediaButtonReceiver.handleIntent(session, intent);   // a headset / steering-wheel button
 
     return START_NOT_STICKY;
@@ -640,6 +698,17 @@ public class MusicService extends Service {
       }
     }
     return "play";
+  }
+
+  static final String SESSION_VIA = "PosterChanMusic session (car / headset / lock screen)";
+
+  /** A pause or stop, read the way coldPress reads it (DOWN only, so one press is one action). */
+  private static boolean isPause(String action, Intent intent) {
+    if (ACTION_PAUSE.equals(action)) return true;
+    if (!Intent.ACTION_MEDIA_BUTTON.equals(action)) return false;
+    KeyEvent ev = null;
+    try { ev = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT); } catch (Exception ignored) {}
+    return ev != null && ev.getAction() == KeyEvent.ACTION_DOWN && ev.getKeyCode() == KeyEvent.KEYCODE_MEDIA_PAUSE;
   }
 
   private static String str(String s, String dflt) { return (s == null || s.isEmpty()) ? dflt : s; }
@@ -799,7 +868,24 @@ public class MusicService extends Service {
    * — i.e. the audio has already stopped — so the notification must go too. Without this the shade
    * keeps a media notification whose every button lands in a process that has nothing playing.
    */
-  @Override public void onTaskRemoved(Intent rootIntent) { shutdown(); }
+  @Override public void onTaskRemoved(Intent rootIntent) {
+    /* ONLY THE PLAYER'S OWN TASK. Android calls this for ANY task of this app that leaves Recents, and
+     * Texts and the Phone app are tasks of their own: swiping one of them away used to shut the media
+     * session down under a song that played on in the untouched WebView task -- after which the car's
+     * buttons had no session to reach and did nothing at all. See TaskRemoval. */
+    ComponentName c = rootIntent == null ? null : rootIntent.getComponent();
+    String removed = c == null ? null : c.getClassName(), target = null;
+    if (c != null) {
+      try { target = getPackageManager().getActivityInfo(c, 0).targetActivity; } catch (Throwable ignored) { }
+    }
+    if (TaskRemoval.endsPlayer(removed, target, MainActivity.class.getName())) {
+      log("task removed: " + removed + " — the player's task, closing the media session");
+      shutdown();
+    } else {
+      log("task removed: " + removed + " — not the player's task, the media session stays");
+      note("a different PosterChan task was closed (" + removed + ") — the player kept its controls");
+    }
+  }
 
   void shutdown() {
     handler.removeCallbacksAndMessages(null);   // a press made a second before the close must not relaunch the app

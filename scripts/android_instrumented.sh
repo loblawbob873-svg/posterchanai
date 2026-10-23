@@ -100,7 +100,7 @@ while :; do
   # assertion for — whether an OEM ships the system widget picker, how many widget providers the image
   # has — and the XML report carries only failures. Without this the only way to get a fact off the
   # device was to fail a test on purpose.
-  timeout --kill-after=5s 20s adb logcat -d -s PosterChan:* TestRunner:* \
+  timeout --kill-after=5s 20s adb logcat -d -s PosterChan:* TestRunner:* PosterChanMusic:* \
     > /tmp/pc-androidtest/logcat-instrumented.txt 2>/dev/null || true
   # AND THE UNFILTERED BUFFER, BECAUSE A CRASH DOES NOT LOG UNDER OUR TAGS.
   #

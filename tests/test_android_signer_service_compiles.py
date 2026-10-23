@@ -98,6 +98,7 @@ package place.poster.app.push;
 public class StayAwakeService extends android.app.Service {
   public static boolean running = false;
   public static final String ACTION_STOP = "stop";
+  public static final String ACTION_START = "start";   // MusicCarButtonsDeviceTest turns the standby switch on
   public static boolean wanted(android.content.Context c) { return false; }
   public android.os.IBinder onBind(android.content.Intent i) { return null; }
 }
