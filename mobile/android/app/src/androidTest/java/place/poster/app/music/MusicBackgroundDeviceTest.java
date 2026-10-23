@@ -79,6 +79,7 @@ public class MusicBackgroundDeviceTest {
             // remove an independent HOME task that is actually covering this singleTask activity.
             // Exercise the same path as tapping PosterChan in Recents/the launcher instead.
             relaunchMainTask(ctx, activity);
+            waitResumed(scenario);
             AtomicReference<WebView> resumed = new AtomicReference<WebView>();
             AtomicInteger resumedTask = new AtomicInteger();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
@@ -282,12 +283,27 @@ public class MusicBackgroundDeviceTest {
         return null;
     }
 
+    /* A RESUMED ACTIVITY BEFORE A QUESTION. A WebView paused on HOME runs no JavaScript until its activity resumes, and
+     * relaunching a task returns before onResume -- so evaluating straight after it raced the resume and, on a slow
+     * emulator, timed out ("WebView did not answer JavaScript"), blocking APK publication twice on 2026-10-22. Wait for
+     * RESUMED, ask once more on a miss, and say the lifecycle state if it still never answers. */
+    private static void waitResumed(ActivityScenario<MainActivity> scenario) {
+        for (int i = 0; i < 100 && scenario.getState() != Lifecycle.State.RESUMED; i++) SystemClock.sleep(100);
+    }
+
     private static String eval(WebView web, String js) throws Exception {
-        CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<String> result = new AtomicReference<String>("null");
-        web.post(() -> web.evaluateJavascript(js, value -> { result.set(value); done.countDown(); }));
-        assertTrue("WebView did not answer JavaScript", done.await(15, TimeUnit.SECONDS));
-        return result.get();
+        for (int attempt = 0; ; attempt++) {
+            CountDownLatch done = new CountDownLatch(1);
+            AtomicReference<String> result = new AtomicReference<String>("null");
+            web.post(() -> web.evaluateJavascript(js, value -> { result.set(value); done.countDown(); }));
+            if (done.await(15, TimeUnit.SECONDS)) return result.get();
+            if (attempt >= 1) {
+                AtomicReference<String> state = new AtomicReference<String>("?");
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> state.set(
+                        "attached=" + web.isAttachedToWindow() + " shown=" + web.isShown() + " focus=" + web.hasWindowFocus()));
+                throw new AssertionError("WebView did not answer JavaScript (twice, 15s each): " + state.get());
+            }
+        }
     }
 
     private static double number(String json) {
