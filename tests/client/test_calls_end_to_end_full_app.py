@@ -154,7 +154,8 @@ class Person:
         return await self.js("__pcs.filter(p=>p.connectionState==='connected').length")
 
     async def missed(self):
-        return await self.js("JSON.parse(localStorage.getItem('pc_missed_calls')||'[]').map(x=>x.pk)")
+        # The signed-in ACCOUNT's log on this device (calls.js keeps one per account: pc_missed_calls:<pubkey>).
+        return await self.js("JSON.parse(localStorage.getItem('pc_missed_calls:'+__PC.me().pubkey)||'[]').map(x=>x.pk)")
 
 
 async def _open(stack, http_port, relay_url, key_byte, name, extra=''):

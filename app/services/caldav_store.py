@@ -159,17 +159,35 @@ def free_id(wanted: str, taken) -> str:
     return f"{wanted}-{n}"
 
 
-async def delete_calendar(db, user, calendar: str) -> int:
-    """Drop a calendar and every item in it. Returns how many events were deleted."""
+class DeleteRefused(Exception):
+    """The relay said no to (part of) a delete. `deleted` is how many documents did go."""
+    def __init__(self, msg: str, deleted: int = 0):
+        super().__init__(msg)
+        self.deleted = deleted
+
+
+async def delete_calendar(db, user, calendar: str, *, strict: bool = False) -> int:
+    """Drop a calendar and every item in it. Returns how many events were deleted.
+
+    `strict` (the web routes): RAISES when the relay cannot be asked, and raises DeleteRefused when it
+    refused any item -- in which case the calendar's own metadata is NOT deleted, so what is left stays
+    listed (and deletable) instead of lingering on the relay under a calendar no screen shows. Loosely
+    (Radicale's mirror of a phone's delete) it keeps its old best-effort shape."""
     sk = user_storage_seckey(db, user)
     port = _port(db)
-    n = 0
-    docs = await store.list_docs(port, f"{NS_ITEM}{calendar}:", seckey=sk, limit=_SCAN_LIMIT)
+    n = refused = 0
+    docs = await store.list_docs(port, f"{NS_ITEM}{calendar}:", seckey=sk, limit=_SCAN_LIMIT, strict=strict)
     for d in docs:
-        if await store.delete_doc(port, sk, d):
+        if await store.delete_doc(port, sk, d, strict=strict):
             n += 1
-    if await store.delete_doc(port, sk, f"{NS_META}{calendar}"):
+        else:
+            refused += 1
+    if strict and refused:
+        raise DeleteRefused(f"{refused} of {len(docs)} items refused", n)
+    if await store.delete_doc(port, sk, f"{NS_META}{calendar}", strict=strict):
         n += 1
+    elif strict:
+        raise DeleteRefused("the collection itself was refused", n)
     return n
 
 

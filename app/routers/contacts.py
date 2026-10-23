@@ -123,7 +123,15 @@ async def create_book(body: BookIn, current_user: User = Depends(get_current_use
 async def delete_book(book_id: str, current_user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     _require_enabled()
-    n = await caldav_store.delete_calendar(db, current_user, book_id)
+    # Same rule as delete_card: a refused or unaskable delete is said, never a 200 (calendar.py too).
+    try:
+        n = await caldav_store.delete_calendar(db, current_user, book_id, strict=True)
+    except caldav_store.DeleteRefused as e:
+        if e.deleted:
+            _forget(current_user.username)
+        raise HTTPException(status_code=502, detail="Could not delete the addressbook — try again.")
+    except Exception as e:
+        raise _unreachable(f"addressbook {book_id!r}", e)
     _forget(current_user.username)
     return {"ok": True, "deleted": n}
 

@@ -53,6 +53,14 @@ def _sign_event_fn() -> str:
     return picked[0]
 
 
+def _helpers() -> str:
+    """The module-level helpers signEvent calls (`_signedWhatWasAsked`, shared with the NIP-55 signer)."""
+    i = APP.find("  function _signedWhatWasAsked(")
+    if i < 0:
+        return ""
+    return APP[i:APP.index("\n  }\n", i) + 4]
+
+
 class SignerAccountSwitch(unittest.TestCase):
     def run_sign(self, expected, returned):
         """Run the shipped signEvent under node with a stubbed transport."""
@@ -65,6 +73,7 @@ class SignerAccountSwitch(unittest.TestCase):
             script.write_text(
                 "const log = { toast: null };\n"
                 "globalThis.toast = m => { log.toast = String(m); };\n"
+                + _helpers() + "\n"
                 f"const returned = {json.dumps(returned)};\n"
                 "const obj = {\n"
                 f"  userPk: {json.dumps(expected)},\n"

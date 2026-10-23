@@ -275,7 +275,16 @@ async def unsubscribe(cal: str = Query(...), current_user: User = Depends(get_cu
 async def delete_calendar(cal_id: str, current_user: User = Depends(get_current_user),
                           db: Session = Depends(get_db)):
     _require_enabled()
-    n = await caldav_store.delete_calendar(db, current_user, cal_id)
+    # A delete the relay REFUSED (or could not be asked about) is an error the client shows -- it used to
+    # be "calendar deleted" with events left on the relay under a calendar that was gone (contacts.py's rule).
+    try:
+        n = await caldav_store.delete_calendar(db, current_user, cal_id, strict=True)
+    except caldav_store.DeleteRefused as e:
+        if e.deleted:
+            _forget(current_user.username)
+        raise HTTPException(status_code=502, detail="Could not delete the calendar — try again.")
+    except Exception as e:
+        raise _unreachable(f"calendar {cal_id!r}", e)
     _forget(current_user.username)
     return {"ok": True, "deleted": n}
 
@@ -376,9 +385,17 @@ async def move_item(body: ItemMoveIn, current_user: User = Depends(get_current_u
 async def delete_item(cal: str = Query(...), uid: str = Query(...),
                       current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_enabled()
-    out = await caldav_store.delete_item(db, current_user, cal, uid)
+    # A delete the relay REFUSED, or one it could not be asked about, is an error -- it used to be a 200
+    # carrying `ok: false` (or, unreachable, `ok: true`), and the screen said "deleted" over an event that
+    # came straight back on the next load. 5xx: the client keeps it in its offline queue and retries.
+    try:
+        out = await caldav_store.delete_item(db, current_user, cal, uid, strict=True)
+    except Exception as e:
+        raise _unreachable(f"event {uid!r}", e)
+    if not out:
+        raise HTTPException(status_code=502, detail="Could not delete the event — try again.")
     _forget(current_user.username)
-    return {"ok": out}
+    return {"ok": True}
 
 
 @router.get("/export", response_class=PlainTextResponse)
