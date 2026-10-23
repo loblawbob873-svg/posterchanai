@@ -94,5 +94,8 @@ def test_the_apk_bell_asks_android_not_the_missing_web_api():
 
 def test_read_marks_follow_the_newest_message_not_this_clock():
     """A sender whose clock runs ahead must not leave an opened channel unread."""
-    body = SRC[SRC.index("function markRead(room,name){"):][:900]
-    assert "Math.max(newest,Number(m.at)||0)" in body and "let newest=Date.now()" in body
+    body = SRC[SRC.index("function markRead(room,name){"):][:2400]
+    # The local cursor is the later of this clock and the newest message (a sender running ahead cannot leave an opened
+    # channel unread); the SYNCED mark is the newest message seen, so repaints do not republish it (2026-10-22).
+    assert "seen=Math.max(seen,Number(m.at)||0)" in body and "const newest=Math.max(Date.now(),seen)" in body
+    assert "noteChannelRead(p,room,name||'general',seen)" in body
