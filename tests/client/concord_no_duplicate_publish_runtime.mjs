@@ -49,6 +49,8 @@ ctx.__guestbook=[];ctx.publishGuestbook=async(p,room,verb)=>{ctx.__guestbook.pus
   await ctx.leaveArmadaMembership(api,room(2));
   assert.equal(published.length,4,'leaving is still written');
   await ctx.persistArmadaMembership(api,room(2));
+  assert.equal(published.length,4,'an UPDATE after a leave is not a join: the left community stays left (2026-10-22)');
+  await ctx.persistArmadaMembership(api,room(2),{join:true});
   assert.equal(published.length,5,'re-joining after a leave is a change, and is written');
   console.log('membership vault: written only on change');
 }

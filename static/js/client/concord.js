@@ -4970,7 +4970,7 @@
       return true;
     });membershipWrites.set(owner,job);return job;
   }
-  async function persistArmadaMembership(p,room){ return persistArmadaMemberships(p,[room]); }
+  async function persistArmadaMembership(p,room,opts){ return persistArmadaMemberships(p,[room],opts); }
   /* THE INSTANCE'S COMMUNITY (Admin -> Nostr Relay -> "Community every member joins"). A new account made
    * here used to land in Concord with nothing, and whatever room it reached it reached by a stale link
    * ("Posterchan Community Not Loading", 2026-10-21). Members ask this node for the invite (never in the
@@ -4993,9 +4993,17 @@
       const mark=()=>{try{localStorage.setItem(INSTANCE_JOIN_KEY(pk),url);}catch(_){}};
       if(saved().some(x=>sameRoom(x,room))||wasLocallyLeft(pk,room)){mark();return;}
       if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});
+      /* THE ACCOUNT'S VAULT DECIDES, NOT THIS DEVICE'S MARKER (2026-10-22). The marker lives in one
+       * browser; a fresh sign-in has none and re-joined a community this account had LEFT, outranking
+       * its tombstone. Written as an UPDATE before the room is shown: a vault that says "left" keeps it
+       * left. A write that fails joins as before -- the next membership pass reconciles it. */
+      const refused=[];
+      try{await persistArmadaMembership(p,room,{left:refused});}catch(_){ /* joined as before; the membership pass reconciles */ }
+      if(accountPk()!==pk)return;
+      if(refused.length){mark();return;}
+      if(saved().some(x=>sameRoom(x,room))||wasLocallyLeft(pk,room)){mark();return;}
       const a=saved();a.push(room);save(a);mark();
       if(state.community==null&&!discoveryOpen){state.community=a.findIndex(x=>sameRoom(x,room));state.channel='general';activeSet(String(state.community));}
-      await persistArmadaMembership(p,room);
       void publishGuestbook(p,room,'join');
       render();
     }catch(_){instanceJoinSession='';}   // could not ask / could not read: silent, tried again next session
@@ -5014,8 +5022,23 @@
    * Budget serialises with `chain`, and awaiting each call is not enough -- the await orders the
    * PUBLISHES, and it is the READS that overlap them.
    *
-   * So the list is the unit of work. One read, every entry, one publish. */
-  async function persistArmadaMemberships(p,rooms){
+   * So the list is the unit of work. One read, every entry, one publish.
+   *
+   * ONLY A JOIN MAY OUTRANK A LEAVE (2026-10-22). Every call used to stamp `added_at` past the
+   * community's tombstone and wipe this device's "left" record -- the rule a deliberate RE-JOIN
+   * needs, applied to every caller. Most callers are not joins: the vault backfill, a rekey or a
+   * dissolution adopted, a staff grant, a refounding, a new private channel, and the instance
+   * community's automatic join all write a membership because a room is in THIS DEVICE's list,
+   * and that list can be older than the account's decision: a fresh device whose vault read has
+   * not finished, a device that kept a room another device left. Each of them put the left community back into the account's
+   * vault, newer than its tombstone, so every device -- a fresh one first -- showed it again.
+   * Measured live: a fresh sign-in re-joined the instance community this account had left 3
+   * minutes earlier (vault tombstone 21:49:01, entry re-added 21:51:40 by joinInstanceCommunity).
+   * So a write is an UPDATE unless the caller says `{join:true}`: an update never brings back a
+   * community the vault says was left -- it is reported in `opts.left` instead -- and only a join
+   * clears this device's ledger. A room the vault has never heard of is still added (backfill). */
+  async function persistArmadaMemberships(p,rooms,opts={}){
+    const join=!!(opts&&opts.join),left=opts&&Array.isArray(opts.left)?opts.left:null,skipped=new Set();
     const viewer=p.viewer?p.viewer():{};
     if(!viewer.pubkey||!p.nip44enc)return false;
     const wanted=(Array.isArray(rooms)?rooms:[rooms])
@@ -5029,6 +5052,9 @@
         const held=window.PosterCordReader?.withChannelHistory?window.PosterCordReader.withChannelHistory(bundle,roomControls.get(room.communityId||room.naddr)||[]):bundle;
         const current={...held,name:room.name};
         const prior=list.entries.find(e=>e.community_id===cid),removed=cordU64(list.tombstones.find(t=>t.community_id===cid)?.removed_at||0);
+        /* The list here is the one read for THIS write, after any Leave queued before it: decided on it,
+         * never on the caller's older copy. `cordMergeLists` already dropped an entry its tombstone beats. */
+        if(!join&&removed>0n&&!prior){skipped.add(room);if(left)left.push(room);continue;}
         const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:cordIntegerMax(now,removed+1n),invite_ref:room.url});
         /* ONLY WHEN SOMETHING CHANGED. Every caller (join, discover, rekey, staff adoption, the
          * vault backfill) used to re-sign the whole 33302 fragment with `added_at = now` even when
@@ -5041,7 +5067,7 @@
       }
       return {list,changed};
     });
-    for(const room of wanted)forgetLeftCommunity(viewer.pubkey,room);
+    if(join)for(const room of wanted)if(!skipped.has(room))forgetLeftCommunity(viewer.pubkey,room);
     return true;
   }
   /* LEAVING USES THE SAME IDENTITY AS JOINING, or a room the vault knows by its naddr could be
@@ -6481,7 +6507,7 @@
     const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,name,url:made.url,cord:{bundle}};
     const guardedCall=async(fn,...args)=>{if(!creator.isCurrent())throw new Error('creating account changed');const result=await fn(...args);if(!creator.isCurrent())throw new Error('creating account changed');return result;};
     const backup={...p,nip44enc:(...args)=>guardedCall(creator.encrypt,...args),nip44dec:(...args)=>guardedCall(creator.decrypt,...args),signTemplate:(...args)=>guardedCall(creator.sign,...args),relayPublishTo:(...args)=>guardedCall(p.relayPublishTo,...args)};
-    if(!await persistArmadaMembership(backup,draft))throw new Error('Owner membership backup was not accepted');
+    if(!await persistArmadaMembership(backup,draft,{join:true}))throw new Error('Owner membership backup was not accepted');
     const {api,context}=await ownedInviteContext(p,draft,creator.isCurrent);
     const entry={token:made.secrets.token,signer_sk:made.secrets.linkSignerSk,community_id:made.communityId,url:made.url,created_at:Math.floor(Date.now()/1000)};
     /* THE COMMUNITY IS NOT HOSTAGE TO ITS INVITE LIST. Remembering the link's signing key in the
@@ -7058,7 +7084,7 @@
       dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
     ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const pending=room.inviteListPending||''; delete room.inviteListPending; const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); /* made here = lives here alone: ask the node to replicate it at once, not at the next Concord start */ try{const cw=roomControls.get(room.communityId||room.naddr)||((room.cord&&room.cord.events)||[]).filter(e=>e&&e.kind===1059);void ensureMirror(p,room,room.cord.bundle,cw);}catch(_){} p.copyValue(shareableInviteUrl(p,room.url)); p.toast(pending?'public community created — invite link copied; '+pending:'public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const icon=normalizeIcon($('#cc-community-icon').value); let room=await mintPublicRoom(p,name,/^(https?|blob):/i.test(icon)?'':icon); const pending=room.inviteListPending||''; delete room.inviteListPending; const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room,{join:true}); /* made here = lives here alone: ask the node to replicate it at once, not at the next Concord start */ try{const cw=roomControls.get(room.communityId||room.naddr)||((room.cord&&room.cord.events)||[]).filter(e=>e&&e.kind===1059);void ensureMirror(p,room,room.cord.bundle,cw);}catch(_){} p.copyValue(shareableInviteUrl(p,room.url)); p.toast(pending?'public community created — invite link copied; '+pending:'public community created — invite link copied'); if(/^(https?|blob):/i.test(icon))void saveCommunitySettings(p,room,{name:room.name,description:'',icon}).then(()=>render()).catch(e=>p.toast('the community icon was not saved: '+(e&&e.message||e))); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     /* From the device: the picked file becomes a blob: URL in the same box, and saving turns it into
      * the encrypted ImageRef (sealImageRef) — one path for a typed URL and an upload. */
@@ -7525,7 +7551,7 @@
     $$('[data-cc-review-invites]').forEach(b=>b.onclick=()=>showDirectInvitations().catch(e=>p.toast(e.message||String(e))));
     const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(saved()[state.community]);   // the room open NOW — `current` is the header renderer's, not in scope here
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; { const j=$('#cc-join'); if(j)j.classList.add('hidden'); } go.disabled=false; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
-    const acceptInvite=async(raw,room,direct=false,onSaved=null)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); if(onSaved)try{onSaved();}catch(_){} state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
+    const acceptInvite=async(raw,room,direct=false,onSaved=null)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); if(onSaved)try{onSaved();}catch(_){} state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room,{join:true});
       /* ANNOUNCE THE JOIN. Only the Discover list published the guestbook Join (CORD-02 §5), so
        * somebody who joined through an invite link or a direct invite — the ordinary way into a
        * Vector community — arrived silently: Vector draws "X has joined" from that kind-3306 and from
@@ -7643,7 +7669,7 @@
            * in the community that was open before -- Join "loads the other community and quickly closes". */
           if(joined>=0)activeSet(String(joined));}
         else if(selected)state.community=latest.findIndex(x=>sameRoom(x,selected));
-        await persistArmadaMembership(p,latest[joined]);void publishGuestbook(p,latest[joined],'join');await hydrateRoomStreams(p,joined);p.toast('community joined');
+        await persistArmadaMembership(p,latest[joined],{join:true});void publishGuestbook(p,latest[joined],'join');await hydrateRoomStreams(p,joined);p.toast('community joined');
       }catch(e){p.toast('could not load community: '+(e&&e.message||e));}
       finally{if(sameRoom(saved()[state.community],v))enterChatBottom(true);}
     });

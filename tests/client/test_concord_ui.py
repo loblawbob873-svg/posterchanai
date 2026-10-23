@@ -230,11 +230,11 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
 
 
 def test_created_and_joined_communities_survive_browser_storage_loss():
-    assert 'async function persistArmadaMembership(p,room)' in CONCORD
+    assert 'async function persistArmadaMembership(p,room,opts)' in CONCORD
     # Actual encryption, signing, fragments and cross-device recovery are exercised by
     # test_concord_membership_fragments.py and test_concord_leave_durability.py.
     assert 'await cordWriteMembership(p,list=>' in CONCORD
-    assert 'await persistArmadaMembership(p,room)' in CONCORD
+    assert 'await persistArmadaMembership(p,room,{join:true})' in CONCORD
     assert 'recoverOwnedInvite(p,item)' in CONCORD
     assert "item.source.pubkey!==viewer.pubkey" in CONCORD
 

@@ -45,7 +45,7 @@ def _fn(header):
 
 def _filter_admits(rooms):
     """RUN the shipped `wanted` filter of persistArmadaMemberships under node, per room."""
-    body = _fn("  async function persistArmadaMemberships(p,rooms){")
+    body = _fn("  async function persistArmadaMemberships(p,rooms,opts={}){")
     m = re.search(r"\.filter\((room=>.*?)\);\n", body, re.S)
     assert m, "persistArmadaMemberships no longer filters the rooms it is given"
     js = ("function roomIdentity(room){ return String(room&&(room.communityId||room.naddr||room.url)||''); }\n"
@@ -75,7 +75,7 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
     was written for; only the spelling of the key moved."""
 
     def test_persist_no_longer_demands_a_community_id(self):
-        body = _fn("  async function persistArmadaMemberships(p,rooms){")
+        body = _fn("  async function persistArmadaMemberships(p,rooms,opts={}){")
         self.assertNotIn("!room.communityId", body,
                          "a room joined by invite link has none, and refusing it is the bug")
         # A room carrying its bundle (every invite join does) is admitted without a communityId.
@@ -96,7 +96,7 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
             None,
         ]), [False, True, True, False],
             "a room with no invite url and no key material must be filtered out, not written keyless")
-        body = _fn("  async function persistArmadaMemberships(p,rooms){")
+        body = _fn("  async function persistArmadaMemberships(p,rooms,opts={}){")
         self.assertIn("invite_ref:room.url", body)
 
     def test_leaving_uses_the_same_identity(self):
@@ -108,7 +108,7 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
         self.assertTrue(leave_key, "leave no longer derives a wire key")
         self.assertIn("tombs.set(wireId,", body)
         self.assertIn("entries.delete(wireId)", body)
-        persist = _fn("  async function persistArmadaMemberships(p,rooms){")
+        persist = _fn("  async function persistArmadaMemberships(p,rooms,opts={}){")
         join_key = _key_sources(persist, "cid")
         self.assertEqual(leave_key[:len(join_key)], join_key,
                         "leave keys its tombstone on %r but join keys the entry on %r -- a left room "
@@ -131,7 +131,7 @@ class TestOneWritePerPass(unittest.TestCase):
     """
 
     def test_the_list_is_the_unit_of_work(self):
-        body = _fn("  async function persistArmadaMemberships(p,rooms){")
+        body = _fn("  async function persistArmadaMemberships(p,rooms,opts={}){")
         self.assertEqual(body.count("cordWriteMembership("), 1,
                          "more than one write per call is the race again")
         self.assertNotRegex(body, r"p\.publish\(|membershipEvents\(",
@@ -147,8 +147,8 @@ class TestOneWritePerPass(unittest.TestCase):
         self.assertIn("membershipWrites.set(owner,job)", writer)
 
     def test_the_single_room_entry_point_delegates(self):
-        self.assertIn("async function persistArmadaMembership(p,room){ return "
-                      "persistArmadaMemberships(p,[room]); }", CONCORD,
+        self.assertIn("async function persistArmadaMembership(p,room,opts){ return "
+                      "persistArmadaMemberships(p,[room],opts); }", CONCORD,
                       "two implementations would drift, and the join path uses the single one")
 
 

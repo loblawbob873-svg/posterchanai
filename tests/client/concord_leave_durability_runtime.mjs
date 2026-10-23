@@ -146,7 +146,7 @@ if (rooms.length) fail('a membership sync kept a room resurrected from an announ
 /* ---- Rejoining must still work, and must survive the tombstone that is still in the vault. */
 const c = boot();
 c.localStorage.setItem('pc.concord.rooms.v1.'+OWNER, JSON.stringify([room]));
-if (!(await c.PC.persistArmadaMembership(api(), room))) fail('re-joining could not publish membership');
+if (!(await c.PC.persistArmadaMembership(api(), room, { join: true }))) fail('re-joining could not publish membership');
 const d = boot();
 await d.PC.syncArmadaMemberships(api(), { pubkey: OWNER });
 rooms = JSON.parse(d.localStorage.getItem('pc.concord.rooms.v1.'+OWNER) || '[]');
