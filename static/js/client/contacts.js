@@ -30,6 +30,10 @@
     // Did the LAST load fetch every book? Separate from loadedOk, which is about history: after one
     // good load, loadedOk is true for ever and cannot say that THIS load came back short.
     partial:false,
+    // Books whose cards the LAST load could not fetch, each with the reason. A failed book with no copy
+    // on this device is NOT an empty book: drawn as "No contacts in this book yet" it told a fresh
+    // device that the address book had been emptied.
+    failed:{},
     scroll:0,
   };
 
@@ -47,7 +51,7 @@
       if(stateOwner === next) return;
       stateOwner = next; ++loadEpoch; namesCheckedAt = null; _nameLoad = null;
       Object.assign(S, {ready:false, enabled:null, books:[], book:'', cards:{}, q:'', scroll:0,
-        loading:false, error:'', stale:'', loadedOk:false, partial:false, fromCache:false,
+        loading:false, error:'', stale:'', failed:{}, loadedOk:false, partial:false, fromCache:false,
         rev:(S.rev || 0) + 1});
     }
 
@@ -163,14 +167,16 @@
          * book that failed is kept (blanking it on screen helps nobody either), and the sweep is told
          * this load was partial. Refusing to reconcile until a whole one lands costs a stale row on
          * the phone; the alternative cost somebody their phone book, twice. */
-        const got = {};
+        const got = {}, failed = {};
         let whole = true;
         for(const b of S.books){
           try{ got[b.id] = (await api('/api/contacts/cards?book=' + encodeURIComponent(b.id))).cards || []; }
-          catch(_){ whole = false; got[b.id] = S.cards[b.id] || []; }
+          catch(e){ whole = false; got[b.id] = S.cards[b.id] || [];
+                    failed[b.id] = (e && e.message) || 'the server could not be reached'; }
           if(!current()) return;
         }
         S.cards = got;
+        S.failed = failed;
         S.rev = (S.rev || 0) + 1;
         S.partial = !whole;     // this load, not the screen's whole history — see the sweep
         S.fromCache = false;    // this came from the server; it may speak for deletions again
@@ -216,7 +222,7 @@
           <button class="btn btn-cyan small" id="ct-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Contact</button>
           <button class="btn btn-ghost small" id="ct-menu" aria-label="Contact options"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
         </div>
-        <div class="ct-count muted small">${S.q ? `${n} of ${total}` : `${total} contact${total===1?'':'s'}`}</div>
+        <div class="ct-count muted small">${(!total && S.failed[S.book]) ? 'not loaded' : S.q ? `${n} of ${total}` : `${total} contact${total===1?'':'s'}`}</div>
       </div>`;
     }
 
@@ -245,6 +251,10 @@
             <button class="btn btn-ghost small" id="ct-import2">Import .vcf</button>
           </div></div>`;
       }
+      if(!items.length && !(S.cards[S.book] || []).length && S.failed[S.book]){
+        return `<div class="empty ct-unloaded"><div class="ws-err">Could not load this addressbook — ${enc(S.failed[S.book])}</div>
+          <button class="btn btn-ghost small" id="ct-retry">Try again</button></div>`;
+      }
       if(!items.length){
         return `<div class="empty">${S.q ? 'No contact matches that.' : 'No contacts in this book yet.'}</div>`;
       }
@@ -272,7 +282,9 @@
              <b>Admin → Tools → Calendar server</b>. It runs inside this app — there is nothing to
              install — and your contacts are stored as encrypted Nostr events.</p></div>`;
       }
-      return `<div class="ws-err">${enc(S.error || 'could not load your contacts')}</div>`;
+      // A way to ask again WITHOUT leaving the screen: the node coming back is the common case.
+      return `<div class="ws-err">${enc(S.error || 'could not load your contacts')}</div>
+        <div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn-ghost small" id="ct-retry">Try again</button></div>`;
     }
 
     function paint(){
@@ -285,7 +297,11 @@
       if(!inView()) return;
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="ct-wrap"><div class="spinner"></div></div>'; return; }
-      if(S.enabled === false || S.error){ feed.innerHTML = `<div class="ct-wrap">${offScreen()}</div>`; return; }
+      if(S.enabled === false || S.error){
+        feed.innerHTML = `<div class="ct-wrap">${offScreen()}</div>`;
+        const r = $('#ct-retry', feed); if(r) r.onclick = ()=>{ r.disabled = true; load(); };
+        return;
+      }
       /* The contacts ARE on screen; what failed is finding out whether they changed. A banner over
        * the list says so without taking the list away — the distinction the old error page could
        * not draw, because it replaced the whole view. */
@@ -303,6 +319,7 @@
       on('#ct-menu', openMenu);
       on('#ct-mkbook', ()=> makeBook());
       on('#ct-import2', ()=> openMenu());
+      on('#ct-retry', ()=>{ const r = $('#ct-retry', root); if(r) r.disabled = true; load(); });
       const pick = $('#ct-pick', root);
       if(pick) pick.onchange = ()=>{ S.book = pick.value; S.q = ''; paint(); };
       const q = $('#ct-q', root);

@@ -16,7 +16,7 @@ from app.database import SessionLocal, get_db
 from app.services.user_table import UserRow as User
 from app.services import instance_membership, user_table
 from app.services.relay_reader import Unavailable
-from app.services.telegram_client.manager import TGError, manager
+from app.services.telegram_client.manager import TGError, TGUnreachable, manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tgc", tags=["telegram-client"])
@@ -61,7 +61,8 @@ async def media_user(t: str = "", db: Session = Depends(get_db), user=Depends(ge
 
 
 def _err(e: TGError, code: int = 400):
-    return JSONResponse({"ok": False, "error": str(e)}, status_code=code)
+    # Telegram not reachable from here is "try again" (503), never a refusal: a 4xx would end the screen's retry.
+    return JSONResponse({"ok": False, "error": str(e)}, status_code=503 if isinstance(e, TGUnreachable) else code)
 
 
 class Phone(BaseModel):

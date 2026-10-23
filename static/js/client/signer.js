@@ -522,6 +522,15 @@ window.PCSignerFactory = function(dep){
             // ('access denied', 'permission denied', 'connection denied') that SHOULD retry.
             if(m.includes('rejected by user') || m.includes('user rejected') || m.includes('user declined')
                || m.includes('denied by user') || m.includes('request denied')) throw e;
+            /* A REQUEST THE USER IS WAITING ON THAT RAN ITS WHOLE CEILING IS ANSWERED, NOT RETRIED.
+             * By then the re-send ladder has already put the same event on the relay four times and
+             * revived the socket twice (see `again` in _rpc), so a second _rpc is not a retry, it is a
+             * second 120s ceiling: measured with the signer device closed mid-post, "action failed:
+             * signer request timed out" arrived after 241s, with one 3-second "waiting for your
+             * signer…" toast in four minutes. The BULK lane keeps its retry -- its 45s ceiling exists
+             * to hand the slot back and let this retry reconnect (see the ceiling comment). */
+            if(this._PRIORITY.has(method) && m.includes('signer request timed out'))
+              throw new Error('signer request timed out — your signer did not answer; is it open and online?');
             await new Promise(r=>setTimeout(r, 600));
             return await this._rpc(method, params, opts);
           }
@@ -932,6 +941,19 @@ window.PCSignerFactory = function(dep){
         try{ toast('Your signer is offering a different account than this session. '
                    + 'Switch it back, or sign in again as that account.'); }catch(_){}
         throw err;
+      }
+      /* THE SIGNATURE MUST BE OVER WHAT WE ASKED FOR. A remote signer hands back a whole event and it was
+       * published as received, so a signer that changed it -- other text, other tags, another KIND -- was
+       * posted under the user's name as if they had written it: measured with a signer that appended to the
+       * content, the app toasted "posted" over words the user never typed. Worse, every guard in publish()
+       * (the follow/mute-list shrink guard above all) ran on the TEMPLATE, before signing, so a returned
+       * kind 3 would have skipped all of them. The id commits to these fields, so comparing them is the
+       * whole check; created_at only when we set one (signers may stamp their own clock). */
+      if(!ev || ev.kind !== tpl.kind || String(ev.content == null ? '' : ev.content) !== String(tpl.content == null ? '' : tpl.content)
+         || JSON.stringify(ev.tags || []) !== JSON.stringify(tpl.tags || [])
+         || (tpl.created_at && ev.created_at !== tpl.created_at)){
+        try{ toast('Your signer returned something other than what you asked it to sign — nothing was published.'); }catch(_){}
+        throw new Error('the signer altered the event it was asked to sign');
       }
       return ev;
     },

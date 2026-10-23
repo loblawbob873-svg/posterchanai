@@ -491,8 +491,9 @@ class Device:
     """One Chrome profile = one phone or one desktop. `async with Device(node, sk_fill, phone=True) as d:`
     signs in by typing an nsec into the login screen and yields `d` (`d.b` is the CDP browser)."""
 
-    def __init__(self, node: Node, sk_fill=1, phone=False, pre_init='', port=None, profile=None, url=None):
-        self.node, self.sk_fill, self.phone = node, sk_fill, phone
+    def __init__(self, node: Node, sk_fill=1, phone=False, pre_init='', port=None, profile=None, url=None, login=True):
+        """`login=False`: stop at the login screen (a device that signs in some other way, e.g. a remote signer)."""
+        self.node, self.sk_fill, self.phone, self.login = node, sk_fill, phone, login
         self.url = url or node.origin + '/client'
         self.width, self.height = (390, 844) if phone else (1440, 900)
         self.pre_init = pre_init
@@ -553,6 +554,8 @@ class Device:
         await wait(b, '!!window.__PC && !!window.NostrTools && document.readyState==="complete"', 60,
                    'the client shell loaded')
         await wait(b, "document.body.classList.contains('guest') || !!__PC.me()", 60, 'the login screen')
+        if not self.login:
+            return self
         if not await b.js('!!__PC.me()'):
             await b.js("(()=>{const key=new Uint8Array(32).fill(%d);document.querySelector('#nsec-input').value="
                        "NostrTools.nip19.nsecEncode(key);document.querySelector('#btn-nsec-login').click()})()"

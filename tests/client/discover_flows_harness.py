@@ -261,13 +261,13 @@ class Scenario:
     def pk(self, i=0):
         return R.pubkey(self.fill(i))
 
-    async def device(self, i=0, phone=False, pre_init='', tag=''):
+    async def device(self, i=0, phone=False, pre_init='', tag='', login=True):
         """A device signed in to account `i` (a FRESH Chrome profile each time). `tag` names its relay sockets
         for Gate rules (device_of)."""
         js = pre_init + CLIENT_INIT
         if tag:
             js += TAG_JS.replace('__HOME__', str(self.n.home.port)).replace('__TAG__', tag)
-        d = R.Device(self.n, self.fill(i), phone=phone, pre_init=js)
+        d = R.Device(self.n, self.fill(i), phone=phone, pre_init=js, login=login)
         await d.__aenter__()
         self.open.append(d)
         return d
@@ -386,3 +386,30 @@ async def react(d, note_id, emoji='🔥'):
 async def open_note(d, note_id):
     await d.b.js("__PC.openThread(%s);true" % json.dumps(note_id))
     await wait(d, "!!%s" % (CARD % note_id), 30, 'the post opened')
+
+
+# --------------------------------------------------------------------------------------------- accounts
+async def add_account(d, sk_fill):
+    """The account card -> "＋ Add an account" -> the login screen -> type that account's nsec, as a person does.
+    The device then holds BOTH accounts in its remembered list (Session.accounts), signed in as the new one."""
+    await d.b.js("document.querySelector('#me-card').click();true")
+    await wait(d, "!!document.querySelector('.acct-pop [data-act=add]')", 15, 'the account menu')
+    await d.b.js("document.querySelector('.acct-pop [data-act=add]').click();true")
+    await wait(d, "!!window.__PC && document.body.classList.contains('guest') && !!document.querySelector('#nsec-input')",
+               60, 'the login screen for another account')
+    await d.b.js("(()=>{const key=new Uint8Array(32).fill(%d);document.querySelector('#nsec-input').value="
+                 "NostrTools.nip19.nsecEncode(key);document.querySelector('#btn-nsec-login').click();return true})()" % sk_fill)
+    await wait(d, "!!__PC.me() && __PC.me().pubkey===%s && Relay.status==='ok'" % json.dumps(R.pubkey(sk_fill)), 60,
+               'signed in as the added account')
+
+
+async def switch_account(d, sk_fill, before_reload=''):
+    """The account card -> the other account's row (the page reloads signed in as it). `before_reload`: JS run
+    right after the click, before the reload lands -- "a change made just before a switch"."""
+    pk = R.pubkey(sk_fill)
+    await d.b.js("document.querySelector('#me-card').click();true")
+    row = ".acct-pop .acct-p[data-pk=\"%s\"]" % pk
+    await wait(d, "!!document.querySelector(%s)" % json.dumps(row), 15, 'the other account in the menu')
+    await d.b.js("window.__pcBeforeSwitch=true;document.querySelector(%s).click();%s;true" % (json.dumps(row), before_reload))
+    await wait(d, "!window.__pcBeforeSwitch && !!window.__PC && !!__PC.me() && __PC.me().pubkey===%s && Relay.status==='ok'"
+               % json.dumps(pk), 60, 'signed in as the account switched to')

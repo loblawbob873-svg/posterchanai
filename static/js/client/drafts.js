@@ -106,6 +106,16 @@ window.PCDraftsFactory = function(dep){
           const merged=this._cap(Object.values(map));   // live never evicted by tombstones (see _cap)
           try{ localStorage.setItem(this.key(), JSON.stringify(merged)); }catch(_){}
           bumpDraft(); if(S.VIEW==='drafts') renderDrafts();
+          /* …AND SEND BACK WHAT ONLY THIS DEVICE HELD. A draft saved as the page went away -- the composer's
+           * pagehide save on a reload, an account switch, a closed tab, a service-worker update -- is written
+           * here and its push (`_sync`, 900 ms later) dies with the page. Nothing pushed it afterwards: the
+           * next load's pull merged it into localStorage and stopped, so it lived on this device only
+           * ("draft shows on phone, not desktop") until some unrelated draft happened to be saved. Measured:
+           * a post left in the composer at an account switch was still absent from the account's synced
+           * drafts after it came back. Only after a read that ANSWERED (r.ok above), and the server merges by
+           * id anyway, so this can only add what it lacks -- never replace what it has. */
+          const theirs={}; r.drafts.forEach(d=>{ if(d&&d.id) theirs[d.id]=d.ts||0; });
+          if(merged.some(d=>d&&d.id&&(!(d.id in theirs)||(d.ts||0)>theirs[d.id]))) this._sync(merged);
         } }catch(_){} },
   };
   // `#draft-badge` is the sidebar's Drafts row and stays drafts-only — it labels one thing.
