@@ -172,7 +172,7 @@ async def put_card(body: CardIn, current_user: User = Depends(get_current_user),
     uid = body.uid or caldav_store.uid_of_vcard(body.vcf) or secrets.token_hex(8)
     if "BEGIN:VCARD" not in (body.vcf or "").upper():
         raise HTTPException(status_code=400, detail="That is not a vCard.")
-    if not await caldav_store.put_item(db, current_user, body.book, uid, body.vcf, "VCARD"):
+    if not await caldav_store.put_item(db, current_user, body.book, uid, body.vcf, "VCARD", keep_href=True):
         raise HTTPException(status_code=502, detail="Could not save the contact.")
     _forget(current_user.username)
     return {"ok": True, "uid": uid}

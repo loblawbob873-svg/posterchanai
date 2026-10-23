@@ -889,7 +889,14 @@ would have handled it fine).
   raised NameError and every request 502'd); (4) an app-side write calls `storage.forget_user()` or a
   calendar made in the web UI is invisible to a phone until the app restarts; (5) items are stored as
   the client PUT them (a whole VCALENDAR each), so export UNWRAPS them or the file nests calendars;
-  (6) import updates by UID rather than duplicating, so a re-import converges.
+  (6) import updates by UID rather than duplicating, so a re-import converges;
+  (7) **a phone's write goes to the RELAY FIRST and its answer is the HTTP answer** (`storage.Collection`
+  raises `MirrorRefused` → 5xx, nothing written to disk): mirrored loosely after the disk write, a refused
+  DELETE was told 200 and came back on every device, a refused PUT was told 201 and later reconciled away;
+  (8) an item keeps the `href` the phone PUT it under (`rec["href"]`, carried by web edits) — written back
+  under its UID the phone got a duplicate; (9) a phone-made collection carries Radicale's `tag`, not `kind`
+  (`kind_of` reads both) — read as a calendar, a phone's address book turned into one.
+  `tests/test_dav_wire_flows.py` drives all of it with DAVx5's own request bodies.
   **An import stores a RESOURCE, not a component**, and the three ways that differ were each measured
   silent on a real 707-event Radicale export: a `VTIMEZONE` has no UID, so keying on UID dropped every
   one (577 events kept a `TZID` referring to a definition no longer in the file — invalid to a strict
@@ -1444,6 +1451,10 @@ would have handled it fine).
   bill parse opens Budget's editable review (`PCBudget.reviewParsed`). The actions row is a GRID and
   `check_mail_mobile.py` pins its button count — new AI actions join the MENU, never the row.
   `tests/test_mail_ai.py`.
+  **Mail over the wire** (`tests/test_mail_wire_flows.py`, `tests/client/test_mail_wire_full_app.py`; real SMTP and
+  IMAP servers on loopback in `tests/mail_wire_servers.py`): the SMTP envelope is every PARSED address (two people in
+  To used to go out as one `RCPT TO:<a@x, b@y>`, refused by every MTA), Bcc never travels in the message, a reply sends
+  the To/Cc/Subject the composer showed, and a failed send says the server's own reason and is saved to Drafts.
   Retired commands (`budget`/`bills`/`pay`/`addbill`/`finance`) are kept in `RETIRED_COMMANDS`, matched
   by `parse_command` AND short-circuited in `execute_command` (Telegram never calls `parse_command`),
   so they answer "it moved to Discover → Budget" instead of falling through to the LLM, which would

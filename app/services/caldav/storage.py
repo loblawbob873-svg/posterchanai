@@ -46,6 +46,21 @@ def _safe_name(uid: str) -> str:
     return "".join(c for c in uid if c.isalnum() or c in "-_.@") or "item"
 
 
+def _stem_of(rec: dict, uid: str, ext: str) -> str:
+    """The file an item is served under: the href the client PUT it as (a phone picks its own, and it is
+    often not the UID), else its UID. Written back under any other name, the phone sees its event
+    deleted and a new copy created -- for a while BOTH, which is a duplicate on the phone's calendar."""
+    href = str(rec.get("href") or "")
+    if href.endswith(ext):
+        from radicale import pathutils
+        try:
+            if pathutils.is_safe_filesystem_path_component(href):
+                return href[:-len(ext)]
+        except Exception:
+            pass
+    return _safe_name(uid)
+
+
 def collection_props(meta: dict, cal_id: str):
     """(Radicale props, item file extension) for one collection.
 
@@ -115,71 +130,95 @@ def _with_user(username: str, fn):
         db.close()
 
 
+class MirrorRefused(Exception):
+    """The relay -- the RECORD -- did not take a phone's write or delete. Raised out of the storage call so
+    Radicale answers the request with a 5xx and the client keeps the change and retries it. Deliberately
+    not a ValueError: Radicale's PUT turns those into 400 Bad Request, which a client takes as "your data
+    is wrong" and may drop."""
+
+
 class Collection(multifilesystem.Collection):
-    """A calendar. Every mutation lands on disk (Radicale's rules) and in an event (the record)."""
+    """A calendar. Every mutation lands in an event (the record) FIRST, then on disk (Radicale's rules).
+
+    THE RECORD FIRST, AND ITS ANSWER IS THE ANSWER. This used to write the disk and then mirror,
+    logging a mirror failure and answering the phone 201/200 regardless ("a mirror failure must never
+    lose the client's write"). It lost it anyway, later and silently: a DELETE the relay refused was
+    told 200, the event stayed on the relay, and the next reconcile served it straight back -- the
+    deleted appointment reappearing on every device; a PUT the relay refused was told 201, existed only
+    in this cache, never reached the web client, and the reconcile then removed it as "no longer on the
+    relay". Now a write the relay did not take fails the request and changes nothing on disk, so the
+    phone still holds the change and sends it again on its next sync -- the strict-delete rule the web
+    routes already follow (calendar.py / contacts.py), on the path phones use."""
 
     def upload(self, href, item):
-        out = super().upload(href, item)
-        try:
-            self._mirror_put(href)
-        except Exception as e:            # a mirror failure must never lose the client's write
-            logger.warning("[caldav] mirror of %s failed: %s", href, e)
-        return out
+        self._mirror_put(href, item)          # raises MirrorRefused: nothing written, the client retries
+        return super().upload(href, item)
 
     def delete(self, href=None):
         # Read the uid BEFORE the delete, or there is nothing left to address the event by.
         uids = []
-        try:
-            if href is None:
-                uids = [i.uid for i in self.get_all() if getattr(i, "uid", None)]
-            else:
+        if href is not None:
+            try:
                 it = self._get(href) if hasattr(self, "_get") else None
-                uid = getattr(it, "uid", None) or os.path.splitext(href)[0]
-                uids = [uid] if uid else []
-        except Exception:
-            pass
-        super().delete(href)
-        try:
-            user, cal = _user_of(self.path), _calendar_of(self.path)
-            if user and cal:
-                from app.services import caldav_store
+            except Exception:
+                it = None
+            uid = getattr(it, "uid", None) or os.path.splitext(href)[0]
+            uids = [uid] if uid else []
+        user, cal = _user_of(self.path), _calendar_of(self.path)
+        if user and cal:
+            from app.services import caldav_store
+            try:
                 if href is None:
-                    _with_user(user, lambda db, u: _run(caldav_store.delete_calendar(db, u, cal)))
+                    _with_user(user, lambda db, u: _run(caldav_store.delete_calendar(db, u, cal, strict=True)))
                 else:
                     for uid in uids:
-                        _with_user(user, lambda db, u, _uid=uid: _run(
-                            caldav_store.delete_item(db, u, cal, _uid)))
-        except Exception as e:
-            logger.warning("[caldav] mirror of delete %s failed: %s", href, e)
+                        ok = _with_user(user, lambda db, u, _uid=uid: _run(
+                            caldav_store.delete_item(db, u, cal, _uid, strict=True)))
+                        if not ok:
+                            raise MirrorRefused(f"the relay refused the deletion of {cal}/{uid}")
+            except MirrorRefused:
+                logger.warning("[caldav] delete %s/%s refused by the relay; told the client", cal, href)
+                raise
+            except Exception as e:
+                # Part of a collection may have gone before the relay stopped answering: re-read this
+                # account on the next request rather than serve what is half deleted.
+                if getattr(e, "deleted", 0):
+                    forget_user(user)
+                logger.warning("[caldav] delete %s/%s not mirrored (%s); told the client", cal, href, e)
+                raise MirrorRefused(f"the delete of {cal}/{href or ''} did not reach the relay: {e}") from e
+        super().delete(href)
 
     def set_meta(self, props):
-        out = super().set_meta(props)
-        try:
-            user, cal = _user_of(self.path), _calendar_of(self.path)
-            if user and cal:
-                from app.services import caldav_store
-                meta = dict(self.get_meta() or {})
-                _with_user(user, lambda db, u: _run(caldav_store.put_calendar(db, u, cal, meta)))
-        except Exception as e:
-            logger.warning("[caldav] mirror of props for %s failed: %s", self.path, e)
-        return out
+        user, cal = _user_of(self.path), _calendar_of(self.path)
+        if user and cal:
+            from app.services import caldav_store
+            meta = dict(props or {})
+            try:
+                ok = _with_user(user, lambda db, u: _run(caldav_store.put_calendar(db, u, cal, meta)))
+            except Exception as e:
+                raise MirrorRefused(f"the properties of {cal} did not reach the relay: {e}") from e
+            if not ok:
+                raise MirrorRefused(f"the relay refused the properties of {cal}")
+        return super().set_meta(props)
 
     # -- helpers -------------------------------------------------------------------------------
-    def _mirror_put(self, href):
+    def _mirror_put(self, href, item):
         user, cal = _user_of(self.path), _calendar_of(self.path)
-        if not (user and cal):
-            return
-        item = None
-        for it in self.get_multi([href]):
-            item = it[1] if isinstance(it, tuple) else it
-            break
-        if item is None:
+        if not (user and cal) or item is None:
             return
         from app.services import caldav_store
         ics = item.serialize()
         uid = getattr(item, "uid", None) or os.path.splitext(href)[0]
         comp = getattr(getattr(item, "component", None), "name", None) or "VEVENT"
-        _with_user(user, lambda db, u: _run(caldav_store.put_item(db, u, cal, uid, ics, comp)))
+        try:
+            ok = _with_user(user, lambda db, u: _run(
+                caldav_store.put_item(db, u, cal, uid, ics, comp, href=href)))
+        except Exception as e:
+            logger.warning("[caldav] write of %s/%s not mirrored (%s); told the client", cal, href, e)
+            raise MirrorRefused(f"the write of {cal}/{href} did not reach the relay: {e}") from e
+        if not ok:
+            logger.warning("[caldav] write of %s/%s refused by the relay; told the client", cal, href)
+            raise MirrorRefused(f"the relay refused the write of {cal}/{href}")
 
 
 class Storage(multifilesystem.Storage):
@@ -278,7 +317,7 @@ class Storage(multifilesystem.Storage):
                 pass                                   # a vCard is stored exactly as it is served
             elif "BEGIN:VCALENDAR" not in body.upper():
                 body = caldav_store.wrap_ics([body], name)
-            wanted[_safe_name(uid)] = body
+            wanted[_stem_of(rec, uid, ext)] = body
 
         for fname, body in wanted.items():
             path = os.path.join(root, fname + ext)

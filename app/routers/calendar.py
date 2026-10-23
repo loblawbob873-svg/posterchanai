@@ -320,7 +320,7 @@ async def put_item(body: ItemIn, current_user: User = Depends(get_current_user),
     _require_enabled()
     uid = body.uid or caldav_store.uid_of(body.ics) or secrets.token_hex(8)
     comp = caldav_store.component_of(body.ics)
-    if not await caldav_store.put_item(db, current_user, body.cal, uid, body.ics, comp):
+    if not await caldav_store.put_item(db, current_user, body.cal, uid, body.ics, comp, keep_href=True):
         raise HTTPException(status_code=502, detail="Could not save the event.")
     _forget(current_user.username)
     return {"ok": True, "uid": uid}

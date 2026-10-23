@@ -43,7 +43,14 @@ KIND_ADDRESSBOOK = "VADDRESSBOOK"
 def kind_of(meta: dict) -> str:
     """A collection's kind, defaulting to a calendar — every document written before addressbooks
     existed has no `kind` field and is one."""
-    k = str((meta or {}).get("kind") or "").upper()
+    # `tag` is RADICALE's own name for it, and it is what a collection a PHONE made carries: an
+    # addressbook created over CardDAV (MKCOL, DAVx5 "Create address book") is mirrored from its
+    # Radicale props, `{"tag": "VADDRESSBOOK", "D:displayname": ...}`, with no `kind`. Read only as
+    # `kind`, it was a CALENDAR: missing from Contacts, listed in Calendar, and on the next reconcile
+    # served back to the phone as a calendar whose cards were rewritten as `.ics` files Radicale
+    # cannot parse -- the address book vanished from the phone that made it.
+    m = meta or {}
+    k = str(m.get("kind") or m.get("tag") or "").upper()
     return KIND_ADDRESSBOOK if k == KIND_ADDRESSBOOK else KIND_CALENDAR
 
 # A `d`-tag PREFIX is not a thing a Nostr filter can match, so a namespace scan pulls the user's
@@ -70,11 +77,27 @@ def enabled() -> bool:
 
 # ---------------------------------------------------------------------------------- items
 
-async def put_item(db, user, calendar: str, uid: str, ics: str, component: str = "VEVENT") -> bool:
-    """Store one iCalendar item. `ics` is the component's own text, as the client sent it."""
+async def put_item(db, user, calendar: str, uid: str, ics: str, component: str = "VEVENT", *,
+                   href: str | None = None, keep_href: bool = False) -> bool:
+    """Store one iCalendar item. `ics` is the component's own text, as the client sent it.
+
+    `href` is the resource name a CalDAV client PUT it under (`<something>.ics`). A phone chooses it and
+    it need not be the UID (DAVx5 and iOS mint their own), and the reconcile must write the item back
+    under the SAME name -- written under the UID instead, a web edit gave the phone a second copy of
+    the event beside the one it made, and then a delete of its own copy. `keep_href` (an edit from the
+    web, which knows nothing of hrefs) carries the stored one forward: one point read, by d-tag."""
     sk = user_storage_seckey(db, user)
+    d = f"{NS_ITEM}{calendar}:{uid}"
+    if href is None and keep_href:
+        try:
+            old = await store.get_doc(_port(db), d, seckey=sk)
+            href = (old or {}).get("href") if isinstance(old, dict) else None
+        except Exception:
+            href = None          # unreadable: the item is written under its UID, as before
     rec = {"cal": calendar, "uid": uid, "ics": ics, "component": component, "ts": time.time()}
-    return await store.put_doc(_port(db), sk, f"{NS_ITEM}{calendar}:{uid}", rec)
+    if href:
+        rec["href"] = href
+    return await store.put_doc(_port(db), sk, d, rec)
 
 
 async def get_items(db, user, calendar: str, *, strict: bool = False) -> list:
@@ -120,6 +143,15 @@ async def list_collections(db, user, *, kind: str | None = None, strict: bool = 
     sk = user_storage_seckey(db, user)
     docs = await store.list_docs(_port(db), NS_META, seckey=sk, strict=strict, limit=_SCAN_LIMIT)
     out = [v for v in docs.values() if isinstance(v, dict) and v.get("id")]
+    for c in out:
+        # A collection a PHONE made carries Radicale's prop names (MKCALENDAR/MKCOL set `D:displayname`,
+        # `ICAL:calendar-color`); the web client reads `displayname`/`color`, so "Family" drew as its
+        # directory id. Answered under both names; the stored document is untouched.
+        if not c.get("displayname") and c.get("D:displayname"):
+            c["displayname"] = c["D:displayname"]
+        if not c.get("color") and c.get("ICAL:calendar-color"):
+            c["color"] = c["ICAL:calendar-color"]
+        c.setdefault("kind", kind_of(c))
     if kind:
         out = [c for c in out if kind_of(c) == kind]
     out.sort(key=lambda c: (c.get("displayname") or c.get("id") or ""))

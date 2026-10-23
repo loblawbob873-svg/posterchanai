@@ -1723,6 +1723,7 @@ window.PCMailFactory = function(dep){
           <button class="modal-x" id="cm-close" title="Close" aria-label="Close">&#215;</button>
           <button class="btn btn-neon small" id="cm-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Send</button></div>
         ${fromSel}
+        <div class="muted small cm-fail hidden" id="cm-fail" role="alert"></div>
         <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
@@ -1792,6 +1793,19 @@ window.PCMailFactory = function(dep){
       };
       { const nb=$('#cm-nmail'), nr=$('#cm-nmail-row');
         if(nb&&nr) nb.onclick=()=>{ nr.classList.toggle('hidden'); nb.classList.toggle('btn-cyan', !nr.classList.contains('hidden')); }; }
+      /* A SEND THAT FAILED IS NEVER A LOST MESSAGE. The composer stays open with the text in it (Send again
+       * once the reason is fixed), the reason is said in the server's own words, and the message is also
+       * saved to Drafts -- so closing the window, or the tab dying, does not take it with it. If the draft
+       * cannot be saved either (the node is unreachable), the composer is still open and says so. */
+      const keepAfterFailure=async(why)=>{
+        const btn=$('#cm-send'); if(btn){ btn.disabled=false; btn.innerHTML=_mi('send')+'Send'; }
+        let kept=false;
+        try{ const d=await self.api('/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(), draft:{...gather(), uid:draftUid}})});
+          if(d&&d.ok){ draftUid=d.uid; kept=true; } }catch(_){}
+        const note=$('#cm-fail'); const text='Not sent: '+why+(kept?' \u2014 kept in Drafts.':' \u2014 the message is still here; it could not be saved to Drafts.');
+        if(note){ note.textContent=text; note.classList.remove('hidden'); }
+        toast(text);
+      };
       $('#cm-send').onclick=async()=>{
         const payload={account:sendAcct(), ...gather()};
         /* nostr-mail: wrap the body in the spec's one producible format (NIP-44 unsigned + SEAL)
@@ -1820,9 +1834,15 @@ window.PCMailFactory = function(dep){
         else if(opts.mode==='forward'){ path='/forward'; payload.uid=m.uid; payload.folder=opts.folder; }
         if((path==='/send'||path==='/forward') && !payload.to){ toast('add a recipient'); return; }
         const btn=$('#cm-send'); btn.disabled=true; btn.textContent='Sending…';
+        { const n=$('#cm-fail'); if(n){ n.textContent=''; n.classList.add('hidden'); } }
         const _nmailDm = payload._nmailDm; delete payload._nmailDm;   // client-side only — never sent to the server
         try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-          if(r.ok){ toast('Sent');
+          if(r.ok){
+            /* Accepted for SOME recipients: it went out (a retry would send it again to everybody who got it),
+             * but the ones the server turned away are named -- "Sent" alone told the person they had reached
+             * everyone. */
+            const refused=Array.isArray(r.refused)?r.refused:[];
+            toast(refused.length ? 'Sent \u2014 but the server refused '+refused.map(x=>x.address+(x.reason?' ('+x.reason+')':'')).join(', ') : 'Sent');
             if(_nmailDm){
               try{ sendDm(_nmailDm, '\ud83d\udce7\ud83d\udd10 I sent you an encrypted email'
                 + (payload.subject ? ': \u201c' + payload.subject + '\u201d' : '')
@@ -1835,8 +1855,8 @@ window.PCMailFactory = function(dep){
             // refreshed when you happened to be LOOKING at Sent — so a message you had just sent
             // was in Thunderbird and missing here, which reads as "it never sent".
             self.syncSent(sendAcct()); }
-          else { toast(r.error||'send failed'); btn.disabled=false; btn.innerHTML=_mi('send')+'Send'; } }
-        catch(_){ toast('send failed'); btn.disabled=false; btn.innerHTML=_mi('send')+'Send'; }
+          else { await keepAfterFailure(r.error||'send failed'); } }
+        catch(e){ await keepAfterFailure('send failed'+((e&&e.message)?': '+e.message:'')); }
       };
     },
     async sync(manual){

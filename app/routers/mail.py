@@ -720,6 +720,18 @@ def _decode_attachments(items) -> list:
     return out
 
 
+def _sent_answer(ok, report: dict) -> dict:
+    """What a send tells the composer. A refusal SAYS WHY (the server's own words): a bare "send failed"
+    left a person retrying a password problem, or a typo in an address, for ever. `refused` lists the
+    recipients the server turned away from a message it accepted for the rest."""
+    out = {"ok": bool(ok)}
+    if not ok:
+        out["error"] = report.get("error") or "send failed"
+    if report.get("refused"):
+        out["refused"] = report["refused"]
+    return out
+
+
 @router.post("/send")
 async def mail_send(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
@@ -728,11 +740,12 @@ async def mail_send(request: Request, db: Session = Depends(get_db), current_use
         raise HTTPException(status_code=404, detail="Account not found")
     if not (d.get("to") or "").strip():
         return JSONResponse({"ok": False, "error": "Recipient required"}, status_code=400)
+    report: dict = {}
     ok = await _asyncio.to_thread(
         send_email, acc, d.get("to", ""), d.get("subject", ""), d.get("body", ""),
         d.get("html_body"), _decode_attachments(d.get("attachments")), None,
-        d.get("cc", ""), d.get("bcc", ""))
-    return {"ok": bool(ok)}
+        d.get("cc", ""), d.get("bcc", ""), report=report)
+    return _sent_answer(ok, report)
 
 
 @router.post("/reply")
@@ -741,10 +754,14 @@ async def mail_reply(request: Request, db: Session = Depends(get_db), current_us
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
+    report: dict = {}
+    # The composer's To/Cc/Subject are sent as the person left them ("to"/"cc"/"subject" absent = an
+    # older client: worked out from the original, as before).
     ok = await _asyncio.to_thread(
         reply_to_message, current_user.id, db, acc.email, d.get("uid"), d.get("body", ""),
-        bool(d.get("reply_all")), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"))
-    return {"ok": bool(ok)}
+        bool(d.get("reply_all")), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"),
+        d.get("to"), d.get("cc"), d.get("subject"), report)
+    return _sent_answer(ok, report)
 
 
 @router.post("/forward")
@@ -755,10 +772,12 @@ async def mail_forward(request: Request, db: Session = Depends(get_db), current_
         raise HTTPException(status_code=404, detail="Account not found")
     if not (d.get("to") or "").strip():
         return JSONResponse({"ok": False, "error": "Recipient required"}, status_code=400)
+    report: dict = {}
     ok = await _asyncio.to_thread(
         forward_message, current_user.id, db, acc.email, d.get("uid"), d.get("to", ""),
-        d.get("body", ""), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"))
-    return {"ok": bool(ok)}
+        d.get("body", ""), _decode_attachments(d.get("attachments")), d.get("folder", "INBOX"),
+        d.get("subject"), d.get("cc", ""), report)
+    return _sent_answer(ok, report)
 
 
 @router.get("/dl/{account_hint}/{folder}/{uid}/{idx}")

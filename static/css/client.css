@@ -5098,6 +5098,7 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
   display:flex;flex-direction:column;gap:0}
 /* Title and Send share the header row; the body below it is the only thing that grows. */
 .mail-compose-modal .cm-head{flex:0 0 auto;display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.mail-compose-modal .cm-fail{color:var(--danger);margin:0 0 8px;overflow-wrap:anywhere}
 .mail-compose-modal .cm-head h3{margin:0;flex:0 1 auto;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .mail-compose-modal .cm-head .spacer{flex:1}

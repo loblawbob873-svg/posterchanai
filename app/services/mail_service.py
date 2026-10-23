@@ -16,6 +16,8 @@ import json
 import logging
 import re
 import smtplib
+import socket
+import ssl
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
@@ -1134,6 +1136,10 @@ def send_email(
     #: exactly the 'delivered, filed, and invisible' failure this module already warns about.
     #: MailAccount carries no user link, so only a caller holding the session can resolve it.
     sent_folder: str = "",
+    #: Filled with what happened, for a caller that shows it: `error` (why it was not sent, in words a
+    #: person can act on -- the server's own refusal included) and `refused` (recipients the server
+    #: turned away while accepting the rest). The bool stays the answer for every older caller.
+    report: Optional[dict] = None,
 ) -> bool:
     """Send an email via SMTP."""
     try:
@@ -1209,17 +1215,17 @@ def send_email(
                         part.set_payload(data)
                         encoders.encode_base64(part)
                         
-                        # Use RFC 2231 encoding for filenames with non-ASCII characters
-                        # This ensures proper handling of Unicode filenames
+                        # A NON-ASCII NAME IS RFC 2231 PERCENT-ENCODING, never an encoded-word inside it.
+                        # This wrote `filename*=UTF-8''=?utf-8?b?csOpc3Vtw6kucGRm?=` -- an RFC 2047 word
+                        # where RFC 2231 wants `r%C3%A9sum%C3%A9.pdf` -- so every recipient's client
+                        # (and Python's own parser) named "résumé.pdf" `=?utf-8?b?csOpc3Vtw6kucGRm?=`.
+                        # The (charset, language, value) form makes the library encode it correctly.
                         try:
                             safe_filename.encode('ascii')
-                            # ASCII filename - use simple format
-                            part.add_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+                            part.add_header("Content-Disposition", "attachment", filename=safe_filename)
                         except UnicodeEncodeError:
-                            # Non-ASCII filename - use RFC 2231 encoding
-                            from email.header import Header
-                            encoded_filename = Header(safe_filename, 'utf-8').encode()
-                            part.add_header("Content-Disposition", f'attachment; filename*=UTF-8\'\'{encoded_filename}')
+                            part.add_header("Content-Disposition", "attachment",
+                                            filename=("utf-8", "", safe_filename))
                         
                         msg.attach(part)
                         attachment_count += 1
@@ -1238,7 +1244,8 @@ def send_email(
 
         # Set headers - sanitize recipient to prevent header injection
         # Remove newlines and carriage returns from recipient (email headers can't contain these)
-        to_clean = to.replace("\n", " ").replace("\r", "").strip()
+        to_clean = _one_line(to)
+        cc, bcc = _one_line(cc), _one_line(bcc)
         msg["From"] = account.email
         msg["To"] = to_clean
         msg["Subject"] = subject
@@ -1261,14 +1268,13 @@ def send_email(
 
         if cc:
             msg["Cc"] = cc
-        if bcc:
-            msg["Bcc"] = bcc
+        # Bcc is NOT a header of the message that goes out (below): it is the envelope's business.
 
         # Threading headers for replies
         if reply_to_msg:
             if reply_to_msg.message_id:
-                msg["In-Reply-To"] = reply_to_msg.message_id
-                refs = reply_to_msg.references
+                msg["In-Reply-To"] = _one_line(reply_to_msg.message_id)
+                refs = " ".join((reply_to_msg.references or "").split())   # unfolded: one header line
                 if refs:
                     msg["References"] = f"{refs} {reply_to_msg.message_id}"
                 else:
@@ -1281,6 +1287,7 @@ def send_email(
         # SSRF protection
         if not validate_mail_server(smtp_server, smtp_port):
             logger.error(f"SMTP connection blocked: invalid server address {smtp_server}")
+            _fail(report, f"The mail server address {smtp_server} is not allowed (or does not resolve).")
             return False
 
         smtp = None
@@ -1299,12 +1306,17 @@ def send_email(
             smtp.login(account.email, account.password)
             logger.debug("SMTP authentication successful")
 
-            # Collect all recipients
-            recipients = [to_clean]
-            if cc:
-                recipients.extend([addr.strip() for addr in cc.split(",")])
-            if bcc:
-                recipients.extend([addr.strip() for addr in bcc.split(",")])
+            # THE ENVELOPE IS EVERY ADDRESS, PARSED -- never the To field as one string.
+            #
+            # `[to_clean]` handed smtplib "a@x, b@y" as ONE recipient, and it went out as
+            # `RCPT TO:<a@x, b@y>`, which every MTA refuses: a message to two people (the composer
+            # says "To (comma-separated)") failed outright, and with a Cc it was "Sent" to the Cc
+            # alone while both people it was written to got nothing. A comma inside a quoted display
+            # name ("Doe, Jane" <j@x>) is why this is getaddresses and not split(",").
+            recipients = _envelope(to_clean, cc, bcc)
+            if not recipients:
+                _fail(report, "There is no valid recipient address.")
+                return False
 
             # Verify connection is still active before sending
             # Note: Some servers don't support NOOP, so we'll skip this check
@@ -1312,20 +1324,60 @@ def send_email(
 
             # Send email
             logger.debug(f"Sending email to {recipients}")
-            smtp.sendmail(account.email, recipients, msg.as_string())
+            # BCC NEVER TRAVELS IN THE MESSAGE. `sendmail` sends the text it is given verbatim (only
+            # `send_message` strips Bcc), and this put a `Bcc:` header in it -- so every recipient
+            # could read who had been blind-copied. The copy filed in Sent below keeps it: that one
+            # is the sender's own record, and it is where a mail client shows who was Bcc'd.
+            refused = smtp.sendmail(account.email, recipients, msg.as_string())
+            if bcc:
+                msg["Bcc"] = bcc
+            if refused:
+                # Accepted for SOME recipients: it went out, so this is not a failure to retry (a
+                # retry re-sends it to everybody who got it), but nobody may be told it reached the
+                # ones the server turned away.
+                _note_refused(report, refused)
+                logger.warning("[mail] %s: delivered, but refused for %s", account.email, list(refused))
             logger.debug("Email sent successfully")
-            
-        except smtplib.SMTPConnectError as e:
-            logger.error(f"SMTP connection error: {e}. Server: {smtp_server}:{smtp_port}")
+
+        except smtplib.SMTPRecipientsRefused as e:
+            logger.error(f"SMTP refused every recipient: {e.recipients}. Server: {smtp_server}:{smtp_port}")
+            _note_refused(report, e.recipients)
+            _fail(report, "The mail server refused " + _refused_text(e.recipients))
             return False
         except smtplib.SMTPAuthenticationError as e:
             logger.error(f"SMTP authentication error: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, f"The mail server rejected the login ({_smtp_text(e.smtp_code, e.smtp_error)}) "
+                          "-- check this account's password in Mail settings.")
             return False
-        except smtplib.SMTPException as e:
+        except smtplib.SMTPDataError as e:
+            logger.error(f"SMTP refused the message: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, f"The mail server refused the message ({_smtp_text(e.smtp_code, e.smtp_error)}).")
+            return False
+        except smtplib.SMTPResponseException as e:
             logger.error(f"SMTP error sending email: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, f"The mail server said no ({_smtp_text(e.smtp_code, e.smtp_error)}).")
+            return False
+        except smtplib.SMTPNotSupportedError as e:
+            logger.error(f"SMTP server offers no STARTTLS: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, "The mail server does not offer a secure connection (STARTTLS), so the "
+                          "password was not sent.")
+            return False
+        except ssl.SSLError as e:
+            logger.error(f"SMTP TLS failure: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, f"The secure connection to the mail server failed ({e.reason or e}).")
+            return False
+        except (socket.timeout, TimeoutError) as e:
+            logger.error(f"SMTP timed out: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, "The mail server stopped answering. The message may not have been sent.")
+            return False
+        except (smtplib.SMTPException, OSError) as e:
+            logger.error(f"SMTP error sending email: {e}. Server: {smtp_server}:{smtp_port}")
+            _fail(report, f"Could not reach the mail server {smtp_server}:{smtp_port} "
+                          f"({getattr(e, 'strerror', None) or e}).")
             return False
         except Exception as e:
             logger.error(f"Error during SMTP connection/send: {e}. Server: {smtp_server}:{smtp_port}", exc_info=True)
+            _fail(report, f"Sending failed ({type(e).__name__}).")
             return False
         finally:
             # Always close the connection properly
@@ -1410,7 +1462,45 @@ def send_email(
 
     except Exception as e:
         logger.error(f"Error sending email: {e}")
+        _fail(report, f"Sending failed ({type(e).__name__}).")
         return False
+
+
+def _one_line(v) -> str:
+    """A header value on one line (no CR/LF: header injection), surrounding space trimmed."""
+    return " ".join(str(v or "").replace("\r", " ").replace("\n", " ").split())
+
+
+def _envelope(*fields) -> list:
+    """Every address in To/Cc/Bcc, parsed (quoted display names may hold commas), deduplicated."""
+    from email.utils import getaddresses
+    out = []
+    for _name, addr in getaddresses([f for f in fields if f]):
+        addr = (addr or "").strip()
+        if "@" in addr and addr.lower() not in {a.lower() for a in out}:
+            out.append(addr)
+    return out
+
+
+def _smtp_text(code, err) -> str:
+    if isinstance(err, bytes):
+        err = err.decode("utf-8", "replace")
+    return f"{code} {err}".strip()
+
+
+def _refused_text(refused: dict) -> str:
+    return "; ".join(f"{a} ({_smtp_text(*r) if isinstance(r, tuple) else r})" for a, r in (refused or {}).items())
+
+
+def _note_refused(report, refused) -> None:
+    if report is not None:
+        report["refused"] = [{"address": a, "reason": (_smtp_text(*r) if isinstance(r, tuple) else str(r))}
+                             for a, r in (refused or {}).items()]
+
+
+def _fail(report, text: str) -> None:
+    if report is not None and not report.get("error"):
+        report["error"] = text
 
 
 def reply_to_message(
@@ -1422,12 +1512,21 @@ def reply_to_message(
     reply_all: bool = False,
     attachments: List[Tuple[str, bytes, str]] = None,
     folder: str = "INBOX",
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    subject: Optional[str] = None,
+    report: Optional[dict] = None,
 ) -> bool:
-    """Reply to a message."""
+    """Reply to a message.
+
+    `to`/`cc`/`subject` are what the person left in the composer. None (an older caller) means "work
+    it out from the original"; a value -- even one they edited -- is sent as written. They used to be
+    ignored outright: somebody added to Cc in the reply box got nothing, with "Sent" on screen."""
     # Get the original message
     original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
     if not original:
         logger.error(f"Original message not found: {account_email}/{uid}")
+        _fail(report, "The message being answered could not be found on the mail server.")
         return False
 
     # Get the account
@@ -1437,17 +1536,18 @@ def reply_to_message(
         return False
 
     # Prepare reply
-    to = original.sender_email
-    subject = original.subject
-    if not subject.lower().startswith("re:"):
-        subject = f"Re: {subject}"
-
-    cc = ""
+    computed_subject = original.subject or ""
+    if not computed_subject.lower().startswith("re:"):
+        computed_subject = f"Re: {computed_subject}"
+    computed_cc = ""
     if reply_all and original.to:
         # Add all original recipients except ourselves
         cc_addrs = [addr.strip() for addr in original.to.split(",")]
         cc_addrs = [a for a in cc_addrs if account.email.lower() not in a.lower()]
-        cc = ", ".join(cc_addrs)
+        computed_cc = ", ".join(cc_addrs)
+    to = to.strip() if (to or "").strip() else original.sender_email
+    subject = subject.strip() if (subject or "").strip() else computed_subject
+    cc = computed_cc if cc is None else cc
 
     # Resolve Sent the way the LIST does, from the session this caller already holds — see
     # send_email's `sent_folder`. A reply is the commonest way a sent copy goes missing.
@@ -1458,7 +1558,7 @@ def reply_to_message(
         pass
     return send_email(
         account=account, to=to, subject=subject, body=body, attachments=attachments,
-        reply_to_msg=original, cc=cc, sent_folder=_sent
+        reply_to_msg=original, cc=cc, sent_folder=_sent, report=report
     )
 
 
@@ -1471,6 +1571,9 @@ def forward_message(
     body: str = "",
     attachments: List[Tuple[str, bytes, str]] = None,
     folder: str = "INBOX",
+    subject: Optional[str] = None,
+    cc: str = "",
+    report: Optional[dict] = None,
 ) -> bool:
     """Forward a message to another recipient."""
     try:
@@ -1478,6 +1581,7 @@ def forward_message(
         original = get_message_by_id(user_id, db, account_email, uid, folder=folder)
         if not original:
             logger.error(f"Original message not found: {account_email}/{uid} in folder {folder}")
+            _fail(report, "The message being forwarded could not be found on the mail server.")
             return False
 
         # Get the account
@@ -1488,18 +1592,23 @@ def forward_message(
             return False
     except Exception as e:
         logger.error(f"Error preparing forward message: {e}")
+        _fail(report, "Could not prepare the forward.")
         return False
 
     # Prepare forward subject
-    subject = original.subject
-    if not subject.lower().startswith("fwd:") and not subject.lower().startswith("fw:"):
-        subject = f"Fwd: {subject}"
+    if (subject or "").strip():
+        subject = subject.strip()               # what the composer showed, edits included
+    else:
+        subject = original.subject or ""
+        if not subject.lower().startswith("fwd:") and not subject.lower().startswith("fw:"):
+            subject = f"Fwd: {subject}"
 
     # Build forwarded message body
+    _when = original.date.strftime("%A, %B %d, %Y at %I:%M %p") if original.date else ""
     forward_header = f"""
 ---------- Forwarded message ----------
 From: {original.sender} <{original.sender_email}>
-Date: {original.date.strftime("%A, %B %d, %Y at %I:%M %p")}
+Date: {_when}
 Subject: {original.subject}
 To: {original.to}
 """
@@ -1509,8 +1618,15 @@ To: {original.to}
     if not original_body.strip() and original.body_html:
         original_body = html_to_text(original.body_html)
 
-    # Combine user's message with forwarded content
-    if body.strip():
+    # THE COMPOSER ALREADY QUOTES THE ORIGINAL (mail.js prefills "---------- Forwarded ----------" and the
+    # body, so the person can trim it), and this appended it AGAIN: every forward from the app carried the
+    # original twice. When the composer's text already holds it, what they sent is what they saw.
+    def _norm(t):
+        return " ".join((t or "").split())
+    already_quoted = bool(_norm(original_body)) and _norm(original_body)[:400] in _norm(body)
+    if already_quoted:
+        full_body = body
+    elif body.strip():
         full_body = f"{body}\n{forward_header}\n{original_body}"
     else:
         full_body = f"{forward_header}\n{original_body}"
@@ -1535,7 +1651,17 @@ To: {original.to}
     logger.debug(f"Forward: total attachments to send: {len(all_attachments)}")
     
     try:
-        result = send_email(account=account, to=to, subject=subject, body=full_body, attachments=all_attachments if all_attachments else None)
+        # reply_to_msg: a forward carries In-Reply-To/References to the original, so it threads with the
+        # conversation it came from -- in this app's own thread view (which links by those headers) and
+        # in the recipient's client -- instead of standing alone. What Gmail does.
+        _sent = ""
+        try:
+            _sent = (list_special_folders(user_id, db, account_email) or {}).get("sent") or ""
+        except Exception:
+            pass
+        result = send_email(account=account, to=to, subject=subject, body=full_body,
+                            attachments=all_attachments if all_attachments else None,
+                            reply_to_msg=original, cc=cc, sent_folder=_sent, report=report)
         if not result:
             logger.error(f"Failed to send forwarded email to {to} (send_email returned False)")
         else:
