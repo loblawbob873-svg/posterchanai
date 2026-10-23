@@ -153,3 +153,31 @@ def test_device_password_and_publishing_a_nostr_event():
         assert int(tags["end"]) - int(tags["start"]) == 3600, ev
         assert not await b.js("__errors"), await b.js("__errors")
     _run(check)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_nostr_events_organizer_opens_their_profile():
+    """A NIP-52 event from the network opens as a card; its organizer's name (#n52-who) closes the card and opens
+    THAT person's profile."""
+    async def check(b):
+        await desktop.login(b)
+        org = await b.js("NostrTools.getPublicKey(new Uint8Array(32).fill(7))")
+        await b.js("""(()=>{const sk=new Uint8Array(32).fill(7),now=Math.floor(Date.now()/1000),start=now+60;
+            window.__events=[
+              NostrTools.finalizeEvent({kind:0,created_at:now,tags:[],content:JSON.stringify({name:'Ada Organizer'})},sk),
+              NostrTools.finalizeEvent({kind:31923,created_at:now,content:'Bring snacks',
+                tags:[['d','meetup-1'],['title','Relay meetup'],['start',String(start)],['end',String(start+3600)]]},sk)];
+            localStorage.setItem('pc_cal_nostr','1'); __PC.switchView('calendar');})(); 1""")
+        ev = "[...document.querySelectorAll('.cal-ev[data-cal=\"__nostr\"]')].find(e=>/Relay meetup/.test(e.innerText))"
+        await b.until(f"!!({ev})")
+        await b.js(f"__PC.needProfile({json.dumps(org)}); 1")
+        await b.until(f"((__PC.profOf({json.dumps(org)})||{{}}).name)==='Ada Organizer'")
+        await b.js(f"({ev}).click(); 1")
+        await b.until("!!document.querySelector('#n52-who')")
+        assert await b.js("document.querySelector('#n52-who').textContent.trim()") == 'Ada Organizer'
+        await b.js("document.querySelector('#n52-who').click(); 1")
+        npub = await b.js(f"NostrTools.nip19.npubEncode({json.dumps(org)})")
+        await b.until(f"!document.querySelector('#n52-who') && __PC.VIEW==='profile' && location.pathname==='/'+{json.dumps(npub)}")
+        await b.until("/Ada Organizer/.test(document.querySelector('#feed').innerText)")
+        assert not await b.js("__errors"), await b.js("__errors")
+    _run(check)
