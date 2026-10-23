@@ -40,6 +40,7 @@ export function makeRealm() {
       try {
         const u = base ? new URL(String(s), String(base)) : new URL(String(s));
         return { href: u.href, protocol: u.protocol, origin: u.origin, host: u.host,
+                 username: u.username, password: u.password,
                  hostname: u.hostname, port: u.port, pathname: u.pathname,
                  search: u.search, hash: u.hash };
       } catch (_) { return null; }

@@ -9,13 +9,19 @@ cross-client question, with nothing stubbed but the people: two headless Chromes
   posterchan  the instance (default https://poster.place), the live-journey test identity
               (~/.config/posterchanai/live-journey.key) signed in through the NIP-07 button like verify_live_signin.py
 
-and walks what two people would do:
+and walks what two people would do, in two communities:
 
-  1. invite/join   Armada creates "pc-call-interop-test <timestamp>" and makes an invite link; PosterChan opens it
-                   and presses "Accept and join".
-  2. call, Armada first      Armada presses "Join voice", then PosterChan presses the channel's call button.
-  3. call, PosterChan first  both leave; PosterChan joins first, then Armada.
-  4. cleanup       PosterChan leaves the community, Armada dissolves it (both always attempted).
+  A  Armada creates "pc-call-interop-test <ts> A" (it declares av.armada.buzz as its call server) and makes an
+     invite link; PosterChan opens it and presses "Accept and join". A call is placed twice: Armada joining first,
+     then PosterChan joining first.
+  B  PosterChan creates "pc-call-interop-test <ts> P" (it declares this instance's broker, `av_brokers`); Armada
+     opens the invite and accepts; the same two calls.
+  cleanup (always, in `finally`): Armada leaves B and dissolves A; PosterChan dissolves every test community it
+     owns and leaves every one it is in (posterchan_clean_tests); the public kind-1 announcements PosterChan posts
+     on creating a community are deleted (NIP-09).
+
+PC_CLIENT_FROM=<checkout> serves PosterChan's /static/ from that checkout while the instance, relay, broker and SFUs
+stay production -- how an undeployed client change is proven live.
 
 For each call it records, from the DevTools network log of each browser: which broker each side asked
 (`/.well-known/concord/av/<room>`), the LiveKit room and identity inside the JWT it got back (claims only -- the
@@ -26,10 +32,10 @@ The tracks are E2EE-decrypted before they reach WebAudio, so sound there means b
 
     venv-unified/bin/python scripts/check_armada_call_interop.py [https://poster.place]
 
-What it found the first time (2026-10-22): Armada first -> both on av.armada.buzz, same room, each hears the other's
-398 Hz tone. PosterChan first -> SPLIT: PosterChan correctly takes its own broker for an empty room, and Armada
-ignores the occupied broker in presence -- it routes only on the community's `av_brokers` (Concord PR #22, not in
-the merged CORD-07 §5, which says join the occupied broker and heal toward the smallest tie-break hash).
+What it found the first time (2026-10-22, deployed client): Armada first -> both on av.armada.buzz, same room, each
+hears the other's 398 Hz tone. PosterChan first -> SPLIT: PosterChan took its own broker for an empty room, Armada
+routes only on the community's `av_brokers` (Concord PR #22) and never follows presence. The client now honours a
+declared list (cord-voice.js `candidates`) and declares its own broker on communities it creates.
 
 Exit 0 = in BOTH join orders each side heard the other. 1 = the call does not work; the line says where it broke
 (invite/join, broker/token, same room?, media). 2 = could not run (no key, no Chrome, Armada's UI could not be
@@ -60,6 +66,9 @@ from verify_live_signin import KEY_FILE, SHIM  # noqa: E402  (the same identity 
 
 CHROME = os.environ.get("PC_CHROME", "/opt/google/chrome/chrome")
 ARMADA = (os.environ.get("PC_ARMADA_URL") or "https://armada.buzz").rstrip("/")
+# PC_CLIENT_FROM=<checkout>: PosterChan's /static/ comes from that checkout instead of the instance (see
+# Browser.serve_client_from) -- proves an undeployed client change against the live instance, broker and SFUs.
+CLIENT_FROM = Path(os.environ["PC_CLIENT_FROM"]).resolve() if os.environ.get("PC_CLIENT_FROM") else None
 HEARD = 0.01          # peak RMS: the threshold test_concord_call_livekit_live.py uses
 
 
@@ -120,6 +129,10 @@ MEASURE = r"""
 
 # Armada: no native share sheet (headless Chrome's hangs the renderer) and a clipboard we can read back -- the
 # invite dialog shares or copies its link and offers no other way to read it.
+CLIPBOARD = r"""
+window.__copied=[];try{Object.defineProperty(Navigator.prototype,'clipboard',{configurable:true,
+  get(){return {writeText:async t=>{window.__copied.push(String(t));},readText:async()=>''};}});}catch(_){}
+"""
 ARMADA_INIT = r"""
 try{delete Navigator.prototype.share;delete Navigator.prototype.canShare;}catch(_){}
 window.__copied=[];try{Object.defineProperty(Navigator.prototype,'clipboard',{configurable:true,
@@ -196,6 +209,7 @@ class Browser:
         self.errors: list[str] = []
         self.proc = self.ws = self.pumper = None
         self.signed_in = False
+        self.static_root, self.static_base, self.served = None, "", set()
         self.prof = tempfile.mkdtemp(prefix=f"pc-armada-call-{name}-")
 
     async def start(self):
@@ -270,9 +284,38 @@ class Browser:
                 url = p.get("url", "").split("?")[0]           # the query carries the access token
                 if "/rtc" in url or "livekit" in url:
                     self.sockets.append({"t": time.monotonic(), "url": url})
+            elif meth == "Fetch.requestPaused":
+                asyncio.create_task(self._serve(p))
             elif meth == "Runtime.exceptionThrown":
                 d = p.get("exceptionDetails") or {}
                 self.errors.append(((d.get("exception") or {}).get("description") or d.get("text") or "")[:200])
+
+    async def serve_client_from(self, base: str, root: Path):
+        """Answer every `<base>/static/…` request with the file from `root` when it has one: the instance (its HTML,
+        API, relay, broker) stays production, the CLIENT is this checkout's -- how a change is proven live before
+        deploy. The service worker is bypassed, or it would answer from its own cache."""
+        self.static_root, self.static_base, self.served = root, base, set()
+        await self.call("Network.setBypassServiceWorker", {"bypass": True})
+        await self.call("Fetch.enable", {"patterns": [{"urlPattern": base + "/static/*", "requestStage": "Request"}]})
+
+    async def _serve(self, p):
+        rid, url = p.get("requestId"), (p.get("request") or {}).get("url", "")
+        try:
+            path = url[len(self.static_base):].split("?")[0].split("#")[0]
+            local = (self.static_root / path.lstrip("/")).resolve()
+            if path.startswith("/static/") and local.is_file() and self.static_root.resolve() in local.parents:
+                kinds = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json",
+                         ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png", ".wasm": "application/wasm"}
+                ctype = kinds.get(local.suffix, "application/octet-stream")
+                self.served.add(path)
+                await self.call("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 200, "responseHeaders": [
+                    {"name": "Content-Type", "value": ctype}, {"name": "Cache-Control", "value": "no-store"}],
+                    "body": base64.b64encode(local.read_bytes()).decode()})
+                return
+        except Exception:       # noqa: BLE001 -- anything odd goes to the network untouched
+            pass
+        with contextlib.suppress(Exception):
+            await self.call("Fetch.continueRequest", {"requestId": rid})
 
     async def _token_body(self, rid, rec):
         with contextlib.suppress(Exception):
@@ -386,7 +429,9 @@ async def armada_invite_link(a: Browser) -> str:
 
 async def posterchan_login(p: Browser, base: str, sk_hex: str):
     bundle = (ROOT / "static/vendor/nostr/nostr.bundle.js").read_text()
-    await p.init("(()=>{" + bundle + "\n;window.__NT=NostrTools;})();window.__LJ_SK=" + json.dumps(sk_hex) + ";" + SHIM + MEASURE)
+    if CLIENT_FROM:
+        await p.serve_client_from(base, CLIENT_FROM)
+    await p.init("(()=>{" + bundle + "\n;window.__NT=NostrTools;})();window.__LJ_SK=" + json.dumps(sk_hex) + ";" + SHIM + MEASURE + CLIPBOARD)
     await p.call("Page.navigate", {"url": base + "/"})
     if not await p.until("(()=>{const b=document.querySelector('#btn-nip07');return (!!b&&typeof b.onclick==='function')"
                          "||!!(window.__PC&&__PC.me&&__PC.me()&&__PC.me().pubkey)})()", 60):
@@ -472,7 +517,7 @@ def describe(side: str, reqs: list, sockets: list) -> str:
             f"identity={c.get('identity')} sfu={last['sfu']} ; SFU sockets: {[s['url'] for s in sockets] or 'none'}")
 
 
-async def one_call(a: Browser, p: Browser, first: str) -> dict:
+async def one_call(a: Browser, p: Browser, first: str, declared: list) -> dict:
     """Place one call with `first` joining first. Returns the evidence and the verdict for this order."""
     t0 = time.monotonic()
     res = {"order": f"{first} first"}
@@ -506,8 +551,12 @@ async def one_call(a: Browser, p: Browser, first: str) -> dict:
     if a_tok["broker"] != p_tok["broker"]:
         res["broke"] = (f"same room?: SPLIT -- same room name {room_a[:16]}… but on two different SFUs: Armada via "
                         f"{a_tok['broker']}, PosterChan via {p_tok['broker']}")
-        # WHOSE rule failed. Merged CORD-07 §5: an empty room -> your own broker; an occupied one -> theirs; a split
+        outside = [side for side, tok in (("Armada", a_tok), ("PosterChan", p_tok)) if declared and tok["broker"] not in declared]
+        if outside:
+            res["broke"] += f"; the community declares {declared} and {' and '.join(outside)} called outside that list"
+        # WHOSE rule failed (no list declared). Merged CORD-07 §5: an empty room -> your own broker; an occupied one -> theirs; a split
         # heals toward the smallest sha256(room || origin). So the side that should have moved is the LOSER's.
+    if a_tok["broker"] != p_tok["broker"] and not declared:
         winner = min((a_tok["broker"], p_tok["broker"]), key=lambda o: rank(room_a, o))
         mover = "Armada" if winner == p_tok["broker"] else "PosterChan"
         res["broke"] += (f"; by CORD-07 §5 the call belongs on {winner} (occupied first / smallest rank), so {mover} "
@@ -545,18 +594,78 @@ async def _wait(pred, seconds):
     return False
 
 
-async def posterchan_leave_tests(p: Browser) -> list:
-    """Leave EVERY community named like this check's -- this run's, and any an interrupted run left behind."""
+async def posterchan_create(p: Browser, name: str, made) -> str:
+    """Communities -> Create a community -> name -> "Create on relays"; the client copies the invite link."""
+    await p.js("(()=>{const b=document.querySelector('#cc-join-create')||document.querySelector('#cc-create');if(b)b.click();return 1})()")
+    if not await p.until("(()=>{const i=document.querySelector('#cc-community-name');return !!i&&i.getClientRects().length>0})()", 20):
+        raise CouldNotRun("posterchan: the create-community dialog did not open")
+    await p.js("(()=>{const i=document.querySelector('#cc-community-name');i.value=%s;i.dispatchEvent(new Event('input',{bubbles:true}));"
+               "document.querySelector('#cc-create-go').click();return 1})()" % json.dumps(name))
+    link = await p.until("(window.__copied||[]).find(u=>/\\/invite\\//.test(u))||''", 120)
+    if not link and await p.js("[...document.querySelectorAll('[data-cc-server]')].some(x=>x.title===%s)" % json.dumps(name)):
+        # "created but its discovery announcement was not accepted" (seen with the deployed client too): the
+        # community exists and is listed, only the copy was skipped -- take the link from the room's own button.
+        say(f"      creation said {await p.js('window.__toasts.slice(-1)')}; copying the link from the room instead")
+        await p.js("(()=>{const b=[...document.querySelectorAll('[data-cc-server]')].find(x=>x.title===%s);if(b)b.click();return 1})()" % json.dumps(name))
+        await p.until("(()=>{const b=document.querySelector('#cc-copy-link');if(b&&((document.querySelector('.cc-server.active')||{}).title===%s)){b.click();return true}return false})()" % json.dumps(name), 30)
+        link = await p.until("(window.__copied||[]).find(u=>/\\/invite\\//.test(u))||''", 30)
+    if not link:
+        raise CouldNotRun(f"posterchan: creating the community produced no invite link; it said {await p.js('window.__toasts.slice(-4)')}")
+    made()
+    return link
+
+
+async def armada_join(a: Browser, link: str, name: str, joined):
+    """Open PosterChan's invite in Armada (same path and #secret on Armada's origin) and press Accept."""
+    target = ARMADA + "/invite/" + link.split("/invite/", 1)[1]
+    for attempt in range(3):
+        await a.call("Page.navigate", {"url": target})
+        ok = await a.until("(()=>{const b=[...document.querySelectorAll('button')].find(x=>/^(Accept invite|Accept|Join)$/.test((x.innerText||'').trim())&&!x.disabled&&x.getClientRects().length);"
+                           "if(b){b.click();return true}return false})()", 45, tick=lambda: armada_dismiss(a))
+        if ok:
+            break
+        say(f"      Armada invite attempt {attempt + 1}: no Accept after 45 s; it showed: {await a.text(200)}")
+    else:
+        raise Broke(f"invite/join: Armada never offered to accept PosterChan's invite: {await a.text(300)}")
+    joined()
+    # Armada can sit on the community with an EMPTY channel list for minutes ("Syncing…") and then draw #general
+    # fine on another try -- measured on 2026-10-22 with communities made by BOTH the deployed and the new client,
+    # so it is not this change. A person reloads; so does this, and says so.
+    shown = "/\\/c\\/[0-9a-f]{64}\\/[0-9a-f]{64}/.test(location.pathname)&&document.body.innerText.includes(%s)" % json.dumps(name)
+    for attempt in range(4):
+        if await a.until(shown, 75):
+            return
+        say(f"      Armada shows '{name}' with no channel yet (attempt {attempt + 1}); reloading")
+        await a.call("Page.reload", {})
+    raise Broke(f"invite/join: Armada accepted but never showed a channel of '{name}' (5 min, 4 reloads): {await a.text(300)}")
+
+
+async def armada_leave_current(a: Browser) -> bool:
+    await a.click("Community menu", 20)
+    await a.click("Leave community", 10)
+    return bool(await a.until("!/\\/c\\/[0-9a-f]{64}/.test(location.pathname)", 60))
+
+
+async def posterchan_clean_tests(p: Browser) -> list:
+    """EVERY community named like this check's, in the test account's list: dissolve it when this account owns it
+    (and it is not dissolved yet), then leave it -- so the account's room list ends as it began, whatever failed."""
     notes = []
-    for _ in range(6):
+    for _ in range(12):
         title = await p.js("(()=>{const b=[...document.querySelectorAll('[data-cc-server]')].find(x=>(x.title||'').startsWith('pc-call-interop-test'));"
                            "if(!b)return '';b.click();return b.title})()")
         if not title:
             break
         if not await p.until("((document.querySelector('.cc-server.active')||{}).title||'')===%s&&!!document.querySelector('#cc-leave-shortcut')" % json.dumps(title), 30):
-            notes.append(f"posterchan: could not open '{title}' to leave it -- leave it by hand")
+            notes.append(f"posterchan: could not open '{title}' -- remove it by hand")
             break
-        await p.js("document.querySelector('#cc-leave-shortcut').click();1")
+        if await p.js("!!document.querySelector('#cc-dissolve')"):       # drawn only for the owner of a live community
+            await p.js("document.querySelector('#cc-dissolve').click();1")
+            ok = await p.until("(()=>{const b=document.querySelector('.uiconfirm [data-uc=\"1\"]');if(b){b.click();return true}return false})()", 15)
+            ok = ok and await p.until("!document.querySelector('#cc-dissolve')", 90)
+            notes.append(f"posterchan: dissolved '{title}'" if ok else f"posterchan: could NOT dissolve '{title}' -- dissolve it by hand")
+            await asyncio.sleep(2)
+        await p.js("(()=>{const d=document.querySelector('#cc-settings-dialog');if(d)d.classList.add('hidden');"
+                   "const b=document.querySelector('#cc-leave-shortcut');if(b)b.click();return 1})()")
         if not await p.until("(()=>{const b=document.querySelector('.uiconfirm [data-uc=\"1\"]');if(b){b.click();return true}return false})()", 15):
             notes.append(f"posterchan: no Leave confirmation for '{title}' -- leave it by hand")
             break
@@ -567,21 +676,76 @@ async def posterchan_leave_tests(p: Browser) -> list:
     return notes
 
 
-async def cleanup(a: Browser, p: Browser, created: bool, joined: bool) -> list:
+ANNOUNCE_RELAYS = ("wss://relay.poster.place", "wss://relay.ditto.pub", "wss://relay.dreamith.to", "wss://relay.primal.net", "wss://nos.lol")
+
+
+async def delete_announcements(sk_hex: str, since: int) -> str:
+    """Creating a community in PosterChan posts a PUBLIC kind-1 announcement carrying its invite link. Ask every
+    relay that holds one of this check's to delete it (NIP-09), signed by the test identity, and say what remains."""
+    import coincurve
+    import websockets
+    sk = coincurve.PrivateKey(bytes.fromhex(sk_hex))
+    pk = sk.public_key.format(compressed=True)[1:].hex()
+
+    async def ask(url, msg, until):
+        out = []
+        with contextlib.suppress(Exception):
+            async with websockets.connect(url, open_timeout=10) as ws:
+                await ws.send(json.dumps(msg))
+                while True:
+                    m = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                    out.append(m)
+                    if m[0] in until:
+                        break
+        return out
+    found = {}
+    for url in ANNOUNCE_RELAYS:
+        for m in await ask(url, ["REQ", "a", {"authors": [pk], "kinds": [1], "since": since, "limit": 100}], ("EOSE", "CLOSED")):
+            if m[0] == "EVENT" and m[2].get("content", "").startswith("pc-call-interop-test"):
+                found[m[2]["id"]] = m[2]
+    if not found:
+        return "no announcements to delete"
+    ev = {"pubkey": pk, "created_at": int(time.time()), "kind": 5, "content": "test community dissolved",
+          "tags": [["e", i] for i in found] + [["k", "1"]]}
+    ev["id"] = hashlib.sha256(json.dumps([0, pk, ev["created_at"], 5, ev["tags"], ev["content"]],
+                                         separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    ev["sig"] = sk.sign_schnorr(bytes.fromhex(ev["id"])).hex()
+    for url in ANNOUNCE_RELAYS:
+        await ask(url, ["EVENT", ev], ("OK",))
+    await asyncio.sleep(2)
+    left = set()
+    for url in ANNOUNCE_RELAYS:
+        left |= {m[2]["id"] for m in await ask(url, ["REQ", "b", {"ids": list(found)}], ("EOSE", "CLOSED")) if m[0] == "EVENT"}
+    return f"deleted {len(found)} announcement(s); still served somewhere: {len(left)}"
+
+
+async def cleanup(a: Browser, p: Browser, st: dict) -> list:
     notes = []
     with contextlib.suppress(Exception):
         await posterchan_hangup(p)
     with contextlib.suppress(Exception):
         await armada_hangup(a)
-    if joined or p.signed_in:
+    if st.get("armada_joined"):      # Armada leaves PosterChan's community first, while it can still be left
         try:
-            notes += await posterchan_leave_tests(p)
+            notes.append("armada: left the PosterChan-made community" if await armada_leave_current(a)
+                         else "armada: Leave pressed but the page stayed -- check by hand")
         except Exception as e:      # noqa: BLE001
-            notes.append(f"posterchan: leaving failed ({e}) -- leave it by hand")
-    if created:
+            notes.append(f"armada: leaving failed ({e}) -- leave it by hand")
+    if p.signed_in:      # always: dissolve what this account made, leave everything this check touched
+        try:
+            notes += await posterchan_clean_tests(p)
+        except Exception as e:      # noqa: BLE001
+            notes.append(f"posterchan: cleanup failed ({e}) -- remove the pc-call-interop-test communities by hand")
+    if st.get("sk") and st.get("since"):
+        try:
+            notes.append("posterchan: " + await delete_announcements(st["sk"], st["since"]))
+        except Exception as e:      # noqa: BLE001
+            notes.append(f"posterchan: deleting the announcements failed ({e})")
+    if st.get("armada_owns"):
         try:
             await asyncio.sleep(2)
-            await a.click("Community menu", 20)
+            await a.call("Page.navigate", {"url": st["armada_owns"]})
+            await a.click("Community menu", 40, tick=lambda: armada_dismiss(a))
             await a.click("Dissolve community", 10)
             gone = await a.until("!/\\/c\\/[0-9a-f]{64}/.test(location.pathname)", 60)
             notes.append("armada: community dissolved" if gone else "armada: dissolve pressed but the page stayed -- check by hand")
@@ -590,45 +754,65 @@ async def cleanup(a: Browser, p: Browser, created: bool, joined: bool) -> list:
     return notes
 
 
+async def calls_both_orders(a: Browser, p: Browser, label: str, base: str, declared: list, results: list):
+    for first in ("armada", "posterchan"):
+        say(f"[{label}] call, {first} joins first")
+        r = await one_call(a, p, first, declared)
+        r["order"] = f"{label}, {first} first"
+        results.append(r)
+        if r.get("room"):
+            ranks = sorted((rank(r["room"], o), o) for o in {"https://av.armada.buzz", base})
+            say(f"      CORD-07 §5 rank for this room (smallest wins): {[o for _, o in ranks]}")
+        say(f"      => {'BROKE at ' + r['broke'] if r.get('broke') else 'both sides heard each other'}")
+        await posterchan_hangup(p)
+        await armada_hangup(a)
+        await asyncio.sleep(6)
+
+
 async def run(base: str, sk_hex: str) -> int:
     # checkall's contract: the runner's port for one Chrome; the other binds 0 and reads DevToolsActivePort.
     a, p = Browser("armada"), Browser("posterchan", os.environ.get("PC_CHECK_PORT") or "0")
-    name = "pc-call-interop-test " + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    created = joined = False
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    name_a, name_p = f"pc-call-interop-test {stamp} A", f"pc-call-interop-test {stamp} P"
+    state = {"armada_owns": False, "joined": False, "posterchan_owns": False, "armada_joined": False,
+             "sk": sk_hex, "since": int(time.time()) - 60}
     results, verdict, why = [], 2, ""
     try:
         await asyncio.gather(a.start(), p.start())
         ident = throwaway_identity()
         say(f"armada identity (throwaway, this run only): {ident['pk']}")
-        say(f"brokers answering the CORD-07 probe: {await probe_brokers(base)}")
-        say(f"[1] invite/join: Armada creates '{name}'")
-        made, _ = await asyncio.gather(armada_login_and_create(a, ident, name), posterchan_login(p, base, sk_hex))
-        created = True
+        probes = await probe_brokers(base)
+        say(f"brokers answering the CORD-07 probe: {probes}")
+        if CLIENT_FROM:
+            say(f"posterchan client: /static/ served from {CLIENT_FROM} (instance, relay and broker: {base})")
+
+        # ---- A: a community ARMADA made (it declares av.armada.buzz) -------------------------------------------
+        say(f"[A] invite/join: Armada creates '{name_a}'")
+        made, _ = await asyncio.gather(armada_login_and_create(a, ident, name_a), posterchan_login(p, base, sk_hex))
+        state["armada_owns"] = made["url"]
         say(f"      created: {made['url']}")
         say(f"      Armada's create wizard listed voice servers (the community's av_brokers): {made['voice_servers']}")
         link = await armada_invite_link(a)
         say(f"      invite link: {link.split('#')[0]}#<secret>")
-        def accepted():
-            nonlocal joined
-            joined = True
-        await posterchan_join(p, link, name, accepted)
+        await posterchan_join(p, link, name_a, lambda: state.__setitem__("joined", True))
         say("      PosterChan joined and sees #general with a call button")
-        try:
-            hz = await p.js("__micHz()", 20)
-            say(f"      the fake microphone's tone (reference): {hz} Hz")
-        except Exception:       # noqa: BLE001
-            pass
-        for k, first in enumerate(("armada", "posterchan"), start=2):
-            say(f"[{k}] call, {first} joins first")
-            r = await one_call(a, p, first)
-            results.append(r)
-            if r.get("room"):
-                ranks = sorted((rank(r["room"], o), o) for o in {ARMADA_AV(made), base})
-                say(f"      CORD-07 §5 rank for this room (smallest wins): {[o for _, o in ranks]}")
-            say(f"      => {'BROKE at ' + r['broke'] if r.get('broke') else 'both sides heard each other'}")
-            await posterchan_hangup(p)
-            await armada_hangup(a)
-            await asyncio.sleep(6)
+        with contextlib.suppress(Exception):
+            say(f"      the fake microphone's tone (reference): {await p.js('__micHz()', 20)} Hz")
+        await calls_both_orders(a, p, "A armada-made", base, made["voice_servers"], results)
+
+        # ---- B: a community POSTERCHAN made (it declares this instance's broker when that answers 204) ---------
+        say(f"[B] invite/join: PosterChan creates '{name_p}'")
+        link_p = await posterchan_create(p, name_p, lambda: state.__setitem__("posterchan_owns", True))
+        say(f"      invite link: {link_p.split('#')[0]}#<secret>")
+        expect = [base] if probes.get(base) == 204 else []
+        say(f"      expected declaration (this instance's broker answers 204): av_brokers={expect}")
+        await armada_join(a, link_p, name_p, lambda: state.__setitem__("armada_joined", True))
+        say("      Armada joined the PosterChan-made community")
+        await p.js("(()=>{const b=[...document.querySelectorAll('[data-cc-server]')].find(x=>x.title===%s);if(b)b.click();return 1})()" % json.dumps(name_p))
+        if not await p.until("!!document.querySelector('[data-cc-voice-channel=\"general\"]')&&((document.querySelector('.cc-server.active')||{}).title||'')===%s" % json.dumps(name_p), 60):
+            raise CouldNotRun("posterchan: could not reopen its own community")
+        await calls_both_orders(a, p, "B posterchan-made", base, expect, results)
+
         broken = [r for r in results if r.get("broke")]
         verdict = 1 if broken else 0
         why = "; ".join(f"{r['order']}: {r['broke']}" for r in broken)
@@ -640,13 +824,16 @@ async def run(base: str, sk_hex: str) -> int:
         verdict, why = 2, f"{type(e).__name__}: {e}"
     finally:
         with contextlib.suppress(Exception):
-            for note in await asyncio.wait_for(cleanup(a, p, created, joined), 150):
+            for note in await asyncio.wait_for(cleanup(a, p, state), 420):
                 say(f"[cleanup] {note}")
+        if CLIENT_FROM and p.static_root:
+            mine = sorted(x for x in p.served if re.search(r"/(cord-voice|cord-call|concord|cord-reader|cord-protocol)\.js$", x))
+            say(f"[client] served from the checkout: {mine}")
         if a.errors or p.errors:
             say(f"[pages] uncaught: armada {a.errors[-3:]} posterchan {p.errors[-3:]}")
         await asyncio.gather(a.stop(), p.stop(), return_exceptions=True)
     if verdict == 0:
-        say("OK: an Armada user and a PosterChan user hear each other, whichever joins first")
+        say("OK: an Armada user and a PosterChan user hear each other, whichever joins first, in a community either made")
     elif verdict == 1:
         say(f"FAIL: the Armada <-> PosterChan call does not work -- {why}")
     else:

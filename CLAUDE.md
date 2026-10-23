@@ -1780,7 +1780,11 @@ would have handled it fine).
   stays on 127.0.0.1 and THE APP carries it at `/livekit/` (`signalling` in concord_av.py), so a node needs no nginx
   change -- its catch-all already forwards upgrades. The broker path is in main.py `_OWN_CORS` (Armada and the APK call
   it cross-origin; the credentialed CORS layer would 400 their preflight). The client prefers THIS instance's broker
-  when it answers 204 (`callBroker`; a stored armada.buzz is the old default, not a choice). The router forwards UDP
+  when it answers 204 (`callBroker`; a stored armada.buzz is the old default, not a choice). **A community's DECLARED call servers win** (CORD-02 metadata `av_brokers`, Concord PR #22, Armada's
+  field: https origins, ≤5): with a list the panel uses ONLY those (`PCCordVoice.candidates`/`heal`, an occupied broker
+  first only when listed), and a community created here declares this instance's broker (`ownCallBroker`; none = declare
+  nothing). Armada never follows presence, so without this a PosterChan member who joined first split the call (live,
+  2026-10-22, `scripts/check_armada_call_interop.py`; `tests/client/test_concord_declared_brokers.py`). The router forwards UDP
   7882 / TCP 7881 by `ip daddr <public IP>` so LAN devices hairpin. Proof: `tests/client/test_concord_call_livekit_live.py`
   -- the real binary, the real broker over HTTPS, two Chromes with fake mics pressing Join in the shipped panel; it
   passes only when each side HEARS the other (WebAudio RMS) and the leaver's element is gone. Two panel bugs it found:

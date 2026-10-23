@@ -32,6 +32,10 @@
     const status=message=>{panel.querySelector('[role=status]').textContent=message;};
     const button=name=>panel.querySelector('[data-call="'+name+'"]');
     button('broker').value=context.preferred||'https://armada.buzz';
+    /* A community that declares its call servers uses only those (see PCCordVoice.candidates): the field shows the
+     * one it will use and cannot be typed over, and Join does not remember it as this person's own choice. */
+    const declaredList=()=>{try{return V.declared(context.declared?.()||[]);}catch(_){return [];}};
+    if(declaredList().length){button('broker').readOnly=true;button('broker').title="This community's call server";}
     document.body.append(panel);
     const valid=()=>!closed&&context.current();
     const check=()=>{if(!valid())throw Error('The account or community changed during the call');};
@@ -103,9 +107,7 @@
       try{
         attemptMaterial=context.material();material=attemptMaterial;
         await disconnect();checkAttempt();
-        const occupied=await V.brokers(attemptMaterial.room,fresh().map(p=>p.broker));
-        const fallback=await V.brokers(attemptMaterial.room,[preferred]);
-        const candidates=[...occupied,...fallback.filter(b=>!occupied.includes(b))];
+        const candidates=await V.candidates(attemptMaterial.room,{declared:declaredList(),occupied:fresh().map(p=>p.broker),preferred});
         if(!candidates.length)throw Error('Enter an HTTPS Concord call server');
         const L=await sdk();checkAttempt();
         if(!L?.isE2EESupported())throw Error('This browser cannot encrypt Concord calls');
@@ -183,8 +185,8 @@
       }
       while(records.size>1024)records.delete(records.keys().next().value);
       people();
-      if(joined&&!moving){const ordered=await V.brokers(material.room,[joined.broker,...fresh().map(p=>p.broker)]);
-        if(valid()&&ordered[0]!==joined.broker)void connect(ordered[0]);}
+      if(joined&&!moving){const target=await V.heal(material.room,joined.broker,fresh().map(p=>p.broker),declaredList());
+        if(valid()&&target!==joined.broker)void connect(target);}
       }catch(_){}
     }
     try{subscription=context.subscribe(receive);}catch(e){await close();throw e;}
@@ -199,7 +201,7 @@
     },2000);
     button('close').onclick=()=>{void close();};
     button('join').disabled=true;status('Listening for an existing call (30s)…');tick();
-    button('join').onclick=()=>{failure='';context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
+    button('join').onclick=()=>{failure='';if(!declaredList().length)context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
     button('mute').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setMicrophoneEnabled(muted);if(!valid()||room!==target){await target.disconnect();return;}muted=!muted;button('mute').textContent=muted?'Unmute':'Mute';}catch(e){status(e.message);}};
     button('video').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setCameraEnabled(!video);if(!valid()||room!==target){await target.disconnect();return;}video=!video;button('video').textContent=video?'Camera off':'Camera on';}catch(e){status(e.message);}};
     button('screen').onclick=async()=>{
