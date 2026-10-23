@@ -48,6 +48,8 @@ public class StayAwakeService extends Service {
   public static final String ACTION_STOP = "place.poster.app.STAY_STOP";
   /** MusicService took over with a real session — drop the standby one. */
   public static final String ACTION_DROP_STANDBY = "place.poster.app.STAY_DROP_STANDBY";
+  /** MusicService's real session is GONE — put the standby one back (see MusicService.onDestroy). */
+  public static final String ACTION_REOPEN_STANDBY = "place.poster.app.STAY_REOPEN_STANDBY";
 
   // The channel and the notification id live in RunningNote now — one item for every background
   // service this app runs. Keeping private copies here is how two of them came back.
@@ -264,6 +266,18 @@ public class StayAwakeService extends Service {
       // Handled BEFORE the foreground/re-arm block below: this is a message, not a restart, and
       // running the whole start path for it would re-open the very session it is asking us to close.
       closeStandbySession();
+      return START_STICKY;
+    }
+    /* THE OTHER HALF OF DROP, and for years it did not exist: the standby session stood down for a
+     * real track and was reopened only by the next onStartCommand -- i.e. the next time the app was
+     * started from scratch. So after the player closed, a car with Bluetooth autoplay on saw no
+     * PosterChan media app at all (MusicStandbyReturnsDeviceTest). A message, like DROP: never the
+     * foreground/re-arm path, and never a service that was not already running. */
+    if (ACTION_REOPEN_STANDBY.equals(action)) {
+      if (!running) { stopSelf(); return START_NOT_STICKY; }
+      openStandbySession();
+      android.util.Log.i(MusicService.TAG, "reopen standby: " + (standby != null ? "open"
+          : MusicService.INSTANCE != null ? "skipped, a player session exists again" : "not opened"));
       return START_STICKY;
     }
     if (ACTION_STOP.equals(action)) {

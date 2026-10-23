@@ -48,6 +48,27 @@ both because they run concurrently: read the chrome port from `PC_CHECK_PORT` an
 state — a test that touched `streamserver/mediamtx.pid` passed on a laptop and PermissionError'd on
 every node that was actually serving. See `docs/TESTING.md`.
 
+**ON-DEVICE (EMULATOR) TESTS RUN FROM HERE ON nas.lan — `scripts/emulator_tests_on_nas.sh -c <class> [-n 3]`.** server1
+has no KVM and cannot run Gradle (its nft `masquerade` rewrites even loopback, so the Gradle client's own daemon
+connection arrives "from 192.168.0.2" and is refused). The script ships `mobile/` to `~/android-sdk-emu` on nas, builds
+there (JDK 17, CI's emulator build + android-34 google_apis x86_64 image, CI's 320x640 mdpi screen, `-gpu swangle`),
+boots headless at nice 19 / ionice idle with 1536 MB, runs `am instrument`, pulls results/logcat into `/tmp/pc-nas-emu/<stamp>/` and ALWAYS kills
+the emulator. ~25 s boot. It hands tests the emulator console, so `SmsNotificationTapDeviceTest` sends a REAL SMS
+through the modem (CI falls back to the app's own receiver). `--src DIR` builds a deliberately broken copy (fail-first
+proof); `--no-console` is CI's shape. The native screens are pressed with REAL touches through `RealUi` (androidTest):
+the accessibility tree of every window + `input tap` -- never `performClick` on a View the test found itself.
+Found by them (2026-10-23): the Phone KEYPAD JUMPED under the finger as typing filtered the recent calls -- the list
+tabs' "No recent calls" line toggled on the keypad tab, re-sizing and rebuilding the keys on a short phone so a press
+was lost (`DialerTapDeviceTest.theKeypadDoesNotMoveUnderTheFingerWhileTyping`); and the Bluetooth standby session never
+came back after the player closed (music, below). Run them on the CI-shaped screen: on a 360x800 AVD the keypad-typing case passed
+3/3 with that bug live, and failed 3/3 at 320x640.
+**A WebView RENDERER SIGSEGV on this image** (system WebView 113.0.5672.136, always `libmonochrome+0x61c5c9a`, a deep
+recursive walk) when the WebView is RESIZED -- `MusicBackgroundDeviceTest`'s rotation case (3/4 boots under
+`swiftshader_indirect`, 2/8 under `swangle`) and `LauncherDeviceTest`'s `wm size` tablet case (which passes anyway). The
+app recovers by design (`recreate`); the rotation test then holds the dead WebView and fails. `AppViewsLaunchSmokeTest`
+did not reproduce on nas (9/9 green); CI's 2026-10-23 smoke red (run 40022336325) was a renderer that stopped answering
+for ~18 s with NO crash and no ANR, on a build from before the test named the view, so the view is not known yet.
+
 ## Deploy — always via `sync.sh`
 
 `./sync.sh` does `git commit -a -m fix && git push`, then restarts local services and
@@ -859,6 +880,11 @@ would have handled it fine).
   session state in Settings → Phone → "Music & car controls" (`#us-music-refresh`, `#us-music-copy`).
   Device proof: `MusicCarButtonsDeviceTest` (AudioManager.dispatchMediaKeyEvent + TransportControls, app in
   the background, another task closed, standby switch on); off-device `tests/test_android_music_car_buttons.py`.
+  **THE STANDBY SESSION CAME BACK ONLY ON AN APP START (2026-10-23).** With Bluetooth autoplay on, the standby
+  session stands down for a real track (`releaseStandby`) and was reopened only by `StayAwakeService.onStartCommand`
+  -- so after the player closed the car saw no PosterChan media app until the app was started from scratch.
+  `MusicService.onDestroy` now sends `ACTION_REOPEN_STANDBY` (a message, never the foreground path) while stay-connected
+  runs. `MusicStandbyReturnsDeviceTest` (red on the old code on the nas emulator).
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate

@@ -912,6 +912,16 @@ public class MusicService extends Service {
     if (session != null) { session.setActive(false); session.release(); session = null; }
     MusicWidget.render(this, null, null, false, false);
     if (INSTANCE == this) INSTANCE = null;
+    /* The car's session goes with us, so the STANDBY one has to come back (it stood down for us in
+     * releaseStandby). Asked only while "stay connected" runs -- that foreground service is what
+     * makes this start legal from the background, and with it off there is no standby to restore. */
+    if (place.poster.app.push.StayAwakeService.running) {
+      log("player session gone — asking the standby session to come back");
+      try {
+        startService(new Intent(this, place.poster.app.push.StayAwakeService.class)
+            .setAction(place.poster.app.push.StayAwakeService.ACTION_REOPEN_STANDBY));
+      } catch (Throwable ignored) {}
+    }
     super.onDestroy();
   }
 }

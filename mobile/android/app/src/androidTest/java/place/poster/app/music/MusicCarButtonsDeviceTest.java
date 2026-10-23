@@ -56,13 +56,19 @@ public class MusicCarButtonsDeviceTest {
     @After
     public void tearDown() {
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        /* THE PAGE GOES FIRST, THEN THE SERVICE, THEN WAIT FOR IT TO BE GONE. Stopped while the page
+         * still played, the page's next state push started a FRESH MusicService behind the test, and
+         * the next case (the standby one) then turned Bluetooth autoplay on beside a live player
+         * session -- measured on the nas emulator: the standby never opened, red for a reason that was
+         * this teardown's. */
+        try { bringBack(ctx); } catch (Throwable ignored) { }
+        try { if (scenario != null) scenario.close(); } catch (Throwable ignored) { }
         try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
         catch (Throwable ignored) { }
+        for (int i = 0; i < 100 && MusicService.INSTANCE != null; i++) SystemClock.sleep(100);
         try { ctx.startService(new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_STOP)); }
         catch (Throwable ignored) { }
         try { MusicService.setAutoplayBluetooth(ctx, false); } catch (Throwable ignored) { }
-        try { bringBack(ctx); } catch (Throwable ignored) { }
-        try { if (scenario != null) scenario.close(); } catch (Throwable ignored) { }
     }
 
     /** The plain case: the app in the background, the car's keys and the session's transport controls. */

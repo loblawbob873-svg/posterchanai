@@ -136,6 +136,7 @@ public class MusicService {
   static volatile boolean standbySession = false;
   static volatile String note = "";
   public static void setAutoplayBluetooth(android.content.Context c, boolean on) { }
+  public static boolean autoplayBluetooth(android.content.Context c) { return false; }   // MusicStandbyReturnsDeviceTest
   static boolean pageListening() { return false; }
   boolean sessionActive() { return false; }
 }

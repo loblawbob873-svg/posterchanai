@@ -14,6 +14,7 @@ public class Assert {
   public static void assertNull(String message, Object value) {}
   public static void assertNull(Object o) { }
   public static void assertArrayEquals(byte[] expected, byte[] actual) { }
+  public static void assertArrayEquals(String message, byte[] expected, byte[] actual) { }
   public static void assertEquals(String m, Object a, Object b) { }
   public static void assertEquals(Object a, Object b) { }
   public static void assertEquals(String m, long a, long b) { }

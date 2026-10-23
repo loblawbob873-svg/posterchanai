@@ -356,6 +356,7 @@ public class DialerActivity extends PcActivity {
         boolean onPad = tab == TAB_KEYPAD;
         padWrap.setVisibility(onPad ? View.VISIBLE : View.GONE);
         list.setVisibility(onPad ? View.GONE : View.VISIBLE);
+        if (onPad) empty.setVisibility(View.GONE);   // see reload(): the list's empty state is not the pad's
         padToggle.setVisibility(onPad ? View.INVISIBLE : View.VISIBLE);
 
         callBtn.setBackground(Skin.pill(this, pal, pal.green, true));
@@ -487,7 +488,13 @@ public class DialerActivity extends PcActivity {
                     @Override public void run() {
                         if (which != tab) return;
                         adapter.set(rows);
-                        empty.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
+                        /* THE LIST TABS' EMPTY STATE, NEVER THE KEYPAD'S. The keypad tab filters the
+                         * recent calls by what is typed, so this flipped with every digit that went from
+                         * matching a call to matching none -- and the line sits in the same column as the
+                         * pad, which therefore jumped by its height under the finger (and on a short phone
+                         * was re-sized and rebuilt, losing the press: DialerTapDeviceTest measured the 7th
+                         * digit of 555-0100 never arriving). The list is not shown there at all. */
+                        empty.setVisibility(rows.isEmpty() && which != TAB_KEYPAD ? View.VISIBLE : View.GONE);
                         empty.setText(which == TAB_CONTACTS ? R.string.tel_contacts_empty
                                     : which == TAB_VOICEMAIL ? R.string.tel_vm_empty
                                     : R.string.tel_recent_empty);
