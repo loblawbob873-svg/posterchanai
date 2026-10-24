@@ -42,23 +42,27 @@ window.PCMediaCenterFactory = function(dep){
     return kids;
   }
   const _mcMoveJoin=(dir,name)=>dir==='.'?name:dir+'/'+name;
-  async function _mcMoveDialog(lib, picked, items, api, done){
+  /* A WHOLE FOLDER goes through the same browser (`moveDir` = its path): it cannot be put inside itself, so
+   * neither it nor anything under it is offered, and "here" is the folder it sits in now. */
+  async function _mcMoveDialog(lib, picked, items, api, done, moveDir){
     // One title (its own Move button) or a SELECTION (the select bar); always a list from here on.
-    picked=[].concat(picked).filter(Boolean);
-    if(!picked.length) return;
+    picked=moveDir?[]:[].concat(picked).filter(Boolean);
+    if(!moveDir && !picked.length) return;
     const item=picked[0], many=picked.length>1;
+    const dirName=moveDir?moveDir.slice(moveDir.lastIndexOf('/')+1):'';
+    const inside=f=>!!moveDir && (f===moveDir || f.startsWith(moveDir+'/'));
     // The library's REAL folders (an emptied one is still somewhere to put things); the folders
     // its titles are in are the fallback if the server cannot list them.
     let disk=[];
     try{ disk=((await api('/'+lib.id+'/move-targets'))||{}).folders||[]; }catch(_){}
     const kids=_mcMoveTree(_mcMoveFolders(items.concat(disk.map(f=>({folder:f})))));
     // Where the titles are now: one folder, or null when the selection spans several.
-    const homes=new Set(picked.map(p=>p.folder||'.')), here=homes.size===1?[...homes][0]:null;
+    const homes=new Set(moveDir?[moveDir.includes('/')?moveDir.slice(0,moveDir.lastIndexOf('/')):'.']:picked.map(p=>p.folder||'.')), here=homes.size===1?[...homes][0]:null;
     const label=f=>f==='.'?lib.name:f.split('/').join(' › ');
     let root=null, cur='.';
     const now=here===null?`Now in <b>${homes.size} folders</b>.`:(many?`All in <b>${enc(label(here))}</b>.`:`Now in <b>${enc(label(here))}</b>.`);
-    modal(`<h3>${many?`Move ${picked.length} titles`:`Move “${enc(item.name)}”`}</h3>
-      <p class="muted small">${now} Open a folder, then choose Move here. Subtitles, poster and watch progress go with ${many?'them':'it'}.</p>
+    modal(`<h3>${moveDir?`Move folder “${enc(dirName)}”`:many?`Move ${picked.length} titles`:`Move “${enc(item.name)}”`}</h3>
+      <p class="muted small">${now} Open a folder, then choose Move here. ${moveDir?'Everything inside goes with it, and watch progress is kept.':`Subtitles, poster and watch progress go with ${many?'them':'it'}.`}</p>
       <nav class="mc-mv-crumbs" id="mc-mv-crumbs" aria-label="Folder path"></nav>
       <input class="input" type="search" id="mc-mv-filter" placeholder="Filter these folders…" aria-label="Filter folders" hidden>
       <div class="mc-mv-list" id="mc-mv-list"></div>
@@ -76,6 +80,7 @@ window.PCMediaCenterFactory = function(dep){
       go.disabled=t===here;
       go.textContent=nw.value.trim()?'Create and move':'Move here';
       said.textContent=t===here?(many?'They are already in this folder.':'It is already in this folder.'):'';
+      if(moveDir && t!==here && inside(t)){ go.disabled=true; said.textContent='A folder cannot go inside itself.'; }
     };
     const open=dir=>{
       cur=dir; filter.value=''; nw.value='';
@@ -83,7 +88,7 @@ window.PCMediaCenterFactory = function(dep){
       const crumbs=[['.',lib.name]].concat(parts.map((p,i)=>[parts.slice(0,i+1).join('/'),p]));
       q('#mc-mv-crumbs').innerHTML=crumbs.map(([path,name],i)=>(i?'<span class="sep" aria-hidden="true">›</span>':'')+
         `<button type="button" data-path="${enc(path)}"${i===crumbs.length-1?' aria-current="location"':''}>${enc(name)}</button>`).join('');
-      const list=kids[dir]||[];
+      const list=(kids[dir]||[]).filter(f=>!inside(f));
       filter.hidden=list.length<=12;
       q('#mc-mv-list').innerHTML=list.length?list.map(f=>{
         const name=f.slice(f.lastIndexOf('/')+1), deeper=!!(kids[f]&&kids[f].length);
@@ -106,6 +111,13 @@ window.PCMediaCenterFactory = function(dep){
       if(folder===here) return;
       go.disabled=true; said.textContent='Moving…';
       try{
+        if(moveDir){
+          const r=await api('/'+lib.id+'/move-folder','POST',{folder:moveDir, to:folder, create});
+          closeModal();
+          toast(`Moved folder “${dirName}” to ${label(folder)}`+(r.moved?` (${r.moved} title${r.moved===1?'':'s'})`:''));
+          done(r.path);
+          return;
+        }
         const r=await api('/'+lib.id+'/move','POST',{items:picked.map(p=>p.id), folder, create});
         const moved=(r.moved||[]).length, errs=r.errors||[];
         if(errs.length && !moved){ said.textContent=errs[0].error||'Could not move it'; go.disabled=false; return; }
@@ -528,6 +540,16 @@ window.PCMediaCenterFactory = function(dep){
         const crumb=(label,path)=>{const button=document.createElement('button');button.type='button';button.className='btn btn-ghost';button.textContent=label;button.onclick=()=>act(button,()=>browseFolder(lib,path));trail.append(button);};
         crumb(lib.name,'.');
         if(currentFolder!=='.'){let prefix='';for(const part of currentFolder.split('/')){prefix=prefix?prefix+'/'+part:part;crumb(part,prefix);}}
+        // Move THIS folder (managers only): the same browser as moving titles; afterwards open it where it went.
+        if(lib.can_manage&&currentFolder!=='.'){
+          const here=currentFolder,mv=document.createElement('button');mv.type='button';mv.className='btn btn-ghost small mc-move-folder';
+          mv.innerHTML='<svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg> Move folder…';
+          mv.onclick=()=>_mcMoveDialog(lib,[],$('#mc-items')._mcItems||[],api,path=>{
+            const open=libraryRows.get(lib.id)?.open;currentFolder=path||'.';
+            if(open&&!open.disabled)open.onclick();else browseFolder(lib,currentFolder);
+          },here);
+          trail.append(mv);
+        }
         const grid=document.createElement('div');grid.className='mc-directory-grid';nav.append(grid);
         for(const folder of result.folders){
           const button=document.createElement('button');button.type='button';button.className='mc-directory';

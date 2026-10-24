@@ -19,7 +19,7 @@
       const trail = gallery.querySelector('.mc-folder-trail');
       if (trail) {
         trail.setAttribute('aria-label', 'Folder breadcrumb');
-        const crumbs = [...trail.querySelectorAll('button')];
+        const crumbs = [...trail.querySelectorAll('button:not(.mc-move-folder)')];
         for (const [index, crumb] of crumbs.entries()) {
           if (index === crumbs.length - 1) crumb.setAttribute('aria-current', 'page');
           else crumb.removeAttribute('aria-current');

@@ -777,6 +777,50 @@ def move_items(library, items, item_ids, destination, create=False):
     return result, moved, errors
 
 
+def move_folder(library, items, folder, destination, create=False):
+    """Move a whole FOLDER of the library into another folder of it, on disk, and return the new catalog.
+
+    One rename of the directory (a copy only across mounts), then every title under it has its path and
+    folder rewritten in place -- the same kept-id rule as move_items, so watch progress, artwork and
+    Jellyfin links survive. Never into itself or one of its own subfolders, never over a name already
+    taken, never the library's top level. Returns (items, moved_count, new_path)."""
+    root, source = library_folder(library, folder)
+    if source == root:
+        raise ValueError("The library's top level cannot be moved")
+    _, dest = library_folder(library, destination, create=create)
+    if dest == source or source in dest.parents:
+        raise ValueError("A folder cannot be moved into itself")
+    if dest == source.parent:
+        raise ValueError("It is already in that folder")
+    target = dest / source.name
+    if os.path.lexists(target):
+        raise ValueError(f"{source.name} already exists there")
+    old = source.relative_to(root).as_posix()
+    new = target.relative_to(root).as_posix()
+    _move_file(source, target)
+
+    def moved(value):
+        return new + value[len(old):] if value == old or value.startswith(old + "/") else None
+
+    result, count = [], 0
+    for item in items:
+        path = moved(item.get("path") or "")
+        if path is None:
+            result.append(item)
+            continue
+        updated = {**item, "path": path, "folder": moved(item.get("folder") or ".") or item.get("folder")}
+        try:
+            # Re-stat, as move_items does: across mounts the move was a copy.
+            stat = (root / path).stat()
+            updated.update(size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+        except OSError:
+            pass
+        result.append(updated)
+        count += 1
+    result.sort(key=lambda item: (natural(item["folder"]), natural(item["path"])))
+    return result, count, new
+
+
 class DeleteRefused(ValueError):
     """A delete that was not carried out, with the sentence that says why."""
 

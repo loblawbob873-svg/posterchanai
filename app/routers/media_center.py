@@ -638,6 +638,41 @@ async def move_items(library_id: str, body: MoveItems, user=Depends(get_media_ad
     return {"moved": moved, "errors": errors, "revision": scan_revision(library)}
 
 
+class MoveFolder(BaseModel):
+    folder: str
+    to: str = "."
+    create: bool = False
+
+
+@router.post("/{library_id}/move-folder")
+async def move_folder(library_id: str, body: MoveFolder, user=Depends(get_media_admin)):
+    """Move a whole folder of a library into another folder of it (owner + admin only). Same locks and
+    the same scanning refusal as moving titles; the titles inside keep their ids."""
+    lock = _move_locks.setdefault(library_id, asyncio.Lock())
+    async with lock:
+        async with media.mutation_lock:
+            library = await library_for(library_id, media.identity(user), owner=True)
+            if _scans.get(library_id, {}).get("state") == "running":
+                raise HTTPException(409, "This library is scanning; move the folder once it finishes")
+            _moving.add(library_id)
+        try:
+            catalog = await media.catalog(library)
+            try:
+                items, moved, path = await asyncio.to_thread(
+                    media.move_folder, library, catalog, body.folder, body.to, body.create)
+            except (ValueError, OSError) as error:
+                raise HTTPException(400, str(error)) from error
+            try:
+                library = await persist_scan_catalog(library, items, library.get("skipped", 0),
+                                                     incomplete=bool(library.get("scan_incomplete")))
+            except Exception as error:
+                logging.getLogger(__name__).exception("Media Center folder move: catalog save failed")
+                raise HTTPException(502, "Folder moved, but the library could not be saved; Rescan to update it") from error
+        finally:
+            _moving.discard(library_id)
+    return {"moved": moved, "path": path, "revision": scan_revision(library)}
+
+
 @router.delete("/{library_id}/items/{item_id}")
 async def delete_item(library_id: str, item_id: str, user=Depends(get_media_admin)):
     """Delete a title FROM DISK and from the catalog (owner + admin only).
