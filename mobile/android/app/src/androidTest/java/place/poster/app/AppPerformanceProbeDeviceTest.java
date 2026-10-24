@@ -13,6 +13,7 @@ import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -35,6 +36,11 @@ public final class AppPerformanceProbeDeviceTest {
     private static final String TAG = "PCPERF";
 
     @Test public void measureColdStartAndIdleCost() throws Exception {
+        /* A MEASUREMENT, NOT A CHECK: it asserts no behaviour and takes minutes, so it runs only when asked for by name
+         * (scripts/emulator_tests_on_nas.sh -c AppPerformanceProbeDeviceTest passes `-e class ...`). Run as part of the
+         * whole suite it hit the 90 s test timeout and blocked APK publication (CI, 2026-10-24). */
+        String asked = String.valueOf(InstrumentationRegistry.getArguments().getString("class"));
+        Assume.assumeTrue("the performance probe runs only when its class is named", asked.contains("AppPerformanceProbeDeviceTest"));
         // NOT `am force-stop`: an instrumented test runs IN the app's process, so that killed the probe itself. These
         // are therefore a cold ACTIVITY start (new MainActivity + WebView + page load) in a warm process.
         long t0 = SystemClock.elapsedRealtime();
