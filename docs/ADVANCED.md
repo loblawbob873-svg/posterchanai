@@ -177,17 +177,21 @@ sudo systemctl status posterchanai
 
 Access the admin panel at `http://localhost:3051/admin`
 
-### AI Settings (Ollama)
+### AI Settings
 
-- **Ollama URL**: URL to your Ollama instance (e.g., `http://localhost:11434`)
-- **Default Model**: Model name to use for chat
+The chat model runs **inside PosterChan** (llama-cpp-python, on the GPU or the CPU) from a GGUF file in
+the models directory. There is no Ollama backend any more: PosterChan cannot be pointed at an Ollama
+instance. (The reverse works -- a coding client such as opencode can talk to Ollama directly; see
+"OpenCode" below.) Several nodes can share load through **`chat_server_urls`**.
+
+- **Model Path**: the GGUF file to load
+- **Agentic / Tools Model**: the model used for tool-calling requests (see "OpenCode" below)
 - **Timeout**: Request timeout in milliseconds
-- **Max Concurrent**: Maximum concurrent requests to Ollama
 - **System Prompt**: Default system prompt for the AI
 
 ### Advanced Model Settings
 
-These settings apply to both Native and Ollama backends:
+These settings apply to the built-in model:
 
 - **Temperature**: Controls randomness (0.0 - 2.0)
 - **Top P**: Nucleus sampling threshold
@@ -196,11 +200,6 @@ These settings apply to both Native and Ollama backends:
 - **Context Length**: Maximum context window size
 - **Max Tokens**: Maximum tokens to generate
 - **Mirostat**: Mirostat sampling mode (0=disabled, 1=v1, 2=v2)
-
-Ollama-only settings:
-- **Keep Alive**: How long to keep model in memory (-1 = forever)
-- **Max Concurrent**: Maximum concurrent requests to Ollama
-- **TFS-Z**: Tail-free sampling parameter
 
 ### Optional Services
 
@@ -431,7 +430,7 @@ The WD14 tagger uses the SmilingWolf/wd-v1-4-moat-tagger-v2 model via ONNX runti
 ### Site Settings
 
 - **Allow Registration**: Enable/disable user registration
-- **Ollama Health Check**: Auto-ping Ollama and restart if unresponsive
+- **LLM Health Check**: Ping the built-in model and reload it if it stops answering (see "LLM Health Check")
 
 ## OpenAI-Compatible API
 
@@ -495,6 +494,31 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 4. **Recommended model**: for agentic coding, use [`Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, ~16 GB, MoE ~3 B active) — drop the GGUF in the models dir and set OpenCode's `model` to its basename. It's dramatically more reliable at multi-step tool use than the 8–14 B models (it 1-shots small web apps). Needs a 12 GB+ GPU; on 12–16 GB cards it partial-offloads to CPU and auto-fits context (keep `ollama_num_ctx` on `auto`). `Qwen3.5-9B-Claude-Code` is the lightweight fallback for smaller GPUs.
 
    **Server-wide agentic model:** rather than (or in addition to) setting it per-client, set **Admin → AI Settings → Agentic / Tools Model** (`llm_tools_model`, GGUF basename in the models dir or an absolute path). It's used for **every tool-bearing `/v1` request** *and* the **`node agent`** command (web UI, Telegram, and the system-health report) — falling back to the default Model Path if blank or the file is missing. Plain chat always uses the default model. (The legacy `node_exec_agent_model` setting is still honored as a fallback.)
+
+#### opencode with Ollama on your own machine (no PosterChan in the loop)
+
+opencode can also use an Ollama running locally, as an OpenAI-compatible provider. In
+`~/.config/opencode/opencode.json` (every project) or `opencode.json` in a project's root:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": { "baseURL": "http://localhost:11434/v1" },
+      "models": { "qwen3-coder:30b": { "name": "Qwen3 Coder 30B" } }
+    }
+  },
+  "model": "ollama/qwen3-coder:30b"
+}
+```
+
+Model keys must match `ollama list` exactly, tag included; `model` is `<provider id>/<model>`, and `/models`
+inside opencode switches between providers. Ollama's default context window is too small for opencode's
+system prompt and tool list (the model ignores tools or stops mid-task), so start it with a bigger one, e.g.
+`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`. `curl http://localhost:11434/v1/models` should list the model.
 
 #### Editing large files on a small-context model
 
@@ -1079,63 +1103,6 @@ The Translate button allows you to translate entire documents to different langu
 3. Choose a file to translate
 4. AI will translate the full document
 
-## Custom AI Service
-
-Users can connect to their own AI service running on their desktop or home server, allowing them to use their personal LLM and ComfyUI instances instead of the server's default.
-
-### Supported Services
-
-**LLM (Chat):**
-- **Ollama** - Direct Ollama API (`/api/chat`)
-- **Open-WebUI** - OpenAI-compatible API (`/v1/chat/completions`)
-- **Posterchanai** - OpenAI-compatible API (`/v1/chat/completions`)
-
-**Image Generation:**
-- **ComfyUI** - User's own ComfyUI instance
-
-### Setup
-
-1. Click your username in the sidebar
-2. Click **Settings**
-3. In the **Custom AI Service** section:
-
-**For Chat/LLM:**
-- Enable **Use Custom LLM**
-- Select **Service Type** (Ollama or Open-WebUI/Posterchanai)
-- Enter **Service URL** (e.g., `http://192.168.1.100:11434` for Ollama)
-- Enter **Model Name** (e.g., `llama3:latest` for Ollama, or your model ID for Open-WebUI)
-- Optionally enter **API Key** (required for Open-WebUI/Posterchanai)
-- Click **Test Connection** to verify
-
-**For Image Generation:**
-- Enable **Use Custom ComfyUI**
-- Enter **ComfyUI URL** (e.g., `http://192.168.1.100:8188`)
-- Click **Test Connection** to verify
-
-4. Click **Save All Settings**
-
-### Quick Toggle
-
-Once configured, a quick toggle appears in the user menu to switch between:
-- **Server AI** - Uses the server's default AI service
-- **Custom AI** - Uses your personal AI service
-
-This allows one-click switching without opening settings.
-
-### How It Works
-
-- Chat requests are routed to your custom LLM endpoint
-- Image generation requests are routed to your custom ComfyUI
-- **All uploads and generated images remain stored on the main server**
-- Your conversation history stays on the main server
-- If your custom service is unavailable, you'll see an error message
-
-### Security Notes
-
-- Your API key is stored encrypted on the server
-- The server only proxies requests to your custom endpoint
-- No data is shared with the custom service except the chat messages/prompts
-
 ## Email AI Responses
 
 You can email any AI response to your configured email address.
@@ -1424,7 +1391,7 @@ Key settings for WebSocket and streaming:
 
 ## LLM Health Check
 
-Posterchanai includes an automatic health check that monitors the LLM backend and recovers if unresponsive. Works with all backends: Native GPU, IPEX-LLM, and Ollama.
+Posterchanai includes an automatic health check that monitors the built-in model and reloads it if it stops answering.
 
 **Important:** The LLM health check is automatically disabled when `vram_mode` is set to `image_only`, since there's no local LLM to monitor in that configuration.
 
@@ -1432,10 +1399,9 @@ Posterchanai includes an automatic health check that monitors the LLM backend an
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `ollama_ping_enabled` | false | Enable/disable health check |
-| `ollama_ping_interval` | 120 | Seconds between health checks |
-| `ollama_restart_after_failures` | 2 | Consecutive failures before recovery |
-| `ollama_restart_command` | `sudo systemctl restart ollama` | Command to restart Ollama (Ollama backend only) |
+| `llm_health_check_enabled` | false | Enable/disable health check |
+| `llm_health_check_interval` | 120 | Seconds between health checks |
+| `llm_reload_after_failures` | 2 | Consecutive failures before the model is reloaded |
 
 ### GPU VRAM Monitoring
 
@@ -1465,12 +1431,10 @@ sudo chmod 440 /etc/sudoers.d/gpu_memory
 ### How it works
 
 1. Checks if the LLM backend is responsive every 120 seconds
-   - **Native/IPEX**: Verifies model is loaded in memory
-   - **Ollama**: Pings the Ollama API
+   - Verifies the model is loaded and answers
 2. If check fails, increments failure counter
 3. After consecutive failures, triggers recovery:
-   - **Native/IPEX**: Reloads the model in-process
-   - **Ollama**: Executes the configured restart command
+   - Reloads the model in-process
 4. If GPU memory monitoring is enabled and VRAM >= threshold:
    - Logs: `GPU VRAM usage at 99.2% (>= 99% threshold) - triggering model reload to free memory`
    - Reloads the model to free fragmented VRAM
@@ -1488,12 +1452,11 @@ The native GPU backend uses an async queue architecture for true real-time strea
 
 ## GPU Acceleration
 
-Poster-chan AI supports four LLM backends:
+Poster-chan AI supports three LLM backends:
 
 1. **IPEX-LLM** (Recommended for Intel Arc) - Intel's optimized LLM inference with best Arc GPU performance
 2. **Native GPU** - Direct llama-cpp-python with SYCL (Intel), CUDA (NVIDIA), or HIP (AMD ROCm)
-3. **Ollama** - External Ollama instance (Docker or native)
-4. **AMD ROCm** - Native llama-cpp-python with HIP backend for AMD GPUs
+3. **AMD ROCm** - Native llama-cpp-python with HIP backend for AMD GPUs
 
 ### IPEX-LLM Setup (Intel Arc - Recommended)
 
@@ -1795,7 +1758,7 @@ The installer handles this automatically for AMD GPUs.
 | PyTorch not detecting GPU | Ensure ROCm is installed and user is in `video` and `render` groups |
 | Slow first generation | Normal - HIP compiles shaders on first run (~1-2 min) |
 | Slower than NVIDIA | ROCm uses CPU offload for SDXL to fit in 12GB - expect ~2x slower |
-| llama-cpp-python SEGV crash | See "Known Issues" below - use CPU mode or Ollama as workaround |
+| llama-cpp-python SEGV crash | See "Known Issues" below - use CPU mode as a workaround |
 
 **Known Issues - llama-cpp-python ROCm on Gentoo:**
 
@@ -1808,8 +1771,7 @@ On Gentoo Linux, `llama-cpp-python` with ROCm/HIP support may crash with SEGFAUL
 **Workarounds:**
 
 1. **Use CPU mode** (automatic fallback) - LLM runs on CPU, slower but works
-2. **Use Ollama** - Install Ollama with ROCm support (pre-built, works correctly)
-3. **Manual llama.cpp build** - Clone llama.cpp and build manually with correct cmake paths:
+2. **Manual llama.cpp build** - Clone llama.cpp and build manually with correct cmake paths:
    ```bash
    git clone https://github.com/ggerganov/llama.cpp
    cd llama.cpp
@@ -1929,8 +1891,6 @@ This helps diagnose:
   - Intel Arc: Intel oneAPI Base Toolkit
   - NVIDIA: CUDA Toolkit
   - GGUF model file
-- **For Ollama mode:**
-  - Ollama instance (local or Docker)
 - **For OCR (image text extraction):**
   - Tesseract OCR (`apt install tesseract-ocr` or `emerge app-text/tesseract`)
 - ComfyUI instance (optional, for image generation)

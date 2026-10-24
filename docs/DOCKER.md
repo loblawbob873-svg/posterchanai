@@ -357,11 +357,11 @@ set the type to `sdxl` (or `sd15`). The anime model is used for style switching.
 
 ## Backends notes
 
-- **No local GPU LLM?** Any image works pointed at an external **Ollama** (set it in
-  the admin UI); the backend is then just image gen / the web app.
+- **No local GPU LLM?** The model then runs on the CPU (slower), or point `chat_server_urls`
+  at another PosterChan node that has a GPU. There is no Ollama backend.
 - **AMD HIP llama** needs ROCm ≥ 6.3; if your card's HIP kernels aren't built it
   falls back to CPU (text gen won't use the GPU) — rebuild with your
-  `AMDGPU_TARGETS`, or use Ollama.
+  `AMDGPU_TARGETS`.
 
 ## Connecting opencode (or any OpenAI client)
 
