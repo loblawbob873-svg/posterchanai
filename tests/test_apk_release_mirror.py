@@ -70,6 +70,22 @@ def test_a_failed_build_is_never_mirrored(tmp_path):
     assert rc == 1 and "failure" in out, out
 
 
+def test_a_run_that_failed_after_publishing_the_release_is_still_mirrored(tmp_path):
+    """2026-10-24: Zapstore refused every listing, the APK job went red AFTER its "Publish rolling release" step, and
+    /apk + the in-app updater stayed on the build before it. The release is what /apk mirrors; Zapstore is not."""
+    rc, out, calls = _wait(tmp_path, ["in_progress null", "completed failure", "40134765150", "success"])
+    assert rc == 0 and "AFTER publishing the release" in out, out
+    assert any("run view 40134765150" in c and "--json jobs" in c for c in calls), calls
+
+
+def test_a_run_that_failed_before_publishing_is_not_mirrored(tmp_path):
+    for publish in ("failure", "skipped", ""):
+        d = tmp_path / (publish or "none")
+        d.mkdir()
+        rc, out, _ = _wait(d, ["completed failure", "40134765150", publish])
+        assert rc == 1 and "nothing to mirror" in out, (publish, out)
+
+
 def test_a_deploy_with_no_android_build_does_not_wait_the_full_hour(tmp_path):
     rc, out, calls = _wait(tmp_path, ["", "", "", "", ""])
     assert rc == 0 and "no Android build" in out and len(calls) == 3, (out, calls)

@@ -21,7 +21,20 @@ for i in $(seq 1 "$LIMIT"); do
          --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null)
   case "$st" in
     "completed success") echo "wait_apk_build: ${sha:0:9} built"; exit 0 ;;
-    completed\ *) echo "wait_apk_build: ${sha:0:9} build ${st#completed } -- nothing to mirror"; exit 1 ;;
+    completed\ *)
+      # A RUN CAN FAIL AFTER IT PUBLISHED. The release step comes before Zapstore, so a refused Zapstore listing
+      # (2026-10-24: every release, for hours) left the APK on GitHub and /apk on the build before it -- the
+      # in-app updater and every direct download a release behind, for a reason that has nothing to do with them.
+      # What counts is whether THIS run's "Publish rolling release" step succeeded.
+      rid=$(gh run list --repo "$REPO" --workflow android.yml --commit "$sha" --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+      pub=""
+      [ -n "$rid" ] && pub=$(gh run view "$rid" --repo "$REPO" --json jobs \
+              --jq '[.jobs[].steps[] | select(.name=="Publish rolling release") | .conclusion] | first // ""' 2>/dev/null)
+      if [ "$pub" = "success" ]; then
+        echo "wait_apk_build: ${sha:0:9} build ${st#completed } AFTER publishing the release -- mirroring it"; exit 0
+      fi
+      echo "wait_apk_build: ${sha:0:9} build ${st#completed } -- nothing to mirror"; exit 1 ;;
     "" | "null null") [ "$i" -ge "$NONE" ] && { echo "wait_apk_build: no Android build for ${sha:0:9}"; exit 0; } ;;
   esac
   sleep "$POLL"
