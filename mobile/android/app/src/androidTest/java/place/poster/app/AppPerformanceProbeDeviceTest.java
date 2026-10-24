@@ -64,11 +64,29 @@ public final class AppPerformanceProbeDeviceTest {
                     + "+Math.round(performance.memory.totalJSHeapSize/1048576):'n/a')");
             Log.i(TAG, "js_heap_used_total_mb=" + mem.replace("\"", ""));
             // Settle (startup work, relay connects), then the idle windows.
-            SystemClock.sleep(10000);   // the runner caps a test at 90 s: 10 s settle + two 30 s windows
-            put("idle_foreground_30s_ticks", ticksOver(30000));
+            SystemClock.sleep(5000);   // the runner caps a test at 90 s: settle + two 25 s windows + the control
+            put("idle_foreground_25s_ticks", ticksOver(25000));
+            // What the PAGE does once HOME is pressed: does it learn it is hidden, and what keeps calling back?
+            eval(web, "(()=>{const C=window.__bg={raf:0,to:0,iv:0,anim:0,vis:[]};"
+                    + "const r=requestAnimationFrame;window.requestAnimationFrame=function(f){return r.call(this,t=>{C.raf++;f(t);});};"
+                    + "const st=setTimeout;window.setTimeout=function(f,ms,...a){return st.call(this,typeof f==='function'?function(...b){C.to++;return f.apply(this,b);}:f,ms,...a);};"
+                    + "document.addEventListener('visibilitychange',()=>C.vis.push(document.visibilityState));"
+                    // every relay message the pool receives, by type (and kind for EVENTs), with bytes
+                    + "C.msg={};C.bytes=0;const om=Relay._onMessage;Relay._onMessage=function(c,d){try{C.bytes+=(d&&d.length)||0;"
+                    + "const m=JSON.parse(d);const k=m[0]+(m[0]==='EVENT'?':'+((m[2]||{}).kind):'')+' '+((c&&c.url)||'').replace(/^wss?:\\/\\//,'');"
+                    + "C.msg[k]=(C.msg[k]||0)+1;}catch(_){}return om.apply(this,arguments);};return true;})()");
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
             SystemClock.sleep(3000);
-            put("idle_background_30s_ticks", ticksOver(30000));
+            put("idle_background_25s_ticks", ticksOver(25000));
+            Log.i(TAG, "background_page " + eval(web, "JSON.stringify({vis:document.visibilityState,hidden:document.hidden,"
+                    + "events:__bg.vis,raf:__bg.raf,timeouts:__bg.to,relay_bytes:__bg.bytes,relay_msgs:__bg.msg,"
+                    + "animations:(document.getAnimations?document.getAnimations().filter(a=>a.playState==='running').map(a=>(a.animationName||a.constructor.name)+'@'+((a.effect&&a.effect.target&&(a.effect.target.id||a.effect.target.className))||'?')).slice(0,12):'n/a')})"));
+            // CONTROL: the same WebView with a blank page, backgrounded the same way -- what the renderer costs with
+            // none of our code in it. Our share is the difference.
+            final WebView w = web;
+            w.post(() -> w.loadUrl("about:blank"));
+            SystemClock.sleep(2000);
+            put("control_blank_background_25s_ticks", ticksOver(25000));
             Log.i(TAG, "processes=" + RealUi.shell("ps -A -o PID,NAME").replaceAll("(?s)^.*?\\n", "")
                     .lines().filter(l -> l.contains("place.poster") || l.contains("sandboxed_process") || l.contains("webview")).map(String::trim).reduce((a, b) -> a + "; " + b).orElse(""));
             Log.i(TAG, "wakelocks=" + RealUi.shell("dumpsys power").lines()
@@ -82,9 +100,34 @@ public final class AppPerformanceProbeDeviceTest {
 
     /** utime+stime of every place.poster process (main + renderer + services), summed, over `ms`. */
     private static long ticksOver(long ms) {
-        long a = ticks();
+        java.util.Map<String, Long> before = perProcess();
         SystemClock.sleep(ms);
-        return ticks() - a;
+        java.util.Map<String, Long> after = perProcess();
+        long sum = 0;
+        StringBuilder by = new StringBuilder();
+        for (java.util.Map.Entry<String, Long> e : after.entrySet()) {
+            long d = e.getValue() - before.getOrDefault(e.getKey(), 0L);
+            sum += d;
+            if (d > 0) by.append(e.getKey()).append('=').append(d).append(' ');
+        }
+        Log.i(TAG, "by_process " + by.toString().trim());
+        return sum;
+    }
+
+    /** name(pid) -> utime+stime for every app, WebView renderer and WebView service process. */
+    private static java.util.Map<String, Long> perProcess() {
+        java.util.Map<String, Long> out = new java.util.TreeMap<>();
+        for (String line : RealUi.shell("ps -A -o PID,NAME").split("\n")) {
+            String[] f = line.trim().split("\\s+");
+            if (f.length < 2 || !(f[1].startsWith("place.poster") || f[1].contains("sandboxed_process") || f[1].contains("webview"))) continue;
+            String stat = RealUi.shell("cat /proc/" + f[0] + "/stat").trim();
+            int close = stat.lastIndexOf(')');
+            if (close < 0) continue;
+            String[] st = stat.substring(close + 2).split(" ");
+            try { out.put(f[1].replaceAll(".*:", "") + "(" + f[0] + ")", Long.parseLong(st[11]) + Long.parseLong(st[12])); }
+            catch (RuntimeException ignored) { }
+        }
+        return out;
     }
 
     private static long ticks() {
