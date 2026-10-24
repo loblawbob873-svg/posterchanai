@@ -83,6 +83,8 @@ def test_joining_a_community_you_are_already_in_does_not_add_a_second_copy():
             assert saved == 1, ('joining again added a second copy to the saved list', saved)
             assert shown <= 1, ('joining again shows the community twice in the rail', shown)
             await bob.b.js("location.reload();true")
+            await asyncio.sleep(1)
+            await R.wait(bob.b, "!!window.__PC && !!__PC.me() && Relay.status==='ok'", 60, 'Bob back after the reload')
             await concord(bob)
             await asyncio.sleep(4)
             assert await bob.b.js(ROOMS_NAMED % json.dumps('Twice')) == 1, 'a reload brought the double back'
