@@ -949,8 +949,12 @@ async def get_avatar(
     # Local file serving (storage server node or when storage_server_url is not configured)
     storage = StorageService(db)
     
-    # Try to get avatar path - this searches for avatar.* files in user directory
-    avatar_path = storage.get_avatar_path(username)
+    # Try to get avatar path - this searches for avatar.* files in user directory. A name that is not a
+    # username at all ("..", a slash) is "no such avatar", never a 500.
+    try:
+        avatar_path = storage.get_avatar_path(username)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Avatar not found")
     
     # If not found via glob, check database for specific filename (if user exists in this DB)
     if not avatar_path or not avatar_path.exists():
