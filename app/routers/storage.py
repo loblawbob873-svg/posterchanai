@@ -26,6 +26,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
 
+def _named_item(user_path: Path, rel: str) -> Path:
+    """The file or folder `rel` names inside the user's storage, for a DELETE or a MOVE.
+
+    A path that names nothing -- "", "/", ".", "./", "//" -- joins to the user's storage ROOT, which is "inside the
+    user's directory" and so passed every guard: bulk Delete `rmtree`'d a user's whole storage on one empty string in
+    a selection. The root is never an item a person picked. Raises ValueError for it (and for any unsafe component)."""
+    parts = [_sanitize_path_component(p) for p in str(rel or "").split('/') if p]
+    target = user_path / Path(*parts) if parts else user_path
+    if not parts or target.resolve() == user_path.resolve():
+        raise ValueError("No file or folder was named")
+    return target
+
+
 @router.post("/save-image")
 async def save_image(
     file: UploadFile = File(...),
@@ -1192,8 +1205,7 @@ async def delete_file(
     
     # Sanitize and validate path
     try:
-        safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-        full_path = user_path / safe_path
+        full_path = _named_item(user_path, file_path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
     
@@ -1531,8 +1543,7 @@ async def move_files(
         for file_path in file_paths:
             try:
                 # Sanitize source path
-                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-                source_path = user_path / safe_path
+                source_path = _named_item(user_path, file_path)
                 
                 # Validate source is within user directory
                 if not _validate_path_within_base(source_path, user_path):
@@ -1695,8 +1706,7 @@ async def delete_files_bulk(
             try:
                 logger.debug(f"[STORAGE] Processing deletion of: {file_path}")
                 # Sanitize and validate path
-                safe_path = Path(*[_sanitize_path_component(p) for p in file_path.split('/') if p])
-                full_path = user_path / safe_path
+                full_path = _named_item(user_path, file_path)
                 
                 # Validate path is within user directory
                 if not _validate_path_within_base(full_path, user_path):

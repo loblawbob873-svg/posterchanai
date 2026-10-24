@@ -70,6 +70,10 @@ def _sanitize_path_component(component: str) -> str:
 
     # Convert to string and strip whitespace
     component = str(component).strip()
+    # Checked AFTER the strip: " " used to come out as "", which every caller joins as no component at all --
+    # i.e. the user's storage ROOT, which bulk Delete then removed whole (tests/test_storage_file_ops_on_disk.py).
+    if not component:
+        raise ValueError("Path component cannot be empty")
 
     # Block path traversal patterns
     if '..' in component or component.startswith('/') or component.startswith('\\'):
