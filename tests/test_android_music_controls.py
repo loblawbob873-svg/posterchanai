@@ -423,8 +423,10 @@ def test_a_skip_on_an_empty_player_is_a_resume_not_a_skip():
     init = re.search(r"_nativeInit\(\)\{(.*?)\n    \},", APPJS, re.S)
     assert init
     for verb in ("next", "prev"):
-        assert f"if(a==='{verb}'){{ if(this.cur) this.{verb}(); else this._resumeOrPlay(); }}" \
-            in init.group(1), f"a {verb} press with no track loaded must resume, not walk an empty queue"
+        # The branch may note the press first (the car-skip report stamps _pressAt); what it must DO is the rule.
+        branch = re.search(r"if\(a==='%s'\)\{([^}]*)\}" % verb, init.group(1))
+        assert branch and f"if(this.cur) this.{verb}(); else this._resumeOrPlay();" in branch.group(1), \
+            f"a {verb} press with no track loaded must resume, not walk an empty queue"
 
 
 def test_a_press_that_could_not_be_performed_still_lands_somewhere():
