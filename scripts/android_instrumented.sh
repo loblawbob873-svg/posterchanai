@@ -35,6 +35,7 @@ if ! find mobile/android/app/src/androidTest \( -name '*.java' -o -name '*.kt' \
   skip "mobile/android/app/src/androidTest has no sources — nothing was tested on the device."
 fi
 
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)   # scripts/, before the cd below
 cd mobile/android || exit 1
 # Asked BEFORE gradle, because the clearest evidence is the simplest: no device attached means the
 # emulator never booted or has already gone, and every second spent building is spent for nothing.
@@ -226,3 +227,8 @@ if summary:
         output.write('\n' + message + '\n')
 sys.exit(1 if problems else 0)
 PYRESULT
+evidence=$?
+# AND THE APP MUST NOT HAVE CRASHED, whatever the tests said: a crash between assertions, or in a test that recovered,
+# fails nothing -- the music service's cross-thread crash went through 168 green tests (android_crash_verdict.py).
+python3 "$HERE/android_crash_verdict.py" /tmp/pc-instrumented.log /tmp/pc-androidtest/logcat-instrumented-crash.txt || evidence=1
+exit "$evidence"
