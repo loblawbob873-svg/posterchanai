@@ -1149,11 +1149,35 @@ _APK_RELEASE = "https://github.com/loblawbob873-svg/posterchanai/releases/downlo
 _ANDROID8_UA = re.compile(r"\bAndroid 8(?:\.\d+)*(?=[;) ]|$)")
 
 
+_ANDROID_UA = re.compile(r"\bAndroid (\d+)(?:\.\d+)*(?=[;) ]|$)")
+
+
+def _android_major(request) -> int:
+    """The Android major version in the User-Agent, 0 when it names none (a desktop, a bare client)."""
+    try:
+        m = _ANDROID_UA.search(request.headers.get("user-agent", ""))
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
+
+
 def _is_android8(request) -> bool:
     try:
         return bool(_ANDROID8_UA.search(request.headers.get("user-agent", "")))
     except Exception:
         return False
+
+
+_APK_TOO_OLD = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>PosterChan for Android</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32em;margin:2em auto;padding:0 16px;background:#111;color:#eee}
+a{color:#7cf}</style>
+<h1>This phone's Android is too old for the app</h1>
+<p>The PosterChan app needs <b>Android 8.0 or newer</b>, and this phone reports Android %d. Installing the
+APK here would only end in "App not installed".</p>
+<p>Everything still works in this phone's browser: <a href="/client">open PosterChan</a>, and use the browser
+menu's "Add to Home screen" to keep it one tap away.</p>
+<p><small><a href="/apk?force=1">Download the APK anyway</a></small></p>"""
 
 
 @app.get("/apk")
@@ -1169,7 +1193,13 @@ async def latest_apk(request: Request):
     rotation lineage, which Android 8 cannot verify -- see docs/ZAPSTORE_SIGNING_RECOVERY.md), so an
     8.x phone told "/apk" downloaded a file it then refused as an invalid package, with nothing on the
     page to say a second APK exists. The choice is a REDIRECT, never different bytes under one URL: a
-    CDN keys on the URL, and an edge holding the Android 8 file would hand it to everybody."""
+    CDN keys on the URL, and an edge holding the Android 8 file would hand it to everybody. Android 7 and
+    older (minSdk is 26) get a page saying so, and pointing at the web client, instead of a file that can
+    only fail to install."""
+    major = _android_major(request)
+    if 0 < major < 8 and request.query_params.get("force") != "1":
+        return HTMLResponse(_APK_TOO_OLD % major,
+                            headers={"Cache-Control": "private, no-store", "Vary": "User-Agent"})
     if _is_android8(request):
         return RedirectResponse(url="/apk/android8", status_code=302,
                                 headers={"Cache-Control": "private, no-store", "Vary": "User-Agent"})

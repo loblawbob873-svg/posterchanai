@@ -61,9 +61,23 @@ def test_an_android_8_phone_is_sent_to_the_apk_it_can_install(client):
 
 
 def test_every_other_device_still_gets_the_main_apk(client):
-    for ua in (UA9, UA14, UA_DESKTOP, ""):
+    for ua in (UA9, UA14, UA_DESKTOP, "", "Mozilla/5.0 (Linux; Android 10; K) Chrome/130 Mobile"):
         r = client.get("/apk", headers={"user-agent": ua}, follow_redirects=False)
         assert r.status_code == 200 and _marker(r.content) == "MAIN", (ua, r.status_code)
+
+
+UA7 = "Mozilla/5.0 (Linux; Android 7.1.2; Redmi 4X) AppleWebKit/537.36 Chrome/90 Mobile"
+UA6 = "Mozilla/5.0 (Linux; Android 6.0; Lenovo K33) AppleWebKit/537.36 Chrome/80 Mobile"
+
+
+def test_a_phone_too_old_for_the_app_is_told_so_instead_of_handed_a_file_that_cannot_install(client):
+    for ua, n in ((UA7, 7), (UA6, 6)):
+        r = client.get("/apk", headers={"user-agent": ua}, follow_redirects=False)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), (ua, r.headers)
+        assert "Android 8.0 or newer" in r.text and ("Android %d" % n) in r.text and 'href="/client"' in r.text
+        assert "no-store" in r.headers.get("cache-control", "")
+        forced = client.get("/apk?force=1", headers={"user-agent": ua})
+        assert _marker(forced.content) == "MAIN", "the page's own 'download anyway' link must still download"
 
 
 def test_android8_falls_back_to_the_release_when_the_mirror_has_none(client, monkeypatch, tmp_path):
