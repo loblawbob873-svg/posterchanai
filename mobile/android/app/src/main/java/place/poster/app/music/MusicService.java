@@ -883,8 +883,22 @@ public class MusicService extends MediaBrowserServiceCompat {
     }
   }
 
+  /**
+   * PLUGIN CALLS ARRIVE ON CAPACITOR'S PLUGIN THREAD; THE SESSION LIVES ON THE MAIN THREAD. MusicPlugin
+   * used to call apply()/ack()/shutdown() straight from there, so onDestroy() (main thread) could set
+   * `session = null` in the middle of a publish() and the next line threw -- a NullPointerException in
+   * notification() that killed the app process (seen in CI's emulator logcat, 2026-10-24). Every plugin
+   * entry that changes this service goes through here.
+   */
+  void runOnMain(Runnable r) {
+    if (Looper.myLooper() == Looper.getMainLooper()) r.run();
+    else handler.post(r);
+  }
+
   /** Push the current state to the media session, the notification and the home-screen widget. */
   private void publish() {
+    // A call queued before onDestroy() ran must not touch a session that has been released.
+    if (session == null) return;
     Watcher w = watcher;
     if (w != null) { try { w.onNowPlaying(title, artist, playing); } catch (Throwable ignored) { } }
     MediaMetadataCompat.Builder md = new MediaMetadataCompat.Builder()

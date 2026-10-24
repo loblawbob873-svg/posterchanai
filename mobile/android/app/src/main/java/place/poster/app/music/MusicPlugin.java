@@ -102,7 +102,7 @@ public class MusicPlugin extends Plugin {
       // Already running, and in THIS process — a direct call. Going back through
       // startForegroundService once a second would be refused the moment the screen went off (see
       // MusicService.apply), which is exactly when the lock screen is all the user has.
-      svc.apply(title, artist, playing, position, duration);
+      svc.runOnMain(() -> svc.apply(title, artist, playing, position, duration));
       call.resolve();
       return;
     }
@@ -132,7 +132,7 @@ public class MusicPlugin extends Plugin {
     MusicService svc = MusicService.INSTANCE;
     if (svc != null) {
       Intent i = MusicService.intent(getContext(), MusicService.ACTION_STOP);
-      try { getContext().startService(i); } catch (Exception ignored) { svc.shutdown(); }
+      try { getContext().startService(i); } catch (Exception ignored) { svc.runOnMain(svc::shutdown); }
     } else {
       // Never started (or already gone) — but a widget may still be showing the last track.
       MusicWidget.render(getContext(), null, null, false, false);
@@ -241,7 +241,7 @@ public class MusicPlugin extends Plugin {
   @PluginMethod
   public void ack(PluginCall call) {
     MusicService svc = MusicService.INSTANCE;
-    if (svc != null) svc.ack();
+    if (svc != null) svc.runOnMain(svc::ack);
     call.resolve();
   }
 
