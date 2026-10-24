@@ -4464,6 +4464,8 @@
           // person on that community. Without this Back walked the history out from under it.
           if(window.PCConcord && PCConcord.communitySettingsOpen && PCConcord.communitySettingsOpen()){ try{ PCConcord.closeCommunitySettings(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
+          // Communities, opt-in: thread -> channel -> channel list before leaving (concord.js backStep).
+          if(ClientSettings.get('concordBackToList', false) && window.PCConcord && PCConcord.backStep){ try{ if(PCConcord.backStep()) return; }catch(_){} }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           /* Walk the app's own history first — every screen is an entry now, so this is what makes
            * Back mean "the last place I was" instead of "the timeline".
@@ -14797,6 +14799,10 @@
        scripts/check_timeline_ghosts.py can plant one and watch it come back, and so a report of
        "only REPLYING TO, no posts" can be answered with a number instead of a hunt. */
     healGhostPairs: _healGhostPairs, ghostStats: () => Object.assign({}, _ghosts),
+    // Times the timeline rebuilt a missing composer / ＋ (timeline.js _tlHeals) -- for the next report of it.
+    tlHeals: () => { try{ const m=_timelineMod(); return m && m.tlHeals ? m.tlHeals() : []; }catch(_){ return []; } },
+    // The in-place timeline redraw every live arrival does (EOSE, a new post): keeps the cards, re-checks the header.
+    redrawTimeline: () => { try{ _drawTimeline(true); }catch(_){} },
     /* WHY THE DM RESTORE IS NOT MOVING, as numbers instead of a guess.
      *
      * "Decrypting messages, stuck at 70/400" has at least four different causes that look identical

@@ -864,3 +864,7 @@ body.os-on .ccg-projects{z-index:320}body.os-on.ccg-projects-open::before{z-inde
 /* Find your community: the search over the public list. */
 .cc-public .cc-public-q{display:block;width:100%;box-sizing:border-box;margin:8px 0 10px}
 .cc-public .cc-public-nomatch{margin:6px 2px}
+/* COMMUNITIES' OWN DIALOGS (cord-spaces: new channel, new post...) are appended to the PAGE, outside .cc-app, so their
+   buttons took the APP's accent -- an orange "Create channel" under a red Communities theme (Vyram, 2026-10-24). They
+   take Communities' accent instead; --cct-* are resolved on :root, so this cannot loop with the "app"/classic themes. */
+.pc-cord-spaces-dialog{--neon:var(--cct-accent);--cyan:var(--cct-accent);--neon2:var(--cct-accent2);--accent-rgb:var(--cct-accent-rgb);--accent2-rgb:var(--cct-accent2-rgb);--on-accent:var(--cct-on-accent)}

@@ -998,5 +998,30 @@ migrationGeneration=2;await PCConcord.hydrateRoomStreams(window.__PC,0);migratio
 if(!migrationSubscriptions.some(urls=>urls.includes('wss://migrated-2.example')))throw new Error('live subscription remained on retired relay after new metadata');
 PCConcord.stopChatLive();
 console.log('same-pass and live metadata relay migration passed');
+// GIT ISSUE "Forum Channel Disappears" (Vyram, 2026-10-24): a community restored from ARMADA'S membership list whose
+// snapshot carries a PRIVATE channel had its whole channel list replaced by [general + that private channel] on every
+// membership sweep -- the public channels, and a forum just created, vanished until a control re-read put them back
+// ("if you save a change to the community appearance then it reappears").
+{
+  const cid='9'.repeat(64),url=JOIN_URL;
+  const priv={id:'p'.repeat(32),name:'mods',key:'k'.repeat(64),epoch:0,private:true};
+  const bundle={...JOIN_BUNDLE,community_id:cid,channels:[priv]};
+  const room={communityId:cid,naddr:'naddr1forumtest',url,name:'PosterChan',
+    channels:[{name:'general'},{name:'Tester',view:'forum',id:'t1'},{name:'Wtf',id:'w1'},{name:'Tester2',view:'forum',id:'t2'},{name:'mods',private:true,id:priv.id}],
+    cord:{bundle,armadaList:true}};
+  const entry={id:'forum-join',pubkey:window.__PC.viewer().pubkey,kind:13302,created_at:900,
+    content:JSON.stringify({entries:[{community_id:cid,added_at:900,current:bundle,seed:bundle,invite_ref:url}],tombstones:[]}),tags:[]};
+  const pc={...window.__PC,nip44dec:async(_pk,v)=>v,relayQuery:async f=>(f[0]?.kinds||[]).includes(13302)?[entry]:[]};
+  PCConcord.forgetLeftCommunity(pc.viewer().pubkey,room);
+  data.set(CC_ROOMS,JSON.stringify([room]));
+  PCConcord.__testState({community:null,channel:'general'});
+  await PCConcord.syncArmadaMemberships(pc,pc.viewer(),true);
+  const after=(JSON.parse(data.get(CC_ROOMS)).find(r=>r.communityId===cid)||{}).channels||[];
+  const names=after.map(c=>c.name);
+  for(const want of ['general','Tester','Wtf','Tester2','mods'])
+    if(!names.includes(want))throw new Error('a membership sweep dropped #'+want+' from the channel list: '+JSON.stringify(names));
+  if((after.find(c=>c.name==='Tester2')||{}).view!=='forum')throw new Error('the forum channel lost its view: '+JSON.stringify(after));
+  console.log('membership sweep keeps public and new channels passed');
+}
 console.log('concord runtime flow ok');
 process.exit(0);

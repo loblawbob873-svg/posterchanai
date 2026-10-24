@@ -202,3 +202,38 @@ def test_concord_themes_default_classic_accent_contrast_and_sync(width):
 
     asyncio.run(desktop.with_browser("online", "", second_device,
                                      extra_init="window.__seedPrefs=" + json.dumps(state["seed"]) + ";" + PREFS))
+
+
+DIALOG_BUTTON = r"""(async()=>{const pending=PCCordSpaces.askNewChannel({ok:'Create channel'});
+  await new Promise(r=>setTimeout(r,150));const b=document.querySelector('.pc-cord-spaces-dialog .btn-neon');
+  const out=b?{bg:getComputedStyle(b).backgroundColor+' '+getComputedStyle(b).backgroundImage,border:getComputedStyle(b).borderTopColor}:null;
+  document.querySelector('.pc-cord-spaces-dialog [data-uc="0"]').click();await pending;return out;})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("theme", ["cyberpunk", "synthwave", "monero", "app"])
+def test_a_custom_accent_reaches_every_accent_in_communities(theme):
+    """Git issues 'Forum Channel Disappears' / 'Concord Theme match' (Vyram, 2026-10-24): with a red custom accent the
+    'TEXT CHANNELS' heading stayed the preset's SECOND accent (magenta) and the new-channel dialog's 'Create channel'
+    stayed the app's accent (orange). One accent picked = every accent Communities draws, its dialogs included."""
+    got = {}
+
+    async def check(b):
+        await open_room(b, 1280)
+        await open_picker(b, 1280)
+        await pick(b, theme)
+        await b.js("(()=>{const i=document.querySelector('#cc-theme-accent');i.value='#ff0000';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));})()")
+        await b.until("getComputedStyle(document.querySelector('.cc-server.active')).backgroundColor==='rgb(255, 0, 0)'")
+        await asyncio.sleep(.2)
+        got["probe"] = await b.js(PROBE)
+        got["dialog"] = await b.js(DIALOG_BUTTON)
+
+    asyncio.run(desktop.with_browser("online", "", check, ""))
+    p = got["probe"]
+    # The two presets that draw section headings in their SECOND accent (concord.css: cyberpunk, synthwave); the
+    # others draw them in a neutral grey, which a custom accent rightly leaves alone.
+    if theme in ("cyberpunk", "synthwave"):
+        assert p["section"] == "rgb(255, 0, 0)", ("'TEXT CHANNELS' kept the preset's second accent under a custom accent", theme, p["section"])
+    d = got["dialog"]
+    assert d and ("rgb(255, 0, 0)" in d["bg"] or "rgb(255, 0, 0)" in d["border"]), \
+        ("the new-channel dialog's button ignores the Communities accent", theme, d)

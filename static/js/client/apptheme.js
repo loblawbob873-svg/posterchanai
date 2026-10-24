@@ -62,7 +62,9 @@
     const v = {};
     if(accent){
       const c = rgb(accent).join(',');
-      Object.assign(v, { '--neon':accent, '--cyan':accent, '--accent-rgb':c, '--on-accent': lum(accent) > .36 ? '#05060b' : '#ffffff',
+      // --neon2 / --accent2-rgb too: the preset's second accent (magenta, orange) otherwise survives a custom accent in
+      // every two-tone place -- Communities' section headings among them when it matches the app theme (2026-10-24).
+      Object.assign(v, { '--neon':accent, '--cyan':accent, '--neon2':accent, '--accent-rgb':c, '--accent2-rgb':c, '--on-accent': lum(accent) > .36 ? '#05060b' : '#ffffff',
         '--glow':`0 0 18px -2px rgba(${c},.45)`, '--glow-cy':`0 0 18px -2px rgba(${c},.4)`, '--amb1':`rgba(${c},.06)`,
         '--line':`rgba(${c},.18)` });
     }

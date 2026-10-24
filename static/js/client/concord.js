@@ -91,7 +91,10 @@
         const v=t.bg?bgVars(t.bg):{};
         /* --cct-line too: it was the one colour a custom accent left alone, so every bordered tile and sheet kept
          * the PRESET's line colour under the new accent (git issue "Concord Theme match": "one color that does not change"). */
-        if(t.accent){const c=rgb(t.accent);v['--cct-accent']=t.accent;v['--cct-accent-rgb']=c.join(',');v['--cct-on-accent']=lum(t.accent)>.36?'#05060b':'#ffffff';v['--cct-line']=`rgba(${c.join(',')},.28)`;}
+        /* …and the SECOND accent: section headings ("TEXT CHANNELS"), the channel hash and every preset's two-tone parts
+         * kept the preset's magenta/orange under a custom red (Vyram, 2026-10-24: "the accent isn't following the theme").
+         * One accent picked is the accent everywhere Communities draws. */
+        if(t.accent){const c=rgb(t.accent);v['--cct-accent']=t.accent;v['--cct-accent-rgb']=c.join(',');v['--cct-accent2']=t.accent;v['--cct-accent2-rgb']=c.join(',');v['--cct-on-accent']=lum(t.accent)>.36?'#05060b':'#ffffff';v['--cct-line']=`rgba(${c.join(',')},.28)`;}
         painted=Object.keys(v); for(const n of painted)root.style.setProperty(n,v[n]);
       }catch(_){}
       try{document.querySelectorAll('[data-cc-theme-pick]').forEach(b=>{const on=b.dataset.ccThemePick===t.theme;b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on));});}catch(_){}
@@ -4113,6 +4116,18 @@
     }
     return n;
   }
+  /* ANDROID BACK INSIDE COMMUNITIES, ONE STEP AT A TIME (opt-in: Settings -> General -> "Back in Communities goes to
+   * the channel list"; git issue "Back Arrow Customization Settings", Vyram 2026-10-24). Back walks the app's history,
+   * so from a channel it left Communities for whatever screen came before. With the setting on, Back first closes a
+   * thread, then the channel drawer, then the channel itself (to the list), and only then leaves Communities.
+   * Returns whether it took the step; app.js's backButton asks before walking history. */
+  function backStep(){
+    if(typeof document==='undefined'||!document.body||!document.body.classList.contains('concord-view'))return false;
+    if(state.thread){state.thread=null;replyTarget=null;render();return true;}
+    if(mobileDrawerOpen){setMobileDrawer(false);return true;}
+    if(mobileChatOpen&&state.community!=null){mobileChatOpen=false;render();return true;}
+    return false;
+  }
   async function readDirectory(p,signal){
     if(!p.relayQueryFrom)return {events:[],ok:false,why:'relay reads unavailable'};
     const h=typeof homeRelayUrl==='function'?homeRelayUrl(p):'';
@@ -4560,6 +4575,24 @@
     }
     return {entries:[...merged.values()],tombstones};
   }
+  /* A MEMBERSHIP SNAPSHOT NAMES ONLY THE PRIVATE CHANNELS IT GRANTS -- IT IS NOT THE CHANNEL LIST (git issue "Forum Channel
+   * Disappears", Vyram 2026-10-24). A room restored from Armada's membership list had its WHOLE list replaced by
+   * [general + the snapshot's private channels] on every sweep whenever the snapshot carried any: every public channel,
+   * and a forum created a moment before, vanished until a control re-read brought them back ("if you save a change to
+   * the community appearance then it reappears"). The room's own list stays; private channels the snapshot grants are
+   * added; a private channel it no longer grants (a rekey that dropped you) goes. With nothing held yet, the derived
+   * list is all there is. tests/client/concord_runtime.mjs ("membership sweep keeps public and new channels"). */
+  function armadaChannels(existing,grantedPrivate,derived){
+    const prior=existing&&Array.isArray(existing.channels)?existing.channels.filter(c=>c&&c.name):[];
+    if(!prior.length)return derived;
+    if(!grantedPrivate.length)return prior;     // as before: a snapshot naming none changes nothing
+    const ids=new Set(grantedPrivate.map(c=>c.id).filter(Boolean)),names=new Set(grantedPrivate.map(c=>c.name));
+    const kept=prior.filter(c=>!(c.private&&c.name!=='general'&&!(c.id?ids.has(c.id):names.has(c.name))));
+    const have=new Set(kept.map(c=>c.id||'#'+c.name));
+    for(const c of grantedPrivate)if(!have.has(c.id||'#'+c.name)&&!kept.some(k=>k.name===c.name))kept.push(c);
+    if(!kept.some(c=>c.name==='general'))kept.unshift({name:'general',private:false});
+    return kept;
+  }
   async function syncArmadaMemberships(p,viewer,localOnly=false){
     if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false,vaultEmpty=false;
@@ -4749,7 +4782,7 @@
         const room={...(existing||{}),...(hydrated||{}),communityId:e.community_id,
           name:current.name||(existing&&existing.name)||(hydrated&&hydrated.name)||'Concord community',
           description:(existing&&existing.description)||(hydrated&&hydrated.description)||'',
-          channels:channels.length?derivedChannels:(existing&&existing.channels||derivedChannels),local:false,
+          channels:armadaChannels(existing,channels,derivedChannels),local:false,
           naddr:url?(inviteParts(url)||{}).naddr:(existing&&existing.naddr)||'community-'+e.community_id,
           url:url||(existing&&existing.url)||'',
           cord:{...(existing&&existing.cord||{}),...(hydrated&&hydrated.cord||{}),bundle,armadaList:true,
@@ -8474,7 +8507,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,withdrawListing,readListingDeletions,withdrawnListings:()=>[...withdrawnListings],dissolveCommunity,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,seedMirrorFromNode,mirrorStateFor:pk=>mirrorState(pk),homeServes:(p,relays,filters)=>homeServes(p,relays,filters),liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p)};
+  window.PCConcord={cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,withdrawListing,readListingDeletions,backStep,withdrawnListings:()=>[...withdrawnListings],dissolveCommunity,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,seedMirrorFromNode,mirrorStateFor:pk=>mirrorState(pk),homeServes:(p,relays,filters)=>homeServes(p,relays,filters),liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p)};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

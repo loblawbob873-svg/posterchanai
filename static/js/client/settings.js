@@ -773,6 +773,8 @@ window.PCSettingsFactory = function(dep){
             })()}</select>
           </label>
           <div class="muted small">Where the app starts. <b>Social</b> is the timeline (picked below); anything else — Notes, Messages, Calendar… — opens that screen first instead. Syncs across your devices; a device that doesn't have the chosen screen falls back to the timeline.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Back in Communities goes to the channel list<label class="switch"><input type="checkbox" id="set-concord-back" ${ClientSettings.get('concordBackToList',false)?'checked':''}><span></span></label></label>
+          <div class="muted small">Android's Back button. Off, Back in Communities returns to the screen you were on before. On, it steps back inside Communities first: out of a thread, then from a channel to the channel list, and only then out of Communities. This device only.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications."><svg class="ic fld-ico" aria-hidden="true"><use href="#i-terminal"></use></svg>Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
           ${BUNDLED ? `<label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-globe"></use></svg>Instance
@@ -1145,6 +1147,7 @@ window.PCSettingsFactory = function(dep){
     // Landing SCREEN: same shape as the timeline above — per-device + synced, nothing to re-render
     // (it only decides where the NEXT start lands). The value is validated at BOOT (_startView), so a
     // slug from an older/newer build costs a fallback to the timeline, never a blank screen.
+    { const cb=$('#set-concord-back'); if(cb) cb.onchange=e=>{ ClientSettings.set('concordBackToList', !!e.target.checked); toast(e.target.checked?'Back steps through Communities first':'Back returns to your last screen'); }; }
     { const sv=$('#set-start-view'); if(sv) sv.onchange=()=>{
         const v = /^[a-z0-9_-]{1,32}$/.test(sv.value) ? sv.value : 'social';
         ClientSettings.set('startView', v); _prefTouched.add('startView'); saveClientPrefsNostr({ startView: v });
