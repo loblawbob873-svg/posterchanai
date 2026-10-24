@@ -61,10 +61,12 @@ def test_attaching_a_new_player_still_disposes_the_old_one():
     """The one caller that is REPLACING the player it owns must not be blocked by the guard, or every
     stream opened in a window leaks the previous hls."""
     assert "function _disposeInlineHls(" in APP
-    i = APP.index("_disposeInlineHls();   // drop any previous inline hls")
-    # …and it is the raw one, not the guarded wrapper.
-    assert "cleanupInlineStream();   // drop any previous" not in APP
-    assert i > 0
+    # attachStream destroys the previous hls UNCONDITIONALLY (the raw destroy, not the guarded wrapper). Since
+    # 2026-10-23 it destroys only the hls, not via _disposeInlineHls(): that also stopped the stream's re-read timer,
+    # which openStream starts before attaching -- so a viewer never saw a stream end.
+    body = APP[APP.index("function attachStream(url, onFail){"):][:1500]
+    assert "if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; }" in body, body[:400]
+    assert "cleanupInlineStream()" not in body.split("const isHls")[0]
 
 
 def test_the_teardown_still_happens_on_an_ordinary_view_change():
