@@ -116,6 +116,24 @@ if ls -d "$DB"/x11-drivers/nvidia-drivers-* >/dev/null 2>&1; then
 fi
 
 # ---- 4. the boot loader picks a kernel that can actually start ----------------------------------
+# ANTI-CHEAT MODE (`gentoo.sh anticheat`): the firmware boots shim -> a Gentoo-signed UKI kept at ONE path by the
+# kernel-install plugin, and new kernels arrive as UKIs rather than systemd-boot entries. So the question there is
+# "is that image the newest kernel's", and an empty entries directory is the expected shape, not a broken machine --
+# without this every update on such a machine ended "no systemd-boot entry is for an intact kernel".
+AC_IMG="$BOOT/EFI/posterchan/posterchanos.efi"
+if [ -f "$R/etc/posterchan/anticheat" ]; then
+	have="$(cat "$BOOT/EFI/posterchan/posterchanos.version" 2>/dev/null)"
+	if [ -s "$AC_IMG" ] && [ "$have" = "$NEWEST" ]; then
+		say "anti-cheat boot: the signed image is $NEWEST"
+	elif [ "$MODE" = --repair ] && [ -x "$R/etc/kernel/install.d/95-posterchan-anticheat.install" ] \
+		&& "$R/etc/kernel/install.d/95-posterchan-anticheat.install" add "$NEWEST" \
+		&& [ "$(cat "$BOOT/EFI/posterchan/posterchanos.version" 2>/dev/null)" = "$NEWEST" ]; then
+		say "anti-cheat boot: the signed image is now $NEWEST (was: ${have:-none})"
+	else
+		bad "anti-cheat boot: the signed image is ${have:-missing}, not $NEWEST -- run: sudo /etc/kernel/install.d/95-posterchan-anticheat.install add $NEWEST"
+	fi
+fi
+
 # systemd-boot only. An entry is bootable when its kernel and initrd exist AND the initrd carries
 # kernel modules: the 0-module initrd above is what a kernel with an emptied module tree gets.
 LOADER="$BOOT/loader/loader.conf"
@@ -137,7 +155,9 @@ if [ -f "$LOADER" ] && [ -d "$BOOT/loader/entries" ]; then
 		fi
 	done
 	cur="$(awk '$1=="default"{print $2; exit}' "$LOADER")"
-	if [ -z "$best" ]; then
+	if [ -z "$best" ] && [ -f "$R/etc/posterchan/anticheat" ]; then
+		warn "no systemd-boot entry (normal in anti-cheat mode: kernels are signed images, booted through shim)"
+	elif [ -z "$best" ]; then
 		bad "no systemd-boot entry is for an intact kernel with a usable initramfs"
 	elif [ "$cur" != "$best" ]; then
 		if [ "$MODE" = --repair ]; then

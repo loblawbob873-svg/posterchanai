@@ -195,3 +195,50 @@ def test_the_iso_refuses_a_broken_kernel_and_keeps_package_owned_opt_trees():
     assert '"$_kg" --check' in g
     assert g.index('"$_kg" --check') < g.index("THE MODULES MUST BE BUILT FOR THE KERNEL THIS IMAGE WILL SHIP")
     assert 'grep -qsxF "dir $F" /var/db/pkg/*/*/CONTENTS && continue' in g
+
+
+# ---- anti-cheat mode (`gentoo.sh anticheat`): the firmware boots shim -> a Gentoo-signed UKI kept at ONE path ----------
+
+def _anticheat(m, have):
+    """A machine converted by gentoo.sh anticheat whose signed image is the one for `have` (None = missing)."""
+    (m.r / "etc/posterchan").mkdir(parents=True, exist_ok=True)
+    (m.r / "etc/posterchan/anticheat").write_text("2026-10-22T00:00:00Z\n")
+    d = m.r / "boot/EFI/posterchan"; d.mkdir(parents=True, exist_ok=True)
+    if have:
+        (d / "posterchanos.efi").write_text("uki"); (d / "posterchanos.version").write_text(have + "\n")
+    plugin = m.r / "etc/kernel/install.d/95-posterchan-anticheat.install"
+    plugin.parent.mkdir(parents=True, exist_ok=True)
+    # What the real plugin does, at this fake root: the newest kernel's image, and its version beside it.
+    _exe(plugin, f'[ "$1" = add ] || exit 0; echo uki > "{d}/posterchanos.efi"; echo "$2" > "{d}/posterchanos.version"')
+    m.loader("da63be93-*")
+    (m.r / "boot/loader/entries").mkdir(parents=True, exist_ok=True)     # no systemd-boot entries: the expected shape
+
+
+def test_anticheat_mode_with_the_newest_signed_image_is_healthy(tmp_path):
+    """Without this every update on such a machine ended 'no systemd-boot entry is for an intact kernel'."""
+    m = Machine(tmp_path); m.kernel(NEW)
+    _anticheat(m, NEW)
+    rc, out, _ = m.run("--check", running=NEW)
+    assert rc == 0, out
+    assert f"anti-cheat boot: the signed image is {NEW}" in out
+    assert "normal in anti-cheat mode" in out
+    assert "no systemd-boot entry is for an intact kernel" not in out
+
+
+def test_anticheat_mode_with_a_stale_image_is_named_by_check_and_fixed_by_repair(tmp_path):
+    m = Machine(tmp_path); m.kernel(NEW)
+    _anticheat(m, OLD)
+    rc, out, _ = m.run("--check", running=NEW)
+    assert rc == 1 and f"the signed image is {OLD}, not {NEW}" in out, out
+    rc, out, _ = m.run("--repair", running=NEW)
+    assert rc == 0, out
+    assert f"the signed image is now {NEW} (was: {OLD})" in out
+    assert (m.r / "boot/EFI/posterchan/posterchanos.version").read_text().strip() == NEW
+
+
+def test_a_normal_machine_with_no_boot_entries_is_still_a_problem(tmp_path):
+    """The anti-cheat allowance must not hide the real failure on every OTHER machine."""
+    m = Machine(tmp_path); m.kernel(NEW)
+    m.loader("da63be93-*"); (m.r / "boot/loader/entries").mkdir(parents=True, exist_ok=True)
+    rc, out, _ = m.run("--check", running=NEW)
+    assert rc == 1 and "no systemd-boot entry is for an intact kernel" in out, out

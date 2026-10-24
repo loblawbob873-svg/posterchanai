@@ -5615,6 +5615,135 @@ setDevices() {
 	partitionDetection
 }
 
+# ANTI-CHEAT READY: `gentoo.sh anticheat` (and `anticheat-off` to undo). OPT-IN, and it changes how this machine boots.
+#
+# Easy Anti-Cheat Linux v2 (Epic, 2026-10-14) checks how the machine booted: Secure Boot, a kernel and modules signed
+# by a key EPIC recognises (never one made on this machine), lockdown=integrity set at boot, IOMMU without
+# passthrough, kexec off, the BPF LSM. `pc-eac-check` asks each question; this makes the answers yes where a
+# PosterChanOS machine can. What it CANNOT do is make Epic accept Gentoo's key -- as of 2026-10-22 their list is
+# Canonical, Fedora, Universal Blue, Debian, SUSE, Rocky, Alma -- so this is "ready for the day they do".
+#
+# THE BOOT CHAIN HOLDS NO KEY MADE HERE, and that is the whole design. Firmware (Microsoft's CA) -> Fedora's signed
+# shim (sys-boot/shim) -> Gentoo's PREBUILT, GENTOO-SIGNED unified kernel image (gentoo-kernel-bin[generic-uki]:
+# kernel + a generic initramfs in one signed file, with fixed command lines as "profiles"; @2 is
+# `quiet lockdown=integrity`). Gentoo's certificate is enrolled into MOK (`mokutil --import`, confirmed once at the
+# next boot) -- a distro key, not a machine key. Under Secure Boot the UKI ignores any command line, so:
+#   * root is found by systemd-gpt-auto-generator: the LUKS partition gets the x86-64 ROOT partition type and the
+#     root subvolume becomes btrfs's DEFAULT; crypttab's root line is retired (the initramfs unlocks it as `root`,
+#     and the old line then failed "device already in use" on every boot);
+#   * no keyfile unlock (the passphrase is asked; `systemd-cryptenroll --tpm2-device=auto` once Secure Boot is on);
+#   * no resume= -- hibernation goes (lockdown forbids it anyway): plain suspend.
+# Measured on the ISO build VM, OVMF with Microsoft's keys + Secure Boot on, 2026-10-22: shim -> UKI @2 booted the
+# desktop with "Secure boot enabled" and "Kernel is locked down from command line" in the kernel log.
+#
+# NVIDIA's proprietary driver is built ON THIS MACHINE and unsigned; lockdown refuses it and EAC would fail anyway,
+# so an NVIDIA install is refused (PC_ANTICHEAT_FORCE=1 overrides, for someone moving to nouveau). Intel needs
+# intel_iommu=on, which a fixed command line cannot add: said, and pc-eac-check shows the result.
+#
+# The existing systemd-boot entry stays, as the fallback with Secure Boot off. installkernel loses USE=dracut
+# (generic-uki requires it), so that entry boots the same generic initramfs and asks for the passphrase.
+# Env for tests: PC_AC_ROOT (a fake /), PC_GENTOO_SH, PC_ANTICHEAT_FORCE.
+anticheatSetup() {
+	local R="${PC_AC_ROOT:-}" esp="${PC_AC_ROOT:-}/boot" dir kver src dev name parent part esp_dev esp_disk esp_part sub cert label="PosterChanOS (anti-cheat)"
+	if [ -z "$R" ] && [ "$(id -u)" != 0 ]; then echo "anticheat: run as root (sudo gentoo.sh anticheat)" >&2; return 1; fi
+	[ -d "$R/sys/firmware/efi" ] || { echo "anticheat: this machine did not boot through UEFI; Secure Boot needs a UEFI install" >&2; return 1; }
+	# An NVIDIA GPU, not the package: every install carries nvidia-drivers (the image boots any GPU), and on a machine
+	# with no NVIDIA card the unsigned module is simply never loaded.
+	local nv=0 d
+	for d in "$R"/sys/bus/pci/devices/*; do
+		[ "$(cat "$d/vendor" 2>/dev/null)" = 0x10de ] && case "$(cat "$d/class" 2>/dev/null)" in 0x03*) nv=1 ;; esac
+	done
+	if [ "$nv" = 1 ] && [ "${PC_ANTICHEAT_FORCE:-}" != 1 ]; then
+		echo "anticheat: this machine has an NVIDIA GPU. NVIDIA's driver is built here and unsigned, so lockdown refuses it" >&2
+		echo "  (and Easy Anti-Cheat refuses the machine). Switch to nouveau first, or PC_ANTICHEAT_FORCE=1." >&2
+		return 1
+	fi
+	dev="$(findmnt -n -o SOURCE / | sed 's/\[.*//')"; name="${dev#/dev/mapper/}"
+	src="$(cryptsetup status "$name" 2>/dev/null | awk '$1=="device:"{print $2}')"
+	[ -n "$src" ] || { echo "anticheat: / is not on an unlocked LUKS volume ($dev); this mode needs the PosterChanOS layout" >&2; return 1; }
+	parent="$(lsblk -dno PKNAME "$src" | head -n1)"; part="$(cat "$R/sys/class/block/${src##*/}/partition" 2>/dev/null)"
+	esp_dev="$(findmnt -n -o SOURCE /boot)"; esp_disk="$(lsblk -dno PKNAME "$esp_dev" | head -n1)"
+	esp_part="$(cat "$R/sys/class/block/${esp_dev##*/}/partition" 2>/dev/null)"
+	[ -n "$parent" ] && [ -n "$part" ] && [ -n "$esp_disk" ] && [ -n "$esp_part" ] || { echo "anticheat: could not find the root and EFI partitions" >&2; return 1; }
+
+	echo "anticheat: the Gentoo-signed kernel image, shim and mokutil (about 600 MB)"
+	mkdir -p "$R/etc/portage/package.use"
+	printf '%s\n' "# gentoo.sh anticheat: Gentoo's signed unified kernel image; installkernel without dracut is what it requires." \
+		"sys-kernel/gentoo-kernel-bin generic-uki" "sys-kernel/installkernel -dracut -ukify uki" >"$R/etc/portage/package.use/zz-posterchan-anticheat"
+	# The plugin goes in BEFORE the kernel is reinstalled, so the reinstall itself puts the image in place.
+	mkdir -p "$R/etc/kernel/install.d" "$esp/EFI/posterchan"
+	cat >"$R/etc/kernel/install.d/95-posterchan-anticheat.install" <<'PLUGIN'
+#!/bin/sh
+# gentoo.sh anticheat: keep the Gentoo-signed UKI at the one path the "PosterChanOS (anti-cheat)" boot entry names.
+# The newest kernel wins; the one it replaces stays beside it as posterchanos-prev.efi.
+[ "$1" = add ] || exit 0
+uki="/usr/lib/modules/$2/uki.efi"; d=/boot/EFI/posterchan
+[ -s "$uki" ] || exit 0
+cur="$(cat "$d/posterchanos.version" 2>/dev/null)"
+if [ -n "$cur" ] && [ "$cur" != "$2" ] && [ "$(printf '%s\n%s\n' "$cur" "$2" | sort -V | tail -n1)" != "$2" ]; then exit 0; fi
+mkdir -p "$d"
+[ -f "$d/posterchanos.efi" ] && [ "$cur" != "$2" ] && cp -f "$d/posterchanos.efi" "$d/posterchanos-prev.efi"
+cp -f "$uki" "$d/posterchanos.efi.new" && mv -f "$d/posterchanos.efi.new" "$d/posterchanos.efi" && echo "$2" >"$d/posterchanos.version"
+PLUGIN
+	chmod 0755 "$R/etc/kernel/install.d/95-posterchan-anticheat.install"
+	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
+	[ -n "$kver" ] || { echo "anticheat: sys-kernel/gentoo-kernel-bin is not installed" >&2; return 1; }
+	emerge -1 sys-kernel/installkernel "=sys-kernel/gentoo-kernel-bin-$kver" sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools || return 1
+	[ -s "$esp/EFI/posterchan/posterchanos.efi" ] || { echo "anticheat: the signed kernel image did not reach $esp/EFI/posterchan" >&2; return 1; }
+	cp -f "$R/usr/share/shim/BOOTX64.EFI" "$esp/EFI/posterchan/shimx64.efi" || return 1
+	cp -f "$R/usr/share/shim/mmx64.efi" "$esp/EFI/posterchan/mmx64.efi" || return 1
+
+	echo "anticheat: root found by partition type"
+	sfdisk --no-reread --part-type "/dev/$parent" "$part" 4f68bce3-e8cd-4db1-96e7-fbcaf984b709 || return 1
+	sub="$(btrfs subvolume show / | awk '/Subvolume ID:/{print $3}')"
+	[ -n "$sub" ] && btrfs subvolume set-default "$sub" / || return 1
+	[ -f "$R/etc/crypttab" ] && sed -i 's|^\(luks-[^ ]* \)|# gentoo.sh anticheat: the initramfs unlocks root by partition type\n# \1|' "$R/etc/crypttab"
+
+	echo "anticheat: boot entry \"$label\""
+	efibootmgr | awk -v l="$label" 'index($0, l) { sub(/^Boot/, ""); sub(/\*.*/, ""); print }' | while read -r n; do efibootmgr -q -b "$n" -B; done
+	efibootmgr -q -c -d "/dev/$esp_disk" -p "$esp_part" -L "$label" -l '\EFI\posterchan\shimx64.efi' \
+		-u '\EFI\posterchan\posterchanos.efi @2' || return 1
+
+	# /etc/sysctl.d does not exist on a fresh install: create it, and FAIL when the write fails -- the first live run
+	# printed every step as done while this file was never written (2026-10-22, build VM).
+	mkdir -p "$R/etc/sysctl.d" && printf '%s\n' "# gentoo.sh anticheat: Easy Anti-Cheat requires kexec off." "kernel.kexec_load_disabled = 1" >"$R/etc/sysctl.d/99-posterchan-anticheat.conf" || return 1
+	"${PC_GENTOO_SH:-/usr/bin/gentoo.sh}" sleep-policy 0 || true
+	grep -qs GenuineIntel "$R/proc/cpuinfo" && echo "anticheat: Intel CPU -- its IOMMU needs intel_iommu=on, which the signed image cannot take; pc-eac-check will say whether it is on"
+	mkdir -p "$R/etc/posterchan" && date -u +%FT%TZ >"$R/etc/posterchan/anticheat"
+
+	cert="$R/usr/src/linux/certs/signing_key.x509"
+	if mokutil --test-key "$cert" 2>/dev/null | grep -q "already enrolled"; then
+		echo "anticheat: Gentoo's kernel key is already trusted"
+	else
+		echo
+		echo "Choose a one-time password. At the next boot a blue screen (MokManager) asks for it:"
+		echo "  Enroll MOK -> Continue -> Yes -> the password -> Reboot."
+		# --ignore-keyring: this kernel already carries Gentoo's key in its BUILT-IN keyring, and without it mokutil
+		# prints "Already in kernel trusted keyring. Skip" and EXITS 0 having queued nothing -- shim never reads that
+		# keyring, so the next boot would refuse the image. The exit status is not evidence; the queue is.
+		mokutil --import "$cert" --ignore-keyring || { echo "anticheat: the key was not queued; run: mokutil --import $cert --ignore-keyring" >&2; return 1; }
+		mokutil --list-new 2>/dev/null | grep -qi "Gentoo" || { echo "anticheat: mokutil reported success but nothing is queued; run: mokutil --import $cert --ignore-keyring" >&2; return 1; }
+	fi
+	echo
+	echo "Done. Reboot, enrol the key, then turn Secure Boot ON in the firmware setup. Afterwards:"
+	echo "  pc-eac-check            what Easy Anti-Cheat will see"
+	echo "  sudo systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7 <your root partition>   unlock with the TPM"
+	echo "  sudo gentoo.sh anticheat-off   undo"
+}
+
+anticheatOff() {
+	local R="${PC_AC_ROOT:-}" label="PosterChanOS (anti-cheat)" kver
+	if [ -z "$R" ] && [ "$(id -u)" != 0 ]; then echo "anticheat-off: run as root" >&2; return 1; fi
+	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
+	efibootmgr | awk -v l="$label" 'index($0, l) { sub(/^Boot/, ""); sub(/\*.*/, ""); print }' | while read -r n; do efibootmgr -q -b "$n" -B; done
+	rm -f "$R/etc/portage/package.use/zz-posterchan-anticheat" "$R/etc/kernel/install.d/95-posterchan-anticheat.install" \
+		"$R/etc/sysctl.d/99-posterchan-anticheat.conf" "$R/etc/posterchan/anticheat"
+	[ -f "$R/etc/crypttab" ] && sed -i -e '/^# gentoo.sh anticheat:/d' -e 's|^# \(luks-\)|\1|' "$R/etc/crypttab"
+	# installkernel gets dracut back and the kernel is reinstalled, so the keyfile unlock is built into an initramfs again.
+	emerge -1 sys-kernel/installkernel "=sys-kernel/gentoo-kernel-bin-$kver" || return 1
+	echo "anticheat-off: back to the normal boot entry. Secure Boot can stay on only if you keep shim; turn it off to use systemd-boot."
+}
+
 hibernation() {
 	echo "[Sleep]" >/etc/systemd/sleep.conf
 	echo "AllowSuspend=yes" >>/etc/systemd/sleep.conf
@@ -6037,6 +6166,10 @@ elif [ "$1" = "accounts" ]; then
 	accounts
 elif [ "$1" = "hibernate" ]; then
 	hibernateSetup
+elif [ "$1" = "anticheat" ]; then
+	anticheatSetup
+elif [ "$1" = "anticheat-off" ]; then
+	anticheatOff
 elif [ "$1" = "sleep-policy" ]; then
 	# System Settings → Power → Hibernation: seconds from sleep to hibernate, 0 = never. See sleepPolicy.
 	sleepPolicy "$2"
