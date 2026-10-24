@@ -27869,12 +27869,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return opened.filter(e => e.kind === 23313 && String(e.epoch) === String(channel.current.epoch))
       .map(e => ({ id: e.rumorId, pubkey: e.author, content: e.content, tags: e.tags, at: e.ms }));
   }
-  async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
+  async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE, notBefore = 0) {
     if(!bundle.dissolved||kind!==KIND_DELETE)requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel?.current) throw new Error("channel is not writable with this membership");
-    const ms = Date.now();
+    // `notBefore` (PosterChan): never stamp a message earlier than the newest one its sender has already seen in the
+    // channel -- see concord.js sendStamp. A room is ordered by each sender's own clock, so without it a quick reply
+    // to a device whose clock runs ahead sorted ABOVE the message it answers, in every client.
+    const ms = Math.max(Date.now(), Number(notBefore) || 0);
     const rumor = buildRumor({ kind, content, pubkey, ms, tags: chatSendTags([...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags], kind, ms, folded) });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { expiration: chatExpirationTag(rumor) }), ms, tags: rumor.tags };
