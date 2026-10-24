@@ -126,3 +126,23 @@ def test_a_mail_attachment_keeps_its_own_name(disk):
                     files={"file": ("Rechnung März.pdf", b"%PDF", "application/pdf")})
     assert r.status_code == 200, r.text
     assert (base / "alice" / "Mail Attachments" / "Rechnung März.pdf").read_bytes() == b"%PDF"
+
+
+# --------------------------------------------------------------------------------------------- chat images
+@pytest.mark.parametrize("prefix", ["../../../evil", "/etc/evil", "a/../../b", "..", ""])
+def test_a_chat_image_is_saved_in_its_conversation_whatever_the_prefix_says(disk, monkeypatch, prefix):
+    """/api/storage/save-image names the file f"{prefix}_{timestamp}.png", and `prefix` is a form field the caller
+    sends -- any account with a conversation could put an image file anywhere the service could write."""
+    client, base, tmp_path = disk
+    from app.services import conversation_table
+
+    async def owned(db, cid, uid):
+        return SimpleNamespace(id=cid, user_id=uid)
+    monkeypatch.setattr(conversation_table, "aget", owned)
+    client.post("/api/storage/save-image", data={"username": "alice", "conversation_id": "7", "prefix": prefix},
+                files={"file": ("x.png", PNG, "image/png")})
+    assert _files_outside(tmp_path, base) == [], ("a chat image was written outside the user's folder", prefix)
+    every = [p for p in base.rglob("*") if p.is_file() and not p.name.endswith((".webp", ".thumb"))]
+    assert every and all((base / "alice") in p.parents for p in every), (prefix, every)
+    convo = [p for p in every if "7" in p.parent.parts or "7" in p.parts]
+    assert convo, ("the image is not in conversation 7's folder", every)

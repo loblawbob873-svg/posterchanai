@@ -205,6 +205,9 @@ class StorageService:
             conv_path = self.get_conversation_path(username, conversation_id)
             conv_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            # `prefix` reaches here from a FORM FIELD (/api/storage/save-image): letters, digits, _ and - only, or a
+            # "../../x" prefix puts the image outside the conversation (tests/test_avatar_upload_stays_in_place.py).
+            prefix = "".join(c for c in str(prefix or "") if c.isalnum() or c in "-_")[:30] or "img"
             filename = f"{prefix}_{timestamp}.png"
             filepath = conv_path / filename
 
