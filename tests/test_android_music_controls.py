@@ -70,7 +70,11 @@ def test_foreground_service_is_declared_the_way_android_14_requires():
     svc = re.search(r"<service\b[^>]*\.music\.MusicService[^>]*>", MANIFEST, re.S)
     assert svc, "MusicService is not declared in the manifest"
     assert 'android:foregroundServiceType="mediaPlayback"' in svc.group(0)
-    assert 'android:exported="false"' in svc.group(0)
+    # EXPORTED, and only because it is also Android Auto's media browser (another app has to bind it);
+    # the exposure that adds is closed in onStartCommand -- see tests/test_android_auto_media_browser.py.
+    assert 'android:exported="true"' in svc.group(0)
+    full = re.search(r"<service\b[^>]*\.music\.MusicService[^>]*>.*?</service>", MANIFEST, re.S).group(0)
+    assert "android.media.browse.MediaBrowserService" in full, "exported for no reason: no media-browser filter"
     # The type must also be claimed at runtime, or the service runs typeless and Android 14 kills it.
     assert "FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK" in SERVICE
     # …and going foreground must happen on the FIRST update: a service started with

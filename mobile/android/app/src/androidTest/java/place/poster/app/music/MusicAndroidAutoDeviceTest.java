@@ -12,8 +12,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.XmlResourceParser;
 import android.os.SystemClock;
-import android.support.v4.media.MediaBrowserCompat;
-import android.support.v4.media.session.MediaControllerCompat;
+import android.media.browse.MediaBrowser;
+import android.media.session.MediaController;
 import android.view.KeyEvent;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * Each test here does what Android Auto does, in its order -- find the browser through PackageManager,
  * connect to it, read the library root, take the session token from the BROWSER (never from the service
  * object) and press through that controller -- and judges every press by the page's own audio element,
- * the only thing that makes sound.
+ * the only thing that makes sound. The PLATFORM MediaBrowser/MediaController, not the compat ones: that
+ * is a client from outside the app's own library, which is what Android Auto is.
  */
 @RunWith(AndroidJUnit4.class)
 public class MusicAndroidAutoDeviceTest {
@@ -51,7 +52,7 @@ public class MusicAndroidAutoDeviceTest {
     private static final String CAR_META = "com.google.android.gms.car.application";
 
     private PlayingPage page;
-    private MediaBrowserCompat browser;
+    private MediaBrowser browser;
 
     @After
     public void tearDown() {
@@ -95,8 +96,8 @@ public class MusicAndroidAutoDeviceTest {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
         SystemClock.sleep(1500);
 
-        MediaControllerCompat.TransportControls tc = connectLikeAndroidAuto();
-        List<MediaBrowserCompat.MediaItem> root = children();
+        MediaController.TransportControls tc = connectLikeAndroidAuto();
+        List<MediaBrowser.MediaItem> root = children();
         assertTrue("Android Auto's library is empty -- nothing to press", !root.isEmpty());
         assertTrue("the library row cannot be played", root.get(0).isPlayable());
 
@@ -167,7 +168,7 @@ public class MusicAndroidAutoDeviceTest {
     private static Context ctx() { return InstrumentationRegistry.getInstrumentation().getTargetContext(); }
 
     /** PackageManager discovery -> connect -> the BROWSER's token -> a controller, as Android Auto does. */
-    private MediaControllerCompat.TransportControls connectLikeAndroidAuto() throws Exception {
+    private MediaController.TransportControls connectLikeAndroidAuto() throws Exception {
         Context ctx = ctx();
         List<ResolveInfo> found = ctx.getPackageManager().queryIntentServices(
                 new Intent(BROWSE_ACTION).setPackage(ctx.getPackageName()), 0);
@@ -177,7 +178,7 @@ public class MusicAndroidAutoDeviceTest {
         CountDownLatch connected = new CountDownLatch(1);
         AtomicReference<String> failed = new AtomicReference<>(null);
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            browser = new MediaBrowserCompat(ctx, cn, new MediaBrowserCompat.ConnectionCallback() {
+            browser = new MediaBrowser(ctx, cn, new MediaBrowser.ConnectionCallback() {
                 @Override public void onConnected() { connected.countDown(); }
                 @Override public void onConnectionFailed() { failed.set("refused"); connected.countDown(); }
                 @Override public void onConnectionSuspended() { failed.set("suspended"); connected.countDown(); }
@@ -186,18 +187,18 @@ public class MusicAndroidAutoDeviceTest {
         });
         assertTrue("the media browser never answered a connection", connected.await(10, TimeUnit.SECONDS));
         assertTrue("the media browser refused the connection: " + failed.get(), failed.get() == null);
-        AtomicReference<MediaControllerCompat> mc = new AtomicReference<>();
+        AtomicReference<MediaController> mc = new AtomicReference<>();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                mc.set(new MediaControllerCompat(ctx, browser.getSessionToken())));
+                mc.set(new MediaController(ctx, browser.getSessionToken())));
         return mc.get().getTransportControls();
     }
 
-    private List<MediaBrowserCompat.MediaItem> children() throws Exception {
+    private List<MediaBrowser.MediaItem> children() throws Exception {
         CountDownLatch done = new CountDownLatch(1);
-        AtomicReference<List<MediaBrowserCompat.MediaItem>> got = new AtomicReference<>();
+        AtomicReference<List<MediaBrowser.MediaItem>> got = new AtomicReference<>();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                browser.subscribe(browser.getRoot(), new MediaBrowserCompat.SubscriptionCallback() {
-                    @Override public void onChildrenLoaded(String parentId, List<MediaBrowserCompat.MediaItem> c) {
+                browser.subscribe(browser.getRoot(), new MediaBrowser.SubscriptionCallback() {
+                    @Override public void onChildrenLoaded(String parentId, List<MediaBrowser.MediaItem> c) {
                         got.set(c); done.countDown();
                     }
                     @Override public void onError(String parentId) { done.countDown(); }
@@ -208,7 +209,7 @@ public class MusicAndroidAutoDeviceTest {
     }
 
     private void disconnect() {
-        MediaBrowserCompat b = browser;
+        MediaBrowser b = browser;
         browser = null;
         if (b == null) return;
         try { InstrumentationRegistry.getInstrumentation().runOnMainSync(b::disconnect); } catch (Throwable ignored) { }

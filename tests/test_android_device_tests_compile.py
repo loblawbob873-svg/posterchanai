@@ -122,6 +122,8 @@ public class MusicService {
   public static final String ACTION_UPDATE = "update";
   public static final String ACTION_TOGGLE = "x";
   public static final String ACTION_STOP = "stop";
+  public static final String ACTION_DISMISS = "dismiss";   // MusicAndroidAutoDeviceTest
+  public static android.content.Intent intent(android.content.Context c, String a) { return new android.content.Intent(a); }
   public static final String EXTRA_TITLE = "title";
   public static final String EXTRA_ARTIST = "artist";
   public static final String EXTRA_PLAYING = "playing";
