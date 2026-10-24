@@ -231,8 +231,26 @@ async def errors(d):
 
 
 # --------------------------------------------------------------------------------------------- what a person does
+async def settled(d):
+    """A booted page that will not reload under the next step. After an upgrade the new service worker may take
+    control on the NEXT page load (here: the reload of "Add an account"), and inside the launch window app.js then
+    reloads once more onto it, silently (_onNewController). That is the product working; a step taken in that gap
+    talks to a page that is about to go. So: no worker still installing or waiting, a booted page, and a marker on
+    that page that survives two quiet seconds."""
+    for _ in range(4):
+        await wait(d, "(async()=>{const r=await navigator.serviceWorker.getRegistration();"
+                      "return !!window.__PC && !!__PC.me() && document.readyState==='complete' && !!r && !r.installing && !r.waiting})()",
+                   60, 'a booted page with no service worker still installing or waiting')
+        await js(d, "window.__pcSettled=1;true")
+        await asyncio.sleep(2.5)
+        if await js(d, "window.__pcSettled===1 && !!window.__PC && !!__PC.me()"):
+            return
+    raise AssertionError('the page kept reloading after the upgrade')
+
+
 async def add_account(d, fill):
     await F.add_account(d, fill)
+    await settled(d)
 
 
 async def switch_account(d, fill):
@@ -425,7 +443,13 @@ LINES = ("[...document.querySelectorAll('.cc-message[data-message-id]')]"
 async def open_concord(d):
     await js(d, CLIP)
     await js(d, "__PC.switchMessagesTab('concord');true")
-    await wait(d, '!!window.PCConcord && !!window.PosterCord', 40, 'Concord loaded')
+    # Communities is a LAZY module, and on a page that has just learnt of a newer build app.js reloads onto that build
+    # instead of loading it (_ontoNewBuild: old and new code never run side by side). That reload is correct; it lands
+    # back on Communities. So wait for the page to SETTLE there -- the first answer may come from the page about to go.
+    await asyncio.sleep(1.5)
+    await wait(d, "!!window.__PC && !!__PC.me() && !!window.PCConcord && !!window.PosterCord && document.readyState==='complete'",
+               60, 'Concord loaded (after any reload onto the new build)')
+    await js(d, CLIP)   # a reload dropped the clipboard capture
 
 
 async def create_community(d, name):
