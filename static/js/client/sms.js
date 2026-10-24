@@ -5472,15 +5472,27 @@
      * every screen (~1,200 queries and ~2,400 database reads an hour, measured in the 2026-10-21 audit)
      * remain only as a once-a-minute safety net for a subscription that missed one, while visible. */
     let outboxTick = 0;
-    const outboxPoll = setInterval(async () => {
+    /* …and NO TIMER WHILE HIDDEN (2026-10-23): it fired every 3 s on a backgrounded phone (20 wake-ups a minute) to
+     * return at the visibility check. The live subscription keeps working without it; on show, watch() runs at once. */
+    const outboxStep = async () => {
       watch(); // Credentials can arrive after module startup; also retire a previous account's filter.
       if(document.visibilityState !== 'visible' || (++outboxTick % 20)) return;
       const st = await phoneState();
       if(st.telephony) drainOutbox();
-    }, 3000);
-    /* Node's browser simulator returns a ref-counted Timeout; browsers return a number. Do not let
-       the production poll turn a completed regression suite into a process that never exits. */
-    if(outboxPoll && typeof outboxPoll.unref === 'function') outboxPoll.unref();
+    };
+    let outboxPoll = null;
+    const armOutbox = () => {
+      if(outboxPoll || (typeof document !== 'undefined' && document.hidden)) return;
+      outboxPoll = setInterval(outboxStep, 3000);
+      /* Node's browser simulator returns a ref-counted Timeout; browsers return a number. Do not let
+         the production poll turn a completed regression suite into a process that never exits. */
+      if(outboxPoll && typeof outboxPoll.unref === 'function') outboxPoll.unref();
+    };
+    if(typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
+      if(document.hidden){ if(outboxPoll){ clearInterval(outboxPoll); outboxPoll = null; } return; }
+      watch(); armOutbox();
+    });
+    armOutbox();
   }
   init();
 

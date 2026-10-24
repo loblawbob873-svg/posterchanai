@@ -103,6 +103,30 @@ remote() {  # remote NAME [VAR=value ...] < script
   ssh "$NAS" "$* bash ~/android-sdk-emu/bin/$name" < /dev/null
 }
 
+# ---- 0. ONE RUN AT A TIME on nas (2026-10-23) -------------------------------------------------------
+# The work dir, the AVD, the adb port and the emulator are shared by every caller. Two sessions ran this at
+# once: the second rsynced over the first's sources, installed its APK into the first's emulator (BOOT 0 --
+# it found one up) and its EXIT trap killed it; both runs' results were garbage. mkdir is atomic on nas; the
+# owner line says who holds it, and a lock older than 75 minutes (beyond the 45-minute hard timeout) is
+# treated as left behind by a run that was SIGKILLed.
+LOCK=android-sdk-emu/run.lock
+lock_owner() { ssh "$NAS" "cat ~/$LOCK/owner 2>/dev/null"; }
+take_lock() {
+  # shellcheck disable=SC2029
+  ssh "$NAS" "mkdir ~/$LOCK 2>/dev/null && echo '$(hostname) pid=$$ dir=$ROOT since=$(date +%s)' > ~/$LOCK/owner"
+}
+WAITED=0
+until take_lock; do
+  own=$(lock_owner); since=$(sed -n 's/.*since=\([0-9]*\).*/\1/p' <<<"$own")
+  if [ -n "$since" ] && [ $(( $(date +%s) - since )) -gt 4500 ]; then
+    echo "emulator lock is stale ($own) -- taking it" >&2; ssh "$NAS" "rm -rf ~/$LOCK"; continue
+  fi
+  if [ "$WAITED" -ge "${PC_EMU_LOCK_WAIT:-1800}" ]; then echo "emulator busy: $own -- gave up after ${WAITED}s" >&2; exit 2; fi
+  [ "$WAITED" = 0 ] && echo "emulator busy: $own -- waiting (PC_EMU_LOCK_WAIT=${PC_EMU_LOCK_WAIT:-1800}s)" >&2
+  sleep 15; WAITED=$((WAITED + 15))
+done
+trap 'ssh "$NAS" "rm -rf ~/$LOCK" 2>/dev/null' EXIT
+
 # ---- 1. the web bundle (local: node lives on server1, not nas) ---------------------------------
 if [ "$BUILD" = 1 ] && [ "$WWW" = 1 ]; then
   ( cd "$ROOT/mobile" \

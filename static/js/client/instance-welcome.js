@@ -91,6 +91,11 @@
   new MutationObserver(() => { if (desktopOrSetup()) close(); }).observe(document.body, {childList:true});
   document.addEventListener('pc-app-ready', check);
   document.addEventListener('visibilitychange', check);
-  setInterval(check, 10000);
+  /* Every 10 s WHILE SEEN; no timer at all while hidden (it woke a backgrounded phone every 10 s to return early --
+   * the visibilitychange above re-checks the moment the page is shown again). */
+  let tick = null;
+  const arm = () => { if (!document.hidden && !tick) tick = setInterval(check, 10000); };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearInterval(tick); tick = null; } else arm(); });
+  arm();
   check();
 }());

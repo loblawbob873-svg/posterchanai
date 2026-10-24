@@ -3002,7 +3002,7 @@
     /* 15s only where the online counter is ON SCREEN (the desktop sidebar). On a phone it is not drawn, and the poll
        is then only the presence heartbeat -- 60s keeps a phone counted (the server's window is 150s) at a quarter of
        the wake-ups and requests. Data saver: 60s everywhere, as before. */
-    updateUserCount(); let _ucT=0; setInterval(()=>{ if(document.hidden) return; const uc=$('#user-count'); if((NO_IMAGES || !uc || !uc.offsetParent) && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
+    updateUserCount(); let _ucT=0; everyVisible(()=>{ const uc=$('#user-count'); if((NO_IMAGES || !uc || !uc.offsetParent) && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
     // Ask the browser for PERSISTENT storage so our caches (SW media cache + IndexedDB) aren't evicted
     // under pressure — that's what lets a large offline media cache actually stick around. Best-effort;
@@ -4625,7 +4625,7 @@
     everyVisible(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
-    setInterval(()=>{ if(document.hidden) return; let n=0; const vh=innerHeight||800;
+    everyVisible(()=>{ let n=0; const vh=innerHeight||800;
       $$('.note[data-pk]').forEach(el=>{ if(n>=60 || Store.haveProfile(el.dataset.pk)) return;
         // Data saver: only backfill profiles for notes near the viewport (the observer handles the rest),
         // so this sweep doesn't defeat lazy loading by fetching every off-screen author.
@@ -7017,15 +7017,24 @@
    * sidebar is however many minutes stale, which is the reason a naive version of this gets reverted.
    * The catch-up is deliberately not a burst — one run, on becoming visible, and only if a tick was
    * actually missed. */
+  /* A REPEATING JOB THAT ONLY RUNS WHILE THE PAGE IS SEEN -- and whose TIMER STOPS while it is not (2026-10-23).
+   * It used to keep firing and return early when hidden: on the APK, whose foreground service keeps the WebView's
+   * timers alive with the screen off, every such interval still woke the CPU to do nothing (measured idle in the
+   * background: 59 timer wake-ups a minute). Now the interval is cleared on hide and re-armed on show, running
+   * once at once if a tick fell due while hidden. */
   function everyVisible(fn, ms){
-    let missed = false;
-    const run = () => { try{ fn(); }catch(_){} };
-    setInterval(() => { if(document.hidden){ missed = true; return; } run(); }, ms);
+    let t = null, last = Date.now();
+    const run = () => { last = Date.now(); try{ fn(); }catch(_){} };
+    const arm = () => { if(!t) t = setInterval(run, ms); };
+    const disarm = () => { if(t){ clearInterval(t); t = null; } };
     document.addEventListener('visibilitychange', () => {
-      if(document.hidden || !missed) return;
-      missed = false; run();
+      if(document.hidden){ disarm(); return; }
+      if(Date.now() - last >= ms) run();
+      arm();
     });
+    if(!document.hidden) arm();
   }
+  window.__pcEveryVisible = everyVisible;
 
   function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   /* The instance logo opens PosterChan OS — a windowed desktop over this same client.
@@ -14355,7 +14364,7 @@
     window.addEventListener('unhandledrejection', e => { say('action failed', e.reason || e); healNav(); });
     // …and on a timer as a backstop, because the stranding can also happen without any exception (a modal
     // removed by something other than closeModal). 4s is invisible to the user and costs one class check.
-    setInterval(healNav, 4000);
+    everyVisible(healNav, 4000);   // a hidden page has no nav to strand -- no wake-up while the phone is in a pocket
   })();
 
   // Ctrl/Cmd+F find-in-page. ONLY in the Electron desktop shell — a browser/PWA already has a real

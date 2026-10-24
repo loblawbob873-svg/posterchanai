@@ -33,9 +33,12 @@ def test_the_texts_outbox_rides_the_live_subscription_not_a_three_second_query()
     live = sms[sms.index("_sub = Relay().subscribe([f], { live:true, onEvent:"):][:1500]
     assert "if(d.startsWith(D_OUT)) phoneState().then(" in live and "drainOutbox()" in live, \
         "a send request arriving on the live subscription must drain the outbox"
-    poll = sms[sms.index("const outboxPoll = setInterval("):][:400]
+    poll = sms[sms.index("const outboxStep = async () => {"):][:1500]
     assert "(++outboxTick % 20)" in poll, "the relay query + native reads must be a once-a-minute net, not every 3 s"
     assert poll.index("watch();") < poll.index("(++outboxTick % 20)"), "watch() (no network) still runs every tick"
+    # …and no 3 s timer at all while hidden (2026-10-23: 20 wake-ups a minute on a backgrounded phone).
+    assert "outboxPoll = setInterval(outboxStep, 3000)" in poll
+    assert "if(document.hidden){ if(outboxPoll){ clearInterval(outboxPoll); outboxPoll = null; } return; }" in poll
 
 
 def test_the_concord_loops_rest_while_the_relays_sleep_and_off_screen():

@@ -23,19 +23,18 @@ HERE = Path(__file__).resolve().parent
 CLIENT = HERE.parents[1] / "static" / "js" / "client"
 LONG_MS = 3000
 
+# 2026-10-23: healNav (app.js, 4 s), the welcome re-check (instance-welcome.js, 10 s) and the Texts outbox loop
+# (sms.js, 3 s) left this list: each is armed only while the page is SEEN and stopped while hidden (everyVisible /
+# a visibilitychange pair), so loading a module into a hidden page arms nothing.
 ALLOWED = {
-    ("app.js", "interval", 4000): "healNav: the nav repair sweep the client has always run",
     ("concord-cache.js", "interval", 2000): "PosterChanOS only (window.pcShell.localRelay): waits for the local relay "
                                            "to answer, moves the old Concord cache onto it once, then stops (gives up after 3 min)",
     ("concord.js", "interval", 20000): "SWEEP_MS: the background sweep for rooms not on screen (mentions, unread)",
-    ("instance-welcome.js", "interval", 10000): "re-checks a pending NIP-05 application while the welcome screen waits",
     ("news.js", "timeout", 4000): "first background news tick, a few seconds after boot",
     ("news.js", "interval", 600000): "background news refresh every 10 minutes",
     ("notes.js", "interval", 300000): "flushes notes typed offline, every 5 minutes",
     ("os.js", "timeout", 15000): "Startup Apps offline fallback -- armed only inside the PosterChanOS shell (window.pcShell); "
                                  "the probe's fake page answers yes to that check",
-    ("sms.js", "interval", 3000): "Texts: re-checks the live outbox subscription each tick (no network); the relay "
-                                  "query + native SMS reads are a once-a-minute safety net (every 20th tick), visible only",
     ("sync.js", "interval", 5000): "Folder Sync's scheduler tick",
     ("telegram.js", "timeout", 4000): "first background Telegram check, a few seconds after boot",
     ("vault.js", "interval", 300000): "password vault auto-lock check",

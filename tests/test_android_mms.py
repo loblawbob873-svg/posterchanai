@@ -728,7 +728,8 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("let _drainingOutbox = null", js)
         self.assertIn("if(_drainingOutbox) return _drainingOutbox", js)
         self.assertIn("if(document.visibilityState !== 'visible') return", js)
-        self.assertIn("if(st.telephony) drainOutbox();\n    }, 3000);", js)
+        self.assertIn("if(st.telephony) drainOutbox();\n    };", js)
+        self.assertIn("outboxPoll = setInterval(outboxStep, 3000);", js)   # armed while the page is seen
         self.assertIn("typeof outboxPoll.unref === 'function'", js)
 
     def test_remote_photo_placeholder_uses_the_mms_document_identity(self):
