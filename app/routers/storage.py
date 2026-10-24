@@ -144,10 +144,14 @@ async def save_avatar(
         raise HTTPException(status_code=403, detail="Access denied")
     
     # Read file content
-    content = await file.read()
-    
-    # Get file extension
-    ext = "." + (file.filename.split('.')[-1] if '.' in file.filename else "png")
+    from app.services.storage_service import AVATAR_MAX_BYTES, avatar_ext
+    try:
+        ext = avatar_ext(file.filename, file.content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    content = await file.read(AVATAR_MAX_BYTES + 1)
+    if len(content) > AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Avatar is too large (10 MB at most)")
     
     # Run blocking file I/O in thread pool to prevent blocking other requests
     # Use bypass_proxy=True since we're on the storage server node

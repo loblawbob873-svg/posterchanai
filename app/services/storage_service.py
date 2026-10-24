@@ -115,6 +115,26 @@ def _validate_path_within_base(file_path: Path, base_path: Path) -> bool:
         return False
 
 
+# AN AVATAR IS ONE IMAGE FILE. Its name used to take the upload's extension as sent, so `a.png/../../x` put the
+# bytes outside the user's folder and `.html`/`.svg` made a page served from this origin (tests/test_avatar_upload_
+# stays_in_place.py). The extension now comes from this set only, and the size is bounded.
+AVATAR_EXTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+AVATAR_MAX_BYTES = 10 * 1024 * 1024
+
+
+def avatar_ext(filename: str | None, content_type: str | None = None) -> str:
+    """The avatar's extension: the upload's own, when it is one of AVATAR_EXTS, else the declared image type's.
+    Raises ValueError for anything else -- never a path, never an extension that is not an image."""
+    name = (filename or "").strip().lower()
+    ext = "." + name.rsplit(".", 1)[1] if "." in name else ""
+    if ext in AVATAR_EXTS:
+        return ext
+    by_type = {v: k for k, v in AVATAR_EXTS.items() if k != ".jpeg"}
+    if (content_type or "").lower() in by_type:
+        return by_type[(content_type or "").lower()]
+    raise ValueError("Avatar must be a PNG, JPEG, GIF or WebP image")
+
+
 class StorageService:
     def __init__(self, db: Session, user_id: int = None):
         self.db = db
@@ -261,6 +281,10 @@ class StorageService:
                     raise ValueError(f"Invalid storage_server_url (missing protocol): {url}")
         
         # Local file saving (only on storage server node when bypass_proxy=True)
+        if ext not in AVATAR_EXTS:          # the caller derives it with avatar_ext(); this is the last word
+            raise ValueError("Avatar must be a PNG, JPEG, GIF or WebP image")
+        if len(image_data) > AVATAR_MAX_BYTES:
+            raise ValueError("Avatar is too large")
         try:
             user_path = self.get_user_path(username)
             user_path.mkdir(parents=True, exist_ok=True)  # Ensure directory exists

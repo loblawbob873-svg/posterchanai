@@ -799,8 +799,11 @@ async def upload_avatar(
             detail="Invalid file type. Allowed: JPEG, PNG, GIF, WebP"
         )
 
-    # Read file content (no size limit)
-    content = await file.read()
+    # Bounded: the whole upload is held in memory and forwarded (storage_service.AVATAR_MAX_BYTES).
+    from app.services.storage_service import AVATAR_MAX_BYTES
+    content = await file.read(AVATAR_MAX_BYTES + 1)
+    if len(content) > AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Avatar is too large (10 MB at most)")
 
     # Check if storage server is configured - proxy request if so
     from app.services import settings_store
