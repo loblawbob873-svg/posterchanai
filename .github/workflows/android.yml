@@ -323,6 +323,14 @@ jobs:
           # the retired key upgrade through the APK's embedded proof-of-rotation. Android 8's
           # explicitly named reinstall artifact is never offered through this store path.
           RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev
+          # ZAPSTORE v2 PINS ONE CERTIFICATE PER APP (zapstore/relay branch v2, pkg/relay/slots.go ListingSlots) and
+          # refuses an asset whose apk_certificate_hash tags do not include it: "asset certificate does not match
+          # this app". place.poster.app is pinned to the RETIRED signer below, so from 2026-10-24 every release was
+          # refused while every other app on Zapstore kept updating. Naming it as a PREDECESSOR (the patch keeps the
+          # current signer first) is what v2 checks; it then verifies the APK against that pin through the APK's
+          # v3 proof-of-rotation. The APK itself is still signed only by the current key. Ask to re-pin:
+          # https://github.com/zapstore/relay/issues/10 -- once re-pinned to c696…, this line can go again.
+          ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES: eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}

@@ -8,7 +8,15 @@ def test_zapstore_publisher_creates_clean_current_signer_listing():
     workflow = (ROOT / ".github/workflows/android.yml").read_text()
     patch = (ROOT / "scripts/zsp-signing-lineage.patch").read_text()
 
-    assert "ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES" not in workflow
+    # Zapstore v2 pins place.poster.app to the retired signer and refuses an asset that does not name it
+    # (zapstore/relay#10): the predecessor is advertised again -- as a predecessor, never as the signer.
+    retired = "eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342"
+    current = "c696595f4ffa6e5f9f010fb0d9faedda2faffa42ba38338163381227f935b31b"
+    assert f"ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES: {retired}" in workflow
+    assert current not in workflow.split("ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES:")[1].splitlines()[0], \
+        "the CURRENT signer is never listed as a predecessor"
+    zap = workflow[workflow.index("- name: Publish to Zapstore"):]
+    assert "ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES" in zap[:zap.index("run: |")], "it must be on the Zapstore step"
     assert "scripts/zsp-signing-lineage.patch" in workflow
     assert 'apply --unidiff-zero "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"' in workflow
     assert "zsp-v0.4.11-posterchan-lineage-v3" in workflow
