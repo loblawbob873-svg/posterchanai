@@ -138,6 +138,10 @@ async def _deliver_phone_text(b, java, when_offset_ms, shell):
 def _check(shell, when_offset_ms=0):
     async def check(b):
         java = check.java
+        # THE BELL, before anything arrives (reported 2026-10-23 on the Windows app and PosterChanOS: "I see
+        # the notification but the bell does not illuminate").
+        await b.until("typeof __PC.notifUnread==='function'")
+        bell_before = await b.js("__PC.notifUnread()")
         ev = await _deliver_phone_text(b, java, when_offset_ms, shell)
         d = ev['tags'][0][1]
         # (a) in the archive, decrypted from the Java ciphertext, and in the Texts list.
@@ -169,10 +173,24 @@ def _check(shell, when_offset_ms=0):
             assert any(SENDER in c for c in cards), (shown, cards)
         else:
             assert any(s['via'] == 'toast-window' and SENDER in s['html'] for s in shown), shown
+        # (e) THE BELL LIGHTS: the count every bell reads (sidebar, mobile bar, the desktop's tray) went up
+        # by this text, the sidebar badge shows it, and Notifications lists the conversation.
+        await b.until("__PC.notifUnread()>%d" % bell_before)
+        assert await b.js("__PC.notifUnread()") == bell_before + 1
+        assert await b.js("(()=>{const x=document.querySelector('#notif-badge');return !!x&&!x.classList.contains('hidden')})()"), \
+            "the bell's badge stayed dark for an arriving text"
+        await b.js("__PC.switchView('notifications')")
+        await b.until("[...document.querySelectorAll('.sms-notif')].some(r=>r.textContent.includes(%s)&&r.textContent.includes(%s))"
+                      % (json.dumps(SENDER), json.dumps(BODY[:20])))
         # And the conversation is listed in Texts.
         await b.js("__PC.switchView('texts')")
         await b.until("!!document.querySelector('.sms-wrap') && document.querySelector('.sms-wrap').textContent.includes(%s)"
                       % json.dumps(SENDER))
+        # (f) Opening the conversation reads it: the bell goes back to where it was.
+        await b.js("__PC.switchView('notifications')")
+        await b.js("[...document.querySelectorAll('.sms-notif')].find(r=>r.textContent.includes(%s)).click()" % json.dumps(SENDER))
+        await b.until("!!document.querySelector('.sms-msgs')")
+        await b.until("__PC.notifUnread()===%d" % bell_before)
     return check
 
 

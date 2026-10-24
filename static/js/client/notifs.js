@@ -491,7 +491,9 @@ window.PCNotifsFactory = function(dep){
       // Concord mentions not yet read DO count (concord.js's ledger -- see _concordMentions).
       + _concordMentions().reduce((n,r)=>n+r.n,0)
       // Telegram messages not yet read DO count too (telegram.js's ledger -- see _tgUnread).
-      + _tgUnread().reduce((n,r)=>n+r.n,0); }
+      + _tgUnread().reduce((n,r)=>n+r.n,0)
+      // …and texts from the phone (sms.js's ledger -- see _smsUnread).
+      + _smsUnread().reduce((n,r)=>n+r.n,0); }
   /* TELEGRAM ARRIVALS, read straight from the ledger telegram.js keeps in localStorage (one entry per
    * chat, per account), so the bell and its list agree on a page that never opened Telegram. */
   function _tgUnread(){
@@ -500,6 +502,15 @@ window.PCNotifsFactory = function(dep){
     if(!l||typeof l!=='object'||Array.isArray(l)) return [];
     return Object.values(l).filter(r=>r&&Array.isArray(r.ids)&&r.ids.length&&r.chat!=null&&isFinite(Number(r.chat)))
       .map(r=>({chat:Number(r.chat),title:String(r.title||'Telegram'),text:String(r.text||''),n:r.ids.length,at:Number(r.at)||0}))
+      .sort((a,b)=>b.at-a.at);
+  }
+  /* TEXTS (SMS/MMS from the paired phone), read from sms.js's ledger -- same shape as Telegram's. */
+  function _smsUnread(){
+    const pk=S.ME&&S.ME.pubkey; if(!pk||S.GUEST) return [];
+    let l; try{ l=JSON.parse(localStorage.getItem('pc.sms.unread.v1.'+pk)||'{}'); }catch(_){ l={}; }
+    if(!l||typeof l!=='object'||Array.isArray(l)) return [];
+    return Object.values(l).filter(r=>r&&Array.isArray(r.ids)&&r.ids.length&&r.address)
+      .map(r=>({address:String(r.address),title:String(r.title||'Text message'),text:String(r.text||''),n:r.ids.length,at:Number(r.at)||0}))
       .sort((a,b)=>b.at-a.at);
   }
   /* CONCORD MENTIONS, read straight from the ledger concord.js keeps in localStorage, so the bell is
@@ -517,7 +528,7 @@ window.PCNotifsFactory = function(dep){
   }
   // Read in another window (another monitor, a popped-out Communities) is read here too.
   try{ window.addEventListener('storage', e => { const k=String(e.key||'');
-    if(k.startsWith('pc.concord.mentions.v1.')||k.startsWith('pc.tg.unread.v1.')) try{ bumpNotif(); }catch(_){} }); }catch(_){}
+    if(k.startsWith('pc.concord.mentions.v1.')||k.startsWith('pc.tg.unread.v1.')||k.startsWith('pc.sms.unread.v1.')) try{ bumpNotif(); }catch(_){} }); }catch(_){}
   function bumpNotif(){ const n=notifUnread();
     // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
@@ -532,7 +543,7 @@ window.PCNotifsFactory = function(dep){
     if(_notifReady && _rightbarShown()) loadNotifsSoon(); }
 
   return {
-    _concordMentions, _tgUnread, _notifTs, _quoteHit, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
+    _concordMentions, _tgUnread, _smsUnread, _notifTs, _quoteHit, _quotesMe, _rememberReminder, _reminderOwner, _remindersChanged, bumpNotif,
     hydrateReminderNotifications, notifList, notifToast, notifUnread, watchNotifications,
   };
 };

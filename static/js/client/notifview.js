@@ -9,7 +9,7 @@
 window.PCNotifViewFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.LOGO, S.ME, S.VIEW, S._apkUpdate, S._desktopUpdate, S._newBuild, S._notifEpoch, S._updApplying, S._updBadge, S._dmUnread
   const {
-    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _tgUnread, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
+    $, $$, NT, _SHORTCODE_STRIP, _concordMentions, _tgUnread, _smsUnread, _notifTs, _quoteHit, _quotesMe, _repoTag, _tipNote, applyEmojis, applyUpdate,
     emojiName, enc, fmtSats, hydrateReminderNotifications, isReply, needEvent, needProfile,
     notifList, openOsNotificationRoute, openThread, profOf, quotedDiv, reactDisp,
     renderProfileView, replyParentId, seenNotif, seenMarkNotif, timeAgo, zapAmount, zapSender,
@@ -141,12 +141,19 @@ window.PCNotifViewFactory = function(dep){
     try{ rows = (typeof _tgUnread === 'function' ? _tgUnread() : []) || []; }catch(_){ rows = []; }
     return rows.map(r => `<div class="notif mention tg-notif" data-route="tg:${enc(String(r.chat))}"><span class="ic">✈</span><div><div class="notif-hd"><b>Telegram · ${enc(r.title)}</b> — ${r.n} new message${r.n===1?'':'s'}</div>${r.text ? `<div class="notif-said">${enc(r.text)}</div>` : ''}</div></div>`).join('');
   }
+  // TEXTS, one row per conversation (sms.js's ledger): who, how many, the newest message's first line.
+  // The row opens that conversation, which clears it.
+  function _smsNotifHtml(){
+    let rows = [];
+    try{ rows = (typeof _smsUnread === 'function' ? _smsUnread() : []) || []; }catch(_){ rows = []; }
+    return rows.map(r => `<div class="notif mention sms-notif" data-route="texts:${enc(encodeURIComponent(r.address))}"><span class="ic">✉</span><div><div class="notif-hd"><b>Texts · ${enc(r.title)}</b> — ${r.n} new message${r.n===1?'':'s'}</div>${r.text ? `<div class="notif-said">${enc(r.text)}</div>` : ''}</div></div>`).join('');
+  }
   /* EVERY ROW THE BELL COUNTS THAT IS NOT A NOSTR EVENT, for every host that lists notifications.
    * The desktop's taskbar panel listed notifItems() + email only, so an update, a Concord mention or a
    * Telegram message lit its bell with a number and nothing under it ("you see notification bell with
    * 1 but no description"). One builder, so the screen and the panel cannot disagree again. */
   function _notifExtrasHtml(updId){
-    return _updNotifHtml(updId || 'upd-notif') + _dmNotifHtml() + _concordNotifHtml() + _tgNotifHtml();
+    return _updNotifHtml(updId || 'upd-notif') + _dmNotifHtml() + _concordNotifHtml() + _tgNotifHtml() + _smsNotifHtml();
   }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids

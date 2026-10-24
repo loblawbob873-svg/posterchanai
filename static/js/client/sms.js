@@ -1462,6 +1462,37 @@
     const st = v.applied && (v.applied.at || 0) >= (v.at || 0) ? v.applied.state : 'pending';
     return st === 'blocked' ? 'Blocked' : st === 'pending' ? 'Blocked — waiting for your phone' : 'Blocked here — your phone could not apply it';
   }
+  /* TEXTS IN THE BELL ("i see the notification but the bell does not illuminate", Windows app and
+   * PosterChanOS, 2026-10-23). An arriving text raised the OS card and the toast and nothing else: the
+   * bell counts Nostr notifications plus two LEDGERS (Concord mentions, Telegram), and Texts had none.
+   * Same shape as telegram.js's: one row per conversation, per account, in localStorage so every window
+   * of this app and notifs.js (which never loads this module) read the same thing. A row is written only
+   * where a notification was actually shown, and leaves when that conversation is on screen here. */
+  const SMS_LEDGER = 'pc.sms.unread.v1.';
+  function smsLedger(pk){
+    if(!pk) return {};
+    try{ const v = JSON.parse(localStorage.getItem(SMS_LEDGER + pk) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+    catch(_){ return {}; }
+  }
+  function saveSmsLedger(pk, l){
+    if(!pk) return;
+    try{ localStorage.setItem(SMS_LEDGER + pk, JSON.stringify(l)); }catch(_){ }
+    try{ if(PC.bumpNotif) PC.bumpNotif(); }catch(_){ }
+  }
+  function smsLedgerAdd(pk, m, who, text){
+    const l = smsLedger(pk), k = convKey(m.address), id = String(m.id || m.d || '');
+    const row = l[k] || { address: String(m.address || ''), title: '', ids: [], at: 0, text: '' };
+    if(id && (row.ids || []).includes(id)) return;
+    row.ids = [...(row.ids || []), id || String(Date.now())].slice(-50);
+    row.title = String(who || row.title || 'Text message').slice(0, 80);
+    row.text = String(text || '').slice(0, 140);
+    row.at = Math.max(Number(m.received) || 0, Number(m.date) || 0) || Date.now();
+    l[k] = row; saveSmsLedger(pk, l);
+  }
+  function smsLedgerClear(key){
+    const pk = ME().pubkey, l = smsLedger(pk);
+    if(l[key]){ delete l[key]; saveSmsLedger(pk, l); }
+  }
   async function notifyNew(ev, owner){
     try{
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
@@ -1503,6 +1534,7 @@
         else { if(PC.switchView) PC.switchView('texts'); openNotification({address:m.address}); }
       };
       try{ if(PC.notifToast) PC.notifToast('✉ <b>' + PC.enc(who) + '</b> ' + PC.enc(preview), '', land, 'sms'); }catch(_){ }
+      try{ smsLedgerAdd(owner, Object.assign({ d }, m), who, preview); }catch(_){ }
       // Through the app's ONE notification path — it knows that Android's WebView implements the
       // Notifications API by doing nothing, and routes to the native builder there instead.
       // `route` is what makes the card openable: without it a click focuses the app and leaves the
@@ -4679,6 +4711,7 @@
     const caret = hadFocus ? [oldIn.selectionStart, oldIn.selectionEnd] : null;
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
+    try{ smsLedgerClear(t.key); }catch(_){ }   // on screen = read: its bell row goes (see SMS_LEDGER)
     const who = whoIs(t.name, t.address);
     /* An archived message can carry the name the phone knew when it arrived. That is useful for
        the title, but it is not proof the card still exists: after deleting the contact it would
