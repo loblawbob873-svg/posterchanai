@@ -413,6 +413,10 @@ async def switch_account(d, sk_fill, before_reload=''):
     """The account card -> the other account's row (the page reloads signed in as it). `before_reload`: JS run
     right after the click, before the reload lands -- "a change made just before a switch"."""
     pk = R.pubkey(sk_fill)
+    # A page that is still reloading onto a new build (the service worker's upgrade reload) has no __PC and no account
+    # card yet; opening the menu then is a click on nothing. Wait for a booted, signed-in page first.
+    await wait(d, "!!window.__PC && !!__PC.me() && !!document.querySelector('#me-card') && Relay.status==='ok'", 60,
+               'a booted, signed-in page before opening the account menu')
     await d.b.js("document.querySelector('#me-card').click();true")
     row = ".acct-pop .acct-p[data-pk=\"%s\"]" % pk
     await wait(d, "!!document.querySelector(%s)" % json.dumps(row), 15, 'the other account in the menu')

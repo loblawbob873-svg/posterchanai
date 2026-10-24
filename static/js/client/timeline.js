@@ -500,6 +500,28 @@ window.PCTimelineFactory = function(dep){
    * are ON never comes here: that stays a real rebuild. */
   const _tlKept = new Map();
   const _tlHeals = [];
+  /* THE HEADER AND THE ＋ ARE REBUILT IF THEY WENT MISSING (2026-10-24, Windows app, windowed desktop: "on Social,
+   * the new post at the top and the + button disappeared"; closing and reopening the window brought them back).
+   * Both are made ONCE, together, and only when #tl-notes is absent -- so any path that leaves the notes without
+   * their header (not reproduced here: 80 random desktop rounds kept it) stranded the window without a composer for
+   * as long as it stayed open. This puts them back on the next render whatever removed them, and counts it
+   * (PC.tlHeals, a console line) so the next report can say what preceded it. */
+  function _healTimelineChrome(feed, notesEl){
+    let healed = '';
+    if(!feed.querySelector('.tl-cmp')){
+      while(notesEl.previousSibling) notesEl.previousSibling.remove();
+      notesEl.insertAdjacentHTML('beforebegin', _timelineHeaderHtml());
+      _bindTimelineHeader(feed);
+      healed += 'header ';
+    }
+    if(S.ME && !S.GUEST && !$('#tl-fab',feed)){
+      feed.insertAdjacentHTML('beforeend', '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>');
+      { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
+      healed += 'plus ';
+    }
+    if(healed){ _tlHeals.push({at:Date.now(), what:healed.trim(), view:S.VIEW}); if(_tlHeals.length>20) _tlHeals.shift();
+      try{ console.warn('[timeline] rebuilt the missing ' + healed.trim() + ' of ' + S.VIEW); }catch(_){} }
+  }
   function _keepTimelineCards(feed){
     const el = feed && feed.querySelector('#tl-notes');
     const v = el && el.dataset.view;
@@ -1377,28 +1399,7 @@ window.PCTimelineFactory = function(dep){
       notesEl=$('#tl-notes',feed);
       const kept = !S._tlMedia && _takeKeptCards(S.VIEW);   // see _keepTimelineCards
       if(kept){ notesEl.replaceWith(kept); notesEl = kept; }
-    } else {
-      /* THE HEADER AND THE ＋ ARE REBUILT IF THEY WENT MISSING (2026-10-24, Windows app, windowed desktop: "on Social,
-       * the new post at the top and the + button disappeared"; closing and reopening the window brought them back).
-       * Both are made ONCE, together, and only when #tl-notes is absent -- so any path that leaves the notes without
-       * their header (not reproduced here: 80 random desktop rounds kept it) stranded the window without a composer for
-       * as long as it stayed open. This puts them back on the next render whatever removed them, and counts it
-       * (PC.tlHeals, a console line) so the next report can say what preceded it. */
-      let healed = '';
-      if(!feed.querySelector('.tl-cmp')){
-        while(notesEl.previousSibling) notesEl.previousSibling.remove();
-        notesEl.insertAdjacentHTML('beforebegin', _timelineHeaderHtml());
-        _bindTimelineHeader(feed);
-        healed += 'header ';
-      }
-      if(S.ME && !S.GUEST && !$('#tl-fab',feed)){
-        feed.insertAdjacentHTML('beforeend', '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>');
-        { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
-        healed += 'plus ';
-      }
-      if(healed){ _tlHeals.push({at:Date.now(), what:healed.trim(), view:S.VIEW}); if(_tlHeals.length>20) _tlHeals.shift();
-        try{ console.warn('[timeline] rebuilt the missing ' + healed.trim() + ' of ' + S.VIEW); }catch(_){} }
-    }
+    } else if(typeof _healTimelineChrome === 'function') _healTimelineChrome(feed, notesEl);   // see _healTimelineChrome
     notesEl.dataset.view = S.VIEW;
     _holdReadingPlace(feed, notesEl);
     if(S._tlMedia){

@@ -603,6 +603,9 @@ async def scenario(n, ctx, old_root, label, sha):
 
         # ---- privacy: B is added on this device before A opens anything, and opens every screen first
         with out.area('privacy'):
+            # The upgrade's own reload onto today's build may still be landing: a page with no __PC yet is not a page.
+            await wait(a, "!!window.__PC && !!__PC.me() && !!document.querySelector('#me-card')", 60,
+                       'today\'s build booted after its upgrade reload')
             seen_errors.append(await errors(a))
             await add_account(a, B)
             leaks = []
