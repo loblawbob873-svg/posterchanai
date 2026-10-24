@@ -54,6 +54,72 @@ HOP_SECS = 120          # how long each hop may take before it counts as broken
 DISSOLVED: set = set()  # communities this run dissolved (either device -- same owner): the other device only leaves
 
 
+DISCOVER_RELAYS = ("wss://relay.dreamith.to",)   # what Armada's Discover reads (concord.js DISCOVER_RELAYS)
+
+
+async def _discover_listings(sk_hex: str, relays) -> dict:
+    """Every public Discover listing (kind 1, tagged concord) of a NAME room this identity still has on `relays`."""
+    import websockets
+    sys.path.insert(0, str(ROOT))
+    from app.services.nostr import bip340
+    pk = bip340.pubkey_from_seckey(bytes.fromhex(sk_hex)).hex()
+    found = {}
+    for url in relays:
+        try:
+            async with websockets.connect(url, open_timeout=10, max_size=2**23) as ws:
+                await ws.send(json.dumps(["REQ", "l", {"kinds": [1], "authors": [pk], "#t": ["concord"], "limit": 500}]))
+                while True:
+                    m = json.loads(await asyncio.wait_for(ws.recv(), 15))
+                    if m[0] == "EVENT" and NAME in str(m[2].get("content", "")):
+                        found.setdefault(m[2]["id"], []).append(url)
+                    elif m[0] in ("EOSE", "CLOSED"):
+                        break
+        except Exception as e:      # noqa: BLE001
+            found.setdefault("?" + url, []).append(f"could not ask: {type(e).__name__}")
+    return found
+
+
+async def withdraw_discover_listings(sk_hex: str) -> list:
+    """THE CANARY MUST NOT STAY ON DISCOVER. Its create dialog publishes a public listing, and until 2026-10-23
+    dissolving never withdrew it -- ten dead canary rooms sat in Armada's Discover ("you are polluting the armada
+    discover"). The client now withdraws on dissolve; this is the check that it happened, and the cleanup if it did
+    not: a NIP-09 deletion of every listing left, then a re-read. Returns lines for the report; any listing still
+    there, or a relay that could not be asked, is a cleanup that was not confirmed."""
+    import hashlib
+    import websockets
+    sys.path.insert(0, str(ROOT))
+    from app.services.nostr import bip340
+    relays = list(DISCOVER_RELAYS) + [NODE_RELAY]
+    left = await _discover_listings(sk_hex, relays)
+    ids = sorted(k for k in left if not k.startswith("?"))
+    out = [f"Discover listings of '{NAME}' still public: {len(ids)}"]
+    if ids:
+        sk = bytes.fromhex(sk_hex)
+        pk = bip340.pubkey_from_seckey(sk).hex()
+        tags = [["e", i] for i in ids] + [["k", "1"]]
+        ev = {"pubkey": pk, "created_at": int(time.time()), "kind": 5, "tags": tags,
+              "content": "federation canary test listing -- withdrawn"}
+        ev["id"] = hashlib.sha256(json.dumps([0, pk, ev["created_at"], 5, tags, ev["content"]],
+                                             separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        ev["sig"] = bip340.sign(bytes.fromhex(ev["id"]), sk).hex()
+        for url in relays:
+            try:
+                async with websockets.connect(url, open_timeout=10) as ws:
+                    await ws.send(json.dumps(["EVENT", ev]))
+                    m = json.loads(await asyncio.wait_for(ws.recv(), 15))
+                    out.append(f"withdrawal -> {url}: {m[2:4] if m[0] == 'OK' else m[0]}")
+            except Exception as e:      # noqa: BLE001
+                out.append(f"withdrawal -> {url}: {type(e).__name__}")
+        left = await _discover_listings(sk_hex, relays)
+    still = sorted(k for k in left if not k.startswith("?"))
+    blind = sorted(k[1:] for k in left if k.startswith("?"))
+    if still:
+        out.append(f"NOT CONFIRMED: {len(still)} listing(s) still public: {[i[:12] for i in still]}")
+    if blind:
+        out.append(f"NOT CONFIRMED: could not ask {blind}")
+    return out
+
+
 class CouldNotRun(Exception):
     """The harness could not get to the point of measuring -- exit 2, never a verdict about federation."""
 
@@ -564,6 +630,13 @@ async def run(base: str, sk: str) -> int:
                     cleanup.append(f"could not re-check after cleanup: {type(e).__name__}: {e}")
                     setup_error = setup_error or "cleanup could not be re-checked"
                     break
+            try:
+                lines = await withdraw_discover_listings(sk)
+            except Exception as e:      # noqa: BLE001
+                lines = [f"NOT CONFIRMED: the Discover check failed: {type(e).__name__}: {e}"]
+            cleanup += lines
+            if any(line.startswith("NOT CONFIRMED") for line in lines):
+                setup_error = setup_error or "the canary may still be listed on Discover"
         await asyncio.gather(a.stop(), b.stop(), return_exceptions=True)
 
     say("[6] report")
