@@ -96,7 +96,7 @@ public final class PlayingPage {
         try { eval("(()=>{try{__PC.MusicPlayer.close&&__PC.MusicPlayer.close()}catch(e){}"
                 + "try{window.__pcBackgroundAudio.pause()}catch(e){}return 1})()"); } catch (Throwable ignored) { }
         try { if (scenario != null) scenario.close(); } catch (Throwable ignored) { }
-        try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
+        try { ctx.startService(MusicService.intent(ctx, MusicService.ACTION_STOP)); }
         catch (Throwable ignored) { }
         long end = SystemClock.uptimeMillis() + 10_000;
         while (MusicService.INSTANCE != null && SystemClock.uptimeMillis() < end) SystemClock.sleep(100);

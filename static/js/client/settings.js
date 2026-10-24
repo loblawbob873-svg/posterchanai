@@ -110,6 +110,7 @@ window.PCSettingsFactory = function(dep){
     if(!r.running) bits.push('media controls: not running (no music session — car buttons have nowhere to go)');
     else bits.push(r.sessionActive===false ? 'media session: NOT active' : 'media session: active');
     bits.push(r.standbySession ? 'standby session: on' : 'standby session: off');
+    if(r.browsers!=null) bits.push(r.browsers ? 'Android Auto / media browser: connected ('+(r.lastBrowser||'?')+')' : 'Android Auto: never connected');
     bits.push('page listening: '+(r.pageListening===false ? 'no' : (r.pageListening ? 'yes' : '?')));
     if(r.running) bits.push(r.playing ? 'playing' : 'paused');
     if(r.webSilenceMs!=null && r.webSilenceMs>=0) bits.push('page last answered '+Math.round(r.webSilenceMs/1000)+'s ago');

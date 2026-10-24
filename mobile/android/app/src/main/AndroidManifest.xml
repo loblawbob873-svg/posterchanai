@@ -672,17 +672,28 @@
              lives in Chrome, not in the WebView), so without this service music in the APK had no
              controls anywhere outside the app. mediaPlayback is also what keeps the WebView's render
              process off the low-memory killer's list while the screen is off.
-             exported=false throughout: the only things that talk to it are our own plugin, our own
-             notification, our own widget, and the platform's media-button router — none of which is
-             another app. -->
+             EXPORTED because it is also the MEDIA BROWSER Android Auto binds: under AA the car's
+             buttons and screen control only an app that declares one (plus the
+             com.google.android.gms.car.application meta-data below), so without it skipping songs
+             worked over plain Bluetooth and stopped the moment Android Auto took over. Being exported
+             lets other apps send it intents too, so onStartCommand ignores any that lack the
+             in-process secret MusicService.intent() stamps (media buttons excepted — the exported
+             MediaButtonReceiver forwards those from anyone already). -->
         <service
             android:name=".music.MusicService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
         </service>
+        <!-- What tells Android Auto this app is a MEDIA app; without it AA never lists it. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <!-- Legacy optional process/media standby. Notification delivery no longer depends on this
              WebView keepalive; PosterChan Direct below owns that job natively. It remains because the

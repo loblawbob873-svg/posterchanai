@@ -182,7 +182,7 @@ public class MusicBackgroundDeviceTest {
             assertTrue("Home dropped the foreground playback service or MediaSession",
                     backgroundPlaybackActive());
         } finally {
-            try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
+            try { ctx.startService(MusicService.intent(ctx, MusicService.ACTION_STOP)); }
             catch (Throwable ignored) { }
             restoreDeviceState(ctx, oldHome, wasEnabled, scenario, activity);
         }

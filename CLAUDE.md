@@ -885,6 +885,17 @@ would have handled it fine).
   -- so after the player closed the car saw no PosterChan media app until the app was started from scratch.
   `MusicService.onDestroy` now sends `ACTION_REOPEN_STANDBY` (a message, never the foreground path) while stay-connected
   runs. `MusicStandbyReturnsDeviceTest` (red on the old code on the nas emulator).
+  **ANDROID AUTO IS NOT A BLUETOOTH CAR (2026-10-23): it controls only a MEDIA BROWSER.** Over plain Bluetooth the
+  keys are AVRCP commands routed to the playing session, so skipping worked -- until Android Auto projected, after
+  which the wheel and the car screen drive AA's own media UI, which binds only apps declaring a MediaBrowserService +
+  `com.google.android.gms.car.application` (`res/xml/automotive_app_desc.xml`). The app had neither. `MusicService`
+  now IS the browser (`MediaBrowserServiceCompat`, one playable "Resume" row -- the library is encrypted in the
+  WebView), the session token goes to AA, and its presses land on the same receipt-checked callbacks. It is EXPORTED
+  for that, so `onStartCommand` ignores any intent without the per-process secret `MusicService.intent()` stamps
+  (MEDIA_BUTTON excepted) -- build every in-app intent with it. A bind-created service is STARTED + made foreground
+  by the page's first push, or AA unbinding would destroy a playing session. A sideloaded APK shows up in AA only
+  with "Unknown sources" on in AA's developer settings. `MusicAndroidAutoDeviceTest` (emulator, connects exactly as
+  AA does) + `tests/test_android_auto_media_browser.py`.
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate

@@ -222,7 +222,7 @@ public class StayAwakeService extends Service {
   /** Hand a press to the existing cold path rather than growing a second one. */
   private void handOff(String action) {
     try {
-      startService(new Intent(this, MusicService.class).setAction(action)
+      startService(MusicService.intent(this, action)
           .putExtra(MusicService.EXTRA_VIA, "standby session (PosterChanStandby)"));
     } catch (Throwable ignored) {}
   }

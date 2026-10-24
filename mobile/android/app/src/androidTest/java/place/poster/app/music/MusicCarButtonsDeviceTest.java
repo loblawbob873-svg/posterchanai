@@ -63,7 +63,7 @@ public class MusicCarButtonsDeviceTest {
          * this teardown's. */
         try { bringBack(ctx); } catch (Throwable ignored) { }
         try { if (scenario != null) scenario.close(); } catch (Throwable ignored) { }
-        try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
+        try { ctx.startService(MusicService.intent(ctx, MusicService.ACTION_STOP)); }
         catch (Throwable ignored) { }
         for (int i = 0; i < 100 && MusicService.INSTANCE != null; i++) SystemClock.sleep(100);
         try { ctx.startService(new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_STOP)); }

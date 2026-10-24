@@ -107,8 +107,7 @@ public class MusicPlugin extends Plugin {
       return;
     }
 
-    Intent i = new Intent(getContext(), MusicService.class)
-        .setAction(MusicService.ACTION_UPDATE)
+    Intent i = MusicService.intent(getContext(), MusicService.ACTION_UPDATE)
         .putExtra(MusicService.EXTRA_TITLE, title)
         .putExtra(MusicService.EXTRA_ARTIST, artist)
         .putExtra(MusicService.EXTRA_PLAYING, playing)
@@ -132,7 +131,7 @@ public class MusicPlugin extends Plugin {
   public void stop(PluginCall call) {
     MusicService svc = MusicService.INSTANCE;
     if (svc != null) {
-      Intent i = new Intent(getContext(), MusicService.class).setAction(MusicService.ACTION_STOP);
+      Intent i = MusicService.intent(getContext(), MusicService.ACTION_STOP);
       try { getContext().startService(i); } catch (Exception ignored) { svc.shutdown(); }
     } else {
       // Never started (or already gone) — but a widget may still be showing the last track.
@@ -209,6 +208,10 @@ public class MusicPlugin extends Plugin {
     /* WHICH SESSION THE CAR CAN REACH, AND WHAT THE LAST PRESSES DID. Settings -> Phone -> "Music & car
      * controls" shows these; the same lines go to `adb logcat -s PosterChanMusic`. */
     r.put("standbySession", MusicService.standbySession);
+    /* Android Auto only reaches an app through its media browser: 0 here with AA in use means AA never
+     * connected (sideloaded app + AA's "Unknown sources" off, or AA picked another media app). */
+    r.put("browsers", MusicService.browsers);
+    r.put("lastBrowser", MusicService.lastBrowser);
     r.put("pageListening", MusicService.pageListening());
     r.put("logTag", MusicService.TAG);
     com.getcapacitor.JSArray presses = new com.getcapacitor.JSArray();

@@ -4,7 +4,6 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -19,12 +18,14 @@ import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.support.v4.media.MediaBrowserCompat;
+import android.support.v4.media.MediaDescriptionCompat;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
@@ -32,7 +33,12 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
+import androidx.media.MediaBrowserServiceCompat;
 import androidx.media.session.MediaButtonReceiver;
+
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.List;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
@@ -92,8 +98,21 @@ import place.poster.app.R;
  * and the A2DP connection-state broadcast both require the BLUETOOTH_CONNECT runtime permission on
  * Android 12+, which is a permission prompt about a Bluetooth feature for something the user asked
  * for in a music player, and the device TYPE — all this needs — is available without it.
+ *
+ * ANDROID AUTO IS NOT A BLUETOOTH CAR, AND IT ONLY TALKS TO A MEDIA BROWSER. Over plain Bluetooth the
+ * head unit's keys are AVRCP commands Android routes to whichever media session is playing — the
+ * session below, which is why skipping songs worked. Once Android Auto projects, the steering wheel
+ * and the car's screen drive AA's OWN media UI, and that UI controls exactly one app: the one it
+ * picked from the apps that declare a MediaBrowserService (+ `com.google.android.gms.car.application`).
+ * This service declared none, so under AA the buttons went to whichever real media app AA had last
+ * used — or nowhere — while our session sat there unreachable. Reported as "media controls worked
+ * before Android Auto took over". So this IS the browser now: AA binds it, reads the session token
+ * from it, and every press arrives on the same callback the Bluetooth keys use. The tree it offers
+ * is one playable item — the library is encrypted inside the WebView, there is no list this side
+ * could show — and playing it is an ordinary play press. AA lists a sideloaded app only with
+ * "Unknown sources" on in AA's developer settings; a Play-installed one needs nothing.
  */
-public class MusicService extends Service {
+public class MusicService extends MediaBrowserServiceCompat {
 
   /** From the plugin: the WebView's current state. */
   public static final String ACTION_UPDATE = "place.poster.app.MUSIC_UPDATE";
@@ -110,6 +129,32 @@ public class MusicService extends Service {
 
   /** Which surface handed us a press (the standby session, the notification...), for PressLog + logcat. */
   public static final String EXTRA_VIA = "via";
+
+  /* THIS SERVICE IS EXPORTED, because Android Auto has to bind it as a media browser — which also lets
+   * any app on the phone send it the intents below (fake a now-playing title, close the player). So
+   * every intent the app sends itself carries a secret only this process knows, and onStartCommand
+   * ignores one without it. Per PROCESS, not per install: every sender (the plugin, the notification's
+   * PendingIntents, the standby session) is rebuilt by a process that is alive to send it, and a
+   * foreground notification dies with the process that posted it. MEDIA_BUTTON is exempt — the
+   * exported MediaButtonReceiver already forwards exactly that from anyone, by design. */
+  private static final String EXTRA_OWN = "pc_own";
+  private static final String OWN_SECRET = Long.toHexString(new SecureRandom().nextLong());
+  /** An intent to this service that onStartCommand will accept. Every in-app sender uses this. */
+  public static Intent intent(Context ctx, String action) {
+    return new Intent(ctx, MusicService.class).setAction(action).putExtra(EXTRA_OWN, OWN_SECRET);
+  }
+  static boolean own(Intent i) {
+    try { return i != null && OWN_SECRET.equals(i.getStringExtra(EXTRA_OWN)); } catch (Throwable t) { return false; }
+  }
+  /** Started by publish() purely so an unbind (Android Auto leaving) cannot destroy a playing service. */
+  static final String ACTION_HOLD = "place.poster.app.MUSIC_HOLD";
+
+  /** The media browser's one root. Android Auto shows its children as the app's library. */
+  static final String BROWSE_ROOT = "pc-music-root";
+  static final String RESUME_ID = "pc-music-resume";
+  /** Who bound the browser and how often — "is Android Auto even reaching us" is answered here. */
+  static volatile int browsers = 0;
+  static volatile String lastBrowser = "";
 
   /** `adb logcat -s PosterChanMusic` -- every transport press, the session it arrived through and what
    *  came of it. A car button that "does nothing at all" is four different failures that look the same
@@ -348,7 +393,7 @@ public class MusicService extends Service {
      * platform refuses anyway, SAY SO in the counter rather than failing the way this whole feature
      * has been failing — silently.
      */
-    Intent i = new Intent(ctx, MusicService.class).setAction(ACTION_PLAY);
+    Intent i = intent(ctx, ACTION_PLAY);
     try {
       ctx.startService(i);
       note("bluetooth connected (app closed) — asked the player to start");
@@ -547,8 +592,6 @@ public class MusicService extends Service {
     }
   };
 
-  @Override public IBinder onBind(Intent intent) { return null; }
-
   @Override
   public void onCreate() {
     super.onCreate();
@@ -568,10 +611,14 @@ public class MusicService extends Service {
       /* The car's own buttons land HERE, not in onStartCommand — the platform routes a media button
        * to the session it belongs to. So these three are the presses that most need the receipt
        * check: a steering wheel is exactly where nobody can see that nothing happened. */
-      @Override public void onPlay() { press("play", SESSION_VIA); }
-      @Override public void onPause() { hush("pause", SESSION_VIA); }
-      @Override public void onSkipToNext() { press("next", SESSION_VIA); }
-      @Override public void onSkipToPrevious() { press("prev", SESSION_VIA); }
+      @Override public void onPlay() { press("play", sessionVia()); }
+      @Override public void onPause() { hush("pause", sessionVia()); }
+      @Override public void onSkipToNext() { press("next", sessionVia()); }
+      @Override public void onSkipToPrevious() { press("prev", sessionVia()); }
+      /* Android Auto's library row and its voice search ("play music on PosterChan"). There is one
+       * item and no catalogue this side can search, so both mean exactly what ▶ means. */
+      @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { press("play", sessionVia()); }
+      @Override public void onPlayFromSearch(String query, Bundle extras) { press("play", sessionVia()); }
       /* Which KEY arrived, before the compat layer turns it into one of the calls above -- a head unit
        * that sends PLAY_PAUSE, PLAY, or a long-press NEXT is told apart here, and only here. */
       @Override public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
@@ -588,6 +635,19 @@ public class MusicService extends Service {
       @Override public void onFastForward() { emit("seekBy", 10); }
       @Override public void onRewind() { emit("seekBy", -10); }
     });
+    /* THE MEDIA BROWSER'S SESSION IS THIS ONE — Android Auto gets its controller from this token, so
+     * its buttons land on the callback above, receipt checks and all. Set once, here: the platform
+     * refuses a second token. */
+    setSessionToken(session.getSessionToken());
+    /* Something to show before the page has pushed anything — the case where Android Auto, not a
+     * track, created this service. Without actions AA draws no ▶ at all, and nothing could start. */
+    session.setMetadata(new MediaMetadataCompat.Builder()
+        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, "PosterChan Music")
+        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "Press play to resume")
+        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, -1).build());
+    session.setPlaybackState(new PlaybackStateCompat.Builder()
+        .setActions(TRANSPORT_ACTIONS)
+        .setState(PlaybackStateCompat.STATE_PAUSED, 0, 0f, SystemClock.elapsedRealtime()).build());
     art = launcherIcon();
     // ContextCompat, not registerReceiver(): from Android 14 a context-registered receiver must say
     // whether it is exported, and an app targeting 34+ that doesn't gets a SecurityException instead
@@ -611,6 +671,12 @@ public class MusicService extends Service {
     // own would publish a notification whose buttons control nothing at all.
     if (intent == null) return START_NOT_STICKY;
     String action = intent.getAction();
+    if (!Intent.ACTION_MEDIA_BUTTON.equals(action) && !own(intent)) {
+      log("ignored a start from outside the app: " + action);
+      if (!foreground) stopSelf(startId);
+      return START_NOT_STICKY;
+    }
+    if (ACTION_HOLD.equals(action)) return START_NOT_STICKY;   // see publish(): already foreground
 
     /* The two ends of a stop, kept apart on purpose. A dismissal starts OUT here and has to reach the
      * player; a plugin stop arrives BECAUSE the player already stopped, and echoing it back would
@@ -702,6 +768,60 @@ public class MusicService extends Service {
 
   static final String SESSION_VIA = "PosterChanMusic session (car / headset / lock screen)";
 
+  /** SESSION_VIA plus WHO sent it, when the platform says — Android Auto is
+   *  com.google.android.projection.gearhead, so the press log tells an AA press from a Bluetooth key. */
+  private String sessionVia() {
+    try {
+      MediaSessionCompat ss = session;
+      androidx.media.MediaSessionManager.RemoteUserInfo who = ss == null ? null : ss.getCurrentControllerInfo();
+      String pkg = who == null ? null : who.getPackageName();
+      if (pkg != null && !pkg.isEmpty() && !pkg.equals(getPackageName())) return SESSION_VIA + " from " + pkg;
+    } catch (Throwable ignored) { }
+    return SESSION_VIA;
+  }
+
+  private static final long TRANSPORT_ACTIONS = PlaybackStateCompat.ACTION_PLAY
+      | PlaybackStateCompat.ACTION_PAUSE
+      | PlaybackStateCompat.ACTION_PLAY_PAUSE
+      | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+      | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+      | PlaybackStateCompat.ACTION_STOP
+      | PlaybackStateCompat.ACTION_SEEK_TO
+      | PlaybackStateCompat.ACTION_FAST_FORWARD
+      | PlaybackStateCompat.ACTION_REWIND
+      | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+      | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH;
+
+  /**
+   * Android Auto (or any media browser) asking to connect. Everyone gets the same one-item tree —
+   * playing it is a press anybody can already make through the exported media-button receiver —
+   * EXCEPT a "recent" request: that is System UI's media-resumption card after a reboot, and a card
+   * that relaunches the app on a tap is a feature nobody asked for here.
+   */
+  @Override
+  public BrowserRoot onGetRoot(String clientPackageName, int clientUid, Bundle rootHints) {
+    if (rootHints != null && rootHints.getBoolean(BrowserRoot.EXTRA_RECENT, false)) return null;
+    browsers++;
+    lastBrowser = clientPackageName == null ? "" : clientPackageName;
+    log("media browser connected: " + lastBrowser);
+    return new BrowserRoot(BROWSE_ROOT, null);
+  }
+
+  @Override
+  public void onLoadChildren(String parentId, Result<List<MediaBrowserCompat.MediaItem>> result) {
+    List<MediaBrowserCompat.MediaItem> items = new ArrayList<>();
+    if (BROWSE_ROOT.equals(parentId)) {
+      boolean held = !title.isEmpty();
+      items.add(new MediaBrowserCompat.MediaItem(new MediaDescriptionCompat.Builder()
+          .setMediaId(RESUME_ID)
+          .setTitle(held ? MusicWidget.oneLine(title, 120) : "Resume music")
+          .setSubtitle(held ? MusicWidget.oneLine(artist, 90) : "PosterChan Music")
+          .setIconBitmap(art)
+          .build(), MediaBrowserCompat.MediaItem.FLAG_PLAYABLE));
+    }
+    result.sendResult(items);
+  }
+
   /** A pause or stop, read the way coldPress reads it (DOWN only, so one press is one action). */
   private static boolean isPause(String action, Intent intent) {
     if (ACTION_PAUSE.equals(action)) return true;
@@ -785,17 +905,8 @@ public class MusicService extends Service {
      * between our updates. That matters more than it looks — the WebView's timers are throttled once
      * the app is backgrounded, which is exactly when the lock screen is the only thing on show, and a
      * bar fed only by those updates would crawl or stall while the music played on. */
-    long actions = PlaybackStateCompat.ACTION_PLAY
-        | PlaybackStateCompat.ACTION_PAUSE
-        | PlaybackStateCompat.ACTION_PLAY_PAUSE
-        | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
-        | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-        | PlaybackStateCompat.ACTION_STOP
-        | PlaybackStateCompat.ACTION_SEEK_TO
-        | PlaybackStateCompat.ACTION_FAST_FORWARD
-        | PlaybackStateCompat.ACTION_REWIND;
     session.setPlaybackState(new PlaybackStateCompat.Builder()
-        .setActions(actions)
+        .setActions(TRANSPORT_ACTIONS)
         .setState(playing ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
                   positionMs, playing ? 1f : 0f, SystemClock.elapsedRealtime())
         .build());
@@ -808,10 +919,22 @@ public class MusicService extends Service {
 
     Notification n = notification();
     if (!foreground) {
-      ServiceCompat.startForeground(this, NOTIF_ID, n,
-          Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-              ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK : 0);
-      foreground = true;
+      /* ANDROID AUTO MAY HAVE CREATED THIS SERVICE BY BINDING IT, in which case nothing has STARTED it,
+       * and a bound-only service is destroyed the moment AA unbinds — music, session and all. So it is
+       * started as well (HOLD does nothing else), and both calls are guarded: from the background
+       * Android 12+ can refuse them, and a refused notification must not take the session AA is using
+       * down with it. Media-controller commands grant the app a brief allowance, which is the case
+       * that matters (AA pressed ▶, the page started playing, this is its first push). */
+      try {
+        ContextCompat.startForegroundService(this, intent(this, ACTION_HOLD));
+        ServiceCompat.startForeground(this, NOTIF_ID, n,
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK : 0);
+        foreground = true;
+      } catch (Throwable t) {
+        note("Android refused the media notification: " + t.getClass().getSimpleName());
+        log("startForeground refused: " + t);
+      }
     } else {
       NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
       if (nm != null) nm.notify(NOTIF_ID, n);
@@ -821,6 +944,7 @@ public class MusicService extends Service {
     String key = title + "\0" + artist + "\0" + playing;
     if (!key.equals(widgetKey)) {
       widgetKey = key;
+      if (browsers > 0) { try { notifyChildrenChanged(BROWSE_ROOT); } catch (Throwable ignored) { } }
       MusicWidget.render(this, title, artist, playing, true);
     }
   }
@@ -858,7 +982,7 @@ public class MusicService extends Service {
 
   /** A button on the notification: back into onStartCommand, which forwards it to the WebView. */
   private PendingIntent command(String action) {
-    Intent i = new Intent(this, MusicService.class).setAction(action);
+    Intent i = intent(this, action);
     return PendingIntent.getService(this, action.hashCode(), i,
         PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
   }

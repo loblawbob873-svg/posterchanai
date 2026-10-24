@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto: this app is a media app (see MusicService, the media browser AA binds). -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>
