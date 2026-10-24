@@ -24,10 +24,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * MEASURES the app's cost on a phone, the numbers the Android performance work is judged by (2026-10-23).
  *
  * Not a pass/fail gate yet -- it records, under logcat tag PCPERF (one line per number):
- *   cold start   launch -> WebView exists -> bundled client ready (__PC) -> first feed paint;
+ *   cold start   (cold Activity, warm process) launch -> WebView exists -> bundled client ready (__PC) -> first feed paint;
  *   JS heap      after start (Chromium's performance.memory, when the WebView exposes it);
  *   idle CPU     CPU time (clock ticks) every app process -- the main process AND the WebView renderer --
- *                burns over 60 s in the FOREGROUND doing nothing, then 60 s after HOME (backgrounded).
+ *                burns over 30 s in the FOREGROUND doing nothing, then 30 s after HOME (backgrounded).
  * Run on the nas emulator: scripts/emulator_tests_on_nas.sh -c AppPerformanceProbeDeviceTest
  */
 @RunWith(AndroidJUnit4.class)
@@ -35,8 +35,8 @@ public final class AppPerformanceProbeDeviceTest {
     private static final String TAG = "PCPERF";
 
     @Test public void measureColdStartAndIdleCost() throws Exception {
-        RealUi.shell("am force-stop place.poster.app");
-        SystemClock.sleep(1500);
+        // NOT `am force-stop`: an instrumented test runs IN the app's process, so that killed the probe itself. These
+        // are therefore a cold ACTIVITY start (new MainActivity + WebView + page load) in a warm process.
         long t0 = SystemClock.elapsedRealtime();
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
         try {
@@ -64,13 +64,13 @@ public final class AppPerformanceProbeDeviceTest {
                     + "+Math.round(performance.memory.totalJSHeapSize/1048576):'n/a')");
             Log.i(TAG, "js_heap_used_total_mb=" + mem.replace("\"", ""));
             // Settle (startup work, relay connects), then the idle windows.
-            SystemClock.sleep(20000);
-            put("idle_foreground_60s_ticks", ticksOver(60000));
+            SystemClock.sleep(10000);   // the runner caps a test at 90 s: 10 s settle + two 30 s windows
+            put("idle_foreground_30s_ticks", ticksOver(30000));
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
-            SystemClock.sleep(5000);
-            put("idle_background_60s_ticks", ticksOver(60000));
+            SystemClock.sleep(3000);
+            put("idle_background_30s_ticks", ticksOver(30000));
             Log.i(TAG, "processes=" + RealUi.shell("ps -A -o PID,NAME").replaceAll("(?s)^.*?\\n", "")
-                    .lines().filter(l -> l.contains("place.poster")).map(String::trim).reduce((a, b) -> a + "; " + b).orElse(""));
+                    .lines().filter(l -> l.contains("place.poster") || l.contains("sandboxed_process") || l.contains("webview")).map(String::trim).reduce((a, b) -> a + "; " + b).orElse(""));
             Log.i(TAG, "wakelocks=" + RealUi.shell("dumpsys power").lines()
                     .filter(l -> l.contains("place.poster") && l.contains("WAKE_LOCK")).count());
         } finally {
@@ -91,7 +91,9 @@ public final class AppPerformanceProbeDeviceTest {
         long sum = 0;
         for (String line : RealUi.shell("ps -A -o PID,NAME").split("\n")) {
             String[] f = line.trim().split("\\s+");
-            if (f.length < 2 || !f[1].startsWith("place.poster")) continue;
+            // The WebView renderer -- where every line of the client's JS runs -- is a SEPARATE process named after the
+            // WebView package (e.g. com.google.android.webview:sandboxed_process0), not after this app.
+            if (f.length < 2 || !(f[1].startsWith("place.poster") || f[1].contains("sandboxed_process") || f[1].contains("webview"))) continue;
             String stat = RealUi.shell("cat /proc/" + f[0] + "/stat").trim();
             int close = stat.lastIndexOf(')');
             if (close < 0) continue;
