@@ -28,8 +28,11 @@ the device, including any local account key, settings, downloads, drafts, and
 unsynced files. Verify that the export can be opened somewhere safe. Then:
 
 1. Uninstall the old PosterChan installation.
-2. Download and install `posterchan-android8-reinstall.apk` from the official
-   GitHub release. Zapstore publishes only the Android 9+ lineage artifact.
+2. Download and install `posterchan-android8-reinstall.apk`: open
+   `https://poster.place/apk` on the phone (an Android 8 browser is sent to
+   `/apk/android8` automatically) or take it from the official GitHub release.
+   Zapstore publishes only the Android 9+ lineage artifact, which an 8.x phone
+   refuses as an invalid package. A phone that never had PosterChan skips step 1.
 3. Import the saved data and sign in again.
 
 Uninstalling erases PosterChan's private app data. If the old app cannot be

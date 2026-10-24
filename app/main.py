@@ -1143,16 +1143,36 @@ async def index(request: Request):
 
 
 _APK_LOCAL_PATH = "/home/verita84/posterchan-apk/posterchan.apk"
+_APK_ANDROID8_PATH = "/home/verita84/posterchan-apk/posterchan-android8-reinstall.apk"
+_APK_RELEASE = "https://github.com/loblawbob873-svg/posterchanai/releases/download/apk-latest/"
+# "Android 8" / "Android 8.1.0" in the User-Agent, never "Android 80" or "Android 18".
+_ANDROID8_UA = re.compile(r"\bAndroid 8(?:\.\d+)*(?=[;) ]|$)")
+
+
+def _is_android8(request) -> bool:
+    try:
+        return bool(_ANDROID8_UA.search(request.headers.get("user-agent", "")))
+    except Exception:
+        return False
 
 
 @app.get("/apk")
-async def latest_apk():
+async def latest_apk(request: Request):
     """Download the newest PosterChan Android APK. GitHub Actions builds + signs it on each deploy and
     publishes it to the rolling 'apk-latest' Release; a small refresh job mirrors that asset to a local
     path so poster.place/apk serves the bytes **directly from this server, behind Cloudflare** — a CDN
     edge close to the user, with Range/resume support (Starlette FileResponse honours Range) — which
     downloads far more reliably on slow/throttled mobile links than bouncing to GitHub's distant CDN.
-    Falls back to the GitHub redirect if the local mirror isn't present yet."""
+    Falls back to the GitHub redirect if the local mirror isn't present yet.
+
+    ANDROID 8 IS SENT TO ITS OWN APK. The main artifact is v3-signed ONLY (it carries the signing-key
+    rotation lineage, which Android 8 cannot verify -- see docs/ZAPSTORE_SIGNING_RECOVERY.md), so an
+    8.x phone told "/apk" downloaded a file it then refused as an invalid package, with nothing on the
+    page to say a second APK exists. The choice is a REDIRECT, never different bytes under one URL: a
+    CDN keys on the URL, and an edge holding the Android 8 file would hand it to everybody."""
+    if _is_android8(request):
+        return RedirectResponse(url="/apk/android8", status_code=302,
+                                headers={"Cache-Control": "private, no-store", "Vary": "User-Agent"})
     if os.path.exists(_APK_LOCAL_PATH):
         # THE CACHE KEY MUST MOVE WHEN THE BUILD DOES. One URL serving different bytes over time is
         # the shape Cloudflare is built to hold on to, and a five-minute max-age is only the floor —
@@ -1168,10 +1188,24 @@ async def latest_apk():
             headers={"Cache-Control": "public, max-age=60, must-revalidate",
                      "ETag": f'"apk-{build}"'},
         )
-    return RedirectResponse(
-        url="https://github.com/loblawbob873-svg/posterchanai/releases/download/apk-latest/posterchan.apk",
-        status_code=302,
-    )
+    return RedirectResponse(url=_APK_RELEASE + "posterchan.apk", status_code=302,
+                            headers={"Cache-Control": "private, no-store", "Vary": "User-Agent"})
+
+
+@app.get("/apk/android8")
+async def android8_apk():
+    """The same build signed for Android 8/8.1 (v1+v2+v3, current signer, no rotation lineage). A phone
+    that has the OLD-signer install must uninstall first; a fresh install just works."""
+    if os.path.exists(_APK_ANDROID8_PATH):
+        build = _apk_build()
+        return FileResponse(
+            _APK_ANDROID8_PATH,
+            media_type="application/vnd.android.package-archive",
+            filename="posterchan-android8.apk",
+            headers={"Cache-Control": "public, max-age=60, must-revalidate",
+                     "ETag": f'"apk8-{build}-{os.path.getsize(_APK_ANDROID8_PATH)}"'},
+        )
+    return RedirectResponse(url=_APK_RELEASE + "posterchan-android8-reinstall.apk", status_code=302)
 
 
 _APK_VERSION_PATH = "/home/verita84/posterchan-apk/version.txt"
