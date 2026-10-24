@@ -158,3 +158,31 @@ def test_a_folder_is_never_offered_a_place_inside_itself():
     assert 'Movies' not in got['rows'] and 'Movies/Drama' not in got['rows'], got['rows']
     assert got['typed_self'][0] is True and 'inside itself' in got['typed_self'][1], got['typed_self']
     assert got['sent'] == 0
+
+
+PHONE = r'''
+localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_move_folder_button_fits_a_phone_deep_in_a_library():
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})
+        await desktop.login(b)
+        await b.js("__PC.switchView('media-center');true")
+        await _open_library(b, 'Movies')
+        await _browse(b, 'Movies')
+        await b.js("document.querySelector(%s).click();true" % json.dumps('.mc-directory[data-path="Movies/Drama"]'))
+        await b.until("[...document.querySelectorAll('.mc-folder-trail button:not(.mc-move-folder)')].length===3")
+        await b.until(MOVE_BTN)
+        await asyncio.sleep(.3)
+        got['fit'] = await b.js(r'''(()=>{const vw=document.documentElement.clientWidth;
+          const m=document.querySelector('.mc-move-folder').getBoundingClientRect();
+          return {vw, inside:m.left>=0&&m.right<=vw+1, h:Math.round(m.height), pageScroll:document.documentElement.scrollWidth>vw+1}})()''')
+
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE + PHONE))
+    f = got['fit']
+    assert f['inside'] and f['h'] >= 28 and not f['pageScroll'], f
