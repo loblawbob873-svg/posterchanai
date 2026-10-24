@@ -363,6 +363,15 @@ the no-replies early return, since a frozen timeline need not contain a reply.
 `tests/client/test_anim_off_never_hides_content.py` measures OPACITY against the real stylesheet, and
 re-runs the pre-fix rule to prove the check can fail.
 
+**A PARKED DESKTOP WINDOW KEEPS ITS APP'S STYLESHEET.** The desktop parks an unfocused window by moving its
+nodes into an `.osw-slot`, and the `body.<view>-view` class belongs to whichever window is FOCUSED -- so a rule
+gated on the body alone silently stops applying to a window that is still on screen. Concord was entirely
+`body.concord-view`-gated: behind another window its custom emoji drew at full size, the consolidated room bar
+came back in its old layout and the hover menu became a wide bar (2026-10-23). os.js `snapshot()` now stamps
+the slot `data-body-view` and concord.css scopes every rule `:is(body.concord-view,.osw-slot[data-body-view~=
+"concord-view"])`; a new view-gated stylesheet must do the same. `test_concord_parked_window_looks_the_same_full_app.py`
+compares the window element by element, focused vs parked.
+
 **TIMELINE, PROFILE AND SEARCH ARE CHECKED AS A RATE, NEVER ONCE —
 `scripts/check_search_profile_stability.py`.** All three were reported as "unstable across all app
 builds", and a single-shot check is the wrong instrument for that: each flow passes on the first try,

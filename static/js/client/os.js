@@ -1494,6 +1494,10 @@
        soon as another window takes focus. Mirror the live feed's layout classes onto the parked
        slot so a background window keeps the exact same content rectangle. */
     slot.className = 'osw-slot ' + realFeed.className;
+    /* …and the BODY's view class, which a parked window loses the moment another one is focused.
+       concord.css keys every rule on body.concord-view; the slot carries it as data-body-view so a
+       Concord window behind another app keeps looking like itself (see concord.css's header). */
+    slot.dataset.bodyView = [...document.body.classList].filter(c => /-view$/.test(c)).join(' ');
     /* …and WHICH VIEW the client believes it is showing, so refocusing can hand that back.
      *
      * The client keeps ONE `VIEW` global and every painter keys on it — flushLive, _drawTimeline
@@ -1553,7 +1557,7 @@
     if(!w || !w.parked || !w.slot) return false;
     try{ w.slot.querySelectorAll('video,audio').forEach(m => { try{ m.pause(); m.removeAttribute('src'); m.load(); }catch(_){ } }); }catch(_){}
     w.slot.innerHTML = '';
-    w.slot.className = 'osw-slot';
+    w.slot.className = 'osw-slot'; delete w.slot.dataset.bodyView;
     w.parked = false;
     w.hibernated = true;
     return true;
@@ -1685,10 +1689,10 @@
       realFeed.innerHTML = '';
       while(w.slot.firstChild) realFeed.appendChild(w.slot.firstChild);
       if(w.feedClass) realFeed.className = w.feedClass;
-      w.slot.className = 'osw-slot';
+      w.slot.className = 'osw-slot'; delete w.slot.dataset.bodyView;
       w.parked = false;
       w.restored = true;                            // → focusWin skips the repaint entirely
-    } else if(w.slot){ w.slot.innerHTML = ''; w.slot.className = 'osw-slot'; }
+    } else if(w.slot){ w.slot.innerHTML = ''; w.slot.className = 'osw-slot'; delete w.slot.dataset.bodyView; }
   }
 
   /* Send the live feed back to the CLASSIC container.

@@ -9,7 +9,10 @@ from tests.client_source import client_source
 ROOT = Path(__file__).resolve().parents[2]
 APP = client_source()
 CSS = (ROOT / "static/css/client.css").read_text()
-CONCORD_CSS = (ROOT / "static/css/concord.css").read_text()
+# Every rule is scoped to body.concord-view OR a parked Concord desktop window (see concord.css's header and
+# test_concord_parked_window_looks_the_same_full_app.py); these checks pin the RULES, so read them in the
+# body-only spelling they were written against.
+CONCORD_CSS = (ROOT / "static/css/concord.css").read_text().replace(':is(body.concord-view,.osw-slot[data-body-view~="concord-view"])', "body.concord-view")
 CONCORD = (ROOT / "static/js/client/concord.js").read_text()
 CORD_READER = (ROOT / "static/js/client/cord-reader.js").read_text()
 WEBXDC = (ROOT / "static/js/client/webxdc.js").read_text()

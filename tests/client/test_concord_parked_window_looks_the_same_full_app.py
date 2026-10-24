@@ -23,7 +23,7 @@ import pytest
 from tests.client import test_desktop_offline_full_app as desktop
 from tests.client.test_concord_react_full_app import ROOM
 
-PIC = "/static/mascot/badpost-facepalm.png"   # 720x720, the shape of a real pack image
+PIC = "/static/icon-512.png"   # 512x512 (bundled), the shape of a real pack image
 
 PARKED_ROOM = ROOM.replace(
     "text:'hello from bob',at:Date.now()-60000,kind:9,tags:[]",
@@ -42,13 +42,19 @@ LAYOUT = r"""(()=>{const app=document.querySelector('.cc-app');if(!app)return nu
         cls:String(e.className&&e.className.baseVal!==undefined?e.className.baseVal:e.className).slice(0,60)};}
   return out;})()"""
 
-EMOJI = """(()=>{const i=[...document.querySelectorAll('.cc-app img')].find(x=>x.src.includes('badpost-facepalm'));
+EMOJI = """(()=>{const i=[...document.querySelectorAll('.cc-app img')].find(x=>x.src.includes('icon-512'));
   if(!i)return null;const r=i.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),loaded:i.complete&&i.naturalWidth>0};})()"""
 
 HOVER = """(()=>{const m=[...document.querySelectorAll('.cc-message')].find(x=>x.textContent.includes('hello from bob'));
   m.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));m.dispatchEvent(new MouseEvent('mouseenter',{bubbles:false}));
   const a=m.querySelector('.cc-message-actions');if(!a)return {none:true};const r=a.getBoundingClientRect(),mr=m.getBoundingClientRect();
   return {w:Math.round(r.width),h:Math.round(r.height),msgW:Math.round(mr.width),shown:getComputedStyle(a).display!=='none'};})()"""
+
+
+# Give a window a fixed frame (what dragging/resizing does), so the other app can sit BESIDE it and a
+# real pointer can reach the parked Concord window.
+PLACE = """(()=>{const w=[...document.querySelectorAll('.osw')].find(e=>e.querySelector('.%s'));
+  w.classList.remove('max');Object.assign(w.style,{left:'%dpx',top:'40px',width:'740px',height:'760px'});})()"""
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -75,13 +81,13 @@ def test_the_concord_window_is_unchanged_while_another_window_is_focused():
         await b.until("!!window.PCOS && PCOS.isOn() && !!document.querySelector('#os-desk')")
         await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
         await b.js(PARKED_ROOM)
+        await b.js("__PC.switchView('concord')")   # on the desktop, Communities opens in its own window
         await b.until("!!document.querySelector('#cc-input')")
         await b.js("(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()")
         await b.until("(()=>{const s=" + EMOJI + ";return !!(s&&s.loaded)})()")
         # Concord opens maximised; make it a window that the other app will not cover, so a real
         # pointer can hover it while it is parked.
-        await b.js("""(()=>{const w=PCOS.windows().find(x=>x.appView==='concord'||x.view==='concord');
-          if(w&&PCOS.snapTo)PCOS.snapTo(w,'left');})()""")
+        await b.js(PLACE % ("cc-app", 0))
         await asyncio.sleep(.8)
         got["focused"] = await b.js(LAYOUT)
         got["emoji_focused"] = await b.js(EMOJI)
@@ -89,7 +95,9 @@ def test_the_concord_window_is_unchanged_while_another_window_is_focused():
         await b.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 2, "y": 2})
         await b.js("__PC.switchView('notes')")
         await b.until("PCOS.windows().some(w=>w.appView==='notes')")
-        await b.js("""(()=>{const w=PCOS.windows().find(x=>x.appView==='notes');if(w&&PCOS.snapTo)PCOS.snapTo(w,'right');})()""")
+        await b.until("[...document.querySelectorAll('.osw')].length>=2")
+        await b.js("""(()=>{const w=[...document.querySelectorAll('.osw')].find(e=>!e.querySelector('.cc-app'));
+          Object.assign(w.style,{left:'760px',top:'40px',width:'600px',height:'760px'});})()""")
         await asyncio.sleep(.8)
         got["parked_really"] = await b.js("!!document.querySelector('.osw-slot .cc-app')")
         got["parked"] = await b.js(LAYOUT)

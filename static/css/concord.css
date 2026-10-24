@@ -1,3 +1,9 @@
+/* EVERY RULE HERE IS SCOPED TO :is(body.concord-view, a PARKED Concord window). The desktop parks an
+   unfocused window by moving its nodes into an .osw-slot, and body.concord-view belongs to whichever
+   window is focused -- so gated on the body alone, a Concord window behind another app lost every rule
+   in this file while still on screen: custom emoji drawn at full size, the room bar back in its
+   pre-consolidation layout, the hover menu as a wide bar (all reported 2026-10-23). os.js snapshot()
+   marks the slot data-body-view; tests/client/test_concord_parked_window_looks_the_same_full_app.py. */
 /* Concord's self-contained workspace skin. Kept separate so stale PWA shell CSS cannot unstyle it. */
 /* ==== CONCORD THEMES ====================================================================
    Every colour, corner and shadow below this block reads a `--cct-*` token, so a theme is a set of
@@ -131,17 +137,17 @@
    shared pieces drawn there (buttons, inputs, the @ picker, threads, polls, the sheets it opens)
    follow the theme instead of the app's. Classic never did, so it does not now. */
 :root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,.cc-member-menu,.cc-reaction-picker),
-:root:not([data-cc-theme="classic"]) body.concord-view #modal-root .modal{
+:root:not([data-cc-theme="classic"]) :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal{
   --neon:var(--cct-accent);--cyan:var(--cct-accent);--neon2:var(--cct-accent2);--magenta:var(--cct-accent2);
   --accent-rgb:var(--cct-accent-rgb);--accent2-rgb:var(--cct-accent2-rgb);--accent:var(--cct-accent);--on-accent:var(--cct-on-accent);
   --text:var(--cct-text);--muted:var(--cct-muted);--line:var(--cct-line);
   --bg:var(--cct-sunk);--bg2:var(--cct-main);--panel:var(--cct-raised);--panel2:var(--cct-hover);
   --cc-accent:var(--cct-accent);--cc-line:var(--cct-line);
 }
-:root:not([data-cc-theme="classic"]) body.concord-view #modal-root .modal{background:var(--cct-raised)!important;color:var(--cct-text)!important;border-color:rgba(var(--cct-accent-rgb),.35)!important;border-radius:calc(14px*var(--cct-round))!important}
-:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,body.concord-view #modal-root .modal) .btn-neon{background:var(--cct-accent)!important;border-color:var(--cct-accent)!important;color:var(--cct-on-accent)!important;box-shadow:var(--cct-glow)!important;text-shadow:none!important}
-:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,body.concord-view #modal-root .modal) .btn-ghost{border-color:rgba(var(--cct-accent-rgb),.55)!important;color:var(--cct-text)!important}
-:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,body.concord-view #modal-root .modal) .input{background:var(--cct-sunk)!important;color:var(--cct-text)!important;border-color:var(--cct-line)!important}
+:root:not([data-cc-theme="classic"]) :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal{background:var(--cct-raised)!important;color:var(--cct-text)!important;border-color:rgba(var(--cct-accent-rgb),.35)!important;border-radius:calc(14px*var(--cct-round))!important}
+:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal) .btn-neon{background:var(--cct-accent)!important;border-color:var(--cct-accent)!important;color:var(--cct-on-accent)!important;box-shadow:var(--cct-glow)!important;text-shadow:none!important}
+:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal) .btn-ghost{border-color:rgba(var(--cct-accent-rgb),.55)!important;color:var(--cct-text)!important}
+:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal) .input{background:var(--cct-sunk)!important;color:var(--cct-text)!important;border-color:var(--cct-line)!important}
 /* Display font for names and headings (Orbitron on the neon presets, the body font elsewhere). */
 :root:not([data-cc-theme="classic"]) :is(.cc-channels>header b,.cc-conversation>header>b,.cc-section,.cc-channel-name,.cc-members-pane>header b,.cc-welcome h2,.cc-join-card h2,.cc-discover h2,.cc-public h3,.cc-joined h3){font-family:var(--cct-font-display)!important;letter-spacing:.02em}
 :root:not([data-cc-theme="classic"]) .cc-channel-name{font-size:13.5px!important}
@@ -156,7 +162,7 @@
 /* The composer's textarea is the one control EXCLUDED: a textarea is :focus-visible whenever it has focus, so this
    ring drew a second, inner box around the message while typing ("there is a rectangle box when you enter your
    message in the room ... so everywhere"). The bar around it already lights up (focus-within). */
-:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,body.concord-view #modal-root .modal) :is(button,a,input,textarea,select,[tabindex]):not(.cc-compose textarea):focus-visible{outline:2px solid var(--cct-accent)!important;outline-offset:2px!important;box-shadow:var(--cct-glow-strong)!important}
+:root:not([data-cc-theme="classic"]) :is(.cc-app,.cc-join,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #modal-root .modal) :is(button,a,input,textarea,select,[tabindex]):not(.cc-compose textarea):focus-visible{outline:2px solid var(--cct-accent)!important;outline-offset:2px!important;box-shadow:var(--cct-glow-strong)!important}
 /* The neon presets (Cyberpunk, Synthwave, and Match-app on the app's own cyberpunk look) add their
    second accent to section labels and the channel mark, and a faint corner wash behind the chat. */
 :root:is(:not([data-cc-theme]),[data-cc-theme="cyberpunk"],[data-cc-theme="synthwave"]) :is(.cc-section,.cc-conversation>header .cc-hash){color:var(--cct-accent2)!important}
@@ -187,13 +193,13 @@ body.anim-off .cc-channel.active{animation:none!important}
 .cc-theme-note{margin:8px 0 0;font-size:12px;color:var(--muted)}
 @media(max-width:520px){.cc-theme-grid{grid-template-columns:1fr 1fr}}
 /* ==== END CONCORD THEMES ==== */
-body.concord-view .cc-message-actions{gap:2px!important;padding:3px!important;border-radius:calc(9px*var(--cct-round))!important;max-width:max-content!important}body.concord-view .cc-message-actions button{display:grid!important;width:32px!important;min-width:32px!important;max-width:32px!important;height:30px!important;padding:0!important;font-size:16px!important;font-weight:750!important}body.concord-view .cc-message-actions button::after{content:none!important;display:none!important}.cc-reaction{min-height:28px!important;padding:3px 8px!important;border-color:rgba(var(--cct-react-rgb),.48)!important;background:rgba(var(--cct-react-rgb),.13)!important}.cc-reaction:hover{border-color:var(--cct-accent)!important;background:rgba(var(--cct-hl-rgb),.12)!important}
-@media(max-width:820px){body.concord-view .cc-app{width:100%!important;max-width:100%!important;min-width:0!important}body.concord-view .cc-channels{min-width:0!important;max-width:calc(100vw - 62px)!important}body.concord-view .cc-conversation{width:100vw!important;max-width:100vw!important;overflow:hidden!important}body.concord-view .cc-message-actions button{width:36px!important;min-width:36px!important;max-width:36px!important;height:36px!important}}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions{gap:2px!important;padding:3px!important;border-radius:calc(9px*var(--cct-round))!important;max-width:max-content!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button{display:grid!important;width:32px!important;min-width:32px!important;max-width:32px!important;height:30px!important;padding:0!important;font-size:16px!important;font-weight:750!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button::after{content:none!important;display:none!important}.cc-reaction{min-height:28px!important;padding:3px 8px!important;border-color:rgba(var(--cct-react-rgb),.48)!important;background:rgba(var(--cct-react-rgb),.13)!important}.cc-reaction:hover{border-color:var(--cct-accent)!important;background:rgba(var(--cct-hl-rgb),.12)!important}
+@media(max-width:820px){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app{width:100%!important;max-width:100%!important;min-width:0!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-channels{min-width:0!important;max-width:calc(100vw - 62px)!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation{width:100vw!important;max-width:100vw!important;overflow:hidden!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button{width:36px!important;min-width:36px!important;max-width:36px!important;height:36px!important}}
 .cc-public-icon{overflow:hidden!important}.cc-public-icon img{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important}.cc-public-icon>span{display:grid!important;place-items:center!important;width:100%!important;height:100%!important}
 .cc-member-help{margin:4px 0 10px!important;color:var(--cct-muted)!important;font-size:12px!important}.cc-member-menu{position:fixed!important;z-index:10000!important;display:grid!important;width:182px!important;padding:5px!important;border:1px solid rgba(var(--cct-tint-rgb),.13)!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cct-menu)!important;box-shadow:0 14px 38px rgba(var(--cct-shade-rgb),.55)!important}.cc-member-menu button{min-height:38px!important;padding:7px 10px!important;border:0!important;border-radius:calc(7px*var(--cct-round))!important;background:transparent!important;color:var(--cct-fg-menu)!important;text-align:start!important;font:600 13px/1.2 inherit!important}.cc-member-menu button:hover,.cc-member-menu button:focus-visible{background:var(--cc-hover)!important;outline:0!important}.cc-member-menu button.danger{color:var(--cct-danger)!important}
-body.concord-view .app{grid-template-columns:300px minmax(0,1fr)!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;column-gap:0!important}
-body.concord-view .rightbar,body.concord-view .rb-toggle,body.concord-view #rb-toggle{display:none!important;visibility:hidden!important;pointer-events:none!important}
-body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .app{grid-template-columns:300px minmax(0,1fr)!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;column-gap:0!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .rightbar,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .rb-toggle,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #rb-toggle{display:none!important;visibility:hidden!important;pointer-events:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .main,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
 /* `100%`, NEVER `100vw`, AND THAT ONE UNIT IS THE WHOLE 'concord still not maximizing to
    width' BUG. The client scales the UI with `body{zoom}` by viewport, and `vw` is resolved
    against the DEVICE viewport with no regard for zoom — so at zoom 0.67 a `max-width:100vw`
@@ -203,8 +209,8 @@ body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max
    1280px viewport -> 858px used (422px wasted); 1920 -> 1478 (442 wasted); 3072 -> full.
    `100%` is relative to the parent and therefore already in the zoomed coordinate space.
    The `overflow-x:clip` half is the part that was actually wanted and is unchanged. */
-html:has(body.concord-view),body.concord-view,body.concord-view .app,body.concord-view .main,body.concord-view .feed,body.concord-view .cc-app,body.concord-view .cc-conversation,body.concord-view .cc-messages{max-width:100%!important;overflow-x:clip!important}
-body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action:pan-y!important}
+html:has(body.concord-view),body.concord-view,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .app,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .main,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .feed,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages{max-width:100%!important;overflow-x:clip!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages{overscroll-behavior-x:none!important;touch-action:pan-y!important}
 /* Tablets were falling between the phone drill-down (<=820px) and the wide desktop assumptions.
    Explicitly consume the remaining track and remove the shell's content caps at common 834–1180px
    tablet widths; the conversation column, not an empty right gutter, gets every spare pixel. */
@@ -216,10 +222,10 @@ body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action
      the conversation column ZERO. Full screen never enters this block, which is why it
      looked fine there — and why dragging the window past 1180px 'fixed' it, reported as
      "it starts not fit to width then it fits if you resize sway window". */
-  body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100%!important}
-  body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
-  body.concord-view .cc-app{width:100%!important;max-width:none!important;grid-template-columns:62px 220px minmax(0,1fr) 190px!important}
-  body.concord-view .cc-conversation{width:auto!important;max-width:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .app{grid-template-columns:240px minmax(0,1fr)!important;width:100%!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .main,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app{width:100%!important;max-width:none!important;grid-template-columns:62px 220px minmax(0,1fr) 190px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation{width:auto!important;max-width:none!important}
 }
 .osw-body>#feed.feed-dm:has(.cc-app){width:100%!important;height:100%!important;max-width:none!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}.osw-slot:has(>.cc-app){padding:0!important;opacity:1!important;overflow:hidden!important}.osw-slot>.cc-app{width:100%!important;height:100%!important;min-height:0!important}
 /* PosterChanOS scales its desktop with `body { zoom }`. A maximised frame therefore occupies the
@@ -272,7 +278,7 @@ body.os-on.concord-view .osw-body .cc-messages{
 .cc-message{position:relative!important}.cc-message:hover{background:rgba(var(--cct-tint-rgb),.025)!important}.cc-message-actions{position:absolute!important;inset-inline-end:5px!important;top:1px!important;display:none!important;padding:2px!important;border:1px solid rgba(var(--cct-tint-rgb),.1)!important;border-radius:calc(8px*var(--cct-round))!important;background:var(--cct-pop)!important}.cc-message:hover .cc-message-actions,.cc-message:focus-within .cc-message-actions{display:flex!important}.cc-message-actions button,.cc-reaction-picker button{display:grid!important;place-items:center!important;width:30px!important;height:28px!important;padding:0!important;border:0!important;border-radius:calc(6px*var(--cct-round))!important;background:transparent!important;color:var(--cct-icon)!important;font-size:16px!important;cursor:pointer!important}.cc-message-actions button:hover,.cc-reaction-picker button:hover{background:var(--cc-hover)!important;color:var(--cct-strong)!important}.cc-message-reply{margin:0 0 5px!important;padding-inline-start:8px!important;border-inline-start:2px solid var(--cct-accent)!important;color:var(--cct-fg-2)!important;font-size:12px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;cursor:pointer!important}.cc-message-reply:hover{color:var(--cct-strong)!important;background:rgba(var(--cct-tint-rgb),.035)!important}.cc-message-reply b{color:var(--cct-strong)!important}.cc-message-target{animation:cc-target-flash 1.8s ease-out}@keyframes cc-target-flash{0%,35%{background:rgba(var(--cct-react-rgb),.28)}100%{background:transparent}}.cc-reactions{display:flex!important;flex-wrap:wrap!important;gap:4px!important;margin-top:5px!important}.cc-reaction{display:flex!important;align-items:center!important;gap:4px!important;min-height:26px!important;padding:2px 7px!important;border:1px solid rgba(var(--cct-hl-rgb),.25)!important;border-radius:calc(8px*var(--cct-round))!important;background:rgba(var(--cct-hl-rgb),.08)!important;color:var(--cct-strong)!important;cursor:pointer!important}.cc-reaction b{margin:0!important;font-size:11px!important}.cc-reaction-picker{position:absolute!important;z-index:8!important;inset-inline-end:5px!important;top:34px!important;display:flex!important;flex-wrap:wrap!important;width:140px!important;padding:5px!important;border:1px solid rgba(var(--cct-tint-rgb),.12)!important;border-radius:calc(9px*var(--cct-round))!important;background:var(--cct-pop)!important;box-shadow:0 10px 30px rgba(var(--cct-shade-rgb),.45)!important}.cc-reply{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;color:var(--cct-reply-fg)!important;font-size:12px!important}.cc-reply.hidden{display:none!important}.cc-reply span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}.cc-reply button{border:0!important;background:transparent!important;color:var(--cct-strong)!important;font-size:20px!important;cursor:pointer!important}
 .cc-encrypted-attachment,.cc-plain-attachment{display:block!important;width:fit-content!important;max-width:min(560px,100%)!important;min-width:0!important;margin-top:7px!important;overflow:hidden!important;color:var(--cct-muted)!important}.cc-attachment-open{display:block!important;width:fit-content!important;max-width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:calc(10px*var(--cct-round))!important;background:transparent!important;cursor:zoom-in!important}.cc-encrypted-attachment img,.cc-encrypted-attachment video,.cc-plain-attachment img,.cc-plain-attachment video{display:block!important;width:auto!important;max-width:100%!important;height:auto!important;max-height:min(58vh,480px)!important;object-fit:contain!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cct-media)!important}.cc-attachment-media{position:relative!important;width:fit-content!important;max-width:100%!important}.cc-attachment-expand{position:absolute!important;top:7px!important;right:7px!important;display:grid!important;place-items:center!important;width:34px!important;height:34px!important;padding:0!important;border:1px solid rgba(var(--cct-tint-rgb),.2)!important;border-radius:calc(8px*var(--cct-round))!important;background:rgba(10,12,17,.82)!important;color:var(--cct-strong)!important;font-size:18px!important;cursor:zoom-in!important}/* A DEFINITE width, never a percentage: the attachment box is width:fit-content with overflow:hidden, and a percentage width inside a shrink-to-fit box is cyclic -- the box sized itself to 0 px and clipped the player away ("i uploaded mp3 file in concord just now and nothing shows"). max-width still lets it shrink on a phone. */.cc-encrypted-attachment audio,.cc-plain-attachment audio{display:block!important;width:420px!important;max-width:100%!important}.cc-encrypted-attachment a,.cc-plain-attachment a{display:inline-flex!important;max-width:100%!important;padding:8px 11px!important;border-radius:calc(8px*var(--cct-round))!important;background:rgba(var(--cct-tint-rgb),.06)!important;overflow-wrap:anywhere!important}.cc-attachment-error{color:var(--cct-error)!important}
 .cc-message-actions button{display:flex!important;width:auto!important;min-width:64px!important;gap:5px!important;padding:0 9px!important;font-size:14px!important;font-weight:750!important}.cc-message-actions button::after{content:attr(title)!important;font-size:11px!important}.cc-compose{position:relative!important}.cc-mention-menu{position:absolute!important;z-index:12!important;inset-inline:44px 54px!important;bottom:calc(100% + 7px)!important;max-height:min(300px,40vh)!important;overflow:auto!important;padding:5px!important;border:1px solid rgba(var(--cct-tint-rgb),.14)!important;border-radius:calc(11px*var(--cct-round))!important;background:var(--cct-pop)!important;box-shadow:0 14px 40px rgba(var(--cct-shade-rgb),.55)!important}.cc-mention-menu button{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;width:100%!important;min-height:42px!important;padding:7px 10px!important;border:0!important;border-radius:calc(7px*var(--cct-round))!important;background:transparent!important;color:var(--cct-strong)!important;text-align:start!important}.cc-mention-menu button.active,.cc-mention-menu button:hover{background:var(--cc-hover)!important}.cc-mention-menu small{color:var(--cct-muted)!important}.cc-message .xdc-card{max-width:min(420px,100%)!important;margin-top:8px!important;box-sizing:border-box!important}
-@media(max-width:820px){body.concord-view .app{grid-template-columns:minmax(0,1fr)!important;padding:0!important}.cc-app{display:flex!important}.cc-communities{flex:0 0 62px!important;width:62px!important;padding:9px 5px!important}.cc-brand,.cc-server{width:44px!important;height:44px!important;flex-basis:44px!important}.cc-channels{flex:1!important;border:0!important}.cc-conversation{display:none!important;position:fixed!important;inset:0!important;z-index:45!important}.cc-app.show-chat .cc-communities,.cc-app.show-chat .cc-channels{display:none!important}.cc-app.show-chat .cc-conversation{display:flex!important}.cc-mobile-back{display:grid!important;min-width:44px!important;width:44px!important;height:44px!important}.cc-conversation>header{padding-top:env(safe-area-inset-top)!important;height:auto!important}.cc-topic{display:none!important}.cc-messages{padding:14px 12px!important}.cc-compose{margin:0 8px calc(8px + env(safe-area-inset-bottom))!important}.cc-compose-btn,.cc-head-btn{min-width:44px!important;width:44px!important;height:44px!important}.cc-channel{min-height:48px!important;font-size:16px!important}.cc-join{position:fixed!important;z-index:60!important;place-items:end center!important;padding:calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))!important}.cc-join-card{padding:20px 16px!important;border-radius:calc(18px*var(--cct-round))!important}.cc-join-actions .btn{flex:1!important;min-height:46px!important}.cc-message-actions{display:flex!important;position:static!important;float:right!important}.cc-message-actions button{width:34px!important;height:34px!important}.cc-reaction-picker{top:40px!important}.cc-reply{margin-inline:8px!important}}
+@media(max-width:820px){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .app{grid-template-columns:minmax(0,1fr)!important;padding:0!important}.cc-app{display:flex!important}.cc-communities{flex:0 0 62px!important;width:62px!important;padding:9px 5px!important}.cc-brand,.cc-server{width:44px!important;height:44px!important;flex-basis:44px!important}.cc-channels{flex:1!important;border:0!important}.cc-conversation{display:none!important;position:fixed!important;inset:0!important;z-index:45!important}.cc-app.show-chat .cc-communities,.cc-app.show-chat .cc-channels{display:none!important}.cc-app.show-chat .cc-conversation{display:flex!important}.cc-mobile-back{display:grid!important;min-width:44px!important;width:44px!important;height:44px!important}.cc-conversation>header{padding-top:env(safe-area-inset-top)!important;height:auto!important}.cc-topic{display:none!important}.cc-messages{padding:14px 12px!important}.cc-compose{margin:0 8px calc(8px + env(safe-area-inset-bottom))!important}.cc-compose-btn,.cc-head-btn{min-width:44px!important;width:44px!important;height:44px!important}.cc-channel{min-height:48px!important;font-size:16px!important}.cc-join{position:fixed!important;z-index:60!important;place-items:end center!important;padding:calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))!important}.cc-join-card{padding:20px 16px!important;border-radius:calc(18px*var(--cct-round))!important}.cc-join-actions .btn{flex:1!important;min-height:46px!important}.cc-message-actions{display:flex!important;position:static!important;float:right!important}.cc-message-actions button{width:34px!important;height:34px!important}.cc-reaction-picker{top:40px!important}.cc-reply{margin-inline:8px!important}}
 /* The other half of "+". Creating a community used to be reachable only while you had none, so this
    is the way back to it from the sheet people actually open. A link, not a third button: joining is
    what the sheet is for and this must not compete with it. */
@@ -290,86 +296,86 @@ body.os-on.concord-view .osw-body .cc-messages{
 
 /* Compact Discord/Armada-style message controls. Keep this final block authoritative over legacy rules. */
 @media(max-width:820px){.cc-members-pane{display:none!important}}
-body.concord-view .cc-message-actions{position:absolute!important;z-index:6!important;inset-inline-end:10px!important;top:-14px!important;display:flex!important;align-items:center!important;gap:2px!important;padding:3px!important;border:1px solid rgba(var(--cct-tint-rgb),.13)!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cct-toolbar)!important;box-shadow:0 7px 22px rgba(var(--cct-shade-rgb),.38)!important;opacity:0!important;visibility:hidden!important;transform:translateY(3px)!important;transition:opacity .12s ease,transform .12s ease,visibility .12s!important}
-body.concord-view .cc-message:hover .cc-message-actions,body.concord-view .cc-message:focus-within .cc-message-actions{opacity:1!important;visibility:visible!important;transform:none!important}
-body.concord-view .cc-message-actions button{display:grid!important;place-items:center!important;width:32px!important;min-width:32px!important;max-width:32px!important;height:30px!important;padding:0!important;border:0!important;border-radius:calc(7px*var(--cct-round))!important;background:transparent!important;color:var(--cct-icon-2)!important;font-size:16px!important;line-height:1!important;cursor:pointer!important}
-body.concord-view .cc-message-actions button:hover,body.concord-view .cc-message-actions button:focus-visible{background:rgba(var(--cct-tint-rgb),.1)!important;color:var(--cct-strong)!important;outline:0!important}
-body.concord-view .cc-message-actions .cc-delete-action:hover{background:rgba(237,66,69,.18)!important;color:var(--cct-danger-2)!important}
-body.concord-view .cc-message-actions button::after{content:none!important;display:none!important}
-body.concord-view .cc-action-sep{width:1px!important;height:20px!important;margin:0 2px!important;background:rgba(var(--cct-tint-rgb),.12)!important}
-body.concord-view .cc-reactions{gap:5px!important;margin-top:7px!important}
-body.concord-view .cc-reaction{min-height:28px!important;padding:3px 9px!important;border:1px solid rgba(var(--cct-tint-rgb),.12)!important;border-radius:calc(9px*var(--cct-round))!important;background:rgba(var(--cct-tint-rgb),.055)!important;color:var(--cct-react-fg)!important}
-body.concord-view .cc-reaction-emoji{display:block!important;width:22px!important;height:22px!important;object-fit:contain!important;border-radius:calc(4px*var(--cct-round))!important}
-body.concord-view .cc-reaction:hover{border-color:rgba(var(--cct-react-rgb),.7)!important;background:rgba(var(--cct-react-rgb),.14)!important}
-body.concord-view .cc-reaction.mine{border-color:var(--cct-react-mine)!important;background:rgba(var(--cct-react-rgb),.25)!important;color:var(--cct-strong)!important}
-body.concord-view .cc-reaction-picker{display:grid!important;grid-template-columns:repeat(4,32px)!important;width:auto!important;gap:2px!important;padding:6px!important;border-radius:calc(11px*var(--cct-round))!important;background:var(--cct-toolbar)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions{position:absolute!important;z-index:6!important;inset-inline-end:10px!important;top:-14px!important;display:flex!important;align-items:center!important;gap:2px!important;padding:3px!important;border:1px solid rgba(var(--cct-tint-rgb),.13)!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cct-toolbar)!important;box-shadow:0 7px 22px rgba(var(--cct-shade-rgb),.38)!important;opacity:0!important;visibility:hidden!important;transform:translateY(3px)!important;transition:opacity .12s ease,transform .12s ease,visibility .12s!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message:hover .cc-message-actions,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message:focus-within .cc-message-actions{opacity:1!important;visibility:visible!important;transform:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button{display:grid!important;place-items:center!important;width:32px!important;min-width:32px!important;max-width:32px!important;height:30px!important;padding:0!important;border:0!important;border-radius:calc(7px*var(--cct-round))!important;background:transparent!important;color:var(--cct-icon-2)!important;font-size:16px!important;line-height:1!important;cursor:pointer!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button:hover,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button:focus-visible{background:rgba(var(--cct-tint-rgb),.1)!important;color:var(--cct-strong)!important;outline:0!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions .cc-delete-action:hover{background:rgba(237,66,69,.18)!important;color:var(--cct-danger-2)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button::after{content:none!important;display:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-action-sep{width:1px!important;height:20px!important;margin:0 2px!important;background:rgba(var(--cct-tint-rgb),.12)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reactions{gap:5px!important;margin-top:7px!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction{min-height:28px!important;padding:3px 9px!important;border:1px solid rgba(var(--cct-tint-rgb),.12)!important;border-radius:calc(9px*var(--cct-round))!important;background:rgba(var(--cct-tint-rgb),.055)!important;color:var(--cct-react-fg)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction-emoji{display:block!important;width:22px!important;height:22px!important;object-fit:contain!important;border-radius:calc(4px*var(--cct-round))!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction:hover{border-color:rgba(var(--cct-react-rgb),.7)!important;background:rgba(var(--cct-react-rgb),.14)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction.mine{border-color:var(--cct-react-mine)!important;background:rgba(var(--cct-react-rgb),.25)!important;color:var(--cct-strong)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction-picker{display:grid!important;grid-template-columns:repeat(4,32px)!important;width:auto!important;gap:2px!important;padding:6px!important;border-radius:calc(11px*var(--cct-round))!important;background:var(--cct-toolbar)!important}
 /* The ellipsis is a real disclosure control on every screen size. Previously cc-actions-open only
    affected the mobile media query, so desktop clicks changed state without changing pixels while
    hover/focus left the old full toolbar hanging around. */
-body.concord-view .cc-message-actions button:not(.cc-action-trigger){display:none!important}
-body.concord-view .cc-message.cc-actions-open .cc-message-actions{display:flex!important}
-body.concord-view .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}
-body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba(var(--cct-tint-rgb),.12)!important}
-@media(max-width:820px),(hover:none){body.concord-view .cc-message-actions{position:static!important;float:none!important;width:max-content!important;margin:7px 0 0 auto!important;opacity:1!important;visibility:visible!important;transform:none!important;box-shadow:none!important;background:rgba(var(--cct-tint-rgb),.035)!important}body.concord-view .cc-message-actions button{display:none!important;width:34px!important;min-width:34px!important;max-width:34px!important;height:34px!important}body.concord-view .cc-message-actions .cc-action-trigger,body.concord-view .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba(var(--cct-tint-rgb),.12)!important}body.concord-view .cc-reaction-picker{position:fixed!important;inset:auto 10px calc(74px + env(safe-area-inset-bottom)) auto!important;grid-template-columns:repeat(4,40px)!important}body.concord-view .cc-reaction-picker button{width:40px!important;height:40px!important}}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button:not(.cc-action-trigger){display:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message.cc-actions-open .cc-message-actions{display:flex!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message.cc-actions-open .cc-action-trigger{background:rgba(var(--cct-tint-rgb),.12)!important}
+@media(max-width:820px),(hover:none){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions{position:static!important;float:none!important;width:max-content!important;margin:7px 0 0 auto!important;opacity:1!important;visibility:visible!important;transform:none!important;box-shadow:none!important;background:rgba(var(--cct-tint-rgb),.035)!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button{display:none!important;width:34px!important;min-width:34px!important;max-width:34px!important;height:34px!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions .cc-action-trigger,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message.cc-actions-open .cc-action-trigger{background:rgba(var(--cct-tint-rgb),.12)!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction-picker{position:fixed!important;inset:auto 10px calc(74px + env(safe-area-inset-bottom)) auto!important;grid-template-columns:repeat(4,40px)!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-reaction-picker button{width:40px!important;height:40px!important}}
 
 /* Classic-mode phone shell: one real screen at a time, with a horizontal community switcher. */
 @media(max-width:820px){
-  body.concord-view .feed.feed-dm:has(.cc-app){padding:0!important;overflow:hidden!important}
-  body.concord-view .cc-app{position:fixed!important;z-index:39!important;inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;width:100vw!important;height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;background:var(--cc-side)!important}
-  body.concord-view .cc-communities{display:flex!important;flex-direction:row!important;align-items:center!important;flex:0 0 62px!important;width:100%!important;max-width:none!important;height:62px!important;padding:7px 10px!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;border:0!important;border-bottom:1px solid rgba(var(--cct-tint-rgb),.07)!important;scrollbar-width:none!important}
-  body.concord-view .cc-communities::-webkit-scrollbar{display:none!important}
-  body.concord-view .cc-brand,body.concord-view .cc-server{flex:0 0 46px!important;width:46px!important;height:46px!important}
-  body.concord-view .cc-server.active:before{inset:auto auto -7px 6px!important;width:34px!important;height:3px!important;border-radius:calc(3px*var(--cct-round)) calc(3px*var(--cct-round)) 0 0!important}
-  body.concord-view .cc-server.unread:after{inset:3px 3px auto auto!important;width:8px!important;height:8px!important;border-radius:50%!important}
-  body.concord-view .cc-channels{display:flex!important;flex:1 1 auto!important;width:100%!important;max-width:none!important;min-height:0!important;border:0!important}
-  body.concord-view .cc-channel-list{padding:8px 10px 12px!important}
-  body.concord-view .cc-channel{min-height:50px!important;padding:10px 12px!important;border-radius:calc(10px*var(--cct-round))!important;font-size:16px!important}
-  body.concord-view .cc-section{padding:10px 11px 6px!important}
-  body.concord-view .cc-identity{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important}
-  body.concord-view .cc-app.show-chat{inset:0!important;z-index:45!important;height:100dvh!important;background:var(--cc-main)!important}
-  body.concord-view .cc-app.show-chat .cc-conversation{display:flex!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important}
-  body.concord-view .cc-app.show-chat .cc-communities,body.concord-view .cc-app.show-chat .cc-channels{display:none!important}
-  body.concord-view .cc-app.home-view #cc-back-channels{display:grid!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .feed.feed-dm:has(.cc-app){padding:0!important;overflow:hidden!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app{position:fixed!important;z-index:39!important;inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;width:100vw!important;height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;background:var(--cc-side)!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-communities{display:flex!important;flex-direction:row!important;align-items:center!important;flex:0 0 62px!important;width:100%!important;max-width:none!important;height:62px!important;padding:7px 10px!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;border:0!important;border-bottom:1px solid rgba(var(--cct-tint-rgb),.07)!important;scrollbar-width:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-communities::-webkit-scrollbar{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-brand,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-server{flex:0 0 46px!important;width:46px!important;height:46px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-server.active:before{inset:auto auto -7px 6px!important;width:34px!important;height:3px!important;border-radius:calc(3px*var(--cct-round)) calc(3px*var(--cct-round)) 0 0!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-server.unread:after{inset:3px 3px auto auto!important;width:8px!important;height:8px!important;border-radius:50%!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-channels{display:flex!important;flex:1 1 auto!important;width:100%!important;max-width:none!important;min-height:0!important;border:0!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-channel-list{padding:8px 10px 12px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-channel{min-height:50px!important;padding:10px 12px!important;border-radius:calc(10px*var(--cct-round))!important;font-size:16px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-section{padding:10px 11px 6px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-identity{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat{inset:0!important;z-index:45!important;height:100dvh!important;background:var(--cc-main)!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-conversation{display:flex!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-communities,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-channels{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.home-view #cc-back-channels{display:grid!important}
   /* The community finder is a destination inside Discover, not a modal chat
      drill-down.  Keep Classic's top and bottom navigation reachable here or
      entering Concord traps the user above every other Discover view. */
-  body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;z-index:39!important;height:auto!important}
-  body.concord-view .cc-app.home-view .cc-conversation{position:absolute!important;inset:0!important;height:100%!important}
-  body.concord-view .cc-conversation>header{flex:0 0 auto!important;min-height:calc(54px + env(safe-area-inset-top))!important;padding:env(safe-area-inset-top) 7px 0!important;gap:5px!important}
-  body.concord-view .cc-conversation>header .cc-hash,body.concord-view .cc-conversation>header .cc-visibility,body.concord-view #cc-publish-listing{display:none!important}
-  body.concord-view .cc-conversation>header>b{min-width:0!important;max-width:34vw!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important}
-  body.concord-view .cc-head-btn,body.concord-view .cc-mobile-back{flex:0 0 38px!important;width:38px!important;min-width:38px!important;height:38px!important}
-  body.concord-view .cc-conversation{min-width:0!important;max-width:100vw!important;overflow:hidden!important}
-  body.concord-view .cc-messages{width:100%!important;max-width:100%!important;padding:12px 9px 8px!important;overflow-x:hidden!important;overscroll-behavior:contain!important}
-  body.concord-view .cc-message-list,body.concord-view .cc-message,body.concord-view .cc-message-body{width:100%!important;max-width:100%!important;min-width:0!important}
-  body.concord-view .cc-message-body a,body.concord-view .cc-message-body p,body.concord-view .cc-message-body pre{max-width:100%!important;overflow-wrap:anywhere!important;word-break:break-word!important}
-  body.concord-view .cc-message-body img,body.concord-view .cc-message-body video,body.concord-view .cc-message-body iframe,body.concord-view .cc-message-body .link-card,body.concord-view .cc-message-body .xdc-card{max-width:100%!important}
-  body.concord-view .cc-message{gap:8px!important;padding:7px 2px!important;background:transparent!important}
-  body.concord-view .cc-message-avatar{flex-basis:30px!important;width:30px!important;height:30px!important}
-  body.concord-view .cc-message p{font-size:15px!important;line-height:1.42!important}
-  body.concord-view .cc-message-actions{gap:0!important;margin:4px 0 0 auto!important;padding:0!important;border:0!important;background:transparent!important}
-  body.concord-view .cc-message-actions .cc-action-sep{display:none!important}
-  body.concord-view .cc-message-actions button{width:38px!important;min-width:38px!important;max-width:38px!important;height:34px!important;background:rgba(var(--cct-tint-rgb),.045)!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;z-index:39!important;height:auto!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.home-view .cc-conversation{position:absolute!important;inset:0!important;height:100%!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header{flex:0 0 auto!important;min-height:calc(54px + env(safe-area-inset-top))!important;padding:env(safe-area-inset-top) 7px 0!important;gap:5px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header .cc-hash,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header .cc-visibility,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) #cc-publish-listing{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header>b{min-width:0!important;max-width:34vw!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-head-btn,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-mobile-back{flex:0 0 38px!important;width:38px!important;min-width:38px!important;height:38px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation{min-width:0!important;max-width:100vw!important;overflow:hidden!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages{width:100%!important;max-width:100%!important;padding:12px 9px 8px!important;overflow-x:hidden!important;overscroll-behavior:contain!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-list,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body{width:100%!important;max-width:100%!important;min-width:0!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body a,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body p,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body pre{max-width:100%!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body img,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body video,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body iframe,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body .link-card,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-body .xdc-card{max-width:100%!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message{gap:8px!important;padding:7px 2px!important;background:transparent!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-avatar{flex-basis:30px!important;width:30px!important;height:30px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message p{font-size:15px!important;line-height:1.42!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions{gap:0!important;margin:4px 0 0 auto!important;padding:0!important;border:0!important;background:transparent!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions .cc-action-sep{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-message-actions button{width:38px!important;min-width:38px!important;max-width:38px!important;height:34px!important;background:rgba(var(--cct-tint-rgb),.045)!important}
   /* EVERY CONTROL IN THE ROW IS ONE HEIGHT (42px) AND THE ROW HAS REAL GAPS. The textarea used to carry the
      global `textarea{margin:6px 0}`, so the row was 54px tall around 40-42px controls; with flex-end the Send
      button sat on the row's floor, 7px below the input's centre and 5px off the bar's edge, and a 2px gap put
      it against the input ("send button not centered ... touching bottom, also touching message box", APK).
      Equal heights + flex-end centre it on one line and keep it on the bottom line if the input grows. */
-  body.concord-view .cc-compose{gap:6px!important;margin:0 6px calc(6px + env(safe-area-inset-bottom))!important;padding:6px!important;border-radius:calc(14px*var(--cct-round))!important}
-  body.concord-view .cc-compose-btn{flex-basis:40px!important;width:40px!important;min-width:40px!important;height:42px!important}
-  body.concord-view .cc-compose textarea{min-height:42px!important;margin:0!important;padding:10px 4px!important;font-size:16px!important}
-  body.concord-view .cc-compose .btn{height:42px!important;min-height:42px!important;min-width:58px!important;padding:0 12px!important}
-  body.concord-view .cc-discover{align-self:flex-start!important;margin:0 auto!important;padding:8px 4px 18px!important}
-  body.concord-view .cc-discover>.concord-mark{width:48px!important;height:48px!important;border-radius:calc(14px*var(--cct-round))!important}
-  body.concord-view .cc-discover h2{font-size:22px!important}
-  body.concord-view .cc-primary-actions{margin:14px 0 22px!important;flex-wrap:wrap!important}
-  body.concord-view .cc-primary-actions .btn{flex:1 1 145px!important;min-height:44px!important}
-  body.concord-view .cc-public-room{grid-template-columns:42px minmax(0,1fr)!important;padding:10px!important}
-  body.concord-view .cc-public-room>strong,body.concord-view .cc-joined-room>strong{display:none!important}
-  body.concord-view .cc-joined-room{grid-template-columns:42px minmax(0,1fr)!important;min-height:64px!important;padding:10px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-compose{gap:6px!important;margin:0 6px calc(6px + env(safe-area-inset-bottom))!important;padding:6px!important;border-radius:calc(14px*var(--cct-round))!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-compose-btn{flex-basis:40px!important;width:40px!important;min-width:40px!important;height:42px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-compose textarea{min-height:42px!important;margin:0!important;padding:10px 4px!important;font-size:16px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-compose .btn{height:42px!important;min-height:42px!important;min-width:58px!important;padding:0 12px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-discover{align-self:flex-start!important;margin:0 auto!important;padding:8px 4px 18px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-discover>.concord-mark{width:48px!important;height:48px!important;border-radius:calc(14px*var(--cct-round))!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-discover h2{font-size:22px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-primary-actions{margin:14px 0 22px!important;flex-wrap:wrap!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-primary-actions .btn{flex:1 1 145px!important;min-height:44px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-public-room{grid-template-columns:42px minmax(0,1fr)!important;padding:10px!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-public-room>strong,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-joined-room>strong{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-joined-room{grid-template-columns:42px minmax(0,1fr)!important;min-height:64px!important;padding:10px!important}
 }
 /* Call stays on the room bar at every width now that the bar is only search, call and the menu (Armada's). */
-@media(max-width:370px){body.concord-view .cc-conversation>header>b{max-width:30vw!important}body.concord-view .cc-compose #cc-emoji{display:none!important}}
+@media(max-width:370px){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header>b{max-width:30vw!important}:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-compose #cc-emoji{display:none!important}}
 
 /* Phone Concord follows the working PosterChanOS workspace, not a separate card UI.  The same
    vertical community rail + channel pane are visible before a room is opened and become one
@@ -377,13 +383,13 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
    mobile cascade over the older horizontal-strip experiment above. */
 .cc-drawer-backdrop{display:none}
 @media(max-width:820px){
-  body.concord-view .cc-app:not(.show-chat){
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app:not(.show-chat){
     display:grid!important;
     grid-template-columns:58px minmax(0,1fr)!important;
     grid-template-rows:minmax(0,1fr)!important;
     flex-direction:initial!important;
   }
-  body.concord-view .cc-app:not(.show-chat) .cc-communities{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app:not(.show-chat) .cc-communities{
     grid-column:1!important;
     display:flex!important;
     flex-direction:column!important;
@@ -397,22 +403,22 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
     border:0!important;
     border-inline-end:1px solid rgba(var(--cct-tint-rgb),.06)!important;
   }
-  body.concord-view .cc-app:not(.show-chat) .cc-channels{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app:not(.show-chat) .cc-channels{
     grid-column:2!important;
     display:flex!important;
     width:100%!important;
     max-width:none!important;
     height:100%!important;
   }
-  body.concord-view .cc-app:not(.show-chat) .cc-brand,
-  body.concord-view .cc-app:not(.show-chat) .cc-server{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app:not(.show-chat) .cc-brand,
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app:not(.show-chat) .cc-server{
     flex:0 0 46px!important;
     width:46px!important;
     height:46px!important;
   }
-  body.concord-view .cc-app.show-chat:not(.drawer-open) .cc-communities,
-  body.concord-view .cc-app.show-chat:not(.drawer-open) .cc-channels{display:none!important}
-  body.concord-view .cc-app.show-chat.drawer-open .cc-drawer-backdrop{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat:not(.drawer-open) .cc-communities,
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat:not(.drawer-open) .cc-channels{display:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-drawer-backdrop{
     display:block!important;
     position:fixed!important;
     z-index:50!important;
@@ -423,7 +429,7 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
     border:0!important;
     background:rgba(var(--cct-shade-rgb),.58)!important;
   }
-  body.concord-view .cc-app.show-chat.drawer-open .cc-communities{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-communities{
     display:flex!important;
     position:fixed!important;
     z-index:52!important;
@@ -439,7 +445,7 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
     border:0!important;
     border-inline-end:1px solid rgba(var(--cct-tint-rgb),.06)!important;
   }
-  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-channels{
     display:flex!important;
     position:fixed!important;
     z-index:52!important;
@@ -452,14 +458,14 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
     border:0!important;
     box-shadow:18px 0 38px rgba(var(--cct-shade-rgb),.46)!important;
   }
-  body.concord-view .cc-app.show-chat.drawer-open .cc-brand,
-  body.concord-view .cc-app.show-chat.drawer-open .cc-server{
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-brand,
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-server{
     flex:0 0 46px!important;
     width:46px!important;
     height:46px!important;
   }
-  body.concord-view .cc-app.show-chat.drawer-open .cc-conversation{display:flex!important}
-  body.concord-view .cc-mobile-back{font-size:22px!important;font-weight:800!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-conversation{display:flex!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-mobile-back{font-size:22px!important;font-weight:800!important}
 }
 /* A MESSAGE THAT TAGS YOU HAS TO LOOK LIKE IT. The tags were always published and nothing on
    screen ever said so — reported as "its not tagging users in concord right so they get the
@@ -476,8 +482,8 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
    item and landed in the 240/300px column while the 1fr column sat empty. Measured in a 900px
    window: .app 900, .main 161, .cc-app 240 CSS px, and the conversation column ZERO — the chat had
    less room than its own member list needs. One column here; the window is the frame. */
-html.pc-oswin body.concord-view .app{grid-template-columns:minmax(0,1fr)!important}
-html.pc-oswin body.concord-view .sidebar{display:none!important}
+html.pc-oswin :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .app{grid-template-columns:minmax(0,1fr)!important}
+html.pc-oswin :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .sidebar{display:none!important}
 
 /* A single check means delivery confirmed, never a read receipt. */
 .cc-delivery-confirmed{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;vertical-align:middle;white-space:nowrap;color:var(--cct-muted);line-height:1}
@@ -533,21 +539,21 @@ span.cc-attachment-wait.cc-sized{display:grid!important;place-items:center!impor
    aligns the list), so the bar became a narrow column beside the messages — in the middle of the
    screen on a desktop, and on a phone it squeezed the whole thread into a strip ("replying to a post
    has a big bug, weird thread button with a back button appears, messes up the display"). */
-body.concord-view .cc-messages:has(>.cc-thread-bar){flex-direction:column!important}
-body.concord-view .cc-messages>.cc-thread-bar{flex:0 0 auto!important;width:100%!important;box-sizing:border-box!important;position:sticky!important;top:0!important;z-index:5!important;display:flex!important;align-items:center!important;gap:10px!important;margin:0 0 12px!important;padding:8px 10px!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cc-main,#15171d)!important;border:1px solid rgba(var(--cct-tint-rgb),.08)!important}
-body.concord-view .cc-messages>.cc-thread-bar button{display:inline-flex!important;align-items:center!important;gap:4px!important;white-space:nowrap!important;padding:4px 10px!important;border-radius:calc(8px*var(--cct-round))!important;border:1px solid rgba(var(--cct-tint-rgb),.14)!important;background:transparent!important;color:inherit!important;cursor:pointer!important}
-body.concord-view .cc-messages>.cc-thread-bar span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
-body.concord-view .cc-messages:has(>.cc-thread-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages:has(>.cc-thread-bar){flex-direction:column!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar{flex:0 0 auto!important;width:100%!important;box-sizing:border-box!important;position:sticky!important;top:0!important;z-index:5!important;display:flex!important;align-items:center!important;gap:10px!important;margin:0 0 12px!important;padding:8px 10px!important;border-radius:calc(10px*var(--cct-round))!important;background:var(--cc-main,#15171d)!important;border:1px solid rgba(var(--cct-tint-rgb),.08)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar button{display:inline-flex!important;align-items:center!important;gap:4px!important;white-space:nowrap!important;padding:4px 10px!important;border-radius:calc(8px*var(--cct-round))!important;border:1px solid rgba(var(--cct-tint-rgb),.14)!important;background:transparent!important;color:inherit!important;cursor:pointer!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages:has(>.cc-thread-bar)>.cc-message-list{width:100%!important;flex:1 0 auto!important}
 
 /* Community folders in the rail (Armada's model): closed, a 2x2 of its communities' icons; open, a
    tinted pill holding the folder glyph and its communities. */
-body.concord-view .cc-folder{display:flex!important;flex-direction:column!important;align-items:center!important;gap:6px!important;border-radius:calc(16px*var(--cct-round))!important}
-body.concord-view .cc-folder.open{background:rgba(var(--cct-soft-rgb),.12)!important;padding:4px 0!important}
-body.concord-view .cc-folder-btn{position:relative!important;overflow:hidden!important}
-body.concord-view .cc-folder-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:2px!important;width:100%!important;height:100%!important;padding:4px!important;box-sizing:border-box!important}
-body.concord-view .cc-folder-mini{display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;border-radius:calc(5px*var(--cct-round))!important;font-size:9px!important;min-width:0!important;min-height:0!important}
-body.concord-view .cc-folder-mini img{width:100%!important;height:100%!important;object-fit:cover!important}
-body.concord-view .cc-folder-glyph{font-size:18px!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder{display:flex!important;flex-direction:column!important;align-items:center!important;gap:6px!important;border-radius:calc(16px*var(--cct-round))!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder.open{background:rgba(var(--cct-soft-rgb),.12)!important;padding:4px 0!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder-btn{position:relative!important;overflow:hidden!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:2px!important;width:100%!important;height:100%!important;padding:4px!important;box-sizing:border-box!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder-mini{display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important;border-radius:calc(5px*var(--cct-round))!important;font-size:9px!important;min-width:0!important;min-height:0!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder-mini img{width:100%!important;height:100%!important;object-fit:cover!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-folder-glyph{font-size:18px!important}
 /* "Check my communities" report: a phone is the device it is for, so it wraps and scrolls inside the modal. */
 .cc-mcheck-out{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font-size:12px;line-height:1.45;margin:8px 0;padding:8px;border-radius:calc(8px*var(--cct-round));background:rgba(127,127,127,.12)}
 /* The room header at phone width: inside a ROOM (the header carries #cc-call), the secondary room actions
@@ -557,8 +563,8 @@ body.concord-view .cc-folder-glyph{font-size:18px!important}
 .cc-head-more{display:none!important}
 /* INSIDE A ROOM THE HEADER IS 🔍 📞 ☰, at every width (Armada's room bar). Everything else is in the ☰ menu, which
    presses these same buttons -- hidden, never removed, so each action keeps one implementation. */
-body.concord-view .cc-conversation>header:has(#cc-call) :is(#cc-pins,#cc-threads-toggle,#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-copy-link,#cc-leave-shortcut,#cc-notify-head,#cc-direct-inbox,#ccg-head-issues,#cc-members){display:none!important}
-body.concord-view .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header:has(#cc-call) :is(#cc-pins,#cc-threads-toggle,#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-copy-link,#cc-leave-shortcut,#cc-notify-head,#cc-direct-inbox,#ccg-head-issues,#cc-members){display:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
 /* Search results (concord.js openRoomSearch). */
 .cc-search-results{display:grid;gap:6px;margin-top:10px;max-height:60vh;overflow:auto}
 .cc-search-note{margin:6px 0 0}
@@ -594,13 +600,13 @@ body.concord-view .cc-conversation>header:has(#cc-call) .cc-head-more{display:gr
    (the switch, the cached history, the network history): measured, the channel list jerked sideways
    x=30->58 twice per switch -- "concord shakes when changing room/community". */
 @media(max-width:820px){
-  body.concord-view .cc-app.show-chat.drawer-open.drawer-opening .cc-communities,
-  body.concord-view .cc-app.show-chat.drawer-open.drawer-opening .cc-channels{animation:ccDrawerIn .16s ease-out}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open.drawer-opening .cc-communities,
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open.drawer-opening .cc-channels{animation:ccDrawerIn .16s ease-out}
 }
 @keyframes ccDrawerIn{from{transform:translateX(-28px)}to{transform:none}}
 @media (prefers-reduced-motion:reduce){
-  body.concord-view .cc-app.show-chat.drawer-open .cc-communities,
-  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{animation:none!important}
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-communities,
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat.drawer-open .cc-channels{animation:none!important}
 }
 /* A scrollbar that comes and goes changes the width of everything beside it: a short channel has none,
    a long one has one, so the rows re-wrapped on every switch on a desktop. The gutter is always kept. */
@@ -836,13 +842,13 @@ body.os-on .ccg-projects{z-index:320}body.os-on.ccg-projects-open::before{z-inde
 
 /* The open-thread bar (concord.js threadBarHtml): a header strip, not a floating box. Full width under the room
    header, the same surface as the conversation, a hairline below; the back control is a link-like button. */
-body.concord-view .cc-messages>.cc-thread-bar{margin:0 0 10px!important;padding:8px 6px!important;border:0!important;border-bottom:1px solid rgba(var(--cct-tint-rgb),.1)!important;border-radius:0!important;background:var(--cct-main)!important;gap:8px!important}
-body.concord-view .cc-messages>.cc-thread-bar button{flex:0 0 auto!important;gap:6px!important;padding:6px 8px!important;border:0!important;border-radius:calc(8px*var(--cct-round))!important;color:var(--cct-accent)!important;font-weight:600!important}
-body.concord-view .cc-messages>.cc-thread-bar button:hover,body.concord-view .cc-messages>.cc-thread-bar button:focus-visible{background:rgba(var(--cct-tint-rgb),.07)!important}
-body.concord-view .cc-messages>.cc-thread-bar button span:first-child{font-size:20px!important;line-height:1!important}
-body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what{min-width:0!important;display:flex!important;flex-direction:column!important;padding-inline-start:8px!important;border-inline-start:1px solid rgba(var(--cct-tint-rgb),.12)!important}
-body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what b{color:var(--cct-strong)!important;font-size:14.5px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
-body.concord-view .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--cct-muted)!important;font-size:12px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar{margin:0 0 10px!important;padding:8px 6px!important;border:0!important;border-bottom:1px solid rgba(var(--cct-tint-rgb),.1)!important;border-radius:0!important;background:var(--cct-main)!important;gap:8px!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar button{flex:0 0 auto!important;gap:6px!important;padding:6px 8px!important;border:0!important;border-radius:calc(8px*var(--cct-round))!important;color:var(--cct-accent)!important;font-weight:600!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar button:hover,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar button:focus-visible{background:rgba(var(--cct-tint-rgb),.07)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar button span:first-child{font-size:20px!important;line-height:1!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar .cc-thread-what{min-width:0!important;display:flex!important;flex-direction:column!important;padding-inline-start:8px!important;border-inline-start:1px solid rgba(var(--cct-tint-rgb),.12)!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar .cc-thread-what b{color:var(--cct-strong)!important;font-size:14.5px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-messages>.cc-thread-bar .cc-thread-what small{color:var(--cct-muted)!important;font-size:12px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 /* The @-picker under a textarea that is not the composer (the edit box): below it, inside the sheet. */
 /* Known members, grouped (concord.js memberRow): Admins, then Members. */
 .cc-member-group{margin:10px 4px 4px!important;color:var(--cct-section)!important;font-size:11px!important;font-weight:800!important;letter-spacing:.06em!important;text-transform:uppercase!important}

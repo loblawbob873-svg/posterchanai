@@ -180,12 +180,14 @@ def test_the_conversation_column_is_not_zero(width):
 
 def test_the_window_checks_can_fail():
     """MUTATION, against the pre-fix stylesheet: both causes restored."""
-    broken = CONCORD.replace(
+    # Read in the body-only spelling the rules were written in (the scope also covers a parked window).
+    src = CONCORD.replace(':is(body.concord-view,.osw-slot[data-body-view~="concord-view"])', "body.concord-view")
+    broken = src.replace(
         "body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100%!important}",
         "body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100vw!important}", 1)
     broken = broken.replace(
         "html.pc-oswin body.concord-view .app{grid-template-columns:minmax(0,1fr)!important}", "", 1)
-    assert broken != CONCORD
+    assert broken != src
     got = measure(900, concord=broken, oswin=True)
     assert got["conv"] == 0 or got["main"] < got["app"] - 100, (
         "the pre-fix stylesheet lays a window out correctly, so these checks prove nothing")
