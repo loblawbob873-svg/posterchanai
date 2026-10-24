@@ -83,8 +83,8 @@ window.PCMusicPlayerFactory = function(dep){
         else if(a==='pause'){ if(S._audioEl) S._audioEl.pause(); }
         // …and a skip on a page holding nothing is a RESUME, not a skip: next() there walks an empty
         // queue (or `indexOf(null)` → track one of the library, which is not what ⏭ means to anyone).
-        else if(a==='next'){ if(this.cur) this.next(); else this._resumeOrPlay(); }
-        else if(a==='prev'){ if(this.cur) this.prev(); else this._resumeOrPlay(); }
+        else if(a==='next'){ this._pressAt=Date.now(); if(this.cur) this.next(); else this._resumeOrPlay(); }
+        else if(a==='prev'){ this._pressAt=Date.now(); if(this.cur) this.prev(); else this._resumeOrPlay(); }
         else if(a==='stop') this.close();
         else if(a==='seekTo'){ if(S._audioEl && S._audioEl.duration) S._audioEl.currentTime=Math.max(0,Math.min(v,S._audioEl.duration)); }
         else if(a==='seekBy'){ if(S._audioEl){ const d=S._audioEl.duration||0;
@@ -408,7 +408,15 @@ window.PCMusicPlayerFactory = function(dep){
       if(this.cur && this.cur!==sha && !(opts&&opts.back)){ this._history.push(this.cur); if(this._history.length>200) this._history.shift(); }
       { const k=this._bag.indexOf(sha); if(k>=0) this._bag.splice(k,1); }   // picked by hand: not again this round
       this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
+      /* A SKIP FROM THE CAR SAYS HOW IT WENT (2026-10-24). The phone's report showed seven ⏭ in seven seconds, every
+       * one "answered" -- the page RECEIVED each press, and the song kept playing: until trackUrl() has fetched and
+       * decrypted the next track the old one plays on, and each new press abandons the load before. Over mobile data
+       * in a car that is indistinguishable from a dead button. So a media-button skip that takes long to load, or
+       * fails (whose toast nobody in a car sees), is written into the same report (MusicControls.playBlocked). */
+      const _fromButton = this._pressAt && Date.now() - this._pressAt < 2000, _t0 = Date.now();
+      const _report = why => { try{ const P=_capPlugin('MusicControls','playBlocked'); if(P){ const r=P.playBlocked({ reason:why }); if(r&&r.catch) r.catch(()=>{}); } }catch(_){} };
       try{ const u=await trackUrl(sha);
+        if(_fromButton && Date.now() - _t0 > 2500) _report('a skip from the car/headset took ' + ((Date.now() - _t0)/1000).toFixed(1) + ' s to load the next track');
         if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
                                      // don't clobber _audioEl.src (that's the "skip plays the wrong song" bug)
         this._loading=false; S._audioEl.src=u;
@@ -426,7 +434,8 @@ window.PCMusicPlayerFactory = function(dep){
         // been replaced (same sha, re-uploaded shorter) is past the end, which throws or lands at 0.
         if(opts && opts.at>0){ try{ const d=S._audioEl.duration;
           S._audioEl.currentTime=(isFinite(d)&&d>0) ? Math.min(opts.at, Math.max(0,d-1)) : opts.at; }catch(_){} } }
-      catch(e){ if(this.cur===sha){ this._loading=false; toast('play failed: '+(e.message||e)); } }
+      catch(e){ if(_fromButton) _report('a skip from the car/headset failed: ' + String(e && e.message || e).slice(0, 120));
+        if(this.cur===sha){ this._loading=false; toast('play failed: '+(e.message||e)); } }
       if(this.cur===sha) this._render();
     },
     toggle(){ if(S._audioEl){ if(S._audioEl.paused) S._audioEl.play(); else S._audioEl.pause(); } },
