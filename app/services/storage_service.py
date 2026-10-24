@@ -122,6 +122,14 @@ AVATAR_EXTS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 AVATAR_MAX_BYTES = 10 * 1024 * 1024
 
 
+def leaf_name(name: str | None, fallback: str = "file") -> str:
+    """ONE file name from whatever a client or an EMAIL calls the file: the last component after any / or \\, never
+    empty, "." or "..". A mail attachment's name is chosen by whoever sent the mail, and it used to be joined as given
+    -- `../../x` left the user's folder and an absolute `/etc/x` replaced the whole path."""
+    leaf = str(name or "").replace("\\", "/").split("/")[-1].strip().replace("\x00", "")
+    return fallback if leaf in ("", ".", "..") else leaf
+
+
 def avatar_ext(filename: str | None, content_type: str | None = None) -> str:
     """The avatar's extension: the upload's own, when it is one of AVATAR_EXTS, else the declared image type's.
     Raises ValueError for anything else -- never a path, never an extension that is not an image."""
@@ -711,8 +719,8 @@ class StorageService:
             mail_attachments_dir = user_path / "Mail Attachments"
             mail_attachments_dir.mkdir(parents=True, exist_ok=True)
             
-            # Use the original filename (already sanitized by caller)
-            filepath = mail_attachments_dir / original_name
+            # NOT "already sanitized by caller": the name comes from the email (leaf_name).
+            filepath = mail_attachments_dir / leaf_name(original_name, "attachment")
             
             with open(filepath, "wb") as f:
                 f.write(file_data)

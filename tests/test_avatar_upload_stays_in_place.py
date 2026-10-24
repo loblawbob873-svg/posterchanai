@@ -17,17 +17,20 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 @pytest.fixture()
 def disk(tmp_path, monkeypatch):
     from app.main import app
-    from app.auth import get_current_user
+    from app.auth import get_current_user, get_current_user_optional
     from app.database import get_db
     from app.services import storage_service
     base = tmp_path / "srv" / "uploads"
     base.mkdir(parents=True)
     monkeypatch.setattr(storage_service.StorageService, "_load_settings",
                         lambda self: setattr(self, "upload_path", str(base)))
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(username="alice", id=1, is_admin=False)
+    alice = SimpleNamespace(username="alice", id=1, is_admin=False)
+    app.dependency_overrides[get_current_user] = lambda: alice
+    app.dependency_overrides[get_current_user_optional] = lambda: alice
     app.dependency_overrides[get_db] = lambda: None
     yield TestClient(app), base, tmp_path
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_current_user_optional, None)
     app.dependency_overrides.pop(get_db, None)
 
 
@@ -98,3 +101,28 @@ def test_the_profile_avatar_upload_refuses_an_oversized_file_before_forwarding_i
     big = PNG + b"\x00" * (storage_service.AVATAR_MAX_BYTES + 1)
     r = client.post("/api/auth/avatar", files={"file": ("big.png", big, "image/png")})
     assert r.status_code == 413 and forwarded == [], (r.status_code, len(forwarded))
+
+
+# --------------------------------------------------------------------------------------------- mail attachments
+# Same shape, worse source: "Save attachment to Files" writes `Mail Attachments/<name>`, and the name is the one in
+# the EMAIL -- chosen by whoever sent it. Both routes (the storage node's and /api/save-mail-attachment) reach
+# StorageService.save_mail_attachment, which joined the name as given.
+@pytest.mark.parametrize("name", ["../../evil.sh", "..\\..\\evil.sh", "/etc/evil", "a/b/../../../evil", "..", ".", ""])
+def test_a_mail_attachment_is_saved_inside_mail_attachments_whatever_the_email_calls_it(disk, name):
+    client, base, tmp_path = disk
+    client.post("/api/storage/save-mail-attachment", data={"username": "alice"},
+                files={"file": (name or "x", b"%PDF-1.4 payload", "application/octet-stream")} if name else
+                {"file": ("", b"%PDF-1.4 payload", "application/octet-stream")})
+    import base64
+    client.post("/api/save-mail-attachment", json={"filename": name or "", "data": base64.b64encode(b"payload2").decode()})
+    assert _files_outside(tmp_path, base) == [], ("a mail attachment was written outside the user's folder", name)
+    every = [p for p in base.rglob("*") if p.is_file()]      # the WHOLE storage, other users' folders included
+    assert all((base / "alice" / "Mail Attachments") in p.parents for p in every), (name, every)
+
+
+def test_a_mail_attachment_keeps_its_own_name(disk):
+    client, base, tmp_path = disk
+    r = client.post("/api/storage/save-mail-attachment", data={"username": "alice"},
+                    files={"file": ("Rechnung März.pdf", b"%PDF", "application/pdf")})
+    assert r.status_code == 200, r.text
+    assert (base / "alice" / "Mail Attachments" / "Rechnung März.pdf").read_bytes() == b"%PDF"
