@@ -303,8 +303,11 @@ class ImapServer:
     """IMAP4rev1 over plain TCP, enough of it for imaplib and the app: one account, named mailboxes with RFC 6154
     flags. `boxes['INBOX'].add(raw)` delivers a message; `appended` records every APPEND (the Sent copies)."""
 
-    def __init__(self, user='me@home.test', password='app-password'):
+    def __init__(self, user='me@home.test', password='app-password', move=True):
         self.user, self.password = user, password
+        # `move`: advertise RFC 6851 MOVE. Without it a client must COPY, flag \\Deleted and EXPUNGE -- both kinds of
+        # server are in use, and mail_service.move_message takes a different path for each.
+        self.caps = 'IMAP4rev1 UIDPLUS SPECIAL-USE' + (' MOVE' if move else '')
         self.boxes = {'INBOX': Mailbox('INBOX'), 'Sent': Mailbox('Sent', ['\\Sent']),
                       'Drafts': Mailbox('Drafts', ['\\Drafts']), 'Trash': Mailbox('Trash', ['\\Trash'])}
         self.commands: list[str] = []
@@ -335,7 +338,7 @@ class ImapServer:
             wfile.write(b if isinstance(b, bytes) else (b + '\r\n').encode())
             wfile.flush()
 
-        say('* OK [CAPABILITY IMAP4rev1 UIDPLUS SPECIAL-USE AUTH=PLAIN] test IMAP ready')
+        say('* OK [CAPABILITY %s AUTH=PLAIN] test IMAP ready' % self.caps)
         while True:
             raw = rfile.readline(1 << 20)
             if not raw:
@@ -352,11 +355,11 @@ class ImapServer:
             tag, _, cmd = line.partition(' ')
             verb, _, arg = cmd.partition(' ')
             verb = verb.upper()
-            with self.lock:
-                self.commands.append(verb if verb != 'LOGIN' else 'LOGIN ***')
             if verb == 'UID':
                 sub, _, arg = arg.partition(' ')
                 verb = 'UID ' + sub.upper()
+            with self.lock:
+                self.commands.append(verb if verb != 'LOGIN' else 'LOGIN ***')   # 'UID MOVE', not just 'UID'
             try:
                 if not self._command(tag, verb, arg, literal, sel, say):
                     return
@@ -365,13 +368,13 @@ class ImapServer:
 
     def _command(self, tag, verb, arg, literal, sel, say) -> bool:
         if verb == 'CAPABILITY':
-            say('* CAPABILITY IMAP4rev1 UIDPLUS SPECIAL-USE AUTH=PLAIN')
+            say('* CAPABILITY %s AUTH=PLAIN' % self.caps)
             say(tag + ' OK CAPABILITY completed')
         elif verb == 'LOGIN':
             t = _tokens(arg)
             if len(t) >= 2 and (t[0], t[1]) == (self.user, self.password):
                 sel['authed'] = True
-                say(tag + ' OK [CAPABILITY IMAP4rev1 UIDPLUS SPECIAL-USE] logged in')
+                say(tag + ' OK [CAPABILITY %s] logged in' % self.caps)
             else:
                 say(tag + ' NO [AUTHENTICATIONFAILED] invalid credentials')
         elif verb == 'LOGOUT':
@@ -437,7 +440,50 @@ class ImapServer:
                 uid = box.add(literal, seen=True)
                 self.appended.append((name, literal))
                 say('%s OK [APPENDUID 7 %d] APPEND completed' % (tag, uid))
-        elif verb in ('CLOSE', 'EXPUNGE', 'CHECK'):
+        elif verb in ('UID MOVE', 'UID COPY'):
+            box = sel['box']
+            spec, _, dest = arg.partition(' ')
+            target = self.boxes.get((_tokens(dest) or [''])[0])
+            if not box:
+                say(tag + ' BAD no mailbox selected')
+            elif not target:
+                say(tag + ' NO [TRYCREATE] no such mailbox')
+            elif verb == 'UID MOVE' and ' MOVE' not in self.caps:
+                say(tag + ' BAD unknown command')
+            else:
+                with self.lock:
+                    picked = [m for m in box.msgs if m[0] in _uidset(spec, [x[0] for x in box.msgs])]
+                    for m in picked:
+                        target.add(m[2], seen='\\Seen' in m[1])
+                    if verb == 'UID MOVE':
+                        box.msgs = [m for m in box.msgs if m not in picked]
+                say(tag + ' OK %s completed' % verb)
+        elif verb == 'UID STORE':
+            box = sel['box']
+            spec, _, rest = arg.partition(' ')
+            how, _, flags = rest.partition(' ')
+            flags = flags.strip('()').split()
+            if not box:
+                say(tag + ' BAD no mailbox selected')
+            else:
+                with self.lock:
+                    for m in box.msgs:
+                        if m[0] in _uidset(spec, [x[0] for x in box.msgs]):
+                            if how.upper().startswith('+'):
+                                m[1] += [f for f in flags if f not in m[1]]
+                            elif how.upper().startswith('-'):
+                                m[1] = [f for f in m[1] if f not in flags]
+                            else:
+                                m[1] = list(flags)
+                say(tag + ' OK STORE completed')
+        elif verb in ('EXPUNGE', 'UID EXPUNGE'):
+            box = sel['box']
+            if box:
+                with self.lock:
+                    only = _uidset(arg.strip(), [x[0] for x in box.msgs]) if verb == 'UID EXPUNGE' else None
+                    box.msgs = [m for m in box.msgs if not ('\\Deleted' in m[1] and (only is None or m[0] in only))]
+            say(tag + ' OK EXPUNGE completed')
+        elif verb in ('CLOSE', 'CHECK'):
             say(tag + ' OK completed')
         else:
             say(tag + ' BAD unknown command')
