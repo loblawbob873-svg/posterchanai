@@ -2899,7 +2899,9 @@ def _is_public_host(host: str) -> bool:
     try:
         for fam, _t, _p, _c, sa in socket.getaddrinfo(host, None):
             ip = ipaddress.ip_address(sa[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            # `not is_global`, not a list of bad ranges: CGNAT / Tailscale 100.64.0.0/10 is none of
+            # private/loopback/link-local/reserved in Python, and a preview reached it.
+            if not ip.is_global or ip.is_multicast:
                 return False
         return True
     except Exception:
@@ -2939,8 +2941,12 @@ async def _preview_http():
     global _preview_client
     if _preview_client is None:
         import httpx
+        from app.utils import redirect_guard
         _preview_client = httpx.AsyncClient(
             timeout=httpx.Timeout(6.0, connect=4.0),
+            # Connect to the address that was JUDGED (DNS rebinding returned an internal page's title to a
+            # caller -- tests/test_image_proxy_fetches_safely.py).
+            transport=redirect_guard.PinnedTransport(),
             # Redirects are followed BY HAND below so every hop can be re-checked. Following them
             # here would validate only the first URL — the exact hole that let one 302 reach
             # 169.254.169.254 in the web-search fetcher.

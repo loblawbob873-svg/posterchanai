@@ -88,3 +88,29 @@ def test_a_redirect_to_a_private_address_is_refused(web, call, endpoint):
     web.page(CDN, "/hop.png", "", status=302, headers={"Location": "http://127.0.0.1:%d/secret" % web.internal_port})
     call(endpoint, "http://%s/hop.png" % CDN)
     assert web.internal_hits == [], web.internal_hits
+
+
+# --------------------------------------------------------------------------------------------- link previews
+# `/client/preview` (no login) reads a page's <title>/OpenGraph tags and hands them back -- an internal page's title
+# is exactly what an SSRF wants. It checked every hop with its own resolver and then connected through a plain
+# client (rebinding), and its own rule let CGNAT / Tailscale 100.64.0.0/10 through (not `is_private` in Python).
+@pytest.mark.parametrize("flip_after", [1, 2, 3])
+def test_a_link_preview_never_reads_this_nodes_network_through_a_rebinding_name(web, call, flip_after):
+    web.dns["rebindp" + D] = lambda n: [FW.PUBLIC[1]] if n <= flip_after else ["127.0.0.1"]
+    r = call("/client/preview", "http://rebindp%s:%d/secret" % (D, web.internal_port))
+    assert FW.SECRET not in r.text, r.text[:200]
+    assert web.internal_hits == [], ("a link preview reached this node's own network", web.internal_hits)
+
+
+@pytest.mark.parametrize("addr", ["100.64.0.7", "100.100.100.100", "127.0.0.1", "169.254.169.254", "0.0.0.0", "::1"])
+def test_a_link_preview_refuses_a_non_public_address(web, call, addr):
+    web.dns["inside" + D] = [addr]
+    r = call("/client/preview", "http://inside%s:%d/secret" % (D, web.internal_port))
+    assert FW.SECRET not in r.text and web.internal_hits == [], (addr, web.internal_hits)
+
+
+def test_a_link_preview_of_a_public_page_still_works(web, call):
+    web.page(CDN, "/post", "<html><head><title>Ferry times</title><meta property='og:title' content='Ferry times'>"
+                           "</head><body>x</body></html>")
+    r = call("/client/preview", "http://%s/post" % CDN)
+    assert r.status_code == 200 and "Ferry times" in r.text, (r.status_code, r.text[:200])
