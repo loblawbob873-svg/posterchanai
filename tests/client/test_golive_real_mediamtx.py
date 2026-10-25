@@ -66,6 +66,8 @@ SCENARIOS = {}
 COST = {'a_webcam_go_live_is_watched_chatted_ended_and_replayed': 90,
         'the_server_ends_a_stream_whose_tab_died': 60,
         'mediamtx_refuses_forged_and_borrowed_keys': 40,
+        'an_obs_stream_that_reconnects_becomes_one_complete_vod': 50,
+        'a_vod_whose_compression_fails_is_still_the_whole_broadcast': 45,
         'a_go_live_that_cannot_publish_says_so_and_announces_nothing': 1}
 FAKE_CAM = ('--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
             '--autoplay-policy=no-user-gesture-required')
@@ -530,6 +532,135 @@ async def mediamtx_refuses_forged_and_borrowed_keys(S):
 
 def test_mediamtx_refuses_forged_and_borrowed_keys(ran):
     ran('mediamtx_refuses_forged_and_borrowed_keys')
+
+
+# --------------------------------------------------------------------------------------------- 5 (the VoD FILE)
+def _rtmp_publish_av(S, path, query, seconds):
+    """OBS-shaped: a moving test pattern AND a 440 Hz tone (H.264 + AAC) over RTMP for `seconds`."""
+    url = 'rtmp://127.0.0.1:%d/%s%s' % (S.ctx.mtx.port('rtmp'), path, ('?' + query) if query else '')
+    p = subprocess.Popen(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-re',
+                          '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15',
+                          '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100',
+                          '-t', str(seconds), '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+                          '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64k', '-f', 'flv', url],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        p.wait(seconds + 20)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait(5)
+    return p.returncode
+
+
+def _probe(path):
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name',
+                          '-of', 'json', path], capture_output=True, text=True, timeout=60)
+    return json.loads(out.stdout or '{}')
+
+
+def _top_level_boxes(path):
+    """The MP4's top-level box types, in file order (moov before mdat = playable while it downloads)."""
+    import struct
+    boxes = []
+    with open(path, 'rb') as f:
+        while len(boxes) < 64:
+            head = f.read(8)
+            if len(head) < 8:
+                break
+            size, kind = struct.unpack('>I4s', head)
+            if size == 1:
+                size = struct.unpack('>Q', f.read(8))[0]
+                f.seek(size - 16, 1)
+            elif size == 0:
+                boxes.append(kind.decode('latin-1'))
+                break
+            else:
+                f.seek(size - 8, 1)
+            boxes.append(kind.decode('latin-1'))
+    return boxes
+
+
+@scenario
+async def an_obs_stream_that_reconnects_becomes_one_complete_vod(S):
+    """The FINAL FILE of a stream: an OBS broadcast that drops and reconnects inside one session (two recording
+    segments, joined AND compressed in one pass by stream_vod_service._prepare_upload) is stored as ONE video with
+    BOTH its picture and its sound, as long as the two parts together, laid out to play while it downloads (moov
+    before mdat), its bytes the sha256 it is named by, and decodable to its last second."""
+    await _reconnecting_vod(S, 0, 'Reconnecting %d' % S.base)
+
+
+@scenario
+async def a_vod_whose_compression_fails_is_still_the_whole_broadcast(S):
+    """The same, when compression cannot run (every encoder failing, the timeout): the recording falls back to the
+    plain -c copy concat, and THAT file must be just as complete -- "compression must never cost the user their
+    recording" is only true if the fallback is the whole recording."""
+    from app.services import media_service
+
+    def broken(*a, **k):
+        raise RuntimeError('every encoder failed (test)')
+    real = media_service.compress_video_file
+    S.ctx.mp.setattr(media_service, 'compress_video_file', broken)   # put back by hand: mp is the whole world's
+    try:
+        await _reconnecting_vod(S, 1, 'Fallback %d' % S.base)
+    finally:
+        S.ctx.mp.setattr(media_service, 'compress_video_file', real)
+
+
+async def _reconnecting_vod(S, who, title):
+    import hashlib
+    loop = asyncio.get_running_loop()
+    d = await S.device(who)
+    info = await ingest(d)
+    token, key = info['token'], info['stream_key'].split('key=', 1)[1]
+    await go_live(d, title, source='obs')
+    pk = S.pk(who)
+    await F.until(lambda: latest(S, pk) and tag(latest(S, pk), 'title') == title, 30, 'the OBS stream announced', d)
+    first, gap, second = 6, 2, 5                      # gap < the reaper's quiet window: the SAME session
+    rc1 = await loop.run_in_executor(None, _rtmp_publish_av, S, token, 'key=' + key, first)
+    await asyncio.sleep(gap)
+    rc2 = await loop.run_in_executor(None, _rtmp_publish_av, S, token, 'key=' + key, second)
+    assert rc1 == 0 and rc2 == 0, ('the RTMP publishes were refused', rc1, rc2)
+    segs = [f for r, _d, fs in os.walk(S.ctx.mtx.rec) for f in fs if f.endswith('.mp4') and token in r]
+    vods = []
+
+    def have_vod():
+        nonlocal vods
+        try:
+            with urllib.request.urlopen('%s/api/streams/vods/by-token/%s' % (S.n.origin, token), timeout=5) as r:
+                vods = json.loads(r.read()).get('vods') or []
+        except (OSError, ValueError):
+            return False
+        return bool(vods)
+    await F.until(have_vod, 150, 'the reconnected stream saved as a VoD (segments seen: %d)' % len(segs), d)
+    assert len(vods) == 1, ('one session must be ONE recording, not one per reconnect', vods)
+    vod = vods[0]
+    path = os.path.join(S.ctx.blobs, vod['sha256'][:2], vod['sha256'])
+    assert os.path.isfile(path), 'the VoD bytes are not stored'
+    data = open(path, 'rb').read()
+    assert hashlib.sha256(data).hexdigest() == vod['sha256'], 'the stored bytes are not the sha256 they are named by'
+    meta = _probe(path)
+    kinds = sorted({s.get('codec_type') for s in meta.get('streams', [])})
+    assert kinds == ['audio', 'video'], ('the VoD lost its picture or its sound', meta.get('streams'))
+    dur = float((meta.get('format') or {}).get('duration') or 0)
+    total = first + second
+    assert total - 2.5 <= dur <= total + gap + 2.5, ('the VoD is not as long as the broadcast (both parts)', dur, total)
+    assert abs(float(vod['duration_s']) - dur) <= 2.5, ('the listed duration is not the file\'s', vod['duration_s'], dur)
+    boxes = _top_level_boxes(path)
+    assert 'moov' in boxes and 'mdat' in boxes and boxes.index('moov') < boxes.index('mdat'), \
+        ('the VoD cannot play until it has fully downloaded (moov after mdat)', boxes)
+    print('[vod] segments=%d duration=%.1fs (broadcast %ds + %ds) streams=%s boxes=%s'
+          % (len(segs), dur, first, second, kinds, boxes[:6]))
+    tail = subprocess.run(['ffmpeg', '-v', 'error', '-sseof', '-1', '-i', path, '-f', 'null', '-'],
+                          capture_output=True, text=True, timeout=60)
+    assert tail.returncode == 0 and not tail.stderr.strip(), ('the end of the VoD does not decode', tail.stderr[-300:])
+
+
+def test_an_obs_stream_that_reconnects_becomes_one_complete_vod(ran):
+    ran('an_obs_stream_that_reconnects_becomes_one_complete_vod')
+
+
+def test_a_vod_whose_compression_fails_is_still_the_whole_broadcast(ran):
+    ran('a_vod_whose_compression_fails_is_still_the_whole_broadcast')
 
 
 # --------------------------------------------------------------------------------------------- 4 (cannot publish)
