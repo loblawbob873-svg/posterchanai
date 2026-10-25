@@ -425,7 +425,7 @@ async def add_one(magnet: str = "", torrent_url: str = "") -> str:
         if not rss_service.looks_fetchable(torrent_url):
             raise ValueError("refusing to fetch that .torrent URL")
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=False,
-                                     transport=afallback_transport()) as client:
+                                     transport=afallback_transport(pinned=True)) as client:
             loop = asyncio.get_event_loop()
             cur, data = torrent_url, None
             for _ in range(4):

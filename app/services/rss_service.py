@@ -225,7 +225,7 @@ async def _get_bytes(url: str) -> bytes:
     through the direct fallback). Streams the body and stops past _MAX_BYTES so a huge response can't buffer."""
     loop = asyncio.get_event_loop()
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False,
-                                 transport=afallback_transport()) as client:   # proxy(Tor)→direct
+                                 transport=afallback_transport(pinned=True)) as client:   # proxy(Tor)→direct
         cur = url
         for _ in range(_MAX_REDIRECTS + 1):
             if not await loop.run_in_executor(None, is_safe_host, cur):

@@ -20,9 +20,9 @@ class _AsyncProxyFallback(httpx.AsyncBaseTransport):
     """httpx transport: send through the built-in proxy FIRST, then fall back to a DIRECT connection
     if the proxy can't be reached. The app-wide 'proxy-first, fall back to direct' for external
     outbound HTTP — drop into httpx.AsyncClient(transport=...) in place of proxy=."""
-    def __init__(self, proxy_url: str):
+    def __init__(self, proxy_url: str, direct: httpx.AsyncBaseTransport | None = None):
         self._proxy = httpx.AsyncHTTPTransport(proxy=proxy_url, retries=0)
-        self._direct = httpx.AsyncHTTPTransport(retries=0)
+        self._direct = direct or httpx.AsyncHTTPTransport(retries=0)
 
     async def handle_async_request(self, request):
         try:
@@ -38,12 +38,24 @@ class _AsyncProxyFallback(httpx.AsyncBaseTransport):
             await self._direct.aclose()
 
 
-def afallback_transport() -> httpx.AsyncBaseTransport:
+def afallback_transport(pinned: bool = False) -> httpx.AsyncBaseTransport:
     """Async httpx transport doing proxy-first-then-direct, or a plain direct transport when no proxy
     is configured. Use: `httpx.AsyncClient(transport=afallback_transport(), timeout=..., ...)` instead
-    of `proxy=get_outbound_proxy()`, and outbound traffic prefers the proxy but survives it being down."""
+    of `proxy=get_outbound_proxy()`, and outbound traffic prefers the proxy but survives it being down.
+
+    `pinned=True` for a URL somebody ELSE supplied (a feed to follow): the DIRECT leg then connects to the
+    address the SSRF guard judged (redirect_guard.PinnedTransport) -- through the proxy Tor cannot reach a
+    private address anyway, but the direct fallback resolved the name again and a DNS answer that flipped to
+    loopback reached this node's network (tests/test_image_proxy_fetches_safely.py). Off by default: other
+    callers reach this deployment's own LAN hosts directly, on purpose."""
     px = get_outbound_proxy()
-    return _AsyncProxyFallback(px) if px else httpx.AsyncHTTPTransport(retries=0)
+    direct = None
+    if pinned:
+        from app.utils.redirect_guard import PinnedTransport
+        direct = PinnedTransport(retries=0)
+    if px:
+        return _AsyncProxyFallback(px, direct)
+    return direct or httpx.AsyncHTTPTransport(retries=0)
 
 # Short-TTL cache: get_proxy_config is called on every social/bot HTTP client and relay
 # connect (~8 per Nostr op). The proxy setting changes very rarely, so

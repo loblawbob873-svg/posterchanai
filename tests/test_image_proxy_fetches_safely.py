@@ -135,3 +135,28 @@ def test_a_public_calendar_still_subscribes(web):
     web.page(CDN, "/cal.ics", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n", ctype="text/calendar")
     text, etag, changed = asyncio.run(caldav_subscribe.fetch_ics("http://%s/cal.ics" % CDN))
     assert "BEGIN:VCALENDAR" in text and changed
+
+
+# --------------------------------------------------------------------------------------------- feeds (RSS, torrent RSS)
+# A feed URL is typed by a member and fetched by the node through `afallback_transport` -- the proxy (Tor) first, then
+# DIRECT. Tor cannot reach a private address; the direct leg resolved the name again after the guard looked.
+@pytest.mark.parametrize("proxy", ["none", "down"])
+@pytest.mark.parametrize("flip_after", [1, 2, 3])
+def test_a_feed_fetch_never_reaches_this_nodes_network_through_a_rebinding_name(web, monkeypatch, proxy, flip_after):
+    from app.services import proxy_utils, rss_service
+    # "down": a proxy is configured and refuses, so the request falls back to the direct leg.
+    monkeypatch.setattr(proxy_utils, "get_outbound_proxy",
+                        lambda: None if proxy == "none" else "http://%s:3128" % FW.DEAD_PUBLIC)
+    web.dns["rebindf" + D] = lambda n: [FW.PUBLIC[1]] if n <= flip_after else ["127.0.0.1"]
+    try:
+        asyncio.run(rss_service._get_bytes("http://rebindf%s:%d/feed.xml" % (D, web.internal_port)))
+    except Exception:
+        pass
+    assert web.internal_hits == [], ("a feed fetch reached this node's own network", proxy, web.internal_hits)
+
+
+def test_a_public_feed_still_fetches(web, monkeypatch):
+    from app.services import proxy_utils, rss_service
+    monkeypatch.setattr(proxy_utils, "get_outbound_proxy", lambda: None)
+    web.page(CDN, "/feed.xml", "<rss><channel><title>News</title></channel></rss>", ctype="application/rss+xml")
+    assert b"<title>News</title>" in asyncio.run(rss_service._get_bytes("http://%s/feed.xml" % CDN))
