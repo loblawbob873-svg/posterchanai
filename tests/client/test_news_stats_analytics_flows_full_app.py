@@ -86,7 +86,7 @@ class Publisher:
         self.feeds[(host, path)] = [(t, i * 7 + 3) for i, t in enumerate(titles)]
         return 'https://%s%s' % (host, path)
 
-    def transport(self):
+    def transport(self, pinned=False):   # rss_service asks for its direct leg pinned; the fake web is one host
         import httpx
         port = self.http.server_address[1]
 
