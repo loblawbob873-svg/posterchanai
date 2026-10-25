@@ -2498,7 +2498,13 @@
       for(const entry of entries){const row=document.createElement('div'),label=document.createElement('span');label.textContent=entry.label||'Invite link';row.appendChild(label);
         for(const [text,action] of [['Copy',()=>p.copyValue(shareableInviteUrl(p,entry.url))],['Retire',()=>changeOwnedInviteLink(p,room,entry)]]){const button=document.createElement('button');button.className='btn';button.textContent=text;button.onclick=async()=>{button.disabled=true;try{const result=await action();if(text==='Retire'&&result){p.closeModal();p.toast('Invitation retired');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};row.appendChild(button);}list.appendChild(row);}
       const mintButton=root.querySelector('#cc-mint-link');mintButton.disabled=!communityPermission(p,room,'inviteCreators');if(mintButton.disabled){mintButton.title='Only authorized community staff can create links';const why=root.querySelector('#cc-mint-error');why.textContent='Only community staff your community allows to invite can create links.';why.hidden=false;}
-      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;const why=root.querySelector('#cc-mint-error');why.textContent='';why.hidden=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(shareableInviteUrl(p,entry.url));p.closeModal();p.toast('Invitation created and copied');}}catch(e){why.textContent='The link was not created: '+(e.message||String(e));why.hidden=false;}finally{button.disabled=false;}};
+      /* SAY IT IS WORKING (2026-10-24: "nothing happens when I click" -- an Armada community). Creating a link reads the
+       * community's control plane and writes the link and the registry across up to eight of ITS relays, each allowed
+       * 10 s; on Armada's that is tens of seconds, and a button that only went quietly grey read as broken. */
+      mintButton.onclick=async event=>{const button=event.currentTarget,label=button.textContent,started=Date.now();button.disabled=true;button.textContent='Creating link…';const why=root.querySelector('#cc-mint-error');
+        const progress=()=>{const s=Math.round((Date.now()-started)/1000);why.textContent='Asking this community’s relays'+(s>=5?' — still working ('+s+' s; a community on slow relays can take up to a minute)':'…');why.hidden=false;};
+        progress();const tick=setInterval(progress,1000);
+        try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(shareableInviteUrl(p,entry.url));p.closeModal();p.toast('Invitation created and copied');}else{why.textContent='The link was not created.';}}catch(e){why.textContent='The link was not created: '+(e.message||String(e));why.hidden=false;}finally{clearInterval(tick);button.disabled=false;button.textContent=label;}};
     });
   }
   /* PUBLISH OUR OWN GUESTBOOK JOIN / LEAVE (CORD-02 §5, CORD-05 §6). Best effort by design: the
