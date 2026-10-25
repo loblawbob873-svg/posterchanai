@@ -104,8 +104,12 @@ async def fetch_ics(url: str, etag: str = "", insecure: bool = False) -> tuple[s
         # most refreshes of most feeds.
         headers["If-None-Match"] = etag
 
+    from app.utils import redirect_guard
+    # PinnedTransport connects to the address the guard judged (a name that flipped to loopback between the check
+    # and the connect reached this node's network -- tests/test_image_proxy_fetches_safely.py). `verify` goes on the
+    # TRANSPORT: httpx ignores a client's own `verify` once a transport is given.
     async with httpx.AsyncClient(follow_redirects=False, timeout=TIMEOUT,
-                                 verify=not insecure) as client:
+                                 transport=redirect_guard.PinnedTransport(verify=not insecure)) as client:
         for _ in range(MAX_REDIRECTS + 1):
             if not rss_service.looks_fetchable(cur):
                 raise ValueError("that address cannot be fetched (it must be a public http/https URL)")

@@ -114,3 +114,24 @@ def test_a_link_preview_of_a_public_page_still_works(web, call):
                            "</head><body>x</body></html>")
     r = call("/client/preview", "http://%s/post" % CDN)
     assert r.status_code == 200 and "Ferry times" in r.text, (r.status_code, r.text[:200])
+
+
+# --------------------------------------------------------------------------------------------- calendar subscriptions
+# Calendar → Subscribe fetches a URL the user typed, every few hours, and shows what came back. It checked each hop's
+# name (is_safe_host, which already refuses CGNAT) and then connected with a plain client.
+@pytest.mark.parametrize("flip_after", [1, 2, 3])
+def test_a_calendar_subscription_never_reaches_this_nodes_network_through_a_rebinding_name(web, flip_after):
+    from app.services import caldav_subscribe
+    web.dns["rebindc" + D] = lambda n: [FW.PUBLIC[1]] if n <= flip_after else ["127.0.0.1"]
+    try:
+        asyncio.run(caldav_subscribe.fetch_ics("http://rebindc%s:%d/cal.ics" % (D, web.internal_port)))
+    except Exception:
+        pass
+    assert web.internal_hits == [], ("a calendar subscription reached this node's own network", web.internal_hits)
+
+
+def test_a_public_calendar_still_subscribes(web):
+    from app.services import caldav_subscribe
+    web.page(CDN, "/cal.ics", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n", ctype="text/calendar")
+    text, etag, changed = asyncio.run(caldav_subscribe.fetch_ics("http://%s/cal.ics" % CDN))
+    assert "BEGIN:VCALENDAR" in text and changed
