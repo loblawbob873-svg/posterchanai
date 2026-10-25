@@ -191,8 +191,8 @@ def test_a_proxied_svg_cannot_run_script_on_this_origin(monkeypatch):
     monkeypatch.setattr(chat, 'is_safe_url', lambda url: (True, ''))
     from app.services import rss_service   # evil.example stands for a public host (every hop is checked, #5)
     monkeypatch.setattr(rss_service, 'is_safe_host', lambda url: 'evil.example' in url)
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real(transport=httpx.MockTransport(
-        lambda req: httpx.Response(200, content=svg, headers={'content-type': 'image/svg+xml'})), **kw))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real(**{**kw, 'transport': httpx.MockTransport(
+        lambda req: httpx.Response(200, content=svg, headers={'content-type': 'image/svg+xml'}))}))
     app = FastAPI()
     app.add_middleware(UntrustedFilesMiddleware)
     app.include_router(client.router)
@@ -204,7 +204,9 @@ def test_a_proxied_svg_cannot_run_script_on_this_origin(monkeypatch):
     assert r.headers.get('x-content-type-options') == 'nosniff'
 
 
-@pytest.mark.parametrize('path', ['/client/proxy-image', '/api/chat/proxy-image', '/api/websearch/asset',
+# '/api/proxy-image' is where the chat proxy is MOUNTED; this list once said '/api/chat/proxy-image', which matched
+# nothing, and the real route went unsandboxed (tests/test_untrusted_files_prefixes_are_real_routes.py).
+@pytest.mark.parametrize('path', ['/client/proxy-image', '/api/proxy-image', '/api/websearch/asset',
                                   '/api/mail/dl/1/2/x', '/api/mail/attachment/1/2/x', '/client/xdc'])
 def test_every_route_serving_foreign_bytes_is_sandboxed(path):
     from app.middleware.untrusted_files import UNTRUSTED_PREFIXES

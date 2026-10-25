@@ -9,7 +9,10 @@ from starlette.datastructures import MutableHeaders
 # one-click account takeover (security review, 2026-10-14). New routes of that kind belong in this list.
 UNTRUSTED_PREFIXES = (
     "/api/files/", "/api/storage/", "/blossom/",
-    "/client/proxy-image", "/api/chat/proxy-image",      # remote images fetched for the client/chat
+    "/client/proxy-image", "/api/proxy-image",           # remote images fetched for the client/chat -- the chat
+    #   one is mounted at /api/proxy-image; this list said /api/chat/proxy-image, which matched nothing, so it
+    #   served fetched SVGs with no sandbox (tests/test_untrusted_files_prefixes_are_real_routes.py)
+    "/api/auth/avatar/",                                 # an avatar: whatever avatar.* a user's folder holds
     "/api/websearch/asset",                              # page assets re-served by the Web Search reader
     "/api/mail/dl/", "/api/mail/attachment/",            # attachments, typed by whoever sent the mail
     "/client/xdc",                                       # a remote .xdc fetched for the player

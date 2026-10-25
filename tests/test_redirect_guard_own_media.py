@@ -67,6 +67,7 @@ def test_the_image_proxy_serves_our_own_media(lan, monkeypatch):
             seen.append(str(request.url))
             return httpx.Response(200, content=b"\x89PNG....", headers={"content-type": "image/png"})
     real = httpx.AsyncClient
-    monkeypatch.setattr(chat.httpx, "AsyncClient", lambda *a, **k: real(*a, transport=T(), **k))
+    # The stub REPLACES the shipped transport (_proxy_fetch now passes a PinnedTransport of its own).
+    monkeypatch.setattr(chat.httpx, "AsyncClient", lambda *a, **k: real(*a, **{**k, "transport": T()}))
     content, ctype = asyncio.run(chat._proxy_fetch("https://media.example.org/" + "b" * 64 + ".png"))
     assert content.startswith(b"\x89PNG") and ctype == "image/png" and seen, (content, ctype, seen)

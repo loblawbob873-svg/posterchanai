@@ -555,7 +555,11 @@ async def _proxy_fetch(url_raw: str):
         raise HTTPException(status_code=400, detail=err)
     from app.utils import redirect_guard
     # Every redirect hop re-checked, not only url_raw (#5).
-    async with httpx.AsyncClient(timeout=12, follow_redirects=True, event_hooks=redirect_guard.HOOKS) as client:
+    # PinnedTransport: connect to the address the guard JUDGED -- with a plain client httpx resolved the name again
+    # to connect, and a DNS answer that flipped to loopback in between reached this node's own network
+    # (tests/test_image_proxy_fetches_safely.py). /client/proxy-image (no login) goes through here too.
+    async with httpx.AsyncClient(timeout=12, follow_redirects=True, event_hooks=redirect_guard.HOOKS,
+                                 transport=redirect_guard.PinnedTransport()) as client:
         resp = await client.get(
             url_raw,
             headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36", "Accept": "image/*,*/*"},
