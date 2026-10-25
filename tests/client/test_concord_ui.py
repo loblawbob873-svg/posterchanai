@@ -259,7 +259,8 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert "tombs.set(wireId,{...tombs.get(wireId),community_id:wireId,removed_at:latest," in CONCORD
     assert "const cid=roomIdentity(room);" in CONCORD
     assert "...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});" in CONCORD
-    assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
+    # The device's "left" record drops a naddr another kept row shares (concord_leave_a_stale_copy_runtime.mjs).
+    assert "rememberLeftCommunity(viewer.pubkey,shared?{...room,naddr:''}:room,removedAt)" in CONCORD
     assert "forgetLeftCommunity(viewer.pubkey,room)" in CONCORD
     assert "wasLocallyLeft(viewer.pubkey,item)" in CONCORD
     # BOTH key forms. A tombstone written by this build names roomIdentity (community id, else

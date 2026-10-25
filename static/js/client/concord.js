@@ -5217,17 +5217,26 @@
    * left on one device and come straight back from the vault on the next -- the exact standoff the
    * tombstone/entry pair exists to settle. This used to return true for any room without a
    * community_id: a silent success that wrote no tombstone at all. */
-  async function leaveIdFor(p,owner,room){
-    const key=inviteKey(room),naddr=String(room.naddr||(inviteParts(room.url)||{}).naddr||'').toLowerCase();
+  /* ONE INVITE ADDRESS, MANY INVITES. An invite link is addressable (one link key, d=""), so every link that key ever
+   * published shares one naddr: the community joined with today's link and a copy left over from before a re-key or
+   * refounding ("PO": opens, other channels -- Vyram, 2026-10-24) sit side by side under it. So whatever a leave
+   * matches by naddr alone may be ANOTHER row on this device, and leaving the copy left the real community. `kept` is
+   * the rest of this device's list: an id one of them holds is never the one being left, and a naddr one of them
+   * shares is never written into a "left" record or a tombstone, which every device replays. */
+  const roomNaddr=room=>String(room&&(room.naddr||((typeof inviteParts==='function'&&inviteParts(room.url))||{}).naddr)||'').toLowerCase();
+  function keptBesides(room){ const id=roomIdentity(room); return (typeof saved==='function'?saved():[]).filter(r=>r!==room&&roomIdentity(r)!==id); }
+  function heldBy(kept,id){ return !!id&&kept.some(r=>[r.cord&&r.cord.bundle&&r.cord.bundle.community_id,r.communityId].map(cordListIdOrEmpty).includes(id)); }
+  async function leaveIdFor(p,owner,room,kept=keptBesides(room)){
+    const key=inviteKey(room),naddr=roomNaddr(room);
     if(!key&&!naddr)return '';
     const state=await cordMembershipState(p,owner);
     for(const e of (state.merged&&state.merged.entries)||[]){
       const url=inviteRefUrl(e.invite_ref),id=cordListIdOrEmpty(e.community_id||(e.current||e.seed||{}).community_id);
-      if(!id||!url)continue;
+      if(!id||!url||heldBy(kept,id))continue;
       const refNaddr=String((inviteParts(url)||{}).naddr||(String(e.invite_ref||'').match(/naddr1[0-9a-z]+/i)||[])[0]||'').toLowerCase();
       if(url===String(room.url||'')||(key&&inviteKey({url})===key)||(naddr&&refNaddr===naddr))return id;
     }
-    if(room.url){ const h=await hydrateInvite(p,room.url); return cordListIdOrEmpty(h&&h.cord&&h.cord.bundle&&h.cord.bundle.community_id); }
+    if(room.url){ const h=await hydrateInvite(p,room.url),id=cordListIdOrEmpty(h&&h.cord&&h.cord.bundle&&h.cord.bundle.community_id); return heldBy(kept,id)?'':id; }
     return '';
   }
   async function leaveArmadaMembership(p,room){
@@ -5244,10 +5253,13 @@
        its invite has none -- and leaving it used to be remembered on THIS device alone, while the
        account's vault kept the membership and every other device kept (or restored) the room. Find the
        id: the vault entry joined with this same invite, else the invite's own bundle. */
-    if(!wireId&&room.protocol!=='nip29'){ try{ wireId=await leaveIdFor(p,viewer.pubkey,room); }catch(_){ wireId=''; } }
-    const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
+    const kept=keptBesides(room);
+    if(heldBy(kept,wireId))wireId='';
+    if(!wireId&&room.protocol!=='nip29'){ try{ wireId=await leaveIdFor(p,viewer.pubkey,room,kept); }catch(_){ wireId=''; } }
+    const shared=!!roomNaddr(room)&&kept.some(r=>roomNaddr(r)===roomNaddr(room));
+    const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=shared?'':String(room.naddr||'');
     if(!wireId){
-      rememberLeftCommunity(viewer.pubkey,room,removedAt);
+      rememberLeftCommunity(viewer.pubkey,shared?{...room,naddr:''}:room,removedAt);
       if(room.protocol==='nip29') try{ await forgetNip29Group(p,viewer,room); }catch(_){ /* the ledger above still keeps it off this device */ }
       return true;
     }
@@ -5260,7 +5272,7 @@
       tombs.set(wireId,{...tombs.get(wireId),community_id:wireId,removed_at:latest,...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
       return {list:{...list,entries:[...entries.values()],tombstones:[...tombs.values()]},changed:[wireId]};
     });
-    rememberLeftCommunity(viewer.pubkey,room,removedAt);
+    rememberLeftCommunity(viewer.pubkey,shared?{...room,naddr:''}:room,removedAt);
     if(typeof leaveMirror==='function')void leaveMirror(p,room).catch(()=>{});
     return true;
   }
