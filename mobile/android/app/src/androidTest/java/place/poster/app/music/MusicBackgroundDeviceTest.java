@@ -43,22 +43,39 @@ public class MusicBackgroundDeviceTest {
      * failed, which blocked the APK from publishing again and again (2026-10-24). So: an attempt during which the
      * renderer died (MainActivity.RENDERER_DEATHS rose) is repeated on a fresh activity, up to three times; a failure
      * with NO renderer death is a real one and is thrown at once; three crashed attempts in a row fail too. */
+    /* AND A REPEAT NEVER OUTLIVES ITS TEST (CI run 40207974642). Every test has 90 s (build.gradle timeout_msec); two
+     * crashed attempts spent it -- each eval() waited 15 s twice on the dead renderer -- JUnit interrupted the test, and
+     * the loop took the interruption for one more renderer death and went on rotating the app UNDER THE NEXT TEST
+     * (MusicCarButtonsDeviceTest then saw a WebView that would not answer). Now eval() gives up the moment the renderer
+     * dies, an interruption ends the loop, and no attempt starts that the budget cannot fit. */
+    private static final long BUDGET_MS = 80_000, ATTEMPT_MS = 30_000;
+
     @Test
     public void tabletDesktopStateSurvivesHomeAndRotationInBothTasks() throws Exception {
         Throwable last = null;
+        long start = SystemClock.elapsedRealtime();
         for (int attempt = 1; attempt <= 3; attempt++) {
             int deaths = MainActivity.RENDERER_DEATHS.get();
             try {
                 rotationScenario();
                 return;
             } catch (Throwable t) {
+                if (interrupted(t)) throw t;                                    // JUnit's timeout: stop, now
                 if (MainActivity.RENDERER_DEATHS.get() == deaths) throw t;      // no renderer crash: a real failure
+                if (SystemClock.elapsedRealtime() - start > BUDGET_MS - ATTEMPT_MS)
+                    throw new AssertionError("the WebView renderer crashed during the rotation; no time left to repeat", t);
                 android.util.Log.w("PosterChanTest", "rotation attempt " + attempt
                         + ": the WebView renderer died during the resize and was recovered; repeating", t);
                 last = t;
             }
         }
         throw new AssertionError("the WebView renderer crashed during the rotation in all three attempts", last);
+    }
+
+    private static boolean interrupted(Throwable t) {
+        if (Thread.currentThread().isInterrupted()) return true;
+        for (Throwable c = t; c != null; c = c.getCause()) if (c instanceof InterruptedException) return true;
+        return false;
     }
 
     private void rotationScenario() throws Exception {
@@ -335,8 +352,17 @@ public class MusicBackgroundDeviceTest {
         for (int attempt = 0; ; attempt++) {
             CountDownLatch done = new CountDownLatch(1);
             AtomicReference<String> result = new AtomicReference<String>("null");
+            int deaths = MainActivity.RENDERER_DEATHS.get();
             web.post(() -> web.evaluateJavascript(js, value -> { result.set(value); done.countDown(); }));
-            if (done.await(15, TimeUnit.SECONDS)) return result.get();
+            // In slices, so a renderer that died ends the wait at once instead of after 15 s (see BUDGET_MS).
+            long until = SystemClock.elapsedRealtime() + 15_000;
+            boolean answered = false;
+            while (!answered && SystemClock.elapsedRealtime() < until) {
+                answered = done.await(250, TimeUnit.MILLISECONDS);
+                if (!answered && MainActivity.RENDERER_DEATHS.get() != deaths)
+                    throw new AssertionError("the WebView renderer died while JavaScript was running");
+            }
+            if (answered) return result.get();
             if (attempt >= 1) {
                 AtomicReference<String> state = new AtomicReference<String>("?");
                 InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> state.set(
