@@ -48,7 +48,6 @@ device_present || skip "no emulator was attached when the instrumented tests wer
 # This changes only the disposable test installation; role/provider assertions remain real.
 APK=$(find app/build/outputs/apk -path '*debug*' -name '*.apk' ! -name '*androidTest*' | head -1)
 [ -n "$APK" ] || { echo "no debug APK built for instrumentation"; exit 1; }
-timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation install failed"; exit 1; }
 
 # `:app:` AND NOT THE ROOT TASK, and that colon is the whole difference between a job that reports
 # what a device did and one that never gets to ask.
@@ -80,6 +79,11 @@ timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation
 # first so the post-mortem reads THIS attempt. Anything else, or GMS dying twice, is reported as before.
 attempt=1
 while :; do
+  # EVERY ATTEMPT, not once: Gradle UNINSTALLS the app when a connected run ends and its own reinstall grants no
+  # runtime permission, so a retry after the Play Services death ran with nothing granted -- the real "Allow
+  # PosterChan to access your phone call logs?" dialog covered every Phone/Texts screen and ten unrelated device
+  # tests failed together (run 40163947917). tests/test_android_instrumented_permissions.py.
+  timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation install failed"; exit 1; }
   timeout --kill-after=5s 20s adb logcat -c >/dev/null 2>&1 || true
   rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected || {
     echo "::error::Could not clear prior instrumentation reports; fresh execution cannot be verified"
