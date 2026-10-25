@@ -51,6 +51,7 @@ raise SystemExit(int(os.environ['GRADLE_STATUS']))
     script = tmp_path / 'runner.sh'
     # Existing runner fixtures relocate only artifact paths; all commands and policy remain shipped.
     script.write_text((ROOT / 'scripts/android_instrumented.sh').read_text().replace('/tmp/pc-', str(tmp_path / 'pc-')))
+    (tmp_path / 'android_crash_verdict.py').write_text((ROOT / 'scripts/android_crash_verdict.py').read_text())   # the runner's companion, beside it as in scripts/
     result = subprocess.run(['bash', str(script)], cwd=tmp_path, capture_output=True, text=True, timeout=15,
         env=os.environ | {'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
             'DEVICE': '1' if device else '0', 'REPORTS': json.dumps(reports),
@@ -187,6 +188,7 @@ raise SystemExit(status)
     gradle.chmod(0o755)
     script = tmp_path / 'runner.sh'
     script.write_text((ROOT / 'scripts/android_instrumented.sh').read_text().replace('/tmp/pc-', str(tmp_path / 'pc-')))
+    (tmp_path / 'android_crash_verdict.py').write_text((ROOT / 'scripts/android_crash_verdict.py').read_text())   # the runner's companion, beside it as in scripts/
     result = subprocess.run(['bash', str(script)], cwd=tmp_path, capture_output=True, text=True, timeout=30,
         env=os.environ | {'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
                           'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary')})

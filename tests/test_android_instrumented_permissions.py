@@ -24,6 +24,7 @@ esac
     script=tmp_path/'runner.sh'
     # Retain every command/branch; only relocate its report artifacts away from other active gates.
     script.write_text((ROOT/'scripts/android_instrumented.sh').read_text().replace('/tmp/pc-',str(tmp_path/'pc-')))
+    (tmp_path / 'android_crash_verdict.py').write_text((ROOT / 'scripts/android_crash_verdict.py').read_text())   # the runner's companion, beside it as in scripts/
     result=subprocess.run(['bash',str(script)],cwd=tmp_path,env=os.environ|{'PATH':str(bindir)+os.pathsep+os.environ['PATH'],'CALLS':str(log),'INSTALL_STATUS':str(install_status)},capture_output=True,text=True)
     assert result.returncode==expected,result.stdout+result.stderr
     calls=log.read_text().splitlines()
