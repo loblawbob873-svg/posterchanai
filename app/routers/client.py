@@ -2870,7 +2870,10 @@ async def client_share(request: Request):
     works and never errors."""
     from urllib.parse import urlencode
     try:
-        form = await request.form()
+        # Text fields only, bounded. This route is UNAUTHENTICATED, and an unbounded form() spools every uploaded
+        # file to /tmp (RAM on a node) before anything looks at it -- the files a share carries are handled by the
+        # service worker, never here (tests/test_share_target_fallback.py).
+        form = await request.form(max_files=0, max_fields=8, max_part_size=64 * 1024)
         params = {k: (form.get(k) or "") for k in ("title", "text", "url") if form.get(k)}
     except Exception:
         params = {}
