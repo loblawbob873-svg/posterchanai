@@ -10625,6 +10625,11 @@ audio.sms-att-img{min-width:220px}
    conversation. */
 .feed.feed-texts{display:flex;flex-direction:column;min-height:0}
 .feed.feed-texts>.sms-wrap{flex:1 1 auto;min-height:0;height:auto;padding:12px}
+/* ...and on a phone it ends ABOVE the fixed bottom nav (62px + the safe area): `feed-texts` drops the feed's own
+   bottom padding, so the conversation's text box sat under the nav -- reached on Android by attaching from Files,
+   the one path into the web Texts ("can no longer see text input"). Not where the nav is hidden.
+   tests/client/test_texts_composer_clears_the_bottom_nav_full_app.py */
+@media(max-width:820px){html:not(.pc-oswin) body:not(.embed):not(.popout):not(.modal-open) .feed.feed-texts>.sms-wrap{padding-bottom:calc(12px + 62px + env(safe-area-inset-bottom))}}
 
 /* Contacts, read from this device while the server cannot be reached. A NOTICE, not an error: the
    address book is on screen and only the refresh failed, so it sits above the list rather than
