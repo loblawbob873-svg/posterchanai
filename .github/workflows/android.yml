@@ -309,7 +309,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/zsp
-          key: zsp-v0.4.11-posterchan-lineage-v3
+          key: zsp-v0.4.11-posterchan-lineage-v4
 
       # The APK is already safe on GitHub Releases, but this step must still fail loudly if Zapstore
       # rejects its asset. A green workflow previously hid a listing whose newest release pointed at
@@ -323,6 +323,13 @@ jobs:
           # the retired key upgrade through the APK's embedded proof-of-rotation. Android 8's
           # explicitly named reinstall artifact is never offered through this store path.
           RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev
+          # ZAPSTORE CHECKS ONLY THE FIRST apk_certificate_hash, and pins place.poster.app to the RETIRED signer.
+          # Probed on relay.zapstore.dev 2026-10-25: this hash alone or first passes the certificate check; c696…
+          # alone, or c696… first with this second (1.0.2600), is refused "asset certificate does not match this
+          # app" -- every release from 1.0.2599 to 1.0.2604. The patch writes this hash first and the active signer
+          # after it; the APK is still signed only by the current key (its v3 proof-of-rotation links the two).
+          # scripts/zapstore_first_cert.py checks the real event before each publish.
+          ZSP_ANDROID_PINNED_CERTIFICATE_HASH: eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -386,6 +393,12 @@ jobs:
           # SAVES it once the APK blob is on its CDN, so 1.0.2505 printed "Published" with nothing installable
           # (the upload had timed out). scripts/zapstore_verify.py asks the relay for this version's asset.
           zs_npub=$(sed -n 's/^pubkey: *//p' zapstore.yaml | head -1)
+          # The asset must LEAD with the pin, or relay.zapstore.dev refuses it: checked on the real signed event
+          # before anything is sent (--offline signs and prints, uploads and publishes nothing).
+          /tmp/zsp publish -q zapstore.yaml --offline > /tmp/zsp-offline.jsonl 2>/tmp/zsp-offline.err \
+            || { cat /tmp/zsp-offline.err; fail 'zsp could not build the release events offline'; }
+          python3 scripts/zapstore_first_cert.py /tmp/zsp-offline.jsonl "$ZSP_ANDROID_PINNED_CERTIFICATE_HASH" \
+            || fail 'the asset does not lead with the certificate Zapstore pinned for this app'
           published=''
           for wait in 0 60 180 420; do
             [ "$wait" = 0 ] || { echo "::warning title=Zapstore retry::retrying the publish in ${wait}s"; sleep "$wait"; }

@@ -11,7 +11,7 @@ def test_zapstore_publisher_creates_clean_current_signer_listing():
     assert "ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES" not in workflow
     assert "scripts/zsp-signing-lineage.patch" in workflow
     assert 'apply --unidiff-zero "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"' in workflow
-    assert "zsp-v0.4.11-posterchan-lineage-v3" in workflow
+    assert "zsp-v0.4.11-posterchan-lineage-v4" in workflow
     assert "RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev" in workflow
     assert "Publish only the API 28+ lineage APK to Zapstore" in workflow
     assert "Android 8's" in workflow
