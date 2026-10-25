@@ -323,13 +323,13 @@ jobs:
           # the retired key upgrade through the APK's embedded proof-of-rotation. Android 8's
           # explicitly named reinstall artifact is never offered through this store path.
           RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev
-          # ZAPSTORE CHECKS ONLY THE FIRST apk_certificate_hash, and pins place.poster.app to the RETIRED signer.
-          # Probed on relay.zapstore.dev 2026-10-25: this hash alone or first passes the certificate check; c696…
-          # alone, or c696… first with this second (1.0.2600), is refused "asset certificate does not match this
-          # app" -- every release from 1.0.2599 to 1.0.2604. The patch writes this hash first and the active signer
-          # after it; the APK is still signed only by the current key (its v3 proof-of-rotation links the two).
-          # scripts/zapstore_first_cert.py checks the real event before each publish.
-          ZSP_ANDROID_PINNED_CERTIFICATE_HASH: eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342
+          # ZAPSTORE CHECKS ONLY THE FIRST apk_certificate_hash against the certificate it pinned for the app (probed
+          # on relay.zapstore.dev). From 2026-10-24 it pinned place.poster.app to the RETIRED signer eddf…, refusing
+          # 1.0.2599-2607; Zapstore re-pinned it to the CURRENT signer on 2026-10-25 (zapstore/relay#10), and a probe
+          # then accepted c696… first and refused eddf… first. This is the hash the asset must LEAD with; when it is
+          # the APK's own signer the patch adds no extra tag. scripts/zapstore_first_cert.py checks the real event
+          # before each publish -- if Zapstore re-pins again, that check is what fails, and this line is what changes.
+          ZSP_ANDROID_PINNED_CERTIFICATE_HASH: c696595f4ffa6e5f9f010fb0d9faedda2faffa42ba38338163381227f935b31b
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
