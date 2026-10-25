@@ -332,7 +332,10 @@ body.os-on.concord-view .osw-body .cc-messages{
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-channel{min-height:50px!important;padding:10px 12px!important;border-radius:calc(10px*var(--cct-round))!important;font-size:16px!important}
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-section{padding:10px 11px 6px!important}
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-identity{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important}
-  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat{inset:0!important;z-index:45!important;height:100dvh!important;background:var(--cc-main)!important}
+  /* An open channel takes the screen down to the app's bottom nav, never over it: the list stops at the same
+     inset ("you lose the navbar on the bottom when using concord on android", 2026-10-25 --
+     tests/client/test_concord_keeps_the_bottom_nav_full_app.py). */
+  :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat{inset:0 0 calc(61px + env(safe-area-inset-bottom)) 0!important;z-index:45!important;height:auto!important;background:var(--cc-main)!important}
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-conversation{display:flex!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important}
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-communities,:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.show-chat .cc-channels{display:none!important}
   :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-app.home-view #cc-back-channels{display:grid!important}

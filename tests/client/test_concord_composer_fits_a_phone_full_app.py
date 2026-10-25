@@ -141,7 +141,7 @@ def test_concord_upload_toast_with_a_long_name_fits_the_phone(width, height):
         g = await b.js(TOAST)
         assert g["l"] >= 12 - .5 and g["r"] <= g["vw"] - 12 + .5, ("the upload toast runs off the screen", g)
         assert not g["clipped"], ("the file name is cut off inside the toast", g)
-        assert g["b"] <= g["barTop"], ("the upload toast covers the composer", g)
+        assert g["b"] <= g["barTop"], ("the upload toast covers the composer", json.dumps(g))
         assert g["vh"] - g["b"] >= SAFE_BOTTOM, ("the upload toast sits in the gesture area", g)
 
     asyncio.run(desktop.with_browser("online", "", check))

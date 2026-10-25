@@ -77,7 +77,8 @@ def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_ch
     assert 'body.concord-view .cc-app.show-chat.drawer-open .cc-communities' in CONCORD_CSS
     assert 'body.concord-view .cc-app.show-chat.drawer-open .cc-channels' in CONCORD_CSS
     assert 'width:min(300px,calc(88vw - 58px))!important' in CONCORD_CSS
-    assert 'body.concord-view .cc-app.show-chat{inset:0!important' in CONCORD_CSS
+    # An open channel stops at the bottom nav (test_concord_keeps_the_bottom_nav_full_app.py measures it).
+    assert 'body.concord-view .cc-app.show-chat{inset:0 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:0!important' not in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view #cc-back-channels{display:grid!important}' in CONCORD_CSS
