@@ -30,6 +30,7 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.ImageView;
+import place.poster.app.ui.ZoomImageView;
 import android.widget.Button;
 import android.widget.GridLayout;
 import android.widget.VideoView;
@@ -1315,25 +1316,37 @@ public class ThreadActivity extends PcActivity {
         return b.toString();
     }
 
-    private Bitmap picture(long id) {
+    private Bitmap picture(long id) { return picture(id, 900); }
+
+    /** The part decoded with its longest side at most `edge` (a power-of-two sample, as BitmapFactory does). */
+    private Bitmap picture(long id, int edge) {
         byte[] bytes = MmsStore.partBytes(this, id, 24 * 1024 * 1024);
         if (bytes == null || bytes.length == 0) return null;
         BitmapFactory.Options o = new BitmapFactory.Options(); o.inJustDecodeBounds = true;
         BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
         o.inSampleSize = 1;
-        while (o.outWidth / o.inSampleSize > 900 || o.outHeight / o.inSampleSize > 900) o.inSampleSize *= 2;
+        while (o.outWidth / o.inSampleSize > edge || o.outHeight / o.inSampleSize > edge) o.inSampleSize *= 2;
         o.inJustDecodeBounds = false; return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
     }
 
-    private void showPicture(final Bitmap bm) {
-        ImageView full = new ImageView(this); full.setImageBitmap(bm);
+    /* A PICTURE OPENS ZOOMABLE, AND SHARP (2026-10-24: "can't zoom in pictures in texts app"). It used to be a plain
+     * FIT_CENTER ImageView of the bubble's 900px thumbnail that closed on any tap: no pinch, no double-tap, and
+     * nothing to zoom into had there been. Now the thumbnail shows at once in a ZoomImageView and a copy decoded at
+     * up to 2048px replaces it in place; a tap closes it only while it is not zoomed, Back always does. */
+    private void showPicture(final long partId, final Bitmap thumb) {
+        final ZoomImageView full = new ZoomImageView(this); full.setImageBitmap(thumb);
         full.setBackgroundColor(android.graphics.Color.BLACK);
-        full.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        full.setContentDescription(getString(R.string.sms_picture_viewer));
         final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         dialog.setContentView(full, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        full.setOnClickListener(v -> dialog.dismiss());
+        full.setOnTap(dialog::dismiss);
         dialog.show();
+        new Thread(() -> {
+            final Bitmap sharp = picture(partId, 2048);
+            if (sharp == null || thumb == null || sharp.getWidth() <= thumb.getWidth()) return;
+            main.post(() -> { if (dialog.isShowing()) full.replaceBitmap(sharp); });
+        }, "pc-mms-full").start();
     }
 
     private void showVideo(final SmsPart part) {
@@ -1439,11 +1452,12 @@ public class ThreadActivity extends PcActivity {
             final String token = m.id + ":" + p.id; image.setTag(token); host.addView(image);
             host.addView(saveButton(p));
             Bitmap cached = thumbs.get(p.id);
-            if (cached != null) { image.setImageBitmap(cached); image.setOnClickListener(v -> showPicture(cached)); continue; }
+            image.setContentDescription(getString(R.string.sms_photo));
+            if (cached != null) { image.setImageBitmap(cached); image.setOnClickListener(v -> showPicture(p.id, cached)); continue; }
             new Thread(() -> {
                 final Bitmap bm = picture(p.id); if (bm != null) thumbs.put(p.id, bm);
                 main.post(() -> { if (!token.equals(image.getTag()) || bm == null) return;
-                    image.setImageBitmap(bm); image.setOnClickListener(v -> showPicture(bm)); });
+                    image.setImageBitmap(bm); image.setOnClickListener(v -> showPicture(p.id, bm)); });
             }, "pc-mms-thumb").start();
         }
     }
