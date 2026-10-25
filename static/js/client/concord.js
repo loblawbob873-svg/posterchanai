@@ -4122,16 +4122,18 @@
     }
     return n;
   }
-  /* ANDROID BACK INSIDE COMMUNITIES, ONE STEP AT A TIME (opt-in: Settings -> General -> "Back in Communities goes to
-   * the channel list"; git issue "Back Arrow Customization Settings", Vyram 2026-10-24). Back walks the app's history,
-   * so from a channel it left Communities for whatever screen came before. With the setting on, Back first closes a
-   * thread, then the channel drawer, then the channel itself (to the list), and only then leaves Communities.
-   * Returns whether it took the step; app.js's backButton asks before walking history. */
-  function backStep(){
+  /* ANDROID BACK INSIDE COMMUNITIES (git issue "Back Arrow Customization Settings", Vyram 2026-10-24). Back walks the
+   * app's history, so from a channel it used to leave Communities for whatever screen came before. Now, ALWAYS: Back
+   * closes a thread, then the channel drawer, then the channel itself (to the list), and only then leaves Communities.
+   * `staysIn` (Settings -> General -> "Back stays in Communities", opt-in, this device): at the channel list Back
+   * reopens the channel you had open, so it alternates chat < list < chat < list and never leaves -- the way out is
+   * the nav. Returns whether it took the step; app.js's backButton asks before walking history. */
+  function backStep(staysIn){
     if(typeof document==='undefined'||!document.body||!document.body.classList.contains('concord-view'))return false;
     if(state.thread){state.thread=null;replyTarget=null;render();return true;}
     if(mobileDrawerOpen){setMobileDrawer(false);return true;}
     if(mobileChatOpen&&state.community!=null){mobileChatOpen=false;render();return true;}
+    if(staysIn&&!mobileChatOpen&&state.community!=null&&state.channel){mobileChatOpen=true;mobileDrawerOpen=false;enterChatBottom();render();return true;}
     return false;
   }
   async function readDirectory(p,signal){

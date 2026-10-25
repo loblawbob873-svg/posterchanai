@@ -4464,8 +4464,8 @@
           // person on that community. Without this Back walked the history out from under it.
           if(window.PCConcord && PCConcord.communitySettingsOpen && PCConcord.communitySettingsOpen()){ try{ PCConcord.closeCommunitySettings(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
-          // Communities, opt-in: thread -> channel -> channel list before leaving (concord.js backStep).
-          if(ClientSettings.get('concordBackToList', false) && window.PCConcord && PCConcord.backStep){ try{ if(PCConcord.backStep()) return; }catch(_){} }
+          // Communities first: thread -> channel -> channel list (concord.js backStep); opt-in, Back never leaves.
+          if(_concordBack()) return;
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           /* Walk the app's own history first — every screen is an entry now, so this is what makes
            * Back mean "the last place I was" instead of "the timeline".
@@ -14582,8 +14582,15 @@
     return c;
   }
   let _bumpT = 0;   // see __PC.bumpNotif
+  /* Android Back inside Communities (git issue "Back Arrow Customization Settings"): did Communities take the step?
+   * Always thread -> channel -> channel list; with "Back stays in Communities" on, the list goes back to the chat. */
+  function _concordBack(){
+    try{ return !!(window.PCConcord && PCConcord.backStep && PCConcord.backStep(!!ClientSettings.get('concordBackStaysIn', false))); }
+    catch(_){ return false; }
+  }
   window.__PC = {
     deviceCache,
+    concordBack: _concordBack,
     // The one on-demand script loader, shared so a module is never fetched twice (concord.js loads
     // cord-reader.js through it: the reader is not a page tag any more, see cordReaderReady there).
     loadModule: (file, global) => _withModule(file, global),
