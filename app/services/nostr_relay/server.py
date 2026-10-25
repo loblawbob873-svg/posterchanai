@@ -641,7 +641,12 @@ def _posterchan_client_allowed(config, headers, connection):
 #          already bypass the WoT gate by design (`_DM_KINDS`: a gift wrap's author is a throwaway
 #          key, so the relay accepts it for being ADDRESSED to one of ours), so allowing the socket
 #          adds no policy that the relay did not already apply to everyone who could connect.
-_RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
+_RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059, 21059, 33301})
+# Concord (CORD) kinds a confined socket may READ by `authors`: a room's envelopes and its live presence/voice
+# signals by stream key (1059/21059 -- never by recipient), and a community's invite link by its link key (33301).
+# An Armada community that lists this relay is read and written by strangers' clients (2026-10-24).
+_CONCORD_READ_KINDS = frozenset({1059, 21059, 33301})
+_CONCORD_INVITE_MAX = 32 * 1024
 
 
 # Read-only stand-in for a server that was built without __init__ (test fixtures do this).
@@ -716,7 +721,9 @@ def _restricted_traffic(typ, msg, is_local=None) -> bool:
     stranger may also: WRITE an event that tags a member (a reply, reaction, zap, repost or mention -- NIP-10/25/
     57/18 all carry the `p`), READ events BY members (their notes, profile, relay list), and READ Concord's
     encrypted kind-1059 by stream key (`authors`) -- the rooms created here live on this relay alone. A 1059 read
-    by recipient (`#p`) stays refused: who receives DMs is not anybody's to list.
+    by recipient (`#p`) stays refused: who receives DMs is not anybody's to list. The rest of a CORD community on
+    this relay rides the same rule: 21059 presence/voice (ephemeral, stored by nobody) and the 33301 invite link
+    are written by any client and read by `authors` -- an Armada community listed this relay (2026-10-24).
     """
     if typ in ("CLOSE", "AUTH", "PING", "PONG"):
         return True
@@ -744,7 +751,8 @@ def _restricted_traffic(typ, msg, is_local=None) -> bool:
             authors = f.get("authors")
             if not (isinstance(authors, list) and authors and len(authors) <= 500):
                 return False
-            if f.get("kinds") == [1059]:
+            kinds = f.get("kinds")
+            if isinstance(kinds, list) and kinds and set(kinds) <= _CONCORD_READ_KINDS:
                 return not f.get("#p")                       # by stream key, never by recipient
             return all(isinstance(a, str) and is_local(a) for a in authors)
         return all(one(f) for f in filters)
@@ -2175,6 +2183,15 @@ class RelayServer:
                 if _limited:
                     self._refuse(conn, eid, ev, _limited)
                     return
+        elif kind == 33301:
+            # Concord (CORD) INVITE LINK: authored by the link's own derived key, which no web of trust can contain,
+            # so the WoT gate refused every invite link for a community listing this relay (2026-10-24). Accepted
+            # on its shape instead: ONE address per link key (d = "") and a bounded sealed body.
+            _d = [t[1] for t in ev.get("tags") or () if isinstance(t, list) and len(t) >= 2 and t[0] == "d"]
+            if _d != [""] or len(ev.get("content") or "") > _CONCORD_INVITE_MAX:
+                self._refuse(conn, eid, ev, "invalid: a Concord invite link is one d=\"\" event of at most %d bytes"
+                             % _CONCORD_INVITE_MAX)
+                return
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
             # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT
