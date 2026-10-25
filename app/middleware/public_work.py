@@ -18,6 +18,9 @@ class PublicWorkMiddleware:
         '/client/summarize': 128 * 1024,
         '/client/compose-from-url': 128 * 1024,
         '/client/hashtags': 128 * 1024,
+        # A model call for an anonymous caller, like summarize/hashtags -- it was missing, so anybody could queue
+        # unbounded LLM work on the node's GPU (tests/test_public_model_routes_are_bounded.py).
+        '/client/emoji-suggest': 128 * 1024,
     }
     # Paths with their OWN concurrency pool instead of the shared 2. Video compression is the one helper
     # that can hand work to another node (client.py: _compress_lb_forward), which only happens when this
