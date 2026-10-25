@@ -123,9 +123,21 @@ public class SmsNotificationTapDeviceTest {
 
     // ------------------------------------------------------------------ the finger
 
+    /* TAP THE CARD WHERE IT ENDS UP, NOT WHERE IT IS MID-ANIMATION. `expand-notifications` starts the shade's
+     * slide; on CI's slower runner the card was found while still moving, the tap landed where it had been a moment
+     * before, and the shade stayed open on its quick-settings tiles ("did not open the conversation", run
+     * 40154649646). The card is tapped once two reads 150 ms apart agree on its bounds. */
     private void tapCardInShade(String body) throws Exception {
         RealUi.shell("cmd statusbar expand-notifications");
-        RealUi.tap("the notification for \"" + body + "\" in the shade", RealUi.named(body), 10_000);
+        RealUi.Hit at = RealUi.waitFor("the notification for \"" + body + "\" in the shade", RealUi.named(body), 10_000);
+        long until = android.os.SystemClock.uptimeMillis() + 5_000;
+        while (android.os.SystemClock.uptimeMillis() < until) {
+            android.os.SystemClock.sleep(150);
+            RealUi.Hit now = RealUi.find(RealUi.named(body));
+            if (now != null && now.bounds.equals(at.bounds)) break;
+            if (now != null) at = now;
+        }
+        RealUi.tap(at);
     }
 
     private void assertConversationShows(String from, String body) throws Exception {
