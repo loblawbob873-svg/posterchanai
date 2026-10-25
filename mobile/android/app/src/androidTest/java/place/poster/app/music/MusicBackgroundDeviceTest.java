@@ -37,8 +37,31 @@ import place.poster.app.home.LauncherState;
 @RunWith(AndroidJUnit4.class)
 public class MusicBackgroundDeviceTest {
 
+    /* THE EMULATOR IMAGE'S WEBVIEW RENDERER SIGSEGVS WHEN THE WEBVIEW IS RESIZED (system WebView 113, always
+     * libmonochrome+0x61c5c9a; 2-3 boots in 8). The app RECOVERS by design (MainActivity recreates on
+     * onRenderProcessGone) -- and this test, which checks the SAME WebView survives a rotation, then held a dead one and
+     * failed, which blocked the APK from publishing again and again (2026-10-24). So: an attempt during which the
+     * renderer died (MainActivity.RENDERER_DEATHS rose) is repeated on a fresh activity, up to three times; a failure
+     * with NO renderer death is a real one and is thrown at once; three crashed attempts in a row fail too. */
     @Test
     public void tabletDesktopStateSurvivesHomeAndRotationInBothTasks() throws Exception {
+        Throwable last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            int deaths = MainActivity.RENDERER_DEATHS.get();
+            try {
+                rotationScenario();
+                return;
+            } catch (Throwable t) {
+                if (MainActivity.RENDERER_DEATHS.get() == deaths) throw t;      // no renderer crash: a real failure
+                android.util.Log.w("PosterChanTest", "rotation attempt " + attempt
+                        + ": the WebView renderer died during the resize and was recovered; repeating", t);
+                last = t;
+            }
+        }
+        throw new AssertionError("the WebView renderer crashed during the rotation in all three attempts", last);
+    }
+
+    private void rotationScenario() throws Exception {
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         boolean wasEnabled = HomeRoles.launcherComponentEnabled(ctx);
         String oldHome = firstRoleHolder(shell("cmd role get-role-holders android.app.role.HOME"));

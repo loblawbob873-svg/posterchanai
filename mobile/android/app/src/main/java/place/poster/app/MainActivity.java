@@ -504,6 +504,10 @@ public class MainActivity extends BridgeActivity {
     // toast plus the log line are what turn a recurrence into something diagnosable (`adb logcat -s
     // PosterChan`). didCrash() separates a renderer crash from an out-of-memory reclaim — different causes
     // with different fixes, and until now there was no way to tell which one users were hitting.
+    /** How many times this process's WebView renderer has gone and been recovered. A device test that resizes the
+     *  WebView reads it to tell the emulator image's renderer SIGSEGV (a recovery, by design) from a real failure. */
+    public static final java.util.concurrent.atomic.AtomicInteger RENDERER_DEATHS = new java.util.concurrent.atomic.AtomicInteger();
+
     private void surviveRenderProcessDeath() {
         if (bridge == null) return;
         bridge.addWebViewListener(
@@ -515,6 +519,7 @@ public class MainActivity extends BridgeActivity {
                     // without it lintVitalRelease fails the CI release build rather than the code failing
                     // on a device.
                     boolean crashed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && detail != null && detail.didCrash();
+                    RENDERER_DEATHS.incrementAndGet();
                     Log.w("PosterChan", "WebView render process gone (crashed=" + crashed + ") — recovering");
                     // Off the callback stack: recreate() while the framework is still inside the
                     // WebViewClient call is asking for trouble. Returning true first is what stops the

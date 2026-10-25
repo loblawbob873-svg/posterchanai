@@ -162,7 +162,8 @@ public class MusicWidget extends android.content.BroadcastReceiver {
 }
 """,
             "place/poster/app/MainActivity.java":
-                "package place.poster.app;\npublic class MainActivity extends android.app.Activity {\n  static volatile int barChecks;   // ComingBackReMeasuresTheStatusBarDeviceTest reads it\n}\n",
+                "package place.poster.app;\npublic class MainActivity extends android.app.Activity {\n  static volatile int barChecks;   // ComingBackReMeasuresTheStatusBarDeviceTest reads it\n"
+                "  public static final java.util.concurrent.atomic.AtomicInteger RENDERER_DEATHS = new java.util.concurrent.atomic.AtomicInteger();   // MusicBackgroundDeviceTest\n}\n",
         }
         # Compile the real signer service and crypto alongside its new device test.
         # Reuse the narrow external-library compile shims; the real OkHttp close
