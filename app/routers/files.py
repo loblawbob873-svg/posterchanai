@@ -1211,6 +1211,18 @@ async def _active_mount(mount_point: str):
         raise HTTPException(status_code=503, detail="External storage cannot be read right now; try again shortly")
 
 
+def _inside_mount(path: Path, mount: Path) -> bool:
+    """`path` (resolved) is the mount or something under it -- compared by PATH COMPONENTS. A string prefix
+    check let `/srv/media/../media-private` through, because "/srv/media-private" starts with "/srv/media":
+    a user given one mount could list and READ any sibling folder whose name began with the mount's
+    (tests/test_external_mount_stays_inside.py)."""
+    try:
+        p, m = path.resolve(), mount.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return p == m or m in p.parents
+
+
 @router.get("/list")
 async def list_files(
     path: str = Query("", description="Directory path relative to user root or external storage mount point"),
@@ -1277,7 +1289,7 @@ async def list_files(
                 mount_path = Path(external_storage.mount_path).resolve()
                 external_path_resolved = external_path.resolve()
                 
-                if not str(external_path_resolved).startswith(str(mount_path)):
+                if not _inside_mount(external_path_resolved, mount_path):
                     raise HTTPException(status_code=403, detail="Access denied: path outside mount")
                 
                 if not external_path.exists():
@@ -1733,7 +1745,7 @@ async def view_file(
             mount_path = Path(external_storage.mount_path).resolve()
             external_file_path_resolved = external_file_path.resolve()
             
-            if not str(external_file_path_resolved).startswith(str(mount_path)):
+            if not _inside_mount(external_file_path_resolved, mount_path):
                 raise HTTPException(status_code=403, detail="Access denied: path outside mount")
             
             if not external_file_path.exists() or not external_file_path.is_file():
@@ -1838,7 +1850,7 @@ async def get_thumbnail(
                     raise HTTPException(status_code=400, detail="Invalid file path")
                 mount_path = Path(external_storage.mount_path).resolve()
                 external_file_path_resolved = external_file_path.resolve()
-                if not str(external_file_path_resolved).startswith(str(mount_path)):
+                if not _inside_mount(external_file_path_resolved, mount_path):
                     raise HTTPException(status_code=403, detail="Access denied: path outside mount")
                 if not external_file_path.exists() or not external_file_path.is_file():
                     raise HTTPException(status_code=404, detail="File not found")
