@@ -87,6 +87,7 @@ public class MainActivity extends BridgeActivity {
         // which instance this person signed in to. This is the one fact the client mirrors
         // across for it — see WeatherPlugin.
         registerPlugin(place.poster.app.weather.WeatherPlugin.class);
+        registerPlugin(place.poster.app.health.AppHealthPlugin.class);
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);

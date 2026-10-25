@@ -120,6 +120,27 @@ window.PCSettingsFactory = function(dep){
     return bits.join(' · ');
   }
 
+  /* "Restarts & memory", in words, from AppHealth.report(): the newest UNEXPECTED end of the app's process first
+   * (a fresh session with no toast is the process ending -- AppHealthPlugin), whether it was on screen, and what
+   * it was using. Kept pure (no DOM) so tests/client/test_app_health_line.py runs it under node. */
+  function _healthLine(r){
+    const bits=[], ex=Array.isArray(r&&r.exits)?r.exits:[], m=(r&&r.memory)||{};
+    const bad=ex.filter(e=>e&&e.unexpected);
+    if(r&&r.exitsSupported===false) bits.push('this Android is too old to say why the app last ended');
+    else if(!bad.length) bits.push(ex.length ? 'no unexpected restarts recorded (last end: '+(ex[0].reason||'?')+')' : 'no restarts recorded');
+    else {
+      const e=bad[0];
+      bits.push('last unexpected end: '+new Date(Number(e.at)||0).toLocaleString()+' — '+(e.reason||'?')
+        +(e.onScreen?' while you were using it':' in the background ('+(e.importance||'?')+')')
+        +(e.pssMb?' · the app was using '+e.pssMb+' MB':''));
+      if(bad.length>1) bits.push(bad.length+' unexpected ends recorded');
+    }
+    if(m.totalMb) bits.push('device memory '+m.availMb+' / '+m.totalMb+' MB free'+(m.lowMemory?' (LOW)':''));
+    if(m.appPssMb) bits.push('app now '+m.appPssMb+' MB');
+    if(r&&r.rendererDeaths) bits.push(r.rendererDeaths+' display recoveries this session');
+    return bits.join(' · ');
+  }
+
   function _renderSignerApps(){
     const box = $('#signer-apps'); if(!box) return;
     const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
@@ -886,6 +907,11 @@ window.PCSettingsFactory = function(dep){
             <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-music-refresh">Refresh</button><button class="btn btn-ghost small" id="us-music-copy">Copy music report</button></div>
             <div class="muted small">If a car, headset or lock-screen button does nothing, press it, then come back here: this says which part of the phone received the press and what came of it.</div>
           </div>
+          <div id="us-health-row" class="fld" style="margin-top:10px">Restarts &amp; memory
+            <div class="muted small" id="us-health-sum">Checking…</div>
+            <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-health-copy">Copy restart report</button></div>
+            <div class="muted small">If the app starts over like a fresh session while you are using it, copy this and send it: Android records why the app ended — a crash, or the system reclaiming memory — and how much it was using.</div>
+          </div>
           <div id="phone-shell"></div></div>` : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
@@ -1424,6 +1450,25 @@ window.PCSettingsFactory = function(dep){
           read();
           if(rf) rf.onclick=()=>read();
           if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'music report copied'); });
+        }
+      } }
+    /* RESTARTS & MEMORY (APK only): AppHealth.report() + what only the page can see (JS heap, DOM size, desktop
+     * windows open/parked). An APK older than the plugin loses the row. */
+    { const row=$('#us-health-row'), sum=$('#us-health-sum'), cp=$('#us-health-copy');
+      const H=_capPlugin('AppHealth','report');
+      if(row){
+        if(!H){ row.remove(); }
+        else{
+          const page=()=>{ const o={nodes:document.getElementsByTagName('*').length};
+            try{ const pm=performance.memory; if(pm) o.jsHeapMb=Math.round(pm.usedJSHeapSize/1048576); }catch(_){}
+            try{ if(window.PCOS&&PCOS.parkStats) o.windows=PCOS.parkStats(); }catch(_){}
+            return o; };
+          let rep=null;
+          const read=()=>Promise.resolve(H.report()).then(r=>{ rep={...(r||{}),page:page()};
+              if(sum) sum.textContent=_healthLine(rep); })
+            .catch(e=>{ if(sum) sum.textContent='could not read: '+((e&&e.message)||e); });
+          read();
+          if(cp) cp.onclick=()=>read().then(()=>{ if(rep) copyValue(JSON.stringify(rep), 'restart report copied'); });
         }
       } }
     { const cp=$('#us-scroll-copy'), sum=$('#us-scroll-sum');
