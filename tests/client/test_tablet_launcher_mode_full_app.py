@@ -50,8 +50,16 @@ async def metrics(b, w, h):
     await b.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
 
 
-async def settled(b):
-    # A wrong mode is often a LATE flip (a restore after the landing), so look after things settle.
+async def settled(b, view=None):
+    # A wrong mode is often a LATE flip (a restore after the landing), so look after things settle. First let the
+    # tile's screen ARRIVE (or time out): under the gate's load a fixed 1.2 s was sometimes before the parked tile was
+    # consumed at all, and the test failed reading the pre-launch screen ({'view': 'home', 'wins': []}).
+    if view:
+        for _ in range(100):
+            st = await b.js(STATE)
+            if st['view'] == view or view in (st['wins'] or []):
+                break
+            await asyncio.sleep(.2)
     await asyncio.sleep(1.2)
     return await b.js(STATE)
 
@@ -78,10 +86,10 @@ def test_tile_icon_and_rotation_agree_on_the_mode(orientation, pref):
         await b.call('Page.reload')
         await asyncio.sleep(.3)
         await b.until('!!window.__PC_BOOTED && !!window.__launchListener')
-        expect(await settled(b), want, 'notes', 'cold tile')
+        expect(await settled(b, 'notes'), want, 'notes', 'cold tile')
 
         await b.js("__launchListener({view:'budget'})")
-        expect(await settled(b), want, 'budget', 'warm tile')
+        expect(await settled(b, 'budget'), want, 'budget', 'warm tile')
 
         # The app's own icon: no tile at all. It must agree with the tiles above.
         await b.call('Page.reload')
@@ -91,7 +99,7 @@ def test_tile_icon_and_rotation_agree_on_the_mode(orientation, pref):
         assert icon['on'] is want, ('the app icon and the launcher tiles disagree', icon)
 
         await b.js("__launchListener({view:'notes'})")
-        expect(await settled(b), want, 'notes', 'warm tile after the icon')
+        expect(await settled(b, 'notes'), want, 'notes', 'warm tile after the icon')
 
         # Turn the tablet. Sideways with the desktop remembered is a desktop, carrying the open
         # screen into a window; upright never tears one down.
