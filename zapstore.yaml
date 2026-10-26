@@ -60,6 +60,9 @@ description: |
 
   **And a full Nostr client**: feeds, threads, profiles, DMs, communities, mini apps and a web-of-trust relay.
 
+  **Monero Zaps**: tip any post or person in **Monero (XMR)** with the ɱ button — private money for a private
+  network, from the built-in Monero micro-wallet or the wallet you already use — right beside Lightning zaps.
+
   Self-hostable by design — point the app at your own instance; the default is poster.place.
 
 tags:
@@ -72,6 +75,8 @@ tags:
   - bookmarks
   - ai
   - social
+  - monero
+  - zaps
   - streaming
 
 icon: ./static/icon-512.png
