@@ -8490,6 +8490,7 @@
       openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
       timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp: _isNativeApp,
       compose: (o) => compose(o),
+      withModule: (file, global) => _withModule(file, global),
     }));
   }
   const repoCard     = (...a) => _git().repoCard(...a);

@@ -85,7 +85,12 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: flow-test fixes (Texts search/delete/block, scheduled-post errors, web reader, Office save, PWA update/offline,
 #: terminal/VM errors, car-controls report) -- many files, a few hundred bytes each, no new page tag. 8.20 leaves
 #: ~50 KB: still a drift detector. The next real reclaim is another on-demand module (see the split notes above).
-BUDGET_MB = 8.20
+#: LOWERED 8.20 -> 8.15 on 2026-10-26, THE RECLAIM THE NOTES ABOVE ASK FOR. The music player redesign (album art,
+#: Now playing) added +27,943 B to the boot (client.css +14.8 KB, musicplayer.js +8.2 KB -- both must stay at boot for
+#: the car-button cold resume) and put the page at 8.226 MB. code.js (107 KB, the Code editor + the highlighter) left
+#: the page: its screen and Files already loaded it on demand, and the one synchronous reader (git.js's file viewer,
+#: window.PCCodeHL) now fetches it beside the file. Measured 8,516,882 B = 8.122 MB; 8.15 leaves ~28 KB.
+BUDGET_MB = 8.15
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

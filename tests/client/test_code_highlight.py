@@ -351,7 +351,12 @@ class TheViewIsWiredInEveryPlace(unittest.TestCase):
         self.assertIn("'code',", self.app[i:i + 1600])
 
     def test_the_module_is_actually_loaded(self):
-        self.assertIn("/static/js/client/code.js", self.html)
+        """A page tag OR the route's on-demand load. code.js left the boot page on 2026-10-26 (the cold-load budget);
+        renderModuleView fetches it when the screen opens -- test_code_editor_buttons_full_app opens it that way in
+        the real bundle. A view with NEITHER never loads, which is what this guards."""
+        tagged = "/static/js/client/code.js" in self.html
+        on_demand = "renderModuleView('code','code.js','PCCode','render')" in self.app
+        self.assertTrue(tagged or on_demand, "code.js has neither a <script> tag nor an on-demand load")
 
     def test_it_is_cached_with_its_siblings(self):
         self.assertIn("'/static/js/client/code.js'", self.sw)

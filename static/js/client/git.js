@@ -36,7 +36,7 @@ window.PCGitFactory = function(dep){
     _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
     attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
     openThread, profOf, publish, renderProfileView, renderThread, replyKindFor, replyTags, requestBlossomAccess, sign, switchView,
-    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp, compose,
+    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp, compose, withModule,
   } = dep;
 
   // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
@@ -1635,7 +1635,7 @@ window.PCGitFactory = function(dep){
   }
   /* A SOURCE FILE, RENDERED THE WAY A SOURCE FILE IS READ: numbered lines and coloured tokens.
    *
-   * The highlighter is `window.PCCodeHL` — the SAME pure, node-tested one the Code editor uses
+   * The highlighter is `window.PCCodeHL` (loaded on demand in _viewRepoFile) — the SAME pure, node-tested one the Code editor uses
    * (code.js), not a second copy and not a library. Two consequences worth stating: a language it
    * cannot do returns escaped plain text rather than nothing, and its own size ceiling (HL_MAX)
    * applies here for the reason it applies there — one regex pass over a very large file is a
@@ -1663,7 +1663,11 @@ window.PCGitFactory = function(dep){
   async function _viewRepoFile(feed, path){
     const fv=$('#rv-fileview',feed); if(!fv || !_rv) return;
     fv.innerHTML='<div class="spinner"></div>'; fv.scrollIntoView({block:'nearest'});
-    const j=await _rvJson('blob', {path});
+    /* The highlighter lives in code.js, which is not on the page at boot any more (it cost every cold load 107 KB for
+     * a screen most sessions never open): fetched here, beside the file itself. A load that fails just means no
+     * colours -- _codeBlock already renders plain text when window.PCCodeHL is absent. */
+    const [j]=await Promise.all([_rvJson('blob', {path}),
+      (window.PCCodeHL || typeof withModule!=='function') ? null : withModule('code.js', 'PCCode').catch(()=>null)]);
     if(S.VIEW!=='repo' || !_rv) return;
     const name=path.split('/').pop();
     if(!j||!j.ok){ fv.innerHTML='<div class="rv-empty muted small">Couldn’t open the file.</div>'; return; }

@@ -180,3 +180,34 @@ def test_create_a_repo_then_open_it_and_cancel_a_new_issue():
         assert not await b.js("__errors"), await b.js("__errors")
 
     asyncio.run(desktop.with_browser("online", "", check, GIT))
+
+
+# The same fixture repo, holding one Python file.
+PY_REPO = (GIT.replace("entries:[{name:'README.md', path:'README.md', type:'blob', size:6}]",
+                       "entries:[{name:'build.py', path:'build.py', type:'blob', size:40}]")
+              .replace("paths:['README.md']", "paths:['build.py']")
+              .replace("json({ok:true, text:'hello\\n', size:6})", "json({ok:true, text:'def main():\\n    return \"ok\"  # done\\n', size:40})"))
+assert PY_REPO.count("build.py") == 3 and "def main" in PY_REPO, "the fixture's file routes moved"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_source_file_is_coloured_though_the_highlighter_is_not_on_the_page_at_boot():
+    """code.js (the Code editor AND the highlighter the repo file viewer uses) left the boot page on 2026-10-26 to pay
+    for the music player's bytes (test_client_boot_payload_budget). The file viewer now fetches it beside the file --
+    so a repo's source must still open with coloured tokens on a page that has never loaded it."""
+    async def check(b):
+        await desktop.login(b)
+        boot = await b.js("({ tag: !!document.querySelector('script[src*=\"/client/code.js\"]'), hl: !!window.PCCodeHL })")
+        assert boot == {"tag": False, "hl": False}, ("code.js is on the boot page again -- this test proves nothing", boot)
+        await b.js(SETUP)
+        await b.until("!!document.querySelector('.rv-tab[data-tab=\"files\"]')")
+        await b.js("document.querySelector('.rv-tab[data-tab=\"files\"]').click(); 1")
+        await b.until("!!document.querySelector('.fb-row[data-path=\"build.py\"]')")
+        await b.js("document.querySelector('.fb-row[data-path=\"build.py\"]').click(); 1")
+        await b.until("!!document.querySelector('#rv-fileview .fb-code')")
+        got = await b.js("""({ tokens: document.querySelectorAll('#rv-fileview .fb-code span[class^="t-"]').length,
+                               text: document.querySelector('#rv-fileview .fb-code').textContent })""")
+        assert "def main" in got["text"], got
+        assert got["tokens"] >= 3, ("the repo's source opened uncoloured -- the highlighter was never fetched", got)
+        assert not await b.js("__errors.slice()")
+    asyncio.run(desktop.with_browser("online", "", check, PY_REPO))
