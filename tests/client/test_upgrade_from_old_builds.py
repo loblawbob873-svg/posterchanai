@@ -236,7 +236,10 @@ async def settled(d):
     control on the NEXT page load (here: the reload of "Add an account"), and inside the launch window app.js then
     reloads once more onto it, silently (_onNewController). That is the product working; a step taken in that gap
     talks to a page that is about to go. So: no worker still installing or waiting, a booted page, and a marker on
-    that page that survives two quiet seconds."""
+    that page that survives two quiet seconds -- AND a page older than the launch window. _onNewController reloads
+    silently only within 20 s of the page's start (app.js _swBootAt); a worker that finishes activating after the two
+    quiet seconds still reloaded it then (measured: sessionStorage swAutoApply written 1 ms before the new page's
+    timeOrigin, deterministically for [yesterday-privacy]). Past 20 s it only shows "Update available"."""
     for _ in range(4):
         await wait(d, "(async()=>{const r=await navigator.serviceWorker.getRegistration();"
                       "return !!window.__PC && !!__PC.me() && document.readyState==='complete' && !!r && !r.installing && !r.waiting})()",
@@ -244,6 +247,11 @@ async def settled(d):
         await js(d, "window.__pcSettled=1;true")
         await asyncio.sleep(2.5)
         if await js(d, "window.__pcSettled===1 && !!window.__PC && !!__PC.me()"):
+            age = await js(d, "Date.now()-performance.timeOrigin")
+            if age < 21000:
+                await asyncio.sleep((21000 - age) / 1000 + .5)
+                if not await js(d, "window.__pcSettled===1 && !!window.__PC && !!__PC.me()"):
+                    continue          # it reloaded inside the window: settle the new page
             return
     raise AssertionError('the page kept reloading after the upgrade')
 
