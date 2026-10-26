@@ -2694,6 +2694,12 @@
     return bannerStage.pointer?{bannerRef:bannerStage.pointer}:{banner:null};
   }
   async function bannerImageBytes(file){
+    /* AN ANIMATED GIF STAYS ANIMATED (Vyram, git issue "Community Banners Do Not Animate", 2026-10-26). The canvas
+     * below re-encodes to ONE JPEG frame. A GIF needs none of what it is for -- a GIF carries no EXIF -- so its own
+     * bytes are sealed (BANNER_MAX_BYTES still bounds it), as the community icon does. Decrypting sniffs the type
+     * (imageMime), so it is shown as image/gif. tests/client/concord_gif_banner_runtime.mjs */
+    const head=new Uint8Array(await file.slice(0,3).arrayBuffer());
+    if(head[0]===0x47&&head[1]===0x49&&head[2]===0x46)return new Uint8Array(await file.arrayBuffer());
     const bm=await createImageBitmap(file),scale=Math.min(1,1920/Math.max(1,bm.width));
     const w=Math.max(1,Math.round(bm.width*scale)),h=Math.max(1,Math.round(bm.height*scale));
     const canvas=typeof OffscreenCanvas==='function'?new OffscreenCanvas(w,h):Object.assign(document.createElement('canvas'),{width:w,height:h});
