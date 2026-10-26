@@ -12261,9 +12261,13 @@
    * specialise in exactly these kinds; the big general relays are here because they are the ones
    * that actually had the data. A list of four hosts that can all be down at once is not a
    * fallback. */
-  const DISCOVERY_RELAYS = ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://relay.nostr.band/',
-                            'wss://relay.0xchat.com/', 'wss://relay.damus.io/', 'wss://nos.lol/',
-                            'wss://relay.primal.net/'];
+  /* MEASURED AGAIN 2026-10-26: purplepag.es (HTTP 502), relay.nostr.band (no answer) and relay.0xchat.com (its name no
+   * longer resolves) were dead at both readings, and every lookup tunnelled to them was a connection doomed to fail and
+   * a console error -- the post-deploy sign-in check failed on the 0xchat one. Replaced by relays measured the same day
+   * ANSWERING with kind-10050 inbox lists (indexer.coracle.social is an indexer like purplepag.es was).
+   * tests/test_client_relay_lists_name_no_dead_relays.py */
+  const DISCOVERY_RELAYS = ['wss://indexer.coracle.social/', 'wss://user.kindpag.es/', 'wss://relay.damus.io/',
+                            'wss://nos.lol/', 'wss://relay.primal.net/', 'wss://relay.snort.social/', 'wss://nostr.mom/'];
 
   /* ---------- DMs (NIP-17 + NIP-04) and the kind-10050 inbox list: moved to static/js/client/dms.js (its own <script> tag) ----------
    * Receiving, unwrapping and caching gift wraps (ensureDMs, ingestWrap, DmCache), sending (sendDm),
@@ -13305,7 +13309,7 @@
   // Thread context fallback: our relay is WoT-gated, so a post we replied to whose author isn't in
   // the trust set isn't stored here. Fetch such a missing event from public relays (UNTRUSTED → the
   // signer worker verifies the signature before we display it), so threads aren't truncated.
-  const PUBLIC_FALLBACK_RELAYS = ['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net','wss://relay.nostr.band'];
+  const PUBLIC_FALLBACK_RELAYS = ['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net'];   // relay.nostr.band: no answer (2026-10-26)
   function fetchFromPublicRelays(filters, timeout=4500, extraRelays){
     // Query the event's OWN relay hints (from an nevent or a NIP-10 e-tag) alongside the public
     // fallbacks — so a parent whose author is outside our WoT is found where it actually lives.
