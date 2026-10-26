@@ -1,0 +1,107 @@
+/* The Music app's library views: Songs / Albums / Artists, album and artist pages, the tag-scan status.
+ * Loaded on demand by music.js (_maEnsureCss) -- it is not on the boot page, which has a byte budget
+ * (tests/test_client_boot_payload_budget.py). Phone first: 2 columns of covers at phone width, 3 on a wide phone
+ * or one held sideways, more on a desktop; every control a thumb presses is 44px or more. */
+
+/* The browse bar: tabs, then the Songs sort and the library options. */
+.ma-browse{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.ma-browse.hidden{display:none}
+.ma-tabs{display:flex;flex:1 1 auto;min-width:0;gap:4px;padding:3px;border:1px solid var(--line);border-radius:999px;
+  background:var(--panel2,rgba(255,255,255,.03))}
+.ma-tab{flex:1 1 0;min-width:0;min-height:44px;padding:0 10px;border:0;border-radius:999px;background:none;color:var(--muted);
+  font:inherit;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-tab:hover{color:var(--text)}
+.ma-tab.on{background:linear-gradient(135deg,hsl(190 90% 45% / .28),hsl(300 90% 55% / .24));color:var(--text);
+  box-shadow:inset 0 0 0 1px hsl(190 95% 60% / .45)}
+.ma-tab:focus-visible{outline:2px solid var(--neon,#0ff);outline-offset:2px}
+.ma-sort{flex:0 1 auto;width:auto;min-width:0;max-width:160px;min-height:44px;margin:0;padding:0 10px}
+.ma-sort.hidden{display:none}
+.ma-libopts{flex:0 0 auto;width:44px;min-width:44px;height:44px;padding:0;display:inline-grid;place-items:center}
+
+/* The tag scan says what it is doing, under the bar -- never in front of the library. */
+.ma-scan{display:flex;align-items:center;gap:10px;min-width:0;font-size:12px;color:var(--muted)}
+.ma-scan.hidden{display:none}
+.ma-scan-t{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-scan-bar{flex:1 1 60px;min-width:40px;height:4px;border-radius:4px;background:var(--line);overflow:hidden}
+.ma-scan-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--neon,#0ff),var(--magenta,#f0f));
+  transition:width .3s ease}
+
+/* The browse area scrolls like the list it replaces (and as one page on a short screen -- see client.css). */
+.music-app .ma-lib-browse{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:12px;
+  -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.ma-lib-browse .music-list{flex:none;overflow:visible;min-height:0}
+@media(max-height:600px){ .music-app:not(.ma-full) .ma-lib-browse{flex:none;overflow:visible} }
+/* A PHONE BROWSES AS ONE PAGE. The now-playing card is most of a phone's height, and a library scrolling in its
+   own box under it was a strip one album tall. Browsing, the whole screen scrolls: the card goes up and away, the
+   grid gets the screen, and the tab bar stays pinned at the top so the next tab is always one thumb away. */
+@media(max-width:820px),(max-height:600px){      /* a phone -- held either way (sideways it is wider than 820) */
+  .music-app.ma-browsing:not(.ma-full){height:auto}
+  .music-app.ma-browsing:not(.ma-full) .ma-lib-browse,
+  .music-app.ma-browsing:not(.ma-full) > .music-list{flex:none;overflow:visible}
+  /* top:-8px + 8px more padding: a sticky box stops at the scroll container's PADDING edge, and #feed has up to
+     8px of it -- at top:0 a strip of covers showed through above the bar. */
+  .music-app.ma-browsing .ma-browse{position:sticky;top:-8px;z-index:6;padding:14px 0 6px;
+    background:var(--bg,#07060d);box-shadow:0 8px 12px -10px rgba(0,0,0,.8)}
+}
+.ma-count{margin:2px 2px 8px}
+
+/* Albums: a grid of square covers. Titles one line, artist one line -- ellipsized, never wrapping the tile taller. */
+.ma-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(min-width:560px){ .ma-grid{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media(min-width:900px){ .ma-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px} }
+.ma-grid-sm{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+@media(max-width:559px){ .ma-grid-sm{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.ma-card{display:flex;flex-direction:column;gap:6px;min-width:0;padding:0;border:0;background:none;color:inherit;
+  text-align:start;cursor:pointer;font:inherit;border-radius:14px}
+.ma-card:focus-visible{outline:2px solid var(--neon,#0ff);outline-offset:3px}
+.ma-card-art,.ma-artist-art,.ma-page-art{display:grid;aspect-ratio:1/1;width:100%;height:auto;border-radius:12px;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(255,255,255,.07),0 8px 18px -8px rgba(0,0,0,.6)}
+.ma-card-art .pc-art-img,.ma-artist-art .pc-art-img,.ma-page-art .pc-art-img{width:100%;height:100%;object-fit:cover}
+.ma-card:hover .ma-card-art{box-shadow:0 0 0 1px hsl(190 95% 60% / .5),0 10px 22px -8px hsl(190 95% 50% / .35)}
+.ma-card-t,.ma-card-s{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
+.ma-card-t{font-weight:700;font-size:14px;color:var(--text);line-height:1.25}
+.ma-card-s{font-size:12px;color:var(--muted);line-height:1.25}
+.ma-more{display:block;width:100%;min-height:44px;margin-top:12px}
+
+/* Artists: a list of rows, 56px tall, round art. */
+.ma-artists{display:flex;flex-direction:column;gap:4px}
+.ma-arow{display:flex;align-items:center;gap:12px;min-width:0;width:100%;min-height:56px;padding:6px 8px;border:0;border-radius:12px;
+  background:none;color:inherit;font:inherit;text-align:start;cursor:pointer}
+.ma-arow:hover{background:var(--panel2,rgba(255,255,255,.04))}
+.ma-arow:focus-visible{outline:2px solid var(--neon,#0ff);outline-offset:2px}
+.ma-artist-art{flex:0 0 48px;width:48px;height:48px;border-radius:50%}
+.ma-artist-m{display:flex;flex-direction:column;min-width:0}
+.ma-artist-n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-artist-s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* An album or artist page: Back, then cover + names, then Play / Shuffle at thumb size. */
+.ma-page{display:flex;flex-direction:column;gap:10px;min-width:0}
+.ma-page-head{display:flex;flex-direction:column;gap:12px;min-width:0}
+.ma-back{align-self:flex-start;min-height:44px;padding:0 12px 0 6px;display:inline-flex;align-items:center;gap:4px}
+.ma-page-top{display:flex;align-items:center;gap:14px;min-width:0}
+.ma-page-art{flex:0 0 auto;width:min(36vw,160px);max-width:160px}
+.ma-page[data-kind="artist"] .ma-page-art{border-radius:50%}
+.ma-page-meta{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ma-page-t{font-size:20px;line-height:1.2;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;overflow-wrap:anywhere}
+.ma-page-s{color:var(--cyan,#0ff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-page-x{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-page-acts{display:flex;gap:10px}
+.ma-page-acts .btn{flex:1 1 0;min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.ma-sec{margin:6px 2px 0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.track-no{display:inline-block;min-width:1.6em;margin-inline-end:6px;color:var(--muted);font-variant-numeric:tabular-nums}
+.track-by{color:var(--text);opacity:.8}
+
+/* The library options sheet's one switch. */
+.ma-opt{display:flex;gap:12px;align-items:flex-start;cursor:pointer;min-height:44px}
+.ma-opt input{flex:0 0 auto;width:22px;height:22px;margin-top:2px;accent-color:var(--neon,#0ff)}
+.ma-opt-why{display:block;margin-top:4px;line-height:1.4}
+#ma-opt-close{min-height:44px;min-width:88px}
+
+/* A FINGER ON A ZOOMED PAGE (821-1920px is drawn at body{zoom}): sized back up to 44 physical pixels. */
+@media(pointer:coarse) and (min-width:821px){
+  .ma-tab,.ma-sort,.ma-back,.ma-page-acts .btn,.ma-more{min-height:calc(44px / var(--zf,1))}
+  .ma-libopts{width:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1))}
+  .ma-arow{min-height:calc(56px / var(--zf,1))}
+  #ma-opt-close{min-height:calc(44px / var(--zf,1))}
+}

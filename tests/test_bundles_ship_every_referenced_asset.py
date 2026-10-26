@@ -85,6 +85,33 @@ def test_the_runtime_only_stylesheet_is_still_copied(which):
     assert "static/css/rtl.css" in BUNDLERS[which]
 
 
+def _runtime_stylesheets():
+    """Every stylesheet the client injects at RUNTIME (`link.href = '/static/css/x.css'` in a client module) --
+    rtl.css from i18n.js, music-library.css from music.js. DISCOVERED, so the next one cannot be forgotten."""
+    import re
+    page = (ROOT / "templates/client.html").read_text()
+    found = set()
+    for js in (ROOT / "static/js/client").glob("*.js"):
+        if js.name == "sw.js":            # the precache list names every sheet; it is not a loader
+            continue
+        found |= set(re.findall(r"""['"]/static/css/([\w.-]+\.css)""", js.read_text(errors="ignore")))
+    return sorted(c for c in found if f"/static/css/{c}" not in page)   # tagged ones: the loop covers them
+
+
+@pytest.mark.parametrize("which", sorted(BUNDLERS))
+def test_every_stylesheet_a_module_loads_at_runtime_is_bundled_and_precached(which):
+    """A stylesheet a module loads at runtime is in no template, so neither the bundlers' loop nor a reader of the
+    page can see it. Missing from a bundle it 404s there and the screen draws unstyled -- the Music library's
+    album grid as a stack of full-width covers -- while the web, which serves /static, looks perfect."""
+    sheets = _runtime_stylesheets()
+    assert "music-library.css" in sheets and "rtl.css" in sheets, sheets
+    sw = (ROOT / "static/js/client/sw.js").read_text()
+    for css in sheets:
+        assert f"static/css/{css}" in BUNDLERS[which], (which, css, "is loaded at runtime but not copied into the bundle")
+        assert f"'/static/css/{css}'" in sw, (css, "is loaded at runtime but not precached: a cold offline open draws it unstyled")
+        assert (ROOT / "static/css" / css).is_file(), css
+
+
 @pytest.mark.parametrize("which", sorted(BUNDLERS))
 def test_the_assets_that_live_inside_a_stylesheet_are_still_copied(which):
     """The two earlier instances of this exact bug, kept honest. Neither URL appears in any

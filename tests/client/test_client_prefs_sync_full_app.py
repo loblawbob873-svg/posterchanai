@@ -367,7 +367,8 @@ READ = {k: f"ClientSettings.get({json.dumps(k)})" for k in (
     "vimKeys", "noImages", "hideReplies", "readAloudHold", "newPostsPill", "autoNewPosts", "cleanLinks",
     "postEffects", "startTimeline", "startView", "mediaCacheGB", "musicOfflineGB", "desktopBuddy", "navHidden",
     "navOrder", "tlHidden", "mobileNav", "navGroupOf", "navUserGroups", "startupApps", "startupAppsAt",
-    "zapPresets", "xmrPresets", "bchPresets", "experience", "experienceRev", "searchBar", "searchBarAt")}
+    "zapPresets", "xmrPresets", "bchPresets", "experience", "experienceRev", "searchBar", "searchBarAt",
+    "musicCoverLookup")}
 READ.update({
     "xmrTip": "ClientSettings.get('xmrLastAmt')",
     "bchTip": "ClientSettings.get('bchLastAmt')",
@@ -425,6 +426,14 @@ async def set_every_pref(b):
     await b.js("PCConcordTheme.forOwner(__PC.me().pubkey);PCConcordTheme.set({theme:'oled',accent:'#ff8800'})")
     # Settings -> Appearance: its own module API (what the pane's inputs call).
     await b.js("PCLook.set({accent:'#11aa77',sec:{music:{bg:'#202040'}},wall:{url:'https://cdn.example/w.jpg',pos:'tile',size:'fill',dim:.4}})")
+    # Music -> library options -> "Look up missing album covers online": the switch a person ticks.
+    await b.js("__PC.switchView('music')")
+    await wait(b, "!!document.getElementById('ma-libopts')", 30, "the music library's options button")
+    await b.js("document.getElementById('ma-libopts').click()")
+    await wait(b, "!!document.getElementById('ma-cover-lookup')", 15, "the cover lookup switch")
+    await b.js("(()=>{const x=document.getElementById('ma-cover-lookup');x.click();"
+               "document.getElementById('ma-opt-close').click();})()")
+    await wait(b, "ClientSettings.get('musicCoverLookup')===true", 15)
     # The two remembered tip amounts: a stranger's profile → the Monero and Bitcoin Cash tip sheets.
     await b.js("__PC.openProfile(window.__strangerPk)")
     await wait(b, "!!document.getElementById('prof-xmr') && !!document.getElementById('prof-bch')", 30, "the profile's tip buttons")

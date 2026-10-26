@@ -187,3 +187,96 @@ def test_a_wav_says_who_it_is_from_its_chunks_wherever_they_are():
     assert got["big"]["title"] == "Playground" and got["big"]["pic"] == pic, got["big"]
     assert got["big"]["read"] < 300_000, ("readBlob read the audio to find the tags", got["big"]["read"], got["big"]["size"])
     assert got["untagged"]["title"] is None and got["untagged"]["pic"] is None, got["untagged"]
+
+
+# ---- where a track sits: track / disc / year / album artist (the Music app's Albums and Artists views) ----
+POS = r"""
+const fs=require('fs');const src=fs.readFileSync(process.argv[1],'utf8');
+const ctx={TextDecoder,Uint8Array,atob:s=>Buffer.from(s,'base64').toString('latin1'),String,Math,Object,Array,Promise,fetch:undefined};
+ctx.globalThis=ctx;require('vm').runInNewContext(src,ctx);
+const files=JSON.parse(fs.readFileSync(0,'utf8'));const out={};
+for(const [k,b64] of Object.entries(files)){let m;
+  try{ m=ctx.PCAudioTags.parse(Uint8Array.from(Buffer.from(b64,'base64'))); }catch(e){ m={threw:String(e)}; }
+  out[k]={title:m.title||null,track:m.track??null,trackTotal:m.trackTotal??null,disc:m.disc??null,year:m.year??null,
+          albumArtist:m.albumArtist||null,threw:m.threw||null};}
+console.log(JSON.stringify(out));
+"""
+
+
+def _id3(ver, frames):
+    def frame(fid, text):
+        body = b"\x03" + text.encode()
+        size = syncsafe(len(body)) if ver == 4 else struct.pack(">I", len(body))
+        return fid.encode() + size + b"\0\0" + body
+    body = b"".join(frame(f, t) for f, t in frames) + b"\0" * 16
+    return b"ID3" + bytes([ver]) + b"\x00\x00" + syncsafe(len(body)) + body
+
+
+def _id3v22(frames):
+    def frame(fid, text):
+        body = b"\x00" + text.encode("latin1")
+        return fid.encode() + struct.pack(">I", len(body))[1:] + body
+    body = b"".join(frame(f, t) for f, t in frames)
+    return b"ID3\x02\x00\x00" + syncsafe(len(body)) + body
+
+
+def _flac_vc(items):
+    vc = vorbis_comments(b"ref", items)
+    blk = lambda t, last, data: bytes([t | (0x80 if last else 0)]) + struct.pack(">I", len(data))[1:] + data
+    return b"fLaC" + blk(0, False, b"\0" * 34) + blk(4, True, vc)
+
+
+def _ogg_vorbis(items):
+    """An Ogg VORBIS file: identification packet, then the comment packet (type 3) -- one page each."""
+    ident = b"\x01vorbis" + b"\0" * 23
+    comment = b"\x03vorbis" + vorbis_comments(b"enc", items) + b"\x01"
+    def page(pk):
+        lac = [255] * (len(pk) // 255) + [len(pk) % 255]
+        return b"OggS" + b"\0" * 22 + bytes([len(lac)]) + bytes(lac) + pk
+    return page(ident) + page(comment)
+
+
+def _run_pos(files):
+    payload = json.dumps({k: base64.b64encode(v).decode() for k, v in files.items()})
+    done = subprocess.run([NODE, "-e", POS, str(ROOT / "static/js/client/audiotags.js")], input=payload,
+                          capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr[-1500:]
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node")
+def test_each_format_says_where_a_track_sits_on_its_album():
+    """Albums list their songs in TRACK order and group a compilation by its ALBUM ARTIST, so the parser has to read
+    TRCK/TPOS/TYER/TDRC/TPE2 (and ID3v2.2's three-letter spellings) and the Vorbis/FLAC comment names -- with "3/12"
+    meaning track 3 of 12, and a full date meaning its year."""
+    got = _run_pos({
+        "v23": _id3(3, [("TIT2", "Song"), ("TRCK", "3/12"), ("TPOS", "2/2"), ("TYER", "1999"), ("TPE2", "Various Artists")]),
+        "v24": _id3(4, [("TIT2", "Song"), ("TRCK", "07"), ("TPOS", "1"), ("TDRC", "2019-04-12"), ("TPE2", "Band")]),
+        "v22": _id3v22([("TT2", "Old"), ("TRK", "4/9"), ("TPA", "1/1"), ("TYE", "1987"), ("TP2", "Old Band")]),
+        "flac": _flac_vc(["TITLE=F", "TRACKNUMBER=5", "TRACKTOTAL=11", "DISCNUMBER=2", "DATE=2003-01-01",
+                          "ALBUMARTIST=Flac Band"]),
+        "vorbis": _ogg_vorbis(["TITLE=V", "TRACKNUMBER=9/10", "DATE=2011", "ALBUM ARTIST=Ogg Band"]),
+    })
+    assert got["v23"] == {"title": "Song", "track": 3, "trackTotal": 12, "disc": 2, "year": "1999",
+                          "albumArtist": "Various Artists", "threw": None}, got["v23"]
+    assert (got["v24"]["track"], got["v24"]["disc"], got["v24"]["year"], got["v24"]["albumArtist"]) == (7, 1, "2019", "Band"), got["v24"]
+    assert (got["v22"]["track"], got["v22"]["trackTotal"], got["v22"]["year"], got["v22"]["albumArtist"]) == (4, 9, "1987", "Old Band"), got["v22"]
+    assert (got["flac"]["track"], got["flac"]["trackTotal"], got["flac"]["disc"], got["flac"]["year"], got["flac"]["albumArtist"]) \
+        == (5, 11, 2, "2003", "Flac Band"), got["flac"]
+    assert (got["vorbis"]["title"], got["vorbis"]["track"], got["vorbis"]["trackTotal"], got["vorbis"]["year"], got["vorbis"]["albumArtist"]) \
+        == ("V", 9, 10, "2011", "Ogg Band"), got["vorbis"]
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node")
+def test_a_malformed_position_is_dropped_never_thrown():
+    """Taggers write anything: "A", "3 of 12", "-1", "1/", a year of "unknown". None of it may throw or invent a
+    number -- the field is simply absent, and the title around it still reads."""
+    got = _run_pos({
+        "letters": _id3(3, [("TIT2", "Keep me"), ("TRCK", "A"), ("TPOS", "x/y"), ("TYER", "unknown")]),
+        "prose": _id3(4, [("TIT2", "Keep me"), ("TRCK", "3 of 12"), ("TDRC", "19")]),
+        "negative": _flac_vc(["TITLE=Keep me", "TRACKNUMBER=-1", "DISCNUMBER=", "DATE=0000"]),
+        "zero": _id3(3, [("TIT2", "Keep me"), ("TRCK", "0"), ("TPOS", "0/2")]),
+    })
+    for k, v in got.items():
+        assert v["threw"] is None and v["title"] == "Keep me", (k, v)
+        assert v["track"] is None and v["disc"] is None and v["year"] is None, (k, v)

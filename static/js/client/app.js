@@ -11116,6 +11116,11 @@
     _musicExt, _musicRefreshedSet, _musicShareCurrent, _musicShareLoad, _musicShareView, _plTracks,
     _refreshBlobHave, _trackMeta, closeModal, delBlob, deleteBlobQuiet, enc, modal, musicEntries,
     musicTracks, openMusicFolder, renameBlob, saveEncrypted, toast, uiConfirm, uiPrompt,
+    // The library views (Songs/Albums/Artists), the tag scan and the opt-in online covers.
+    _withModule: (file, global) => _withModule(file, global), trackPlainBlob, ensureAiSession,
+    authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts,
+      headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),
+    saveClientPrefsNostr, touchPref: k => _prefTouched.add(k),
   }; }
   function _musicMod(){ return _lzGet('music.js', 'PCMusicFactory', _musicDeps); }
   function _musicLoad(){ return _lzLoad('music.js', 'PCMusicFactory', _musicDeps); }
@@ -11781,6 +11786,7 @@
     FilesIdx, MusicPlayer, _ENC_MARK, _dimAttrs, _driveDecrypt, _plTracks, _shaFromUrl,
     _standalone, _trackUrlOrder, _trackUrls, blossomPicker, enc, encFileUrl, gifPicker,
     mediaServer, openMenuPopover, pickSyncedFile, toast, uploadBlob,
+    _withModule: (file, global) => _withModule(file, global),
   }; }
   function _musiclibMod(){ return _lzGet('musiclib.js', 'PCMusicLibFactory', _musiclibDeps); }
   function _musiclibLoad(){ return _lzLoad('musiclib.js', 'PCMusicLibFactory', _musiclibDeps); }
@@ -11796,6 +11802,7 @@
   function _musicRefreshedSet(){ return _lzRun(_musiclibMod, _musiclibLoad, '_musicRefreshedSet', arguments); }
   function _refreshBlobHave(){ return _lzRun(_musiclibMod, _musiclibLoad, '_refreshBlobHave', arguments); }
   function _trackMeta(){ return _lzRun(_musiclibMod, _musiclibLoad, '_trackMeta', arguments); }
+  function trackPlainBlob(){ return _lzRun(_musiclibMod, _musiclibLoad, 'trackPlainBlob', arguments); }
   function _u8b64(){ return _lzRun(_musiclibMod, _musiclibLoad, '_u8b64', arguments); }
   function _unwrapMK(){ return _lzRun(_musiclibMod, _musiclibLoad, '_unwrapMK', arguments); }
   function decorateEncAtts(){ return _lzRun(_musiclibMod, _musiclibLoad, 'decorateEncAtts', arguments); }

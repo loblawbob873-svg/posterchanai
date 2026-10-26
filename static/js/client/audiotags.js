@@ -45,13 +45,32 @@
     return 0;
   }
 
+  /* WHERE A TRACK SITS: "3", "03", "3/12" (track 3 of 12) -- an integer, or nothing. A year from a full date
+   * ("2019-04-12", TDRC) is its first four digits. Anything that is not a number is DROPPED, never thrown:
+   * a library's grouping must not depend on every tagger agreeing how to write a number. */
+  function count(v){
+    const m = /^\s*0*(\d{1,4})\s*(?:\/\s*0*(\d{1,4}))?\s*$/.exec(String(v == null ? '' : v));
+    return m ? { n: +m[1] || null, of: m[2] ? +m[2] : null } : null;
+  }
+  function numbers(out){
+    if('track' in out){ const c = count(out.track); delete out.track;
+      if(c && c.n){ out.track = c.n; if(c.of && !out.trackTotal) out.trackTotal = c.of; } }
+    if('trackTotal' in out && typeof out.trackTotal !== 'number'){ const c = count(out.trackTotal); delete out.trackTotal;
+      if(c && c.n) out.trackTotal = c.n; }
+    if('disc' in out){ const c = count(out.disc); delete out.disc; if(c && c.n) out.disc = c.n; }
+    if('year' in out){ const y = /(?:^|\D)(\d{4})(?:\D|$)/.exec(String(out.year)); delete out.year;
+      if(y && +y[1] >= 1000 && +y[1] <= 2999) out.year = y[1]; }
+    return out;
+  }
+
   function id3(b){
     const ver = b[3], flags = b[5], size = syncsafe(b, 6), end = Math.min(b.length, 10 + size), out = {};
     let i = 10;
     if((flags & 0x40) && ver >= 3) i += (ver === 4 ? syncsafe(b, i) : be32(b, i) + 4);   // extended header
     const v22 = ver === 2, idLen = v22 ? 3 : 4, hdr = v22 ? 6 : 10;
-    const names = v22 ? { TT2:'title', TP1:'artist', TAL:'album', PIC:'pic' }
-                      : { TIT2:'title', TPE1:'artist', TALB:'album', APIC:'pic' };
+    const names = v22 ? { TT2:'title', TP1:'artist', TAL:'album', PIC:'pic', TRK:'track', TPA:'disc', TYE:'year', TP2:'albumArtist' }
+                      : { TIT2:'title', TPE1:'artist', TALB:'album', APIC:'pic', TRCK:'track', TPOS:'disc',
+                          TYER:'year', TDRC:'year', TPE2:'albumArtist' };
     while(i + hdr <= end){
       const id = ascii(b, i, idLen);
       if(!/^[A-Z0-9]+$/.test(id)) break;                     // padding
@@ -71,7 +90,7 @@
       }
       i += hdr + len;
     }
-    return out;
+    return numbers(out);
   }
 
   function vorbisComments(b, i){
@@ -88,11 +107,16 @@
       if(key === 'TITLE' && !out.title) out.title = clean(val);
       else if(key === 'ARTIST' && !out.artist) out.artist = clean(val);
       else if(key === 'ALBUM' && !out.album) out.album = clean(val);
+      else if((key === 'ALBUMARTIST' || key === 'ALBUM ARTIST') && !out.albumArtist) out.albumArtist = clean(val);
+      else if(key === 'TRACKNUMBER' && !out.track) out.track = clean(val);
+      else if(key === 'TRACKTOTAL' && !out.trackTotal) out.trackTotal = clean(val);
+      else if(key === 'DISCNUMBER' && !out.disc) out.disc = clean(val);
+      else if((key === 'DATE' || key === 'YEAR') && !out.year) out.year = clean(val);
       else if(key === 'METADATA_BLOCK_PICTURE' && !out.picture){
         try{ const raw = Uint8Array.from(atob(val), c => c.charCodeAt(0)); out.picture = flacPicture(raw, 0); }catch(_){ }
       }
     }
-    return out;
+    return numbers(out);
   }
 
   function flacPicture(b, i){
@@ -230,5 +254,24 @@
     }catch(_){ return {}; }
   }
 
-  root.PCAudioTags = { parse, read, readBlob, needed };
+  /* What the Music LIBRARY keeps of a file's tags: the record (`tg`) written into the ENCRYPTED files index per
+   * track, so Albums/Artists never decrypt a song to know where it belongs. Short keys -- the index is one
+   * document re-saved whole. v marks "read" even when the file had nothing to say (no re-reading it forever);
+   * p says the file carries a picture (the cover is cached per device, never in the index). */
+  function index(t){
+    t = t || {};
+    const s = v => String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
+    const out = { v: 1 };
+    if(s(t.title)) out.t = s(t.title);
+    if(s(t.artist)) out.a = s(t.artist);
+    if(s(t.album)) out.al = s(t.album);
+    if(s(t.albumArtist)) out.aa = s(t.albumArtist);
+    if(typeof t.track === 'number' && t.track > 0) out.n = t.track;
+    if(typeof t.disc === 'number' && t.disc > 0) out.d = t.disc;
+    if(/^\d{4}$/.test(String(t.year || ''))) out.y = String(t.year);
+    if(t.picture && t.picture.data && t.picture.data.length) out.p = 1;
+    return out;
+  }
+
+  root.PCAudioTags = { parse, read, readBlob, needed, index };
 })(typeof window !== 'undefined' ? window : globalThis);

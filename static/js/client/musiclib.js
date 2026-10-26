@@ -482,6 +482,15 @@ window.PCMusicLibFactory = function(dep){
     // The stored mime has to be the TRUTH — a passed-through mp3 labelled audio/ogg decodes by luck
     // rather than by contract, and the download would save it under the wrong extension.
     FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:mime,enc:true,mk:true,size:bytes.length,srcName:file.name,srcSize:file.size,srcExt:srcExt,ts:Math.floor(Date.now()/1000)});
+    /* THE TAG INDEX, while the plaintext is in hand: Albums/Artists read `tg` from the (encrypted) files index, so
+     * a track indexed here never has to be downloaded and decrypted again just to learn its album. Best-effort --
+     * a file whose tags cannot be read is still uploaded, and the scan marks it later. */
+    try{
+      const T=window.PCAudioTags || (dep._withModule ? await dep._withModule('audiotags.js','PCAudioTags') : null);
+      if(T && T.index){ const t=await T.readBlob(new Blob([bytes]));
+        FilesIdx.setFile(sha,{tg:T.index(t)});
+        if(t.picture && window.PCMusicArt) window.PCMusicArt.fromTags(t).catch(()=>{}); }
+    }catch(_){ }
     return sha;   // the caller's receipt: the sha the library now holds this track under
   }
   // One-time-per-session cleanup of leaked Files-index blobs (the old cross-session GC bug left stale
@@ -720,6 +729,18 @@ window.PCMusicLibFactory = function(dep){
    * long as its URL. Null when this device has not decrypted that track this session. */
   const _trackBlobs={};
   function trackBlob(sha){ return _trackUrls[sha] ? (_trackBlobs[sha]||null) : null; }
+  /* A library track's plaintext for the TAG INDEX (music.js's scan), decrypted the way trackUrl does it but
+   * never entering trackUrl's six-URL cache: a scan of hundreds of songs must not evict the URL of the track
+   * that is playing or the next one. The kept copy first, as everywhere. */
+  async function trackPlainBlob(sha){
+    const held=trackBlob(sha); if(held) return held;
+    const m=FilesIdx.meta(sha)||_trackMeta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
+    if(m.shared) return new Blob([await PCMusicShare.plain(sha)],{type:m.mime||'audio/ogg'});   // trackUrl's rule
+    let blob=await MusicOffline.get(sha);
+    if(!blob){ const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
+      blob=new Uint8Array(await r.arrayBuffer()); }
+    return new Blob([await _driveDecrypt(m, blob, true)],{type:m.mime||'audio/ogg'});
+  }
   // Blobs the server actually still HAS (from Blossom /list). The index is a local/encrypted record of
   // what you uploaded and is NOT updated when blobs are deleted elsewhere — so trusting it alone made the
   // player queue songs that no longer exist. Only _renderMusicList passed a list; openMusic, refreshQueue
@@ -766,7 +787,7 @@ window.PCMusicLibFactory = function(dep){
     MusicOffline, _aesDecrypt, _b64u8, _contentIV, _fmtTime, _masterDecrypt, _masterEncrypt,
     _masterKeyInput, _musicExt, _musicHasSrc, _musicRefreshedSet, _refreshBlobHave, _trackMeta,
     _u8b64, _unwrapMK, decorateEncAtts, dmAttachFiles, dmAttachMenu, dmEncOn, dmPickGif,
-    dmPickMedia, encAttParse, musicEntries, musicTracks, trackBlob, trackUrl, uploadMusicTrack,
+    dmPickMedia, encAttParse, musicEntries, musicTracks, trackBlob, trackPlainBlob, trackUrl, uploadMusicTrack,
     uploadSharedEnc,
   };
 };

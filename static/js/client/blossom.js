@@ -411,6 +411,12 @@ window.PCBlossomFactory = function(dep){
         ClientSettings.set('readAloudHold', pr.readAloudHold);
         if(!pr.readAloudHold) stopNarration();
       }
+      // Music → "Look up missing album covers online" (opt-in, OFF by default): the Music app reads it live.
+      if(!_prefTouched.has('musicCoverLookup') && typeof pr.musicCoverLookup==='boolean'
+         && pr.musicCoverLookup!==ClientSettings.get('musicCoverLookup', false)){
+        ClientSettings.set('musicCoverLookup', pr.musicCoverLookup);
+        try{ window.PCMusicLibrary && window.PCMusicLibrary.prefChanged(); }catch(_){}
+      }
       /* The right panel follows the ACCOUNT ("make it sync to the account"): hidden on one machine is
          hidden on all of them. Stored as `rightPanel` = shown. The per-app hiding is separate and
          untouched -- this only ever chooses between "where it belongs" and "nowhere". */

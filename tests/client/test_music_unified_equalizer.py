@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import subprocess
 from tests.client_source import client_source, state_shim
 
@@ -151,4 +152,6 @@ console.log(JSON.stringify({selected,unselected:_musicRefreshedSet(null)}));
 
     refresh = APP[APP.index("const rf=$('#mus-refresh'"):
                   APP.index("const ga=$('#mus-getall'", APP.index("const rf=$('#mus-refresh'"))]
-    assert "_renderMusicList(grid, null, q, _musicRefreshedSet(only))" in refresh
+    # The repaint keeps the selected playlist (and whatever view options the list was drawn with -- an album page's
+    # track numbers, say).
+    assert re.search(r"_renderMusicList\(grid, null, q, _musicRefreshedSet\(only\)(, opts)?\)", refresh), refresh

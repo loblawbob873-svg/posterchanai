@@ -30,6 +30,7 @@ from app.routers import code as code_router      # PosterChan Code: /api/code/* 
 from app.routers import office as office_router  # built-in CODE + WOPI document editing
 from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared encrypted file, decrypted in the recipient's browser
 from app.routers import admin_emoji
+from app.routers import music_cover   # /api/music/cover — the Music library's opt-in online album covers
 from app.routers import git as git_router
 from app.routers import texts as texts_router   # /api/texts/* (Texts ✨ suggested reply)
 from app.routers import chat_assist as chat_assist_router   # /api/chat-assist (Telegram/DM ✨)
@@ -251,6 +252,7 @@ app.include_router(image_api.router)
 # imports that module's auth dependency.
 app.include_router(search_api.router)
 app.include_router(music_api.router)
+app.include_router(music_cover.router)  # /api/music/cover (opt-in album-cover lookup for the Music library)
 app.include_router(video_api.router)
 app.include_router(voice_api.router)
 app.include_router(effects_api.router)
