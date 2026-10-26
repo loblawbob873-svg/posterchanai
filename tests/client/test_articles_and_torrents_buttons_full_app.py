@@ -52,6 +52,8 @@ def test_write_publish_then_every_button_on_your_own_article():
         await b.until(f"{SENT % 30024}.length>0")
         await b.js("document.querySelector('#ae-pub').click(); 1")
         await b.until(f"{SENT % 30023}.length===1")
+        # Publishing is done when the editor has handed back to the Articles list -- not when the event is SENT.
+        await b.until("!!document.querySelector('#art-new') && !document.querySelector('#ae-pub')")
         art = await b.js(f"{SENT % 30023}[0]")
         # Publishing returns to the Articles list; open it as a reader does.
         await b.js("__PC.openNote(" + repr(art["id"]) + "); 1")
@@ -102,4 +104,37 @@ def test_publish_a_torrent_and_cancel():
         tor = await b.js(f"{SENT % 2003}[0]")
         assert ["x", ih] in tor["tags"] and ["title", "Debian 12"] in tor["tags"], tor["tags"]
         assert not await b.js("__errors"), await b.js("__errors")
+    asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_publish_confirmed_after_you_moved_on_does_not_pull_you_back():
+    """The relay's OK can land after the person has left the editor. Switching to the Articles list THEN painted it
+    over whatever they had opened -- the gate's flaky '#av-bm' failure, and a real yank for anyone who taps away
+    while 'Publishing…'. Back to the list only from the editor."""
+    async def check(b):
+        await desktop.login(b)
+        await b.js(r"""(() => {
+          window.__heldOK = [];
+          const P = Object.getPrototypeOf(__sockets.find(s => s.readyState === 1)), send = P.send;
+          P.send = function(raw){ const m = JSON.parse(raw);
+            if(Array.isArray(m) && m[0] === 'EVENT' && m[1].kind === 30023){ __heldOK.push([this, m[1].id]); return; }
+            return send.call(this, raw); };
+          window.__releaseOK = () => { for(const [s, id] of __heldOK.splice(0)) s.fire('message', ['OK', id, true, '']); };
+          __PC.switchView('articles'); })(); 1""")
+        await b.until("!!document.querySelector('#art-new')")
+        await b.js("document.querySelector('#art-new').click(); 1")
+        await b.until("!!document.querySelector('#ae-pub')")
+        await b.js("(()=>{document.querySelector('#ae-title').value='Late OK';const t=document.querySelector('#ae-body');"
+                   "t.value='Body.';t.dispatchEvent(new Event('input',{bubbles:true}));})(); 1")
+        await b.js("document.querySelector('#ae-pub').click(); 1")
+        await b.until("__heldOK.length===1")
+        await b.js("__PC.switchView('notifications'); 1")
+        await b.until("!document.querySelector('#ae-pub')")
+        await b.js("__releaseOK(); 1")
+        await asyncio.sleep(1.5)
+        got = await b.js("({ list: !!document.querySelector('#art-new'), title: document.querySelector('#view-title').textContent })")
+        assert not got["list"], ("a publish confirmed after the person moved on pulled them back to Articles", got)
+        assert not await b.js("__errors.slice()")
+
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
