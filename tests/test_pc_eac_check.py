@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-eac-check"
 
 
-def machine(tmp, *, sb=1, tpm="2", log=True, iommu=True, ident=False, lockdown="none", kexec="0", lsm="lockdown,bpf",
-            cmdline="root=x", modules=(("good", "sig", "Gentoo"),), taint="0"):
+def machine(tmp, *, sb=1, tpm="2", log=b"x" * 64, iommu=True, ident=False, lockdown="none", kexec="0", lsm="lockdown,bpf",
+            cmdline="root=x", modules=(("good", "sig", "Gentoo"),), taint="0", unreadable_log=False, log_from=None):
     r = tmp / "root"
     (r / "sys/firmware/efi/efivars").mkdir(parents=True)
     (r / "sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c").write_bytes(bytes([6, 0, 0, 0, sb]))
@@ -21,8 +21,13 @@ def machine(tmp, *, sb=1, tpm="2", log=True, iommu=True, ident=False, lockdown="
         (r / "sys/class/tpm/tpm0").mkdir(parents=True)
         (r / "sys/class/tpm/tpm0/tpm_version_major").write_text(tpm)
     (r / "sys/kernel/security/tpm0").mkdir(parents=True)
-    if log:
-        (r / "sys/kernel/security/tpm0/binary_bios_measurements").write_bytes(b"x" * 64)
+    if log is not False:
+        (r / "sys/kernel/security/tpm0/binary_bios_measurements").write_bytes(log)
+    if log_from:
+        (r / "sys/kernel/security/tpm0/binary_bios_measurements").unlink()
+        (r / "sys/kernel/security/tpm0/binary_bios_measurements").symlink_to(log_from)
+    if unreadable_log:
+        (r / "sys/kernel/security/tpm0/binary_bios_measurements").chmod(0)
     (r / "sys/class/iommu").mkdir(parents=True)
     if iommu:
         (r / "sys/class/iommu/dmar0").mkdir()
@@ -84,3 +89,22 @@ def test_it_ships_with_the_desktop():
     assert "pc-eac-check" in (ROOT / "os/gentoo.sh").read_text()
     ebuild = next((ROOT / "os/overlay/app-misc/posterchanos-shell").glob("*.ebuild")).read_text()
     assert "pc-eac-check" in ebuild
+
+
+def test_a_real_event_log_is_found_though_securityfs_reports_size_zero(tmp_path, monkeypatch):
+    """Measured on the Secure Boot VM (2026-10-26): binary_bios_measurements is there, root:tss 0440, and `stat` says
+    0 bytes like every securityfs file -- the old `[ -s ]` answered "no TPM event log visible" on a machine that had
+    one. A fake file cannot be size-0-with-content, so the stand-ins are: readable with bytes, and present but not
+    readable (a normal user)."""
+    assert os.stat("/proc/version").st_size == 0      # the securityfs shape: reports 0 bytes, reads as text
+    _, out = machine(tmp_path / "a", log_from="/proc/version")
+    assert "ok" in out and "Measured boot (the firmware's TPM event log is there)" in out, out
+    if os.geteuid() == 0:
+        return
+    rc, out = machine(tmp_path / "b", lockdown="integrity", kexec="1", log=b"x" * 64, unreadable_log=True)
+    assert rc == 0 and "readable by root and the tss group" in out, out
+
+
+def test_an_empty_event_log_is_not_called_measured_boot(tmp_path):
+    _, out = machine(tmp_path, log=b"")
+    assert "no TPM event log visible" in out, out
