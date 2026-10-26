@@ -79,6 +79,7 @@ window.PCSettingsFactory = function(dep){
           i.closest('.look-col').classList.remove('unset'); };
         i.oninput=()=>go(false); i.onchange=()=>{ go(true); redraw(); };
       });
+      if(L.hexFields) L.hexFields(box);
       box.querySelectorAll('[data-look-clear]').forEach(b=>b.onclick=()=>{ const k=b.dataset.lookClear, sec=b.dataset.sec;
         if(sec) L.setSection(sec,{[k]:''}); else L.set({[k]:''}); redraw(); });
       box.querySelectorAll('[data-pos]').forEach(b=>b.onclick=()=>wall({pos:b.dataset.pos}));

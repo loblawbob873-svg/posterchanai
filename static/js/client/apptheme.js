@@ -163,8 +163,46 @@
   }
   const isCustom = t => !!(t && (t.accent || t.bg || t.text || t.wall || Object.keys(t.sec || {}).length));
 
+  /* A #rrggbb BOX BESIDE EVERY COLOUR PICKER ("could you replace the color picker with one that allows you to input
+   * #colorcode?", Vyram, git issue "Concord Theme match with app theme", 2026-10-25). Android's picker is a wheel --
+   * matching an exact red by finger is next to impossible. The picker stays (it is the one people tap); the box drives
+   * it: a valid code sets the picker and fires ITS `input` (a live preview) while typing and ITS `change` (the save) on
+   * Enter / leaving the box, so every caller's existing handlers do the work and nothing is saved twice. `#f00` and
+   * `ff0000` are accepted; anything else is marked and never applied. */
+  function hexOf(v){
+    v = String(v || '').trim().replace(/^#?/, '#');
+    const m = v.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+    if(m) v = '#' + m[1] + m[1] + m[2] + m[2] + m[3] + m[3];
+    return /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : '';
+  }
+  function hexFields(root){
+    if(!root) return;
+    root.querySelectorAll('input[type=color]').forEach(c => {
+      if(c._pcHex) return;
+      const t = document.createElement('input');
+      t.type = 'text'; t.className = 'input look-hex'; t.maxLength = 7; t.spellcheck = false;
+      t.autocomplete = 'off'; t.setAttribute('autocapitalize', 'off'); t.placeholder = '#rrggbb'; t.value = c.value;
+      const lab = c.closest('label');
+      t.setAttribute('aria-label', ((lab && lab.textContent.trim()) || 'Colour') + ' as a #rrggbb code');
+      (lab || c).insertAdjacentElement('afterend', t);
+      c._pcHex = t;
+      t.addEventListener('input', () => {
+        const v = hexOf(t.value);
+        t.classList.toggle('bad', !v && t.value.trim() !== '');
+        if(v && v !== c.value){ c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); }
+      });
+      t.addEventListener('change', () => {
+        const v = hexOf(t.value);
+        if(!v){ t.value = c.value; t.classList.remove('bad'); return; }
+        c.value = v; t.value = v; c.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      t.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); t.dispatchEvent(new Event('change')); } });
+      c.addEventListener('input', () => { if(document.activeElement !== t) t.value = c.value; });
+    });
+  }
+
   paint(cur);
   window.PCLook = { SECTIONS, POSITIONS, VIEWS, get, set, setSection, reset: () => set({ ...EMPTY() }), forOwner, adopt,
     section, isCustom: () => isCustom(cur), onChange: f => { listeners.add(f); return () => listeners.delete(f); },
-    _css: css, _clean: clean };
+    hexFields, hexOf, _css: css, _clean: clean };
 })();

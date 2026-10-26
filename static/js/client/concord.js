@@ -127,7 +127,8 @@
         box.querySelectorAll('[data-cc-theme-pick]').forEach(b=>b.onclick=()=>{set({theme:b.dataset.ccThemePick});note();});
         for(const [id,key] of [['#cc-theme-accent','accent'],['#cc-theme-bg','bg']]){const i=box.querySelector(id);if(!i)continue;
           i.oninput=()=>{set({[key]:i.value},{save:false});note();}; i.onchange=()=>{set({[key]:i.value});note();};}
-        const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{set({accent:'',bg:''});note();};
+        if(window.PCLook&&window.PCLook.hexFields)window.PCLook.hexFields(box.querySelector('.cc-theme-custom'));
+        const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{set({accent:'',bg:''});note();for(const id of ['#cc-theme-accent','#cc-theme-bg']){const i=box.querySelector(id);if(i&&i._pcHex)i._pcHex.value=i.value;}};
         /* "It should change the app theme in every page" (git issue). The colours go to Settings -> Appearance and
          * Concord switches to Match app theme, so the one look is kept in one place and Concord follows it. */
         const whole=box.querySelector('#cc-theme-whole');if(whole)whole.onclick=()=>{

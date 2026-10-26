@@ -12589,6 +12589,9 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .look-col.unset input[type=color]{opacity:.45}
 .look-col.unset .look-clear{visibility:hidden}
 .look-clear{width:24px;height:24px;border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer;font-size:12px}
+/* The #rrggbb box beside each colour picker (apptheme.js hexFields): wide enough for seven characters, no wider. */
+.look-hex{width:7.2em;min-width:0;padding:6px 8px;font-family:ui-monospace,monospace;font-size:14px;text-transform:lowercase}
+.look-hex.bad{border-color:#ff5a5a;box-shadow:0 0 0 1px #ff5a5a}
 .look-clear:hover{background:var(--hover);color:var(--text)}
 .look-secs{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 14px}
 .look-sec{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 0;border-bottom:1px solid var(--line)}
