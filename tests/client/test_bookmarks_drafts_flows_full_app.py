@@ -193,10 +193,14 @@ async def a_fresh_device_nobody_answers_never_replaces_the_bookmarks(S):
                    for t in await b.toasts()), ('the failed bookmark was not reported', await b.toasts())
         assert 'No bookmarks yet' not in text, ('an unanswered read told the person they have no bookmarks', text)
         S.ctx.gate.drop(rule)
-        await open_bookmarks(b)                             # the relay answers now: Try again shows the saved one
-        await F.wait(b, "!!document.querySelector('#bm-retry')", 20, 'Bookmarks offered to try again')
-        await b.b.js("document.querySelector('#bm-retry').click();true")
-        await F.wait(b, "%s.includes(%s)" % (LISTED, json.dumps(one['id'])), 40, 'Try again listed the saved bookmark')
+        # The relay answers now. Reopening Bookmarks asks for the list again by itself (a list no relay has confirmed
+        # this session is re-read when the view opens), so the saved bookmark may already be there; if the screen
+        # still offers Try again, press it, as a person would. Either way the saved bookmark must be listed.
+        await open_bookmarks(b)
+        has = "%s.includes(%s)" % (LISTED, json.dumps(one['id']))
+        await F.wait(b, "!!document.querySelector('#bm-retry') || " + has, 20, 'Bookmarks offered to try again or listed it')
+        await b.b.js("(()=>{const r=document.querySelector('#bm-retry'); if(r) r.click(); return true})()")
+        await F.wait(b, has, 40, 'the saved bookmark listed once the relay answered')
         await press_bookmark(b, two['id'])                  # the bookmark is ADDED to the list
         await F.until(lambda: sorted(bookmarked(S.n, pk) or []) == sorted([one['id'], two['id']]), 30,
                       'both bookmarks on the home relay', b)

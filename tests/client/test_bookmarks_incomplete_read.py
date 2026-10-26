@@ -41,5 +41,12 @@ class BookmarksIncompleteRead(unittest.TestCase):
         self.assertTrue(g["notice"])
 
 
+    def test_a_list_no_relay_answered_offers_try_again_and_it_asks_again(self):
+        g = self.got["listNeverRead"]
+        self.assertTrue(g["unreachable"] and g["button"], "no relay answered and the screen does not say so: %r" % g)
+        self.assertTrue(g["pressed"], "Try again (#bm-retry) has no handler")
+        self.assertGreaterEqual(g["asked"], 1, "pressing Try again did not ask for the list again: %r" % g)
+
+
 if __name__ == "__main__":
     unittest.main()

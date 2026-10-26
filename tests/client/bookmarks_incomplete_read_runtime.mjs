@@ -15,7 +15,7 @@ const end = app.indexOf('  // ---------- minimal, SAFE markdown renderer', start
 if (start < 0 || end < 0) throw new Error('renderBookmarks moved');
 const shipped = app.slice(start, end);
 
-function world(answers){
+function world(answers, opts = {}){
   const store = new Map([['a1', {id:'a1', pubkey:'p1', created_at:2}]]);
   const remote = {id:'a2', pubkey:'p2', created_at:1};
   const feed = {
@@ -27,11 +27,12 @@ function world(answers){
   const retry = { disabled: false, onclick: null };
   const calls = [];
   const g = {
-    BOOKMARKS: new Set(['a1', 'a2']), VIEW: 'bookmarks', ME: { pubkey: 'me' }, GUEST: false,
+    BOOKMARKS: new Set(opts.unread ? [] : ['a1', 'a2']), VIEW: 'bookmarks', ME: { pubkey: 'me' }, GUEST: false,
+    _bmReadFor: opts.unread ? '' : 'me', _bmFetch: null, fetchBookmarks(){ calls.push('fetchBookmarks'); },
     Store: { get: id => store.get(id) || null, saveEvent: e => store.set(e.id, e), query: () => [] },
     needProfile(){}, hydrate(){},
     noteHtml: ev => `<article data-id="${ev.id}"></article>`,
-    $: sel => sel === '#feed' ? feed : (sel === '#bm-missing-retry' && feed.innerHTML.includes('bm-missing-retry') ? retry : null),
+    $: sel => sel === '#feed' ? feed : ((sel === '#bm-missing-retry' || sel === '#bm-retry') && feed.innerHTML.includes(sel.slice(1)) ? retry : null),
     Relay: {
       async ready(){ return true; },
       async query(f){ calls.push(f[0].ids.slice()); const a = answers.shift() || 'silent';
@@ -60,5 +61,13 @@ const out = {};
 { // 3: the relays answered completely: the post is not there -- asked once, and said
   const w = world(['empty']); await w.render();
   out.answeredEmpty = { shown: shown(w.feed), asked: w.calls.length, notice: w.feed.innerHTML.includes('1 bookmarked post') };
+}
+{ // 4: no relay has answered for the list and nothing is held: say so, and Try again asks again
+  const w = world([], { unread: true }); await w.render();
+  const shown = { unreachable: w.feed.innerHTML.includes('bm-unreachable'), button: w.feed.innerHTML.includes('id="bm-retry"') };
+  const before = w.calls.filter(c => c === 'fetchBookmarks').length;
+  if (w.retry.onclick) w.retry.onclick();
+  await new Promise(r => setTimeout(r, 20));
+  out.listNeverRead = { ...shown, pressed: !!w.retry.onclick, asked: w.calls.filter(c => c === 'fetchBookmarks').length - before };
 }
 process.stdout.write(JSON.stringify(out));

@@ -27,6 +27,8 @@ const held = new Map([['a1', {id:'a1', pubkey:'p1', created_at:2}],
 globalThis.BOOKMARKS = new Set(['a1', 'a2', 'missing1']);
 globalThis.VIEW = 'bookmarks';
 globalThis.ME = { pubkey: 'me' }; globalThis.GUEST = false;
+// The list was read from a relay this session: renderBookmarks has no reason to ask for it again.
+globalThis._bmReadFor = 'me'; globalThis._bmFetch = null; globalThis.fetchBookmarks = () => {};
 globalThis.Store = { get: id => held.get(id) || null, saveEvent(){} };
 globalThis.needProfile = () => {};
 globalThis.noteHtml = ev => `<article data-id="${ev.id}"></article>`;

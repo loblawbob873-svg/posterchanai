@@ -8125,6 +8125,16 @@
   async function renderBookmarks(){
     const feed=$('#feed');
     _bookmarksFromStore();
+    /* THE LIST ON THIS DEVICE MAY BE AN OLD ONE. After a reload BOOKMARKS comes from the kind-10003 the Store held, and
+     * if the boot's read of the relays' copy was never answered (under load it times out to [] with complete:false),
+     * nothing asked again: the view showed the older list -- one of two bookmarks, no error -- for the whole session
+     * (the gate's real-node bookmark test, still flaky after the missing-posts fix). Not yet confirmed by a relay this
+     * session: ask once more, at most every 10 s; fetchBookmarks repaints this view when the list changes. Deferred,
+     * because fetchBookmarks applies the cached list synchronously and would call straight back in here. */
+    if(ME && !GUEST && _bmReadFor!==ME.pubkey && !_bmFetch && Date.now()-(renderBookmarks._askedAt||0)>10000){
+      renderBookmarks._askedAt=Date.now();
+      setTimeout(()=>{ if(VIEW==='bookmarks' && !_bmFetch) fetchBookmarks(); }, 0);
+    }
     const ids=[...BOOKMARKS];
     if(!ids.length){
       if(ME && _bmReadFor===ME.pubkey){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
