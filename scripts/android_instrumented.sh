@@ -31,7 +31,11 @@ skip() {
   exit 2
 }
 
-if ! find mobile/android/app/src/androidTest \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | grep -q .; then
+# `find | grep -q .` under pipefail is a FALSE "no sources": grep exits at the first line, find dies of SIGPIPE writing
+# the rest, and the pipeline fails -- 48 test files are 4.3 KB, two writes (CI run 40373764324 reported "no sources"
+# with them all checked out; tests/test_android_instrumented_source_check.py makes it happen every time). -quit asks
+# find for one name and nothing else.
+if [ -z "$(find mobile/android/app/src/androidTest \( -name '*.java' -o -name '*.kt' \) -print -quit 2>/dev/null)" ]; then
   skip "mobile/android/app/src/androidTest has no sources — nothing was tested on the device."
 fi
 
