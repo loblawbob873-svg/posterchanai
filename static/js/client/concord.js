@@ -81,10 +81,24 @@
       return v;
     }
     let owner='',cur=load(LAST)||{theme:DEF,accent:'',bg:'',at:0},painted=[];
+    /* SETTINGS -> APPEARANCE REACHES CONCORD (Vyram, 2026-10-26: "The accent color is only applying to the write a note
+     * button"). Concord painted only from its OWN picker, so Appearance's accent and Communities colours never touched
+     * TEXT CHANNELS, the selected channel or anything else Concord draws. Most specific first: the Communities section
+     * colour, else Concord's own picker (choices made before Appearance existed), else the app's colour, else the
+     * preset -- and the picker writes the Communities section (see openPicker), so the two are one setting. */
+    let lookHooked=false;
+    function withLook(t){
+      const L=typeof window!=='undefined'&&window.PCLook;if(!L||!L.get)return t;
+      if(!lookHooked&&L.onChange){lookHooked=true;try{L.onChange(()=>paint(cur));}catch(_){}}
+      let g={};try{g=L.get()||{};}catch(_){}
+      const sec=(g.sec&&g.sec.concord)||{};
+      return {...t,accent:hexOk(sec.accent)||t.accent||hexOk(g.accent),bg:hexOk(sec.bg)||t.bg||hexOk(g.bg)};
+    }
     function paint(t){
       /* Never fatal: Concord's node harnesses (and any odd embed) hand it a minimal document. */
       const root=typeof document!=='undefined'&&document.documentElement;
       if(!root||typeof root.setAttribute!=='function'||!root.style||typeof root.style.setProperty!=='function')return;
+      try{ t=withLook(t); }catch(_){}
       try{
         root.setAttribute('data-cc-theme',t.theme);
         for(const n of painted)root.style.removeProperty(n);
@@ -126,9 +140,12 @@
         const note=()=>{const n=box.querySelector('#cc-theme-note');if(n)n.textContent=cur.accent||cur.bg?'Custom colours are on.':'Using the preset’s own colours.';};
         box.querySelectorAll('[data-cc-theme-pick]').forEach(b=>b.onclick=()=>{set({theme:b.dataset.ccThemePick});note();});
         for(const [id,key] of [['#cc-theme-accent','accent'],['#cc-theme-bg','bg']]){const i=box.querySelector(id);if(!i)continue;
-          i.oninput=()=>{set({[key]:i.value},{save:false});note();}; i.onchange=()=>{set({[key]:i.value});note();};}
+          /* One setting with Appearance's Communities colour (see withLook): the picker writes it, or the section
+           * colour would outrank what was just picked here. */
+          const toLook=(v,save)=>{try{if(window.PCLook&&window.PCLook.setSection)window.PCLook.setSection('concord',{[key]:v},{save});}catch(_){}};
+          i.oninput=()=>{toLook(i.value,false);set({[key]:i.value},{save:false});note();}; i.onchange=()=>{toLook(i.value,true);set({[key]:i.value});note();};}
         if(window.PCLook&&window.PCLook.hexFields)window.PCLook.hexFields(box.querySelector('.cc-theme-custom'));
-        const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{set({accent:'',bg:''});note();for(const id of ['#cc-theme-accent','#cc-theme-bg']){const i=box.querySelector(id);if(i&&i._pcHex)i._pcHex.value=i.value;}};
+        const reset=box.querySelector('#cc-theme-reset');if(reset)reset.onclick=()=>{try{if(window.PCLook&&window.PCLook.setSection)window.PCLook.setSection('concord',{accent:'',bg:''});}catch(_){}set({accent:'',bg:''});note();for(const id of ['#cc-theme-accent','#cc-theme-bg']){const i=box.querySelector(id);if(i&&i._pcHex)i._pcHex.value=i.value;}};
         /* "It should change the app theme in every page" (git issue). The colours go to Settings -> Appearance and
          * Concord switches to Match app theme, so the one look is kept in one place and Concord follows it. */
         const whole=box.querySelector('#cc-theme-whole');if(whole)whole.onclick=()=>{
