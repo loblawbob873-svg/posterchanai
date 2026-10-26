@@ -27,7 +27,8 @@ def browser_page(tmp_path):
     try:
         port = asyncio.run(wait_browser_port(proc, profile/'DevToolsActivePort', chrome_log))
         target = asyncio.run(wait_browser_target(proc, port, chrome_log))
-        with connect(target) as ws:
+        # The page is built from the WHOLE client.css (over 1 MB); the library default refuses frames past 1 MB.
+        with connect(target, max_size=64 * 1024 * 1024) as ws:
             class Page:
                 seq=0
                 def call(self,method,params):
