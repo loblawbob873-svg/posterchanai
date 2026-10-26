@@ -4476,6 +4476,8 @@
           // person on that community. Without this Back walked the history out from under it.
           if(window.PCConcord && PCConcord.communitySettingsOpen && PCConcord.communitySettingsOpen()){ try{ PCConcord.closeCommunitySettings(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
+          // Music's Now playing is the library's own card, enlarged: Back shrinks it back to the library.
+          if(window.PCMusicFull && PCMusicFull.open && PCMusicFull.open()){ try{ PCMusicFull.close(); }catch(_){} return; }
           // Communities first: thread -> channel -> channel list (concord.js backStep); opt-in, Back never leaves.
           if(_concordBack()) return;
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
@@ -11758,6 +11760,7 @@
   function musicEntries(){ return _lzRun(_musiclibMod, _musiclibLoad, 'musicEntries', arguments); }
   function musicTracks(){ return _lzRun(_musiclibMod, _musiclibLoad, 'musicTracks', arguments); }
   function trackUrl(){ return _lzRun(_musiclibMod, _musiclibLoad, 'trackUrl', arguments); }
+  function trackBlob(sha){ const m = _musiclibMod(); return (m && m.trackBlob) ? m.trackBlob(sha) : null; }
   function uploadMusicTrack(){ return _lzRun(_musiclibMod, _musiclibLoad, 'uploadMusicTrack', arguments); }
   function uploadSharedEnc(){ return _lzRun(_musiclibMod, _musiclibLoad, 'uploadSharedEnc', arguments); }
   const MusicOffline = _lzProxy(_musiclibMod, 'MusicOffline');   // the module's own object, reached through a Proxy
@@ -11770,8 +11773,8 @@
       get LOGO(){ return LOGO; },
       get _audioEl(){ return _audioEl; }, set _audioEl(v){ _audioEl = v; },
     },
-    FilesIdx, PC_setMusicPl, _capPlugin, _fmtTime, _trackMeta, _updateMusicListBtns, enc,
-    musicTracks, renderMusicApp, toast, trackUrl,
+    FilesIdx, PC_setMusicPl, _capPlugin, _fmtTime, _trackMeta, _updateMusicListBtns, _withModule, enc,
+    musicTracks, renderMusicApp, toast, trackBlob, trackUrl,
   }; }
   function _musicPlayerMod(){ return _lzGet('musicplayer.js', 'PCMusicPlayerFactory', _musicPlayerDeps); }
 
@@ -15452,7 +15455,11 @@
         const i = q.indexOf(MusicPlayer.cur);
         const nxt = (i >= 0 && i + 1 < q.length) ? (FilesIdx.meta(q[i + 1]) || {}).name : '';
         const d = (_audioEl && isFinite(_audioEl.duration)) ? _audioEl.duration : 0;
-        return { title: m.name || 'track', playing: !!(_audioEl && !_audioEl.paused),
+        // The file's own title/artist/album/cover (MusicPlayer.info), so the desktop panel shows what the
+        // Music app shows. `art` is the current track's cover object URL, '' for the generated placeholder.
+        const inf = MusicPlayer.info(MusicPlayer.cur) || {};
+        return { title: inf.title || m.name || 'track', artist: inf.artist || '', album: inf.album || '',
+                 art: inf.cover || '', hue: inf.hue || 0, playing: !!(_audioEl && !_audioEl.paused),
                  next: nxt || '', pos: i >= 0 ? i + 1 : 0, total: q.length,
                  t: (_audioEl && _audioEl.currentTime) || 0, d: d > 0 ? d : 0 };
       },

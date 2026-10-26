@@ -127,8 +127,10 @@ def test_the_native_push_is_not_gated_on_the_browser_api():
 
 
 def test_packaged_desktop_does_not_retry_unsupported_app_scheme_artwork_each_second():
-    body = re.search(r"_media\(\)\{(.*?)\n    \},", APPJS, re.S)
-    assert body, "MusicPlayer._media() moved — re-point this test"
+    # The metadata (and its artwork) is built in _mediaMeta, which _media and a track change both call.
+    body = re.search(r"_mediaMeta\(\)\{(.*?)\n    \},", APPJS, re.S)
+    assert body, "MusicPlayer._mediaMeta() moved — re-point this test"
+    assert "this._mediaMeta();" in re.search(r"_media\(\)\{(.*?)\n    \},", APPJS, re.S).group(1), "_media no longer sets the metadata"
     body = body.group(1)
     assert "new URL(S.LOGO,location.href)" in body
     assert "art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:'" in body

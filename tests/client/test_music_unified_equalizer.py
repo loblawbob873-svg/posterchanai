@@ -42,9 +42,13 @@ def test_visualizer_is_compact_so_the_library_keeps_the_screen():
     for needed in ("display:flex", "flex-direction:column", "min-height:0", "height:100%"):
         assert needed in app, "%s is gone from .music-app: %s" % (needed, app)
     assert ".music-app .music-list{flex:1;min-height:0;overflow-y:auto}" in CSS
-    mobile = CSS[CSS.index("@media(max-width:560px)"):]
-    assert ".ma-art{display:none}" in mobile
-    assert ".ma-ctl{flex:0 0 auto" in mobile
+    mobile = CSS[CSS.index("@media(max-width:560px)", CSS.index(".music-app .music-list{")):]
+    mobile = mobile[:mobile.index("\n}") + 2]
+    # The phone card keeps the COVER now (it is how a player looks), but small: the full-size cover is Now playing,
+    # one tap away, so the library still has the screen. The transport is its own full-width row at thumb size.
+    # (test_music_player_art_full_app.py measures all of it at 320-390px.)
+    assert ".ma-art{width:56px;height:56px}" in mobile, mobile
+    assert ".ma-ctl{flex:1 1 100%" in mobile, mobile
 
 
 def test_phone_transport_and_equalizer_fit_without_horizontal_overflow():

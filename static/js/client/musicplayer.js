@@ -18,10 +18,19 @@ window.PCMusicPlayerFactory = function(dep){
     FilesIdx, PC_setMusicPl, _capPlugin, _fmtTime, _trackMeta, _updateMusicListBtns, enc,
     musicTracks, renderMusicApp, toast, trackUrl,
   } = dep;
+  // audiotags.js loads on demand; harnesses that build this factory without the loader still get it if it is on the page.
+  const _tagsMod = () => window.PCAudioTags ? Promise.resolve(window.PCAudioTags)
+    : (dep._withModule ? dep._withModule('audiotags.js','PCAudioTags') : Promise.resolve(null));
   const MusicPlayer = {
     el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'',
     _eq:{low:0,mid:0,high:0}, _eqLoaded:false,
     _viz:{an:null,raf:0,failed:false,ro:null,filters:null},
+    /* WHAT THE FILE SAYS ABOUT ITSELF: title, artist, album and cover, read from the decrypted track
+     * (audiotags.js) once it is loaded. Text is kept per track (a few strings, so going back to a song
+     * shows its artist at once); a COVER is an object URL, and only the CURRENT track's is ever held
+     * -- the previous one is revoked the moment the track changes, so a long session is one picture,
+     * not a picture per song (the tablet is the device that runs out of memory). */
+    _tags:new Map(), _cover:null,
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
@@ -31,7 +40,7 @@ window.PCMusicPlayerFactory = function(dep){
       this._loadEQ();
       S._audioEl.ontimeupdate=()=>this._tick();
       S._audioEl.onended=()=>this.next();
-      S._audioEl.onplay=()=>{ this._render(); this._startViz(); this._media(); };
+      S._audioEl.onplay=()=>{ this._closedUI=false; this._render(); this._startViz(); this._media(); };
       S._audioEl.onpause=()=>{ this._render(); this._media(); };
       // Hardware / keyboard media keys (play/pause, ⏮/⏭) + OS lock-screen controls via MediaSession.
       if('mediaSession' in navigator){ const ms=navigator.mediaSession; try{
@@ -290,9 +299,11 @@ window.PCMusicPlayerFactory = function(dep){
        * down. `_nativeOff` is cleared by play(), which is the only thing that should bring it back. */
       if(!this.cur || this._nativeOff) return Promise.resolve(false);
       const P=_capPlugin('MusicControls','update'); if(!P) return Promise.resolve(false);
-      const m=_trackMeta(this.cur), d=S._audioEl?S._audioEl.duration:0;
+      const inf=this.info(this.cur)||{}, d=S._audioEl?S._audioEl.duration:0;
       try{
-        const r=P.update({ title:(m&&m.name)||'Track', artist:'PosterChan',
+        // The file's own artist and album when it has them -- the lock screen, the shade and a car's display
+        // show this line, and "PosterChan" under every song says nothing about any of them.
+        const r=P.update({ title:inf.title||'Track', artist:inf.artist||'PosterChan', album:inf.album||'',
           playing:!!(S._audioEl && !S._audioEl.paused),
           position:(S._audioEl&&S._audioEl.currentTime)||0,
           duration:(isFinite(d)&&d>0)?d:0 });
@@ -338,17 +349,20 @@ window.PCMusicPlayerFactory = function(dep){
         renderMusicApp();
       }).catch(()=>{});
     },
-    _media(){
-      // Push the current track + play state to the OS media UI so the media keys show the right song.
-      // The native push is FIRST and unconditional: in the APK it is the only one of the two that
-      // produces a lock screen, and gating it behind the browser API would tie the app's controls to
-      // a WebView feature that does not do the job (see _nativeInit).
-      this._nativePush();
-      if(!('mediaSession' in navigator)) return;
+    /* WHAT the lock screen / headset / car says is playing -- title, artist, album, artwork. Its own step so a
+     * track CHANGE can say it at once (play() calls it the moment `cur` moves): otherwise the previous song's
+     * artist and cover -- a cover whose URL has just been revoked -- stayed on the lock screen for as long as the
+     * next track took to load. Browser mediaSession only; the native session is told by _nativePush. */
+    _mediaMeta(){
+      if(typeof navigator==='undefined' || !('mediaSession' in navigator)) return;
       try{
-        const m=this.cur?_trackMeta(this.cur):null;
-        if(window.MediaMetadata){
-          const metadata={title:(m&&m.name)||'Track',artist:'PosterChan',album:'Library'};
+        const inf=this.cur?this.info(this.cur):null;
+        /* Rebuilt only when what it SAYS changes. _media runs on every play/pause and position resync, and a
+         * new MediaMetadata makes the browser fetch and decode its artwork again each time. */
+        const mdSig=inf?[this.cur,inf.title,inf.artist,inf.album,inf.cover].join('\n'):'';
+        if(window.MediaMetadata && mdSig!==this._mdSig){
+          this._mdSig=mdSig;
+          const metadata={title:(inf&&inf.title)||'Track',artist:(inf&&inf.artist)||'PosterChan',album:(inf&&inf.album)||'Library'};
           /* Chromium's MediaImage loader rejects Electron's app:// scheme. _media runs on every
            * position heartbeat, so supplying the packaged relative logo produced a fresh console
            * error and failed image load every second. The native Android session does not use this
@@ -358,8 +372,21 @@ window.PCMusicPlayerFactory = function(dep){
             if(art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:')
               metadata.artwork=[{src:art.href,sizes:'512x512',type:'image/png'}];
           }catch(_){}
+          // The track's own cover first; the logo stays as the fallback a platform can use if it cannot load a blob.
+          if(inf && inf.cover) metadata.artwork=[{src:inf.cover,sizes:'512x512'}].concat(metadata.artwork||[]);
           navigator.mediaSession.metadata=new MediaMetadata(metadata);
         }
+      }catch(_){}
+    },
+    _media(){
+      // Push the current track + play state to the OS media UI so the media keys show the right song.
+      // The native push is FIRST and unconditional: in the APK it is the only one of the two that
+      // produces a lock screen, and gating it behind the browser API would tie the app's controls to
+      // a WebView feature that does not do the job (see _nativeInit).
+      this._nativePush();
+      if(!('mediaSession' in navigator)) return;
+      try{
+        this._mediaMeta();
         navigator.mediaSession.playbackState=(S._audioEl && !S._audioEl.paused)?'playing':'paused';
         /* WHERE WE ARE IN THE TRACK. Without this a car's display has a title and nothing else: no
          * elapsed time, no remaining time, and a scrubber many head units disable outright because
@@ -389,6 +416,7 @@ window.PCMusicPlayerFactory = function(dep){
     async play(sha, opts){
       this.ensure();
       this._nativeOff=false;   // playing again is what brings the OS controls back after a close
+      this._closedUI=false;
       /* Tapping the PLAYING track in the list means pause/resume. Transport buttons must not get that
        * treatment: with a short queue every one of them resolves to the current track — next() wraps
        * (i+1)%1 back to itself, prev() likewise, and the shuffle pick can land on it — so ⏮ ⏭ and
@@ -407,7 +435,7 @@ window.PCMusicPlayerFactory = function(dep){
       // queue-order-previous isn't what you just heard). `opts.back` = we're navigating backward, don't record.
       if(this.cur && this.cur!==sha && !(opts&&opts.back)){ this._history.push(this.cur); if(this._history.length>200) this._history.shift(); }
       { const k=this._bag.indexOf(sha); if(k>=0) this._bag.splice(k,1); }   // picked by hand: not again this round
-      this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
+      this.cur=sha; this._dropCover(sha); this._loading=true; this.el.classList.remove('hidden'); this._render(); this._mediaMeta();
       /* A SKIP FROM THE CAR SAYS HOW IT WENT (2026-10-24). The phone's report showed seven ⏭ in seven seconds, every
        * one "answered" -- the page RECEIVED each press, and the song kept playing: until trackUrl() has fetched and
        * decrypted the next track the old one plays on, and each new press abandons the load before. Over mobile data
@@ -420,6 +448,7 @@ window.PCMusicPlayerFactory = function(dep){
         if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
                                      // don't clobber _audioEl.src (that's the "skip plays the wrong song" bug)
         this._loading=false; S._audioEl.src=u;
+        this._readTags(sha, u);   // not awaited: the sound must not wait for a picture
         /* Establish Android's foreground MediaSession BEFORE sound starts. Previously onplay fired
          * the native update asynchronously after play() succeeded; a quick HOME in that gap made
          * Android refuse the background FGS start, leaving the WebView process unprotected and the
@@ -569,7 +598,11 @@ window.PCMusicPlayerFactory = function(dep){
       if(f) f.style.width=(ok ? (t/d*100) : 0)+'%';
     },
     setMin(m){ this.min=m; this._render(); },
-    close(){ this._nativeOff=true; if(S._audioEl) S._audioEl.pause(); if(this.el) this.el.classList.add('hidden');
+    /* CLOSED STAYS CLOSED. pause() is asynchronous: its 'pause' event lands after this returns, runs _render, and
+     * _render's className reset took `hidden` straight back off -- so ✕ closed the player for a moment and it came
+     * back, paused. `_closedUI` holds it shut until something PLAYS again (play(), or the audio starting by any
+     * other road -- a media key, the Music app), which is when a transport on screen is wanted again. */
+    close(){ this._nativeOff=true; this._closedUI=true; if(S._audioEl) S._audioEl.pause(); if(this.el) this.el.classList.add('hidden');
       /* Take the native controls down WITH the player. A media notification (and a widget) still
        * offering to pause a track whose player has been closed is worse than none — its buttons work
        * on nothing, and on Android a lingering foreground service is what users go looking for in
@@ -628,6 +661,55 @@ window.PCMusicPlayerFactory = function(dep){
         if(c) c.textContent=_fmtTime(this._scrub!=null ? this._scrub*S._audioEl.duration : S._audioEl.currentTime);
         if(du) du.textContent=_fmtTime(S._audioEl.duration); }
     },
+    /* Revoke the cover of any track that is not `keep` -- called the moment the current track changes,
+     * BEFORE the next one has loaded, so no surface can go on drawing the old song's picture. */
+    _dropCover(keep){
+      const c=this._cover; if(!c || c.sha===keep) return;
+      this._cover=null; try{ URL.revokeObjectURL(c.url); }catch(_){}
+    },
+    async _readTags(sha, url){
+      const known=this._tags.get(sha);
+      if(known && (!known.pic || (this._cover && this._cover.sha===sha))) return;
+      let t={};
+      try{ const T=await _tagsMod();
+        if(T && T.readBlob){
+          // The bytes the player is already holding; a fetch of the URL is only the fallback for a caller without them.
+          const b=(dep.trackBlob && dep.trackBlob(sha)) || await (await fetch(url)).blob();
+          t=await T.readBlob(b); } }catch(_){ t={}; }
+      const p=t.picture, pic=!!(p && p.data && p.data.length);
+      this._tags.delete(sha);
+      this._tags.set(sha, { title:t.title||'', artist:t.artist||'', album:t.album||'', pic });
+      // A small library of strings, but not an unbounded one.
+      if(this._tags.size>500){ const k=this._tags.keys().next().value; if(k!==this.cur) this._tags.delete(k); }
+      // A skip landed while this was reading: the picture belongs to a track nobody is looking at.
+      if(this.cur!==sha) return;
+      if(pic){ this._dropCover(null); this._cover={ sha, url:URL.createObjectURL(new Blob([p.data],{type:p.mime||'image/jpeg'})) }; }
+      /* NOT IN THE MIDDLE OF A SEEK. _render abandons any drag (it rebuilds the widget under the pointer), so a
+       * cover that finished reading while a finger was on the scrubber cancelled that seek -- the bar sprang back
+       * and nothing moved. The picture waits for the drag to end; it is a picture, the seek is what was asked. */
+      const show=(n)=>{ if(this.cur!==sha) return;
+        if(this._scrub!=null && n<50){ setTimeout(()=>show(n+1), 200); return; }
+        this._mdSig=''; this._render(); this._media(); };
+      show(0);
+    },
+    /* One description of a track for every surface (the widget, the Music app, the desktop's Now playing,
+     * the lock screen): the file's own tags where it has them, the library's name where it does not.
+     * `cover` is only ever the CURRENT track's (see _tags); everything else draws the placeholder. */
+    info(sha){
+      sha=sha||this.cur; if(!sha) return null;
+      const m=_trackMeta(sha)||{}, t=this._tags.get(sha)||{};
+      return { title:t.title||m.name||'track', artist:t.artist||'', album:t.album||'',
+               cover:(this._cover && this._cover.sha===sha) ? this._cover.url : '',
+               hue:parseInt(String(sha).replace(/[^0-9a-f]/gi,'').slice(0,6)||'0',16)%360 };
+    },
+    /* The art square. With no cover it is a GENERATED one -- a gradient and a note, its colour fixed per
+     * track -- never a broken image: a library of untagged files is the common case, not the exception. */
+    artHtml(sha, cls){
+      const i=sha||this.cur ? this.info(sha) : null, h=i?i.hue:200, cover=i&&i.cover;
+      return '<div class="pc-art'+(cls?' '+cls:'')+(cover?'':' ph')+'" style="--art-h:'+h+'" data-art="'+(cover?'cover':'placeholder')+'">'
+        +(cover ? '<img class="pc-art-img" src="'+enc(cover)+'" alt="" decoding="async" draggable="false">'
+                : '<svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg>')+'</div>';
+    },
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
@@ -651,22 +733,27 @@ window.PCMusicPlayerFactory = function(dep){
        * person opens creates a SECOND player UI even though both drive the same audio element. Keep
        * the engine alive, but keep its old browser widget out of the APK. Reopening Music paints the
        * full app from this object's unchanged state. */
-      if(_capPlugin('MusicControls','addListener') || document.getElementById('ma-lib')){
+      if(this._closedUI || _capPlugin('MusicControls','addListener') || document.getElementById('ma-lib')){
         d.classList.add('hidden'); return;
-      } const m=this.cur?_trackMeta(this.cur):null; const name=(m&&m.name)||'—';
-      const playing=S._audioEl && !S._audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
+      } const inf=this.cur?this.info(this.cur):null; const name=(inf&&inf.title)||'—';
+      const by=inf ? [inf.artist,inf.album].filter(Boolean).join(' · ') : '';
+      // Sprite icons, not ⏸/▶ characters: those drew as colour-emoji tiles on one machine and empty boxes on another.
+      const playing=S._audioEl && !S._audioEl.paused;
+      const pl=this._loading?'…':`<svg class="ic b-ic" aria-hidden="true"><use href="#i-${playing?'pause':'play'}"></use></svg>`;
       const playLabel=this._loading?'Loading track':(playing?'Pause':'Play');
       if(this.min){
         d.className='mp mp-mini'+(playing?' playing':'');
-        d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play" title="${playLabel}" aria-label="${playLabel}">${pl}</button><button class="mp-exp" title="Expand" aria-label="Expand player"><svg class="ic x-ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>`;
+        d.innerHTML=`<span class="mp-eq${playing?' on':''}">${this.artHtml(this.cur,'mp-thumb')}</span><span class="mp-title" title="${enc(name)}">${enc(name)}${inf&&inf.artist?`<small class="mp-by">${enc(inf.artist)}</small>`:''}</span><button class="mp-play" title="${playLabel}" aria-label="${playLabel}">${pl}</button><button class="mp-exp" title="Expand" aria-label="Expand player"><svg class="ic x-ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>`;
       } else {
         d.className='mp'+(playing?' playing':'');
-        d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize"><svg class="ic x-ic" aria-hidden="true"><use href="#i-minimize"></use></svg></button><button class="mp-close" title="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+        d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">NOW PLAYING</span><button class="mp-min" title="Minimize"><svg class="ic x-ic" aria-hidden="true"><use href="#i-minimize"></use></svg></button><button class="mp-close" title="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+          <div class="mp-hero">${this.artHtml(this.cur,'mp-art')}<div class="mp-hero-meta">
+            <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
+            <div class="mp-artist${by?'':' empty'}">${enc(by||'Unknown artist')}</div></div></div>
           <canvas class="mp-viz"></canvas>
-          <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
           <div class="mp-seek"><div class="mp-seek-fill"></div></div>
           <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
-          <div class="mp-controls"><button class="mp-prev" title="Previous"><svg class="ic x-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next"><svg class="ic x-ic" aria-hidden="true"><use href="#i-next"></use></svg></button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button></div>
+          <div class="mp-controls"><button class="mp-prev" title="Previous"><svg class="ic x-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button><button class="mp-play mp-big" title="${playLabel}" aria-label="${playLabel}">${pl}</button><button class="mp-next" title="Next"><svg class="ic x-ic" aria-hidden="true"><use href="#i-next"></use></svg></button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button></div>
           <div class="mp-search-row">${this._plPickHtml()}<input class="mp-search" type="search" placeholder="🔍 Search tracks…" value="${enc(this._search||'')}"></div>
           <div class="mp-list">${this._listHtml()}</div>`;
       }

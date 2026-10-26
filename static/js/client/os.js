@@ -8244,6 +8244,7 @@
             <div class="wgt-mart"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
             <div class="wgt-mmeta">
               <div class="wgt-mtitle wgt-dim">Nothing playing</div>
+              <div class="wgt-martist"></div>
               <div class="wgt-mnext wgt-dim"></div>
             </div>
           </div>
@@ -8332,7 +8333,30 @@
         if(nx) nx.textContent = (now && now.next) ? ('next · ' + now.next)
                               : (now && now.total > 1 ? (now.pos + ' of ' + now.total) : '');
         const art = $('.wgt-mart', el);
-        if(art) art.classList.toggle('spin', !!(now && now.playing));
+        if(art){
+          art.classList.toggle('spin', !!(now && now.playing));
+          /* THE TRACK'S OWN COVER when the file carries one (the player reads it from the tags), the note on a
+           * colour fixed per track when it does not. Swapped only when it CHANGES -- this runs every second, and
+           * re-setting an <img> src restarts its decode. A cover from another renderer (a Music window) that
+           * cannot be loaded here falls back to the placeholder rather than a broken image. */
+          const src = (now && now.art) || '';
+          art.style.setProperty('--art-h', String((now && now.hue) || 200));
+          if(art.dataset.src !== src){
+            art.dataset.src = src;
+            art.classList.toggle('has-cover', !!src);
+            art.textContent = '';
+            if(src){
+              const img = document.createElement('img');
+              img.className = 'pc-art-img'; img.alt = ''; img.draggable = false; img.decoding = 'async';
+              img.onerror = () => { if(art.dataset.src !== src) return; art.classList.remove('has-cover');
+                art.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg>'; };
+              img.src = src; art.appendChild(img);
+            } else art.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg>';
+          }
+        }
+        const by = $('.wgt-martist', el);
+        if(by){ const a = (now && [now.artist, now.album].filter(Boolean).join(' · ')) || '';
+          if(by.textContent !== a) by.textContent = a; by.classList.toggle('hidden', !a); }
         /* THE MIDDLE OF THE PANEL, which was a hole between the title and the transport. A player's
          * missing piece is where you ARE in the track — and it is what makes the space earn itself.
          * Updated from the player's existing once-a-second hook, so there is no new timer and nothing
