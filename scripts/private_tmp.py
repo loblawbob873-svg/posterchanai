@@ -144,8 +144,15 @@ def enter(prefix='pct-'):
 
 
 def child_env(env, path):
-    """`env` with TMPDIR (and the ownership mark) pointing at `path`."""
+    """`env` with TMPDIR (and the ownership mark) pointing at `path` -- and NO session D-Bus.
+
+    Every headless Chrome a test starts registers with the desktop's xdg-desktop-portal over the session bus
+    (`org.freedesktop.host.portal.Registry.Register`), and the portal never lets go: measured on server1 2026-10-25,
+    the portal grew only while a gate ran (12 -> 42 MB over four gates, flat in between) and had reached 29 GB after
+    five days, which tripped the deploy watchdog. No test needs the user's bus -- the Electron tests drop it and the
+    shell tests bring their own -- so the children get `disabled:` (Chrome then registers nothing: 1 -> 0, measured).
+    """
     out = dict(env)
     _keep_pytest_short(out, _root())
-    out.update(TMPDIR=path, **{ENV_MARK: path})
+    out.update(TMPDIR=path, DBUS_SESSION_BUS_ADDRESS='disabled:', **{ENV_MARK: path})
     return out
