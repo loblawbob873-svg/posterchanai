@@ -129,6 +129,22 @@ public class MusicCarButtonsDeviceTest {
     @Test
     public void theStandbySessionNeverTakesTheButtonsFromAPlayingTrack() throws Exception {
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        /* NO PLAYER SESSION BEFORE THE STANDBY ONE IS ASKED FOR. The standby session stands aside while a real player
+         * session exists -- correctly -- so a player left over from the previous case makes this test wait out
+         * THAT session's death. Measured on the nas emulator 2026-10-26: the standby service started at :21.1, the
+         * previous case's player died at :26.6, the standby opened that same millisecond -- 0.07 s after this test
+         * had given up. The teardown already waits for MusicService to go, but the page can start a fresh one behind
+         * it. So the precondition is checked HERE: no session for one steady second, or the failure says so. */
+        int clear = 0;
+        for (int i = 0; i < 150 && clear < 10; i++) {
+            clear = (MusicService.INSTANCE == null || !sessionActive()) ? clear + 1 : 0;
+            if (clear == 0 && i % 20 == 0) {
+                try { ctx.startService(MusicService.intent(ctx, MusicService.ACTION_STOP)); } catch (Throwable ignored) { }
+            }
+            SystemClock.sleep(100);
+        }
+        assertTrue("a player session from the previous case is still alive after 15 s -- the standby session would "
+                + "rightly stand aside for it: " + sessionReport(), clear >= 10);
         MusicService.setAutoplayBluetooth(ctx, true);
         androidx.core.content.ContextCompat.startForegroundService(ctx,
                 new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_START));
