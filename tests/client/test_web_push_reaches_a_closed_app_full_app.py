@@ -146,6 +146,16 @@ def test_push_enabled_in_the_app_reaches_it_closed_and_stops_when_turned_off(tmp
 
             # The app is CLOSED; somebody mentions this account.
             await ph.close_page(pg)
+            # ...closed as far as the WORKER knows. The push handler shows nothing while a window is visible (the open
+            # app raises its own), and under load a just-closed page is still one of its clients for a moment -- so a
+            # push delivered at once was rightly suppressed and this test failed 3 in 10 run 10-up. Wait for that.
+            w = await ph.worker()
+            for _ in range(100):
+                if not await w.js("clients.matchAll({type:'window',includeUncontrolled:true}).then(c=>c.length)"):
+                    break
+                await asyncio.sleep(.1)
+            else:
+                raise AssertionError('the closed page is still a window of the service worker after 10 s')
             ev = api.run(mention('are you there nostr:me'))
             for _ in range(100):
                 if svc.received.get(tok):
