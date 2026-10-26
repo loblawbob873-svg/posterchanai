@@ -93,10 +93,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # RETRIED ONCE. The SDK download is GitHub's network, not our code: on 2026-10-26 one run died on
+      # "Error on ZipFile unknown archive" (a corrupt emulator package), which skips every device test and
+      # blocks the APK and its Zapstore listing until somebody re-runs the job by hand.
+      - id: sdk1
+        uses: android-actions/setup-android@v3
+        continue-on-error: true
         with:
           # Install the emulator before wrapping its executable below; fresh runners lack it.
           # The action's default also includes the retired "tools" SDK package.
+          packages: 'platform-tools emulator'
+      - name: Wait before retrying the SDK install
+        if: steps.sdk1.outcome == 'failure'
+        run: sleep 30
+      - id: sdk2
+        if: steps.sdk1.outcome == 'failure'
+        uses: android-actions/setup-android@v3
+        with:
           packages: 'platform-tools emulator'
 
       - name: Install Capacitor deps
