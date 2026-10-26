@@ -181,7 +181,10 @@
       if(c._pcHex) return;
       const t = document.createElement('input');
       t.type = 'text'; t.className = 'input look-hex'; t.maxLength = 7; t.spellcheck = false;
-      t.autocomplete = 'off'; t.setAttribute('autocapitalize', 'off'); t.placeholder = '#rrggbb'; t.value = c.value;
+      t.autocomplete = 'off'; t.setAttribute('autocapitalize', 'off'); t.placeholder = '#rrggbb';
+      /* defaultValue too: Settings treats a field whose value differs from its default as an UNSAVED EDIT and will not
+       * redraw over it (settings.js renderUserSettings hadEdits) -- a box born with only .value set froze Settings. */
+      t.defaultValue = c.value; t.value = c.value;
       const lab = c.closest('label');
       t.setAttribute('aria-label', ((lab && lab.textContent.trim()) || 'Colour') + ' as a #rrggbb code');
       (lab || c).insertAdjacentElement('afterend', t);

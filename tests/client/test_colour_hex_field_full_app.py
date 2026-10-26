@@ -42,6 +42,8 @@ def test_a_typed_hex_code_sets_the_colour_live_and_saves_on_enter():
         await b.js("document.querySelector('.us-tab[data-tab=\"appearance\"]').click()")
         got["boxes"] = await b.js("document.querySelectorAll('#us-look .look-hex').length===document.querySelectorAll('#us-look input[type=color]').length"
                                   "&&document.querySelectorAll('#us-look .look-hex').length>0")
+        # A new box is not an edit: Settings refuses to redraw over a field whose value differs from its default.
+        got["not_edits"] = await b.js("[...document.querySelectorAll('#us-look .look-hex')].every(t=>t.value===t.defaultValue&&t.value)")
         got["fits"] = await b.js("[...document.querySelectorAll('#us-look .look-hex')].every(e=>{const r=e.getBoundingClientRect();return r.width>40&&r.right<=innerWidth+1})")
         await _type(b, ACCENT_HEX, "#d10000")
         got["live"] = await b.js(NEON)
@@ -66,6 +68,7 @@ def test_a_typed_hex_code_sets_the_colour_live_and_saves_on_enter():
 
     asyncio.run(desktop.with_browser("online", "", check, NO_OS))
     assert got["boxes"], ("not every colour picker has a #rrggbb box", got)
+    assert got["not_edits"], ("a fresh #rrggbb box reads as an unsaved edit -- Settings will not redraw", got)
     assert got["fits"], ("a #rrggbb box is missing or off the screen", got)
     assert got["live"] == "#d10000", ("typing a code does not show it", got)
     assert got["saved"] == "#d10000", ("Enter did not save the typed colour", got)
