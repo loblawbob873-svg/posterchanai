@@ -3077,6 +3077,59 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    * use the row, so its single-line title truncates far later. */
   #music-player.mp-mini{inset-inline-end:8px;bottom:76px;max-width:calc(100vw - 16px)}
 }
+/* ── ALBUM ART, shared by every player surface (MusicPlayer.artHtml) ──
+ * The track's own cover when the file carries one; otherwise a GENERATED cover -- two neon glows on a
+ * dark plate, their hue fixed per track (--art-h, from the sha) so a library of untagged files still
+ * reads as different songs rather than one grey square repeated. Never a broken image. */
+.pc-art{position:relative;display:grid;place-items:center;overflow:hidden;width:100%;height:100%;
+  aspect-ratio:1;border-radius:inherit;isolation:isolate;
+  background:radial-gradient(120% 95% at 18% 12%,hsl(var(--art-h,200) 95% 60% / .85),transparent 56%),
+    radial-gradient(110% 100% at 88% 92%,hsl(calc(var(--art-h,200) + 130) 92% 56% / .8),transparent 60%),
+    linear-gradient(140deg,hsl(calc(var(--art-h,200) + 40) 65% 16%),#07030f)}
+.pc-art.ph::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 4px)}
+.pc-art .ic{position:absolute;inset:0;margin:auto;width:40%;height:40%;color:#fff;opacity:.9;
+  filter:drop-shadow(0 0 10px hsl(var(--art-h,200) 100% 70% / .85))}
+.pc-art-img{display:block;width:100%;height:100%;object-fit:cover}
+
+/* The floating widget, laid out like a player: cover and title/artist side by side, the spectrum
+ * under them, then the scrubber and the transport. It hangs off <html>, not <body> (body's zoom would
+ * misplace it), so it inherits NOTHING from body -- the font has to be said here, exactly as the popovers
+ * say it (.menu-pop), or the player draws in the browser's default serif. */
+#music-player{font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif}
+.mp-hero{display:flex;align-items:center;gap:12px;padding:12px 14px 6px;position:relative;z-index:1}
+.mp-art{flex:none;width:76px;height:76px;border-radius:12px;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(255,255,255,.08),0 8px 22px rgba(0,0,0,.45),0 0 18px rgba(0,240,255,.22)}
+.mp-hero-meta{flex:1;min-width:0}
+#music-player.mp:not(.mp-mini) .mp-hero .mp-now{padding:0}
+.mp-artist{margin-top:4px;font-size:12px;color:var(--cyan,#0ff);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-artist.empty{color:var(--muted)}
+.mp-viz{height:36px;width:auto;margin:6px 14px 0;border-radius:10px;border-bottom:0;
+  background:linear-gradient(180deg,transparent,rgba(0,240,255,.10))}
+#music-player.mp-mini .mp-eq{flex:none;display:block;width:34px;height:34px;border-radius:9px;overflow:hidden;font-size:0;
+  box-shadow:0 0 0 1px rgba(255,255,255,.1)}
+#music-player.mp-mini .mp-eq.on{animation:none;box-shadow:0 0 0 1px var(--cyan,#0ff),0 0 12px rgba(0,240,255,.55)}
+#music-player.mp-mini .mp-thumb .ic{width:52%;height:52%}
+#music-player.mp-mini .mp-title .mp-by{display:block;font-size:11px;color:var(--cyan,#0ff);opacity:.85;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:820px){
+  /* Full screen on a phone: the cover is the point of the screen -- large and centred, sized by the
+   * HEIGHT as well as the width so a short phone (or landscape) never pushes the transport off it. */
+  #music-player.mp:not(.mp-mini) .mp-hero{flex-direction:column;text-align:center;gap:14px;padding:18px 16px 6px}
+  #music-player.mp:not(.mp-mini) .mp-art{width:min(62vw,30vh,300px);height:auto;aspect-ratio:1;border-radius:18px}
+  #music-player.mp:not(.mp-mini) .mp-hero-meta{width:100%}
+  #music-player.mp:not(.mp-mini) .mp-hero .mp-now{font-size:20px}
+  #music-player.mp:not(.mp-mini) .mp-artist{font-size:15px}
+  #music-player.mp:not(.mp-mini) .mp-viz{height:44px;margin:8px 16px 0}
+  #music-player.mp:not(.mp-mini) .mp-controls button{min-width:48px;min-height:48px}
+}
+@media(max-width:820px) and (max-height:520px){
+  #music-player.mp:not(.mp-mini) .mp-hero{flex-direction:row;text-align:start;padding:10px 16px 4px}
+  #music-player.mp:not(.mp-mini) .mp-art{width:min(28vh,120px)}
+  #music-player.mp:not(.mp-mini) .mp-viz{display:none}
+}
+@media(prefers-reduced-motion:reduce){ .mp-scan{animation:none} }
+
 /* Signup captcha (anti-spam) */
 .captcha-box{margin:12px 0;padding:12px;border:1px solid rgba(0,240,255,.3);border-radius:12px;background:rgba(0,240,255,.05)}
 .captcha-lbl{font-size:12px;color:var(--cyan,#0ff);font-weight:700;margin-bottom:8px;letter-spacing:.5px}
@@ -8315,6 +8368,20 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
   justify-content:center;background:radial-gradient(circle at 50% 50%,rgba(var(--accent-rgb),.35) 0 22%,
   var(--bg2) 23% 100%);border:1px solid var(--line);box-shadow:inset 0 0 12px rgba(0,0,0,.55)}
 .wgt-mart .ic{width:17px;height:17px;color:var(--neon)}
+/* The track's own cover turns as the record when the file has one; otherwise the disc stays the
+ * player's generated colour (--art-h, per track). */
+.wgt-mart{overflow:hidden}
+.wgt-mart.has-cover{background:#000;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 0 16px rgba(var(--accent-rgb),.35)}
+.wgt-mart .pc-art-img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+/* A track with no cover of its own: the SAME generated cover the player draws (MusicPlayer.artHtml), on the disc. */
+.os-wgt .wgt-music .wgt-mart.ph{border-color:transparent;
+  background:radial-gradient(circle at 50% 50%,rgba(0,0,0,.55) 0 9%,transparent 10%),
+    radial-gradient(120% 95% at 18% 12%,hsl(var(--art-h,200) 95% 60% / .9),transparent 56%),
+    radial-gradient(110% 100% at 88% 92%,hsl(calc(var(--art-h,200) + 130) 92% 56% / .85),transparent 60%),
+    linear-gradient(140deg,hsl(calc(var(--art-h,200) + 40) 65% 16%),#07030f);
+  box-shadow:0 0 0 1px rgba(255,255,255,.08),0 0 16px hsl(var(--art-h,200) 90% 55% / .45)}
+.os-wgt .wgt-music .wgt-mart.ph .ic{color:#fff;filter:drop-shadow(0 0 6px hsl(var(--art-h,200) 100% 70% / .9))}
+.wgt-martist{font-size:11px;margin-top:1px;color:var(--cyan,var(--neon));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wgt-mart.spin{animation:wgtspin 4s linear infinite}
 @keyframes wgtspin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){ .wgt-mart.spin{animation:none} }
@@ -9233,20 +9300,33 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 
 /* The Music APP — a player, not the file manager's Music folder. */
 .music-app{display:flex;flex-direction:column;gap:8px;padding:10px 12px;min-height:0;height:100%}
-.ma-now{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:center;gap:8px 10px;
-  flex-wrap:wrap;padding:10px 12px;border-radius:14px;background:var(--panel2);border:1px solid var(--line)}
+/* THE NOW-PLAYING CARD: dark glass with a neon edge, the cover on the left, title and artist, the
+ * transport, and the scrubber on its own full-width row. Tapping the cover opens Now playing. */
+.ma-now{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:center;gap:8px 12px;
+  flex-wrap:wrap;padding:12px 14px;border-radius:18px;
+  background:linear-gradient(150deg,rgba(var(--accent-rgb),.16),transparent 55%),var(--panel2);
+  border:1px solid rgba(var(--accent-rgb),.32);
+  box-shadow:0 0 0 1px rgba(255,255,255,.03) inset,0 10px 28px rgba(0,0,0,.28),0 0 22px rgba(var(--accent-rgb),.12)}
 .ma-now>*:not(.ma-viz){position:relative;z-index:1}
-.ma-art{width:44px;height:44px;border-radius:10px;flex:0 0 auto;display:flex;align-items:center;
-  justify-content:center;background:linear-gradient(135deg,rgba(var(--accent-rgb),.28),transparent);
-  border:1px solid var(--line)}
-.ma-art .ic{width:26px;height:26px;color:var(--neon)}
+.ma-art{width:72px;height:72px;flex:0 0 auto;padding:0;border:0;border-radius:14px;background:none;cursor:pointer;
+  display:block;overflow:visible;-webkit-tap-highlight-color:transparent}
+.ma-art .pc-art{border-radius:14px;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.4),
+  0 0 18px hsl(var(--art-h,200) 90% 55% / .35);transition:transform .18s ease}
+.ma-art:hover .pc-art{transform:scale(1.03)}
+.ma-art:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
 .ma-meta{flex:1 1 170px;min-width:0}
-.ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
+.ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:17px}
+.ma-artist{display:block;font-size:13px;color:var(--cyan,var(--neon));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.ma-meta .small{display:block;margin-top:2px}
+.music-app:not(.ma-full) #ma-collapse{display:none}
 .ma-ctl{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap}
-.ma-ctl .btn{width:36px;height:36px;padding:0;justify-content:center;border-radius:50%}
-.ma-ctl #ma-play{width:44px;height:44px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
-.ma-viz{display:block;position:absolute;z-index:0;inset:0;width:100%;height:100%;opacity:.34;
-  pointer-events:none;background:radial-gradient(ellipse at bottom,rgba(0,240,255,.13),transparent 72%)}
+.ma-ctl .btn{width:44px;height:44px;padding:0;justify-content:center;border-radius:50%}
+.ma-ctl #ma-play{width:52px;height:52px;border:0;color:#06010f;
+  background:linear-gradient(135deg,var(--neon),var(--neon2,var(--neon)));
+  box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 0 22px rgba(var(--accent-rgb),.5)}
+.ma-ctl #ma-play .ic{width:22px;height:22px}
+.ma-viz{display:block;flex:1 1 100%;width:100%;height:30px;border-radius:10px;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(var(--accent-rgb),.10));box-shadow:inset 0 -1px 0 rgba(0,240,255,.18)}
 .ma-tools{flex:1 1 100%;display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
 /* The Music app's seek row. Full width of the panel (flex-basis 100% in a wrapping .ma-now), so the
  * bar is never squeezed to a stub by the buttons beside it. `touch-action:none` is load-bearing on a
@@ -9335,15 +9415,128 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 @media(max-width:560px){
   .music-app{padding:8px 8px;gap:8px}
-  .ma-now{justify-content:center;padding:8px 8px;gap:6px 8px}
-  .ma-art{display:none}
-  .ma-meta{flex:1 1 76px}.ma-meta b{font-size:13px}.ma-meta .small{font-size:11px}
-  .ma-ctl{flex:0 0 auto;order:2;gap:4px}
-  .ma-ctl .btn{width:32px;height:32px}.ma-ctl #ma-play{width:38px;height:38px}
-  .ma-viz{order:0}.ma-seek-row{order:5}
-  .ma-tools{order:6;justify-content:center}.ma-tools .btn{min-height:32px;padding:6px 8px}
-  .ma-eq{order:7}
+  /* A phone's card: cover + title/artist on the first row, the scrubber, then the transport across the
+   * whole width at thumb size -- every target is 44px or more. */
+  .ma-now{padding:10px 10px;gap:8px 10px}
+  .ma-art{width:56px;height:56px}
+  .ma-art .pc-art{border-radius:12px}
+  .ma-meta{flex:1 1 0}.ma-meta b{font-size:15px}.ma-artist{font-size:12px}.ma-meta .small{font-size:11px}
+  .ma-ctl{flex:1 1 100%;order:6;gap:14px}
+  .ma-ctl #ma-play{width:56px;height:56px}
+  .ma-viz{order:4;height:26px}.ma-seek-row{order:5}
+  .ma-tools{order:7;justify-content:center}.ma-tools .btn{min-height:40px;padding:6px 10px}
+  .ma-eq{order:8}
   .ma-eq-bands{grid-template-columns:1fr;gap:8px}
+}
+/* NOW PLAYING (.ma-full): the same card, filling the Music screen. The library steps aside; the cover
+ * is large at the top and the transport sits at the bottom, where a thumb is. The cover is sized by the
+ * screen's HEIGHT as well as its width, so on a short phone it shrinks rather than pushing the
+ * controls off the bottom. */
+.music-app.ma-full>:not(.ma-now){display:none}
+.music-app.ma-full .ma-now{flex:1 1 auto;min-height:0;flex-direction:column;flex-wrap:nowrap;align-items:stretch;
+  justify-content:space-between;gap:12px;padding:14px 16px calc(16px + env(safe-area-inset-bottom));overflow-y:auto;
+  border-radius:20px}
+.music-app.ma-full .ma-viz{order:3;flex:0 0 auto;height:44px}
+.music-app.ma-full .ma-collapse{display:inline-flex;position:absolute;top:10px;inset-inline-start:10px;z-index:2;
+  width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));padding:0;justify-content:center;border-radius:50%}
+/* The cover's BOX takes whatever height the text and the transport leave (flex 1 1 0, min-height 0) and is
+ * a size container; the square inside is 100cqmin of it, so it is as big as fits and never bigger -- on a
+ * 320x640 phone it shrinks, and the play button stays on screen. The vh width is the fallback for an
+ * engine without container units. */
+.music-app.ma-full .ma-art{order:1;align-self:stretch;width:auto;height:auto;flex:1 1 0;min-height:96px;
+  margin-top:46px;cursor:default;container-type:size;display:grid;place-items:center}
+.music-app.ma-full .ma-art .pc-art{width:min(100%,40vh,420px);height:auto;width:min(100cqmin,420px);height:min(100cqmin,420px)}
+.music-app.ma-full .ma-art .pc-art{border-radius:22px;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 24px 60px -12px rgba(0,0,0,.7),
+  0 0 46px hsl(var(--art-h,200) 90% 55% / .45)}
+.music-app.ma-full .ma-art:hover .pc-art{transform:none}
+.music-app.ma-full .ma-meta{order:2;flex:0 0 auto;text-align:center}
+.music-app.ma-full .ma-meta b{font-size:20px;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2}
+.music-app.ma-full .ma-artist{font-size:15px}
+.music-app.ma-full .ma-seek-row{order:4;flex:0 0 auto}
+.music-app.ma-full .ma-ctl{order:5;flex:0 0 auto;gap:22px}
+.music-app.ma-full .ma-ctl .btn{width:52px;height:52px}
+.music-app.ma-full .ma-ctl #ma-play{width:72px;height:72px}
+.music-app.ma-full .ma-ctl #ma-play .ic{width:28px;height:28px}
+.music-app.ma-full .ma-tools{order:6;flex:0 0 auto;justify-content:center}
+.music-app.ma-full .ma-eq{order:7;flex:0 0 auto}
+/* A SHORT portrait screen (a small phone, the keyboard-less 360x600 class): the cover gets the height the
+ * spacing was taking -- no top margin (the chevron sits in the corner beside a narrower cover), tighter gaps,
+ * and the "playing" line goes (the transport already says it). */
+@media(orientation:portrait) and (max-height:700px){
+  .music-app.ma-full .ma-now{gap:8px;padding-top:10px}
+  .music-app.ma-full .ma-art{margin-top:0;min-height:120px}
+  .music-app.ma-full .ma-art .pc-art{--s:min(100cqmin, calc(100cqw - 116px), 420px);width:var(--s);height:var(--s)}
+  .music-app.ma-full .ma-meta .small{display:none}
+  .music-app.ma-full .ma-meta b{font-size:17px}
+  .music-app.ma-full .ma-ctl{gap:16px}
+}
+/* WIDE (a desktop window or tab, a tablet, a phone on its side): the cover on the left, everything else beside
+ * it, decided by the WIDTH THE PLAYER HAS (a container query), not the screen -- a Music window can be narrow
+ * on a wide monitor, and a wide one must not be a small cover floating in an empty card. The cover takes the
+ * smaller of half that width and ~70% of the screen's height (vh is divided by the page zoom, --zf). */
+.music-app.ma-full{container:maf / inline-size}
+@container maf (min-width:640px){
+  .music-app.ma-full .ma-now{display:grid;grid-template-columns:auto minmax(0,1fr);
+    grid-template-rows:1fr auto auto auto auto auto 1fr;column-gap:clamp(24px,4cqw,56px);row-gap:14px;align-items:center;
+    padding:clamp(16px,3cqw,36px)}
+  .music-app.ma-full .ma-art{grid-column:1;grid-row:1 / -1;width:min(50cqw,calc(70vh / var(--zf,1)),760px);height:auto;aspect-ratio:1;
+    flex:none;min-height:0;margin-top:0;align-self:center;container-type:normal}
+  .music-app.ma-full .ma-art .pc-art,.music-app.ma-full .ma-art .pc-art{--s:100%;width:100%;height:100%}
+  .music-app.ma-full .ma-meta{grid-column:2;grid-row:2;text-align:start}
+  .music-app.ma-full .ma-viz{grid-column:2;grid-row:3}
+  .music-app.ma-full .ma-seek-row{grid-column:2;grid-row:4}
+  .music-app.ma-full .ma-ctl{grid-column:2;grid-row:5;justify-content:flex-start}
+  .music-app.ma-full .ma-tools{grid-column:2;grid-row:6;justify-content:flex-start}
+  .music-app.ma-full .ma-eq{grid-column:1 / -1;grid-row:auto}
+  /* The chevron goes to the empty top of the text column: at the top-left it sat on the cover's corner. */
+  .music-app.ma-full .ma-collapse{inset-inline-start:auto;inset-inline-end:12px}
+}
+/* A BIG view (a maximised desktop window, a desktop tab): type and transport grow with it, the way a desktop
+ * player's Now playing fills the screen rather than leaving a phone-sized column in the middle of it. */
+@container maf (min-width:900px){
+  .music-app.ma-full .ma-meta b{font-size:30px}
+  .music-app.ma-full .ma-artist{font-size:20px;margin-top:6px}
+  .music-app.ma-full .ma-viz{height:56px}
+  .music-app.ma-full .ma-seek{height:16px}
+  .music-app.ma-full .ma-seek-row .ma-t{font-size:15px}
+  .music-app.ma-full .ma-ctl{gap:28px}
+  .music-app.ma-full .ma-ctl .btn{width:64px;height:64px}
+  .music-app.ma-full .ma-ctl .btn .ic{width:24px;height:24px}
+  .music-app.ma-full .ma-ctl #ma-play{width:88px;height:88px}
+  .music-app.ma-full .ma-ctl #ma-play .ic{width:34px;height:34px}
+}
+@media(orientation:landscape) and (max-height:520px){
+  /* No room for the strip on a phone held sideways: it goes, and so does its grid row (a hidden item still
+   * leaves its row's gaps), and the "playing" line -- the transport already says it. */
+  .music-app.ma-full .ma-now{padding:10px 14px;row-gap:8px;grid-template-rows:1fr auto auto auto auto 1fr}
+  .music-app.ma-full .ma-seek-row{grid-row:3}.music-app.ma-full .ma-ctl{grid-row:4}.music-app.ma-full .ma-tools{grid-row:5}
+  .music-app.ma-full .ma-meta .small{display:none}
+  .music-app.ma-full .ma-art{width:min(calc(52vh / var(--zf,1)),36cqw)}
+  .music-app.ma-full .ma-viz{display:none}
+  .music-app.ma-full .ma-ctl .btn{width:calc(46px / var(--zf,1));height:calc(46px / var(--zf,1))}
+  .music-app.ma-full .ma-ctl #ma-play{width:calc(58px / var(--zf,1));height:calc(58px / var(--zf,1))}
+  .music-app.ma-full .ma-meta b{font-size:17px}
+}
+@media(prefers-reduced-motion:reduce){ .ma-art .pc-art{transition:none} }
+/* The card never gives up height to the column: on a short screen (a phone on its side) a shrinking card
+ * clipped its own cover and let the playlist bar draw over it. The library list is what absorbs the slack. */
+.music-app:not(.ma-full)>.ma-now,.music-app>#ma-plbar,.music-app>.ma-q{flex-shrink:0}
+/* ...and on a SHORT screen (600px or less) there is no slack to absorb: header, card, chips and search already
+ * fill a small phone or one held sideways, and the list's own scroll box was left a sliver under the bottom nav. There the Music screen
+ * scrolls as one page instead (the list pages with its "Show more" button, not by scroll position). */
+@media(max-width:820px){ .ma-tools .btn{min-height:44px} }
+@media(max-height:600px){
+  .music-app:not(.ma-full){height:auto}
+  .music-app:not(.ma-full) .music-list{flex:none;overflow:visible}
+}
+/* A FINGER ON A ZOOMED PAGE. Between 821 and 1920px the whole page is drawn at body{zoom} (~.67-.77), so a
+ * 44px control is ~32 physical pixels -- fine for a mouse, a miss for a thumb on a phone held sideways or a
+ * tablet. On a coarse pointer the player's controls are sized back up by the zoom (--zf). */
+@media(pointer:coarse) and (min-width:821px){
+  .ma-ctl .btn,.music-app.ma-full .ma-ctl .btn,.music-app .ma-collapse{width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1))}
+  .ma-ctl #ma-play,.music-app.ma-full .ma-ctl #ma-play{width:calc(58px / var(--zf,1));height:calc(58px / var(--zf,1))}
+  .ma-tools .btn{min-height:calc(44px / var(--zf,1))}
 }
 
 /* The account chip at the foot of the start menu — where Windows 11 keeps it. */

@@ -24,7 +24,7 @@ const body=src.slice(src.indexOf('{',rstart)+1,end);
 
 function node(){const cls=new Set();return{classList:{add:c=>cls.add(c),remove:c=>cls.delete(c),
   toggle:(c,on)=>{if(on===undefined)on=!cls.has(c);on?cls.add(c):cls.delete(c);return on;},contains:c=>cls.has(c)},
-  _cls:cls,textContent:'',style:{}};}
+  _cls:cls,textContent:'',style:{setProperty(){}},dataset:{},appendChild(){}};}
 function fakeEl(){const n={};
   ['.wgt-mtitle','[data-m="toggle"]','.wgt-mnext','.wgt-mart','.wgt-mseekfill','.wgt-mt0','.wgt-mt1','[data-m="shuffle"]','.wgt-music'].forEach(s=>n[s]=node());
   return{querySelector:s=>n[s]||null,_n:n};}

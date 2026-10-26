@@ -19,7 +19,7 @@ async function run({ms=0,fail=false,fromButton=true}){
   ctx.window=ctx;
   vm.createContext(installStateGlobals(ctx)&&ctx);
   vm.runInContext('globalThis.P={\n'+play+'\nensure(){},_render(){},refreshQueue(){},_nativePush(){return Promise.resolve(true)},'
-    +'el:{classList:{remove(){}}},queue:["a","b"],cur:"a",_history:[],_bag:[],_loading:false};',ctx);
+    +'_dropCover(){},_mediaMeta(){},_readTags(){},el:{classList:{remove(){}}},queue:["a","b"],cur:"a",_history:[],_bag:[],_loading:false};',ctx);
   if(fromButton) ctx.P._pressAt=Date.now();
   await ctx.P.play('b',{force:true});
   return reported;

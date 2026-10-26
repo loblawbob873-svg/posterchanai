@@ -708,10 +708,18 @@ window.PCMusicLibFactory = function(dep){
     // `true`: trackUrl already refused anything without a record (`if(!m||!m.enc) throw` above), so
     // by here the meta IS the index's.
     const plain=m.shared?await PCMusicShare.plain(sha):await _driveDecrypt(m, blob, true);
-    const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; _trackUrlOrder.push(sha);
-    while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
+    const bl=new Blob([plain],{type:m.mime||'audio/ogg'});
+    const u=URL.createObjectURL(bl); _trackUrls[sha]=u; _trackBlobs[sha]=bl; _trackUrlOrder.push(sha);
+    while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old===(MusicPlayer&&MusicPlayer.cur)) continue;
+      delete _trackBlobs[old];
+      if(_trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
     return u;
   }
+  /* The decrypted track itself, for the player's tag reader (title/artist/cover): the same bytes the URL
+   * above points at, so reading a song's cover never fetches or decrypts it a second time. Held exactly as
+   * long as its URL. Null when this device has not decrypted that track this session. */
+  const _trackBlobs={};
+  function trackBlob(sha){ return _trackUrls[sha] ? (_trackBlobs[sha]||null) : null; }
   // Blobs the server actually still HAS (from Blossom /list). The index is a local/encrypted record of
   // what you uploaded and is NOT updated when blobs are deleted elsewhere — so trusting it alone made the
   // player queue songs that no longer exist. Only _renderMusicList passed a list; openMusic, refreshQueue
@@ -758,7 +766,7 @@ window.PCMusicLibFactory = function(dep){
     MusicOffline, _aesDecrypt, _b64u8, _contentIV, _fmtTime, _masterDecrypt, _masterEncrypt,
     _masterKeyInput, _musicExt, _musicHasSrc, _musicRefreshedSet, _refreshBlobHave, _trackMeta,
     _u8b64, _unwrapMK, decorateEncAtts, dmAttachFiles, dmAttachMenu, dmEncOn, dmPickGif,
-    dmPickMedia, encAttParse, musicEntries, musicTracks, trackUrl, uploadMusicTrack,
+    dmPickMedia, encAttParse, musicEntries, musicTracks, trackBlob, trackUrl, uploadMusicTrack,
     uploadSharedEnc,
   };
 };

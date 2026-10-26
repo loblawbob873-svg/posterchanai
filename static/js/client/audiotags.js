@@ -141,6 +141,38 @@
     return {};
   }
 
+  /* WAV: tags live in RIFF CHUNKS, not at the front -- an `id3 ` chunk (what taggers and most
+   * DAWs write, an ordinary ID3v2 tag inside) and/or a LIST/INFO chunk (INAM/IART/IPRD). Either
+   * may sit AFTER the audio, so `riff` reads whatever chunks the bytes it was handed contain and
+   * `readBlob` walks a whole file by its chunk sizes without reading the audio between them. */
+  const fill = (out, got) => { for(const k in got) if(got[k] && !out[k]) out[k] = got[k]; return out; };
+  function riffInfo(b){
+    const out = {}, keys = { INAM:'title', IART:'artist', IPRD:'album' };
+    let i = 4;                                                // past the 'INFO' list type
+    while(i + 8 <= b.length){
+      const id = ascii(b, i, 4), len = le32(b, i + 4);
+      if(keys[id] && !out[keys[id]]) out[keys[id]] = clean(utf8.decode(b.subarray(i + 8, Math.min(b.length, i + 8 + len))));
+      i += 8 + len + (len & 1);
+    }
+    return out;
+  }
+  function riffChunk(out, id, body){
+    if((id === 'id3 ' || id === 'ID3 ') && body.length >= 10 && ascii(body, 0, 3) === 'ID3') fill(out, id3(body));
+    else if(id === 'LIST' && body.length >= 4 && ascii(body, 0, 4) === 'INFO') fill(out, riffInfo(body));
+    return out;
+  }
+  function riff(b){
+    const out = {};
+    let i = 12;
+    while(i + 8 <= b.length){
+      const id = ascii(b, i, 4), len = le32(b, i + 4);
+      riffChunk(out, id, b.subarray(i + 8, Math.min(b.length, i + 8 + len)));
+      i += 8 + len + (len & 1);
+    }
+    return out;
+  }
+  const isRiff = b => b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 4) === 'WAVE';
+
   function parse(bytes){
     try{
       const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -149,6 +181,7 @@
       if(magic.slice(0, 3) === 'ID3') return id3(b);
       if(magic === 'fLaC') return flac(b);
       if(magic === 'OggS') return ogg(b);
+      if(isRiff(b)) return riff(b);
     }catch(_){ }
     return {};
   }
@@ -173,5 +206,29 @@
     return job;
   }
 
-  root.PCAudioTags = { parse, read, needed };
+  /* A whole file already in memory (the Music player's decrypted track): read only the parts that
+   * hold tags -- the head, or a WAV's tag chunks wherever they are -- never a copy of the audio.
+   * Anything unreadable is {}, exactly like `read`. */
+  async function readBlob(blob){
+    try{
+      const at = async (from, n) => new Uint8Array(await blob.slice(from, from + n).arrayBuffer());
+      const head = await at(0, 262144);
+      if(isRiff(head)){
+        const out = {};
+        let i = 12, n = 0;
+        while(i + 8 <= blob.size && n++ < 256){
+          const h = i + 8 <= head.length ? head.subarray(i, i + 8) : await at(i, 8);
+          if(h.length < 8) break;
+          const id = ascii(h, 0, 4), len = le32(h, 4);
+          if((id === 'id3 ' || id === 'ID3 ' || id === 'LIST') && len <= 4 * 1024 * 1024) riffChunk(out, id, await at(i + 8, len));
+          i += 8 + len + (len & 1);
+        }
+        return out;
+      }
+      const want = Math.min(needed(head), 2 * 1024 * 1024);
+      return parse(want > head.length ? await at(0, want) : head);
+    }catch(_){ return {}; }
+  }
+
+  root.PCAudioTags = { parse, read, readBlob, needed };
 })(typeof window !== 'undefined' ? window : globalThis);

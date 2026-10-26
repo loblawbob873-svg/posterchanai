@@ -37,10 +37,15 @@ window.PCMusicFactory = function(dep){
     S.VIEW='music'; _hidePill(); _clearNav();
     { const t=$('#view-title'); if(t) t.textContent='Music'; }
     _feedScrollable(feed);
-    feed.innerHTML=`<div class="music-app">
+    /* A PLAYER, LAID OUT LIKE ONE. The now-playing card above the library carries the cover, title, artist,
+     * scrubber and transport; tapping the cover opens NOW PLAYING -- the same card filling the screen, cover
+     * large on top and the transport at the bottom where a thumb is. One set of elements in two layouts
+     * (`.ma-full` on .music-app), never a second copy of the controls to drift out of step. */
+    feed.innerHTML=`<div class="music-app${_maFull?' ma-full':''}">
       <div class="ma-now">
-        <div class="ma-art"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
-        <div class="ma-meta"><b id="ma-title">Nothing playing</b><span class="muted small" id="ma-sub"></span></div>
+        <button class="ma-art" id="ma-art" type="button" title="Now playing" aria-label="Open Now playing">${MusicPlayer.artHtml(MusicPlayer.cur,'ma-cover')}</button>
+        <div class="ma-meta"><b id="ma-title">Nothing playing</b><span class="ma-artist" id="ma-artist"></span><span class="muted small" id="ma-sub"></span></div>
+        <button class="btn btn-ghost small ma-collapse" id="ma-collapse" type="button" title="Back to your library" aria-label="Close Now playing"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chevron-down"></use></svg></button>
         <div class="ma-ctl">
           <button class="btn btn-ghost small" id="ma-shuffle" title="Shuffle" aria-label="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-prev" title="Previous"><svg class="ic b-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button>
@@ -60,7 +65,7 @@ window.PCMusicFactory = function(dep){
         </div>
         <div class="ma-tools">
           <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
-          <button class="btn btn-ghost small" id="ma-eq-toggle" aria-expanded="false" aria-controls="ma-eq"><span aria-hidden="true">≋</span> Equalizer</button>
+          <button class="btn btn-ghost small" id="ma-eq-toggle" aria-expanded="false" aria-controls="ma-eq"><svg class="ic b-ic" aria-hidden="true"><use href="#i-sliders"></use></svg>Equalizer</button>
         </div>
         <div class="ma-eq hidden" id="ma-eq">
           <div class="ma-eq-head"><b>Equalizer</b><span class="muted small">Saved on this device</span></div>
@@ -162,6 +167,8 @@ window.PCMusicFactory = function(dep){
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
     b('#ma-add',()=>openMusicFolder());
+    b('#ma-art',()=>_maSetFull(!_maFull));
+    b('#ma-collapse',()=>_maSetFull(false));
     b('#ma-eq-toggle',()=>{
       const panel=$('#ma-eq',feed), toggle=$('#ma-eq-toggle',feed); if(!panel||!toggle) return;
       const open=panel.classList.toggle('hidden')===false;
@@ -272,10 +279,35 @@ window.PCMusicFactory = function(dep){
       };
     });
   }
+  /* NOW PLAYING, opened from the cover and closed by its chevron -- or by Android's Back (app.js asks
+   * PCMusicFull before it walks the view history), so Back leaves the big player for the library and not
+   * the whole Music screen. Kept for the session: reopening Music returns to whichever you were looking at. */
+  let _maFull=false;
+  function _maSetFull(on){
+    _maFull=!!on;
+    const app=document.querySelector('#feed .music-app');
+    if(app) app.classList.toggle('ma-full', _maFull);
+    const a=document.getElementById('ma-art');
+    if(a){ a.setAttribute('aria-expanded', _maFull?'true':'false'); a.setAttribute('aria-label', _maFull?'Now playing':'Open Now playing'); }
+    try{ MusicPlayer._startViz && S._audioEl && !S._audioEl.paused && MusicPlayer._startViz(); }catch(_){}
+  }
+  window.PCMusicFull = {
+    open: () => _maFull && !!document.querySelector('#feed .music-app.ma-full'),
+    close: () => _maSetFull(false),
+  };
   function _musicAppNow(){
     const t=document.getElementById('ma-title'); if(!t) return;
-    const m=MusicPlayer.cur?_trackMeta(MusicPlayer.cur):null;
-    t.textContent=(m&&m.name)||'Nothing playing';
+    const inf=MusicPlayer.cur?MusicPlayer.info(MusicPlayer.cur):null;
+    t.textContent=(inf&&inf.title)||'Nothing playing';
+    { const ar=document.getElementById('ma-artist');
+      if(ar){ const by=inf?[inf.artist,inf.album].filter(Boolean).join(' · '):'';
+        ar.textContent=by; ar.classList.toggle('hidden', !by); } }
+    /* The cover, redrawn only when it is a different picture -- this runs on every state change, and a
+     * fresh <img> on each one would flash. */
+    { const a=document.getElementById('ma-art');
+      const sig=inf?(MusicPlayer.cur+'|'+inf.cover):'';
+      if(a && a.dataset.sig!==sig){ a.dataset.sig=sig; a.innerHTML=MusicPlayer.artHtml(MusicPlayer.cur,'ma-cover'); }
+      if(a) a.setAttribute('aria-expanded', _maFull?'true':'false'); }
     const sub=document.getElementById('ma-sub');
     const playing=S._audioEl && !S._audioEl.paused;
     if(sub) sub.textContent=MusicPlayer.cur ? (playing?'playing':'paused')+(MusicPlayer.shuffle?' · shuffle':'') : '';

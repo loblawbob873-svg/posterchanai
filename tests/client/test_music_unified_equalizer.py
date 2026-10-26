@@ -32,8 +32,12 @@ def test_equalizer_is_persistent_and_part_of_the_single_audio_graph():
 
 
 def test_visualizer_is_compact_so_the_library_keeps_the_screen():
-    assert ".ma-viz{display:block;position:absolute" in CSS
-    assert "inset:0;width:100%;height:100%;opacity:.34" in CSS
+    # A thin STRIP in the card's flow (under the title, above the scrubber), never a background behind the text:
+    # as a full-card backdrop its bars drew behind the time labels and over the card's rounded border.
+    # test_music_player_art_full_app.py asserts the canvas overlaps no label or control at every size.
+    viz = CSS[CSS.index(".ma-viz{"):]
+    viz = viz[:viz.index("}") + 1]
+    assert "position:absolute" not in viz and "height:30px" in viz and "flex:1 1 100%" in viz, viz
     # THE SHAPE, NOT THE GAP. What keeps the library on screen is that the app is a flex COLUMN
     # sized to its host with the LIST taking the slack (asserted next) — the exact gap belongs to
     # the spacing scale `scripts/check_css_scale.py` owns, which has since moved it 9px -> 8px.
@@ -42,9 +46,13 @@ def test_visualizer_is_compact_so_the_library_keeps_the_screen():
     for needed in ("display:flex", "flex-direction:column", "min-height:0", "height:100%"):
         assert needed in app, "%s is gone from .music-app: %s" % (needed, app)
     assert ".music-app .music-list{flex:1;min-height:0;overflow-y:auto}" in CSS
-    mobile = CSS[CSS.index("@media(max-width:560px)"):]
-    assert ".ma-art{display:none}" in mobile
-    assert ".ma-ctl{flex:0 0 auto" in mobile
+    mobile = CSS[CSS.index("@media(max-width:560px)", CSS.index(".music-app .music-list{")):]
+    mobile = mobile[:mobile.index("\n}") + 2]
+    # The phone card keeps the COVER now (it is how a player looks), but small: the full-size cover is Now playing,
+    # one tap away, so the library still has the screen. The transport is its own full-width row at thumb size.
+    # (test_music_player_art_full_app.py measures all of it at 320-390px.)
+    assert ".ma-art{width:56px;height:56px}" in mobile, mobile
+    assert ".ma-ctl{flex:1 1 100%" in mobile, mobile
 
 
 def test_phone_transport_and_equalizer_fit_without_horizontal_overflow():

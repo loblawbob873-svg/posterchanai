@@ -122,3 +122,68 @@ def test_every_format_gives_its_title_artist_album_and_cover():
     assert got["opus"]["title"] == "Opus Title" and got["opus"]["artist"] == "Opus Artist" and got["opus"]["pic"] == ["image/png", 8], got["opus"]
     assert got["garbage"] == {"title": None, "artist": None, "album": None, "pic": None}
     assert got["truncated_id3"]["pic"] is None      # a cut-off tag answers what it can, and never throws
+
+
+def wav(chunks, audio=b"\0\0" * 4000):
+    """A WAV: fmt, the audio, then `chunks` (id, body) AFTER it -- where taggers write them."""
+    def ck(cid, body):
+        return cid + struct.pack("<I", len(body)) + body + (b"\0" if len(body) & 1 else b"")
+    body = b"WAVE" + ck(b"fmt ", struct.pack("<HHIIHH", 1, 1, 8000, 16000, 2, 16)) + ck(b"data", audio)
+    for cid, b in chunks:
+        body += ck(cid, b)
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def riff_info(**kw):
+    out = b"INFO"
+    for k, v in kw.items():
+        b = v.encode() + b"\0"
+        out += k.encode() + struct.pack("<I", len(b)) + b + (b"\0" if len(b) & 1 else b"")
+    return out
+
+
+READ_BLOB = r"""
+const fs=require('fs');const src=fs.readFileSync(process.argv[1],'utf8');
+const ctx={TextDecoder,Uint8Array,atob:s=>Buffer.from(s,'base64').toString('latin1'),String,Math,Object,Array,Promise,fetch:undefined};
+ctx.globalThis=ctx;require('vm').runInNewContext(src,ctx);
+const files=JSON.parse(fs.readFileSync(0,'utf8'));
+(async()=>{const out={};
+for(const [k,b64] of Object.entries(files)){const bytes=Uint8Array.from(Buffer.from(b64,'base64'));
+  // A Blob that COUNTS what is read: the player hands readBlob the whole decrypted track, and it must read the tags,
+  // never a copy of the audio.
+  const blob=new Blob([bytes]); let read=0; const sl=blob.slice.bind(blob);
+  blob.slice=(a,b)=>{const s=sl(a,b);const ab=s.arrayBuffer.bind(s);s.arrayBuffer=async()=>{const r=await ab();read+=r.byteLength;return r;};return s;};
+  const m=await ctx.PCAudioTags.readBlob(blob); const p=ctx.PCAudioTags.parse(bytes);
+  out[k]={title:m.title||null,artist:m.artist||null,album:m.album||null,pic:m.picture?[m.picture.mime,m.picture.data.length]:null,
+          read, size:bytes.length, parse:{title:p.title||null,artist:p.artist||null}};}
+console.log(JSON.stringify(out));})();
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node")
+def test_a_wav_says_who_it_is_from_its_chunks_wherever_they_are():
+    """The Music player reads the DECRYPTED track (MusicPlayer._readTags -> readBlob). A WAV keeps its tags in RIFF
+    chunks -- an `id3 ` chunk (an ordinary ID3v2 tag inside) and/or LIST/INFO -- usually AFTER the audio, so a
+    head-only read never sees them. readBlob walks the chunk headers and reads only the tag chunks."""
+    big = b"\0\x01" * 3_000_000                      # 6 MB of audio between the header and the tags
+    files = {"id3_chunk": wav([(b"id3 ", id3v23())]),
+             "info": wav([(b"LIST", riff_info(INAM="Info Title", IART="Info Artist", IPRD="Info Album"))]),
+             "both": wav([(b"LIST", riff_info(INAM="Info Title")), (b"ID3 ", id3v23())]),
+             "big": wav([(b"id3 ", id3v23())], audio=big),
+             "untagged": wav([])}
+    payload = json.dumps({k: base64.b64encode(v).decode() for k, v in files.items()})
+    done = subprocess.run([NODE, "-e", READ_BLOB, str(ROOT / "static/js/client/audiotags.js")], input=payload,
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[-1500:]
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    pic = ["image/jpeg", len(JPEG)]
+    assert got["id3_chunk"]["title"] == "Playground" and got["id3_chunk"]["artist"] == "Bea Miller", got["id3_chunk"]
+    assert got["id3_chunk"]["pic"] == pic and got["id3_chunk"]["parse"]["title"] == "Playground", got["id3_chunk"]
+    assert (got["info"]["title"], got["info"]["artist"], got["info"]["album"], got["info"]["pic"]) == \
+        ("Info Title", "Info Artist", "Info Album", None), got["info"]
+    # Both: each field from whichever chunk comes first, the cover from the ID3 one.
+    assert got["both"]["title"] == "Info Title" and got["both"]["artist"] == "Bea Miller" and got["both"]["pic"] == pic, got["both"]
+    # 6 MB of audio, and the tags read without reading it.
+    assert got["big"]["title"] == "Playground" and got["big"]["pic"] == pic, got["big"]
+    assert got["big"]["read"] < 300_000, ("readBlob read the audio to find the tags", got["big"]["read"], got["big"]["size"])
+    assert got["untagged"]["title"] is None and got["untagged"]["pic"] is None, got["untagged"]
