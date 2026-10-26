@@ -63,8 +63,27 @@ def test_add_an_account_signs_out_to_the_sign_in_screen():
         await b.js("__PC.accountMenu(); 1")
         await b.until("!!document.querySelector('#acct-add')")
         await b.js("document.querySelector('#acct-add').click(); 1")
-        await b.until("!!window.__PC && !!document.body && (document.body.classList.contains('guest') || !!document.querySelector('#btn-nip07:not([hidden])'))")
-        assert not await b.js("!!(__PC.me&&__PC.me()&&__PC.me().pubkey)"), "still signed in after Add an account"
+        # Signing out reloads the page, and the old page could satisfy a one-shot wait just before it went: the next
+        # evaluate then landed in a half-loaded document ("ReferenceError: __PC", flaky under load in 3 deploys). So
+        # "signed out on the sign-in screen" is the wait itself, and it must still hold once the page has settled.
+        out = ("!!window.__PC && !!document.body && (document.body.classList.contains('guest') || "
+               "!!document.querySelector('#btn-nip07:not([hidden])')) && !(__PC.me&&__PC.me()&&__PC.me().pubkey)")
+
+        async def signed_out():
+            # b.until() raises on the CDP error an evaluate gets while the page is between documents
+            # ("Inspected target navigated or closed") -- which is exactly when this wait runs. Poll through it.
+            for _ in range(150):
+                try:
+                    if await b.js(out):
+                        return
+                except AssertionError:
+                    pass
+                await asyncio.sleep(.1)
+            raise AssertionError(("not signed out on the sign-in screen after Add an account",
+                                  await b.js("({body: document.body ? document.body.innerText.slice(-600) : ''})")))
+        await signed_out()
+        await asyncio.sleep(1.5)
+        await signed_out()
         listed = await b.js("JSON.stringify(localStorage)")
         assert me in listed, "the account was forgotten instead of kept in the switcher"
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
@@ -73,7 +92,10 @@ def test_add_an_account_signs_out_to_the_sign_in_screen():
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
 def test_sign_up_captcha_refreshes():
     async def check(b):
-        await b.until("!!window.__PC && !!__PC.showAuth")
+        # Booted, as a person must be: every Sign up button is drawn by startApp(), and before it the sign-in screen's
+        # buttons are not wired yet -- opened that early (only a test can), Generate keypair did nothing and the boot's
+        # end then closed the form (flaky under load in 3 deploys).
+        await b.until("!!window.__PC && !!__PC.showAuth && !!window.__PC_BOOTED")
         await b.js("__PC.showAuth('signup'); 1")
         await b.until("!!document.querySelector('#btn-gen-key')")
         await b.js("document.querySelector('#btn-gen-key').click(); 1")
@@ -81,3 +103,4 @@ def test_sign_up_captcha_refreshes():
         await b.js("document.querySelector('#signup-captcha-refresh').click(); 1")
         await b.until("__captchas===2")
     asyncio.run(desktop.with_browser('online', '', check, FIXTURE))
+

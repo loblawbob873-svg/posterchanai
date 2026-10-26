@@ -1810,24 +1810,31 @@ window.PCGitFactory = function(dep){
    * `_canSetStatus` rule as the list), Resolve / Close / Reopen, and a comment box whose buttons become
    * "Comment & resolve" / "Comment & close" once something is typed. The comment is an ordinary NIP-22
    * reply (what every git client renders), published FIRST; the status goes out only if it landed. */
+  /* THE BOX IS DRAWN FROM WHAT THIS DEVICE HOLDS, THEN CORRECTED. It used to await the repo announcement (when not
+   * cached) and the status events before drawing anything, so on a slow relay the issue page sat there with no way
+   * to comment for as long as the relays took -- the gate's "no comment box on the issue" failure, flaky under load
+   * in eight deploys. Now: paint from the Store (the repo and any status events already held), ask the relays, and
+   * repaint only if the state or who-may-set-it changed -- never during a publish, and keeping what was typed. */
   async function mountIssueStatus(host, issue){
     if(!host || !issue || (issue.kind!==1621 && issue.kind!==1617)) return;
     const a=((issue.tags||[]).find(t=>t[0]==='a' && /^30617:/.test(t[1]||''))||[])[1]||'';
     const [, rpk, rd]=a.split(':');
-    let repo=null;
-    if(rpk && rd){
-      const q=[{ kinds:[30617], authors:[rpk], '#d':[rd], limit:1 }];
-      try{ repo=(Store.query(q)||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){ repo=null; }
-      if(!repo){ try{ const got=await Relay.query(q); repo=(got||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null;
-                      if(repo) Store.saveEvent(repo); }catch(_){ } }
-    }
-    let stEvs=[]; try{ stEvs=await Relay.query([{ kinds:_ST_KINDS, '#e':[issue.id], limit:50 }]); }catch(_){ }
-    if(!host.isConnected) return;
-    const people=_repoPeople(repo), m=_statusMap(stEvs, [issue], people).get(issue.id);
-    const state=m ? _ST_META[m.kind][0] : 'open', open=(state==='open'||state==='draft');
-    const may=_canSetStatus(issue, people);
+    const repoQ=(rpk && rd) ? [{ kinds:[30617], authors:[rpk], '#d':[rd], limit:1 }] : null;
+    const stQ=[{ kinds:_ST_KINDS, '#e':[issue.id], limit:50 }];
+    const newest=evs=>(evs||[]).slice().sort((x,y)=>y.created_at-x.created_at)[0]||null;
+    let repo=null, stEvs=[];
+    if(repoQ){ try{ repo=newest(Store.query(repoQ)); }catch(_){ repo=null; } }
+    try{ stEvs=Store.query(stQ)||[]; }catch(_){ stEvs=[]; }
     const noun=issue.kind===1617 ? 'patch' : 'issue';
-    host.innerHTML=`<div class="issue-status" data-state="${state}">
+    let busy=false, drawn='';
+    const paint=()=>{
+      const people=_repoPeople(repo), m=_statusMap(stEvs, [issue], people).get(issue.id);
+      const state=m ? _ST_META[m.kind][0] : 'open', open=(state==='open'||state==='draft');
+      const may=_canSetStatus(issue, people);
+      const sig=state+'|'+may+'|'+!!S.ME;
+      if(sig===drawn) return; drawn=sig;
+      const prev=host.querySelector('.issue-comment'), typed=prev ? prev.value : '', focused=!!prev && document.activeElement===prev;
+      host.innerHTML=`<div class="issue-status" data-state="${state}">
         <div class="issue-status-hd"><span class="collab-state st-${state}">${_ST_BADGE[state]||state}</span>
           ${may ? '' : `<span class="muted small">Only the ${noun}'s author and the repo's maintainers can change its status.</span>`}</div>
         ${(!may && S.ME) ? `<textarea class="input issue-comment" rows="3" maxlength="20000" placeholder="Leave a comment" aria-label="Comment"></textarea>
@@ -1840,35 +1847,45 @@ window.PCGitFactory = function(dep){
                  : `<button type="button" class="btn small" data-is="1630"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg><span>Reopen ${noun}</span></button>`}
         </div>` : ''}
       </div>`;
-    const ta=host.querySelector('.issue-comment');
-    if(!ta) return;
-    const label={ 1631:['Resolve','Comment & resolve'], 1632:['Close '+noun,'Comment & close'], 1630:['Reopen '+noun,'Comment & reopen'] };
-    const relabel=()=>{ const has=!!ta.value.trim();
-      host.querySelector('[data-is="comment"]').disabled=!has;
-      host.querySelectorAll('[data-is]:not([data-is="comment"])').forEach(b=>{ const l=label[b.dataset.is]; const s=b.querySelector('span'); if(l&&s) s.textContent=l[has?1:0]; }); };
-    ta.addEventListener('input', relabel);
-    let busy=false;
-    host.querySelectorAll('[data-is]').forEach(b=>b.onclick=async()=>{
-      if(busy) return; busy=true;
-      const buttons=[...host.querySelectorAll('[data-is]')]; buttons.forEach(x=>x.disabled=true);
-      const text=ta.value.trim(), k=b.dataset.is==='comment' ? 0 : +b.dataset.is;
-      const again=()=>{ busy=false; buttons.forEach(x=>x.disabled=false); relabel(); };
-      try{
-        if(text){
-          const r=await publish(replyKindFor(issue), text, replyTags(issue, issue.id, issue.pubkey));
-          if(!(r && r.ok)){ toast('Your comment was not posted — nothing was changed'); again(); return; }
-          ta.value='';
-        }
-        if(k){
-          const done=k===1632?noun+' closed':k===1631?'marked resolved':noun+' reopened';
-          const r=await _setIssueStatus(repo, issue, k, '', ()=>{ toast(done); renderThread(issue.id); });
-          if(r && r.ok) toast(text ? 'Commented and '+done : done);
-          else if(r && r.unconfirmed){ toast('Not confirmed yet — the relay hasn’t answered. It may already be done; pressing again re-sends the same status.'); again(); return; }
-          else { toast('relay: '+((r&&r.msg)||'rejected')); again(); return; }
-        }else toast('comment posted');
-        renderThread(issue.id);
-      }catch(err){ toast('failed: '+((err&&err.message)||err)); again(); }
-    });
+      const ta=host.querySelector('.issue-comment');
+      if(!ta) return;
+      const label={ 1631:['Resolve','Comment & resolve'], 1632:['Close '+noun,'Comment & close'], 1630:['Reopen '+noun,'Comment & reopen'] };
+      const relabel=()=>{ const has=!!ta.value.trim();
+        host.querySelector('[data-is="comment"]').disabled=!has;
+        host.querySelectorAll('[data-is]:not([data-is="comment"])').forEach(b=>{ const l=label[b.dataset.is]; const s=b.querySelector('span'); if(l&&s) s.textContent=l[has?1:0]; }); };
+      ta.addEventListener('input', relabel);
+      if(typed){ ta.value=typed; relabel(); }
+      if(focused){ try{ ta.focus(); }catch(_){ } }
+      host.querySelectorAll('[data-is]').forEach(b=>b.onclick=async()=>{
+        if(busy) return; busy=true;
+        const buttons=[...host.querySelectorAll('[data-is]')]; buttons.forEach(x=>x.disabled=true);
+        const text=ta.value.trim(), k=b.dataset.is==='comment' ? 0 : +b.dataset.is;
+        const again=()=>{ busy=false; buttons.forEach(x=>x.disabled=false); relabel(); };
+        try{
+          if(text){
+            const r=await publish(replyKindFor(issue), text, replyTags(issue, issue.id, issue.pubkey));
+            if(!(r && r.ok)){ toast('Your comment was not posted — nothing was changed'); again(); return; }
+            ta.value='';
+          }
+          if(k){
+            const done=k===1632?noun+' closed':k===1631?'marked resolved':noun+' reopened';
+            const r=await _setIssueStatus(repo, issue, k, '', ()=>{ toast(done); renderThread(issue.id); });
+            if(r && r.ok) toast(text ? 'Commented and '+done : done);
+            else if(r && r.unconfirmed){ toast('Not confirmed yet — the relay hasn’t answered. It may already be done; pressing again re-sends the same status.'); again(); return; }
+            else { toast('relay: '+((r&&r.msg)||'rejected')); again(); return; }
+          }else toast('comment posted');
+          renderThread(issue.id);
+        }catch(err){ toast('failed: '+((err&&err.message)||err)); again(); }
+      });
+    };
+    paint();
+    // The two reads are independent: asked one after the other, a slow relay cost its timeout twice.
+    await Promise.all([
+      (repoQ && !repo) ? Relay.query(repoQ).then(got=>{ const r=newest(got); if(r){ repo=r; Store.saveEvent(r); } }).catch(()=>{}) : null,
+      Relay.query(stQ).then(got=>{ if(got && (got.length || got.complete!==false)) stEvs=got; }).catch(()=>{}),
+    ]);
+    if(!host.isConnected || busy) return;
+    paint();
   }
 
   /* AN ISSUE IS A PAGE, NOT A SOCIAL THREAD. It opened through the timeline's thread view: the issue as a post

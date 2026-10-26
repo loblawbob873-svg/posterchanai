@@ -44,8 +44,12 @@ elif [ -n "$v" ]; then no "TPM is version $v, not 2.0"
 else no "No TPM visible"; fix "Enable the TPM (fTPM / PTT on most boards) in the firmware setup."; fi
 
 # Measured boot: the firmware's event log of what it ran.
+# securityfs reports every file as size 0, so `-s` is always false here: existence is the evidence, and when we may
+# read it (root or the tss group) one byte confirms it is not empty.
 log="$R/sys/kernel/security/tpm0/binary_bios_measurements"
-if [ -s "$log" ]; then ok "Measured boot (the firmware's TPM event log is there)"
+if [ -e "$log" ] && { [ ! -r "$log" ] || [ -n "$(head -c1 "$log" 2>/dev/null | od -An -tx1)" ]; }; then
+    if [ -r "$log" ]; then ok "Measured boot (the firmware's TPM event log is there)"
+    else ok "Measured boot (the firmware's TPM event log is there; readable by root and the tss group)"; fi
 elif [ "$v" = "2" ]; then huh "Measured boot — no TPM event log visible (is securityfs mounted?)"
 else no "Measured boot — needs the TPM above"; fi
 

@@ -115,16 +115,21 @@ def test_the_mention_itself_is_patched_not_only_a_redrawn_copy():
         await b.js("Store.saveProfile(" + json.dumps(bare) + ");Store.saveEvent(" + json.dumps(ev) + ");true")
         await b.js(f"__PC.openThread('{ev['id']}');true")
         await b.until("[...document.querySelectorAll('a.mention')].some(a=>a.textContent.includes('Big Duck'))")
-        await b.js("window.__m=[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Big Duck'));true")
-        got['before'] = await b.js("__m.querySelectorAll('img.emoji-inline').length")
-        await b.js("Store.saveProfile(" + json.dumps(dict(bare, tags=DUCK_TAGS)) + ");__PC.decorateProfiles();true")
-        got['after'] = await b.js("__m.querySelectorAll('img.emoji-inline').length")
-        got['marked_after'] = await b.js("__m.hasAttribute('data-mpk')")
+        # ONE synchronous evaluate: grab the element, deliver the map, measure. Split across CDP calls, the thread's
+        # own refresh could redraw the card in between and leave the test holding a DETACHED element nothing will ever
+        # patch -- which is what failed under load in five deploys while the mention on screen was fine.
+        r = await b.js("""(() => { const m = [...document.querySelectorAll('a.mention')].find(a => a.textContent.includes('Big Duck'));
+            const before = m.querySelectorAll('img.emoji-inline').length;
+            Store.saveProfile(%s); __PC.decorateProfiles();
+            return { before, after: m.querySelectorAll('img.emoji-inline').length, marked_after: m.hasAttribute('data-mpk'),
+                     connected: m.isConnected }; })()""" % json.dumps(dict(bare, tags=DUCK_TAGS)))
+        got.update(r)
 
     asyncio.run(desktop.with_browser('online', '', check, ''))
     assert got['before'] == 0, got
     assert got['after'] == 2, ("the mention on screen kept its :shortcode: text after its emoji arrived", got)
     assert got['marked_after'] is False, ("a finished mention is still marked pending", got)
+    assert got['connected'], ("the mention measured is not the one on screen", got)
 
 
 def test_a_name_with_colons_that_is_not_emoji_stops_waiting():
@@ -144,13 +149,17 @@ def test_a_name_with_colons_that_is_not_emoji_stops_waiting():
         await b.js("Store.saveProfile(" + json.dumps(prof) + ");Store.saveEvent(" + json.dumps(ev) + ");true")
         await b.js(f"__PC.openThread('{ev['id']}');true")
         await b.until("[...document.querySelectorAll('a.mention')].some(a=>a.textContent.includes('Meet'))")
-        await b.js("window.__m=[...document.querySelectorAll('a.mention')].find(a=>a.textContent.includes('Meet'));__PC.decorateProfiles();true")
-        got["waiting"] = await b.js("__m.hasAttribute('data-mpk')")
-        await b.js("(()=>{const real=Date.now; Date.now=()=>real()+21000;})(); __PC.decorateProfiles(); true")
-        got["after"] = await b.js("__m.hasAttribute('data-mpk')")
-        got["text"] = await b.js("__m.textContent")
+        # One synchronous evaluate, for the reason given in the test above: a redraw between CDP calls leaves the test
+        # holding a detached copy that no decorate pass will ever clear.
+        r = await b.js("""(() => { const m = [...document.querySelectorAll('a.mention')].find(a => a.textContent.includes('Meet'));
+            __PC.decorateProfiles(); const waiting = m.hasAttribute('data-mpk');
+            const real = Date.now; Date.now = () => real() + 21000;
+            try { __PC.decorateProfiles(); } finally { Date.now = real; }
+            return { waiting, after: m.hasAttribute('data-mpk'), text: m.textContent, connected: m.isConnected }; })()""")
+        got.update(r)
 
     asyncio.run(desktop.with_browser('online', '', check, ''))
     assert got["waiting"] is True, ("it should still be waiting for a map at first", got)
     assert got["after"] is False, ("the mention is still marked pending 21 s later", got)
     assert "Meet 10:30:00 sharp" in got["text"], got
+    assert got["connected"], ("the mention measured is not the one on screen", got)
