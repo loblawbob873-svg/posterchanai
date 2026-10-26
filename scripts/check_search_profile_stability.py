@@ -137,8 +137,10 @@ async def _session(ws, flow, query):
                 empty: !!document.querySelector('#prof-list .empty, #prof-list .muted'),
                 title: (document.getElementById('view-title')||{}).textContent})""")
             d = json.loads(st)
-            # Same trio as the cold flow: they die together when a render aborts half way.
-            return (d.get("title") == "Profile" and d.get("tabs") == 5 and d.get("copy")
+            # Same trio as the cold flow: they die together when a render aborts half way. The tab row is "at least
+            # five", never an exact count: a sixth tab was added and `== 5` failed every profile while every one of
+            # them rendered posts, tabs and Copy npub (found 2026-10-25 chasing a Windows "profile shows nothing").
+            return (d.get("title") == "Profile" and d.get("tabs", 0) >= 5 and d.get("copy")
                     and d.get("posts", 0) > 0), st
 
         if flow in ("profile", "profile_replies"):
@@ -154,9 +156,9 @@ async def _session(ws, flow, query):
             if flow == "profile_replies":
                 # Posts may legitimately be 0 here. What must NOT happen is the render aborting
                 # before its bindings — that is the reported "no posts, dead hamburger, dead copy".
-                return (d.get("tabs") == 5 and d.get("copy")
+                return (d.get("tabs", 0) >= 5 and d.get("copy")
                         and d.get("title") == "Profile"), st
-            return (d.get("posts", 0) > 0 and d.get("tabs") == 5 and d.get("copy")), st
+            return (d.get("posts", 0) > 0 and d.get("tabs", 0) >= 5 and d.get("copy")), st
 
         await call("Page.navigate", {"url": BASE + "/client"})
         for _ in range(80):
