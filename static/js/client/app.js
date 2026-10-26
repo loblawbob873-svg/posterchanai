@@ -8136,19 +8136,38 @@
     const first=held();
     if(first.length){ feed.innerHTML=first.map(noteHtml).join(''); hydrate(feed); }
     else feed.innerHTML='<div class="spinner"></div>';
-    const missing=ids.filter(id=>!Store.get(id));
-    if(missing.length){
-      try{ await Relay.ready(8000); }catch(_){}
-      try{ const evs=await Relay.query([{ ids:missing }]); evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
-    }
+    /* A READ NOBODY FINISHED IS NOT "THOSE POSTS ARE GONE". Relay.query resolves [] with complete:false when no relay
+     * answered in time -- under load, right after a reload -- and that used to be final: the view kept the posts it
+     * held, never asked again and never said one was missing, so two bookmarks read as one with nothing on screen
+     * (the gate's "flaky under load" bookmark test, nine deploys running). Ask once more when the answer was not
+     * complete, and name whatever is still missing with a way to ask again. */
+    const fetchMissing=async()=>{
+      for(let attempt=0; attempt<2; attempt++){
+        const want=ids.filter(id=>!Store.get(id)); if(!want.length) return;
+        try{ await Relay.ready(8000); }catch(_){}
+        let evs=null;
+        try{ evs=await Relay.query([{ ids:want }]); (evs||[]).forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
+        if(evs && evs.complete!==false) return;   // the relays answered: what is still missing is not there
+      }
+    };
+    if(ids.some(id=>!Store.get(id))) await fetchMissing();
     if(VIEW!=='bookmarks') return;   // user navigated away while fetching
-    const notes=held();
+    const notes=held(), lost=ids.length-notes.length;
+    const notice = lost ? `<div class="empty bm-missing">${lost===1?'1 bookmarked post':lost+' bookmarked posts'} couldn’t be loaded from your relays.`
+      +'<div><button class="btn btn-ghost small" id="bm-missing-retry">Try again</button></div></div>' : '';
+    const bindRetry=()=>{ const r=$('#bm-missing-retry'); if(r) r.onclick=()=>{ r.disabled=true; renderBookmarks(); }; };
     /* Only repaint when the answer actually changed, or the first paint was the spinner — a
-     * needless second innerHTML throws away scroll position and every hydrated card. */
-    if(notes.length===first.length && first.length) return;
-    feed.innerHTML = notes.length ? notes.map(noteHtml).join('')
-      : '<div class="empty">Couldn\'t load your bookmarked posts from the relay.</div>';
-    hydrate(feed);
+     * needless second innerHTML throws away scroll position and every hydrated card. The missing-posts line is
+     * appended rather than repainting the cards under it. */
+    if(notes.length===first.length && first.length){
+      const old=feed.querySelector('.bm-missing'); if(old) old.remove();
+      if(notice){ feed.insertAdjacentHTML('beforeend', notice); bindRetry(); }
+      return;
+    }
+    feed.innerHTML = notes.length ? notes.map(noteHtml).join('')+notice
+      : '<div class="empty">Couldn\'t load your bookmarked posts from the relay.'
+        +'<div><button class="btn btn-ghost small" id="bm-missing-retry">Try again</button></div></div>';
+    hydrate(feed); bindRetry();
   }
 
   // ---------- minimal, SAFE markdown renderer (for NIP-23 articles) ----------
