@@ -313,6 +313,10 @@
     catch(_){return false;}
   }
 
+  let _routeSeen={ key:'', at:0, dropped:0, warned:false, performed:0 };
+  // What the breaker above did -- for the tests that prove a storm is one action and one focus.
+  function routeStats(){ return { performed:_routeSeen.performed, dropped:_routeSeen.dropped }; }
+
   try{
     if(typeof root.BroadcastChannel==='function'){
       const ch=new root.BroadcastChannel(ROUTE_CHANNEL);
@@ -320,6 +324,21 @@
         const v=String(event&&event.data&&event.data.view||''),state=root.__PC_WIN_STATE__;
         const arg=String(event&&event.data&&event.data.arg||'');
         if(!state||String(state.view||'')!==v)return;
+        /* A ROUTE IS PERFORMED ONCE, HOWEVER MANY TIMES IT ARRIVES. On 2026-10-26 a Texts notification set off a loop
+           (the window handed the route back to the desktop, which broadcast it to the window again): ~190 deliveries
+           a second, each ending in root.focus(), so Texts held the keyboard and no other window could be typed in.
+           That loop is fixed at its source; this is the breaker for the next one. The same route again within 1.5 s
+           of the last delivery -- a window that slides while a storm lasts -- is dropped: no action and, above all,
+           no focus. A person clicking the same notification twice is served by the first. */
+        {
+          const key=v+'\n'+arg, now=Date.now(), last=_routeSeen;
+          if(last.key===key && now-last.at<1500){
+            last.at=now; last.dropped++;
+            if(!last.warned){ last.warned=true; try{ console.warn('[oswin] the same window route keeps arriving -- performed once, repeats dropped:', v); }catch(_){} }
+            return;
+          }
+          _routeSeen={ key, at:now, dropped:0, warned:false, performed:(last.performed||0)+1 };
+        }
         try{
           if(root.__PC && ['home','global','trending'].includes(v) && typeof root.__PC.timelineTop==='function')
             root.__PC.timelineTop(v);
@@ -505,7 +524,7 @@
     }catch(_){ }
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, POST_TOOLS, shellPath,
+  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, POST_TOOLS, shellPath, routeStats,
                 installFrame, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
