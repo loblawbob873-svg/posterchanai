@@ -298,8 +298,11 @@ jobs:
             posterchan-android8-reinstall.apk
           make_latest: true
 
-      # Publish only the API 28+ lineage APK to Zapstore. The Android 8 current-signer reinstall is a
-      # separately named GitHub asset so no store can mistake it for an in-place old-signer update. Config lives in
+      # Publish the CURRENT-SIGNER APK WITHOUT the rotation lineage to Zapstore (zapstore.yaml release_source:
+      # ./zapstore.apk = a copy of posterchan-android8-reinstall.apk). Zapstore refuses a release whose APK carries the
+      # v3 lineage ("the asset lineage does not match the APK", 1.0.2599-2610, every tag shape); this artifact was
+      # accepted and promoted (1.0.2608, 2026-10-26), and a Zapstore install updates to it in place (emulator, API 34).
+      # GitHub/poster.place keep the lineage APK for installs still on the retired key. Config lives in
       # zapstore.yaml; `zsp` reads the version straight out of the APK, uploads it to Blossom and publishes the
       # NIP-82 app/release events. Skipped (not failed) when SIGN_WITH isn't set, so forks still build an APK.
       # NB: -q, not -y — the upstream docs advertise a -y flag the binary doesn't actually have.
@@ -395,6 +398,7 @@ jobs:
           zs_npub=$(sed -n 's/^pubkey: *//p' zapstore.yaml | head -1)
           # The asset must LEAD with the pin, or relay.zapstore.dev refuses it: checked on the real signed event
           # before anything is sent (--offline signs and prints, uploads and publishes nothing).
+          cp posterchan-android8-reinstall.apk zapstore.apk || fail 'no current-signer APK to publish to Zapstore'
           /tmp/zsp publish -q zapstore.yaml --offline > /tmp/zsp-offline.jsonl 2>/tmp/zsp-offline.err \
             || { cat /tmp/zsp-offline.err; fail 'zsp could not build the release events offline'; }
           python3 scripts/zapstore_first_cert.py /tmp/zsp-offline.jsonl "$ZSP_ANDROID_PINNED_CERTIFICATE_HASH" \

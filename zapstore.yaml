@@ -19,7 +19,12 @@ website: https://poster.place
 license: GPL-3.0-or-later
 
 # The APK the workflow just built and signed (the job copies it here before publishing).
-release_source: ./posterchan.apk
+# The CURRENT-SIGNER APK without the v3 rotation lineage (CI copies posterchan-android8-reinstall.apk here). Zapstore
+# refuses a release whose APK carries a lineage ("the asset lineage does not match the APK", 2026-10-25/26), and every
+# Zapstore install since the 2026-08-28 listing reset is signed by this same key -- measured on an Android 14
+# emulator: the Zapstore 1.0.2593 install (lineage) updates in place to this artifact. GitHub/poster.place keep
+# the lineage APK for installs still on the retired key.
+release_source: ./zapstore.apk
 
 # Written by .github/workflows/android.yml before `zsp publish`, from the commits that actually
 # touched what ships inside the APK. Not committed: it describes one build, and a stale one in the
