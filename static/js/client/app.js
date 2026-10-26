@@ -11650,18 +11650,22 @@
     }
     return out;
   }
+  const _trackRead=new Map();   // enc(url) -> {title, sub, cover}: see _trackRemember
   function _trackCard(u, label, preload, meta){
     const M=meta||{}, clip=v=>String(v||'').trim().slice(0,200);
     let name=clip(M.title) || String(label||'');
     if(!name) try{ name=decodeURIComponent(String(u).split(/[?#]/)[0].split('/').pop()||''); }catch(_){ name=''; }
     if(!M.title) name=name.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[_]+/g,' ').trim();
     if(!name || /^[0-9a-f]{32,}$/i.test(name)) name='Audio';
-    const sub=[clip(M.artist), clip(M.album)].filter(Boolean).join(' · ');
+    let sub=[clip(M.artist), clip(M.album)].filter(Boolean).join(' · ');
     const dur=Number(M.duration), d=isFinite(dur) && dur>0 && dur<864000 ? dur : 0;
-    const img=(!NO_IMAGES && /^https?:\/\/[^\s"'<>]+$/i.test(String(M.image||'')))
+    let img=(!NO_IMAGES && /^https?:\/\/[^\s"'<>]+$/i.test(String(M.image||'')))
       ? `<img alt="" loading="lazy" referrerpolicy="no-referrer" src="${enc(M.image)}" onerror="this.parentNode.innerHTML='<span>♪</span>'">` : '<span>♪</span>';
+    // Tags this page already read for this file: a redrawn card is born with them, never as the file name first.
+    const R=_trackRead.get(String(u));
+    if(R){ if(R.title) name=R.title; if(R.sub) sub=R.sub; if(R.cover) img=`<img alt="" src="${R.cover}">`; }
     const bars=_trackBars(String(u)).map((h,i)=>`<i style="height:${h}%" data-i="${i}"></i>`).join('');
-    return `<div class="pc-track" data-src="${u}"${d?` data-dur="${d}"`:''}><div class="pct-art" aria-hidden="true">${img}</div>`
+    return `<div class="pc-track" data-src="${u}"${d?` data-dur="${d}"`:''}${R?' data-tagged="1"':''}><div class="pct-art" aria-hidden="true">${img}</div>`
       + `<div class="pct-main"><div class="pct-title" title="${enc(name)}">${enc(name)}</div><div class="pct-sub"${sub?` title="${enc(sub)}"`:''}>${enc(sub)}</div>`
       + `<div class="pct-row"><button type="button" class="pct-play" aria-label="Play ${enc(name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="pct-i-play" d="M8 5v14l11-7z"/><path class="pct-i-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>`
       + `<div class="pct-wave" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${bars}</div>`
@@ -11679,20 +11683,34 @@
     const btn=card.querySelector('.pct-play'), nm=(card.querySelector('.pct-title')||{}).textContent||'';
     if(btn) btn.setAttribute('aria-label', (playing?'Pause ':'Play ')+nm);
   }
-  /* The tags, once per card, when it is first on screen. A file whose tags cannot be read keeps its name. */
+  /* The tags, once per card, when it is first on screen. A file whose tags cannot be read keeps its name.
+   * …and once per FILE for the page: every redraw (a timeline reconcile, a Bookmarks repaint) builds new cards, which
+   * used to show the bare file name, no artist and no cover until the observer fired and the read resolved again --
+   * a flash on every redraw, caught by the gate's track-card test reading "50b4aa" a moment after "Playground". The
+   * cover's object URL is kept for as long as its entry; the oldest of 200 entries goes, URL revoked. */
+  function _trackRemember(key, rec){
+    if(_trackRead.has(key)) _trackRead.delete(key);
+    _trackRead.set(key, rec);
+    while(_trackRead.size>200){ const [k, old]=_trackRead.entries().next().value; _trackRead.delete(k);
+      if(old && old.cover){ try{ URL.revokeObjectURL(old.cover); }catch(_){ } } }
+  }
   let _trackIO=null;
   function _trackTags(card){
     if(card.dataset.tagged) return; card.dataset.tagged='1';
     const src=card.dataset.src;
     _withModule('audiotags.js','PCAudioTags').then(T=>T&&T.read(src)).then(m=>{
-      if(!m||!card.isConnected) return;
-      if(m.title){ const t=card.querySelector('.pct-title'); t.textContent=m.title; t.title=m.title; }
+      if(!m) return;
+      const key=enc(src), prev=_trackRead.get(key);
       const sub=[m.artist,m.album].filter(Boolean).join(' · ');
-      if(sub){ const e=card.querySelector('.pct-sub'); e.textContent=sub; e.title=sub; }
-      if(m.picture&&m.picture.data&&m.picture.data.length){
-        try{ const url=URL.createObjectURL(new Blob([m.picture.data],{type:m.picture.mime||'image/jpeg'}));
-          const art=card.querySelector('.pct-art'); art.innerHTML=`<img alt="" src="${url}">`; }catch(_){ }
+      let cover=prev&&prev.cover||'';
+      if(!cover && m.picture&&m.picture.data&&m.picture.data.length){
+        try{ cover=URL.createObjectURL(new Blob([m.picture.data],{type:m.picture.mime||'image/jpeg'})); }catch(_){ cover=''; }
       }
+      _trackRemember(key, { title:m.title||'', sub, cover });
+      if(!card.isConnected) return;
+      if(m.title){ const t=card.querySelector('.pct-title'); t.textContent=m.title; t.title=m.title; }
+      if(sub){ const e=card.querySelector('.pct-sub'); e.textContent=sub; e.title=sub; }
+      if(cover){ const art=card.querySelector('.pct-art'); art.innerHTML=`<img alt="" src="${cover}">`; }
       _trackPaint(card);
     }).catch(()=>{});
   }

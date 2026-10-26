@@ -92,7 +92,13 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
             Path(os.environ['PC_TRACK_SHOTS'], f'track-{width}.png').write_bytes(base64.b64decode(shot))
         got['viewUrl'] = await b.js("location.href")
         await _click(b, '#feed .pc-track .pct-play')
-        got['playing'] = await b.js(CARDS)
+        # Starting audio is not instant under load: wait for it (10 s) rather than reading at a fixed 0.2 s, which
+        # failed as "play did not play" in the gate while the track was still starting.
+        for _ in range(50):
+            got['playing'] = await b.js(CARDS)
+            if got['playing'][0]['playing']:
+                break
+            await asyncio.sleep(.2)
         await _click(b, '#feed .pc-track .pct-wave', 0.5)
         got['seeked'] = await b.js(CARDS)
         got['stillHere'] = await b.js("location.href")
@@ -120,3 +126,29 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
     assert s['now'] in ('49', '50', '51') and 18 <= s['lit'] <= 22 and s['time'] in ('1:38', '1:39', '1:40', '1:41'), ("seeking by the bars failed", s)
     assert got['stillHere'] == got['viewUrl'], "pressing the player opened the post instead"
     assert not got['errors'], got['errors']
+
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_redrawn_track_card_is_born_with_its_tags():
+    """A redraw builds new cards (a timeline reconcile, a Bookmarks repaint). They used to show the bare file name, no
+    artist and no cover until the tags were read again -- a flash on every redraw, caught in the gate as a card reading
+    "50b4aa" a moment after "Playground". The page remembers what it read: the new card is drawn with it."""
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=390, height=900, deviceScaleFactor=1, mobile=True))
+        await desktop.login(b)
+        await b.js("__PC.switchView('bookmarks')")
+        await b.until("[...document.querySelectorAll('#feed .pc-track .pct-title')].length===2 && "
+                      "[...document.querySelectorAll('#feed .pc-track .pct-title')].every(t=>t.textContent==='Playground')")
+        got = await b.js("""(() => { const before = document.querySelector('#feed .pc-track');
+            __PC.switchView('notifications'); __PC.switchView('bookmarks');
+            const cards = [...document.querySelectorAll('#feed .pc-track')];
+            return { rebuilt: cards.length > 0 && !cards.includes(before), n: cards.length,
+                     titles: cards.map(c => c.querySelector('.pct-title').textContent),
+                     subs: cards.map(c => c.querySelector('.pct-sub').textContent),
+                     covers: cards.map(c => /^blob:/.test((c.querySelector('.pct-art img') || {}).src || '')) }; })()""")
+        assert got['rebuilt'] and got['n'] == 2, ("the redraw did not build new cards -- this proves nothing", got)
+        assert got['titles'] == ['Playground', 'Playground'], ("a redrawn card showed the file name first", got)
+        assert all(sub == 'Bea Miller · Arcane: League of Legends' for sub in got['subs']), got
+        assert all(got['covers']), ("a redrawn card lost its cover", got)
+    asyncio.run(desktop.with_browser('online', '', check, SEED))
