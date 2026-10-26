@@ -532,7 +532,15 @@ async def collaboras_own_save_as_saves_a_copy_beside_the_original_and_a_fresh_de
     got = await drive_entry(d, pdf)
     assert len(got) == 1 and R.H.STATE['blobs'][got[0]['sha']][:5] == b'%PDF-', ('no PDF on the drive', got)
 
-    # A FRESH device of the account lists the copy (and the original, unchanged).
+    # A FRESH device of the account lists the copy (and the original, unchanged) -- once the first device's save has
+    # LANDED. The drive index is saved on a 900 ms debounce after the export; a device opened before that reads the
+    # index once and lists the state before the PDF (measured: opened at once, the PDF never appeared on it in 20 s;
+    # opened after the node's index named it, every time). The same wait the two-device scenario above uses.
+    pk = await d.b.js('__PC.me().pubkey')
+    await F.until(lambda: {copy, pdf} <= {m.get('name') for m in
+                                         ((R.H.STATE['indexes'].get(pk) or {}).get('files') or {}).values()
+                                         if isinstance(m, dict)},
+                  30, "the copy and the PDF on the node's drive index", d)
     d2 = await device(S)
     listed = {(f['name'], f['sha']) for f in await d2.b.js(DRIVE)}
     assert (copy, new[0]['sha']) in listed and (name, orig['sha']) in listed and (pdf, got[0]['sha']) in listed, listed
