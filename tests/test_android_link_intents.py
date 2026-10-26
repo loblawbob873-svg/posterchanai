@@ -166,7 +166,10 @@ class Client(unittest.TestCase):
 
     def test_app_js_exposes_the_openers_and_opens_media_in_preview(self):
         src = open(os.path.join(ROOT, "static/js/client/app.js")).read()
-        self.assertIn("openBech32, openMailto,", src[src.index("window.__PC = {"):][:400])
+        # Anywhere in the __PC object literal, not within its first N characters: entries added above it (a test
+        # seam, a new opener) must not read as the openers disappearing.
+        start = src.index("window.__PC = {")
+        self.assertIn("openBech32, openMailto,", src[start:src.index("\n  };", start)])
         doc = src[src.index("async function _consumeOpenDoc("):]
         doc = doc[:doc.index("\n  }\n")]
         self.assertIn("r.kind === 'media' && r.path", doc)

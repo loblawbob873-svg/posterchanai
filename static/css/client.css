@@ -12621,3 +12621,8 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .sv-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .sv-actions .sv-gap{flex:1}
 .sv-actions [hidden]{display:none}
+/* Share from another app into a Communities channel (concord.js shareInto): communities, each with its channels. */
+.cc-share-targets{display:flex;flex-direction:column;gap:12px;max-height:min(60vh,520px);overflow-y:auto;margin-top:8px}
+.cc-share-room{display:flex;flex-direction:column;gap:6px}
+.cc-share-room>b{font-size:14px;color:var(--text)}
+.cc-share-channel{justify-content:flex-start;text-align:start;min-height:44px;width:100%}

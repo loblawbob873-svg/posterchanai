@@ -25,6 +25,7 @@ import place.poster.app.MainActivity;
 public class ShareTargetPlugin extends Plugin {
 
   private static final String AI_ALIAS = "place.poster.app.ShareToAi";
+  static final String COMMUNITIES_ALIAS = "place.poster.app.ShareToCommunities";
 
   /** Who installed this APK — "" when Android will not say (sideload, old API, hardened ROM).
    *  The updater branches on it: an install that came from a STORE should update through that
@@ -75,7 +76,9 @@ public class ShareTargetPlugin extends Plugin {
     JSObject ret = new JSObject();
     // "office" is the PosterChan Office entry: that share is a document to OPEN (OpenDocPlugin),
     // and the page's share handler must leave it alone rather than attach it to a new post.
+    // "concord" is the PosterChan Communities entry: the page asks which community + channel and fills its composer.
     ret.put("target", AI_ALIAS.equals(cls) ? "ai"
+        : COMMUNITIES_ALIAS.equals(cls) ? "concord"
         : place.poster.app.office.OpenDocPlugin.OFFICE_ALIAS.equals(cls) ? "office" : "post");
     // Per-share nonce: JS dedups on this so re-sharing the SAME file is a new share, not a swallowed duplicate.
     ret.put("nonce", MainActivity.shareNonce);

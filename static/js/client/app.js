@@ -2778,6 +2778,15 @@
     return true;
   }
   let _lastShareSig='';
+  /* The "PosterChan Communities" share entry: open Communities and let PCConcord.shareInto ask which community and
+   * channel (concord.js). Concord loads with its view, so wait for it; false = fall back to the post composer. */
+  async function _concordShare(payload){
+    try{
+      switchView('concord');
+      for(let i=0;i<100 && !(window.PCConcord && PCConcord.shareInto);i++) await new Promise(r=>setTimeout(r,50));
+      return !!(window.PCConcord && PCConcord.shareInto && PCConcord.shareInto(payload));
+    }catch(_){ return false; }
+  }
   async function _consumeSendIntent(){
     try{
       const SI = _capPlugin('SendIntent', 'checkSendIntentReceived');
@@ -2789,12 +2798,12 @@
       // choice lives in the launch intent's component, which ShareTarget reads. Resolved BEFORE the dedupe
       // because it's part of the share's identity: sharing the same photo to the OTHER entry is a NEW share,
       // and keying only on the payload would swallow it as a duplicate (app foregrounds, nothing happens).
-      let toAi=false, nonce=null;
+      let toAi=false, toConcord=false, nonce=null;
       try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget();
         // A share to the "PosterChan Office" entry is a document to OPEN, not a file to post:
         // _consumeOpenDoc owns it, and attaching it to a new post here as well would do both.
         if(t && t.target==='office') return false;
-        toAi=!!(t && t.target==='ai'); if(t && t.nonce!=null) nonce=t.nonce; } }catch(_){}
+        toAi=!!(t && t.target==='ai'); toConcord=!!(t && t.target==='concord'); if(t && t.nonce!=null) nonce=t.nonce; } }catch(_){}
       // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
       // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
       // with the composer instead. Because the intent then persists, checkSendIntentReceived keeps returning
@@ -2805,8 +2814,9 @@
       // resume/re-read of the persisted intent keeps the same nonce and is skipped. (Content-based dedup made
       // sharing the same image twice a silent no-op — "worked only once".) Fall back to a content signature on
       // an older APK whose plugin returns no nonce.
-      const sig = (nonce!=null) ? ('n'+nonce+'|'+(toAi?'ai':'post'))
-        : ((res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0)+'|'+(toAi?'ai':'post'));
+      const dest = toAi ? 'ai' : toConcord ? 'concord' : 'post';
+      const sig = (nonce!=null) ? ('n'+nonce+'|'+dest)
+        : ((res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0)+'|'+dest);
       if(sig===_lastShareSig) return false; _lastShareSig=sig;
       if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} _lastShareSig=''; return false; }  // retry after login
       const type=(res.type||'');
@@ -2839,6 +2849,7 @@
           switchView('home'); onQrScanned(pair); return true;
         }
         if(toAi && _aiShare({ text: txt })) return true;   // falls through to the composer if AI is unavailable
+        if(toConcord && await _concordShare({ text: txt })) return true;   // falls through to the composer if it can't
         switchView('home'); compose({ text: txt }); return true;
       }
       const urls=[]; if(res.url) urls.push(res.url);
@@ -2852,6 +2863,7 @@
       }
       if(!files.length){ try{ toast('Couldn’t read the shared file'); }catch(_){} return false; }
       if(toAi && _aiShare({ files })) return true;   // falls through to the composer if AI is unavailable
+      if(toConcord && await _concordShare({ files })) return true;   // falls through to the composer if it can't
       switchView('home'); compose({ files });
       return true;
     }catch(_){ return false; }
@@ -14590,6 +14602,7 @@
   }
   window.__PC = {
     deviceCache,
+    consumeShare: _consumeSendIntent,   // the Android share-in handler (tests drive it with a stand-in plugin)
     concordBack: _concordBack,
     // The one on-demand script loader, shared so a module is never fetched twice (concord.js loads
     // cord-reader.js through it: the reader is not a page tag any more, see cordReaderReady there).

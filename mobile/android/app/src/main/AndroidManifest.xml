@@ -94,6 +94,33 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- SHARE INTO A COMMUNITY CHANNEL ("Android: needs helper to share content from other apps into a concord
+             community/channel", 2026-10-26). Same payloads as PosterChan AI; ShareTargetPlugin reports "concord" and the
+             page asks which community and channel, then puts the text / files in that channel's composer. -->
+        <activity-alias
+            android:name=".ShareToCommunities"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan Communities"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- OPEN PICTURES, VIDEOS AND MUSIC FROM A FILE MANAGER ("opening an image from an external file
              manager should have an option to open a file with posterchan", 2026-10-15). VIEW only: a photo
              SHARED to PosterChan is still a post. office/DocIntent.java (MEDIA) decides; the file is copied
