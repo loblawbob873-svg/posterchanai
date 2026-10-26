@@ -330,7 +330,13 @@ async def a_document_made_in_office_is_on_the_drive_of_a_fresh_device(S):
     toast = [t for t in await d.b.js('window.__toastLog') if 'office unavailable' in t.lower()][0]
     assert 'disabled' in toast or 'no office editor' in toast, toast
 
-    d2 = await S.device(0)                                  # the same account, a fresh device
+    # The same account, a fresh device -- opened once the first device's drive-index save has LANDED on the node (it
+    # is saved on a 900 ms debounce; a device opened before that reads the index once and lists the state before the
+    # document: measured 2/2 failing, deploy 70). The same wait test_office_real_collabora.py's scenarios use.
+    pk = await d.b.js('__PC.me().pubkey')
+    await F.until(lambda: name in {m.get('name') for m in ((R.H.STATE['indexes'].get(pk) or {}).get('files') or {}).values()
+                                   if isinstance(m, dict)}, 30, "the new document on the node's drive index", d)
+    d2 = await S.device(0)
     files = await d2.b.js(DRIVE)
     doc = [f for f in files if f['name'] == name]
     assert doc, ('the new document is not on the drive a fresh device reads', files)
