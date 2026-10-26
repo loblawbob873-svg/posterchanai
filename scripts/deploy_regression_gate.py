@@ -435,6 +435,23 @@ def _run_required_sharded(groups, base, root, env, directory, report, timeout=No
 # Per-test durations from previous full runs, used only to balance shards. A cache, not a record:
 # losing it costs balance, never coverage.
 DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'posterchanai' / 'test-durations.json'
+# MEASURED TIMES TRAVEL WITH THE REPO. The groups are balanced by each file's measured duration, read from the cache
+# above -- which a fresh GitHub runner never has, so CI balanced by FILE SIZE, a poor proxy (a small file whose module
+# fixture runs nine scenarios takes 150 s). The desktop job's required stage was then two groups of ~1,050 s and
+# ~1,660 s of server1 time, and the big one was killed at 2,100 s on the slower runner (e2928a73 and 7d1872e1,
+# 2026-10-26) while the other finished in 1,279 s. This snapshot (scripts/snapshot_test_durations.py, the required
+# list only) is the floor; a local cache entry, measured on this machine, wins over it.
+DURATIONS_SNAPSHOT = Path(__file__).with_name('test-durations.json')
+
+
+def load_durations():
+    out = {}
+    for path in (DURATIONS_SNAPSHOT, DURATIONS):
+        try:
+            out.update(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            pass
+    return out
 
 
 HANG_DUMP_S = 600
@@ -761,10 +778,7 @@ def run_full_suite(root, env, directory, jobs=None, skip_browser=False, select=N
         files = kept
     if not files:
         return False, 'no test files discovered'
-    try:
-        durations = json.loads(DURATIONS.read_text())
-    except (OSError, ValueError):
-        durations = {}
+    durations = load_durations()
     if not jobs:
         # A GATE THAT CANNOT FIT IN MEMORY IS A GATE SOMEBODY SKIPS, which is how unlisted tests
         # failed against shipped code for days. `_default_jobs()` sizes itself by CPU, and each
@@ -978,10 +992,7 @@ def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
             browser = browser_test_files(root)
             required = tuple(t for t in TESTS if t.split('::')[0] not in browser)
         base = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=', '-q', '-ra', '--durations=20']
-        try:
-            durations = json.loads(DURATIONS.read_text())
-        except (OSError, ValueError):
-            durations = {}
+        durations = load_durations()
         shards = jobs or _env_jobs() or runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
         groups = required_shards(list(required), shards, durations, root)
         print(f'[regressions] required: {len(required)} entries in {len(groups)} parallel group(s)')
