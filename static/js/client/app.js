@@ -12882,8 +12882,12 @@
   /* One place that raises an OS-level notification. Everything that wants one goes through here so
    * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
    * system notification that does nothing is worse than not having sent it. */
-  function openOsNotificationRoute(route){
-    if(_notifRouteViaDesktop(route)) return true;
+  /* `here`: the route was delivered TO this window by the desktop (oswin.js's route channel), so it is this window's
+   * to perform. Handing it back to the desktop is a LOOP: the desktop sees the window already open and broadcasts the
+   * route again, which arrives here again -- measured on the laptop 2026-10-26: ~190 broadcasts/s from one Texts
+   * notification, every one ending in window.focus(), so Texts took the keyboard from every other window for good. */
+  function openOsNotificationRoute(route, opts){
+    if(!(opts && opts.here) && _notifRouteViaDesktop(route)) return true;
     const value=String(route||'');
     if(value==='texts'){switchView('texts');return true;}
     if(value.startsWith('texts:')){
@@ -12944,6 +12948,7 @@
   }
 
   window.PCOpenNotificationRoute=openOsNotificationRoute;
+  window.PCOpenNotificationRouteHere=route=>openOsNotificationRoute(route, { here:true });
   function osNotify(title, body, opts){
     if(!notificationAllowed(_notificationType(opts)))return null;
     // One PosterChanOS monitor announces (see notifs.js announcesArrivals): no second chime, no second card.

@@ -326,10 +326,12 @@
           /* A named conversation is what the click was ABOUT — opening the list instead is the bug
              this exists for. `openDMWith` validates the key itself; a malformed one falls through to
              the ordinary view switch rather than being trusted. */
-          else if(arg && v==='texts' && root.PCOpenNotificationRoute)
-            root.PCOpenNotificationRoute('texts:'+encodeURIComponent(arg));
-          else if(arg && v==='tg' && /^-?\d{1,20}$/.test(arg) && root.PCOpenNotificationRoute)
-            root.PCOpenNotificationRoute('tg:'+arg);
+          /* HERE, never back through the desktop: PCOpenNotificationRoute inside a window hands the route to the
+             desktop, which broadcasts it to the open window again -- this handler, for ever, focusing on every lap. */
+          else if(arg && v==='texts' && (root.PCOpenNotificationRouteHere || root.PCOpenNotificationRoute))
+            (root.PCOpenNotificationRouteHere || root.PCOpenNotificationRoute)('texts:'+encodeURIComponent(arg));
+          else if(arg && v==='tg' && /^-?\d{1,20}$/.test(arg) && (root.PCOpenNotificationRouteHere || root.PCOpenNotificationRoute))
+            (root.PCOpenNotificationRouteHere || root.PCOpenNotificationRoute)('tg:'+arg);
           else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
             root.__PC.openDMWith(arg);
           /* A POST handed to a tool (🎞️ Meme Builder / 🎬 Effect on a post) that already has its own
