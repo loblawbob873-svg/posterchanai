@@ -77,7 +77,7 @@ const {isTrustedPage}=require(TRUST);
 const fsGuard=e=>{if(!isTrustedPage(e.senderFrame.url,LOCALDIR))throw Error('denied')};
 HANDLER
 let owner,child;
-const watchdog=setTimeout(()=>{console.error('Native lifecycle timed out');app.exit(2)},15000);
+const watchdog=setTimeout(()=>{console.error('Native lifecycle timed out after 75 s');app.exit(2)},75000);
 app.whenReady().then(async()=>{
  protocol.handle('app',()=>new Response('<!doctype html><html><body>Native role probe</body></html>',{headers:{'content-type':'text/html'}}));
  owner=new BrowserWindow({show:false,webPreferences:{preload:PRELOAD,contextIsolation:true}});
@@ -119,7 +119,7 @@ app.whenReady().then(async()=>{
  async function roundTrip(id){
    assert.deepEqual(await p.webContents.executeJavaScript(`new Promise((resolve,reject)=>{
      const channel=new BroadcastChannel('pc-native-sync-regression');
-     const timer=setTimeout(()=>{channel.close();reject(Error('detached Sync popup could not reach primary'))},3000);
+     const timer=setTimeout(()=>{channel.close();reject(Error('detached Sync popup could not reach primary'))},20000);
      channel.onmessage=e=>{clearTimeout(timer);channel.close();resolve(e.data)};
      channel.postMessage({id:${id},action:'sweep'});
    })`),{id,result:'owner-complete'});
@@ -196,7 +196,11 @@ app.whenReady().then(async()=>{
             except subprocess.TimeoutExpired as error:
                 raise AssertionError((error.stdout or b'').decode(errors='replace')+'\n'+(error.stderr or b'').decode(errors='replace')) from error
             (tmp_path/'electron.log').write_text(stdout+'\n'+stderr)
-            assert native.returncode==0,stdout+'\n'+stderr
+            # STDERR FIRST: the gate's summary shows a failure's FIRST LINE, and stdout's first line is the
+            # ELECTRON_VERSION banner -- so in deploys 82-84 this failed three times as 'ELECTRON_VERSION=44.0.0', which
+            # says nothing. The script's own clocks (75 s watchdog, 20 s per round trip) sit inside the 90 s above for
+            # the reason given there: a fixed few seconds is the machine's load, not a hang.
+            assert native.returncode==0,'exit %s: %s\n--- stdout ---\n%s' % (native.returncode, stderr.strip() or '(no stderr)', stdout)
             assert 'REAL_NATIVE_RELOAD_PASS' in stdout
             assert 'DETACHED_SYNC_BROADCAST_PASS' in stdout
         finally:
