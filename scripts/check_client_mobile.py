@@ -47,7 +47,7 @@ WIDTHS = [(390, 844), (360, 780)]
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9471)
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-mobile-check"
 
-AUDIT = r"""(() => {
+AUDIT = r"""(async () => {
   const out = {overflow:false, zero:[], offCentre:[], stretched:[], hscroll:[], offlineBar:[], searchClipped:[]};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
 
@@ -80,7 +80,13 @@ AUDIT = r"""(() => {
     if (!ar || ar === 'auto') return;                      // no declared ratio: nothing to violate
     const m = ar.match(/^([\d.]+)\s*\/\s*([\d.]+)$/);
     if (!m) return;
-    const want = parseFloat(m[1]) / parseFloat(m[2]);
+    let want = parseFloat(m[1]) / parseFloat(m[2]);
+    // A LONE picture in a timeline card is cropped (object-fit:cover) into a frame clamped between 16:9 and 4:5 on
+    // purpose ("media preview sizes are not consistent", tests/client/test_timeline_media_frame_full_app.py), so a
+    // 1:2 portrait is EXPECTED to show 4:5. Only that frame is exempted -- the profile gallery's "super long
+    // rectangles" were object-fit:cover too, so excusing cover everywhere would hide the bug this check exists for.
+    if (im.matches('#tl-notes .media-row:not(.quoted .media-row) img:only-child'))
+      want = Math.min(16 / 9, Math.max(4 / 5, want));
     const r = im.getBoundingClientRect();
     if (r.width < 20 || r.height < 20) return;
     const got = r.width / r.height;
@@ -133,10 +139,14 @@ AUDIT = r"""(() => {
       const probe = document.createElement('input');
       probe.type = 'search'; probe.style.cssText = 'position:absolute;left:-9999px';
       document.getElementById('feed').appendChild(probe);
-      void document.body.offsetHeight;
+      // The flag is set by a MutationObserver (app.js _bindMainFlags), whose callback runs as a microtask --
+      // after this script, still before the next paint. Read synchronously, the audit saw the state no frame
+      // ever shows and reported two search boxes that nobody could see. Let the observer run first.
+      await new Promise(r => setTimeout(r, 0));
       if (getComputedStyle(sb).display !== 'none')
         out.searchClipped.push('a view with its own search still shows the topbar search too (two search boxes)');
       probe.remove();
+      await new Promise(r => setTimeout(r, 0));
     }
   }
 
@@ -227,7 +237,7 @@ async def drive():
                     return msg.get("result")
 
         async def js(expr):
-            r = await call("Runtime.evaluate", {"expression": expr, "returnByValue": True})
+            r = await call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True})
             if r.get("exceptionDetails"):
                 return None
             return r["result"].get("value")
