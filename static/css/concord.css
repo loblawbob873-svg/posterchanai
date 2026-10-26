@@ -871,3 +871,10 @@ body.os-on .ccg-projects{z-index:320}body.os-on.ccg-projects-open::before{z-inde
    buttons took the APP's accent -- an orange "Create channel" under a red Communities theme (Vyram, 2026-10-24). They
    take Communities' accent instead; --cct-* are resolved on :root, so this cannot loop with the "app"/classic themes. */
 .pc-cord-spaces-dialog{--neon:var(--cct-accent);--cyan:var(--cct-accent);--neon2:var(--cct-accent2);--accent-rgb:var(--cct-accent-rgb);--accent2-rgb:var(--cct-accent2-rgb);--on-accent:var(--cct-on-accent)}
+
+/* The channel topic opens in full (concord.js openTopic): the line is a button on a wide screen; on a phone, where the
+   line is hidden, the ⓘ button is the way in. */
+.cc-conversation>header .cc-topic{cursor:pointer}
+.cc-topic-open{display:none!important}
+@media(max-width:820px){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-topic-open{display:inline-grid!important;place-items:center!important}}
+.cc-topic-full{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;margin:8px 0 0}
