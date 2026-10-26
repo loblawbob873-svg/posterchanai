@@ -92,6 +92,12 @@ def test_cover_artist_and_placeholder_follow_the_track():
         got["three"] = await F.state(b)
         got["painted"] = await b.js("window.__painted")
         got["held"] = await b.js("(()=>{const c=__PC.MusicPlayer._cover;return c?c.sha:null})()")
+        got["glyph"] = await b.js(GLYPH)                 # the generated cover, card size
+        await F.press(b, "#ma-art")
+        await F.until_state(b, lambda s: s["full"], what="Now playing")
+        await asyncio.sleep(.3)
+        got["glyphFull"] = await b.js(GLYPH)             # ...and full size
+        await F.press(b, "#ma-collapse")
         # Back: track 2, now loaded, shows ITS cover and artist.
         await F.press(b, "#ma-prev")
         got["two"] = await F.until_state(b, lambda s: s["cur"] == S2 and s["appArt"]["kind"] == "cover" and s["appArt"]["loaded"],
@@ -126,6 +132,13 @@ def test_cover_artist_and_placeholder_follow_the_track():
     assert got["held"] is None, ("the skipped track's cover is still held (an object URL nobody shows)", got["held"])
     assert three["appArt"]["kind"] == "placeholder" and three["appTitle"] == "Stub Song 3", three
     assert three["artist"] == "" and three["art"] == "" and three["md"]["title"] == "Stub Song 3", three
+    # The generated cover is a cover: a gradient with a note CENTRED on it at a real size -- the glyph was once
+    # 22x60px pinned to the left edge in the card (percent sizes resolved against the grid row, not the cover).
+    for k in ("glyph", "glyphFull"):
+        g = got[k]
+        assert g["bg"] and "gradient" in g["bg"], (k, "the placeholder is a flat block", g)
+        assert .3 <= g["w"] <= .5 and abs(g["w"] - g["h"]) < .02, (k, "the note is not a square ~40% of the cover", g)
+        assert abs(g["dx"]) < .03 and abs(g["dy"]) < .03, (k, "the note is not centred on the cover", g)
     # Track 2: its own cover (a different picture), title and artist.
     assert two["appTitle"] == "Chrome Hearts" and two["artist"] == "Mira Sol" and two["art"] and two["art"] != one["art"], two
     assert two["md"]["art"][0] == two["art"] and two["md"]["artist"] == "Mira Sol", two
@@ -161,6 +174,26 @@ def test_a_cover_arriving_mid_seek_does_not_cancel_it():
     assert 18 <= got["s"]["t"] <= 24, ("the seek was cancelled by the cover arriving", got["s"]["t"])
 
 
+GLYPH = r"""(()=>{const a=document.querySelector('#ma-art .pc-art'), i=a&&a.querySelector('svg.ic'); if(!a||!i) return {bg:'',w:0,h:0,dx:1,dy:1};
+  const A=a.getBoundingClientRect(), G=i.getBoundingClientRect();
+  return {bg:getComputedStyle(a).backgroundImage, w:G.width/A.width, h:G.height/A.height,
+          dx:((G.left+G.width/2)-(A.left+A.width/2))/A.width, dy:((G.top+G.height/2)-(A.top+A.height/2))/A.height};})()"""
+
+# Which fraction of the spectrum strip's columns carry a bar taller than a quarter of the strip (and of its right quarter).
+SPREAD = r"""(()=>{const cv=document.getElementById('ma-viz'); const W=cv.width,H=cv.height; if(!W||!H) return {lit:0,right:0,W,H};
+  const d=cv.getContext('2d').getImageData(0,0,W,H).data, tall=[];
+  for(let x=0;x<W;x++){ let top=H; for(let y=0;y<H;y++){ if(d[(y*W+x)*4+3]>60){ top=y; break; } } tall.push(H-top>H*.25); }
+  const frac=a=>a.filter(Boolean).length/Math.max(1,a.length);
+  // bars have gaps between them: count a column lit if any column within 4px is
+  const near=tall.map((_,x)=>tall.slice(Math.max(0,x-4),x+5).some(Boolean));
+  return {lit:frac(near), right:frac(near.slice(Math.floor(W*.75))), W, H};})()"""
+
+# How much of Now playing's card the cover takes (a desktop view must not be a small cover in an empty card).
+FILL = r"""(()=>{const a=document.querySelector('#ma-art .pc-art').getBoundingClientRect(), c=document.querySelector('.ma-now').getBoundingClientRect(),
+  t=document.getElementById('ma-title'); return {w:a.width/c.width, h:a.height/c.height, font:parseFloat(getComputedStyle(t).fontSize), cardW:c.width,
+  display:getComputedStyle(document.querySelector('.ma-now')).display};})()"""
+
+
 # ── every control, pressed where it is drawn ─────────────────────────────────────────────────────────────────────
 @CHROME
 @pytest.mark.parametrize("width", [390, 1280])
@@ -180,6 +213,10 @@ def test_every_control_drives_the_player(width):
         await F.until_state(b, lambda s: s["cur"] != S1 and s["playing"], what="next")
         await F.press(b, "#ma-prev")
         await F.until_state(b, lambda s: s["cur"] == S1, what="previous")
+        # The spectrum draws across the WHOLE strip for broadband audio (log bands up to 16 kHz), not a clump on the left.
+        await asyncio.sleep(1.0)
+        spread = await b.js(SPREAD)
+        assert spread["lit"] >= .6 and spread["right"] >= .3, ("the spectrum is a clump, not a band across the strip", spread)
         await F.press(b, "#ma-shuffle")
         await F.until_state(b, lambda s: s["shuffle"], what="shuffle on")
         assert await b.js("document.getElementById('ma-shuffle').getAttribute('aria-pressed')") == "true"
@@ -192,6 +229,10 @@ def test_every_control_drives_the_player(width):
         await F.press(b, "#ma-art")
         await F.until_state(b, lambda s: s["full"], what="Now playing open")
         assert await F.audit(b, ".music-app") == [], await F.audit(b, ".music-app")
+        if width >= 1280:
+            fill = await b.js(FILL)
+            assert fill["w"] >= .42 and fill["h"] >= .55, ("desktop Now playing is a small cover in an empty card", fill)
+            assert fill["font"] >= 30, ("desktop Now playing's title did not scale up with the view", fill)
         assert await b.js("!document.getElementById('ma-lib').checkVisibility()"), "the library is still drawn under Now playing"
         await F.press(b, "#ma-next")
         await F.until_state(b, lambda s: s["cur"] != S1 and s["playing"], what="next in Now playing")
@@ -340,7 +381,7 @@ SIZES = r"""(()=>{const vis=e=>e.checkVisibility();
   const a=document.querySelector('#ma-art .pc-art').getBoundingClientRect(), p=document.getElementById('ma-play').getBoundingClientRect();
   const nav=document.querySelector('.mobilenav'); const nr=nav&&getComputedStyle(nav).display!=='none'?nav.getBoundingClientRect():null;
   const meet=(x,y)=>x.left<y.right-1&&y.left<x.right-1&&x.top<y.bottom-1&&y.top<x.bottom-1;
-  const artOverlaps=['ma-title','ma-seek','ma-play','ma-prev','ma-next'].filter(id=>meet(a,document.getElementById(id).getBoundingClientRect()));
+  const artOverlaps=['ma-title','ma-seek','ma-play','ma-prev','ma-next','ma-collapse','ma-viz'].filter(id=>meet(a,document.getElementById(id).getBoundingClientRect()));
   return {small, art:[Math.round(a.width),Math.round(a.height)], playBottom:Math.round(p.bottom), artOverlaps,
           limit:Math.round(nr&&nr.height?nr.top:innerHeight)};})()"""
 
@@ -375,6 +416,7 @@ def test_desktop_window_and_now_playing_widget():
         await F.press(b, "#ma-art")
         await F.until_state(b, lambda s: s["full"], what="Now playing in the window")
         got["fullAudit"] = await F.audit(b, ".osw .music-app", nav=False)
+        got["fill"] = await b.js(FILL)
         await F.press(b, "#ma-play")
         await F.until_state(b, lambda s: not s["playing"], what="paused in the window")
         await F.press(b, "#ma-collapse")
@@ -388,13 +430,23 @@ def test_desktop_window_and_now_playing_widget():
         await F.until_state(b, lambda s: s["cur"] != S1, what="next")
         await b.until(f"!document.querySelector('{sel} .wgt-mart img') || document.querySelector('{sel} .wgt-mart').dataset.src!=={json.dumps(got['wgt']['src'])}")
         got["wgtAfter"] = await b.js(f"document.querySelector('{sel} .wgt-martist').textContent")
+        # An untagged track: the disc wears the player's generated cover, not the empty record.
+        await _settled(b)
+        await F.press(b, "#ma-next")
+        await F.until_state(b, lambda s: s["cur"] == S3, what="the untagged track")
+        await b.until(f"document.querySelector('{sel} .wgt-mart').classList.contains('ph')")
+        got["wgtPh"] = await b.js(f"getComputedStyle(document.querySelector('{sel} .wgt-mart')).backgroundImage")
         assert not await b.js("__errors"), await b.js("__errors")
 
     _run(check, F.LIB + F.HELD)
     assert got["audit"] == [] and got["fullAudit"] == [], got
+    assert got["fill"]["display"] == "grid" and got["fill"]["w"] >= .38, \
+        ("Now playing in a wide desktop window is not the side-by-side layout, or its cover is small", got["fill"])
     w = got["wgt"]
     assert w["title"] == "Neon Rain" and w["artist"] == "Kaito Vega · Night City", w
     assert w["src"] == w["now"] and w["loaded"], w
+    # The generated cover stacks four gradients; the empty record it replaces is a single radial one.
+    assert got["wgtPh"].count("gradient(") >= 4, ("the desk widget shows the empty record for a track", got["wgtPh"])
 
 
 # ── the APK ──────────────────────────────────────────────────────────────────────────────────────────────────────

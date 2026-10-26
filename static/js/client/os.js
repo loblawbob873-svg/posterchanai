@@ -8341,6 +8341,7 @@
            * cannot be loaded here falls back to the placeholder rather than a broken image. */
           const src = (now && now.art) || '';
           art.style.setProperty('--art-h', String((now && now.hue) || 200));
+          art.classList.toggle('ph', !!now && !src);   // a track with no cover: the player's generated one
           if(art.dataset.src !== src){
             art.dataset.src = src;
             art.classList.toggle('has-cover', !!src);

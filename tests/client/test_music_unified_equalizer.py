@@ -32,8 +32,12 @@ def test_equalizer_is_persistent_and_part_of_the_single_audio_graph():
 
 
 def test_visualizer_is_compact_so_the_library_keeps_the_screen():
-    assert ".ma-viz{display:block;position:absolute" in CSS
-    assert "inset:0;width:100%;height:100%;opacity:.34" in CSS
+    # A thin STRIP in the card's flow (under the title, above the scrubber), never a background behind the text:
+    # as a full-card backdrop its bars drew behind the time labels and over the card's rounded border.
+    # test_music_player_art_full_app.py asserts the canvas overlaps no label or control at every size.
+    viz = CSS[CSS.index(".ma-viz{"):]
+    viz = viz[:viz.index("}") + 1]
+    assert "position:absolute" not in viz and "height:30px" in viz and "flex:1 1 100%" in viz, viz
     # THE SHAPE, NOT THE GAP. What keeps the library on screen is that the app is a flex COLUMN
     # sized to its host with the LIST taking the slack (asserted next) — the exact gap belongs to
     # the spacing scale `scripts/check_css_scale.py` owns, which has since moved it 9px -> 8px.

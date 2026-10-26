@@ -50,11 +50,18 @@ LIB = r"""
   const CHUNKS=%s;
   const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
   // 30 s of a quiet tone at 8 kHz -- long enough that nothing ends (and auto-advances) mid-test.
-  const wav=(tag)=>{const sr=8000,n=sr*30,extra=tag?8+tag.length+(tag.length&1):0,b=new ArrayBuffer(44+n*2+extra),v=new DataView(b),
+  const wav=(tag)=>{const sr=22050,n=sr*30,extra=tag?8+tag.length+(tag.length&1):0,b=new ArrayBuffer(44+n*2+extra),v=new DataView(b),
       w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
     w(0,'RIFF');v.setUint32(4,36+n*2+extra,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
     v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
-    for(let i=0;i<n;i++)v.setInt16(44+i*2,Math.round(Math.sin(i/8)*300),true);
+    // BROADBAND: a chord from 110 Hz to 3.5 kHz plus noise, so the spectrum has something to draw across its whole
+    // width (a single low tone lights the leftmost bars only, which is how a clumped strip once looked "fine").
+    // Each note's level drifts at its own rate, so the bars MOVE the way music does instead of standing still.
+    const F=[60,110,220,440,660,880,1320,1760,2640,3520,5000,7000,9500]; let seed=7;
+    for(let i=0;i<n;i++){ seed=(seed*1103515245+12345)&0x7fffffff; const t=i/sr;
+      let x=(seed/0x7fffffff-.5)*250;   // quiet noise: like music, the energy is in the notes, spread per OCTAVE
+      F.forEach((f,k)=>{ x+=Math.sin(2*Math.PI*f*t)*700*(.55+.45*Math.sin(2*Math.PI*t*(.4+k*.23))); });
+      v.setInt16(44+i*2,Math.max(-32000,Math.min(32000,Math.round(x))),true); }
     if(tag){const o=44+n*2;w(o,'id3 ');v.setUint32(o+4,tag.length,true);new Uint8Array(b,o+8,tag.length).set(tag);}
     return new Uint8Array(b);};
   window.__stubPlays=[]; window.__delay={}; window.__revoked=[];
@@ -176,6 +183,13 @@ AUDIT = r"""((root, navTop) => {
       if(Math.abs(dx)>2.5||Math.abs(dy)>2.5) out.push('off-centre icon in '+name+' dx='+dx.toFixed(1)+' dy='+dy.toFixed(1)); } });
   R.querySelectorAll('img').forEach(i=>{ if(!vis(i)) return; const r=i.getBoundingClientRect();
     if(r.width>20&&r.height>20&&Math.abs(r.width/r.height-1)>0.05&&i.closest('.pc-art')) out.push('stretched cover '+Math.round(r.width)+'x'+Math.round(r.height)); });
+  // THE SPECTRUM is a strip of its own: never behind a label or under a control, and inside its card's edge.
+  const meet=(a,b)=>a.left<b.right-1&&b.left<a.right-1&&a.top<b.bottom-1&&b.top<a.bottom-1;
+  R.querySelectorAll('canvas.ma-viz,canvas.mp-viz').forEach(cv=>{ if(!vis(cv)) return; const c=cv.getBoundingClientRect(); if(!c.width||!c.height) return;
+    R.querySelectorAll('button,#ma-title,#ma-artist,#ma-sub,.ma-t,.ma-seek,.mp-seek,.mp-time span,.mp-now,.mp-artist,.pc-art').forEach(e=>{
+      if(!vis(e)||e===cv) return; const r=e.getBoundingClientRect(); if(r.width&&r.height&&meet(c,r)) out.push('spectrum overlaps '+(e.id||String(e.className.baseVal??e.className).split(' ')[0])); });
+    const card=cv.closest('.ma-now,#music-player'); if(card){ const k=card.getBoundingClientRect();
+      if(c.left<k.left+4||c.right>k.right-4||c.top<k.top+1||c.bottom>k.bottom-1) out.push('spectrum runs to/over the card edge '+[c.left,c.right,k.left,k.right].map(Math.round)); } });
   R.querySelectorAll('#ma-title,#ma-artist,.mp-now,.mp-artist').forEach(t=>{ if(!vis(t)) return; const r=t.getBoundingClientRect();
     if(r.right>vw+1||r.left<-1) out.push('text runs off the side: '+(t.id||t.className)); });
   return out;

@@ -834,7 +834,9 @@ window.PCMusicPlayerFactory = function(dep){
         low.type='lowshelf'; low.frequency.value=180; mid.type='peaking'; mid.frequency.value=1200; mid.Q.value=.8;
         high.type='highshelf'; high.frequency.value=4200; v.filters={low,mid,high};
         this._loadEQ(); for(const b of ['low','mid','high']) v.filters[b].gain.value=this._eq[b];
-        v.an.fftSize=128; v.an.smoothingTimeConstant=0.82;
+        // 512 bins of ~94 Hz at 48 kHz: enough resolution for log-spaced bands down to the bass (128 gave 375 Hz bins,
+        // so the low bars all repeated one bin). -20 dB ceiling: a loud master no longer pins every bar at the top.
+        v.an.fftSize=512; v.an.smoothingTimeConstant=0.82; v.an.maxDecibels=-20;
         v.src.connect(low); low.connect(mid); mid.connect(high); high.connect(v.an); v.an.connect(v.ctx.destination); return true;
       }catch(e){ v.failed=true; return false; } },
     /* THE SPECTRUM BARS, AND WHY THIS LOOP IS WRITTEN SO CAREFULLY.
@@ -908,9 +910,18 @@ window.PCMusicPlayerFactory = function(dep){
         if(stale || (!v.ro && now-lastMeasure > 500)){ stale=false; lastMeasure=now; measure(cv); }
         if(!cx || !grads) return;
         v.an.getByteFrequencyData(data); cx.clearRect(0,0,W,H);
-        const n=Math.min(data.length,42), bw=W/n, minH=2*dpr, bar=Math.max(1,bw-2*dpr);
+        /* LOG-SPACED BANDS ACROSS THE WHOLE STRIP. The bars used to be the first 42 FFT bins, one each -- linear
+         * in frequency, so almost all of a song's energy (and all of a bass line) landed in the leftmost few and
+         * the strip read as a clump hugging one edge. Each bar is now a band an equal step apart on a log scale,
+         * averaged, the way ears hear and every music player draws it; how many bars is set by the width. */
+        // Up to 16 kHz: above that a song has next to nothing, and the top octave of a 48 kHz analyser left a third
+        // of the strip permanently flat.
+        const B=data.length, top=Math.max(8, Math.min(B, Math.round(16000/(((v.ctx&&v.ctx.sampleRate)||48000)/2)*B)));
+        const n=Math.max(12, Math.min(64, Math.round(W/(7*dpr)))), bw=W/n, minH=2*dpr, bar=Math.max(1,bw-2*dpr);
         for(let i=0;i<n;i++){
-          const h=Math.max(minH,(data[i]/255)*H);
+          const lo=Math.min(top-1, Math.floor(Math.pow(top, i/n))), hi=Math.max(lo+1, Math.min(top, Math.floor(Math.pow(top, (i+1)/n))));
+          let sum=0; for(let k=lo;k<hi;k++) sum+=data[k];
+          const h=Math.max(minH,(sum/(hi-lo)/255)*H);
           cx.fillStyle=grads[Math.min(BUCKETS-1, Math.max(0, Math.round(h/H*BUCKETS)-1))];
           cx.fillRect(i*bw+dpr,H-h,bar,h);
         }
