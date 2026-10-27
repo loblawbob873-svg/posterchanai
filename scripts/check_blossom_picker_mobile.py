@@ -41,6 +41,9 @@ const FOLDERS=['Camera','Screenshots from an exceptionally long journey','Receip
 const ME={pubkey:'phone-user'}, _MIME_EXT={'image/jpeg':'jpg','application/pdf':'pdf'}, FilesIdx={_lastIndexSha:'index',loadLocal(){},async ensure(){},meta(s){return this.rows[s]||{}},folderOf(s){return this.meta(s).folder||''},folders(){return FOLDERS},isEncFolder(){return false},rows:{}};
 const rows=[]; for(let i=0;i<24;i++){const sha=String(i).padStart(64,'0'),pdf=i===0,name=pdf?'Annual-report.pdf':`IMG_${String(i).padStart(4,'0')}_summer-holiday-photo.jpg`,mime=pdf?'application/pdf; charset=binary':'image/jpeg'; rows.push({sha256:sha,url:'https://media.example/'+sha,type:mime,size:102400+i}); FilesIdx.rows[sha]={name,folder:FilesIdx.folders()[i%6],mime};}
 const fetch=async()=>({ok:true,async json(){return rows}}), blossomListAuth=async()=>({}), mediaServer=()=> 'https://media.example', toast=()=>{}, _trapFocus=(el,close)=>document.addEventListener('keydown',e=>{if(e.key==='Escape')close()}), _popKeys=()=>{}, _bindThumbFallback=()=>{}, mimeForName=n=>n.endsWith('.pdf')?'application/pdf':'image/jpeg', extOfBlob=(b,m)=>m.name.endsWith('.pdf')?'pdf':'jpg', downloadName=b=>b.sha256, fileLabel=n=>n, blobThumb=(b,e)=>e==='pdf'?'<span class="file-icon">PDF</span>':`<img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><rect width='96' height='96' fill='pink'/></svg>" alt="${e}">`;
+/* This audit measures the TILES view (thumbnail size, the S/M switch): it asks for Tiles through the file manager's
+   own setting, as a person who picked Tiles there would. Details is tests/client/test_file_picker_matches_the_file_manager_full_app.py. */
+window.ClientSettings={get:(k,d)=>k==='filesView'?'tiles':d,set(){}};
 /* FUNCTIONS */
 blossomPicker({value:'',dispatchEvent(){}},x=>window.__picked=x,{title:'Attach Files'});
 setTimeout(()=>window.__ready=true,50);

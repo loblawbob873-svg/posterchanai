@@ -35,7 +35,7 @@ def test_all_files_does_not_filter_to_only_root_folder():
         "a named folder is no longer matched by the file's own folder"
     assert "=== f" in rows or "===f" in rows, \
         "the folder comparison is gone"
-    assert "const folders=[['','🗂 All']]" in body
+    assert "const folders=[['','All']]" in body
 
 
 # The picker now asks for a BOUNDED page (`?limit=`) with an abort deadline, so the call is no

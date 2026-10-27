@@ -72,6 +72,10 @@
 .fx-explorer .files-grid.details .file-card.row:hover{background:rgba(var(--accent-rgb),.08);box-shadow:inset 3px 0 0 var(--neon)}
 .fx-explorer .files-grid.details .file-card.row.selected{background:rgba(var(--accent-rgb),.18);box-shadow:inset 3px 0 0 var(--cyan)}
 .fx-explorer .fx-name .fname{font-size:14px}
+/* a picture's own thumbnail as its row icon (files.js), row-sized */
+.fx-explorer .files-grid.details .fx-ic{display:inline-grid;place-items:center;width:28px;height:28px;overflow:hidden;border-radius:4px}
+.fx-explorer .files-grid.details .fx-ic img,.fx-explorer .files-grid.details .fx-ic .file-icon{width:28px;height:28px;min-height:0;object-fit:cover;font-size:12px}
+.fx-explorer .files-grid.details .fx-ic .file-icon>span{display:none}
 .fx-explorer .file-card.isdir .fx-ic{filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.55))}
 .fx-rowmore{display:inline-grid;place-items:center;justify-self:end;flex:0 0 auto;width:32px;height:32px;padding:0;
   border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
@@ -109,4 +113,39 @@
   .fx-rowmore{width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1))}
   .fx-explorer .fx-home-tile{min-height:52px}
   .fx-status{margin:0;padding:6px 10px}
+}
+
+/* ---- the FILE PICKER (upload.js blossomPicker), which loads this sheet when it opens ---------------------------- */
+/* THE PICKER LOOKS LIKE THE FILE MANAGER (2026-10-26: "our file picker needs to be consistent across the app, same like
+   what you see in the file manager"): a search box and the Details/Tiles switch in its header, Details = one row per
+   file (icon, name, size, date) with the Explorer's neon edge, a status line at the foot, folder icons from the same
+   sprite. The S/M thumbnail size belongs to Tiles only. */
+.bp-file-picker .bp-find{flex:0 1 220px;min-width:90px;height:34px;padding:6px 10px;font-size:13px;border-radius:8px}
+.bp-file-picker .bp-find:focus{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon),0 0 16px -6px var(--neon)}
+.bp-view{display:inline-flex;gap:2px;flex:0 0 auto}
+.bp-view .mini{display:inline-grid;place-items:center;min-width:34px;min-height:34px;padding:0}
+.bp-view .mini.active{border-color:var(--neon);color:var(--neon);background:rgba(var(--accent-rgb),.14)}
+.bp-file-picker.bp-details .bp-density{display:none}
+.bp-explorer>.files-grid.bp-rows{display:flex;flex-direction:column;gap:0;padding:4px 8px}
+.bp-explorer .bp-pick-card.bp-pick-row{display:grid;grid-template-columns:28px minmax(0,1fr) 72px 92px;align-items:center;
+  column-gap:10px;min-height:40px;padding:4px 8px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;
+  text-align:start;color:var(--text);transition:background .1s,box-shadow .1s}
+.bp-explorer .bp-pick-card.bp-pick-row:hover,.bp-explorer .bp-pick-card.bp-pick-row:focus-visible{background:rgba(var(--accent-rgb),.08);
+  box-shadow:inset 3px 0 0 var(--neon);outline:none}
+.bp-explorer .bp-pick-card.bp-pick-row.bp-picked{background:rgba(var(--accent-rgb),.18);box-shadow:inset 3px 0 0 var(--cyan)}
+.bp-explorer .bp-pick-row .bp-pick-ic{display:grid;place-items:center;width:28px;height:28px;overflow:hidden;border-radius:4px}
+.bp-explorer .bp-pick-row .bp-pick-ic img{width:28px;height:28px;object-fit:cover}
+.bp-explorer .bp-pick-row .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500}
+.bp-explorer .bp-pick-row .bp-pick-size,.bp-explorer .bp-pick-row .bp-pick-date{font-size:12px;color:var(--muted);white-space:nowrap;text-align:end}
+.bp-explorer .folder-chip .ic{width:16px;height:16px;margin-inline-end:6px;vertical-align:-3px}
+.bp-status{flex:0 0 auto;padding:6px 14px;border-top:1px solid var(--line);color:var(--muted);
+  font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em}
+.bp-status::before{content:"";display:inline-block;width:6px;height:6px;margin-inline-end:8px;border-radius:50%;
+  background:var(--cyan);box-shadow:0 0 8px var(--cyan);vertical-align:1px}
+.bp-status:empty{display:none}
+@media (max-width:820px),(max-height:600px){
+  .bp-explorer .bp-pick-card.bp-pick-row{grid-template-columns:36px minmax(0,1fr) 64px;min-height:calc(52px / var(--zf,1))}
+  .bp-explorer .bp-pick-row .bp-pick-date{display:none}
+  .bp-file-picker .bp-find{flex:1 1 120px}
+  .bp-view .mini{min-width:calc(44px / var(--zf,1));min-height:calc(44px / var(--zf,1))}
 }

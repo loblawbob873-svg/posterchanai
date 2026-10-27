@@ -2426,10 +2426,8 @@
     error.incomplete=true;error.missing=list;return error;
   }
   function unanswered(relays,report){return (relays||[]).filter(url=>!report.ok?.includes(url));}
-  /* WHO DID NOT ANSWER, A REFUSAL EXCEPTED. relay.damus.io answers a kind-1059 read with auth-required, and again after
-   * our AUTH: only the community's stream key may read there, so no member's client reads anything from it -- it cannot
-   * be holding something only it would show. Such a relay (`refused`, relay.js queryFrom) is not a missing answer, as
-   * long as some relay DID answer; a relay that timed out, failed or was skipped still is. */
+  /* Who did not answer, a REFUSAL excepted (relay.damus.io refuses kind-1059 reads even after AUTH; no member reads
+   * there), as long as some relay did answer. A timeout, failure or skip still counts as missing. */
   function unansweredBesidesRefusals(relays,report){
     const refused=new Set(report.refused||[]),ok=report.ok||[];
     if(!(relays||[]).some(url=>ok.includes(url)))return unanswered(relays,report);
@@ -6428,9 +6426,7 @@
       for(let page=0;page<100;page++){
         if(!current())throw new Error('refounding account or membership changed');
         const report={},auth=reader.createPlaneAuth(bundle,cached,author,[relay]),filter={kinds:[1059],authors:[author],limit:1000,...(until===undefined?{}:{until})};
-        /* `urgent`: a read that must COMPLETE opens its own socket. Without it a relay another read was using at that
-         * moment was skipped ("held") and the rotation stopped -- reliably, once relay.ditto.pub (also read by the
-         * background membership sweep) became one of a community's relays (2026-10-26). The invite reads do the same. */
+        /* urgent: a read that must complete opens its own socket, never skipped as "held" (2026-10-26). */
         const events=await p.relayQueryFrom([relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history',urgent:true});
         if(!current())throw new Error('refounding account or membership changed');
         if(!(report.ok||[]).map(normalizeRelay).includes(normalizeRelay(relay))||(report.failed||[]).length||(report.unheld||[]).length)throw new Error('every control relay must complete before refounding');

@@ -343,7 +343,7 @@ async def a_document_made_in_office_is_on_the_drive_of_a_fresh_device(S):
     await d2.b.js("__PC.switchView('blossom');true")
     await F.wait(d2, "!!document.querySelector('.fx-home-tile[data-folder=\"\"]')", 30, 'the Files home')
     await d2.b.js("document.querySelector('.fx-home-tile[data-folder=\"\"]').click();true")
-    await F.wait(d2, "/Showing \\d+ of/.test(document.querySelector('#feed').innerText) && "
+    await F.wait(d2, "/\\d+ items?/.test((document.getElementById('fx-status')||{}).textContent||'') && "   # the status bar
                      "document.querySelector('#feed').innerText.includes(%s)" % json.dumps(name), 30,
                  'listed under All files')
     raw = R.H.STATE['blobs'].get(doc[0]['sha'])

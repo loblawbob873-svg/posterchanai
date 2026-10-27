@@ -196,6 +196,10 @@ window.PCMusicLibFactory = function(dep){
       /* MUSIC is an encrypted folder, and pickers hide those unless the caller can decrypt what it
          picks — this one can (above), so the Music folder is offered here too. */
       allowEncrypted: true,
+      /* ...and the picker's own Synced Folders branch hands a FILE here, attached exactly as the 📎 menu's
+         "From a synced folder" attaches one. */
+      onFile: async f => { if(!dmEncOn()) toast('sending a readable copy of '+f.name+' — turn on 🔒 to encrypt it to this conversation');
+                           await dmAttachFiles(inp, [f], st); },
     });
   }
 

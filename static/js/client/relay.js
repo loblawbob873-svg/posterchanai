@@ -111,8 +111,7 @@
   /* Deployment-denied relay hosts. These two consistently refuse/time out and have appeared through
      legacy saved rooms, user relay migrations and external reads. Check at every constructor path so
      no persisted spelling can bypass a higher-level list cleanup. */
-  /* relay.ditto.pub left this list on 2026-10-26: it answers again, and Concord syncs with it by default -- blocked here
-   * it was never subscribed to or written to, only read once. relay.damus.io stays: it refuses Concord's gift-wrap reads. */
+  /* relay.ditto.pub left this list 2026-10-26 (it answers again; a Concord default). */
   var _BLOCKED_RELAY_HOST = /^wss?:\/\/(?:relay\.damus\.io)(?::\d+)?(?:[\/?#]|$)/i;
   function _isBlockedRelay(u){ return _BLOCKED_RELAY_HOST.test(String(u||'').trim()); }
 
@@ -238,9 +237,7 @@
     _queryFromCooldown: new Map(),
     _queryFromPurposeCooldown: new Map(),
     _queryFromStops: new Set(),
-    /* Hosts external reads skip unless a caller allows them. relay.ditto.pub was here while it refused WebSocket handshakes;
-     * it answers again and is one of Concord's default relays (2026-10-26), and a community that lists it must be READ
-     * there -- left here, key rotation after a ban skipped it ("held") and refused to start. */
+    /* relay.ditto.pub left this list (2026-10-26): it answers again and is a Concord default. */
     _queryFromBlockedHosts: new Set(['relay.damus.io']),
     _authSigner: null,
     /* PosterChanOS's local relay (osmode.py) holds no key, so to sync this account's PRIVATE documents
@@ -1491,12 +1488,8 @@
         try { ws = new WebSocket(via?via(u):u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
         const wire=JSON.stringify(['REQ',subId,...filters]),request=()=>{if(auth&&!auth.current()){fin('abort');return;}ws.send(wire);};
-        /* A relay that REFUSES the read once it has seen who asks ('denied': auth-required again after our AUTH, or no
-         * signer that may answer it) has answered -- "nobody without the right key reads this here" -- which is not a
-         * relay that could not be reached. It is still `failed` for every caller (nothing changes for them), and is ALSO
-         * `refused`, for a caller that can tell the two apart (Concord's invite registry, which relay.damus.io's
-         * kind-1059 gate used to fail every time: "error when creating an invite link to my own room, complains
-         * about damus", 2026-10-26). A timeout stays a plain failure. */
+        /* A relay that refuses the read after seeing who asks has ANSWERED: still `failed`, and also `refused` for a caller
+         * that can tell them apart (Concord's invite reads vs relay.damus.io, 2026-10-26). A timeout stays a failure. */
         auth=this._externalReadAuth(ws,u,()=>!done,request,reason=>fin(reason==='timeout'?'failure':'refused'),()=>{clearTimeout(tm);tm=setTimeout(fin,12000);},authScope);
         ws.onopen = () => { try{ request(); }catch(_){ fin(); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }

@@ -4001,7 +4001,11 @@ window.PCFilesFactory = function(dep){
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         data: ` data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}"`
             + ` data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}"`,
-        icon: m.enc ? _fxEncIcon(ext, m.mime) : _fxIcon(ext, (b.type && !/octet-stream/i.test(b.type)) ? b.type : (m.mime||b.type)), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
+        /* A PICTURE IS ITS OWN ICON, as in Explorer's Details view: the same thumbnail the tile draws, row-sized
+         * (files-explorer.css). Everything else keeps its type icon; an encrypted picture too (its preview is a decrypt). */
+        icon: m.enc ? _fxEncIcon(ext, m.mime)
+            : (/^image\//i.test((b.type && !/octet-stream/i.test(b.type)) ? b.type : (m.mime||mimeForName('x.'+(ext||''))||'')) ? blobThumb(b, ext)
+            : _fxIcon(ext, (b.type && !/octet-stream/i.test(b.type)) ? b.type : (m.mime||b.type))), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
         acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL" aria-label="Copy URL"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg></button>`) + dl + ren + move + del,
       });

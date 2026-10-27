@@ -19,7 +19,7 @@ window.PCUploadFactory = function(dep){
     $, $$, FilesIdx, _MEDIA_META, _blobToB64, _blossomBuiltin, _fmtBytes, _fxFileGlyph, _hold,
     _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus, _withModule,
     checkBlossomAccess, copyValue, enc, isMutedView, isReply, mediaServer, needProfile, openThread,
-    profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget,
+    profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget, pickSyncedFile, _fxFolderIcon,
   } = dep;
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   // Hash a File for upload WITHOUT holding it whole in memory. Small files go through crypto.subtle
@@ -967,6 +967,10 @@ window.PCUploadFactory = function(dep){
   // a private copy silently ships a flat, folderless drive (which is exactly what the meme picker did).
   function blossomPicker(ta, onPick, opts={}){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
+    /* Its look is the file manager's (files-explorer.css, lazily loaded -- the boot payload has no room): load it here
+     * too, under the same id, so it is fetched once whichever opens first. */
+    if(!document.getElementById('fx-explorer-css')){ try{ const l=document.createElement('link'); l.id='fx-explorer-css'; l.rel='stylesheet';
+      l.href='/static/css/files-explorer.css'+(window.__VER?('?v='+encodeURIComponent(window.__VER)):''); document.head.appendChild(l); }catch(_){} }
     /* STATE LIVES ON THE PICKER, NOT BESIDE IT.
        `scripts/check_blossom_picker_mobile.py` LIFTS this function out of app.js and runs it against
        a stub page, so a `const` added at module scope is simply not there — and the way that failed
@@ -985,11 +989,14 @@ window.PCUploadFactory = function(dep){
     const bg=document.createElement('div'); bg.className='modal-bg modal-sub bp-picker-bg';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal bp-file-picker">
       <div class="bp-head"><button type="button" class="mini bp-locations" aria-expanded="false">☰ Locations</button><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
+        <input type="search" class="input bp-find" placeholder="🔍 Search" aria-label="Search these files" autocomplete="off">
+        <span class="bp-view" role="group" aria-label="View"><button type="button" class="mini" data-bp-view="details" title="Details" aria-label="Details"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bars"></use></svg></button><button type="button" class="mini" data-bp-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button></span>
         <label class="bp-sort"><span>Sort</span><select aria-label="Sort files"><option value="date">Newest</option><option value="name">Name</option><option value="size">Size</option></select></label>
         <span class="bp-density" aria-label="Thumbnail size"><button type="button" class="mini active" data-bp-size="small" aria-pressed="true" title="Small thumbnails">S</button><button type="button" class="mini" data-bp-size="medium" aria-pressed="false" title="Medium thumbnails">M</button></span>
         <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
       <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
         <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>
+      <div class="bp-status" role="status"></div>
       <div class="bp-multi-bar" hidden><span class="bp-multi-count" role="status"></span>
         <button type="button" class="btn btn-ghost small bp-multi-clear">Clear</button>
         <button type="button" class="btn btn-neon small bp-multi-go" disabled>Attach</button></div></div>`;
@@ -1160,9 +1167,27 @@ window.PCUploadFactory = function(dep){
        *
        * `allowEncrypted` is opt-in, so every existing caller is byte-for-byte unchanged — a
        * composer that publishes a URL still must not offer ciphertext nobody else can fetch. */
-      const folders=[['','🗂 All']].concat(
-        FilesIdx.folders().filter(f=>opts.allowEncrypted||!FilesIdx.isEncFolder(f)).map(f=>[f,'📁 '+f]));
-      let cur='', sort='date';
+      const folders=[['','All']].concat(
+        FilesIdx.folders().filter(f=>opts.allowEncrypted||!FilesIdx.isEncFolder(f)).map(f=>[f,f]));
+      const _chipIcon=f=>f===''?'<svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>':(typeof _fxFolderIcon==='function'?_fxFolderIcon(f):'');
+      /* SYNCED FOLDERS, as in the file manager's tree -- offered to a caller that can take what is picked there: one
+       * that takes a FILE (`onFile`: Messages attaches it) or a post composer (`publishDecrypted`: a playable copy is
+       * uploaded and linked, as for a Music track). A synced file is private, so nobody else is offered it. */
+      const canSynced=typeof pickSyncedFile==='function' && (typeof opts.onFile==='function' || (opts.publishDecrypted && ta));
+      let cur='', sort='date', query='';
+      /* THE FILE MANAGER'S VIEW, HERE TOO ("our file picker needs to be consistent across the app, same like what you
+       * see in the file manager", 2026-10-26): Details or Tiles is the SAME setting Files uses, and switching here
+       * switches there. Details lists a file as one row (icon, name, size, date); Tiles keeps the thumbnails, with
+       * the S/M size beside them. */
+      let view=(window.ClientSettings&&ClientSettings.get('filesView','details')==='tiles')?'tiles':'details';
+      const modal=bg.querySelector('.bp-file-picker');
+      const paintView=()=>{ modal.classList.toggle('bp-details', view==='details');
+        bg.querySelectorAll('[data-bp-view]').forEach(b=>{ const on=b.dataset.bpView===view; b.classList.toggle('active',on); b.setAttribute('aria-pressed',on?'true':'false'); }); };
+      paintView();
+      bg.querySelectorAll('[data-bp-view]').forEach(b=>b.onclick=()=>{ view=b.dataset.bpView==='tiles'?'tiles':'details';
+        try{ ClientSettings.set('filesView', view); }catch(_){}
+        paintView(); draw(); });
+      { const f=bg.querySelector('.bp-find'); if(f){ let t=null; f.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ query=f.value.trim().toLowerCase(); draw(); },150); }; } }
       /* A FOLDER'S CONTENTS COME FROM THE INDEX, NOT FROM THE NEWEST-N WINDOW.
        *
        * The listing above is deliberately bounded (`?limit=2000`) because a full BUD-02 listing on
@@ -1199,7 +1224,7 @@ window.PCUploadFactory = function(dep){
         return out;
       };
       const draw=()=>{
-        const shown=_folderRows(cur).slice().sort((a,b)=>{
+        const shown=_folderRows(cur).filter(b=>!query||String((FilesIdx.meta(b.sha256)||{}).name||b.name||'').toLowerCase().includes(query)).sort((a,b)=>{
           if(sort==='name')return String((FilesIdx.meta(a.sha256)||{}).name||a.name||'').localeCompare(String((FilesIdx.meta(b.sha256)||{}).name||b.name||''));
           if(sort==='size')return (Number(b.size)||0)-(Number(a.size)||0);
           return (Number(b.uploaded||b.created_at)||0)-(Number(a.uploaded||a.created_at)||0);
@@ -1214,6 +1239,7 @@ window.PCUploadFactory = function(dep){
            * itself already carries the name and size. Keep the same metadata directly under the
            * preview and return it to the caller so an MMS part is not named with its blob hash. */
           const when=Number(b.uploaded||b.created_at)||0;
+          if(view==='details') return `<button type="button" class="file-card bp-pick-card bp-pick-row" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}" data-sha="${enc(b.sha256)}"><span class="bp-pick-ic">${/^image\//.test(type)?blobThumb(Object.assign({},b,{type}),ext):_fxFileGlyph(/^video\//.test(type)?'video':/^audio\//.test(type)?'audio':'file')}</span><span class="fname">${enc(fileLabel(name,ext,b.size))}</span><span class="bp-pick-size">${enc(_fmtBytes(b.size||0))}</span><span class="bp-pick-date">${when?enc(new Date(when*1000).toLocaleDateString()):''}</span></button>`;
           return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}" data-sha="${enc(b.sha256)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small>${when?`<small class="bp-pick-date">${enc(new Date(when*1000).toLocaleDateString())}</small>`:''}</span></button>`;
         }).join('')
           /* "I could not ask" is never "you have nothing" — the same rule the drive check and the
@@ -1222,6 +1248,8 @@ window.PCUploadFactory = function(dep){
           : `<div class="empty">${_bpListFailed
               ? enc(_bpListFailed)+' <button type="button" class="mini bp-retry">Retry</button>'
               : (cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.'))}</div>`;
+        grid.classList.toggle('bp-rows', view==='details');
+        { const st=bg.querySelector('.bp-status'); if(st) st.textContent=shown.length+' item'+(shown.length===1?'':'s')+(query?' matching “'+query+'”':'')+(picked.length?' · '+picked.length+' selected':''); }
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
         syncMulti();                // a folder change redraws the grid; the picks survive it
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
@@ -1267,7 +1295,18 @@ window.PCUploadFactory = function(dep){
       // stays visible instead of being hidden inside a native select whose state was easy to miss.
       fbar.innerHTML = `<section class="fx-tree-node"><button type="button" class="fx-tree-head active" id="bp-tree-toggle" aria-expanded="true"><span class="chev">▾</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><b>Files</b></button>
         <div class="fx-tree-children" id="bp-tree-children"><div class="folder-bar">${folders.map(([v,l])=>
-          `<button type="button" class="folder-chip${v===''?' active':''}" data-folder="${enc(v)}">${enc(l)}</button>`).join('')}</div></div></section>`;
+          `<button type="button" class="folder-chip${v===''?' active':''}" data-folder="${enc(v)}">${_chipIcon(v)}${enc(l)}</button>`).join('')}</div></div></section>`
+        + (canSynced ? `<section class="fx-tree-node"><button type="button" class="fx-tree-head" id="bp-synced"><span class="chev">▸</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg><b>Synced Folders</b></button></section>` : '');
+      { const sb=fbar.querySelector('#bp-synced'); if(sb) sb.onclick=async()=>{
+          const f=await pickSyncedFile(); if(!f) return;        // cancelled: back in this picker
+          close();
+          try{
+            if(typeof opts.onFile==='function'){ await opts.onFile(f); return; }
+            toast('adding a copy of '+f.name+' to your drive');
+            const link=await uploadBlob(f);
+            ta.value+=(ta.value?'\n':'')+link; ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached');
+          }catch(e){ toast('could not attach '+(f.name||'that file')+' — '+((e&&e.message)||e)); }
+        }; }
       const toggle=fbar.querySelector('#bp-tree-toggle'), children=fbar.querySelector('#bp-tree-children');
       toggle.onclick=()=>{ const open=!children.classList.toggle('hidden'); toggle.setAttribute('aria-expanded',open?'true':'false'); toggle.querySelector('.chev').textContent=open?'▾':'▸'; };
       fbar.querySelectorAll('[data-folder]').forEach(btn=>btn.onclick=()=>{

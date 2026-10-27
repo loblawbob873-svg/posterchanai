@@ -47,7 +47,7 @@ def test_a_label_item_is_not_closed_before_the_browser_acts_on_it():
 def test_existing_files_remain_available_from_composer_more_menu():
     body = _compose()
     assert "items.push(['files','📁 Attach from Files'])" in body
-    assert "if(a==='files'){ blossomPicker(ta); return; }" in body
+    assert "if(a==='files'){ blossomPicker(ta, null, {allowEncrypted:true, publishDecrypted:true}); return; }" in body
 
 
 def test_the_reply_composer_offers_files_too():

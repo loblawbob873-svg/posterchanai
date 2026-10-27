@@ -14,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_native_window_reload_electron import _missing_runtime, _native_popen, _stop_native
+from tests.test_native_window_reload_electron import _native_popen, _stop_native
+
+
+def _missing_runtime(reason):
+    # A plain skip, never the native IPC test's PC_REQUIRE_NATIVE_IPC_TEST failure: that flag belongs to that test, and
+    # the node half below runs this file's logic everywhere (the gate has no display for Electron).
+    pytest.skip(reason)
 
 ROOT = Path(__file__).resolve().parents[1]
 

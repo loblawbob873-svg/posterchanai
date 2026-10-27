@@ -10870,7 +10870,7 @@
     $, $$, FilesIdx, _MEDIA_META, _blobToB64, _blossomBuiltin, _fmtBytes, _fxFileGlyph, _hold,
     _instanceBase, _isNativeApp, _popKeys, _serverOrigin, _shaFromUrl, _trapFocus, _withModule,
     checkBlossomAccess, copyValue, enc, isMutedView, isReply, mediaServer, needProfile, openThread,
-    profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget,
+    profOf, safePk, sendDm, sign, toast, trackUrl, uploadTarget, pickSyncedFile, _fxFolderIcon,
   }; }
   function _uploadMod(){ return _lzGet('upload.js', 'PCUploadFactory', _uploadDeps); }
   function _uploadLoad(){ return _lzLoad('upload.js', 'PCUploadFactory', _uploadDeps); }
