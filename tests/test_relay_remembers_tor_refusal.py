@@ -6,6 +6,7 @@ full 8s each time, then connected direct. Drives the shipped _connect against a 
 import asyncio
 
 import pytest
+import websockets
 
 from app.services.nostr import relay as R
 
@@ -27,7 +28,7 @@ def net(monkeypatch):
         if not state["direct_ok"]:
             raise OSError("unreachable")
         return _WS()
-    monkeypatch.setattr(R.websockets, "connect", connect)
+    monkeypatch.setattr(websockets, "connect", connect)   # relay.py opens through peer_ua, which calls websockets.connect
     monkeypatch.setattr(R, "_proxy_kw", lambda: {"proxy": "http://127.0.0.1:8118"})
     monkeypatch.setattr(R, "_tor_refused", {})
     for name in ("_note_relay_ok", "_note_relay_fail", "_note_relay_429"):

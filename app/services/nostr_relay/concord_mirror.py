@@ -184,12 +184,12 @@ class _TorThenDirect:
         self.url, self.proxy, self._cm = url, proxy, None
 
     async def __aenter__(self):
-        import websockets
         from app.services import concord_tunnel as tun
+        from app.services.nostr import peer_ua   # PosterChan/Server, dropped for a relay that refuses it (jskitty: 403)
         last = None
         for hop in tun.hops(self.url, self.proxy):
-            cm = websockets.connect(self.url, proxy=hop or None, open_timeout=tun.open_timeout(hop),
-                                    max_size=4 * 1024 * 1024, user_agent_header="PosterChan/Server", ping_interval=None)
+            cm = peer_ua.connect(self.url, proxy=hop or None, open_timeout=tun.open_timeout(hop),
+                                 max_size=4 * 1024 * 1024, ping_interval=None)
             try:
                 ws = await cm.__aenter__()
             except Exception as e:

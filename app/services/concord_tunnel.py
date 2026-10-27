@@ -180,9 +180,9 @@ def open_timeout(proxy: str | None) -> float:
 
 def connect(url: str, proxy: str | None):
     """The outbound socket, through the fallback proxy, or direct with `proxy=None` (patched in tests)."""
-    import websockets
-    return websockets.connect(url, proxy=proxy or None, open_timeout=open_timeout(proxy), max_size=MAX_FRAME,
-                              user_agent_header="PosterChan/Server", ping_interval=None)
+    from app.services.nostr import peer_ua   # PosterChan/Server, dropped for a relay that refuses it (jskitty: 403)
+    return peer_ua.connect(url, proxy=proxy or None, open_timeout=open_timeout(proxy), max_size=MAX_FRAME,
+                           ping_interval=None)
 
 
 async def pipe(client, upstream) -> None:

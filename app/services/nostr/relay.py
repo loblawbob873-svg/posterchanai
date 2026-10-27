@@ -17,7 +17,7 @@ import contextvars
 import logging
 from urllib.parse import urlparse
 
-import websockets
+from app.services.nostr import peer_ua
 
 
 def _tolerate_unfinished_connections() -> None:
@@ -402,18 +402,17 @@ async def _open(relay: str, direct: bool, **kw):
     flaky/down Tor proxy degrades to a direct connection instead of dropping federation entirely.
     Loopback relays never proxy; `direct=True` callers skip the proxy attempt. Extra kwargs (e.g.
     max_size for the firehose) pass through."""
-    # Identify PosterChan server traffic even when a peer is reached through a public proxy.
-    kw.setdefault("user_agent_header", "PosterChan/Server")
+    # PosterChan server traffic identifies itself (peer_ua: dropped for a relay that refuses it), even through a proxy.
     base = _conn_kw(relay, direct)
     if base.get("proxy") and _tor_refuses(relay):
         base = {"proxy": None}
     try:
         try:
-            ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
+            ws = await peer_ua.connect(relay, open_timeout=_CONNECT_TIMEOUT, **base, **kw)
         except Exception as e:
             if base.get("proxy"):
                 logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
-                ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
+                ws = await peer_ua.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
                 _note_tor_refused(relay)
                 logger.info("[nostr] %s connected DIRECT (refuses Tor; direct for %dh)", relay,
                             _TOR_REFUSED_TTL // 3600)
