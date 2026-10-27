@@ -13087,9 +13087,9 @@
     if(_menuAct('classic')) return;
     if(!on) return;
     on = false;
+    _publishShellFront();   // this surface is an application again — see _publishShellFront
     // Unread DMs count in the bell only in Desktop mode / PosterChanOS (notifs.js notifUnread): recount on the way out.
     try{ if(window.__PC && __PC.bumpNotif) __PC.bumpNotif(); }catch(_){}
-    _publishShellFront();   // this surface is an application again — see _publishShellFront
     try{ window.PCBuddy && PCBuddy.unmount(); }catch(_){}
     try{ delete window.__PC_COMPOSE_HOST; }catch(_){ window.__PC_COMPOSE_HOST = null; }
     _deskLayoutSize=null;
