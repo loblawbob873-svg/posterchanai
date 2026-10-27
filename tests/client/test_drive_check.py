@@ -245,12 +245,39 @@ class ReclaimTests(unittest.TestCase):
             ["cc"], ["dd", "ee"])
         self.assertEqual(got, ["aa"])
 
+    def test_a_synced_album_cover_is_a_reference(self):
+        """A synced album cover (music.js sharePass, 2026-10-26) is a keep-flagged blob that no file entry names --
+        its address lives INSIDE each track's tag index as `tg.ca`. Unreferenced, it is exactly the reclaim's
+        target, and deleting it blanks the cover on every other device of the account."""
+        import json
+        import re
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node on this node")
+        m = re.search(r"function _musicCoverRefs\(files\)\{[\s\S]*?\n  \}", self.src)
+        self.assertIsNotNone(m, "the reclaim no longer collects the music library's synced covers")
+        cover, other = "c" * 64, "d" * 64
+        files = {"t1": {"tg": {"ca": cover}}, "t2": {"tg": {"ca": cover}}, "t3": {"tg": {"ca": "not-a-sha"}}, "t4": {}}
+        js = ("const refs = (%s)(%s);\nprocess.stdout.write(JSON.stringify([...refs]));"
+              % (m.group(0).replace("function _musicCoverRefs", "function"), json.dumps(files)))
+        r = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        refs = json.loads(r.stdout)
+        self.assertEqual(refs, [cover])
+        got = self._run([{"sha256": cover, "size": 9, "keep": True}, {"sha256": other, "size": 9, "keep": True}], [], refs)
+        self.assertEqual(got, [other], "a synced album cover was offered for deletion")
+        seg = self.src[self.src.index("let refs = await _syncRefIds();"):][:1600]
+        self.assertLess(seg.index("_musicCoverRefs("), seg.index("_reclaimableBlobs(list, named, refs)"),
+                        "the covers are added AFTER the reclaim set was computed")
+
     def test_could_not_read_and_nothing_to_reclaim_are_different_sentences(self):
         """"Nothing to reclaim" printed over a null reference set hid 137 GB behind a signer blip —
         the admin-scan sin, repeated the same day it was fixed there. The third truth gets its own
         sentence and never a verdict about the bytes."""
         at = self.src.index("let refs = await _syncRefIds();")
-        seg = self.src[at:at + 2200]
+        seg = self.src[at:at + 2600]
         self.assertIn("refs ? ", seg)
         self.assertIn("t be read just now", seg)
 

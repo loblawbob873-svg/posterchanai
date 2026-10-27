@@ -10,7 +10,8 @@ carries TIT2/TPE1/TALB/TPE2/TRCK/TPOS/TYER and, for two albums, an APIC cover:
   mystery_track  -- no tags at all: "Unknown album" / "Unknown artist", never dropped
 
 Knobs: `__plainDelay[sha]=ms`, `__plainFail[sha]=true`, `__plainCalls` (every decrypt the scan or player asked for),
-`__coverReqs` (every request to /api/music/cover), `__coverAnswer` ('ok' | 'none' | '503').
+`__coverReqs` (every request to /api/music/cover), `__coverAnswer` ('ok' | 'none' | '503'),
+`__uploads` (every PUT /upload: url, headers, sha, b64 bytes), `__uploadFail`, `__blobGets` (media GETs served), `__putBlob(sha,b64)`.
 `__seedLib({indexed})` puts the tracks in the Music folder (merging -- a reload keeps what the scan wrote);
 `__seedBig(n)` a library of n tracks over n/10 albums, already indexed (the lazy-render check).
 """
@@ -74,6 +75,7 @@ LIB = r"""
     if(tag){const o=44+n*2;w(o,'id3 ');v.setUint32(o+4,tag.length,true);new Uint8Array(b,o+8,tag.length).set(tag);}
     return new Uint8Array(b);};
   window.__plainCalls=[]; window.__plainDelay={}; window.__plainFail={}; window.__coverReqs=[]; window.__coverAnswer='ok';
+  window.__uploads=[]; window.__uploadFail=false; window.__blobs={}; window.__blobGets=[];
   // `__plainSerial`: one decrypt at a time, like ONE network pipe -- a scan that fanned out would queue a song
   // somebody pressed play on behind every read it had started.
   window.__plainSerial=false; let pipe=Promise.resolve();
@@ -103,7 +105,23 @@ LIB = r"""
       if(/\/api\/music\/cover\/[0-9a-f-]{36}/.test(s)) return Promise.resolve(new Response(b64(COVER),{status:200,headers:{'Content-Type':'image/png'}}));
       return Promise.resolve(new Response(JSON.stringify({id:COVER_ID}),{status:200,headers:{'Content-Type':'application/json'}}));
     }
+    // The media server's own blobs (synced album covers): a PUT /upload is recorded -- its headers and the exact bytes
+    // -- and kept, so a GET of that sha serves it back, on this page or (via __putBlob) a second device's.
+    if(o && String(o.method||'').toUpperCase()==='PUT' && /\/upload$/.test(s)){
+      return (async()=>{ const bytes=new Uint8Array(await new Response(o.body).arrayBuffer());
+        const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
+        const b64s=btoa(String.fromCharCode(...bytes));
+        __uploads.push({url:s, headers:Object.assign({},o.headers||{}), sha, b64:b64s, ok:!__uploadFail});
+        if(__uploadFail) return new Response('{"detail":"down"}',{status:500,headers:{'Content-Type':'application/json'}});
+        __blobs[sha]=b64s;
+        return new Response(JSON.stringify({sha256:sha,size:bytes.length,url:s.replace(/\/upload$/,'/'+sha)}),{status:200,headers:{'Content-Type':'application/json'}}); })();
+    }
+    const m=s.match(/\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?(?:\?.*)?$/);
+    if(m && __blobs[m[1]] && !(o && o.method && String(o.method).toUpperCase()!=='GET')){
+      __blobGets.push(m[1]); return Promise.resolve(new Response(b64(__blobs[m[1]]),{status:200,headers:{'Content-Type':'application/octet-stream'}}));
+    }
     return f(u,o); };
+  window.__putBlob=(sha,b64s)=>{ __blobs[sha]=b64s; return true; };
   // Merge, never replace: a reload keeps what the scan already wrote into each record.
   window.__seedLib=(opts)=>{
     const F=__PC.filesIdx();

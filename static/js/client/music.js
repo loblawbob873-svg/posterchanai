@@ -18,7 +18,9 @@
  *
  * An entry is the library's own ({sha, m, missing, offline}); `m.tg` is the tag index musiclib/the scan wrote
  * into the encrypted files index -- t title, a artist, al album, aa album artist, n track, d disc, y year,
- * p "the file carries a picture", oc the online cover id ('-' = looked up, none). A track with no index yet
+ * p "the file carries a picture", oc the online cover id ('-' = looked up, none), ca the SYNCED cover: the
+ * sha of the album's thumbnail, encrypted with the drive key and stored once, so the account's other devices show it
+ * without reading the audio or asking anybody (Lib.syncPass / sharePass). A track with no index yet
  * (or no tags) is still a song: it groups under "Unknown album" / "Unknown artist", never dropped.
  *
  * Album identity is the ALBUM ARTIST (else the artist) plus the album name, both NORMALISED (case and
@@ -34,7 +36,8 @@ window.PCMusicGroups = (function(){
     const artist = String(g.a || '').trim(), albumArtist = String(g.aa || '').trim();
     return { title, artist, album: String(g.al || '').trim(), albumArtist, by: albumArtist || artist,
              track: num(g.n), disc: num(g.d), year: /^\d{4}$/.test(String(g.y || '')) ? String(g.y) : '',
-             pic: !!g.p, oc: g.oc || '', indexed: !!(g.v >= 1) };
+             pic: !!g.p, oc: g.oc || '', ca: /^[0-9a-f]{64}$/.test(String(g.ca || '')) ? String(g.ca) : '',
+             indexed: !!(g.v >= 1) };
   }
   function albumKey(t){ return norm(t.by) + '\u0001' + norm(t.album); }
   function artistKey(t){ return norm(t.by); }
@@ -59,11 +62,12 @@ window.PCMusicGroups = (function(){
       const t = tags(e), key = albumKey(t);
       let a = map.get(key);
       if(!a){ a = { key, album: t.album || UNKNOWN_ALBUM, artist: t.by || (t.album ? UNKNOWN_ARTIST : ''),
-                    year: '', unknown: !t.album, tracks: [], pic: false, oc: '' }; map.set(key, a); }
+                    year: '', unknown: !t.album, tracks: [], pic: false, oc: '', ca: '' }; map.set(key, a); }
       a.tracks.push(e);
       if(t.year && (!a.year || t.year < a.year)) a.year = t.year;
       if(t.pic) a.pic = true;
       if(t.oc && !a.oc) a.oc = t.oc;
+      if(t.ca && !a.ca) a.ca = t.ca;
     }
     const out = [...map.values()];
     out.forEach(a => {
@@ -113,8 +117,8 @@ window.PCMusicGroups = (function(){
 })();
 
 /* ALBUM COVERS, CACHED ON THIS DEVICE. A cover is a 320px JPEG thumbnail in IndexedDB, keyed by the album -- never
- * in the files index (one document re-saved whole; a few hundred covers would make every save megabytes) and never
- * uploaded (an extra blob in nobody's index is exactly what the Blossom orphan reclaim exists to delete). Where it
+ * in the files index (one document re-saved whole; a few hundred covers would make every save megabytes). The index
+ * carries only each album's synced-cover ADDRESS (`ca`, see Lib.syncPass): the bytes are one small encrypted blob. Where it
  * comes from: the file's own picture (read by the tag scan or at upload), or the opt-in online lookup through this
  * node. A fresh device re-derives covers album by album, one track each -- not the whole library.
  * Object URLs are capped (oldest revoked): a grid scrolled through 500 albums must not hold 500 blobs for ever. */
@@ -175,7 +179,11 @@ window.PCMusicArt = (function(){
     if(!G || !T || !T.index) return Promise.resolve(false);
     return fromPicture(G.albumKey(G.tags({ m: { tg: T.index(t) } })), t && t.picture);
   }
-  return { get, has, put, thumb, fromPicture, fromTags, _urls: urls };
+  async function blob(key){
+    const d = await db(); if(!d) return null;
+    try{ return (await req(d.transaction('art').objectStore('art').get(key))) || null; }catch(_){ return null; }
+  }
+  return { get, has, put, blob, thumb, fromPicture, fromTags, _urls: urls };
 })();
 
 /* A SONG ROW IS PLAY, THE SONG, AND ⋯ -- every other action of the row is in ⋯'s menu ("the song list UI for each
@@ -201,6 +209,7 @@ window.PCMusicFactory = function(dep){
     _refreshBlobHave, _trackMeta, closeModal, delBlob, deleteBlobQuiet, enc, modal, musicEntries,
     musicTracks, openMusicFolder, renameBlob, saveEncrypted, toast, uiConfirm, uiPrompt,
     _withModule, trackPlainBlob, ensureAiSession, authFetch, saveClientPrefsNostr, touchPref,
+    uploadBlob, mediaServer, _shaFromUrl, _contentIV, _masterEncrypt, _masterDecrypt,
   } = dep;
   const G = window.PCMusicGroups, Art = window.PCMusicArt;
 
@@ -769,7 +778,8 @@ window.PCMusicFactory = function(dep){
   }
   /* LIBRARY OPTIONS -- one switch today: the opt-in online cover lookup. Saved like every client pref (this device,
    * then the account's pcai:client-prefs, so it follows to the next device); read live by the scan. */
-  const _coverOn = () => !!(window.ClientSettings && ClientSettings.get('musicCoverLookup', false));
+  // ON unless the person turns it off (asked for 2026-10-26: "should be default") -- see the ⋯ sheet's wording.
+  const _coverOn = () => !!(window.ClientSettings && ClientSettings.get('musicCoverLookup', true));
   function _maOptions(){
     const on = _coverOn();
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Library</h3>
@@ -778,7 +788,7 @@ window.PCMusicFactory = function(dep){
         <span><b>Look up missing album covers online</b>
           <span class="muted small ma-opt-why">For albums whose files carry no cover, this server asks MusicBrainz and the Cover Art
           Archive (through its Tor-first proxy). They learn the artist and album names it asks about — nothing else about
-          your library. Off until you turn it on.</span></span></label>
+          your library. On unless you turn it off here.</span></span></label>
       <div class="ma-opt-acts" id="ma-opt-acts">
         ${[['mus-getall','i-download'],['mus-refresh','i-refresh'],['mus-tidy','i-close'],['mus-delall','i-close']].map(([id, ic]) => {
           const src=document.getElementById(id); if(!src || src.disabled) return '';
@@ -808,8 +818,10 @@ window.PCMusicFactory = function(dep){
    * encrypted files index -- the next device inherits it. One track at a time, a pause between, never while the
    * player is loading a track and never while the page is hidden; a track that fails is skipped (and retried next
    * session), never the end of the scan. Saved in checkpoints of 10, so a reload resumes where it was.
-   * Then two cover passes: albums whose files carry a picture but this DEVICE has no thumbnail (one track per album),
-   * and -- only when the person turned it on -- the online lookup for albums with no picture at all. */
+   * Covers another device of the account already stored come first (syncPass: one small download each). Then two
+   * cover passes: albums whose files carry a picture but this DEVICE has no thumbnail (one track per album), and --
+   * unless the person turned it off -- the online lookup for albums with no picture at all, then sharePass, which
+   * stores each cover this device holds once for the account's other devices. */
   const SCAN_GAP = 150, SCAN_CHECKPOINT = 10;
   const Lib = window.PCMusicLibrary = {
     st: { running: false, phase: '', done: 0, total: 0, failed: new Set(), asked: new Set(), runs: 0 },
@@ -838,8 +850,10 @@ window.PCMusicFactory = function(dep){
       this.st.running = true; this.st.runs++;
       try{
         const T = await _withModule('audiotags.js', 'PCAudioTags');
+        // Covers another device already found come first: they cost one small download, never a tag read or a lookup.
+        await this.syncPass();
         if(T && T.index){ await this.tagPass(T); await this.coverPass(T); }
-        if(_coverOn()) await this.onlinePass();
+        if(_coverOn()){ await this.onlinePass(); await this.sharePass(); }
       }catch(_){ }
       finally{ this.st.running = false; this.st.phase = ''; this.st.total = 0; this.show(); }
     },
@@ -870,7 +884,7 @@ window.PCMusicFactory = function(dep){
     async coverPass(T){
       const want = [];
       for(const a of G.albums(musicEntries(null).filter(e => !e.missing))){
-        if(!a.pic || (await Art.has(a.key))) continue;
+        if(!a.pic || this.synced(a) || (await Art.has(a.key))) continue;
         const t = a.tracks.find(x => x.m.tg && x.m.tg.p && !this.st.failed.has(x.sha)); if(t) want.push([a, t]);
       }
       if(!want.length) return;
@@ -884,6 +898,65 @@ window.PCMusicFactory = function(dep){
       }
       _maRepaint();
     },
+    /* A COVER IS FOUND ONCE PER ACCOUNT, NOT ONCE PER DEVICE. Asked for 2026-10-26: "sync the artwork to your phone
+     * so it doesn't have to query online every PosterChan client". The device that finds a cover (a file's own
+     * picture, or the online lookup) stores its thumbnail ONCE -- AES-GCM with the drive master key, the music
+     * library's own scheme, deterministic IV so the same picture is the same blob -- keep-flagged so the age cleanup
+     * never takes it, and writes its address (`ca`) onto every track of the album in the encrypted index. Every
+     * other device sees `ca` with the index and fetches + decrypts that one small blob into its own cache: no tag
+     * read of the audio, no question to this node. Never while a song is loading (idle()); a failed upload writes
+     * nothing, so the next pass tries again. The Blossom reclaim counts `ca` as a reference (files.js). */
+    // Another device stored this album's cover: fetch that, never re-derive it -- unless fetching it failed this session.
+    synced(a){ return !!a.ca && !this.st.failed.has('ca:' + a.ca); },
+    async syncPass(){
+      const want = [];
+      for(const a of G.albums(musicEntries(null).filter(e => !e.missing))){
+        if(a.ca && !this.st.failed.has('ca:' + a.ca) && !(await Art.has(a.key))) want.push(a);
+      }
+      if(!want.length) return;
+      const st = this.st; st.phase = 'covers'; st.done = 0; st.total = want.length; this.show();
+      for(const a of want){
+        await this.idle();
+        if(!(await this.pullCover(a.key, a.ca))) st.failed.add('ca:' + a.ca);   // this session; retried next start
+        st.done++; this.show();
+      }
+      _maRepaint();
+    },
+    async pullCover(key, sha){
+      try{
+        const r = await fetch((await mediaServer()) + '/' + sha); if(!r.ok) return false;   // mediaServer is lazy: may be a promise
+        const mk = await FilesIdx._ensureMK();
+        const plain = await _masterDecrypt(mk, new Uint8Array(await r.arrayBuffer()));
+        return await Art.put(key, new Blob([plain], { type: 'image/jpeg' }));
+      }catch(_){ return false; }
+    },
+    async sharePass(){
+      const want = [];
+      for(const a of G.albums(musicEntries(null).filter(e => !e.missing))){
+        if(!a.ca && !a.unknown && (await Art.has(a.key))) want.push(a);
+      }
+      if(!want.length) return;
+      FilesIdx.beginBatch();
+      try{
+        for(const a of want){
+          if(!_coverOn()) break;
+          await this.idle();
+          const sha = await this.shareCover(a.key);
+          // No address = nothing written: the album stays un-shared and the next pass (the next time Music opens) tries again.
+          if(sha) a.tracks.forEach(t => FilesIdx.setFile(t.sha, { tg: Object.assign({ v: 1 }, t.m.tg || {}, { ca: sha }) }));
+        }
+      }finally{ await FilesIdx.endBatch(); }
+    },
+    async shareCover(key){
+      try{
+        const b = await Art.blob(key); if(!b) return '';
+        const bytes = new Uint8Array(await b.arrayBuffer()), mk = await FilesIdx._ensureMK();
+        const ct = await _masterEncrypt(mk, bytes, await _contentIV(bytes));
+        const url = await uploadBlob(new File([ct], 'cover.enc', { type: 'application/octet-stream' }),
+                                     { noMirror: true, keep: true, noCompress: true });
+        return _shaFromUrl(url) || '';
+      }catch(_){ return ''; }
+    },
     /* OPT-IN. Asks THIS node (GET /api/music/cover), which asks MusicBrainz + the Cover Art Archive. An album is
      * asked about once: the answer -- a cover id, or '-' for "there is none" -- is written into every one of its
      * tracks' records, so no device asks again. "Could not ask" (503, network) writes NOTHING: it is not "no cover",
@@ -892,7 +965,7 @@ window.PCMusicFactory = function(dep){
       const albums = G.albums(musicEntries(null).filter(e => !e.missing));
       const ask = [], fetchIds = [];
       for(const a of albums){
-        if(a.unknown || !a.artist || a.pic) continue;
+        if(a.unknown || !a.artist || a.pic || this.synced(a)) continue;
         if(!a.oc){ if(!this.st.asked.has(a.key)) ask.push(a); continue; }
         if(a.oc !== '-' && !(await Art.has(a.key))) fetchIds.push(a);
       }

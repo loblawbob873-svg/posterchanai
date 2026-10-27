@@ -13,8 +13,10 @@ the control after proving nothing covers it (music_art_fixture.press), over the 
   * a 1000-song library builds one page of covers, not 100, and fills covers only as they scroll into view;
   * the scan resumes after a reload without re-reading, survives a track that will not read, pauses while the page
     is hidden, and never holds up a song somebody presses play on;
-  * the opt-in online covers: OFF means not one request; ON asks once per album without a picture, stores the
-    answer in the tracks' records and never asks again after a reload; "no cover" is remembered; a 503 is not.
+  * the online covers, ON by default (2026-10-26: "should be default"): OFF means not one request and not one upload;
+    ON asks once per album without a picture, stores the answer in the tracks' records and never asks again after a
+    reload; "no cover" is remembered; a 503 is not. (Covers reaching the account's OTHER devices:
+    test_music_cover_sync_full_app.py.)
 """
 import asyncio
 import json
@@ -53,9 +55,12 @@ INDEXED = ("(()=>{const L=window.PCMusicLibrary, f=__PC.filesIdx()._norm().files
            "return !!L && !L.st.running && Object.values(f).filter(m=>m.folder==='Music').every(m=>m.tg&&m.tg.v>=1);})()")
 
 
-async def _music(b, indexed_first=True, login=True):
+async def _music(b, indexed_first=True, login=True, covers=None):
+    """`covers`: None leaves the online lookup at its default (ON); True/False sets it before Music opens."""
     if login:
         await desktop.login(b)
+    if covers is not None:
+        await b.js(f"ClientSettings.set('musicCoverLookup', {json.dumps(covers)}); 1")
     await b.js("window.__publishOK=true; __seedLib(); __PC.switchView('music'); 1")
     await b.until("!!document.querySelector('#ma-browse')")
     if indexed_first:
@@ -133,6 +138,9 @@ def test_the_scan_reads_each_track_once_and_says_how_far_it_has_got():
     assert nums and nums == sorted(nums) and len(set(nums)) >= 3 and max(nums) >= 7, ("progress did not count up", got["seen"])
     assert got["hiddenAfter"], "the scan's status line stayed up after it finished"
     assert sorted(got["reads"]) == sorted(SH.values()), ("every track is read exactly once", got["reads"])
+    # `ca` (the album's synced cover) may already be there too -- the share pass follows the scan; that is
+    # test_music_cover_sync_full_app.py's subject, so it is left out of the scan's own fields here.
+    got["tg"].pop("ca", None)
     assert got["tg"] == {"v": 1, "t": "Night Drive", "a": "Kaito Vega", "al": "Neon Skyline", "n": 2, "d": 1, "y": "2021", "p": 1}, got["tg"]
     assert "Night Drive" in got["titles"] and "mystery_track" in got["titles"], got["titles"]
 
@@ -145,7 +153,7 @@ def test_albums_artists_and_their_pages(w, h):
 
     async def check(b):
         await _screen(b, w, h)
-        await _music(b)
+        await _music(b, covers=False)       # the files' own pictures: the online lookup is a separate test
         await _tab(b, "albums")
         await _until(b, "document.querySelectorAll('#ma-albums .ma-card img.pc-art-img').length>=2", 10, "the embedded covers")
         got["cards"] = await b.js(CARDS)
@@ -455,17 +463,45 @@ async def _turn_on_covers(b):
 
 
 @CHROME
-def test_off_by_default_means_not_one_request():
+def test_on_by_default_asks_for_the_albums_with_no_picture():
+    """Asked for 2026-10-26 ("should be default"): a person who never opens the ⋯ sheet gets the covers."""
     got = {}
 
     async def check(b):
         await _music(b)
-        await asyncio.sleep(2.5)
+        await _tab(b, "albums")
+        await _until(b, "__coverReqs.length>0", 15, "a cover lookup with the switch never touched")
         got["reqs"] = await b.js("__coverReqs.slice()")
-        got["default"] = await b.js("ClientSettings.get('musicCoverLookup', false)")
+        got["checked"] = await b.js("(async()=>{document.getElementById('ma-libopts').click();"
+                                    "for(let i=0;i<50&&!document.getElementById('ma-cover-lookup');i++)await new Promise(r=>setTimeout(r,100));"
+                                    "return document.getElementById('ma-cover-lookup').checked})()")
 
     _run(check, L.PLAIN + L.LIB)
-    assert got["default"] is False and got["reqs"] == [], got
+    assert got["reqs"], got
+    assert got["checked"] is True, ("the switch does not show the lookup is on", got)
+
+
+@CHROME
+def test_switched_off_means_not_one_request():
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("ClientSettings.set('musicCoverLookup', false); 1")
+        await b.js("window.__publishOK=true; __seedLib(); __PC.switchView('music'); 1")
+        await b.until("!!document.querySelector('#ma-browse')")
+        await _until(b, INDEXED, 40, "the tag scan to finish")
+        await _tab(b, "albums")
+        await _until(b, "document.querySelectorAll('#ma-albums .ma-card img.pc-art-img').length>=2", 10, "the files' own covers")
+        await asyncio.sleep(2.5)
+        got["reqs"] = await b.js("__coverReqs.slice()")
+        # OFF is "nothing about my covers leaves this device": the files' own pictures are not stored for syncing either.
+        got["uploads"] = await b.js("__uploads.length")
+        got["ca"] = await b.js("Object.values(__PC.filesIdx()._norm().files).filter(m=>m.tg&&m.tg.ca).length")
+
+    _run(check, L.PLAIN + L.LIB)
+    assert got["reqs"] == [], ("the person turned the lookup off and it still asked", got)
+    assert got["uploads"] == 0 and got["ca"] == 0, ("the person turned the lookup off and a cover was still uploaded", got)
 
 
 @CHROME
@@ -474,7 +510,7 @@ def test_on_asks_once_per_album_without_a_picture_and_never_again():
 
     async def check(b):
         await _screen(b, 390, 844)
-        await _music(b)
+        await _music(b, covers=False)       # off first, so the press below is what turns it on
         await _tab(b, "albums")
         got["wasOn"] = await _turn_on_covers(b)
         await _shot(b, "phone-cover-switch-on")
@@ -511,7 +547,7 @@ def test_no_cover_is_remembered_and_could_not_ask_is_not(answer, stored, asks_ag
     got = {}
 
     async def check(b):
-        await _music(b)
+        await _music(b, covers=False)
         await b.js(f"window.__coverAnswer={json.dumps(answer)}; 1")
         await _turn_on_covers(b)
         await _until(b, "__coverReqs.length>=1 && !PCMusicLibrary.st.running", 15, "the lookup")

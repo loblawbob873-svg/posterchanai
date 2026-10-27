@@ -11121,6 +11121,8 @@
     authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts,
       headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),
     saveClientPrefsNostr, touchPref: k => _prefTouched.add(k),
+    // Synced album covers: encrypted with the drive key, stored once, keep-flagged (music.js Lib.syncPass/sharePass).
+    uploadBlob, mediaServer, _shaFromUrl, _contentIV, _masterEncrypt, _masterDecrypt,
   }; }
   function _musicMod(){ return _lzGet('music.js', 'PCMusicFactory', _musicDeps); }
   function _musicLoad(){ return _lzLoad('music.js', 'PCMusicFactory', _musicDeps); }

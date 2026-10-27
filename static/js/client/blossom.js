@@ -413,7 +413,7 @@ window.PCBlossomFactory = function(dep){
       }
       // Music → "Look up missing album covers online" (opt-in, OFF by default): the Music app reads it live.
       if(!_prefTouched.has('musicCoverLookup') && typeof pr.musicCoverLookup==='boolean'
-         && pr.musicCoverLookup!==ClientSettings.get('musicCoverLookup', false)){
+         && pr.musicCoverLookup!==ClientSettings.get('musicCoverLookup', true)){
         ClientSettings.set('musicCoverLookup', pr.musicCoverLookup);
         try{ window.PCMusicLibrary && window.PCMusicLibrary.prefChanged(); }catch(_){}
       }

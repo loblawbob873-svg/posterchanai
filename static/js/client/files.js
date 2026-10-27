@@ -671,6 +671,12 @@ window.PCFilesFactory = function(dep){
    * name (music, notes attachments and drive files all live there); only blobs no synced folder
    * references — entries, every chunk, and the sealed path-list blobs the manifests live in.
    * PURE, so the suite runs it under node. */
+  // Every synced album cover the library references (music.js: tg.ca on each track of the album). PURE.
+  function _musicCoverRefs(files){
+    const out = new Set();
+    for(const m of Object.values(files || {})){ const ca = m && m.tg && m.tg.ca; if(/^[0-9a-f]{64}$/.test(String(ca || ''))) out.add(ca); }
+    return out;
+  }
   function _reclaimableBlobs(list, indexShas, refIds){
     const out = [];
     /* TOO FRESH TO JUDGE IS NOT AN ORPHAN. A first seed uploads bytes continuously and publishes
@@ -895,7 +901,9 @@ window.PCFilesFactory = function(dep){
             for(const sh of (FilesIdx._indexShas || [])) refs.add(sh);
             if(FilesIdx._lastIndexSha) refs.add(FilesIdx._lastIndexSha);
           }catch(_){}
-          reclaim = _reclaimableBlobs(list, named, refs);
+          // Synced album covers: named inside a track's tags (`tg.ca`), never as files -- else each is an "orphan".
+          try{ for(const sh of _musicCoverRefs(FilesIdx._norm().files)) refs.add(sh); }catch(_){ refs = null; }
+          if(refs) reclaim = _reclaimableBlobs(list, named, refs);
         }
         const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
         /* THREE sentences for three truths, never one for two: an offer, a genuine nothing, and
