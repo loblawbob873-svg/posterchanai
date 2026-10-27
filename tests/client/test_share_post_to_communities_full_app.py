@@ -174,3 +174,49 @@ def test_on_the_posterchanos_desktop_the_picker_opens_and_the_channel_window_get
     asyncio.run(desktop.with_browser("online", "", check, ""))
     assert got["os"], "this run was meant to be on the windowed desktop"
     assert not got["errors"], got["errors"]
+
+
+# The real shape of the report (2026-10-27, "sharing to communities does not always work. communities opens but no
+# link", then "that worked a second time"): Communities NOT opened yet this session, no room active, a community with
+# more than one channel, and a fediverse GIF (the example post). The tests above open Communities first and only ever
+# choose #general -- the one channel the first paint of a newly opened room draws.
+GIF = "https://ak.kyaruc.moe/media/3cfc6648/73456155b3c8.gif"
+COLD = r"""(()=>{
+  const room={name:'Two rooms',communityId:'d'.repeat(64),naddr:'fixture-two',
+    channels:[{id:'fx-general',name:'general'},{id:'fx-memes',name:'memes'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+  localStorage.removeItem('pc.concord.active.v1.'+__PC.me().pubkey);
+  window.__wraps=[];
+  window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fx-general',name:'general',streamPubkeys:[]},{id:'fx-memes',name:'memes',streamPubkeys:[]}]}),
+    inspectChat:async()=>({messages:[],reactions:[],reactionIds:[]}),
+    createChatWrap:async()=>{throw new Error('nothing is sent in this test')}};
+  const k=new Uint8Array(32).fill(7), now=Math.floor(Date.now()/1000);
+  const ev=NostrTools.finalizeEvent({kind:1,created_at:now-30,content:%r,tags:[['imeta','url '+%r,'m image/gif']]},k);
+  Store.saveEvent(ev); window.__gif=ev.id; return true; })()""" % (GIF, GIF)
+
+
+@CHROME
+@pytest.mark.parametrize("channel", ["memes", "general"])
+def test_the_first_share_of_a_session_lands_in_the_chosen_channel(channel):
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
+        await desktop.login(b)
+        await b.js("window.__publishOK=true; 1")
+        await b.js(COLD)
+        await b.js("__PC.switchView('home'); 1")
+        await _open(b, "__gif")
+        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__gif"))
+        await b.until("!!document.querySelector('[data-cc-share-channel]')")
+        await A.press(b, "[data-cc-share-channel='%s']" % channel)
+        await b.until("!!document.querySelector('#cc-input')")
+        await asyncio.sleep(2.5)                 # every repaint the room's opening does
+        got["shown"] = await b.js("(document.querySelector('.cc-conversation header b')||{}).textContent||''")
+        got["composer"] = await b.js("document.querySelector('#cc-input').value")
+        got["errors"] = await b.js("(window.__errors||[]).slice(-5)")
+
+    asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
+    assert got["shown"] == channel, ("the chosen channel is not the one showing", got)
+    assert GIF in got["composer"], ("Communities opened with no link in the message box", got)
+    assert not got["errors"], got["errors"]

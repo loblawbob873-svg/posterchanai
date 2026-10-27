@@ -6843,7 +6843,8 @@
       box.querySelectorAll('[data-cc-share-channel]').forEach(b=>b.onclick=async()=>{
         const index=Number(b.dataset.ccShareRoom),channel=b.dataset.ccShareChannel;
         try{p.closeModal&&p.closeModal();}catch(_){}
-        pendingShare={text,files,media};
+        // Addressed: opening a room paints #general first, and that composer took the share meant for another channel.
+        pendingShare={text,files,media,room:roomIdentity(saved()[index]),channel};
         if(p.switchView&&!(p.isView&&p.isView('concord')))p.switchView('concord');
         await activateJoinedRoom(p,index,false);
         state.channel=channel;state.thread=null;mobileChatOpen=true;mobileDrawerOpen=false;enterChatBottom();render();
@@ -7475,7 +7476,7 @@
     const uploadAttachments=async files=>{ for(const f of files){ if(f.size>CONCORD_UPLOAD_MAX){ p.toast(f.name+' is too large ('+Math.round(CONCORD_UPLOAD_MAX/1048576)+' MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const isXdc=/\.xdc$/i.test(f.name)||f.type==='application/x-webxdc'||f.type==='application/webxdc+zip'||f.type==='application/vnd.webxdc+zip',bytes=isXdc?new Uint8Array(await f.arrayBuffer()):null,clean=(!isXdc&&window.PCExifStrip&&window.PCExifStrip.cleanFile)?await window.PCExifStrip.cleanFile(f).catch(()=>f):f,sealed=isXdc||!(saved()[state.community]||{}).cord||(saved()[state.community]||{}).protocol==='nip29'?null:await sealAttachment(clean),url=await p.uploadBlob(sealed?sealed.blob:clean,{keep:true,ciphertext:!!sealed}),mime=isXdc?'application/vnd.webxdc+zip':String(clean.type||'application/octet-stream'),tag=sealed?attachmentImeta(url,mime,String(clean.name||'file'),sealed):['imeta',`url ${url}`,`m ${mime}`,`name ${String(clean.name||'file').slice(0,120)}`]; if(isXdc){ const sha=bytesHex(await crypto.subtle.digest('SHA-256',bytes)),topic=mintWebxdcTopic(),name=f.name.replace(/\.xdc$/i,'').slice(0,80);tag.push(`x ${sha}`,`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name}`); }pendingAttachments.set(url,tag); const box=liveComposer(); if(!box)throw new Error('the composer went away while '+f.name+' was uploading'); box.value+=(box.value&&!/\s$/.test(box.value)?' ':'')+url; box.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name+(e&&e.message?': '+e.message:'')); } } };
     if(file&&input)file.onchange=async()=>{ await uploadAttachments([...file.files]); file.value=''; };
     /* A share from another app (shareInto above) lands in the composer of the channel it was sent to. */
-    if(pendingShare&&input){const s0=pendingShare;pendingShare=null;
+    if(pendingShare&&input&&(!pendingShare.channel||(pendingShare.channel===(state.channel||'general')&&pendingShare.room===roomIdentity(saved()[state.community])))){const s0=pendingShare;pendingShare=null;
       if(s0.text){input.value=(input.value?input.value+'\n':'')+s0.text;try{input.dispatchEvent(new Event('input',{bubbles:true}));}catch(_){}}
       if(s0.files&&s0.files.length)void uploadAttachments(s0.files);
       for(const m of (s0.media||[])){ const type=String(m.type||'');
