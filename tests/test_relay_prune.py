@@ -979,3 +979,48 @@ def test_the_preview_says_how_much_the_age_rule_kept_and_for_whom(store_factory)
     assert pv["aged_kept_preserved"] == 40, ("the old events kept for preserved authors are not counted", pv)
     assert pv["aged_kept_exempt"] == 0 and pv["preserve_authors"] == 3, pv
     assert pv["aged_kept_top"] == [["b" * 64, 30], ["c" * 64, 10]], ("the top preserved authors are not named", pv)
+
+
+def test_mirrored_concord_messages_survive_every_cleaner(store_factory):
+    """Concord communities MIRROR to this node (concord_mirror.py): every message is a kind-1059 gift wrap stored with
+    origin "wot", authored by the community's stream key -- nobody this relay preserves. Asked 2026-10-27: "some
+    concord communities are mirroring to us so we need to make sure our retention settings are good so we don't
+    delete events with routine cleanup". This is that check, against every routine cleaner at once: age (window 0),
+    count cap (1), pay-to-stay ON with nobody subscribed, the nightly word / language / hidden-payload purges with a
+    word the message contains. Old ordinary notes from the same author must go (so the cleaners really ran) and every
+    wrap must stay. The one deletion that IS right: a wrap the community stamped with its own Disappearing-messages
+    `expiration`, once that time has passed."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=0, max_events=1)
+        store.free_retention_days = 1
+        store.paid_retention_days = 30
+        store.set_subscribers([], ledger_ok=True)
+        stream = "f" * 64
+        soon = int(time.time()) + 4
+        wraps = []
+        for i in range(1, 31):
+            ev = _ev(i, kind=1059, age_days=400, pubkey=stream)
+            ev["content"] = "meetup " + "A" * 60          # a blocked word + a long run that looks like a payload
+            ev["tags"] = [["p", "e" * 64]]
+            wraps.append(ev)
+        timed = _ev(99, kind=1059, age_days=1, pubkey=stream, expiration=soon)   # Disappearing messages: on
+        timed["tags"] = [["p", "e" * 64]] + [t for t in timed["tags"] if t[0] == "expiration"]
+        notes = [_ev(i, kind=1, age_days=400, pubkey=stream) for i in range(200, 210)]
+        await store.add_events_bulk(wraps + [timed], origin="wot")
+        await store.add_events_bulk(notes, origin="wot")
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))
+        for _ in range(4):
+            await store.prune(chunk=3)
+        await store.delete_by_words(["meetup"])
+        await store.delete_by_langs({"en", "fr", "de"})
+        await store.delete_hidden_payload()
+        left = {e["id"] for e in await store.query([{"kinds": [1059], "limit": 100}])}
+        notes_left = await store.query([{"kinds": [1], "authors": [stream]}])
+        return left, {w["id"] for w in wraps}, timed["id"], notes_left
+
+    left, wrap_ids, timed_id, notes_left = _run(go)
+    assert not notes_left, "the cleaners did not run, so this proves nothing"
+    missing = wrap_ids - left
+    assert not missing, (f"{len(missing)} mirrored Concord message(s) deleted by routine cleanup -- keep 1059 out of "
+                         "_PRUNABLE_KINDS and in _NEVER_WORD_FILTERED")
+    assert timed_id not in left, "a message the community set to disappear outlived its own timer"
