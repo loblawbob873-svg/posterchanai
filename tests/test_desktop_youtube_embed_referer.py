@@ -53,8 +53,11 @@ console.log(JSON.stringify([
     assert c["Referer"] == d["Referer"] == "https://poster.place/"
     assert e["Referer"] == "https://kept.example/", "an existing Referer was overwritten"
     assert urls == ["https://www.youtube.com/embed/*", "https://www.youtube-nocookie.com/embed/*"]
-    ses = MAIN[MAIN.index("const ses = session.defaultSession;"):][:400]
-    assert "onBeforeSendHeaders({ urls: YT_EMBED_URLS }" in ses and "withYtReferer(d.requestHeaders, instance())" in ses
+    hook = _lift("wireYtReferer")
+    assert "onBeforeSendHeaders({ urls: YT_EMBED_URLS }" in hook and "withYtReferer(d.requestHeaders, instance())" in hook
+    assert re.search(r"wirePermissions\(\);\s*wireYtReferer\(\);", MAIN), "the Referer hook is never installed"
+    # Kept OUT of wirePermissions: harnesses lift that function into a fake Electron with no webRequest.
+    assert "YT_EMBED" not in _lift("wirePermissions")
     app = (ROOT / "static/js/client/app.js").read_text()
     assert "location.protocol !== 'app:'" in app, "the desktop app still hands YouTube to the system browser"
 

@@ -1569,6 +1569,12 @@ function wireDownloads() {
   });
 }
 
+// YouTube refuses an embed with no Referer (Error 153), and an app:// page sends none: name the site.
+function wireYtReferer() {
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: YT_EMBED_URLS },
+    (d, cb) => cb({ requestHeaders: withYtReferer(d.requestHeaders, instance()) }));
+}
+
 // The client is a real app: calls need camera/mic, notifications need permission, screen share needs
 // display-capture. Grant those to our own pages only; deny everything else by default.
 function wirePermissions() {
@@ -1583,8 +1589,6 @@ function wirePermissions() {
   // a game origin may request; notably absent are media, display capture, clipboard and filesystem.
   const WEBXDC_ALLOW = new Set(['pointerLock', 'fullscreen']);
   const ses = session.defaultSession;
-  ses.webRequest.onBeforeSendHeaders({ urls: YT_EMBED_URLS },
-    (d, cb) => cb({ requestHeaders: withYtReferer(d.requestHeaders, instance()) }));
 
   const permissionAllowed = (permission, from) =>
     ALLOW.has(permission) && (isOurs(from)
@@ -4722,6 +4726,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     await applyProxy();
     wireDownloads();
     wirePermissions();
+    wireYtReferer();
     buildMenu();
     // The OS shell is the desktop itself and must never honor Electron's login-item "hidden"
     // state. Electron 44 can report wasOpenedAsHidden on a recovery launch even without --hidden;
