@@ -316,7 +316,11 @@ window.PCFilesFactory = function(dep){
     const pane = btn.closest('.fx-explorer') || document;
     const which = btn.dataset.fxmenu, items = [], run = {};
     const n = _filesSel.size;
-    for(const [sel, label, cls, popover] of (_FX_MENUS[which] || [])){
+    if(which === 'edit'){
+      const m = _fxEditMenu(pane, btn);
+      items.push(...m.items); Object.assign(run, m.run);
+    }
+    for(const [sel, label, cls, popover] of (which === 'edit' ? [] : (_FX_MENUS[which] || []))){
       const el = pane.querySelector(sel); if(!el) continue;
       const key = String(items.length);
       let words = label || (el.textContent || '').trim() || el.getAttribute('aria-label') || '';
@@ -335,6 +339,106 @@ window.PCFilesFactory = function(dep){
     btn.classList.add('open');
     openMenuPopover(btn, items, k => { btn.classList.remove('open'); if(run[k]) run[k](); });
   }
+  /* THE EDIT MENU IS THE SAME EVERYWHERE: Cut, Copy, Paste, Delete, Rename, Move to…, Select all, Select none -- the
+   * Explorer's Edit menu. It used to be a list of whatever hidden buttons the pane happened to draw, so the drive
+   * offered no Cut/Copy/Paste at all and This Computer hid all three (and its Delete) one level down behind
+   * "Selected items…": "You forgot to add delete actions. you maybe missing other actions like copy and paste or move
+   * also!" (2026-10-27). Each location answers with its own operations; one it cannot do is shown disabled. */
+  function _fxEditMenu(pane, btn){
+    const items = [], run = {};
+    const add = (key, words, fn, opt) => { items.push([key, words, (opt && opt.cls) || '', fn ? undefined : { disabled: true }]);
+      if(fn) run[key] = fn; };
+    const host = _S._hostOn && window.PCHostFiles && PCHostFiles.edit && PCHostFiles.edit();
+    if(host){
+      const a = host.act, n = host.selected;
+      add('cut', 'Cut', n && a.cut); add('copy', 'Copy', n && a.copy);
+      add('paste', host.clip || 'Paste', host.clip && (() => a.paste()));
+      add('del', 'Delete' + (n ? ' (' + n + ')' : ''), n && a.trash, { cls: 'danger' });
+      add('ren', 'Rename', n === 1 && a.rename);
+      add('mv', 'Move to…', n && a.moveTo); add('cp', 'Copy to…', n && a.copyTo);
+      add('all', 'Select all', a.selectAll); add('none', 'Select none', n && (() => a.clear()));
+      return { items, run };
+    }
+    const q = s => pane.querySelector(s);
+    if(_S._syncRoot){
+      const mv = q('#ss-move'), del = q('#ss-del'), all = q('#ss-all'), none = q('#ss-none');
+      add('cut', 'Cut', null); add('copy', 'Copy', null); add('paste', 'Paste', null);
+      add('del', 'Delete on every device', del && !del.disabled && (() => _fxPress(del)), { cls: 'danger' });
+      add('mv', 'Move to…', mv && !mv.disabled && (() => _fxPress(mv, btn)));
+      add('all', 'Select all', all && (() => _fxPress(all))); add('none', 'Select none', none && (() => _fxPress(none)));
+      return { items, run };
+    }
+    const n = _filesSel.size, del = q('#bl-seldel'), mv = q('#bl-selmove'), all = q('#bl-selall'), none = q('#bl-selnone');
+    add('cut', 'Cut' + (n ? ' (' + n + ')' : ''), n && (() => _fxClipSet(true)));
+    add('copy', 'Copy' + (n ? ' (' + n + ')' : ''), n && (() => _fxClipSet(false)));
+    add('paste', _fxClip ? _fxPasteLabel() : 'Paste', _fxClip && (() => _fxPaste()));
+    add('del', 'Delete' + (n ? ' (' + n + ')' : ''), n && del && (() => _fxPress(del)), { cls: 'danger' });
+    add('ren', 'Rename', n === 1 && (() => { const sha = [..._filesSel][0], m = FilesIdx.meta(sha) || {};
+      renameBlob(sha, m.name || ''); }));
+    add('mv', 'Move to…', n && mv && (() => _fxPress(mv, btn)));
+    add('all', (all && (all.textContent || '').trim()) || 'Select all', all && (() => _fxPress(all)));   // "Select all (60)"
+    add('none', 'Select none', n && none && (() => _fxPress(none)));
+    return { items, run };
+  }
+  /* THE DRIVE'S CLIPBOARD. Cut + Paste moves (index only, nothing is re-sent). Copy + Paste makes a real second
+   * file: a file of the drive lives in ONE folder (the index is keyed by its bytes), so a copy is new bytes -- read
+   * (and decrypted) here and stored again in the folder that is open, by the same writer Save As uses. */
+  let _fxClip = null;     // {shas:[…], move:bool}
+  function _fxPasteLabel(){ const k = _fxClip.shas.length;
+    return 'Paste ' + (k === 1 ? '1 file' : k + ' files') + (_fxClip.move ? ' (move)' : ' (copy)'); }
+  function _fxClipSet(move, shas){
+    const list = shas || [..._filesSel]; if(!list.length) return;
+    _fxClip = { shas: list, move };
+    toast((move ? 'cut ' : 'copied ') + list.length + ' file' + (list.length > 1 ? 's' : '') + ' — open a folder and Paste');
+  }
+  async function _fxPaste(){
+    const clip = _fxClip; if(!clip) return;
+    const folder = _S._filesFolder || '';
+    if(clip.move){
+      clip.shas.forEach(sha => FilesIdx.move(sha, folder));
+      _fxClip = null; _filesSelClear();
+      toast('moved ' + clip.shas.length + ' file' + (clip.shas.length > 1 ? 's' : '') + ' to ' + (folder || 'All'));
+      renderBlossom(); return;
+    }
+    const byId = {}; (_S._filesGridList || []).forEach(b => { byId[b.sha256] = b; });
+    let ok = 0, fail = 0;
+    for(const sha of clip.shas){
+      const m = FilesIdx.meta(sha) || {}, b = byId[sha] || {};
+      const name0 = m.name || b.name || sha.slice(0, 12);
+      const same = (m.folder || '') === folder;
+      const name = same ? name0.replace(/(\.[^./]+)?$/, ' (copy)$1') : name0;
+      toast('copying ' + name + '…');
+      try{
+        const blob = await _previewBytes({ sha, enc: m.enc ? '1' : '', mime: m.mime || b.type || mimeForName(name0),
+          name: name0, url: b.url || (mediaServer() + '/' + sha) });
+        await _officeStoreDrive(blob, name, folder); ok++;
+      }catch(e){ fail++; }
+    }
+    toast(fail ? ('copied ' + ok + ', ' + fail + ' failed') : ('copied ' + ok + ' file' + (ok > 1 ? 's' : '') + ' to ' + (folder || 'All')));
+    renderBlossom();
+  }
+  // The drive's keys -- This Computer has its own (hostfiles.js _onKey), and nothing fires while typing or with a menu up.
+  function _fxDriveKey(e){
+    if(_S.VIEW !== 'blossom' || _S._hostOn || _S._syncRoot || e.defaultPrevented) return;
+    // A ticked checkbox keeps the focus, and is no text field: only something you TYPE into stands the keys down.
+    const typing = el => !!(el && (el.isContentEditable || /^(TEXTAREA|SELECT)$/.test(el.tagName || '')
+      || (el.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color|file)$/i.test(el.type || ''))));
+    if(typing(e.target) || typing(document.activeElement)) return;
+    if(document.querySelector('.menu-pop, .modal-bg, .ui-dialog, .uiconfirm-bg')) return;
+    const pane = document.querySelector('.fx-explorer'); if(!pane || !pane.getClientRects().length) return;
+    const win = pane.closest('.osw'); if(win && !win.classList.contains('focused')) return;
+    const k = String(e.key || '').toLowerCase(), mod = e.ctrlKey || e.metaKey, n = _filesSel.size;
+    let fn = null;
+    if(mod && !e.shiftKey && !e.altKey){
+      if(k === 'x' && n) fn = () => _fxClipSet(true);
+      else if(k === 'c' && n) fn = () => _fxClipSet(false);
+      else if(k === 'v' && _fxClip) fn = () => _fxPaste();
+    }else if(!mod && !e.altKey && k === 'delete' && n){
+      const del = pane.querySelector('#bl-seldel'); if(del) fn = () => _fxPress(del);
+    }
+    if(!fn) return;
+    e.preventDefault(); fn();
+  }
   /* ONE FILE'S ACTIONS: its ⋯, or a right-click on it. Built from the buttons the row already carries (and hides), so
    * a file of the drive, of a synced folder or of This Computer offers exactly what it always could. */
   const _FX_ROW_LABEL = { copy:'Copy link', dlbtn:'Download', renbtn:'Rename', movebtn:'Move to…', del:'Delete',
@@ -345,6 +449,12 @@ window.PCFilesFactory = function(dep){
     const items = [], run = {}, seen = new Set();
     const open = card.querySelector('a.fx-name, :scope > a');
     if(open){ items.push(['o', 'Open', '']); run.o = () => open.click(); }
+    const dsha = !_S._hostOn && !_S._syncRoot && card.dataset.sha;
+    if(dsha){
+      items.push(['cut', 'Cut', ''], ['cpy', 'Copy', '']);
+      run.cut = () => _fxClipSet(true, [dsha]); run.cpy = () => _fxClipSet(false, [dsha]);
+      if(_fxClip){ items.push(['pst', _fxPasteLabel(), '']); run.pst = () => _fxPaste(); }
+    }
     for(const b of card.querySelectorAll('button')){
       if(b.matches('.selbox, .fx-rowmore') || b.closest('summary')) continue;
       const cls = [...b.classList].find(c => _FX_ROW_LABEL[c]) || '';
@@ -361,6 +471,7 @@ window.PCFilesFactory = function(dep){
   // Once per page, marked on the document itself: scripts/check_files_explorer.py lifts this function by name, alone.
   function _fxDelegate(){
     if(document.__fxDelegated) return; document.__fxDelegated = true;
+    document.addEventListener('keydown', _fxDriveKey);
     document.addEventListener('click', e => {
       const t = e.target && e.target.closest ? e.target : null; if(!t) return;
       const m = t.closest('.fx-menubar .fx-menu');
@@ -523,6 +634,7 @@ window.PCFilesFactory = function(dep){
       else if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
         _S._syncRoot = cut < 0 ? rest : rest.slice(0, cut); _S._syncPath = cut < 0 ? '' : rest.slice(cut+1);
         _syncSel.clear(); _syncSelOn = false; _S._fxMobileSource = 'synced'; }
+      else if(to === 'r:'){ _S._syncRoot = ''; _S._syncPath = ''; _S._filesFolder = null; _S._hostOn = false; _S._fxMobileSource = 'blossom'; }
       else { _S._syncRoot = ''; _S._syncPath = ''; _S._filesFolder = to.slice(2); _S._hostOn = false; _S._fxMobileSource = 'blossom'; }
     }
   }
@@ -590,6 +702,9 @@ window.PCFilesFactory = function(dep){
   function _fxWhere(){
     if(_S._hostOn){ const H = _hostFs(); return 'h:' + ((H && H.at()) || ''); }
     if(_S._syncRoot) return 's:' + _S._syncRoot + (_S._syncPath ? '/' + _S._syncPath : '');
+    // `r:` is the folder list (Files' home, _filesFolder === null); `f:` with nothing after it is ALL files. They
+    // were both `f:`, so Back from All "returned" to All and nothing on the bar led back to the folders.
+    if(_S._filesFolder === null) return 'r:';
     return 'f:' + (_S._filesFolder || '');
   }
   /* The engine's own name for the trash, in the scope that RENDERS it. app.js is several closures,
@@ -1683,7 +1798,7 @@ window.PCFilesFactory = function(dep){
     }; }
   }
   function _fxCrumbs(){
-    const home = { label:'Files', to:'b:' };
+    const home = { label:'Files', to:'r:' };   // the folder list -- Up from any folder, All included, leads here
     if(_S._syncRoot){
       const out = [home, { label:'🔄 ' + _S._syncRoot, to:'s:' + _S._syncRoot }];
       let acc = '';
@@ -1693,7 +1808,8 @@ window.PCFilesFactory = function(dep){
       }
       return out;
     }
-    if(!_S._filesFolder) return [home];
+    if(_S._filesFolder === null) return [home];
+    if(_S._filesFolder === '') return [home, { label:'All files', to:'b:' }];
     const ic = _S._filesFolder==='Music' ? '🎵 ' : (FilesIdx.isEncFolder(_S._filesFolder) ? '🔒 ' : '📁 ');
     return [home, { label: ic + _S._filesFolder, to:'b:' + _S._filesFolder }];
   }

@@ -62,7 +62,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 # The functions lifted out of app.js. Each is matched from `function <name>(` to the line that closes
 # it at the same indentation — app.js indents module-level functions by two spaces, so the closing
 # brace is the first line that is exactly "  }".
-LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxDelegate", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
+LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxDelegate", "_fxDriveKey", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
         "_fxView", "_fxSort", "_fxCompare"]
 # Data the lifted functions close over. Same rule: taken verbatim, never restated here.
 LIFT_CONST = ["_FX_COLS", "_FX_KINDS", "_FX_SORT_CHOICES"]

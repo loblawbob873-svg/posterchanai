@@ -128,7 +128,9 @@
    * no menu or dialog is up, and (on the desktop) its window is the focused one. Ctrl+C in a note
    * must copy text, not files. */
   function _editable(t){
-    return !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+    // A ticked checkbox keeps the focus and is no text field: Ctrl+C after ticking files must copy the FILES.
+    return !!(t && (t.isContentEditable || /^(TEXTAREA|SELECT)$/.test(t.tagName || '')
+      || (t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color|file)$/i.test(t.type || ''))));
   }
   function _onKey(e){
     const pane = _pane, a = _act;
@@ -159,8 +161,14 @@
     document.addEventListener('keydown', _onKey);
   }
 
+  /* What the Explorer's Edit menu needs: the actions of the pane drawn last, and what they would act on. Null while
+   * no This Computer pane is on screen. */
+  function edit(){
+    if(!_act || !_pane || !_pane.isConnected) return null;
+    return { act: _act, selected: _sel.size, clip: _clipboard ? pasteLabel(_clipboard) : '' };
+  }
   const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs,
-                allSelected, pasteLabel, clipNote, doneNote, H };
+                allSelected, pasteLabel, clipNote, doneNote, H, edit };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
