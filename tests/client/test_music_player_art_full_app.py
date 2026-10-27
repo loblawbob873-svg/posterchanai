@@ -97,8 +97,8 @@ def test_cover_artist_and_placeholder_follow_the_track():
         await F.until_state(b, lambda s: s["full"], what="Now playing")
         await asyncio.sleep(.3)
         got["glyphFull"] = await b.js(GLYPH)             # ...and full size
-        await F.press(b, "#ma-collapse")
-        # Back: track 2, now loaded, shows ITS cover and artist.
+        # Back (from Now playing -- on a phone the mini player carries play/pause and next only): track 2, now loaded,
+        # shows ITS cover and artist.
         await F.press(b, "#ma-prev")
         got["two"] = await F.until_state(b, lambda s: s["cur"] == S2 and s["appArt"]["kind"] == "cover" and s["appArt"]["loaded"],
                                          what="track 2's cover after ⏮")
@@ -159,6 +159,9 @@ def test_a_cover_arriving_mid_seek_does_not_cancel_it():
         await _music(b)
         await _play_row(b, S1)
         await F.until_state(b, lambda s: s["appArt"]["loaded"], what="cover")
+        await F.press(b, "#ma-art")                       # on a phone the scrubber is Now playing's; the mini bar's is a read-out
+        await F.until_state(b, lambda s: s["full"], what="Now playing")
+        await asyncio.sleep(.3)
         r = await b.js("(()=>{const r=document.querySelector('#ma-seek').getBoundingClientRect();return [r.left,r.top+r.height/2,r.width]})()")
         x0, y, wd = r[0] + r[2] * .2, r[1], r[2]
         await b.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x0, "y": y, "button": "left", "clickCount": 1})
@@ -211,6 +214,12 @@ def test_every_control_drives_the_player(width):
         await F.until_state(b, lambda s: s["playing"], what="resumed")
         await F.press(b, "#ma-next")
         await F.until_state(b, lambda s: s["cur"] != S1 and s["playing"], what="next")
+        phone = width < 800
+        if phone:
+            # The phone's mini player carries play/pause and next (pressed above, ON the docked bar); everything else
+            # lives in Now playing, opened by tapping the bar.
+            await F.press(b, "#ma-title")
+            await F.until_state(b, lambda s: s["full"], what="Now playing, opened from the mini player's title")
         await F.press(b, "#ma-prev")
         await F.until_state(b, lambda s: s["cur"] == S1, what="previous")
         # The spectrum draws across the WHOLE strip for broadband audio (log bands up to 16 kHz), not a clump on the left.
@@ -226,8 +235,9 @@ def test_every_control_drives_the_player(width):
         await F.drag(b, "#ma-seek", .2, .7)                                # seek by dragging
         await F.until_state(b, lambda s: 18 <= s["t"] <= 24, what="seeked to ~70% of 30 s")
         # Now playing: opened from the cover, every control still works in the big layout, closed by its chevron.
-        await F.press(b, "#ma-art")
-        await F.until_state(b, lambda s: s["full"], what="Now playing open")
+        if not phone:
+            await F.press(b, "#ma-art")
+            await F.until_state(b, lambda s: s["full"], what="Now playing open")
         assert await F.audit(b, ".music-app") == [], await F.audit(b, ".music-app")
         if width >= 1280:
             fill = await b.js(FILL)
@@ -344,6 +354,11 @@ def test_phone_layouts_fit(size):
         await asyncio.sleep(.2)
         got["card"] = await F.audit(b, ".ma-now")
         got["cardSizes"] = await b.js(SIZES)
+        got["mini"] = await b.js(MINI)
+        # Now playing, from the docked bar -- where the equalizer, the scrubber and the rest of the transport live.
+        await F.press(b, "#ma-art")
+        await F.until_state(b, lambda s: s["full"], what="Now playing")
+        await asyncio.sleep(.3)
         # The equalizer opens INSIDE the card, which then needs far more height: the card must grow, never be
         # squeezed by the column so that its own contents (or the chips below) draw over each other.
         await F.press(b, "#ma-eq-toggle")
@@ -355,14 +370,18 @@ def test_phone_layouts_fit(size):
         got["eq"] = await F.audit(b, "#ma-eq")
         await F.press(b, "#ma-eq-toggle")
         await b.until("document.getElementById('ma-eq-toggle').getAttribute('aria-expanded')==='false'")
-        await F.press(b, "#ma-art")
-        await F.until_state(b, lambda s: s["full"], what="Now playing")
+        await b.js("document.getElementById('feed').scrollTop=0; scrollTo(0,0); 1")
         await asyncio.sleep(.3)
         got["full"] = await F.audit(b, ".music-app")
         got["fullSizes"] = await b.js(SIZES)
 
     _run(check, F.PLAIN + F.LIB + F.HELD)
     assert got["card"] == [], got
+    m = got["mini"]
+    assert m["fixed"] and m["h"] <= 72, ("on a phone the player is not a docked mini bar -- the library loses the screen", m)
+    assert m["bottom"] <= m["limit"] + 1, ("the mini player sits under the bottom nav", m)
+    assert m["left"] >= m["feedLeft"] - 1 and m["right"] <= m["feedRight"] + 1, ("the mini player is not under the content", m)
+    assert m["hidden"] == ["ma-prev", "ma-shuffle", "ma-seek-row-input", "ma-tools"] or set(m["hidden"]) >= {"ma-prev", "ma-shuffle", "ma-tools"}, m
     assert got["eq"] == [] and got["eqOverlap"] == [], got
     assert got["full"] == [], got
     for k in ("cardSizes", "fullSizes"):
@@ -384,6 +403,17 @@ SIZES = r"""(()=>{const vis=e=>e.checkVisibility();
   const artOverlaps=['ma-title','ma-seek','ma-play','ma-prev','ma-next','ma-collapse','ma-viz'].filter(id=>meet(a,document.getElementById(id).getBoundingClientRect()));
   return {small, art:[Math.round(a.width),Math.round(a.height)], playBottom:Math.round(p.bottom), artOverlaps,
           limit:Math.round(nr&&nr.height?nr.top:innerHeight)};})()"""
+
+
+# The docked mini player: fixed, short, above the nav, within the content column; the rest of the transport is
+# Now playing's (hidden here).
+MINI = r"""(()=>{const n=document.querySelector('.ma-now'), r=n.getBoundingClientRect(), cs=getComputedStyle(n);
+  const nav=document.querySelector('.mobilenav'), nr=nav&&getComputedStyle(nav).display!=='none'?nav.getBoundingClientRect():null;
+  const f=document.getElementById('feed').getBoundingClientRect();
+  const hidden=['ma-prev','ma-shuffle'].filter(id=>!document.getElementById(id).checkVisibility());
+  if(!document.querySelector('.ma-tools').checkVisibility()) hidden.push('ma-tools');
+  return {fixed:cs.position==='fixed', h:Math.round(r.height), bottom:Math.round(r.bottom), left:Math.round(r.left), right:Math.round(r.right),
+          feedLeft:Math.round(f.left), feedRight:Math.round(f.right), limit:Math.round(nr&&nr.height?nr.top:innerHeight), hidden};})()"""
 
 
 # Siblings in the Music screen's column that draw over each other (a squeezed card overflowing onto the chips).

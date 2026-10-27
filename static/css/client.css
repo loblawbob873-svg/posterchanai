@@ -12819,3 +12819,97 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 .cc-share-room{display:flex;flex-direction:column;gap:6px}
 .cc-share-room>b{font-size:14px;color:var(--text)}
 .cc-share-channel{justify-content:flex-start;text-align:start;min-height:44px;width:100%}
+
+/* ===== MUSIC ON A PHONE: THE LIBRARY GETS THE SCREEN, THE PLAYER DOCKS =====================================
+   Reported 2026-10-26 on Android: "made less room to see your music files" -- the now-playing card (cover,
+   transport, spectrum, scrubber, Add music, Equalizer) was ~40% of the screen before the first track. Like every
+   phone music app, browsing now gets the whole screen and the card becomes a MINI PLAYER docked above the bottom
+   nav: cover, title/artist, play/pause and next, the progress as a hairline along its top. Tapping it opens Now
+   playing (.ma-full), which keeps every control. Nothing loaded (.ma-idle) = no player at all. Desktop unchanged. */
+#feed .music-app .ma-libadd{display:none}
+@media(max-width:820px),(max-height:600px){
+  #feed .music-app:not(.ma-full) .ma-libadd{display:inline-grid;place-items:center;flex:0 0 auto;width:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));padding:0}
+  .music-app:not(.ma-full){padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+  .music-app.ma-idle:not(.ma-full){padding-bottom:12px}
+  .music-app:not(.ma-full) .ma-now{position:fixed;z-index:45;left:calc(var(--ma-left,0px) + 8px);right:auto;width:calc(var(--ma-w,100vw) - 16px);
+    bottom:calc(var(--ma-nav-h,64px) + 8px);height:calc(64px / var(--zf,1));min-height:0;margin:0;padding:8px 8px 8px 8px;box-sizing:border-box;
+    display:flex;flex-wrap:nowrap;align-items:center;gap:10px;overflow:hidden;border-radius:16px;
+    background:linear-gradient(135deg,hsl(250 45% 10% / .94),hsl(285 45% 12% / .94));
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3);
+    box-shadow:0 0 0 1px hsl(190 95% 60% / .35),0 10px 28px -8px rgba(0,0,0,.75),0 0 22px -10px hsl(190 95% 55% / .6)}
+  .music-app.ma-idle:not(.ma-full) .ma-now{display:none}
+  .music-app:not(.ma-full) .ma-now .ma-art{flex:0 0 calc(48px / var(--zf,1));width:calc(48px / var(--zf,1));height:calc(48px / var(--zf,1));border-radius:10px;order:0}
+  .music-app:not(.ma-full) .ma-now .ma-meta{flex:1 1 auto;min-width:0;cursor:pointer;order:1}
+  .music-app:not(.ma-full) .ma-now .ma-meta b{font-size:15px;line-height:1.2}
+  .music-app:not(.ma-full) .ma-now .ma-artist{font-size:12.5px;margin-top:1px}
+  .music-app:not(.ma-full) .ma-now #ma-sub,
+  .music-app:not(.ma-full) .ma-now .ma-viz,
+  .music-app:not(.ma-full) .ma-now .ma-tools,
+  .music-app:not(.ma-full) .ma-now .ma-eq,
+  .music-app:not(.ma-full) .ma-now .ma-collapse,
+  .music-app:not(.ma-full) .ma-now #ma-shuffle,
+  .music-app:not(.ma-full) .ma-now #ma-prev,
+  .music-app:not(.ma-full) .ma-now .ma-t{display:none}
+  .music-app:not(.ma-full) .ma-now .ma-ctl{flex:0 0 auto;display:flex;gap:4px;order:2;margin:0;padding:0}
+  .music-app:not(.ma-full) .ma-now .ma-ctl .btn{width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));padding:0;border-radius:50%}
+  .music-app:not(.ma-full) .ma-now .ma-ctl #ma-play{width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1))}
+  /* The progress, as a hairline along the top edge: the real seek bar, made a read-out here (Now playing seeks). */
+  .music-app:not(.ma-full) .ma-now .ma-seek-row{position:absolute;inset-inline:12px;top:0;margin:0;padding:0;height:3px;
+    pointer-events:none;display:block;order:3}
+  .music-app:not(.ma-full) .ma-now .ma-seek{height:3px;margin:0;border-radius:3px;background:hsl(190 95% 60% / .15)}
+}
+/* The browse bar holds the search too (music.js moves #ma-q in): tabs | search | sort | + | more. */
+.ma-browse .ma-q{flex:1 1 200px;min-width:0;margin:0}
+#feed .music-app .track-more{display:none}
+.ma-opt-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.ma-opt-acts:empty{display:none}
+.ma-opt-acts .btn{min-height:calc(44px / var(--zf,1))}
+@media(max-width:820px),(max-height:600px){
+  /* Row 1: the three tabs, full width. Row 2: search, sort, add, more -- one line, every control calc(44px / var(--zf,1)). */
+  .music-app:not(.ma-full) .ma-browse{flex-wrap:wrap;row-gap:8px}
+  .music-app:not(.ma-full) .ma-tabs{flex:1 1 100%}
+  .music-app:not(.ma-full) .ma-browse .ma-q{flex:1 1 0;min-height:calc(44px / var(--zf,1))}
+  /* Sort as a calc(44px / var(--zf,1)) icon button; the native picker still opens with every option named. */
+  .music-app:not(.ma-full) .ma-sort{flex:0 0 calc(44px / var(--zf,1));width:calc(44px / var(--zf,1));max-width:calc(44px / var(--zf,1));padding:0;color:transparent;text-indent:-999px;
+    -webkit-appearance:none;appearance:none;cursor:pointer;
+    background:var(--panel2,rgba(255,255,255,.04)) center/20px no-repeat
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2367e8f9' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3'/%3E%3C/svg%3E")}
+  .music-app:not(.ma-full) .ma-sort option{color:var(--text);text-indent:0}
+  /* The list header: Shuffle and the count; the library actions live in the options sheet (⋯) on a phone. */
+  /* The row says who and what; the encrypted size is a detail for the ⋯ sheet, not for every line. */
+  #feed .music-app .music-list .track .track-size,#feed .music-app .music-list .track .track-sep{display:none}
+  #feed .music-app .music-list .track .track-by:only-child + .track-sep{display:none}
+  .music-app:not(.ma-full) #mus-refresh,.music-app:not(.ma-full) #mus-delall,
+  .music-app:not(.ma-full) .music-head-secondary{display:none}
+  .music-app:not(.ma-full) .music-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 6px}
+  .music-app:not(.ma-full) .music-head-primary{display:flex;gap:8px}
+  /* A SONG IS ONE COMPACT ROW: play, title, "artist · album", and ⋯ for its actions -- about ten on a phone screen
+     instead of two and a half cards. The row itself plays (music.js). ⋯ opens the actions on a line of their own. */
+  #feed .music-app .music-list .track{display:grid;grid-template-columns:calc(44px / var(--zf,1)) repeat(4,minmax(0,1fr)) calc(44px / var(--zf,1));
+    grid-template-areas:"play name name name name more" "play meta meta meta meta more";
+    align-items:center;column-gap:10px;row-gap:0;min-height:60px;padding:6px 6px 6px 8px;margin:0 0 2px;border-radius:12px;cursor:pointer;
+    background:none;border:0;border-bottom:1px solid rgba(255,255,255,.05);box-shadow:none}
+  #feed .music-app .music-list .track .track-play{grid-area:play;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1))}
+  #feed .music-app .music-list .track .track-name{grid-area:name;min-width:0;margin:0;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;align-self:end}
+  #feed .music-app .music-list .track .track-meta{grid-area:meta;min-width:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;align-self:start}
+  #feed .music-app .music-list .track .track-more{grid-area:more;display:inline-grid;place-items:center;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));
+    padding:0;border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer}
+  #feed .music-app .music-list .track .track-more[aria-expanded="true"]{color:var(--text);background:var(--panel2,rgba(255,255,255,.06))}
+  #feed .music-app .music-list .track > .track-keep,#feed .music-app .music-list .track > .track-add,#feed .music-app .music-list .track > .track-dl,
+  #feed .music-app .music-list .track > .track-ren,#feed .music-app .music-list .track > .track-del{display:none}
+  #feed .music-app .music-list .track.open{grid-template-areas:"play name name name name more" "play meta meta meta meta more" ". k a d r x";
+    row-gap:4px;background:var(--panel2,rgba(255,255,255,.04))}
+  #feed .music-app .music-list .track.open > .track-keep{grid-area:k}#feed .music-app .music-list .track.open > .track-add{grid-area:a}
+  #feed .music-app .music-list .track.open > .track-dl{grid-area:d}#feed .music-app .music-list .track.open > .track-ren{grid-area:r}
+  #feed .music-app .music-list .track.open > .track-del{grid-area:x}
+  #feed .music-app .music-list .track.open > .track-keep,#feed .music-app .music-list .track.open > .track-add,
+  #feed .music-app .music-list .track.open > .track-dl,#feed .music-app .music-list .track.open > .track-ren,
+  #feed .music-app .music-list .track.open > .track-del{display:inline-grid;place-items:center;justify-self:center;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1))}
+}
+/* A phone held SIDEWAYS has the width for one browse row (tabs, then search and the icons) and none of the height
+   for two: a second row left no full row of covers under the pinned bar on an 844x390 screen. */
+@media(min-width:821px) and (max-height:600px){
+  .music-app:not(.ma-full) .ma-browse{flex-wrap:nowrap}
+  .music-app:not(.ma-full) .ma-tabs{flex:1 1 auto}
+  .music-app:not(.ma-full) .ma-browse .ma-q{flex:1 1 160px}
+}

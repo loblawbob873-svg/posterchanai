@@ -258,12 +258,15 @@ window.PCMusicFactory = function(dep){
           <option value="added">Recently added</option><option value="title">Title</option>
           <option value="artist">Artist</option><option value="album">Album</option>
         </select>
+        <button type="button" class="btn btn-ghost small ma-libadd" id="ma-libadd" title="Add music" aria-label="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>
         <button type="button" class="btn btn-ghost small ma-libopts" id="ma-libopts" title="Library options" aria-label="Library options"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
       </div>
       <div class="ma-scan hidden" id="ma-scan" role="status" aria-live="polite"><span class="ma-scan-t" id="ma-scan-t"></span><span class="ma-scan-bar" aria-hidden="true"><i id="ma-scan-fill"></i></span></div>
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
+    { const q=$('#ma-q',feed), bar=$('#ma-browse',feed), sort=$('#ma-sort',feed);
+      if(q && bar && sort) bar.insertBefore(q, sort); }
     const lib=$('#ma-lib',feed);
     /* HYDRATE THE INDEX FIRST. The library lives in the files index, and this window can be the very
      * first thing opened in a session — openMusic() called loadLocal() before doing anything for
@@ -352,6 +355,11 @@ window.PCMusicFactory = function(dep){
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
     b('#ma-add',()=>openMusicFolder());
+    b('#ma-libadd',()=>openMusicFolder());
+    /* ON A PHONE THE NOW-PLAYING CARD IS A MINI PLAYER docked above the bottom nav (music-library.css): the library
+     * gets the screen, and tapping the bar -- its cover OR its title -- opens Now playing, which keeps every control. */
+    { const m=$('.ma-meta',feed); if(m) m.onclick=()=>{ if(!_maFull && _maPhone()) _maSetFull(true); }; }
+    _maDock();
     b('#ma-art',()=>_maSetFull(!_maFull));
     b('#ma-collapse',()=>_maSetFull(false));
     b('#ma-eq-toggle',()=>{
@@ -474,6 +482,25 @@ window.PCMusicFactory = function(dep){
    * PCMusicFull before it walks the view history), so Back leaves the big player for the library and not
    * the whole Music screen. Kept for the session: reopening Music returns to whichever you were looking at. */
   let _maFull=false;
+  // A phone held EITHER way: narrow, or short (sideways a phone is wider than 820) -- the rule music-library.css uses.
+  const _maPhone = () => { try{ return matchMedia('(max-width:820px),(max-height:600px)').matches; }catch(_){ return false; } };
+  /* Where the mini player docks: the bottom nav's real height (it carries the safe-area inset, so no constant fits
+   * every phone), kept current across rotation. */
+  let _maDockBound = false;
+  function _maDock(){
+    const set = () => { const app=document.querySelector('#feed .music-app'); if(!app) return;
+      // The bar is laid out inside <body>, which carries a zoom at some widths: measured viewport pixels come back
+      // ALREADY zoomed and would be zoomed again as CSS lengths. Divide them out.
+      let z=1; try{ z=parseFloat(getComputedStyle(document.body).zoom)||1; }catch(_){ }
+      // NOT offsetParent: the nav is position:fixed, whose offsetParent is always null -- it read as hidden on every phone.
+      const nav=document.querySelector('.mobilenav'), r=nav && getComputedStyle(nav).display!=='none' ? nav.getBoundingClientRect() : null;
+      app.style.setProperty('--ma-nav-h', (r && r.height ? Math.round(r.height / z) : 0) + 'px');
+      // ...and under the CONTENT column: a phone held sideways also shows the sidebar, which the bar must not cover.
+      const f=document.getElementById('feed'), fr=f ? f.getBoundingClientRect() : null;
+      if(fr && fr.width){ app.style.setProperty('--ma-left', Math.round(fr.left / z) + 'px'); app.style.setProperty('--ma-w', Math.round(fr.width / z) + 'px'); } };
+    set();
+    if(!_maDockBound){ _maDockBound = true; try{ addEventListener('resize', set, { passive:true }); }catch(_){ } }
+  }
   function _maSetFull(on){
     _maFull=!!on;
     const app=document.querySelector('#feed .music-app');
@@ -493,6 +520,7 @@ window.PCMusicFactory = function(dep){
     const t=document.getElementById('ma-title'); if(!t) return;
     const inf=MusicPlayer.cur?MusicPlayer.info(MusicPlayer.cur):null;
     t.textContent=(inf&&inf.title)||'Nothing playing';
+    { const app=t.closest('.music-app'); if(app) app.classList.toggle('ma-idle', !MusicPlayer.cur); }
     { const ar=document.getElementById('ma-artist');
       if(ar){ const by=inf?[inf.artist,inf.album].filter(Boolean).join(' · '):'';
         ar.textContent=by; ar.classList.toggle('hidden', !by); } }
@@ -576,8 +604,10 @@ window.PCMusicFactory = function(dep){
     { const lo = $('#ma-libopts', feed); if(lo) lo.onclick = () => _maOptions(); }
     Lib.show();
   }
+  let _musSeq = 0;                       // see _renderMusicList: the newest paint of an element owns it
   function _maPaintLibrary(lib){
     if(!lib) return;
+    lib._musSeq = ++_musSeq;
     const q = S._musicQ || '', entries = musicEntries(null);
     if(_maNav.page === 'album'){
       const al = G.albums(entries).find(a => a.key === _maNav.key);
@@ -734,9 +764,17 @@ window.PCMusicFactory = function(dep){
           <span class="muted small ma-opt-why">For albums whose files carry no cover, this server asks MusicBrainz and the Cover Art
           Archive (through its Tor-first proxy). They learn the artist and album names it asks about — nothing else about
           your library. Off until you turn it on.</span></span></label>
+      <div class="ma-opt-acts" id="ma-opt-acts">
+        ${[['mus-getall','i-download'],['mus-refresh','i-refresh'],['mus-tidy','i-close'],['mus-delall','i-close']].map(([id, ic]) => {
+          const src=document.getElementById(id); if(!src || src.disabled) return '';
+          return `<button type="button" class="btn btn-ghost small" data-act="${id}"><svg class="ic b-ic" aria-hidden="true"><use href="#${ic}"></use></svg>${enc(src.textContent.trim())}</button>`; }).join('')}
+      </div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button type="button" class="btn btn-ghost small" id="ma-opt-close">Close</button></div>`, root => {
       $('#ma-opt-close', root).onclick = closeModal;
+      // The library's own buttons, pressed for you: one set of handlers, whichever button the person reached.
+      root.querySelectorAll('[data-act]').forEach(btn => btn.onclick = () => {
+        const src=document.getElementById(btn.dataset.act); closeModal(); if(src) src.click(); });
       const box = $('#ma-cover-lookup', root);
       box.onchange = () => {
         const v = !!box.checked;
@@ -901,8 +939,15 @@ window.PCMusicFactory = function(dep){
      * The list repaints on every keystroke of the search box, so this cannot be an IDB scan per
      * paint. The first paint of a session may not know yet; it draws without the marks and repaints
      * itself when the answer arrives, which is a flicker of a badge rather than a blocked render. */
+    /* WHOSE LIST THIS ELEMENT IS SHOWING. #ma-lib also holds the Albums and Artists views, and every deferred repaint
+     * of THIS list (the offline marks arriving, a delete-all or tidy finishing) used to check only that the element was
+     * still on the page -- so switching to Albums while the first paint's offline check was still out drew the song
+     * list back over the albums (caught by the gate, deploy 88: Albums selected, songs on screen). A repaint happens
+     * only if this paint is still the element's newest. */
+    const seq = grid._musSeq = ++_musSeq;
+    const mine = () => grid.isConnected && grid._musSeq === seq;
     if(!MusicOffline._have){
-      MusicOffline.have().then(()=>{ if(grid.isConnected) _renderMusicList(grid, list, q, only, opts); }).catch(()=>{});
+      MusicOffline.have().then(()=>{ if(mine()) _renderMusicList(grid, list, q, only, opts); }).catch(()=>{});
     }
     /* `opts`: {sort} orders the whole library (the Songs tab); {compact} is the list under an album or artist page,
      * whose own Play/Shuffle stand above it; {numbered} shows each song's track number (an album's own order). */
@@ -965,8 +1010,10 @@ window.PCMusicFactory = function(dep){
                     : `<button class="track-play" data-sha="${t.sha}" aria-label="Play ${enc(tg.title)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>`}
         <span class="track-name">${opts.numbered && tg.track ? `<span class="track-no">${tg.track}</span>` : ''}${enc(tg.title)}</span>
         <span class="track-meta">${t.missing ? 'not on the server — delete to tidy up'
-                                             : (by ? `<span class="track-by">${enc(by)}</span> · ` : '') + '🔒 ' + (((t.m.size||0)/1048576)).toFixed(1) + 'MB'
-                                               + (t.offline ? ' · offline' : '')}</span>
+                                             : (by ? `<span class="track-by">${enc(by)}</span><span class="track-sep"> · </span>` : '')
+                                               + `<span class="track-size">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>`
+                                               + (t.offline ? '<span class="track-off"> · offline</span>' : '')}</span>
+        ${t.missing ? '' : `<button class="track-more" data-sha="${t.sha}" title="More for this song" aria-label="More for this song" aria-expanded="false"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
         ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
@@ -1037,7 +1084,7 @@ window.PCMusicFactory = function(dep){
                                 + `— it will fix itself on the next save; do not reload yet`
                               : `deleted ${doomed.length} song${doomed.length>1?'s':''}`);
         try{ await FilesIdx.pull(); }catch(_){}
-        _renderMusicList(grid, list, q, only, opts);
+        if(mine()) _renderMusicList(grid, list, q, only, opts);
         try{ _musicAppNow(); }catch(_){}
         try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
       }; }
@@ -1057,7 +1104,7 @@ window.PCMusicFactory = function(dep){
         const saved = await FilesIdx.endBatch();
         toast(saved ? `removed ${dead.length} missing track${dead.length>1?'s':''}`
                     : `not saved — your library on the server is unchanged`);
-        _renderMusicList(grid, list, q, only, opts);
+        if(mine()) _renderMusicList(grid, list, q, only, opts);
         try{ _musicAppNow(); }catch(_){}
       }; }
     { const sh=$('#mus-shuffle',grid);
@@ -1087,9 +1134,19 @@ window.PCMusicFactory = function(dep){
      * Rebound (not accumulated) on each render: `grid.onclick` is a single slot, so re-rendering
      * cannot leave a second handler behind the way addEventListener would. */
     grid.onclick = async (ev) => {
-      const b = ev.target && ev.target.closest && ev.target.closest(
-        '.track-play,.track-keep,.track-add,.track-dl,.track-ren,.track-del,.mus-more');
+      let b = ev.target && ev.target.closest && ev.target.closest(
+        '.track-play,.track-more,.track-keep,.track-add,.track-dl,.track-ren,.track-del,.mus-more');
+      /* ON A PHONE THE ROW IS THE PLAY BUTTON, as in every music app: a tap anywhere on a song that is not one of its
+       * buttons plays it. (On a desktop the row is a target for selecting text, so only the button plays.) */
+      if(!b && _maPhone()){ const row = ev.target && ev.target.closest && ev.target.closest('.track');
+        if(row && grid.contains(row) && !row.classList.contains('gone')) b = row.querySelector('.track-play'); }
       if(!b || !grid.contains(b)) return;
+      if(b.classList.contains('track-more')){
+        const row = b.closest('.track'), open = !row.classList.contains('open');
+        grid.querySelectorAll('.track.open').forEach(r => { r.classList.remove('open'); const m=r.querySelector('.track-more'); if(m) m.setAttribute('aria-expanded','false'); });
+        row.classList.toggle('open', open); b.setAttribute('aria-expanded', open ? 'true' : 'false');
+        return;
+      }
       if(b.classList.contains('mus-more')){ _musMore(grid, b); return; }
       const sha = b.dataset.sha;
       if(b.classList.contains('track-play')){

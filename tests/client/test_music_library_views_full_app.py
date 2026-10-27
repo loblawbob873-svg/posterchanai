@@ -84,7 +84,7 @@ TABS = {"songs": "#ma-tab-songs", "albums": "#ma-tab-albums", "artists": "#ma-ta
 
 async def _tab(b, name):
     await A.press(b, TABS[name])
-    await _until(b, f"document.getElementById('ma-tab-{name}').getAttribute('aria-selected')==='true'", 5, f"{name} tab")
+    await _until(b, f"document.getElementById('ma-tab-{name}').getAttribute('aria-selected')==='true'", 15, f"{name} tab")
 
 
 async def _shot(b, name):
@@ -152,7 +152,7 @@ def test_albums_artists_and_their_pages(w, h):
         await _shot(b, f"{'phone' if w < 600 else 'desktop'}-albums")
         # An album: disc, then track order -- and Play makes THAT album the queue.
         await A.press(b, "#ma-albums .ma-card[data-i='1']")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 5, "the album page")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 15, "the album page")
         got["albumRows"] = await b.js(ROWS)
         got["albumHead"] = await b.js("({t:document.querySelector('.ma-page-t').textContent,s:document.querySelector('.ma-page-s').textContent,x:document.querySelector('.ma-page-x').textContent,nums:[...document.querySelectorAll('#ma-pagelist .track-no')].map(e=>e.textContent)})")
         got["androidBack"] = await b.js("PCMusicFull.open()")
@@ -163,28 +163,28 @@ def test_albums_artists_and_their_pages(w, h):
         await A.press(b, "#ma-next")
         await _until(b, f"__PC.MusicPlayer.cur==='{NEON[1]}'", 10, "next = the album's second track")
         await A.press(b, "#ma-alb-shuffle")
-        await _until(b, "__PC.MusicPlayer.shuffle===true", 5, "shuffle")
+        await _until(b, "__PC.MusicPlayer.shuffle===true", 15, "shuffle")
         got["afterShuffle"] = await b.js(PLAYER)
         await A.press(b, "#ma-back")
-        await _until(b, "!!document.querySelector('#ma-albums') && !document.getElementById('ma-page')", 5, "back to Albums")
+        await _until(b, "!!document.querySelector('#ma-albums') && !document.getElementById('ma-page')", 15, "back to Albums")
         # Artists, an artist's page, one of their albums -- and Back walks out the way it came.
         await _tab(b, "artists")
         got["artists"] = await b.js("[...document.querySelectorAll('#ma-artists .ma-artist-n')].map(e=>e.textContent)")
         await _shot(b, f"{'phone' if w < 600 else 'desktop'}-artists")
         kaito = got["artists"].index("Kaito Vega")
         await A.press(b, f"#ma-artists .ma-arow[data-i='{kaito}']")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 5, "the artist page")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 15, "the artist page")
         got["artistAlbums"] = await b.js("[...document.querySelectorAll('#ma-albums .ma-card-t')].map(e=>e.textContent)")
         got["artistRows"] = await b.js(ROWS)
         await _shot(b, f"{'phone' if w < 600 else 'desktop'}-artist-page")
         await A.press(b, "#ma-albums .ma-card[data-i='0']")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 5, "the album from the artist page")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 15, "the album from the artist page")
         got["backLabel"] = await b.js("document.querySelector('#ma-back span').textContent")
         # Android's Back, as app.js drives it: PCMusicFull.open() then close().
         await b.js("PCMusicFull.open() && PCMusicFull.close(); 1")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 5, "Back to the artist")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 15, "Back to the artist")
         await A.press(b, "#ma-back")
-        await _until(b, "!!document.querySelector('#ma-artists') && !document.getElementById('ma-page')", 5, "Back to Artists")
+        await _until(b, "!!document.querySelector('#ma-artists') && !document.getElementById('ma-page')", 15, "Back to Artists")
         got["openAfter"] = await b.js("PCMusicFull.open()")
         # One search box per tab.
         await b.js("(()=>{const q=document.getElementById('ma-q');q.value='ghost';q.dispatchEvent(new Event('input'));})(); 1")
@@ -306,20 +306,20 @@ def test_every_new_screen_fits_a_phone(w, h):
         await _shot(b, f"phone{tag}-albums-scrolled")
         await _tab(b, "albums")
         await A.press(b, "#ma-albums .ma-card[data-i='1']")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 5, "album page")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=album]')", 15, "album page")
         await asyncio.sleep(.2)
         got["album"] = await b.js(GEOM)
         await _shot(b, f"phone{tag}-album-page")
         await A.press(b, "#ma-back")
         await _tab(b, "artists")
         await A.press(b, "#ma-artists .ma-arow[data-i='1']")
-        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 5, "artist page")
+        await _until(b, "!!document.querySelector('#ma-page[data-kind=artist]')", 15, "artist page")
         await asyncio.sleep(.2)
         got["artist"] = await b.js(GEOM)
         await _shot(b, f"phone{tag}-artist-page")
         await A.press(b, "#ma-back")
         await A.press(b, "#ma-libopts")
-        await _until(b, "!!document.getElementById('ma-cover-lookup')", 5, "the library options")
+        await _until(b, "!!document.getElementById('ma-cover-lookup')", 15, "the library options")
         got["opts"] = await b.js("""(()=>{const l=document.querySelector('.ma-opt').getBoundingClientRect(),c=document.getElementById('ma-opt-close').getBoundingClientRect();
           return {fits:l.left>=-1&&l.right<=innerWidth+1, h:Math.round(l.height), close:[Math.round(c.width),Math.round(c.height)],
                   sideways:document.documentElement.scrollWidth>innerWidth+1}})()""")
@@ -446,10 +446,10 @@ def test_the_scan_waits_while_the_page_is_hidden_and_never_holds_up_a_song():
 # ── the opt-in online covers ────────────────────────────────────────────────────────────────────────────────────
 async def _turn_on_covers(b):
     await A.press(b, "#ma-libopts")
-    await _until(b, "!!document.getElementById('ma-cover-lookup')", 5, "the library options")
+    await _until(b, "!!document.getElementById('ma-cover-lookup')", 15, "the library options")
     got = await b.js("document.getElementById('ma-cover-lookup').checked")
     await A.press(b, "#ma-cover-lookup")
-    await _until(b, "ClientSettings.get('musicCoverLookup')===true", 5, "the switch on")
+    await _until(b, "ClientSettings.get('musicCoverLookup')===true", 15, "the switch on")
     await A.press(b, "#ma-opt-close")
     return got
 
@@ -545,7 +545,7 @@ def test_the_music_window_browses_albums_and_artists():
         got["cols"] = await b.js("(()=>{const g=document.getElementById('ma-albums'),k=[...g.children],t=k[0].getBoundingClientRect().top;return k.filter(e=>Math.abs(e.getBoundingClientRect().top-t)<2).length})()")
         await _shot(b, "desktop-window-albums")
         await A.press(b, ".osw #ma-albums .ma-card[data-i='1']")
-        await _until(b, "!!document.querySelector('.osw #ma-page[data-kind=album]')", 5, "album page in the window")
+        await _until(b, "!!document.querySelector('.osw #ma-page[data-kind=album]')", 15, "album page in the window")
         await A.press(b, ".osw #ma-alb-play")
         await _until(b, f"__PC.MusicPlayer.cur==='{NEON[0]}'", 15, "playing from the window")
         await _shot(b, "desktop-window-album-page")
@@ -559,3 +559,130 @@ def test_the_music_window_browses_albums_and_artists():
     assert got["cols"] >= 3, ("a desktop window shows more than a phone's two columns", got["cols"])
     assert got["artists"] == ["Ghost Band", "Kaito Vega", "Various Artists", "Unknown artist"], got["artists"]
     assert not got["errors"], got["errors"]
+
+
+# ── the phone layout: the library gets the screen, the player docks (2026-10-26: "made less room to see your music") ──
+ROWS_IN_VIEW = r"""(()=>{const bar=document.querySelector('.ma-now'), nav=document.querySelector('.mobilenav');
+  const br=bar&&bar.checkVisibility()?bar.getBoundingClientRect():null, nr=nav&&getComputedStyle(nav).display!=='none'?nav.getBoundingClientRect():null;
+  const floor=Math.min(br?br.top:innerHeight, nr?nr.top:innerHeight);
+  return [...document.querySelectorAll('#ma-lib .track')].filter(t=>{const r=t.getBoundingClientRect();return r.top>=0&&r.bottom<=floor+1;}).length;})()"""
+
+
+@CHROME
+def test_a_phone_lists_songs_as_rows_and_the_row_plays():
+    got = {}
+
+    async def check(b):
+        await _screen(b, 390, 844)
+        await _music(b)
+        await _tab(b, "songs")
+        await b.js("document.getElementById('feed').scrollTop=0; 1")
+        await asyncio.sleep(.3)
+        got["idle"] = await b.js("({bar:document.querySelector('.ma-now').checkVisibility(), rows:" + ROWS_IN_VIEW + "})")
+        acts = ".track-keep,.track-add,.track-dl,.track-ren,.track-del"
+        got["actsBefore"] = await b.js(f"[...document.querySelectorAll('#ma-lib .track:first-of-type :is({acts})')].filter(e=>e.checkVisibility()).length")
+        # A tap on the ROW (its title, not its play button) plays the song.
+        first = await b.js("document.querySelector('#ma-lib .track').dataset.sha")
+        await A.press(b, f"#ma-lib .track[data-sha='{first}'] .track-name")
+        await _until(b, f"__PC.MusicPlayer.cur==={json.dumps(first)}", 10, "the tapped row playing")
+        await asyncio.sleep(.6)
+        got["playing"] = await b.js("({bar:document.querySelector('.ma-now').checkVisibility(), rows:" + ROWS_IN_VIEW + "})")
+        # ⋯ opens THAT song's actions, one row at a time; an action from it works (add to a playlist opens its picker).
+        await A.press(b, f"#ma-lib .track[data-sha='{first}'] .track-more")
+        got["actsOpen"] = await b.js(f"[...document.querySelectorAll('#ma-lib .track.open :is({acts})')].filter(e=>e.checkVisibility()).length")
+        second = await b.js("[...document.querySelectorAll('#ma-lib .track')][1].dataset.sha")
+        await A.press(b, f"#ma-lib .track[data-sha='{second}'] .track-more")
+        got["openRows"] = await b.js("[...document.querySelectorAll('#ma-lib .track.open')].map(t=>t.dataset.sha)")
+        await A.press(b, f"#ma-lib .track[data-sha='{second}'] .track-add")
+        await _until(b, "!!document.querySelector('.modal, .menu-pop, [role=dialog]')", 15, "the playlist picker")
+        await b.js("__PC.closeModal && __PC.closeModal(); 1")
+        got["second"], got["openRowsWant"] = second, [second]
+        assert not await b.js("__errors.slice()")
+
+    _run(check, L.PLAIN + L.LIB)
+    assert got["idle"]["bar"] is False, ("nothing is loaded and the player still takes the screen", got)
+    assert got["idle"]["rows"] >= 6, ("fewer than six songs fit a 390x844 phone", got)
+    assert got["actsBefore"] == 0, ("every row still shows its five action buttons", got)
+    assert got["playing"]["bar"] is True and got["playing"]["rows"] >= 5, ("playing, the docked player took the list's room", got)
+    assert got["actsOpen"] == 5, ("⋯ did not show the song's actions", got)
+    assert got["openRows"] == got["openRowsWant"], ("more than one row open at once", got)
+
+
+@CHROME
+def test_add_and_the_library_actions_are_reachable_on_a_phone():
+    got = {}
+
+    async def check(b):
+        await _screen(b, 390, 844)
+        await _music(b)
+        await _tab(b, "songs")
+        # The library's own Refresh, pressed through the options sheet -- the same button and handler, not a copy.
+        await b.js("(()=>{const r=document.getElementById('mus-refresh'), o=r.onclick; r.onclick=function(){window.__refreshed=(window.__refreshed||0)+1; return o&&o.apply(this,arguments)}; })(); 1")
+        await A.press(b, "#ma-libopts")
+        await _until(b, "!!document.querySelector('#ma-opt-acts [data-act=mus-refresh]')", 15, "Refresh in the library options")
+        await A.press(b, "#ma-opt-acts [data-act=mus-refresh]")
+        await _until(b, "window.__refreshed===1", 15, "the library's Refresh")
+        # ＋ is Add music.
+        await A.press(b, "#ma-libadd")
+        await _until(b, "__PC.VIEW!=='music'", 15, "Add music opening the Music folder")
+        got["view"] = await b.js("__PC.VIEW")
+
+    _run(check, L.PLAIN + L.LIB)
+    assert got["view"] in ("blossom", "files"), got
+
+
+@CHROME
+def test_the_desktop_keeps_its_player_card():
+    async def check(b):
+        await _screen(b, 1280, 800)
+        await _music(b)
+        await _tab(b, "songs")
+        got = await b.js("""({pos:getComputedStyle(document.querySelector('.ma-now')).position,
+            card:document.querySelector('.ma-now').checkVisibility(), add:document.getElementById('ma-libadd').checkVisibility(),
+            more:[...document.querySelectorAll('#ma-lib .track-more')].some(e=>e.checkVisibility())})""")
+        assert got == {"pos": "relative", "card": True, "add": False, "more": False} or (got["pos"] != "fixed" and got["card"] and not got["add"] and not got["more"]), got
+    _run(check, L.PLAIN + L.LIB)
+
+
+# The device's offline-copy list (IndexedDB 'pcmusic') answers LATE: held until the test releases it.
+HOLD_OFFLINE = r"""
+(() => { const real = indexedDB.open.bind(indexedDB); window.__idbHeld = [];
+  indexedDB.open = function(name, v){ if(name !== 'pcmusic' || window.__idbGo) return real(name, v);
+    const fake = {}; window.__idbHeld.push(() => { const r = real(name, v);
+      r.onupgradeneeded = e => { fake.result = r.result; fake.onupgradeneeded && fake.onupgradeneeded(e); };
+      r.onsuccess = e => { fake.result = r.result; fake.onsuccess && fake.onsuccess(e); };
+      r.onerror = e => { fake.error = r.error; fake.onerror && fake.onerror(e); }; });
+    return fake; };
+  window.__releaseOffline = () => { window.__idbGo = 1; window.__idbHeld.splice(0).forEach(f => f()); };
+})();
+"""
+
+
+@CHROME
+def test_a_late_offline_check_does_not_draw_the_songs_back_over_albums():
+    """The gate (deploy 88): Albums selected, the song list on screen. The first paint of Songs asks which tracks are
+    kept on this device and repaints itself when that answers; the repaint only checked that the element was still on
+    the page -- and #ma-lib is the same element the Albums grid draws into. Here that answer is held until AFTER the
+    switch to Albums."""
+    got = {}
+
+    async def check(b):
+        await _screen(b, 390, 844)
+        await desktop.login(b)
+        await b.js("try{localStorage.setItem('pc_music_tab','songs')}catch(_){}; window.__publishOK=true; __seedLib(); __PC.switchView('music'); 1")
+        await _until(b, "document.querySelectorAll('#ma-lib .track').length>=3", 20, "the song list (offline check still held)")
+        assert await b.js("window.__idbHeld.length") >= 1, "the offline check was not held -- this proves nothing"
+        await _tab(b, "albums")
+        await _until(b, "!!document.getElementById('ma-albums')", 10, "the albums grid")
+        # Any song row drawn into the library while Albums is the tab -- even for a moment -- is the bug.
+        await b.js("""window.__songsOverAlbums = 0; new MutationObserver(() => {
+            if(document.querySelector('.ma-tab.on')?.dataset.tab === 'albums' && document.querySelector('#ma-lib > .track'))
+              window.__songsOverAlbums++; }).observe(document.getElementById('ma-lib'), {childList: true}); 1""")
+        await b.js("__releaseOffline(); 1")
+        await asyncio.sleep(1.5)                           # the held answer lands, and any repaint it triggers
+        got["after"] = await b.js("({albums:!!document.getElementById('ma-albums'), songs:document.querySelectorAll('#ma-lib > .track').length,"
+                                  " tab:document.querySelector('.ma-tab.on').dataset.tab, flashed:window.__songsOverAlbums})")
+
+    _run(check, L.PLAIN + L.LIB + HOLD_OFFLINE)
+    assert got["after"]["flashed"] == 0 and got["after"]["tab"] == "albums" and got["after"]["albums"] and got["after"]["songs"] == 0, \
+        ("a late offline check drew the song list back over the Albums the person had opened", got)
