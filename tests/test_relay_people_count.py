@@ -211,3 +211,16 @@ def test_one_signed_in_person_on_two_networks_is_one_and_a_shared_address_is_not
 def test_the_operator_key_is_not_a_person():
     b = _people([("41.0.0.1", _Conn(), ["op"])])
     assert b["online"] == 1 and b["accounts"] == 0, "counted once as an address, never as an account"
+
+
+def test_a_client_signed_in_as_its_communities_stream_keys_is_still_one_person():
+    """2026-10-27, "check our relay stats, no way 720 on it right now": 718 "online" over 430 sockets from 170 outside
+    addresses. A client signs in as ITSELF and then as each Concord community's stream key it reads; every key was
+    counted as a person. A socket is the key it signed in as first."""
+    rows = []
+    for i, who in enumerate(["alice", "bob"]):
+        c = _Conn()
+        c._pcai_first_auth = who
+        rows.append(("41.0.0.%d" % i, c, [who] + ["stream%d" % k for k in range(10)]))   # ten communities each
+    b = _people(rows)
+    assert b["online"] == 2 and b["accounts"] == 2, b

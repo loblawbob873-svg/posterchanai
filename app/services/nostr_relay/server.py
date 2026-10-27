@@ -1630,7 +1630,11 @@ class RelayServer:
                 continue
             pks = [pk for pk in (auth.get(conn) or ()) if not is_op(pk)]
             if pks:
-                accounts.update(pks)
+                # ONE PERSON PER SOCKET: the key it signed in as FIRST. A client also signs in as every Concord
+                # community's stream key it reads, and counting those made one person with ten communities eleven
+                # "people" -- "no way 720 on it right now" (2026-10-27: 718 online over 430 sockets, 170 addresses).
+                first = getattr(conn, "_pcai_first_auth", None)
+                accounts.add(first if first in pks else sorted(pks)[0])
                 if ip:
                     authed_ips.add(ip)
             elif ip:
@@ -1858,6 +1862,8 @@ class RelayServer:
                     str(ev["pubkey"])[:12])
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
         try:
+            if not getattr(conn, "_pcai_first_auth", None):
+                setattr(conn, "_pcai_first_auth", ev["pubkey"])   # who this socket IS (online_breakdown)
             setattr(conn, "_pcai_authed_n", len(self._auth_pubkeys[conn]))
         except Exception:
             pass
