@@ -4163,6 +4163,11 @@
    * the nav. Returns whether it took the step; app.js's backButton asks before walking history. */
   function backStep(staysIn){
     if(typeof document==='undefined'||!document.body||!document.body.classList.contains('concord-view'))return false;
+    /* An open git ISSUE (or PR) closes first, then the issues list -- each is a sheet over the channel ("Back Arrow
+     * Close Issue", Vyram 2026-10-27); after that Back follows the rule above, switch included. */
+    const G=window.PCConcordGit;
+    if(G&&document.getElementById('ccg-panel')){G.closePanel();return true;}
+    if(G&&document.getElementById('ccg-projects')){G.closeProjects();return true;}
     if(state.thread){state.thread=null;replyTarget=null;render();return true;}
     if(mobileDrawerOpen){setMobileDrawer(false);return true;}
     if(mobileChatOpen&&state.community!=null){mobileChatOpen=false;render();return true;}

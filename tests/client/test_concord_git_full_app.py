@@ -104,16 +104,9 @@ async def on_top(b, selector, where):
     assert hit == 'ok', f'{where}: {selector} is covered by {hit}'
 
 
-@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-@pytest.mark.parametrize('width,os_mode', [(1280, False), (390, False), (1280, True)])
-def test_repository_channel_panel_and_projects(width, os_mode):
-    fx = fixture()
-
-    async def check(b):
-        await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=860, deviceScaleFactor=1, mobile=width < 600))
-        await desktop.login(b)
-        assert await b.js('__PC.me().pubkey') == fx['viewer']
-        await b.js(r'''(()=>{
+async def _install(b, fx, os_mode):
+    """A room with two repository channels and the fixture's issues, read through a stub relay door."""
+    await b.js(r'''(()=>{
           const FX=%s;
           const ngit={id:'ch-ngit',name:'ngit',streamPubkeys:[],repositories:[{address:FX.coord,relayHints:['wss://git.fixture.invalid'],attachedAt:FX.attachedAt}]};
           const tools={id:'ch-tools',name:'tools',streamPubkeys:[],repositories:[{address:FX.other,relayHints:['wss://git.fixture.invalid'],attachedAt:FX.attachedAt}]};
@@ -133,6 +126,18 @@ def test_repository_channel_panel_and_projects(width, os_mode):
           Object.defineProperty(window,'PCConcordRelay',{configurable:true,get(){return door;}});
           if(%s)__PC.switchView('concord');else __PC.switchMessagesTab('concord');
         })()''' % (json.dumps(fx), 'true' if os_mode else 'false'))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width,os_mode', [(1280, False), (390, False), (1280, True)])
+def test_repository_channel_panel_and_projects(width, os_mode):
+    fx = fixture()
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=860, deviceScaleFactor=1, mobile=width < 600))
+        await desktop.login(b)
+        assert await b.js('__PC.me().pubkey') == fx['viewer']
+        await _install(b, fx, os_mode)
         await b.until("!!document.querySelector('.cc-channel-list')")
         # The channel list marks repository channels and offers Projects.
         assert await b.js("document.querySelectorAll('.ccg-chan-badge').length") == 2
@@ -401,3 +406,38 @@ def test_the_git_dialogs_buttons_do_what_they_say():
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_android_back_closes_the_open_issue_first_then_follows_the_back_rule():
+    """Git issue "Back Arrow Close Issue" (Vyram, 2026-10-27): on a phone, an issue opened from a community channel
+    is a sheet over the channel; Android Back must close THAT, then the issues list, and only then do what the Back
+    setting says (by default: the channel list). Back pressed through the same handler Android calls."""
+    fx = fixture()
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=390, height=860, deviceScaleFactor=1, mobile=True))
+        await desktop.login(b)
+        await _install(b, fx, False)
+        await b.until("!!document.querySelector('.cc-channel-list')")
+        await press(b, '[data-cc-channel="ngit"]')
+        await b.until("document.querySelectorAll('.ccg-row').length>=3")
+        await press(b, '.ccg-ticket .ccg-subject')
+        await b.until("!!document.querySelector('#ccg-panel .ccg-md')")
+        here = "({panel:!!document.querySelector('#ccg-panel'),projects:!!document.querySelector('#ccg-projects'),chat:!!document.querySelector('.cc-app.show-chat')})"
+        got['one'] = (await b.js("__PC.concordBack()"), await b.js(here))
+        await press(b, '#cc-head-more')
+        await b.until("[...document.querySelectorAll('button,[role=menuitem]')].some(x=>x.textContent.trim()==='Issues and pull requests'&&x.getBoundingClientRect().width>0)")
+        await b.js("[...document.querySelectorAll('button,[role=menuitem]')].find(x=>x.textContent.trim()==='Issues and pull requests'&&x.getBoundingClientRect().width>0).setAttribute('data-t-issues','1')")
+        await press(b, '[data-t-issues]')
+        await b.until("!!document.querySelector('#ccg-projects')")
+        got['two'] = (await b.js("__PC.concordBack()"), await b.js(here))
+        got['three'] = (await b.js("__PC.concordBack()"), await b.js(here))
+
+    classic = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, classic))
+    assert got['one'] == (True, {'panel': False, 'projects': False, 'chat': True}), ('Back did not close the issue', got)
+    assert got['two'] == (True, {'panel': False, 'projects': False, 'chat': True}), ('Back did not close the issues list', got)
+    assert got['three'] == (True, {'panel': False, 'projects': False, 'chat': False}), \
+        ('after the issue, Back must follow the rule: channel -> channel list', got)
