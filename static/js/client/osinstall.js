@@ -131,7 +131,7 @@
    * point, so a running install is found again rather than offered a second time. The password is
    * the exception: it is dropped the moment it has been handed to the installer. */
   const S = { step: 'welcome', goal: 'install', info: null, disks: null, disksErr: '', disk: '', size: null, mode: 'fresh',
-              password: '', password2: '', rootName: 'gentoo', typed: '', status: null, showLog: false,
+              password: '', password2: '', rootName: 'gentoo', typed: '', status: null, showLog: false, secureBoot: false,
               busy: false, error: '' };
 
   function paint(host){
@@ -371,10 +371,30 @@
         ['Filesystem', `btrfs — system in @${S.rootName}, with @home and snapshots`],
         ['Boot loader', 'systemd-boot (UEFI), registered with the firmware'],
       ];
+      /* SECURE BOOT ("anti-cheat") is OPT-IN and set up at the first boot (pc-anticheat). Offered only where it can
+       * work: a fresh/resumed install (an upgrade keeps what the machine has), a UEFI start, no NVIDIA card. The
+       * costs are stated here, before anyone ticks it, because each one is something the person meets later. */
+      const info = S.info || {};
+      const sbOffer = S.goal !== 'upgrade' && !!info.efi;
+      if(!sbOffer || info.nvidia) S.secureBoot = false;
+      if(S.secureBoot){
+        rows.find(r => r[0] === 'Encryption')[1] = 'LUKS; unlocked automatically until Secure Boot is set up, then you type the password at startup';
+        rows.push(['Secure Boot', 'Set up at the first boot (anti-cheat mode); finish it in MokManager on the restart after that']);
+      }
+      const sbBox = !sbOffer ? '' : info.nvidia
+        ? `<div class="pci-note warn" data-sb-nvidia>${ic('i-shield')}<span><b>Secure Boot (anti-cheat) is not available on this machine.</b>
+             NVIDIA's driver is built here and unsigned, and Secure Boot refuses to load it.</span></div>`
+        : `<label class="pci-note pci-sb"><input type="checkbox" data-sb${S.secureBoot ? ' checked' : ''}>
+             <span><b>Set up Secure Boot (anti-cheat mode)</b> — for games whose anti-cheat requires it.
+             Done at the first boot (about 600 MB is downloaded). Afterwards: you type the disk password at every
+             startup, hibernation is off (sleep still works), and you confirm a one-time code in the firmware's blue
+             MokManager screen once. Switch Secure Boot on in the firmware settings when System Settings says so.
+             You can set this up or undo it later in System Settings → Secure Boot.</span></label>`;
       frame(S.goal === 'upgrade' ? 'Ready to upgrade' : 'Ready to install',
         S.goal === 'upgrade' ? 'Check the details, then upgrade. Sign in with the same Nostr key afterwards.'
           : resume ? 'Check the details, then install.' : 'Check the details. Nothing has been changed yet.',
         `<dl class="pci-sum">${rows.map(r => `<dt>${H(r[0])}</dt><dd>${H(r[1])}</dd>`).join('')}</dl>
+         ${sbBox}
          ${resume ? '' : `<div class="pci-danger">
            <div class="pci-danger-h">${ic('i-warn')}<b>This erases /dev/${H(d.name)}</b></div>
            <p>Everything on ${H(diskTitle(d))} will be permanently deleted. To confirm, type the disk's name —
@@ -385,6 +405,8 @@
         nextFoot(S.goal === 'upgrade' ? 'Upgrade' : resume ? 'Install' : 'Erase and install', !resume));
       const t = el.querySelector('[data-typed]');
       if(t){ t.oninput = () => { S.typed = t.value; refreshNext(); }; setTimeout(() => { try{ t.focus(); }catch(_){} }, 30); }
+      const sb = el.querySelector('[data-sb]');
+      if(sb) sb.onchange = () => { S.secureBoot = !!sb.checked; S.typed = t ? t.value : S.typed; drawSummary(); };
       bindNav(start);
     }
 
@@ -403,7 +425,8 @@
       }
       S.busy = true; refreshNext();
       try{
-        const st = await bridge.start({ disk: d.name, size: d.size, rootName: S.rootName, password: S.password, mode: S.mode });
+        const st = await bridge.start({ disk: d.name, size: d.size, rootName: S.rootName, password: S.password, mode: S.mode,
+                                          secureBoot: S.secureBoot === true });
         S.password = ''; S.password2 = ''; S.typed = '';
         S.status = st; S.showLog = false;
         go('install');

@@ -280,3 +280,42 @@ def test_the_progress_bar_never_moves_backwards(env):
     seen = json.loads(node(js, env["env"]).stdout)
     assert seen == sorted(seen), seen
     assert seen[1] == seen[0], "a fall in rsync's percentage must hold the bar where it was"
+
+
+# ------------------------------------------------------------------ Secure Boot (anti-cheat), opt-in
+
+def test_secure_boot_is_asked_for_only_when_ticked(env):
+    """2026-10-27 ("i hope there is some secure boot thing in the gui installer"): the box hands gentoo.sh
+    PC_INSTALL_SECUREBOOT=1, which leaves the first-boot request; an unticked box hands nothing."""
+    r = call("m.start({disk:'nvme0n1',size:%d,password:'pw',rootName:'gentoo',mode:'fresh',secureBoot:true})"
+             % (512 * GIB), env["env"])
+    assert "ok" in r, r
+    wait_finished(env["env"])
+    argv = (env["out"] / "argv").read_text().splitlines()
+    assert "PC_INSTALL_SECUREBOOT=1" in argv and argv.index("PC_INSTALL_SECUREBOOT=1") < argv.index("install-live")
+    for off in ("", ",secureBoot:false", ",secureBoot:'yes'"):
+        r = call("m.start({disk:'vdb',password:'pw',rootName:'gentoo',mode:'resume'%s})" % off, env["env"])
+        assert "ok" in r, r
+        wait_finished(env["env"])
+        assert "PC_INSTALL_SECUREBOOT=1" not in (env["out"] / "argv").read_text(), off
+
+
+def test_an_nvidia_display_card_is_reported_so_the_wizard_can_say_no(env):
+    pci = env["tmp"] / "pci"
+    for dev, vendor, cls in (("0000:00:02.0", "0x8086", "0x030000"), ("0000:01:00.1", "0x10de", "0x040300")):
+        (pci / dev).mkdir(parents=True)
+        (pci / dev / "vendor").write_text(vendor + "\n")
+        (pci / dev / "class").write_text(cls + "\n")
+    e = {**env["env"], "PC_PCI_DIR": str(pci)}
+    assert call("m.info()", e)["ok"]["nvidia"] is False, "NVIDIA's AUDIO function is not a display card"
+    (pci / "0000:01:00.0").mkdir()
+    (pci / "0000:01:00.0" / "vendor").write_text("0x10de\n")
+    (pci / "0000:01:00.0" / "class").write_text("0x030000\n")
+    assert call("m.info()", e)["ok"]["nvidia"] is True
+
+
+def test_the_preload_and_main_process_pass_secure_boot_through():
+    pre = (ROOT / "desktop/preload.js").read_text()
+    main = (ROOT / "desktop/main.js").read_text()
+    assert "secureBoot: opts.secureBoot === true" in pre
+    assert "secureBoot: o.secureBoot === true" in main[main.index("'pc:installer:start'"):][:600]

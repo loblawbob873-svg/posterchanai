@@ -63,7 +63,19 @@ function info(){
   try{ efi = fs.existsSync(process.env.PC_EFI_DIR || '/sys/firmware/efi'); }catch(_){}
   /* `available` is the one answer the desktop acts on: a live boot WITH an installer to run. A live
    * boot without one (a rescue disc built from some other tree) gets no icon that could only fail. */
-  return { live, installer, available: !!(live && installer), efi };
+  /* An NVIDIA display card: its driver is built on the machine and unsigned, so Secure Boot's lockdown refuses it
+   * and `gentoo.sh anticheat` refuses the machine -- the wizard says so instead of offering the option. */
+  let nvidia = false;
+  const pci = process.env.PC_PCI_DIR || '/sys/bus/pci/devices';
+  try{
+    for(const d of fs.readdirSync(pci)){
+      try{
+        if(fs.readFileSync(path.join(pci, d, 'vendor'), 'utf8').trim() === '0x10de'
+           && fs.readFileSync(path.join(pci, d, 'class'), 'utf8').trim().startsWith('0x03')) nvidia = true;
+      }catch(_){}
+    }
+  }catch(_){}
+  return { live, installer, available: !!(live && installer), efi, nvidia };
 }
 
 /* ---------------------------------------------------------------- the disks */
@@ -287,6 +299,9 @@ async function start(opts){
   /* The erase is only ever pre-answered for a FRESH install, which the wizard asked the person to
    * confirm by typing the disk's name. A resume never erases, so it never carries the yes. */
   if(mode === 'fresh') args.push('PC_ASSUME_YES=1');
+  /* Secure Boot ("anti-cheat") is opt-in and happens at the FIRST BOOT, not here: it downloads the signed kernel
+   * and shim and needs a person at MokManager afterwards (gentoo.sh liveISOinstall, pc-anticheat). */
+  if(o.secureBoot === true) args.push('PC_INSTALL_SECUREBOOT=1');
   args.push(about.installer, 'install-live');
 
   const spec = { state: STATE_FILE, log: LOG_FILE, lock: LOCK_FILE, token, kind: 'install', bin: SUDO, args, env: {},

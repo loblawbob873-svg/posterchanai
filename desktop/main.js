@@ -3562,7 +3562,7 @@ ipcMain.handle('pc:installer:start', (e, opts) => {
   const o = opts && typeof opts === 'object' ? opts : {};
   return installer.start({ disk: String(o.disk || ''), size: o.size == null ? null : Number(o.size),
                            rootName: String(o.rootName || ''), password: String(o.password == null ? '' : o.password),
-                           mode: o.mode === 'resume' ? 'resume' : 'fresh' });
+                           mode: o.mode === 'resume' ? 'resume' : 'fresh', secureBoot: o.secureBoot === true });
 });
 ipcMain.handle('pc:liveusb:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(dialogOwner(e),{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
@@ -4051,6 +4051,13 @@ ipcMain.handle('pc:printers:default', (e, n) => { fsGuard(e); return printers.se
 ipcMain.handle('pc:printers:remove', (e, n) => { fsGuard(e); return printers.remove(n); });
 ipcMain.handle('pc:printers:test', (e, n) => { fsGuard(e); return printers.testPage(n); });
 ipcMain.handle('pc:power:status', (e) => { fsGuard(e); return power.status(); });
+const anticheat = require('./anticheat.js');
+ipcMain.on('pc:anticheat:available', (e) => {
+  try{ e.returnValue = !!(fromOurPage(e) && anticheat.available()); }catch(_){ e.returnValue = false; }
+});
+ipcMain.handle('pc:anticheat:status', (e) => { fsGuard(e); return anticheat.status(); });
+ipcMain.handle('pc:anticheat:setup', (e) => { fsGuard(e); return anticheat.setup(); });
+ipcMain.handle('pc:anticheat:undo', (e) => { fsGuard(e); return anticheat.undo(); });
 ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
 ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });
 ipcMain.handle('pc:power:keep-awake', (e, on) => { fsGuard(e); return power.setKeepAwake(!!on); });

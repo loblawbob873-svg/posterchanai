@@ -68,7 +68,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-kernel-guard pc-eac-check pc-usb-grant update-posterchan ptop; do
+	for helper in foot pc-super pc-provision-user pc-anticheat pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc pc-open pc-kernel-guard pc-eac-check pc-usb-grant update-posterchan ptop; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	# `pc-open` asks the running desktop to open a file in Office, Code, Preview or Files. The
@@ -89,6 +89,9 @@ src_install() {
 	doins "${FILESDIR}/posterchan-monero-wallet-rpc.service"
 	# libvirt's secret key can never be left empty, and an empty one (every install before 2026-09-25)
 	# is made again -- see the file. A VENDOR drop-in, so an admin's own in /etc still wins.
+	# Secure Boot ("anti-cheat") mode: pc-anticheat's service, run only while a request marker exists.
+	insinto /usr/lib/systemd/system
+	doins "${FILESDIR}/posterchan-anticheat.service"
 	insinto /usr/lib/systemd/system/virt-secret-init-encryption.service.d
 	newins "${FILESDIR}/virt-secret-init-encryption-posterchanos.conf" 50-posterchanos.conf
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -111,6 +114,9 @@ src_install() {
 	# ONE USB device for the caller's own VM; the helper checks every argument itself.
 	newins "${FILESDIR}/posterchan-usb-grant.sudoers" posterchan-usb-grant
 	fperms 0440 /etc/sudoers.d/posterchan-usb-grant
+	# Reading the Secure Boot (anti-cheat) state; setting it up stays the administrator's (see the file).
+	newins "${FILESDIR}/posterchan-anticheat.sudoers" posterchan-anticheat
+	fperms 0440 /etc/sudoers.d/posterchan-anticheat
 	# Removable drives: the session user mounts/ejects USB sticks without a password (desktop/drives.js).
 	# AFTER the sudoers block: an insinto in the middle of it sent the next sudoers files here.
 	insinto /etc/polkit-1/rules.d

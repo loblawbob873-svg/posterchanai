@@ -10936,6 +10936,7 @@ svg.ic.pci-ic{width:18px;height:18px;flex:none;stroke-width:1.9}
 .pci-check.warn,.pci-note.warn{border-color:rgba(255,207,43,.45)}.pci-check.warn .pci-ic{color:var(--amber)}
 .pci-check.bad,.pci-note.bad{border-color:var(--danger)}.pci-check.bad .pci-ic,.pci-note.bad .pci-ic{color:var(--danger)}
 .pci-note .pci-ic{color:var(--neon)}
+.pci-sb{cursor:pointer;margin-top:12px}.pci-sb input{margin-top:3px;flex:none;width:18px;height:18px}
 /* disks */
 .pci-toolbar{display:flex;justify-content:flex-end}
 .pci-toolbar .btn{display:inline-flex;align-items:center;gap:6px}
@@ -12947,3 +12948,8 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
   .music-app:not(.ma-full) .ma-tabs{flex:1 1 auto}
   .music-app:not(.ma-full) .ma-browse .ma-q{flex:1 1 160px}
 }
+/* System Settings → Secure Boot (os.js _secureBootPage) */
+.os-sb .os-set-cardhead{margin-bottom:10px}.os-sb-costs,.os-sb-steps{margin:0 0 6px;padding-left:20px;color:var(--text);font-size:13px;line-height:1.55}
+.os-sb-costs li,.os-sb-steps li{margin:3px 0}.os-sb-code{margin:10px 0 14px;font:700 30px/1.2 ui-monospace,monospace;letter-spacing:.14em;color:var(--accent);overflow-wrap:anywhere}
+.os-sb-log{max-height:240px;overflow:auto;margin:8px 0 0;padding:10px;border-radius:10px;background:#0006;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.os-sb .os-set-actions{margin-top:14px}

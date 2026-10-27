@@ -2226,6 +2226,17 @@ liveISOinstall() {
 		sudo cp -f /usr/local/share/posterchanos/gentoo.sh $TARGET/usr/bin/ 2>/dev/null || true
 	fi
 	[ -f /tmp/disk ] && sudo cp -f /tmp/disk $TARGET/etc/ 2>/dev/null
+	# SECURE BOOT ("anti-cheat"), asked for by the graphical installer's checkbox (PC_INSTALL_SECUREBOOT=1). The setup
+	# needs the INSTALLED system running -- its root, its ESP, its firmware variables, ~600 MB of downloads -- so it is
+	# left for the first boot: the request marker plus pc-anticheat's service, which System Settings reports on.
+	if [ "${PC_INSTALL_SECUREBOOT:-}" = 1 ]; then
+		sudo mkdir -p $TARGET/etc/posterchan $TARGET/etc/systemd/system/multi-user.target.wants \
+			&& sudo touch $TARGET/etc/posterchan/anticheat-requested \
+			&& sudo ln -sf /usr/lib/systemd/system/posterchan-anticheat.service \
+				$TARGET/etc/systemd/system/multi-user.target.wants/posterchan-anticheat.service \
+			&& echo -e "${COLOR_CYAN}Secure Boot (anti-cheat) will be set up at the first boot; System Settings shows its progress${COLOR_RESET}" \
+			|| echo -e "${COLOR_YELLOW}  could not ask for Secure Boot set-up; do it later in System Settings → Secure Boot${COLOR_RESET}"
+	fi
 
 	finalizeInstall || return 1
 	# A kernel-launched or otherwise unattended installer may intentionally have no HOME. `cd` with
@@ -5773,7 +5784,17 @@ PLUGIN
 		# --ignore-keyring: this kernel already carries Gentoo's key in its BUILT-IN keyring, and without it mokutil
 		# prints "Already in kernel trusted keyring. Skip" and EXITS 0 having queued nothing -- shim never reads that
 		# keyring, so the next boot would refuse the image. The exit status is not evidence; the queue is.
+		# PC_MOK_PASSWORD: the password chosen for the person (pc-anticheat, System Settings / the installer), handed to
+		# mokutil as a hash because there is no terminal to type it into. Without it mokutil asks, as before.
+		if [ -n "${PC_MOK_PASSWORD:-}" ]; then
+			local hash; hash="$(mktemp)" || return 1
+			mokutil --generate-hash="$PC_MOK_PASSWORD" >"$hash" && [ -s "$hash" ] \
+				&& mokutil --import "$cert" --ignore-keyring --hash-file "$hash" \
+				|| { rm -f "$hash"; echo "anticheat: the key was not queued (hashed password)" >&2; return 1; }
+			rm -f "$hash"
+		else
 		mokutil --import "$cert" --ignore-keyring || { echo "anticheat: the key was not queued; run: mokutil --import $cert --ignore-keyring" >&2; return 1; }
+		fi
 		mokutil --list-new 2>/dev/null | grep -qi "Gentoo" || { echo "anticheat: mokutil reported success but nothing is queued; run: mokutil --import $cert --ignore-keyring" >&2; return 1; }
 	fi
 	echo

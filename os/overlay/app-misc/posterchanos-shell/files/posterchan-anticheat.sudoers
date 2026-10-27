@@ -1,0 +1,3 @@
+# Anyone signed in may read the Secure Boot (anti-cheat) state. Setting it up or undoing it changes how the machine
+# boots, so only the administrator may: they hold the posterchan-admin grant already, and nobody else gets one here.
+%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-anticheat status

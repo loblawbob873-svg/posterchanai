@@ -541,7 +541,7 @@ if (isOurPage) {
     start: (opts) => ipcRenderer.invoke('pc:installer:start', opts && typeof opts === 'object' ? {
       disk: String(opts.disk || ''), size: opts.size == null ? null : Number(opts.size),
       rootName: String(opts.rootName || ''), password: String(opts.password == null ? '' : opts.password),
-      mode: opts.mode === 'resume' ? 'resume' : 'fresh' } : {}),
+      mode: opts.mode === 'resume' ? 'resume' : 'fresh', secureBoot: opts.secureBoot === true } : {}),
   });
 
   contextBridge.exposeInMainWorld('pcNet', {
@@ -573,6 +573,17 @@ if (isOurPage) {
     setDefault: (name) => ipcRenderer.invoke('pc:printers:default', String(name || '')),
     remove: (name) => ipcRenderer.invoke('pc:printers:remove', String(name || '')),
     testPage: (name) => ipcRenderer.invoke('pc:printers:test', String(name || '')),
+  });
+
+  /* Secure Boot ("anti-cheat"): System Settings reads the state and, for the administrator, asks for it or undoes
+   * it. The helper (pc-anticheat) does the work as a service; nothing here takes an argument. */
+  let _anticheatHere = false;
+  try { _anticheatHere = ipcRenderer.sendSync('pc:anticheat:available') === true; } catch (_) {}
+  /* Only where the helper is installed (PosterChanOS): on Windows or another Linux there is no page to show. */
+  if (_anticheatHere) contextBridge.exposeInMainWorld('pcAnticheat', {
+    status: () => ipcRenderer.invoke('pc:anticheat:status'),
+    setup: () => ipcRenderer.invoke('pc:anticheat:setup'),
+    undo: () => ipcRenderer.invoke('pc:anticheat:undo'),
   });
 
   contextBridge.exposeInMainWorld('pcPower', {

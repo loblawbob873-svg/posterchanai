@@ -1,0 +1,18 @@
+# Secure Boot ("anti-cheat") mode, set up by pc-anticheat (System Settings, or the installer's checkbox).
+# Runs only while /etc/posterchan/anticheat-requested exists, so enabling it on every machine costs nothing.
+[Unit]
+Description=PosterChanOS Secure Boot (anti-cheat) setup
+ConditionPathExists=/etc/posterchan/anticheat-requested
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# NOT oneshot: a oneshot in multi-user.target holds the boot until it ends, so the first boot after the installer's
+# checkbox would show no desktop for the whole download. `exec` counts as started once pc-anticheat is running.
+Type=exec
+ExecStart=/usr/local/bin/pc-anticheat run
+# ~600 MB of downloads and a kernel reinstall.
+TimeoutStartSec=3h
+
+[Install]
+WantedBy=multi-user.target

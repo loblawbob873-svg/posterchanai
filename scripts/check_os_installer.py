@@ -30,6 +30,9 @@ Assertions, each a way the installer fails somebody who has booted a USB stick t
   no-reboot          A finished install offers no restart, or the button does not reach pcPower.
   failure-silent     A failed install does not show what the installer last said, or no way to retry.
   overflow           Something in the window scrolls sideways or sticks out of it.
+  secure-boot        The summary offers no Secure Boot (anti-cheat) box, does not say what it costs (the
+                     disk password at every startup, no hibernation), ticking it loses the typed disk name or
+                     does not reach start(); it is offered on an NVIDIA machine or for an upgrade.
 
 Exit 0 clean · 1 problems · 2 could not run.
 """
@@ -106,7 +109,8 @@ window.__status = { kind:'install', running:false, finished:0, ok:false, progres
 window.__rebooted = 0;
 window.pcInstaller = {
   isLive: () => Q.get('live') !== '0',
-  info: async () => ({ live: Q.get('live') !== '0', available: Q.get('live') !== '0', installer:'/usr/bin/gentoo.sh', efi:true }),
+  info: async () => ({ live: Q.get('live') !== '0', available: Q.get('live') !== '0', installer:'/usr/bin/gentoo.sh', efi:true,
+                       nvidia: Q.get('nvidia') === '1' }),
   disks: async () => JSON.parse(JSON.stringify(window.__disks)),
   status: async () => { if (window.__statusQueue.length > 1) window.__status = window.__statusQueue.shift();
                         else if (window.__statusQueue.length) window.__status = window.__statusQueue[0];
@@ -226,7 +230,22 @@ SUMMARY = "(async () => {" + HELPERS + r"""
   out.installPartial = !next().disabled;
   type($('[data-typed]'), 'nvme0n1');
   out.installTyped = !next().disabled;
+  const sb = $('[data-sb]');
+  out.sbOffered = !!sb && !sb.checked;
+  out.sbText = sb ? (sb.closest('label') || {}).textContent || '' : '';
+  if (sb) { sb.click(); await sleep(80); }
+  out.sbTicked = !!($('[data-sb]') || {}).checked;
+  out.sbRow = /Secure Boot/.test(($('.pci-sum') || {}).textContent || '')
+    && !/unlocked automatically at startup/.test(($('.pci-sum') || {}).textContent || '');
+  out.sbKeptTyped = ($('[data-typed]') || {}).value === 'nvme0n1' && !next().disabled;
   out.summaryOverflow = overflow();
+  return out;
+})()"""
+
+NVIDIA = "(async () => {" + HELPERS + r"""
+  next().click(); await until(() => $('.pci-sum'), 2000);
+  out.sbBox = !!$('[data-sb]');
+  out.sbNote = ($('[data-sb-nvidia]') || {}).textContent || '';
   return out;
 })()"""
 
@@ -259,6 +278,7 @@ UPGRADE = "(async () => {" + HELPERS + r"""
   out.summaryText = ($('.pci-sum') || {}).textContent || '';
   out.noTyped = !$('[data-typed]');
   out.buttonLabel = (next() || {}).textContent || '';
+  out.sbBox = !!$('[data-sb]');
   out.summaryOverflow = overflow();
   window.__confirms = [];
   next().click(); await until(() => window.__started, 3000);
@@ -413,6 +433,11 @@ async def drive(base, shots):
                 if out.get("installBeforeTyped") or out.get("installPartial") or not out.get("installTyped"):
                     bad("erase-unconfirmed", f"before={out.get('installBeforeTyped')} partial={out.get('installPartial')} "
                                              f"typed={out.get('installTyped')}")
+                sbt = out.get("sbText") or ""
+                if not out.get("sbOffered") or "disk password" not in sbt or "hibernation" not in sbt:
+                    bad("secure-boot", f"offered (unticked)={out.get('sbOffered')} text={sbt[:120]!r}")
+                elif not out.get("sbTicked") or not out.get("sbRow") or not out.get("sbKeptTyped"):
+                    bad("secure-boot", f"ticked={out.get('sbTicked')} row={out.get('sbRow')} keptTyped={out.get('sbKeptTyped')}")
                 if "WD Black SN770" not in (out.get("summaryText") or "") or "nvme0n1" not in (out.get("summaryText") or ""):
                     bad("wrong-answers", "the summary does not name the chosen disk")
                 for k in ("welcomeOverflow", "diskOverflow", "securityOverflow", "summaryOverflow"):
@@ -424,7 +449,7 @@ async def drive(base, shots):
                 if not fin.get("confirms") or not (fin["confirms"][0]["o"] or {}).get("danger"):
                     bad("native-dialog", "Install did not ask through the app's own (danger) uiConfirm")
                 if st != {"disk": "nvme0n1", "size": 512 * GIB, "rootName": "gentoo",
-                          "password": "correct horse battery", "mode": "fresh"}:
+                          "password": "correct horse battery", "mode": "fresh", "secureBoot": True}:
                     bad("wrong-answers", f"start() received {st}")
                 if "44%" not in (fin.get("pctText") or "") or "50% of the files" not in (fin.get("pctText") or ""):
                     bad("no-progress", f"the bar reads {fin.get('pctText')!r}")
@@ -443,6 +468,15 @@ async def drive(base, shots):
                     bad("native-dialog", f"native dialogs were used: {done['native']}")
                 if done.get("doneOverflow"):
                     bad("overflow", "the finished screen scrolls sideways")
+
+            # ---- an NVIDIA machine: Secure Boot is explained, never offered
+            await load("?live=1&nvidia=1")
+            out = await js(DRIVE) or {}
+            for step in (DISK, SECURITY):
+                out = await js(step) or out
+            nv = await js(NVIDIA) or {}
+            if nv.get("sbBox") or "NVIDIA" not in (nv.get("sbNote") or ""):
+                bad("secure-boot", f"NVIDIA machine: box={nv.get('sbBox')} note={nv.get('sbNote')!r}")
 
             # ---- reopening while a job runs, which then fails
             await load("?live=1&running=1")
@@ -478,6 +512,8 @@ async def drive(base, shots):
                 bad("upgrade-summary", f"title={up.get('summaryTitle')!r} typedField={not up.get('noTyped')} "
                                        f"button={up.get('buttonLabel')!r}")
             st = up.get("started") or {}
+            if up.get("sbBox") or st.get("secureBoot"):
+                bad("secure-boot", f"an upgrade offered Secure Boot (box={up.get('sbBox')} start={st.get('secureBoot')})")
             if st.get("mode") != "resume" or st.get("disk") != "sdb" or up.get("dangerConfirms"):
                 bad("upgrade-erases", f"start()={st} dangerConfirms={up.get('dangerConfirms')}")
             for k in ("diskOverflow", "summaryOverflow"):

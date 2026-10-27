@@ -80,6 +80,7 @@ class Machine:
         _exe(self.bin / "efibootmgr", f'{L}; [ $# -eq 0 ] && printf "BootCurrent: 0001\\nBoot0001* Linux Boot Manager\\nBoot0007* PosterChanOS (anti-cheat)\\n"; true')
         _exe(self.bin / "mokutil",
              f'{L}; case "$1" in --test-key) {"echo already enrolled" if enrolled else "echo is not enrolled"};; '
+             f'--generate-hash=*) echo \'$6$salt$hashedpassword\';; '
              f'--import) case "$*" in *--ignore-keyring*) {"touch " + str(self.state) if mok_queues else "true"};; '
              f'*) echo "Already in kernel trusted keyring. Skip";; esac;; '
              f'--list-new) [ -e "{self.state}" ] && echo "Subject: CN=Gentoo Linux kernel signing key";; esac; true')
@@ -203,3 +204,19 @@ def test_the_plugin_keeps_the_newest_signed_image_and_the_one_before(tmp_path):
 def test_the_mode_is_reachable_from_the_command_line():
     assert re.search(r'elif \[ "\$1" = "anticheat" \]; then\n\tanticheatSetup', GENTOO)
     assert re.search(r'elif \[ "\$1" = "anticheat-off" \]; then\n\tanticheatOff', GENTOO)
+
+
+def test_a_password_chosen_for_the_person_is_handed_over_as_a_hash(tmp_path):
+    """System Settings and the installer have no terminal: pc-anticheat chooses a one-time password and passes it in
+    PC_MOK_PASSWORD. The import is handed a HASH FILE (`mokutil --generate-hash` makes it) -- the key is still queued
+    and checked, and nothing waits on a prompt. (The password is a one-time code that only works typed into MokManager
+    at the machine itself, and System Settings shows it, so it is not a secret from local users.)"""
+    m = Machine(tmp_path)
+    rc, out, calls = m.run(PC_MOK_PASSWORD="31415926")
+    assert rc == 0, out
+    imp = [c for c in calls.splitlines() if c.startswith("mokutil --import")]
+    assert imp and "--ignore-keyring --hash-file " in imp[0], imp
+    assert "31415926" not in imp[0], "the import was given the password, not its hash"
+    assert "mokutil --generate-hash=31415926" in calls
+    assert "mokutil --list-new" in calls
+    assert "Done." in out
