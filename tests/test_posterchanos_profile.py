@@ -792,7 +792,8 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("media-libs/mesa vulkan", steam, "the Vulkan flag was dropped")
         # The sweep is the general answer and must not be replaced by the named list.
         build = self._code(self._fn("buildGentoo"))
-        self.assertIn("posterchan-abi", build, "the generic ABI sweep was removed")
+        self.assertIn("installABI32Sweep", build, "the generic ABI sweep is no longer run by the install")
+        self.assertIn("posterchan-abi", self._code(self._fn("installABI32Sweep")), "the generic ABI sweep was removed")
 
     def test_the_iso_creates_the_parents_of_every_pseudo_directory(self):
         """mksquashfs does not create intermediate directories for a pseudo definition.

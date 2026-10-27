@@ -486,8 +486,9 @@ def test_a_declined_upgrade_is_judged_by_its_cause_not_its_count():
 
     # The sweep in the installer must not hand abi_x86_32 to a package skipped for another reason —
     # it changes nothing and writes a meaningless USE line on every install, for ever.
-    body = SH[SH.index("buildGentoo() {"):SH.index("finalizeInstall() {")]
-    assert "| skippedABI32Packages)" in body, "the sweep must use the shared ABI parser"
+    assert "installABI32Sweep" in SH[SH.index("buildGentoo() {"):SH.index("finalizeInstall() {")], "the install skips the sweep"
+    body = SH[SH.index("installABI32Sweep() {"):SH.index("\n}\n", SH.index("installABI32Sweep() {"))]
+    assert "| skippedABI32Packages)" in body and "| proposedABI32Changes)" in body, "the sweep must use the shared ABI parsers"
 
     # Execute the shared parser: edk2-bin (pinned) out, ncurses (ABI) in.
     import subprocess

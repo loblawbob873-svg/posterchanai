@@ -767,6 +767,45 @@ unmaskPackages() {
 
 }
 
+# THE 32-BIT CONVERGENCE AT THE END OF AN INSTALL, as a function so a test can run it against portage's real output
+# (tests/test_gentoo_install_abi_sweep.py). Writes $TARGET/etc/portage/package.use/posterchan-abi.
+installABI32Sweep() {
+	local sweep skipped atom out proposed
+	for sweep in 1 2 3; do
+		# ONLY THE ONES WHOSE CONFLICT IS ACTUALLY ABOUT abi_x86_32.
+		#
+		# The first version took every skipped atom, and portage skips upgrades for reasons that have
+		# nothing to do with us: measured here, `sys-firmware/edk2-bin` is skipped because
+		# app-emulation/qemu RDEPENDs on `~sys-firmware/edk2-bin-202408` -- an exact-version pin by a
+		# reverse dependency, present on any Gentoo machine with qemu installed. Handing that package
+		# `abi_x86_32` changes nothing (it may not even have the flag) and writes a meaningless line
+		# into package.use on every install, three times, for ever. awk keeps each atom only if its
+		# own conflict detail mentions the ABI.
+		# TWO SHAPES, both portage's own words: a resolution that SUCCEEDS while skipping a 32-bit upgrade
+		# (skippedABI32Packages), and one that FAILS asking for the flag outright -- "The following USE
+		# changes are necessary to proceed: >=x11-libs/libX11-1.8.14 abi_x86_32" (proposedABI32Changes). The
+		# second was only read on UPDATES (prepareUpdateDependencies); measured 2026-10-27 in the from-scratch
+		# VM build, an install met it (libX11, libpng, libXrender) and handed over a machine whose
+		# `emerge -uDNp @world` fails. A proposal carrying ANY other flag is refused (REFUSE), as on update.
+		out="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1)"
+		proposed="$(printf '%s\n' "$out" | proposedABI32Changes)"
+		printf '%s\n' "$proposed" | grep -qx REFUSE && proposed=""
+		skipped="$(printf '%s\n%s\n' "$(printf '%s\n' "$out" | skippedABI32Packages)" "$proposed" | grep -v '^$' | sort -u)"
+		[ -n "$skipped" ] || break
+		echo -e "\033[1;33m  giving abi_x86_32 to: $(echo $skipped)\033[0m"
+		mkdir -p "$TARGET/etc/portage/package.use"
+		for atom in $skipped; do
+			echo "$atom abi_x86_32"
+		done >>"$TARGET/etc/portage/package.use/posterchan-abi"
+		chroot $TARGET /usr/bin/emerge -uDN --newuse @world || true
+	done
+	if [ -n "$skipped" ]; then
+		echo -e "\033[1;31mThese packages still cannot be upgraded on the installed machine:\033[0m"
+		echo -e "\033[1;31m  $(echo $skipped)\033[0m"
+		echo -e "\033[1;31mThe install is complete and bootable; run the world resolution to see why.\033[0m"
+	fi
+}
+
 # Read Portage's skipped-update diagnostic, not the whole dependency graph: unrelated
 # exact-version pins (for example QEMU firmware) must never gain an ABI flag.
 skippedABI32Packages() {
@@ -1217,32 +1256,7 @@ buildGentoo() {
 	# So the names are read out of portage's own warning and given the flag explicitly. Data-driven
 	# rather than a hardcoded list: which packages are reached depends on Steam's dependency graph on
 	# the day, and a list written today is a list that is wrong after the next Steam bump.
-	local sweep skipped atom
-	for sweep in 1 2 3; do
-		# ONLY THE ONES WHOSE CONFLICT IS ACTUALLY ABOUT abi_x86_32.
-		#
-		# The first version took every skipped atom, and portage skips upgrades for reasons that have
-		# nothing to do with us: measured here, `sys-firmware/edk2-bin` is skipped because
-		# app-emulation/qemu RDEPENDs on `~sys-firmware/edk2-bin-202408` -- an exact-version pin by a
-		# reverse dependency, present on any Gentoo machine with qemu installed. Handing that package
-		# `abi_x86_32` changes nothing (it may not even have the flag) and writes a meaningless line
-		# into package.use on every install, three times, for ever. awk keeps each atom only if its
-		# own conflict detail mentions the ABI.
-		skipped="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1 \
-			| skippedABI32Packages)"
-		[ -n "$skipped" ] || break
-		echo -e "\033[1;33m  giving abi_x86_32 to: $(echo $skipped)\033[0m"
-		mkdir -p "$TARGET/etc/portage/package.use"
-		for atom in $skipped; do
-			echo "$atom abi_x86_32"
-		done >>"$TARGET/etc/portage/package.use/posterchan-abi"
-		chroot $TARGET /usr/bin/emerge -uDN --newuse @world || true
-	done
-	if [ -n "$skipped" ]; then
-		echo -e "\033[1;31mThese packages still cannot be upgraded on the installed machine:\033[0m"
-		echo -e "\033[1;31m  $(echo $skipped)\033[0m"
-		echo -e "\033[1;31mThe install is complete and bootable; run the world resolution to see why.\033[0m"
-	fi
+	installABI32Sweep
 	# Upgrades portage declines for reasons that are not ours -- a reverse dependency pinning an
 	# exact version, most often -- are SAID, because an operator who reads about them in a bug report
 	# months later should have seen them here first, and NOT treated as a fault of this install.
