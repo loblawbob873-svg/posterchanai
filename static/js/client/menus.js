@@ -388,7 +388,7 @@ window.PCMenusFactory = function(dep){
     if(S.IS_ADMIN && !mine){ try{ await ensureRelayBlocked(); }catch(_){} }
     const items=[['bookmark', S.BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🔗 Copy link']];
     // A post with a picture or a video can be handed to a Communities channel (app.js sharePostToCommunities).
-    if(!dep.isGuest() && postHasMedia(id)) items.push(['sharecomm','👥 Share to Communities']);
+    if(!dep.isGuest()) items.push(['sharecomm','👥 Share to Communities']);   // its media, or else its link
     if(mine) items.push(['delete','🗑️ Delete','danger']);   // near the top so it's reachable on a crowded menu
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread

@@ -6835,7 +6835,7 @@
     if(!text&&!files.length&&!media.length)return false;
     const targets=shareTargets();
     if(!targets.length){p.toast('Join a community first, then share to one of its channels');return false;}
-    const what=files.length?(files.length===1?files[0].name:files.length+' files')
+    const what=payload&&payload.label?String(payload.label):files.length?(files.length===1?files[0].name:files.length+' files')
       :media.length?(media.length===1?(/^video\//.test(media[0].type||'')?'this video':'this image'):media.length+' images and videos'):'this';
     p.modal(`<h3>Share to a channel</h3><p class="muted">Where should ${p.enc(what)} go? It is put in the message box for you to send.</p>
       <div class="cc-share-targets">${targets.map(t=>`<div class="cc-share-room"><b>${p.enc(roomName(t.room,t.index))}</b>${

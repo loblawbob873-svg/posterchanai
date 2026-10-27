@@ -98,7 +98,7 @@ def test_a_posts_image_and_video_go_to_the_chosen_channel(w, h):
 
     asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
     shape = (w, h)
-    assert got["text_btn"] is False, (shape, "a post with nothing to share offers Share to Communities")
+    assert got["text_btn"] is True, (shape, "a text post must offer Share to Communities too (it shares its link)")
     assert got["row"]["n"] == 7 and got["row"]["inside"] and got["row"]["oneLine"] and not got["row"]["sideways"], \
         (shape, "the action row does not fit", got["row"])
     assert got["row"]["asWide"], (shape, "the Share to Communities button is smaller than its neighbours", got["row"]["widths"])
@@ -220,3 +220,33 @@ def test_the_first_share_of_a_session_lands_in_the_chosen_channel(channel):
     assert got["shown"] == channel, ("the chosen channel is not the one showing", got)
     assert GIF in got["composer"], ("Communities opened with no link in the message box", got)
     assert not got["errors"], got["errors"]
+
+
+
+@CHROME
+@pytest.mark.parametrize("w,h", [(390, 844), (1280, 860)])
+def test_a_post_with_no_media_shares_its_link(w, h):
+    """Asked 2026-10-27: "Share to communities: if no media, share link to post in communities". A text post's 👥 puts
+    the post's own link -- the address Copy link gives -- in the chosen channel's message box; nothing is sent."""
+    got = {}
+
+    async def check(b):
+        await _ready(b, w, h)
+        await b.js("__PC.switchView('home'); 1")
+        await _open(b, "__text")
+        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__text"))
+        await b.until("!!document.querySelector('[data-cc-share-channel]')")
+        got["prompt"] = await b.js("document.querySelector('.modal p').textContent")
+        await A.press(b, "[data-cc-share-channel='general']")
+        await b.until("!!document.querySelector('#cc-input') && /nevent1/.test(document.querySelector('#cc-input').value)")
+        got["composer"] = await b.js("document.querySelector('#cc-input').value")
+        got["id"] = await b.js("window.__text")
+        got["decoded"] = await b.js("(()=>{const m=document.querySelector('#cc-input').value.match(/nevent1[a-z0-9]+/);"
+                                    "return m?NostrTools.nip19.decode(m[0]).data.id:''})()")
+        got["sent"] = await b.js("(window.__wraps||[]).length")
+
+    asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
+    shape = (w, h)
+    assert "a link to this post" in got["prompt"], (shape, got["prompt"])
+    assert got["decoded"] == got["id"], (shape, "the message box does not hold a link to THIS post", got)
+    assert got["sent"] == 0, (shape, "sent without pressing Send")

@@ -9842,7 +9842,14 @@
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     const media=_postMedia(ev);
-    if(!media.length){ toast('this post has no image or video to share'); return; }
+    // No picture or video: the post's LINK goes instead -- the same address Copy link gives (2026-10-27).
+    if(!media.length){
+      let link=''; try{ link=_webLink(NT().nip19.neventEncode({id:ev.id})); }catch(_){ }
+      if(!link){ toast('could not make a link to this post'); return; }
+      const go=mod=>{ if(!(mod && mod.shareInto && mod.shareInto({ text:link, label:'a link to this post' }))) toast('could not open Communities'); };
+      if(window.PCConcord && PCConcord.shareInto) go(PCConcord); else _withModule('concord.js','PCConcord',go);
+      return;
+    }
     // A Blossom address says nothing of its type: ask the server once, so a video is attached as a video.
     await Promise.all(media.filter(m=>!m.type).map(async m=>{
       try{ const c=new AbortController(), t=setTimeout(()=>c.abort(), 4000);
