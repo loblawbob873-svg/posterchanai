@@ -62,7 +62,10 @@ const context={console,Map,Set,Promise,JSON,String,Number,Math,setTimeout,
     querySelector:sel=>sel==='#cc-input'?composer:(sel==='.cc-messages'?pane:null)}};
 context.window=context;
 vm.createContext(context);
-vm.runInContext('let backgroundRenderPending=false,backgroundFocusHost=null;\n'+painters+'\n'+slice,context);
+/* The shared-post embed hydrator the painters call (concord.js noteEmbedHtml/hydrateNoteEmbeds), from the shipped file. */
+const embeds=code.slice(code.indexOf('  const NOTE_REF_RE='),code.indexOf('  function messageContentHtml('));
+assert(embeds.includes('function hydrateNoteEmbeds('),'re-point: the note embed helpers moved');
+vm.runInContext('let backgroundRenderPending=false,backgroundFocusHost=null;\n'+embeds+'\n'+painters+'\n'+slice,context);
 
 /* 1. Typing in the composer: the messages ARE painted, the full render is still deferred, and the
  *    textarea is the same element carrying the same text. */

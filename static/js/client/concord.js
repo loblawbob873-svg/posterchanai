@@ -1125,7 +1125,7 @@
     const was={top:scroller.scrollTop,atBottom:scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop<=2};
     paintPane(scroller,messagesPaneHtml(p,messages,current,viewer,me));
     try{ const st=readScroll(scrollKey()); setProgrammaticScroll(scroller,st.pinned!==false||was.atBottom?scroller.scrollHeight:was.top); }catch(_){ }
-    if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);
+    if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);hydrateNoteEmbeds(p,scroller);
     wireRoomMedia(p);
     hydrateEncryptedAttachments(messages);
     hydrateWebxdcCards(current);
@@ -2122,6 +2122,40 @@
     return out;
   }
   function escCode(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  /* A SHARED POST IS A CARD, the way Armada draws it (ChatContent.tsx: `nostr:nevent1/note1`, or a link whose LAST path
+   * segment is one, becomes an EmbeddedNote fetched through the nevent's relays). Drawn with the timeline's own quote
+   * card (__PC.quotedDiv); the link text itself is dropped from the prose -- the card opens the post. 2026-10-27. */
+  const NOTE_REF_RE=/(?:nostr:|https?:\/\/[^\s<>"']*\/)((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]{10,})(?=$|[\s?#)\]"'<>.,!])/gi;
+  function noteRefsOf(text){
+    const out=[],seen=new Set(),NT=window.NostrTools;if(!NT||!NT.nip19)return out;
+    for(const m of String(text||'').matchAll(NOTE_REF_RE)){
+      try{const d=NT.nip19.decode(m[1]),id=d.type==='note'?d.data:d.data&&d.data.id;
+        if(/^[0-9a-f]{64}$/.test(id||'')&&!seen.has(id)){seen.add(id);out.push({id,relays:d.type==='nevent'?(d.data.relays||[]):[],raw:m[0]});}}catch(_){}
+      if(out.length>=3)break;
+    }
+    return out;
+  }
+  function noteEmbedHtml(p,ref){
+    const ev=p.storeGet&&p.storeGet(ref.id);
+    if(ev&&p.quotedDiv)return p.quotedDiv(ev);
+    return `<div class="quoted muted small cc-note-load" data-cc-note="${p.enc(ref.id)}" data-cc-relays="${p.enc(ref.relays.join(' '))}" data-open="${p.enc(ref.id)}">❝ shared post loading…</div>`;
+  }
+  const noteLoads=new Map();
+  function hydrateNoteEmbeds(p,root){
+    if(!root||!root.querySelectorAll||!p.fetchEvent)return;
+    for(const el of root.querySelectorAll('.cc-note-load[data-cc-note]')){
+      const id=el.dataset.ccNote;
+      if(!noteLoads.has(id))noteLoads.set(id,Promise.resolve(p.fetchEvent(id,(el.dataset.ccRelays||'').split(' ').filter(Boolean)))
+        .then(ev=>{if(ev&&p.storeSave)p.storeSave(ev);return ev;}).catch(()=>null));
+      noteLoads.get(id).then(ev=>{
+        for(const x of document.querySelectorAll('.cc-note-load[data-cc-note="'+id+'"]')){
+          if(ev&&p.quotedDiv){const w=document.createElement('div');w.innerHTML=p.quotedDiv(ev);x.replaceWith(w.firstElementChild||w);}
+          else{x.textContent='shared post not found';x.classList.remove('cc-note-load');}
+        }
+        if(!ev)noteLoads.delete(id);
+      });
+    }
+  }
   function messageContentHtml(p,m,room,channelName){
     if(m.kind===1740){const seconds=Number((m.tags||[]).find(t=>t[0]==='timer')?.[1]||0),duration=seconds%86400===0?seconds/86400+' days':seconds%3600===0?seconds/3600+' hours':seconds+' seconds';return '<span class="cc-timer-notice">'+p.enc(seconds?'Set disappearing messages to '+duration:'Turned off disappearing messages')+'</span>';}
 
@@ -2134,6 +2168,9 @@
      * remove only that exact attachment URL from prose so linkify/link-preview cannot paint a raw
      * Blossom link above the card. Keep the URL when Webxdc is unavailable: it remains the user's
      * download/open fallback instead of turning into an invisible attachment. */
+    const noteRefs=noteRefsOf(text);
+    for(const r of noteRefs)text=text.split(r.raw).join('').replace(/[ \t]{2,}/g,' ').trim();
+    const noteCards=noteRefs.map(r=>noteEmbedHtml(p,r)).join('');
     const mini=webxdcOf(m,room,channelName),canPlayMini=!!(mini&&window.PCWebxdc&&PCWebxdc.cardHtml);
     if(canPlayMini)text=text.split(mini.url).join('').replace(/\s{2,}/g,' ').trim();
     const viewer=p.viewer?p.viewer():{};
@@ -2169,7 +2206,7 @@
     /* Paint the canonical room-aware card with the message. A deferred generic link card could
      * otherwise win the render race and replace Armada's explicit webxdc-topic. */
     const miniCard=canPlayMini?PCWebxdc.cardHtml(mini):'';
-    return body+poll+miniCard+publicMedia+media;
+    return body+noteCards+poll+miniCard+publicMedia+media;
   }
   function attachmentFailText(e){
     const stage=e&&e.stage,host=String(e&&e.host||'the file host').replace(/[<>&"]/g,'');
@@ -7265,7 +7302,7 @@
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
       if(settingsActions&&current.cord?.bundle?.owner===p.viewer?.().pubkey&&p.sendCordDirectInvite)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost" id="cc-private-channel">New private channel</button>');
     }
-    if(p.hydrateLinkCards)p.hydrateLinkCards(feed);
+    if(p.hydrateLinkCards)p.hydrateLinkCards(feed);hydrateNoteEmbeds(p,feed);
     wireRoomMedia(p);
     hydrateEncryptedAttachments(messages);
     hydrateWebxdcCards(current);

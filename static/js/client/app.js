@@ -9844,7 +9844,10 @@
     const media=_postMedia(ev);
     // No picture or video: the post's LINK goes instead -- the same address Copy link gives (2026-10-27).
     if(!media.length){
-      let link=''; try{ link=_webLink(NT().nip19.neventEncode({id:ev.id})); }catch(_){ }
+      // Relay + author + kind in the nevent: Armada (and any njump-style reader) draws the post as a card and has to FIND
+      // it -- with no hint it only asks a few public relays, which never saw a post that lives here.
+      let link=''; try{ const rl=(CFG && CFG.relay_url) ? [String(CFG.relay_url)] : [];
+        link=_webLink(NT().nip19.neventEncode({id:ev.id, author:ev.pubkey, kind:ev.kind, relays:rl})); }catch(_){ }
       if(!link){ toast('could not make a link to this post'); return; }
       const go=mod=>{ if(!(mod && mod.shareInto && mod.shareInto({ text:link, label:'a link to this post' }))) toast('could not open Communities'); };
       if(window.PCConcord && PCConcord.shareInto) go(PCConcord); else _withModule('concord.js','PCConcord',go);
@@ -14833,6 +14836,8 @@
      * without one reads as code and fails the build.) */
     openMenuPopover, openEmojiPopover, gifPicker, gifEnabled: () => !!CFG.gif_enabled,
     linkify, linkCardHtml, hydrateLinkCards,
+    // A shared post drawn in Communities as the timeline's own quote card (concord.js noteEmbedHtml).
+    quotedDiv, fetchEvent, storeGet: id => Store.get(id), storeSave: ev => Store.saveEvent(ev),
     insertAt: _insertAt, payPrivateConcordZap, startConcordTip,
     __remoteDesktopPoint: _rdVideoPoint,
     startGroupCall,

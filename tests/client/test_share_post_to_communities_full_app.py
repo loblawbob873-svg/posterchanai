@@ -250,3 +250,50 @@ def test_a_post_with_no_media_shares_its_link(w, h):
     assert "a link to this post" in got["prompt"], (shape, got["prompt"])
     assert got["decoded"] == got["id"], (shape, "the message box does not hold a link to THIS post", got)
     assert got["sent"] == 0, (shape, "sent without pressing Send")
+
+
+# A message carrying a shared post's LINK, as Armada draws it: the post as a card, not a URL (2026-10-27, "about
+# sharing a nostr event, we need to make sure we embed it right so it displays cleanly. What does armada do?").
+EMBED_ROOM = r"""(()=>{
+  const k=new Uint8Array(32).fill(6), now=Math.floor(Date.now()/1000);
+  const post=NostrTools.finalizeEvent({kind:1,created_at:now-60,content:'the shared post itself',tags:[]},k);
+  Store.saveEvent(post); window.__shared=post.id;
+  const link=location.origin+'/'+NostrTools.nip19.neventEncode({id:post.id,author:post.pubkey,kind:1,relays:['wss://relay.poster.place']});
+  const gone='nostr:'+NostrTools.nip19.neventEncode({id:'e'.repeat(64)});
+  const room={name:'Embeds',communityId:'f'.repeat(64),naddr:'fixture-embeds',
+    channels:[{id:'fx-general',name:'general'}],cord:{bundle:{relays:['wss://fixture.invalid']},hydrated:true}};
+  localStorage.setItem('pc.concord.rooms.v1.'+__PC.me().pubkey,JSON.stringify([room]));
+  localStorage.setItem('pc.concord.active.v1.'+__PC.me().pubkey,'0');
+  window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels:[{id:'fx-general',name:'general',streamPubkeys:[]}]}),
+    inspectChat:async()=>({messages:[{id:'m-link',pubkey:'b'.repeat(64),text:'look at this '+link,at:Date.now()-60000,kind:9,tags:[]},
+                                     {id:'m-gone',pubkey:'b'.repeat(64),text:gone,at:Date.now()-50000,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
+    createChatWrap:async()=>{throw new Error('nothing is sent')}};
+  __PC.fetchEvent=async()=>null;   // the missing post: nobody has it
+  __PC.switchMessagesTab('concord'); return link; })()"""
+
+
+@CHROME
+@pytest.mark.parametrize("w,h", [(390, 844), (1280, 860)])
+def test_a_shared_post_link_is_drawn_as_the_post(w, h):
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": w <= 900})
+        await desktop.login(b)
+        got["link"] = await b.js(EMBED_ROOM)
+        await b.js("(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()")
+        await b.until("[...document.querySelectorAll('.cc-message')].length>=2")
+        await b.until("![...document.querySelectorAll('.cc-note-load')].some(e=>e.dataset.ccNote)", )
+        got["msgs"] = await b.js("""[...document.querySelectorAll('.cc-message')].map(m=>({text:(m.querySelector('p')||{}).textContent||'',
+          card:!!m.querySelector('.quoted[data-open]'), cardText:(m.querySelector('.quoted')||{}).textContent||'',
+          wide:(()=>{const q=m.querySelector('.quoted');return q?q.getBoundingClientRect().right<=innerWidth+1:true})()}))""")
+        got["errors"] = await b.js("(window.__errors||[]).slice(-5)")
+
+    asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
+    link_msg = next(m for m in got["msgs"] if "look at this" in m["text"])
+    assert link_msg["card"] and "the shared post itself" in link_msg["cardText"], ("the shared post is not drawn as a card", got)
+    assert "nevent1" not in link_msg["text"], ("the raw link is still in the message", link_msg)
+    gone = [m for m in got["msgs"] if "not found" in m["cardText"]]
+    assert gone, ("a post nobody has must say so, not spin", got["msgs"])
+    assert all(m["wide"] for m in got["msgs"]), ("a card runs off the screen", got["msgs"])
+    assert not got["errors"], got["errors"]

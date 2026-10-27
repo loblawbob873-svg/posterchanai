@@ -35,7 +35,7 @@ class PollsRender(unittest.TestCase):
         body = src[src.index("function messageContentHtml("):]
         body = body[:body.index("\n  function ", 10)]
         self.assertIn("pollHtml(p,m)", body, "the message bubble no longer draws polls")
-        self.assertIn("body+poll+", body, "the poll is built but never returned")
+        self.assertRegex(body, r"return body\+(?:\w+\+)*poll\+", "the poll is built but never returned")
 
     def test_voting_publishes_into_the_channel_and_not_to_the_open_relay(self):
         """A Concord vote is sealed in the channel stream like every other message. Published
