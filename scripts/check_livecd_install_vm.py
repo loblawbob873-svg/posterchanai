@@ -492,6 +492,13 @@ def boot_installed(disk, serial_dir, vars_copy, evidence, timeout, memory, cpus,
     added = _make_installed_boot_audible(disk, evidence, extra="systemd.debug_shell=ttyS1" if shell else "")
     if added:
         print(f"OK  boot entry made audible for the test ({added})")
+    else:
+        # A boot this check cannot HEAR is not a boot that failed. Measured 2026-10-27: run as an ordinary user,
+        # qemu-nbd could not open the disk, nothing was edited, the installed system booted quietly on its own
+        # screen and this check said "printed nothing recognisable" -- an installer failure that never happened.
+        print("SKIP  could not add a serial console to the installed boot entry (qemu-nbd needs root -- run this "
+              "check with sudo): the installed system's boot cannot be observed, so nothing is judged")
+        return 2
     sock = Path(serial_dir, "boot-console.sock")
     log = open(Path(evidence, "boot-console.log"), "w", encoding="utf-8")
     # iso=None leaves out every medium drive, so the only bootable thing is the installed disk.

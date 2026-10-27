@@ -426,3 +426,16 @@ def test_the_upgrade_can_start_from_an_older_published_iso():
     assert "old_iso = args.from_iso or args.iso" in rnd
     first, second = rnd.index("install(old_iso"), rnd.index("upgrade=True")
     assert first < second and "install(args.iso" in rnd[second - 200:second], "the upgrade must use the NEW image"
+
+
+def test_a_boot_it_cannot_hear_is_not_judged(tmp_path, monkeypatch):
+    """2026-10-27: run as an ordinary user, qemu-nbd could not open the disk, so no serial console was added to the
+    installed boot entry; the system booted quietly on its own screen and the check said "printed nothing
+    recognisable" -- a failure the installer never had. Without the console the boot is unobservable: SKIP (2),
+    before any VM is started."""
+    started = []
+    monkeypatch.setattr(MOD, "_make_installed_boot_audible", lambda *a, **k: "")
+    monkeypatch.setattr(MOD.subprocess, "Popen", lambda *a, **k: started.append(a) or (_ for _ in ()).throw(AssertionError("booted")))
+    monkeypatch.setattr(MOD, "ovmf", lambda: ("code", "vars"))
+    rc = MOD.boot_installed(tmp_path / "d.qcow2", tmp_path, tmp_path / "vars", tmp_path, 60, 1024, 1)
+    assert rc == 2 and not started, (rc, started)
