@@ -49,7 +49,9 @@ window.PCSettingsFactory = function(dep){
       <div class="look-row">${pick('accent','Accent',t.accent,themeHex('--neon'))}${pick('bg','Background',t.bg,themeHex('--bg'))}${pick('text','Text',t.text,themeHex('--text'))}</div>
       <h4>Each section <span class="muted small">— its own colours; empty uses yours</span></h4>
       <div class="look-secs">${L.SECTIONS.map(([id,name])=>{ const s=t.sec[id]||{};
-        return `<div class="look-sec"><b>${enc(name)}</b>${pick('accent','Accent',s.accent,t.accent||themeHex('--neon'),id)}${pick('bg','Background',s.bg,t.bg||themeHex('--bg'),id)}</div>`; }).join('')}</div>
+        // Three per section: what the accent colours there, the background, and the TEXT (Vyram, 2026-10-27).
+        const accentWord=id==='social'?'Hashtags & icons':'Accent';
+        return `<div class="look-sec"><b>${enc(name)}</b>${pick('accent',accentWord,s.accent,t.accent||themeHex('--neon'),id)}${pick('bg','Background',s.bg,t.bg||themeHex('--bg'),id)}${pick('text','Text',s.text,t.text||themeHex('--text'),id)}</div>`; }).join('')}</div>
       <h4>Wallpaper</h4>
       <div class="look-wall">
         <div class="look-row"><label class="btn btn-ghost small look-file">Choose image<input type="file" accept="image/*" id="look-file" hidden></label>

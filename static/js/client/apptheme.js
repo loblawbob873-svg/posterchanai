@@ -18,7 +18,12 @@
   // The sections a person can colour, and the views each one covers. A view not listed keeps your
   // app-wide colours. Order is the order Settings lists them in.
   const SECTIONS = [['social','Timeline & social'],['concord','Communities'],['messages','Messages'],['texts','Texts'],
-    ['mail','Email'],['music','Music'],['notes','Notes'],['files','Files'],['ai','PosterChan AI'],['settings','Settings']];
+    ['mail','Email'],['music','Music'],['notes','Notes'],['files','Files'],['ai','PosterChan AI'],['settings','Settings'],
+    ['menu','Menus']];
+  /* MENUS ARE THEIR OWN SECTION ("Menu Separate Color Class", Vyram 2026-10-27): the bottom bar, the sidebar and the More /
+   * Discover / Files sheets took each section's colours as you moved between them. Coloured here, they keep these
+   * everywhere; left empty they follow the section as before. No view maps to it -- it is drawn by selector (MENU_SEL). */
+  const MENU_SEL = ':is(.mobilenav,.sidebar,.modal:has(.more-grid))';
   const VIEWS = {home:'social',global:'social',trending:'social',notifications:'social',profile:'social',thread:'social',
     hashtag:'social',search:'social',bookmarks:'social',lists:'social',concord:'concord',messages:'messages',texts:'texts',
     mail:'mail',music:'music',__music:'music',notes:'notes',blossom:'files',ai:'ai',settings:'settings'};
@@ -37,7 +42,7 @@
     if(!v || typeof v !== 'object') return null;
     const sec = {};
     for(const id of SEC_IDS){ const s = v.sec && v.sec[id]; if(s && typeof s === 'object'){
-      const a = hexOk(s.accent), b = hexOk(s.bg); if(a || b) sec[id] = { accent:a, bg:b }; } }
+      const a = hexOk(s.accent), b = hexOk(s.bg), x = hexOk(s.text); if(a || b || x) sec[id] = { accent:a, bg:b, text:x }; } }
     const w = v.wall && typeof v.wall === 'object' ? v.wall : {};
     const url = urlOk(w.url);
     return { accent:hexOk(v.accent), bg:hexOk(v.bg), text:hexOk(v.text), sec,
@@ -99,7 +104,18 @@
     out += block(ROOT, top);
     for(const id of SEC_IDS){
       const s = t.sec[id]; if(!s) continue;
-      const v = vars(s.accent || '', s.bg || '', s.bg ? t.text : '');
+      // A section's own TEXT colour ("Timeline & Social Color", Vyram 2026-10-27), else the app-wide one under its background.
+      const v = vars(s.accent || '', s.bg || '', s.text || (s.bg ? t.text : ''));
+      if(id === 'menu'){
+        // Whatever section is open: the menu's colours, filled in from yours where the menu has none.
+        const mv = vars(s.accent || t.accent || '', s.bg || '', s.text || (s.bg ? t.text : ''));
+        if(s.bg) mv.background = 'var(--panel)';
+        // !important: Communities themes its own sheets (the More sheet opened there turned red) -- a colour chosen
+        // FOR the menus is the one asked for, wherever they are drawn.
+        for(const k of Object.keys(mv)) mv[k] += ' !important';
+        out += block(`${ROOT} ${MENU_SEL}, ${ROOT}[data-pcsec] ${MENU_SEL}`, mv);
+        continue;
+      }
       if(s.bg && t.wall) v['--canvas'] = canvas(t, s.bg);
       else if(s.bg) v['--canvas'] = `radial-gradient(ellipse 900px 600px at 50% -8%,var(--amb1) 0%,transparent 55%),${s.bg}`;
       out += block(`${ROOT}[data-pcsec="${id}"]`, v);

@@ -132,3 +132,47 @@ def test_remove_wallpaper_and_reset_appearance():
         await b.until(f"{ROOTVAR.format('--neon')}==={theme!r} && document.querySelector('#look-reset').disabled")
 
     asyncio.run(desktop.with_browser("online", "", check, NO_OS))
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_each_section_has_a_text_colour_and_the_menus_keep_their_own():
+    """Git issues "Timeline & Social Color" and "Menu Separate Color Class" (Vyram, 2026-10-27): the timeline needs a
+    TEXT colour of its own beside background and hashtags & icons, and the menus (bottom bar, More sheet, sidebar)
+    took each section's accent as you moved between sections -- they get their own colours that hold everywhere."""
+    got = {}
+    VAR = "getComputedStyle(document.querySelector('{}')).getPropertyValue('{}').trim()"
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 900, 'deviceScaleFactor': 1, 'mobile': True})
+        await desktop.login(b)
+        await b.js("__PC.switchView('settings')")
+        await b.until("!!document.querySelector('.us-tab[data-tab=\"appearance\"]') && !!document.querySelector('#us-look .look')")
+        await b.js("document.querySelector('.us-tab[data-tab=\"appearance\"]').click()")
+        got["social_labels"] = await b.js("[...document.querySelectorAll('#us-look input[data-sec=\"social\"]')].map(i=>i.closest('label').textContent.trim())")
+        await _color(b, 'accent', '#00b06f', sec='social')
+        await _color(b, 'text', '#ffffff', sec='social')
+        await _color(b, 'accent', '#ff0000', sec='concord')
+        await _color(b, 'accent', '#3366ff', sec='menu')
+        await _color(b, 'text', '#ffcc00', sec='menu')
+        out = {}
+        for view in ('home', 'concord'):
+            await b.js(f"__PC.switchView('{view}')")
+            await asyncio.sleep(.4)
+            out[view] = {"text": await b.js(ROOTVAR.format('--text')), "neon": await b.js(ROOTVAR.format('--neon')),
+                         "nav_neon": await b.js(VAR.format('.mobilenav', '--neon')),
+                         "nav_text": await b.js(VAR.format('.mobilenav', '--text'))}
+        await b.js("document.querySelector('.mobilenav [data-v=\"more\"], .mobilenav .more, .mobilenav button:last-child').click()")
+        await b.until("!!document.querySelector('.modal .more-grid')")
+        out["more"] = {"neon": await b.js(VAR.format('.modal:has(.more-grid)', '--neon')),
+                       "label": await b.js("getComputedStyle(document.querySelector('.more-item')).color")}
+        got["views"] = out
+
+    asyncio.run(desktop.with_browser("online", "", check, NO_OS))
+    assert got["social_labels"] == ["Hashtags & icons", "Background", "Text"], got["social_labels"]
+    v = got["views"]
+    assert v["home"]["text"] == "#ffffff" and v["home"]["neon"] == "#00b06f", ("the timeline's own text / hashtags", v)
+    assert v["concord"]["neon"] == "#ff0000", ("Communities' own accent", v)
+    for view in ("home", "concord"):
+        assert v[view]["nav_neon"] == "#3366ff" and v[view]["nav_text"] == "#ffcc00", \
+            (view, "the menu took the section's colours instead of its own", v)
+    assert v["more"]["neon"] == "#3366ff" and v["more"]["label"] == "rgb(255, 204, 0)", ("the More sheet", v)
