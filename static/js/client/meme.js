@@ -1283,12 +1283,28 @@
       ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}"></video>`
       : `<img src="${enc(_isDraw(l) ? _drawPreview(l) : l.src)}" alt="" style="object-fit:${ofit}">`;
     // .mb-mk styles itself inline for the same reason .mb-fx does — see _rotCss.
+    const ar = (l.type==='image'||l.type==='video') ? _areaOk(l.warpArea) : null;
+    const acv = ar ? `<canvas class="mb-acv" style="position:absolute;left:${(ar.r[0]*100).toFixed(3)}%;top:${(ar.r[1]*100).toFixed(3)}%;`
+      + `width:${(ar.r[2]*100).toFixed(3)}%;height:${(ar.r[3]*100).toFixed(3)}%;transform-origin:0 0;pointer-events:none"></canvas>` : '';
     const inner = `<i class="mb-mk" style="position:absolute;inset:0;display:block;pointer-events:none`
-                + `${mk}${_xformCss(l, lt)}">${media}</i>`;
+                + `${mk}${_xformCss(l, lt)}">${media}${acv}</i>`;
     const fxw = `<i class="mb-fx${_fxCrops(l)?' crop':''}" style="${_rotCss(l)}">${inner}</i>`;
-    const wc = (_warpOn && l.id===sel && (l.type==='image'||l.type==='video')) ? (_warpOk(l.warp) || _WARP_ID) : null;
-    const handles = wc ? [0,1,2,3].map(k=>`<i class="mb-wh" data-wc="${k}" role="slider" aria-label="${['Top-left','Top-right','Bottom-left','Bottom-right'][k]} corner" style="left:${(wc[k*2]*100).toFixed(2)}%;top:${(wc[k*2+1]*100).toFixed(2)}%"></i>`).join('') : '';
-    return `<div class="mb-item mb-media${s}${wc?' mb-warping':''}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i>${handles}</div>`;
+    const editing = _warpOn && l.id===sel && (l.type==='image'||l.type==='video');
+    const wc = (editing && _warpMode !== 'area') ? (_warpOk(l.warp) || _WARP_ID) : null;
+    const CORNER = ['Top-left','Top-right','Bottom-left','Bottom-right'];
+    let handles = wc ? [0,1,2,3].map(k=>`<i class="mb-wh" data-wc="${k}" role="slider" aria-label="${CORNER[k]} corner" style="left:${(wc[k*2]*100).toFixed(2)}%;top:${(wc[k*2+1]*100).toFixed(2)}%"></i>`).join('') : '';
+    if(editing && _warpMode === 'area'){
+      if(!ar) handles = `<i class="mb-apick" title="Drag across the part of the picture to distort"><b class="mb-apick-tip">Drag across the part to distort</b></i>`;
+      else {
+        const [rx, ry, rw, rh] = ar.r, X = v=>(_aFx(l, v)*100).toFixed(2), Y = v=>(_aFy(l, v)*100).toFixed(2);
+        const L = Math.min(+X(rx), +X(rx+rw)), T = Math.min(+Y(ry), +Y(ry+rh));
+        const cx = (ar.q[0]+ar.q[2]+ar.q[4]+ar.q[6])/4, cy = (ar.q[1]+ar.q[3]+ar.q[5]+ar.q[7])/4;
+        handles = `<i class="mb-arect" style="left:${L}%;top:${T}%;width:${(rw*100).toFixed(2)}%;height:${(rh*100).toFixed(2)}%"></i>`
+          + [0,1,2,3].map(k=>`<i class="mb-wh mb-ah" data-ac="${k}" role="slider" aria-label="Area ${CORNER[k].toLowerCase()} corner" style="left:${X(ar.q[k*2])}%;top:${Y(ar.q[k*2+1])}%;${_ahOut(l, ar.q, k)}"></i>`).join('')
+          + `<i class="mb-am" role="slider" aria-label="Move the area" title="Drag to move the area" style="left:${X(cx)}%;top:${Y(cy)}%"></i>`;
+      }
+    }
+    return `<div class="mb-item mb-media${s}${editing?' mb-warping':''}" data-id="${l.id}" style="${pos}${size}opacity:${_opacityOf(l, lt)}">${fxw}<i class="mb-h"></i>${handles}</div>`;
   }
 
   function trackEl(l){
@@ -1640,9 +1656,9 @@
   /* A corner may not be dragged across the picture: past a straight line through two other corners the
    * shape folds into a triangle or a bow-tie, which no perspective can draw (the exporter would have to
    * put a corner at infinity). Corners go TL TR BR BL; every turn must bend the same way, by a margin. */
-  function _warpConvex(w, W, H){
+  function _warpConvex(w, W, H, margin){
     const q = [[w[0]*W, w[1]*H], [w[2]*W, w[3]*H], [w[6]*W, w[7]*H], [w[4]*W, w[5]*H]];
-    const min = 0.02 * W * H;
+    const min = (margin == null ? 0.02 : margin) * W * H;
     for(let i = 0; i < 4; i++){
       const a = q[i], b = q[(i+1)%4], c = q[(i+2)%4];
       if((b[0]-a[0])*(c[1]-b[1]) - (b[1]-a[1])*(c[0]-b[0]) <= min) return false;
@@ -1682,12 +1698,73 @@
   }
   function _measureWarps(root){
     for(const l of P.layers){
-      if(!_warpOk(l.warp)) continue;
-      const m = root.querySelector(`.mb-item[data-id="${l.id}"] .mb-mk`); if(!m) continue;
+      const area = _areaOk(l.warpArea);
+      if(!_warpOk(l.warp) && !area) continue;
+      const it = root.querySelector(`.mb-item[data-id="${l.id}"]`), m = it && it.querySelector('.mb-mk'); if(!m) continue;
       _warpPx[l.id] = { W:m.offsetWidth, H:m.offsetHeight };
       m.style.transform = _xform(l, _curT - l.start); m.style.transformOrigin = _fxOrigin(l);
+      if(area) _paintArea(it, l);
     }
   }
+  /* DISTORT AN AREA ("distort does not let you transform an area in the photo like photo editors let you",
+   * 2026-10-27). `l.warpArea = {r:[x,y,w,h], q:[8]}`, fractions of the layer box: `r` is the rectangle picked
+   * out of the picture, `q` where its corners went (TL TR BL BR, the order of `l.warp`). The renderer
+   * (meme_builder_service._warp_area) crops `r`, moves it onto `q` and lays it OVER the picture, before flip,
+   * effect and rotate. The stage draws the same thing: a canvas inside .mb-mk (so it flips and moves with the
+   * picture) painted from the layer's own <img>/<video>, carried onto `q` by a matrix3d. */
+  let _warpMode = 'whole';
+  const _AREA_MIN = 0.03, _AREA_FOLD = 0.0005;      // the renderer's AREA_MIN / AREA_FOLD
+  function _areaOk(a){
+    if(!a || typeof a !== 'object' || !Array.isArray(a.r) || a.r.length !== 4 || !Array.isArray(a.q) || a.q.length !== 8) return null;
+    if(![...a.r, ...a.q].every(v => Number.isFinite(+v))) return null;
+    const x = clamp(+a.r[0], 0, 1), y = clamp(+a.r[1], 0, 1);
+    const r = [x, y, clamp(+a.r[2], 0, 1 - x), clamp(+a.r[3], 0, 1 - y)];
+    if(r[2] < _AREA_MIN || r[3] < _AREA_MIN) return null;
+    return { r, q: a.q.map(v => clamp(+v, 0, 1)) };
+  }
+  const _areaIdent = r => [r[0], r[1], r[0]+r[2], r[1], r[0], r[1]+r[3], r[0]+r[2], r[1]+r[3]];
+  // What the renderer is sent: an area that was picked but never moved is no edit at all.
+  function _areaMoved(l){
+    const a = _areaOk(l.warpArea); if(!a) return null;
+    const id = _areaIdent(a.r);
+    return a.q.every((v, i) => Math.abs(v - id[i]) < 0.002) ? null : a;
+  }
+  // The area's rectangle -> its quad, as a matrix3d on a canvas laid over that rectangle (transform-origin 0 0).
+  function _areaMatrix(a, W, H){
+    const [rx, ry, rw, rh] = a.r;
+    const rel = a.q.map((v, i) => i % 2 ? (v - ry) / rh : (v - rx) / rw);
+    return _warpMatrix(rel, rw * W, rh * H);
+  }
+  // Paint the moved area from the layer's own picture, letterboxed or cropped exactly as object-fit shows it.
+  function _paintArea(it, l){
+    const cv = it && it.querySelector('.mb-acv'), a = _areaOk(l.warpArea);
+    if(!cv || !a) return;
+    const m = it.querySelector('.mb-mk'), media = m && m.querySelector('img,video');
+    const W = m ? m.offsetWidth : 0, H = m ? m.offsetHeight : 0; if(!media || !W || !H) return;
+    const iw = media.naturalWidth || media.videoWidth, ih = media.naturalHeight || media.videoHeight;
+    const M = _areaMatrix(a, W, H);
+    cv.style.transform = M ? `matrix3d(${M})` : '';
+    if(!iw || !ih) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1), [rx, ry, rw, rh] = a.r;
+    const cw = Math.max(1, Math.round(rw * W * dpr)), ch = Math.max(1, Math.round(rh * H * dpr));
+    if(cv.width !== cw) cv.width = cw;
+    if(cv.height !== ch) cv.height = ch;
+    const s = (l.fit === 'cover' ? Math.max : Math.min)(W / iw, H / ih), dw = iw * s, dh = ih * s;
+    const c = cv.getContext('2d'); if(!c) return;
+    c.clearRect(0, 0, cw, ch);
+    try{ c.drawImage(media, ((W - dw) / 2 - rx * W) * dpr, ((H - dh) / 2 - ry * H) * dpr, dw * dpr, dh * dpr); }catch(_){ }
+  }
+  /* An area corner's handle sits OUTSIDE its corner, pointing away from the area. On a phone the stage is small (a photo
+   * layer ~110px wide), so a face-sized area is ~20px across and four 44px handles centred on its corners lie on top of
+   * each other -- the finger takes whichever was drawn last. The drag moves the corner by the finger's travel, so the
+   * offset never makes it jump. */
+  function _ahOut(l, q, k){
+    const cx = (q[0]+q[2]+q[4]+q[6])/4, cy = (q[1]+q[3]+q[5]+q[7])/4;
+    const left = _aFx(l, q[k*2]) < _aFx(l, cx), up = _aFy(l, q[k*2+1]) < _aFy(l, cy);
+    return `margin:0;transform:translate(${left ? '-100%' : '0'},${up ? '-100%' : '0'})`;
+  }
+  // Handles live on the unflipped .mb-item while the area belongs to the (possibly mirrored) picture.
+  const _aFx = (l, x) => l.flipH ? 1 - x : x, _aFy = (l, y) => l.flipV ? 1 - y : y;
   function _xform(l, lt){
     const p=[];
     const wp=_warpCss(l); if(wp) p.push(wp);
@@ -1898,7 +1975,10 @@
              <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
              <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
            </div>
-           ${(l.type==='image'||l.type==='video') && !isDraw ? `<div class="mb-frow"><button class="btn btn-cyan small${_warpOn?' on':''}" id="mb-warp" aria-pressed="${_warpOn}" title="Drag the picture's four corners to skew it or give it perspective"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Distort</button>${_warpOk(l.warp)?`<button class="btn btn-cyan small" id="mb-warp-reset" title="Put the corners back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undistort</button>`:''}</div>` : ''}
+           ${(l.type==='image'||l.type==='video') && !isDraw ? `<div class="mb-frow"><button class="btn btn-cyan small${_warpOn?' on':''}" id="mb-warp" aria-pressed="${_warpOn}" title="Drag the picture's four corners to skew it or give it perspective -- or pick an area of it and move that"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Distort</button>${_warpOk(l.warp)?`<button class="btn btn-cyan small" id="mb-warp-reset" title="Put the corners back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undistort</button>`:''}</div>`
+             + (_warpOn ? `<div class="mb-frow mb-warpmode" role="radiogroup" aria-label="What to distort"><button class="btn btn-cyan small${_warpMode!=='area'?' on':''}" id="mb-warp-whole" role="radio" aria-checked="${_warpMode!=='area'}">Whole picture</button><button class="btn btn-cyan small${_warpMode==='area'?' on':''}" id="mb-warp-area" role="radio" aria-checked="${_warpMode==='area'}">An area</button></div>` : '')
+             + (_warpOn && _warpMode==='area' && _areaOk(l.warpArea) ? `<div class="mb-frow"><button class="btn btn-cyan small" id="mb-area-new" title="Pick a different part of the picture">New area</button><button class="btn btn-cyan small" id="mb-area-reset" title="Put the area back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo area</button></div>` : '')
+             + (!_warpOn && _areaMoved(l) ? `<div class="mb-frow"><button class="btn btn-cyan small" id="mb-area-reset" title="Put the distorted area back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo area</button></div>` : '') : ''}
            <button class="btn btn-cyan small full" id="mb-resize" title="Set this layer's exact size in pixels or percent"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Resize…</button>
            <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Canvas to this photo</button>
            <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>`))}
@@ -2279,6 +2359,82 @@
     t.addEventListener('pointercancel', up);
   }
 
+  /* Distort -> An area: drag across the picture to pick the area, then drag its corners (each on its own) or its
+   * centre (all four together). Every drag is one undo step and repaints in place, like the whole-picture corners. */
+  function _bindArea(root){
+    const drag = (hd, onMove, onDone)=>{
+      hd.addEventListener('pointerdown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        const it = hd.closest('.mb-item'), l = it && P.layers.find(x=>x.id===it.dataset.id); if(!l) return;
+        const r0 = it.getBoundingClientRect(); if(!r0.width || !r0.height) return;
+        const at = ev => { const r = it.getBoundingClientRect();
+          // NOT clamped here: a corner's handle sits outside the picture's edge, so the finger must be free to go past it.
+          // Each use clamps what it stores.
+          return [_aFx(l, (ev.clientX - r.left)/r.width), _aFy(l, (ev.clientY - r.top)/r.height), r]; };
+        snap();
+        const start = at(e), ctx = { l, it, start, a0: _areaOk(l.warpArea) };
+        try{ hd.setPointerCapture(e.pointerId); }catch(_){ }
+        const move = ev => onMove(ctx, at(ev));
+        const up = ev => { hd.removeEventListener('pointermove', move); hd.removeEventListener('pointerup', up); hd.removeEventListener('pointercancel', up);
+          onDone(ctx, at(ev)); };
+        hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
+      });
+    };
+    const repaintArea = (ctx)=>{
+      const m = ctx.it.querySelector('.mb-mk');
+      if(m) _warpPx[ctx.l.id] = { W:m.offsetWidth, H:m.offsetHeight };
+      _paintArea(ctx.it, ctx.l);
+      const a = _areaOk(ctx.l.warpArea); if(!a) return;
+      ctx.it.querySelectorAll('.mb-ah').forEach(h=>{ const k = +h.dataset.ac;
+        h.style.left = (_aFx(ctx.l, a.q[k*2])*100).toFixed(2)+'%'; h.style.top = (_aFy(ctx.l, a.q[k*2+1])*100).toFixed(2)+'%';
+        h.style.transform = _ahOut(ctx.l, a.q, k).split('transform:')[1]; });
+      const mv = ctx.it.querySelector('.mb-am');
+      if(mv){ mv.style.left = (_aFx(ctx.l, (a.q[0]+a.q[2]+a.q[4]+a.q[6])/4)*100).toFixed(2)+'%';
+              mv.style.top = (_aFy(ctx.l, (a.q[1]+a.q[3]+a.q[5]+a.q[7])/4)*100).toFixed(2)+'%'; }
+    };
+    // Pick: a rubber band in the picture's own coordinates.
+    const c01 = v => clamp(v, 0, 1);
+    root.querySelectorAll('.mb-apick').forEach(pk=>drag(pk, (ctx, [x, y])=>{
+      x = c01(x); y = c01(y);
+      const [x0, y0] = ctx.start.map(c01), l = ctx.l;
+      let band = pk.querySelector('.mb-aband');
+      if(!band){ band = document.createElement('i'); band.className = 'mb-aband'; pk.appendChild(band); }
+      const L = Math.min(_aFx(l, x0), _aFx(l, x)), T = Math.min(_aFy(l, y0), _aFy(l, y));
+      band.style.left = (L*100)+'%'; band.style.top = (T*100)+'%';
+      band.style.width = (Math.abs(x - x0)*100)+'%'; band.style.height = (Math.abs(y - y0)*100)+'%';
+    }, (ctx, [x, y])=>{
+      x = c01(x); y = c01(y);
+      const [x0, y0] = ctx.start.map(c01), r = [Math.min(x0, x), Math.min(y0, y), Math.abs(x - x0), Math.abs(y - y0)];
+      if(r[2] < _AREA_MIN || r[3] < _AREA_MIN){ unsnapIfUnchanged(); render(); toast('drag across the part of the picture to distort'); return; }
+      ctx.l.warpArea = { r: r.map(v=>+v.toFixed(4)), q: _areaIdent(r).map(v=>+v.toFixed(4)) };
+      save(); render();
+    }));
+    // One corner.
+    root.querySelectorAll('.mb-ah').forEach(hd=>drag(hd, (ctx, [x, y, rect])=>{
+      const a = _areaOk(ctx.l.warpArea), a0 = ctx.a0; if(!a || !a0) return;
+      const k = +hd.dataset.ac, q = a.q.slice();
+      q[k*2] = +clamp(a0.q[k*2] + x - ctx.start[0], 0, 1).toFixed(4); q[k*2+1] = +clamp(a0.q[k*2+1] + y - ctx.start[1], 0, 1).toFixed(4);
+      if(!_warpConvex(q, rect.width, rect.height, _AREA_FOLD)) return;    // stops at the last drawable place
+      ctx.l.warpArea = { r: a.r, q }; repaintArea(ctx);
+    }, ()=>save()));
+    // All four: the whole area moves, and stops at the edge of the picture.
+    root.querySelectorAll('.mb-am').forEach(hd=>drag(hd, (ctx, [x, y])=>{
+      const a0 = ctx.a0; if(!a0) return;
+      const xs = a0.q.filter((_, i)=>i%2===0), ys = a0.q.filter((_, i)=>i%2===1);
+      const dx = clamp(x - ctx.start[0], -Math.min(...xs), 1 - Math.max(...xs)), dy = clamp(y - ctx.start[1], -Math.min(...ys), 1 - Math.max(...ys));
+      ctx.l.warpArea = { r: a0.r, q: a0.q.map((v, i)=>+(v + (i%2 ? dy : dx)).toFixed(4)) }; repaintArea(ctx);
+    }, ()=>save()));
+    // A picture that loads after the stage was drawn: paint its area then.
+    root.querySelectorAll('.mb-acv').forEach(cv=>{
+      const it = cv.closest('.mb-item'), l = it && P.layers.find(x=>x.id===it.dataset.id), media = it && it.querySelector('.mb-mk img,.mb-mk video');
+      if(!l || !media || media._areaHooked) return;
+      media._areaHooked = true;
+      const again = ()=>_paintArea(it, l);
+      media.addEventListener(media.tagName === 'VIDEO' ? 'loadeddata' : 'load', again);
+      if(media.tagName === 'VIDEO'){ media.addEventListener('seeked', again); media.addEventListener('timeupdate', again); }
+    });
+  }
+
   function bindStage(root){
     _measureWarps(root);
     const _st = root.querySelector('#mb-stage');
@@ -2287,7 +2443,7 @@
     }
     // Distort's corner handles. Their own pointer stream (stopPropagation), so dragging a corner never
     // moves or resizes the layer; one undo step per drag; the transform repaints in place on every move.
-    root.querySelectorAll('.mb-wh').forEach(hd=>{
+    root.querySelectorAll('.mb-wh:not(.mb-ah)').forEach(hd=>{
       hd.addEventListener('pointerdown', (e)=>{
         e.preventDefault(); e.stopPropagation();
         const it = hd.closest('.mb-item'), l = it && P.layers.find(x=>x.id===it.dataset.id); if(!l) return;
@@ -2310,6 +2466,7 @@
         hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
       });
     });
+    _bindArea(root);
     const stage = root.querySelector('#mb-stage'); if(!stage) return;
     stage.addEventListener('pointerdown', (e)=>{
       const item = e.target.closest('.mb-item'); if(!item) return;
@@ -2540,6 +2697,8 @@
         if(m){ const x=_xform(l, t - l.start);
           if(m.style.transform!==x){ m.style.transform=x; m.style.transformOrigin=_fxOrigin(l); } }
       }
+      // A moved AREA of a video follows the frame (see _paintArea).
+      if(on && l.type==='video' && l.warpArea) _paintArea(el, l);
       const v=el.querySelector('video');
       if(v){
         const playing = !!_playT;
@@ -4317,6 +4476,7 @@
           opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
           flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
           warp:_warpOk(l.warp) || undefined,
+          warpArea:_areaMoved(l) || undefined,
           // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
           volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
           speed:_speedOf(l), xin:+l.xin||0, xout:+l.xout||0,
@@ -5043,6 +5203,10 @@
       if(fw){ fw.style.transform=(+l.rotate||0)?`rotate(${+l.rotate||0}deg)`:''; fw.style.transformOrigin='center'; } };
     on('mb-warp','click',()=>{ _warpOn = !_warpOn; render(); });
     on('mb-warp-reset','click',()=>{ snap(); delete l.warp; save(); render(); });
+    on('mb-warp-whole','click',()=>{ _warpMode = 'whole'; render(); });
+    on('mb-warp-area','click',()=>{ _warpMode = 'area'; render(); });
+    on('mb-area-new','click',()=>{ snap(); delete l.warpArea; save(); render(); });
+    on('mb-area-reset','click',()=>{ snap(); delete l.warpArea; save(); render(); });
     on('mb-fliph','click',(e)=>{ snap(); l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
     on('mb-flipv','click',(e)=>{ snap(); l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
     on('mb-f-rot','input',(e)=>{ snapBurst('rot:'+l.id); l.rotate=clamp(e.target.value,-180,180); save();

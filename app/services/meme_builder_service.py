@@ -88,7 +88,7 @@ def _warp_corners(raw):
     return vals
 
 
-def _warp_folded(warp, lw, lh):
+def _warp_folded(warp, lw, lh, margin=0.02):
     """True when a Distort corner was dragged across the line through two others: the shape folds into a
     triangle or a bow-tie, which `perspective` cannot draw -- the corner would sit at infinity and the
     whole layer comes out blank (measured: the photo gone from the export). The editor refuses that
@@ -97,9 +97,42 @@ def _warp_folded(warp, lw, lh):
     ring = [q[0], q[1], q[3], q[2]]                # TL TR BR BL
     for i in range(4):
         a, b, c = ring[i], ring[(i + 1) % 4], ring[(i + 2) % 4]
-        if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) <= 0.02 * lw * lh:
+        if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) <= margin * lw * lh:
             return True
     return False
+
+
+# An area is at least 3% of the box each way, and its corners fold check at 0.05% of the box: the whole-picture
+# 2% margin would refuse every small area (a face) before it moved. A 3% square is 0.09% -- it passes.
+AREA_MIN, AREA_FOLD = 0.03, 0.0005
+
+
+def _warp_area(raw):
+    """Distort AN AREA of the picture ("transform an area in the photo like photo editors let you"):
+    ``{"r": [x, y, w, h], "q": [8 corners]}``, every number a FRACTION of the layer's box. ``r`` is the rectangle
+    picked out of the picture, ``q`` where its four corners went (top-left, top-right, bottom-left, bottom-right,
+    the order of ``warp``). The moved area is drawn OVER the picture, so the original stays underneath. None
+    when absent, malformed, too small to see, or not moved -- an untouched layer renders as before."""
+    if not isinstance(raw, dict):
+        return None
+    r, q = raw.get("r"), raw.get("q")
+    if not isinstance(r, (list, tuple)) or len(r) != 4 or not isinstance(q, (list, tuple)) or len(q) != 8:
+        return None
+    try:
+        rx, ry, rw, rh = (float(v) for v in r)
+        qv = [min(1.0, max(0.0, float(v))) for v in q]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (rx, ry, rw, rh)):
+        return None
+    rx, ry = min(1.0, max(0.0, rx)), min(1.0, max(0.0, ry))
+    rw, rh = min(1.0 - rx, max(0.0, rw)), min(1.0 - ry, max(0.0, rh))
+    if rw < AREA_MIN or rh < AREA_MIN:
+        return None
+    ident = [rx, ry, rx + rw, ry, rx, ry + rh, rx + rw, ry + rh]
+    if all(abs(a - b) < 0.002 for a, b in zip(qv, ident)):
+        return None
+    return (rx, ry, rw, rh), qv
 
 
 def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
@@ -898,6 +931,25 @@ def render(edit: dict, sources: dict, out_file: str | None = None) -> tuple:
             # sees the lw x lh box it was built for) and ROTATE after it — so a spin/zoom animates the
             # upright artwork and the whole result is then turned, rather than the effect's own geometry
             # being rotated out from under it.
+            # AREA DISTORT, before flip/effect/rotate -- like the erase mask, it edits the picture itself, so the
+            # area means "this part of the photo" however the layer is later turned. The chain so far ends at a
+            # label; one copy is the picture, the other is cropped to the area, stretched to the box and moved
+            # by `perspective` onto its four new corners (1px transparent border: see DISTORT below), then laid
+            # over the picture. The layer's chain carries on from the result.
+            area = _warp_area(layer.get("warpArea"))
+            src = f"[mM{n}]" if mask_idx is not None else f"[{idx}:v]"
+            if area and not _warp_folded(area[1], lw, lh, AREA_FOLD):
+                (rx, ry, rw, rh), aq = area
+                cx, cy = int(round(rx * lw)), int(round(ry * lh))
+                cw, ch = max(2, min(lw - cx, int(round(rw * lw)))), max(2, min(lh - cy, int(round(rh * lh))))
+                apts = [(1 + aq[i] * lw, 1 + aq[i + 1] * lh) for i in range(0, 8, 2)]
+                chains.append(src + (",".join(chain) or "null") + f"[ap{n}]")
+                chains.append(f"[ap{n}]split[aA{n}][aB{n}]")
+                chains.append(f"[aB{n}]crop={cw}:{ch}:{cx}:{cy},scale={lw}:{lh},pad={lw + 2}:{lh + 2}:1:1:color=black@0,"
+                              + "perspective=" + ":".join(f"x{k}={apts[k][0]:.2f}:y{k}={apts[k][1]:.2f}" for k in range(4))
+                              + f":sense=destination:interpolation=linear[aW{n}]")
+                chains.append(f"[aA{n}][aW{n}]overlay=x=-1:y=-1:format=auto,format=rgba[aO{n}]")
+                src, chain = f"[aO{n}]", []
             if layer.get("flipH"):
                 chain.append("hflip")
             if layer.get("flipV"):
@@ -958,8 +1010,7 @@ def render(edit: dict, sources: dict, out_file: str | None = None) -> tuple:
             # A masked layer already emitted its front half above and continues from the mask's output;
             # `chain` is never empty here (the setpts shift above always lands in it), so this can't
             # produce a chainless "[a][b]" link.
-            chains.append((f"[mM{n}]" if mask_idx is not None else f"[{idx}:v]")
-                          + ",".join(chain) + f"[l{n}]")
+            chains.append(src + ",".join(chain) + f"[l{n}]")
 
             nxt = f"[v{n}]"
             chains.append(f"{cur}[l{n}]overlay=x={ox}:y={oy}:"
