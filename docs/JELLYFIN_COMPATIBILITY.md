@@ -66,7 +66,7 @@ validation before claiming every playback mode works.
 
 ```sh
 JELLYFIN_TEST_SDK=/tmp/pc-jellyfin-sdk/node_modules/@jellyfin/sdk \
-  .venv/bin/pytest -q tests/test_jellyfin.py
+  venv-unified/bin/python -m pytest -q tests/test_jellyfin.py
 ```
 
 The SDK is a test-only dependency. Browser integration needs Chrome and FFmpeg;

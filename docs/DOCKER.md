@@ -358,7 +358,7 @@ set the type to `sdxl` (or `sd15`). The anime model is used for style switching.
 ## Backends notes
 
 - **No local GPU LLM?** The model then runs on the CPU (slower), or point `chat_server_urls`
-  at another PosterChan node that has a GPU. There is no Ollama backend.
+  at another PosterChan node that has a GPU.
 - **AMD HIP llama** needs ROCm ≥ 6.3; if your card's HIP kernels aren't built it
   falls back to CPU (text gen won't use the GPU) — rebuild with your
   `AMDGPU_TARGETS`.

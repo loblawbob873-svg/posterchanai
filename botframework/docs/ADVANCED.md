@@ -211,7 +211,7 @@ Most features work without OpenAI configured:
 
 - Python 3.10+
 - PostgreSQL (for database features)
-- OpenAI-compatible API (Ollama, Open-WebUI, etc.)
+- An OpenAI-compatible API (this PosterChan node's `/v1`)
 - Pillow (for GIF/image format conversion)
 - ffmpeg with libx264 (for mobile-compatible video narration)
 - edge-tts (for voice synthesis)

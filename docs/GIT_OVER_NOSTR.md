@@ -7,9 +7,9 @@ external services (no ngit-relay/ngit.dev), no HTTP passwords.
 
 **OFF BY DEFAULT.** Everything is gated on the `git_server_enabled` setting (default `"false"`):
 the supervisor spawns nothing and every `/api/git/*` route 404s until an admin turns it on. Shipping
-it dormant is what makes a one-shot deploy safe. Gitea (`git.poster.place`) remains the deploy
-backbone — `sync.sh` only **mirrors** each deploy onto the built-in host (P5, below); it never
-deploys *from* it.
+it dormant is what makes a one-shot deploy safe. **This host is now the deploy backbone:** Gitea is
+gone and `origin` IS the nostr repo, so `git push` / `sync.sh` deploy through it (CLAUDE.md → Deploy);
+the `github` remote is the public mirror.
 
 ## Components (files added)
 
@@ -22,8 +22,8 @@ deploys *from* it.
 | `git_hooks/pre_receive.py` | The `pre-receive` hook (invoked by receive-pack). Fail-closed push validator; delegates the decision to `git_auth.decide_push_ref`. |
 | `git_hooks/post_receive.py` | The `post-receive` hook. Publishes a normalized **30618 witness** (operator-signed, LOCAL relay only). Skips private repos. |
 | `app/routers/git.py` | `/api/git/*` — host/list/announce/status. Hard-gated on `git_server_enabled`. |
-| `scripts/grasp_selfhost.py` | P4 — **provision + announce** (30617/30618) the `posterchanai` repo on the built-in host, in PARALLEL with Gitea. |
-| `scripts/grasp_mirror.py` | P5 — **mirror commits**: publish a maintainer-signed 30618 for the new tip, then push it. Called by `sync.sh` on every deploy; runs on the hosting node, self-skips elsewhere. |
+| `scripts/grasp_selfhost.py` | P4 — **provision + announce** (30617/30618) the `posterchanai` repo on the built-in host. |
+| `scripts/grasp_mirror.py` | P5 — **mirror commits**: publish a maintainer-signed 30618 for the new tip, then push it. No longer part of a deploy (`origin` is the nostr repo, so `git push` does this); kept for manual/recovery use. |
 
 Edited: `app/schemas.py` (`git_server_*` settings), `app/database.py` (default `git_server_enabled=false`),
 `app/main.py` (start/stop under the port-3051 guard + router registration),
@@ -433,11 +433,12 @@ already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequ
   200s with a forwarded reader NIP-98 header (auth stays on the host). Uses `httpx` (already a dep,
   via the storage proxy) — no new packages.
 
-## P5 — `sync.sh` mirrors every deploy to the nostr repo
+## P5 — mirroring onto the nostr repo (historical; now manual/recovery only)
 
-`scripts/grasp_mirror.py` keeps the hosted repo's commits in sync with `origin` (it had drifted 8
-commits behind before this existed). Gitea (`origin`) is still the **deploy backbone** and the
-break-glass path — the GRASP repo is a **mirror**, like the `github` remote, not a cutover.
+`scripts/grasp_mirror.py` kept the hosted repo's commits in sync with a Gitea `origin` (it had drifted 8
+commits behind before it existed). **That cutover has happened:** Gitea is gone, `origin` IS the nostr
+repo, and `sync.sh` no longer calls this script. What follows describes how it works, for running it by
+hand to repair a repo.
 
 - **Where it runs: the HOSTING node.** Push auth is a maintainer *signature*, not a connection: only
   a maintainer of `30617:<owner>:<id>` can move a ref, and `pre-receive` reads the **hosting node's**

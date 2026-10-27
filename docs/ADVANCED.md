@@ -180,9 +180,7 @@ Access the admin panel at `http://localhost:3051/admin`
 ### AI Settings
 
 The chat model runs **inside PosterChan** (llama-cpp-python, on the GPU or the CPU) from a GGUF file in
-the models directory. There is no Ollama backend any more: PosterChan cannot be pointed at an Ollama
-instance. (The reverse works -- a coding client such as opencode can talk to Ollama directly; see
-"OpenCode" below.) Several nodes can share load through **`chat_server_urls`**.
+the models directory. Several nodes can share load through **`chat_server_urls`**.
 
 - **Model Path**: the GGUF file to load
 - **Agentic / Tools Model**: the model used for tool-calling requests (see "OpenCode" below)
@@ -494,31 +492,6 @@ Use posterchanai as the LLM backend for [OpenCode](https://opencode.ai):
 4. **Recommended model**: for agentic coding, use [`Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) (`IQ4_XS`, ~16 GB, MoE ~3 B active) — drop the GGUF in the models dir and set OpenCode's `model` to its basename. It's dramatically more reliable at multi-step tool use than the 8–14 B models (it 1-shots small web apps). Needs a 12 GB+ GPU; on 12–16 GB cards it partial-offloads to CPU and auto-fits context (keep `ollama_num_ctx` on `auto`). `Qwen3.5-9B-Claude-Code` is the lightweight fallback for smaller GPUs.
 
    **Server-wide agentic model:** rather than (or in addition to) setting it per-client, set **Admin → AI Settings → Agentic / Tools Model** (`llm_tools_model`, GGUF basename in the models dir or an absolute path). It's used for **every tool-bearing `/v1` request** *and* the **`node agent`** command (web UI, Telegram, and the system-health report) — falling back to the default Model Path if blank or the file is missing. Plain chat always uses the default model. (The legacy `node_exec_agent_model` setting is still honored as a fallback.)
-
-#### opencode with Ollama on your own machine (no PosterChan in the loop)
-
-opencode can also use an Ollama running locally, as an OpenAI-compatible provider. In
-`~/.config/opencode/opencode.json` (every project) or `opencode.json` in a project's root:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
-      "options": { "baseURL": "http://localhost:11434/v1" },
-      "models": { "qwen3-coder:30b": { "name": "Qwen3 Coder 30B" } }
-    }
-  },
-  "model": "ollama/qwen3-coder:30b"
-}
-```
-
-Model keys must match `ollama list` exactly, tag included; `model` is `<provider id>/<model>`, and `/models`
-inside opencode switches between providers. Ollama's default context window is too small for opencode's
-system prompt and tool list (the model ignores tools or stops mid-task), so start it with a bigger one, e.g.
-`OLLAMA_CONTEXT_LENGTH=32768 ollama serve`. `curl http://localhost:11434/v1/models` should list the model.
 
 #### Editing large files on a small-context model
 
@@ -1458,11 +1431,12 @@ Poster-chan AI supports three LLM backends:
 2. **Native GPU** - Direct llama-cpp-python with SYCL (Intel), CUDA (NVIDIA), or HIP (AMD ROCm)
 3. **AMD ROCm** - Native llama-cpp-python with HIP backend for AMD GPUs
 
-### IPEX-LLM Setup (Intel Arc - Recommended)
+### Intel Arc setup
 
-IPEX-LLM provides the best performance on Intel Arc GPUs using Intel's optimized inference backend. This is the same technology used by Docker-based Ollama solutions for Intel Arc.
+On Intel Arc the chat model runs on llama-cpp-python built for SYCL, and image generation on torch-XPU, from one venv
+and one service (IPEX-LLM is no longer used).
 
-**See [IPEX-LLM-SETUP.md](IPEX-LLM-SETUP.md) for complete setup instructions for Gentoo, Debian/Ubuntu, and Fedora.**
+**See [IPEX-LLM-SETUP.md](IPEX-LLM-SETUP.md) (the file keeps its old name) for setup on Gentoo, Debian/Ubuntu and Fedora.**
 
 **Quick Requirements:**
 - Python 3.11 (required - not compatible with Python 3.12+)
@@ -1893,7 +1867,7 @@ This helps diagnose:
   - GGUF model file
 - **For OCR (image text extraction):**
   - Tesseract OCR (`apt install tesseract-ocr` or `emerge app-text/tesseract`)
-- ComfyUI instance (optional, for image generation)
+- Image generation needs no external server: it is diffusers, in the app's own venv (ComfyUI support was removed)
 - SearXNG — bundled: `./install.sh --searxng` installs it into the app's own venv (no
   container, no separate service to find). Only needed as an EXTERNAL requirement if you want the
   node to search through an instance you already run.

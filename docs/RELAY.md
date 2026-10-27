@@ -78,7 +78,8 @@ re-broadcast by the outbox. Safe to re-run (it dedupes).
 
 ### Search (NIP-50)
 Clients can full-text **search** the relay's notes with a `{"search": "..."}` filter, backed
-by a **PostgreSQL `tsvector`** index (GIN) over note content. Multiple words are AND-ed.
+by PosterChanDB's own **word index** over note content (the tokenizer reproduces Postgres's `tsvector`
+rules, so answers match what the old store gave). Multiple words are AND-ed.
 Advertised as NIP-50 in the relay info doc.
 
 ### Lookup relay (NIP-65 / outbox model)
@@ -445,8 +446,8 @@ Edits in the admin UI apply immediately (no restart).
   author's intent across *all* kinds, even profiles/DMs/local-user events that the age-based
   cleaner would otherwise keep forever.
 - **NIP-45** — `COUNT`.
-- **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by a PostgreSQL
-  `tsvector`/GIN index over note content.
+- **NIP-50** — full-text **search** (`{"search": "..."}` filters), backed by PosterChanDB's word index
+  over note content.
 - **NIP-65** — relay lists (kind-10002) stored & served — this relay works as an **outbox /
   lookup relay** so clients can resolve where each member posts.
 - **NIP-77** — **negentropy** set reconciliation (`NEG-OPEN`/`NEG-MSG`) for efficient sync;

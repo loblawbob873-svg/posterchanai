@@ -273,16 +273,16 @@ The Cloudflare rule must be configured in the zone; source changes do not create
 ## Validation
 
 ```sh
-.venv/bin/pytest -q tests/test_media_center.py tests/test_media_center_packaging.py
+venv-unified/bin/python -m pytest -q tests/test_media_center.py tests/test_media_center_packaging.py
 node --check static/js/client/app.js
 node --check static/js/client/sw.js
-.venv/bin/python scripts/check_media_center.py
+venv-unified/bin/python scripts/check_media_center.py
 ```
 
 The broader regression command used for this validation is:
 
 ```sh
-.venv/bin/pytest -q tests/test_media_center.py tests/test_media_center_packaging.py \
+venv-unified/bin/python -m pytest -q tests/test_media_center.py tests/test_media_center_packaging.py \
   tests/test_nip78_auth_privacy.py tests/test_admin_settings_coverage.py \
   tests/test_install_defaults.py tests/test_docker_nostr_no_models.py \
   tests/client/test_auth_signer_failure.py tests/client/test_nip78_auth.py
@@ -311,7 +311,7 @@ To include the official Jellyfin SDK integration cases (test-only dependency):
 ```sh
 npm install --prefix /tmp/pc-jellyfin-sdk --no-audit --no-fund @jellyfin/sdk@0.13.0
 JELLYFIN_TEST_SDK=/tmp/pc-jellyfin-sdk/node_modules/@jellyfin/sdk \
-  .venv/bin/pytest -q tests/test_jellyfin.py
+  venv-unified/bin/python -m pytest -q tests/test_jellyfin.py
 ```
 
 Without that environment variable, only the two SDK/FFmpeg cases are skipped; the

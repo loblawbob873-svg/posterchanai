@@ -13,7 +13,7 @@
 > |-----------|-----------------|-------|
 > | venv | **`venv-unified`** | ONE venv: chat **and** image |
 > | torch | **2.12.0+xpu** | native PyTorch-XPU; bundles its own oneAPI runtime (no system oneAPI, no IPEX) |
-> | chat backend | **`llama-cpp-python` (SYCL)** | built `-DGGML_SYCL=ON` (the only local LLM backend — Ollama/IPEX removed) |
+> | chat backend | **`llama-cpp-python` (SYCL)** | built `-DGGML_SYCL=ON` (the only local LLM backend) |
 > | image backend | **diffusers (torch-XPU)** | the only image backend (ComfyUI removed); per-gen subprocess (`image_subprocess_mode=true`) frees VRAM on the shared GPU |
 > | IGC (system) | **>= 2.35.5** | `scripts/install-igc.sh`; still required for SDXL ≥768 |
 > | launcher | **`run-intel.sh`** | sets `LD_LIBRARY_PATH=venv-unified/lib:/usr/lib64` + **`ONEAPI_DEVICE_SELECTOR=level_zero:gpu`** |
