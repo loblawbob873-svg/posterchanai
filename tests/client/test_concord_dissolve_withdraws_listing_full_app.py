@@ -27,7 +27,11 @@ SETUP = r"""(()=>{
   window.__got={queried:[],published:[],sentTo:[],dissolved:0};
   const other=ev('b','canary room\n\n'+URL,[['t','concord'],['t','community']]);          // signed on another device
   const unrelated=ev('c','my other community\n\nhttps://poster.place/invite/naddr1other',[['t','concord']]);
-  window.PosterCordReader={...(window.PosterCordReader||{}),
+  // The real reader is loaded first (see _run). This test is about the LISTING, so the two reader calls the
+  // dissolution itself makes are stood in for: the wrap, and the plane auth (whose membership check rightly refuses a
+  // room that is not in this account's saved list -- which this dummy room is not). Before, the stub only ever held
+  // on a machine fast enough to run before the real reader loaded; on CI the real one replaced it.
+  window.PosterCordReader={...window.PosterCordReader, createPlaneAuth:undefined,
     createDissolutionWrap:async()=>({wrap:{id:'w'.repeat(64),pubkey:'f'.repeat(64),kind:1059,tags:[],content:'',created_at:1,sig:''}})};
   window.__p=(failQuery,failPublish)=>({...__PC.concordDeps?__PC.concordDeps():{},
     viewer:()=>({pubkey:PK}), toast:()=>{}, enc:x=>String(x),
@@ -55,7 +59,11 @@ def _run(fail_query=False, fail_publish=False):
     async def check(b):
         await desktop.login(b)
         await b.js("__PC.switchView('concord')")
-        await b.until("!!window.PCConcord && typeof PCConcord.dissolveCommunity==='function'")
+        # The REAL reader first: SETUP stubs onto it, and a reader that finished loading afterwards replaced the stub,
+        # so the real one got this test's dummy community and threw "invalid Concord join material" -- on CI and in a
+        # loaded gate, never on an idle machine (the desktop builds failed on it).
+        await b.until("!!window.PCConcord && typeof PCConcord.dissolveCommunity==='function'"
+                      " && !!window.PosterCordReader && typeof PosterCordReader.inspectControl==='function'")
         got["pk"] = await b.js(SETUP)
         got["threw"] = await b.js("PCConcord.dissolveCommunity(__p(%s,%s),__room).then(()=>null,e=>String(e&&e.message||e))"
                                   % (json.dumps(fail_query), json.dumps(fail_publish)))
