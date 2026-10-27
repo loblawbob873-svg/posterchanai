@@ -92,6 +92,26 @@ async def _area(b, touch):
     got["out_pulled"], _ = _px(png, *B(.4, .3))       # inside the moved quad, outside the original square
     got["out_far"], _ = _px(png, *B(.1, .85))         # nowhere near the area
     got["out_orig"], _ = _px(png, *B(.45, .45))       # the original square, under the moved copy
+    # After the export: back to the layer's controls, then the mode switch and the two area buttons, each pressed.
+    if await b.js("!!document.querySelector('.mb-tab[data-tab=\"layer\"]')"):
+        await inp.tap('.mb-tab[data-tab="layer"]')
+    await b.until("!!document.getElementById('mb-warp-whole')")
+    # The mode switch and the two area buttons, each pressed for real.
+    await inp.tap('#mb-warp-whole')                       # back to the whole picture's four corners
+    await b.until("document.querySelectorAll('.mb-wh:not(.mb-ah)').length===4 && !document.querySelector('.mb-ah')")
+    got["whole_keeps_area"] = await b.js(LAYER + ".warpArea||null")
+    await inp.tap('#mb-warp-area')
+    await b.until("document.querySelectorAll('.mb-ah').length===4")
+    await inp.tap('#mb-area-new')                         # pick a different part: the old area is dropped
+    await b.until("!!document.querySelector('.mb-apick')")
+    got["after_new"] = await b.js(LAYER + ".warpArea||null")
+    r2 = await b.js(RECT)
+    await _drag(b, inp, r2[0] + r2[2] * .1, r2[1] + r2[3] * .1, r2[0] + r2[2] * .3, r2[1] + r2[3] * .3)
+    await b.until("document.querySelectorAll('.mb-ah').length===4")
+    got["repicked"] = await b.js(LAYER + ".warpArea||null")
+    await inp.tap('#mb-area-reset')                       # Undo area
+    await b.until("!!document.querySelector('.mb-apick')")
+    got["after_undo"] = await b.js(LAYER + ".warpArea||null")
     got["errors"] = await b.js("(window.__errors||[]).slice(-5)")
     return got
 
@@ -113,6 +133,10 @@ def _check(got):
     assert _near(got["out_pulled"], RED, tol=50), ("the export does not move the area", got)
     assert _near(got["out_far"], GREEN, tol=50), ("the export changed the photo away from the area", got)
     assert _near(got["out_orig"], RED, tol=50), got
+    assert got["whole_keeps_area"] == got["moved"], ("switching to Whole picture lost the area", got)
+    assert got["after_new"] is None, ("New area kept the old one", got)
+    assert got["repicked"] and all(abs(a - b) < .04 for a, b in zip(got["repicked"]["r"], [.1, .1, .2, .2])), got
+    assert got["after_undo"] is None, ("Undo area left the area", got)
     assert not got["errors"], got["errors"]
 
 
