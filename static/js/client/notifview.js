@@ -112,8 +112,9 @@ window.PCNotifViewFactory = function(dep){
     // Notifications app in a window has to empty the bell, not only the badge inside that window.
     try{ if(window.PCOS && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
   }
-  // UNREAD DIRECT MESSAGES, as one row that opens Messages. The bell no longer COUNTS them (notifs.js
-  // notifUnread -- a DM badges Messages only), but somebody on this screen is still told; a row per DM
+  // UNREAD DIRECT MESSAGES, as one row that opens Messages. In Desktop mode and PosterChanOS the bell counts them
+  // (notifs.js notifUnread), so the screen behind it has to show them; elsewhere it is how this screen still tells
+  // somebody who only badges Messages. A row per DM
   // would need the decrypted messages, which live in the Messages view, and would print their senders on a
   // screen that a shoulder-surfer reads -- the count is enough to say "you have mail".
   function _dmNotifHtml(){

@@ -470,6 +470,7 @@ window.PCNotifsFactory = function(dep){
     }
     return seenNotif.ahead;
   }
+  function _desktopBell(){ try{ return !!(window.PCOS && PCOS.isOn && PCOS.isOn()); }catch(_){ return false; } }
   function notifUnread(){ return notifList().filter(e=>{
       const ts=_notifTs(e);
       if(ts<=seenNotif.last && !_arrivedUnread(e)) return false;
@@ -484,10 +485,12 @@ window.PCNotifsFactory = function(dep){
     // pinned the bell at 1 however often it was clicked ("notification bell stuck at 1 despite clicking on
     // it many times"). The row stays in the list; it just stops being unread once seen, like any other.
     }).length + ((S._newBuild||S._apkUpdate)&&S._updBadge?1:0)
-      // UNREAD DMs ARE NOT IN THE BELL (operator decision, 2026-10-11). They were, for a while ("i see no
-      // notification bell when DM's come in"), and one message then lit two badges while the bell rang
-      // for something Notifications could only point away from. A DM badges Messages (dms.js bumpDm);
-      // its toast and OS/push notification are unchanged. tests/client/bell_dms_runtime.mjs.
+      // UNREAD DMs LIGHT THE BELL IN DESKTOP MODE AND POSTERCHANOS (2026-10-27: "maybe for Desktop mode and OS mode,
+      // light the bell"). There the bell is the taskbar's one place to look, and a DM missed under a window is the
+      // complaint. In the web/phone layout a DM badges Messages only (the 10-11 decision: one message, one badge).
+      // Only those since Notifications was last opened (dms.js dmUnreadSince): opening it empties the bell, DMs
+      // included, while Messages keeps its own count until they are read. tests/client/bell_dms_runtime.mjs.
+      + (_desktopBell() && typeof window.PCdmUnreadSince === 'function' ? window.PCdmUnreadSince(seenNotif.last) : 0)
       // Concord mentions not yet read DO count (concord.js's ledger -- see _concordMentions).
       + _concordMentions().reduce((n,r)=>n+r.n,0)
       // Telegram messages not yet read DO count too (telegram.js's ledger -- see _tgUnread).

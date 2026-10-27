@@ -1,10 +1,8 @@
-"""A DM LIGHTS MESSAGES, NEVER THE NOTIFICATION BELL (operator decision, 2026-10-11).
-
-Unread DMs used to be summed into the bell ("i see no notification bell when DM's come in"), so one
-message lit two badges, and the desktop's taskbar bell rang for something Notifications only pointed
-away from. Now: an incoming DM raises the Messages badge and leaves the bell where it was; a mention
-or reply still raises the bell. DM toasts and OS/push notifications are untouched -- only the bell's
-COUNT changed. Real NIP-17 gift wraps through the in-page relay (test_dm_newest_first_full_app).
+"""WHERE A DM LIGHTS THE BELL. In the web/phone layout a DM badges Messages, never the bell (operator decision
+2026-10-11: one message lit two badges). In Desktop mode and PosterChanOS it lights the taskbar bell too (2026-10-27:
+"maybe for Desktop mode and OS mode, light the bell") -- there the bell is the one place to look, and a DM missed
+under a window was the complaint. A mention or reply lights the bell everywhere; toasts and OS/push notifications are
+untouched. Real NIP-17 gift wraps through the in-page relay (test_dm_newest_first_full_app).
 """
 import asyncio
 from pathlib import Path
@@ -56,9 +54,11 @@ DM_BADGE = "(()=>{const b=document.querySelector('#dm-badge');return b&&!b.class
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
-def test_the_desktop_taskbar_bell_stays_dark_for_dms():
-    """The PosterChanOS taskbar draws its own bell from the same count (PC.notifUnread). DMs arrive
-    AFTER sign-in, in desktop mode; Messages counts them, the taskbar bell does not."""
+def test_the_desktop_taskbar_bell_lights_for_dms_and_the_web_bell_does_not():
+    """The desktop's taskbar draws its own bell from the same count (PC.notifUnread). DMs arrive AFTER sign-in, in
+    desktop mode: Messages counts them AND the taskbar bell lights; opening Notifications empties the bell while
+    Messages keeps counting (a DM arriving after that relights it: bell_dms_runtime.mjs); leaving the desktop leaves
+    the DMs out of the bell."""
     async def check(b):
         await b.call('Emulation.setDeviceMetricsOverride', dict(width=1440, height=900, deviceScaleFactor=1, mobile=False))
         await b.until("document.body.classList.contains('guest')")
@@ -69,9 +69,14 @@ def test_the_desktop_taskbar_bell_stays_dark_for_dms():
         await b.js(DM_SEED + "('new',2)")                    # two DMs arrive while the desktop is up
         await until(b, "__PC.dmStats && __PC.dmStats().done>=2")
         await until(b, DM_BADGE + "==='2'")
-        await asyncio.sleep(1.5)
-        assert await b.js(OS_BELL) == '', ('a DM lit the taskbar bell', await b.js(OS_BELL))
-        assert await b.js('__PC.notifUnread()') == 0, await b.js('__PC.notifUnread()')
+        await until(b, OS_BELL + "==='2'")
+        assert await b.js('__PC.notifUnread()') == 2, await b.js('__PC.notifUnread()')
+        await b.js("__PC.switchView('notifications')")              # opening Notifications empties the bell
+        await until(b, "__PC.notifUnread()===0")
+        await until(b, OS_BELL + "===''")
+        assert await b.js(DM_BADGE) == '2', ('Notifications must not read the DMs', await b.js(DM_BADGE))
+        await b.js('PCOS.exit()')                                   # outside the desktop it is Messages only
+        await until(b, "__PC.notifUnread()===0")
         assert not await b.js('__errors'), await b.js('__errors')
     asyncio.run(desktop.with_browser('online', '', check, RELAY))
 
@@ -92,5 +97,5 @@ def test_reading_dms_on_one_monitor_clears_messages_on_the_other():
           o.dmSeen=Math.floor(Date.now()/1000)+60;const nv=JSON.stringify(o);localStorage.setItem(k,nv);
           window.dispatchEvent(new StorageEvent('storage',{key:k,oldValue:old,newValue:nv,storageArea:localStorage}));})()""")
         await until(b, DM_BADGE + "===''")
-        assert await b.js(OS_BELL) == '', await b.js(OS_BELL)
+        await until(b, OS_BELL + "===''")       # read on the other monitor: this desktop's bell drops them too
     asyncio.run(desktop.with_browser('online', '', check, RELAY))

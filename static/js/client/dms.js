@@ -1120,6 +1120,15 @@ window.PCDmsFactory = function(dep){
   }); }catch(_){}
   // Read = at or before what THIS ACCOUNT has seen in that conversation, on any device (dmSeenFor:
   // this device's `dmSeen` and the synced `pcai:seen` marks, app.js / seen.js).
+  /* Unread DMs that arrived AFTER `since` (seconds) -- what the BELL counts (2026-10-27, the owner reversing the
+     10-11 decision: "make DMs light the bell again"). Opening Notifications empties the bell, DMs included, while the
+     Messages badge keeps the full count until they are read. Read = this account's mark for that conversation. */
+  function dmUnreadSince(since){ let n=0;
+    for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
+      const selfThread = pk===S.ME.pubkey, seen = Math.max(dmSeenFor(pk), Number(since)||0);
+      for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } }
+    return n; }
+  try{ window.PCdmUnreadSince = dmUnreadSince; }catch(_){}
   function recountDmUnread(){ let n=0;
     for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
       const selfThread = pk===S.ME.pubkey, seen = dmSeenFor(pk);
