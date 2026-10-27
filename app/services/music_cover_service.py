@@ -1,8 +1,15 @@
 """Album covers for the Music library, looked up ONLINE on a person's request (opt-in, per user, off by default).
 
 The Music app asks THIS node for an album it has no cover for (the files carry none); the node asks MusicBrainz which
-release group that is, then the Cover Art Archive for its front cover, and caches the bytes keyed by the MusicBrainz
-id -- so a cover is fetched from the internet once, ever, however many people or devices ask for it.
+release group that is, then the Cover Art Archive for its front cover -- and KEEPS IT ON THIS NODE'S BLOSSOM, so a
+cover is fetched from the internet once, ever, however many people or devices ask for it.
+
+WHERE IT IS KEPT. The bytes are a Blossom blob (content-addressed, owned by the node's operator key, `keep` -- never
+aged out -- and not mirrored), and the two answers that decide whether the internet is asked live on this node's
+relay as operator documents: `pcai:musiccover:<mbid>` -> {sha, mime} and `pcai:musiccoverq:<query hash>` -> {id, t}
+(the release group, or "-" for "no cover", believed for NEGATIVE_TTL). They used to be files under data/music-covers,
+a private folder no backup, node check or Blossom tooling knew about; a cache found there is moved into Blossom the
+first time it is read. "Could not ask" the relay or the store is `unavailable` -- never a reason to go online.
 
 Rules, each one a failure this module was written to avoid:
   * OUTBOUND THROUGH THE NODE'S PROXY FALLBACK (Tor first, then direct: proxy_utils.afallback_transport), the way
@@ -80,6 +87,7 @@ class Lookup:
 
 
 def _root() -> Path:
+    """The OLD cache folder -- read only to move what it holds into Blossom (see _LegacyFiles)."""
     base = os.environ.get("PC_MUSIC_COVER_DIR") or str(Path(__file__).resolve().parents[2] / "data" / "music-covers")
     return Path(base)
 
@@ -107,32 +115,157 @@ def _lucene(s: str) -> str:
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-# ---------------------------------------------------------------- the cache (atomic writes; a torn file is a miss)
-def _write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)
+# ---------------------------------------------------------------- where covers are kept
+class _Keep:
+    """The cover store: Blossom for the bytes, the relay for the two maps. Every method may raise Unavailable."""
+    COVER, QUERY = "pcai:musiccover:", "pcai:musiccoverq:"
 
+    @staticmethod
+    def _port() -> int:
+        from app.services import settings_store
+        return settings_store.get_int("nostr_relay_port", 3052)
 
-def _cached_map(qh: str) -> str | None:
-    """'<mbid>', '-' (no cover, still fresh) or None (never asked, or the negative answer expired)."""
-    p = _root() / "map" / qh
-    try:
-        val = p.read_text().strip()
-        if val == "-" and time.time() - p.stat().st_mtime > NEGATIVE_TTL:
+    @staticmethod
+    async def _with_db(fn):
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            return await fn(db)
+        finally:
+            db.close()
+
+    async def _sk(self) -> bytes:
+        from app.services import settings_store
+
+        async def go(db):
+            return settings_store._operator_seckey(db)
+        sk = await self._with_db(go)
+        if not sk:
+            raise Unavailable("no operator key")
+        return sk
+
+    async def _get(self, d: str):
+        from app.services import nostr_store
+        try:
+            return await nostr_store.get_doc(self._port(), d, seckey=await self._sk(), strict=True)
+        except Unavailable:
+            raise
+        except Exception as e:      # noqa: BLE001 -- an unreadable relay is "could not ask", whatever it raised
+            raise Unavailable("relay: %s" % type(e).__name__) from e
+
+    async def _put(self, d: str, doc: dict) -> None:
+        from app.services import nostr_store
+        if not await nostr_store.put_doc(self._port(), await self._sk(), d, doc):
+            raise Unavailable("relay refused the write")
+
+    async def get_map(self, qh: str):
+        doc = await self._get(self.QUERY + qh)
+        return doc if isinstance(doc, dict) else None
+
+    async def put_map(self, qh: str, mbid: str, t: int | None = None) -> None:
+        await self._put(self.QUERY + qh, {"id": mbid, "t": int(t if t is not None else time.time())})
+
+    async def get_cover(self, mbid: str):
+        doc = await self._get(self.COVER + mbid)
+        sha = str((doc or {}).get("sha") or "") if isinstance(doc, dict) else ""
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
             return None
-        return val if (val == "-" or valid_id(val)) else None
-    except OSError:
+        from app.services import blob_index, blossom_service
+        try:
+            blob = await blob_index.aget(sha)
+        except Exception as e:      # noqa: BLE001
+            raise Unavailable("blob index: %s" % type(e).__name__) from e
+        if blob is None:
+            return None             # the record outlived its bytes: fetched again, by id
+        data = await self._with_db(lambda db: blossom_service.read_full(db, blob))
+        if data is None:
+            raise Unavailable("the store could not read the cover")
+        return data, str(doc.get("mime") or "image/jpeg")
+
+    async def put_cover(self, mbid: str, data: bytes, mime: str) -> None:
+        from app.services import blossom_service
+        from app.services.nostr import bip340
+        pk = bip340.pubkey_from_seckey(await self._sk()).hex()
+        desc = await self._with_db(lambda db: blossom_service.save_blob(
+            db, pk, data, mime, mirror=False, keep=True, filename="cover-%s.%s" % (mbid, blossom_service.ext_for_mime(mime).lstrip("."))))
+        await self._put(self.COVER + mbid, {"sha": desc["sha256"], "mime": mime})
+
+
+class _LegacyFiles:
+    """The folder covers used to be kept in: read once, moved into the store, then deleted."""
+
+    @staticmethod
+    def map(qh: str):
+        p = _root() / "map" / qh
+        try:
+            return p.read_text().strip(), int(p.stat().st_mtime)
+        except OSError:
+            return None
+
+    @staticmethod
+    def cover(mbid: str):
+        d = _root() / "covers"
+        try:
+            return (d / f"{mbid}.img").read_bytes(), (d / f"{mbid}.mime").read_text().strip() or "image/jpeg"
+        except OSError:
+            return None
+
+    @staticmethod
+    def drop(*paths) -> None:
+        for p in paths:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+_keep = _Keep()
+
+
+async def _cached_map(qh: str) -> str | None:
+    """'<mbid>', '-' (no cover, still fresh) or None (never asked, or the negative answer expired)."""
+    doc = await _keep.get_map(qh)
+    if doc is None:
+        old = _LegacyFiles.map(qh)
+        if old and (old[0] == "-" or valid_id(old[0])):
+            await _keep.put_map(qh, old[0], old[1])   # the old answer's age: "no cover" is believed for a week from THEN
+            doc = {"id": old[0], "t": old[1]}
+            _LegacyFiles.drop(_root() / "map" / qh)
+    if not doc:
         return None
+    val = str(doc.get("id") or "")
+    if val == "-" and time.time() - int(doc.get("t") or 0) > NEGATIVE_TTL:
+        return None
+    return val if (val == "-" or valid_id(val)) else None
 
 
-def _cached_cover(mbid: str) -> tuple[bytes, str] | None:
-    d = _root() / "covers"
+async def _cached_cover(mbid: str) -> tuple[bytes, str] | None:
+    hit = await _keep.get_cover(mbid)
+    if hit is None:
+        old = _LegacyFiles.cover(mbid)
+        if old:
+            await _keep.put_cover(mbid, *old)
+            _LegacyFiles.drop(_root() / "covers" / f"{mbid}.img", _root() / "covers" / f"{mbid}.mime")
+            hit = old
+    return hit
+
+
+async def _remember(qh: str, mbid: str) -> None:
+    """A write after the answer is known: if the store will not take it, the answer still goes back (and is
+    simply asked for again next time) -- an answer in hand is never turned into "could not ask"."""
     try:
-        return (d / f"{mbid}.img").read_bytes(), (d / f"{mbid}.mime").read_text().strip() or "image/jpeg"
-    except OSError:
-        return None
+        await _keep.put_map(qh, mbid)
+    except Unavailable as e:
+        logger.info("music cover lookup: answer not kept (%s)", e)
+
+
+async def _keep_cover(mbid: str, data: bytes, mime: str) -> bool:
+    try:
+        await _keep.put_cover(mbid, data, mime)
+        return True
+    except Unavailable as e:
+        logger.info("music cover: bytes not kept (%s)", e)
+        return False
 
 
 # ---------------------------------------------------------------- MusicBrainz, one request a second
@@ -246,44 +379,42 @@ def _checked(data: bytes) -> tuple[bytes, str]:
     return data, mime
 
 
-def _store_cover(mbid: str, data: bytes, mime: str) -> None:
-    d = _root() / "covers"
-    _write(d / f"{mbid}.img", data)
-    _write(d / f"{mbid}.mime", mime.encode())
-
-
 # ---------------------------------------------------------------- the two questions the router asks
 async def lookup(artist: str, album: str) -> Lookup:
     """Which cover (by MusicBrainz id) an album has: 'ok' + id, 'none', or 'unavailable' (never cached)."""
     qh = _qhash(artist, album)
-    hit = _cached_map(qh)
-    if hit == "-":
-        logger.info("music cover lookup: none (cached)")
-        return Lookup("none")
-    if hit and _cached_cover(hit):
-        logger.info("music cover lookup: ok (cached)")
-        return Lookup("ok", hit)
+    try:
+        hit = await _cached_map(qh)
+        if hit == "-":
+            logger.info("music cover lookup: none (cached)")
+            return Lookup("none")
+        if hit and await _cached_cover(hit):
+            logger.info("music cover lookup: ok (cached)")
+            return Lookup("ok", hit)
+    except Unavailable as e:
+        logger.info("music cover lookup: unavailable (the store: %s)", e)
+        return Lookup("unavailable")
     try:
         async with asyncio.timeout(DEADLINE):
             async with httpx.AsyncClient(transport=_transport(), timeout=12.0, follow_redirects=False,
                                          headers={"User-Agent": USER_AGENT, "Accept": "application/json"}) as client:
                 mbid = hit or await _release_group(client, artist, album)
                 if not mbid:
-                    _write(_root() / "map" / qh, b"-")
+                    await _remember(qh, "-")
                     logger.info("music cover lookup: none (no matching release group)")
                     return Lookup("none")
                 try:
                     got = await _caa_front(client, mbid)
                 except _Refused as e:
-                    _write(_root() / "map" / qh, b"-")
+                    await _remember(qh, "-")
                     logger.info("music cover lookup: none (refused: %s)", e)
                     return Lookup("none")
                 if not got:
-                    _write(_root() / "map" / qh, b"-")
+                    await _remember(qh, "-")
                     logger.info("music cover lookup: none (the archive has no front cover)")
                     return Lookup("none")
-                _store_cover(mbid, *got)
-                _write(_root() / "map" / qh, mbid.encode())
+                await _keep_cover(mbid, *got)
+                await _remember(qh, mbid)      # even if the bytes were not kept: the id still skips MusicBrainz
                 logger.info("music cover lookup: ok (%d bytes)", len(got[0]))
                 return Lookup("ok", mbid)
     except (Unavailable, TimeoutError) as e:
@@ -297,7 +428,11 @@ async def cover(mbid: str) -> tuple[str, bytes, str]:
     mbid = str(mbid or "").lower()
     if not valid_id(mbid):
         return "none", b"", ""
-    hit = _cached_cover(mbid)
+    try:
+        hit = await _cached_cover(mbid)
+    except Unavailable as e:
+        logger.info("music cover fetch: unavailable (the store: %s)", e)
+        return "unavailable", b"", ""
     if hit:
         return "ok", hit[0], hit[1]
     try:
@@ -314,6 +449,6 @@ async def cover(mbid: str) -> tuple[str, bytes, str]:
         return "unavailable", b"", ""
     if not got:
         return "none", b"", ""
-    _store_cover(mbid, *got)
+    await _keep_cover(mbid, *got)       # served even if not kept -- the bytes are good
     logger.info("music cover fetch: ok (%d bytes)", len(got[0]))
     return "ok", got[0], got[1]

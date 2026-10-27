@@ -54,8 +54,43 @@ class FakeWeb:
         return httpx.Response(599)
 
 
+class FakeKeep:
+    """The node's cover store (Blossom bytes + relay maps), in memory -- the same methods as svc._Keep. `down` makes
+    every call "could not ask"; `refuse_writes` makes only the writes fail."""
+
+    def __init__(self):
+        self.maps, self.covers, self.down, self.refuse_writes = {}, {}, False, False
+
+    def _check(self, write=False):
+        if self.down or (write and self.refuse_writes):
+            raise svc.Unavailable("fake store down")
+
+    async def get_map(self, qh):
+        self._check()
+        return self.maps.get(qh)
+
+    async def put_map(self, qh, mbid, t=None):
+        self._check(True)
+        self.maps[qh] = {"id": mbid, "t": int(t if t is not None else time.time())}
+
+    async def get_cover(self, mbid):
+        self._check()
+        return self.covers.get(mbid)
+
+    async def put_cover(self, mbid, data, mime):
+        self._check(True)
+        self.covers[mbid] = (data, mime)
+
+
 @pytest.fixture
-def web(tmp_path, monkeypatch):
+def keep(monkeypatch):
+    k = FakeKeep()
+    monkeypatch.setattr(svc, "_keep", k)
+    return k
+
+
+@pytest.fixture
+def web(tmp_path, monkeypatch, keep):
     fake = FakeWeb()
     monkeypatch.setenv("PC_MUSIC_COVER_DIR", str(tmp_path / "covers"))
     monkeypatch.setattr(svc, "_transport", lambda: httpx.MockTransport(fake.handler))
@@ -104,15 +139,14 @@ def test_a_second_ask_is_answered_from_the_cache_and_asks_nobody(client, web):
     assert len(web.calls) == n
 
 
-def test_no_cover_is_cached_for_a_week_and_then_asked_again(client, web, tmp_path):
+def test_no_cover_is_cached_for_a_week_and_then_asked_again(client, web, keep):
     web.mb = lambda req: httpx.Response(200, json={"release-groups": []})
     assert _ask(client).status_code == 404
     n = len(web.calls)
     assert _ask(client).status_code == 404 and len(web.calls) == n, "a cached 'none' asked MusicBrainz again"
     # A week later the answer is old: ask again (and this time there is one).
-    for p in (tmp_path / "covers" / "map").iterdir():
-        old = time.time() - svc.NEGATIVE_TTL - 60
-        os.utime(p, (old, old))
+    for doc in keep.maps.values():
+        doc["t"] = int(time.time() - svc.NEGATIVE_TTL - 60)
     web.mb = lambda req: httpx.Response(200, json={"release-groups": [{"id": RG, "score": 99}]})
     assert _ask(client).json() == {"id": RG}
     assert len(web.calls) > n
@@ -233,3 +267,108 @@ def test_the_names_never_travel_in_a_url(client, web):
     r = client.get("/api/music/cover", params={"artist": ARTIST, "album": ALBUM})
     assert r.status_code == 405, r.status_code
     assert web.calls == []
+
+
+# ---------------------------------------------------------------- kept on this node's Blossom, never a private folder
+def test_a_cover_is_kept_in_the_store_and_a_restart_asks_the_internet_nothing(client, web, keep):
+    """"make sure that album/artist artwork is stored on our blossom so it don't have to keep reaching the internet"
+    (2026-10-26): the bytes go to the node's store, the answers to the relay, and a fresh process -- nothing in
+    memory, the store still there -- serves every cover without one outbound request."""
+    assert _ask(client).json() == {"id": RG}
+    assert keep.covers[RG] == (_png(), "image/png") and any(d["id"] == RG for d in keep.maps.values()), keep.__dict__
+    n = len(web.calls)
+    import importlib
+    fresh = importlib.reload(svc)                    # a restart: module state gone, the store is what is left
+    try:
+        fresh._keep = keep
+        fresh._transport = lambda: httpx.MockTransport(web.handler)
+        assert asyncio.run(fresh.lookup(ARTIST, ALBUM)).id == RG
+        assert asyncio.run(fresh.cover(RG))[:2] == ("ok", _png())
+    finally:
+        importlib.reload(svc)
+    assert len(web.calls) == n, ("a kept cover asked the internet again", web.calls[n:])
+
+
+def test_a_store_that_cannot_be_asked_is_a_503_and_never_a_reason_to_go_online(client, web, keep):
+    keep.down = True
+    r = _ask(client)
+    assert r.status_code == 503, r.text
+    assert client.get(f"/api/music/cover/{RG}").status_code == 503
+    assert web.calls == [], ("an unreadable store sent the node to the internet", web.calls)
+
+
+def test_a_store_that_will_not_take_the_cover_still_answers(client, web, keep):
+    keep.refuse_writes = True
+    assert _ask(client).json() == {"id": RG}
+    img = client.get(f"/api/music/cover/{RG}")
+    assert img.status_code == 200 and img.content == _png()
+
+
+def test_the_old_cover_folder_moves_into_the_store_and_is_served_without_the_internet(client, web, keep, tmp_path):
+    root = tmp_path / "covers"
+    (root / "covers").mkdir(parents=True)
+    (root / "map").mkdir(parents=True)
+    (root / "covers" / f"{RG}.img").write_bytes(_png(4))
+    (root / "covers" / f"{RG}.mime").write_text("image/png")
+    qh = svc._qhash(ARTIST, ALBUM)
+    (root / "map" / qh).write_text(RG)
+    qh2 = svc._qhash("Other", "Nothing")
+    (root / "map" / qh2).write_text("-")
+    old = time.time() - 3 * 86400
+    os.utime(root / "map" / qh2, (old, old))
+    assert _ask(client).json() == {"id": RG}
+    assert client.get(f"/api/music/cover/{RG}").content == _png(4)
+    assert _ask(client, "Other", "Nothing").status_code == 404
+    assert web.calls == [], ("the old folder's covers were fetched again", web.calls)
+    assert keep.covers[RG] == (_png(4), "image/png") and keep.maps[qh]["id"] == RG
+    assert abs(keep.maps[qh2]["t"] - old) < 2, "a moved 'no cover' was given a fresh week"
+    assert not any(p.is_file() for p in root.rglob("*")), "the old folder still holds what was moved"
+
+
+def test_the_real_store_keeps_the_bytes_on_this_nodes_blossom(monkeypatch):
+    """svc._Keep itself, with the relay and Blossom faked at their edges: the bytes are saved as the OPERATOR's,
+    `keep` (never aged out), not mirrored; the relay records the sha; a read comes back through Blossom."""
+    from app.services import blob_index, blossom_service, nostr_store, settings_store
+    from app.services.nostr import bip340
+    sk = bytes(range(1, 33))
+    docs, saved, blobs = {}, [], {}
+    monkeypatch.setattr(settings_store, "_operator_seckey", lambda db: sk)
+    monkeypatch.setattr(svc._Keep, "_with_db", staticmethod(lambda fn: fn(None)))
+
+    async def put_doc(port, seckey, d, data, **kw):
+        assert seckey == sk
+        docs[d] = data
+        return True
+
+    async def get_doc(port, d, *, seckey=None, strict=False, **kw):
+        assert strict, "a cover read must be strict: an unreachable relay is not 'no cover'"
+        return docs.get(d)
+
+    async def save_blob(db, pubkey, data, mime, mirror=True, private=False, expires_days=0, filename="", keep=False):
+        saved.append(dict(pubkey=pubkey, mime=mime, mirror=mirror, keep=keep, expires_days=expires_days, filename=filename))
+        sha = blossom_service.compute_sha256(data)
+        blobs[sha] = data
+        return {"sha256": sha}
+
+    async def aget(sha):
+        return type("B", (), {"sha256": sha})() if sha in blobs else None
+
+    async def read_full(db, blob):
+        return blobs.get(blob.sha256)
+
+    monkeypatch.setattr(nostr_store, "put_doc", put_doc)
+    monkeypatch.setattr(nostr_store, "get_doc", get_doc)
+    monkeypatch.setattr(blossom_service, "save_blob", save_blob)
+    monkeypatch.setattr(blossom_service, "read_full", read_full)
+    monkeypatch.setattr(blob_index, "aget", aget)
+    k = svc._Keep()
+
+    async def go():
+        await k.put_cover(RG, _png(), "image/png")
+        await k.put_map("q" * 64, RG)
+        return await k.get_cover(RG), await k.get_map("q" * 64)
+    got, m = asyncio.run(go())
+    assert got == (_png(), "image/png") and m["id"] == RG
+    assert saved == [dict(pubkey=bip340.pubkey_from_seckey(sk).hex(), mime="image/png", mirror=False, keep=True,
+                          expires_days=0, filename=f"cover-{RG}.png")], saved
+    assert docs[svc._Keep.COVER + RG]["sha"] == blossom_service.compute_sha256(_png())

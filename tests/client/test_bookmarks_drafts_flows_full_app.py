@@ -143,8 +143,22 @@ async def a_bookmark_is_kept_after_a_reload_and_on_a_fresh_device(S):
                   'both bookmarks on the home relay', a)
     await reload(a)
     await open_bookmarks(a)
-    await F.wait(a, "%s.includes(%s) && %s.includes(%s)" % (LISTED, json.dumps(keep['id']), LISTED, json.dumps(drop['id'])),
-                 40, 'both bookmarks listed after a reload')
+    try:
+        await F.wait(a, "%s.includes(%s) && %s.includes(%s)" % (LISTED, json.dumps(keep['id']), LISTED, json.dumps(drop['id'])),
+                     40, 'both bookmarks listed after a reload')
+    except Exception:
+        # Intermittent (gate, 2026-10-26: one bookmark listed while the relay held both). Say what the client held,
+        # so the next failure names the stale copy instead of only "one bookmark".
+        try:
+            state = await a.b.js(r"""(async()=>{const row=e=>[e.created_at,e.id.slice(0,8),
+            e.tags.filter(t=>t[0]==='e').map(t=>t[1].slice(0,8))], mine=Store.query([{kinds:[10003]}]);
+          const pk=(mine[0]||{}).pubkey; return JSON.stringify({store:mine.map(row), listed:""" + LISTED + r""",
+            relay:pk?(await Relay.query([{kinds:[10003],authors:[pk]}])).map(row):null})})()""")
+        except Exception as e:      # noqa: BLE001 -- the dump must never replace the real failure
+            state = "could not read: %r" % (e,)
+        print("bookmark state at the failure:", state, "home relay:", bookmarked(S.n, S.pk(0)),
+              "keep:", keep['id'][:8], "drop:", drop['id'][:8])
+        raise
     b = await S.device(0)                                   # a fresh device, same account
     await open_bookmarks(b)
     await F.wait(b, "%s.includes(%s) && %s.includes(%s)" % (LISTED, json.dumps(keep['id']), LISTED, json.dumps(drop['id'])),

@@ -192,12 +192,12 @@ window.PCMusicArt = (function(){
  * so the list's one delegated click handler (and the shared list's) runs exactly the code a visible button ran.
  * The labels are each button's `data-label`; one marked `data-danger` is drawn as a danger item. */
 window.PCMusicRowMenu = function(btn){
-  const row = btn && btn.closest('.track'), PC = window.__PC;
+  const row = btn && btn.closest('.track'), app = window.__PC;
   if(!row) return;
   const acts = [...row.querySelectorAll(':scope > button[data-label]')].filter(a => !a.disabled);
   if(!acts.length) return;
-  if(!PC || !PC.openMenuPopover){ acts[0].click(); return; }
-  PC.openMenuPopover(btn, acts.map((a, i) => [String(i), a.dataset.label, a.dataset.danger ? 'danger' : '']),
+  if(!app || !app.openMenuPopover){ acts[0].click(); return; }
+  app.openMenuPopover(btn, acts.map((a, i) => [String(i), a.dataset.label, a.dataset.danger ? 'danger' : '']),
     k => { const a = acts[+k]; if(a && a.isConnected) a.click(); });
 };
 
