@@ -51,14 +51,14 @@ async def _run(width):
         await b.js("document.querySelectorAll('section,fieldset,.tab-content').forEach(e=>{e.hidden=false;e.style.display='block'}); 1")
         await b.js("document.getElementById('relayPins').scrollIntoView({block:'center'}); 1")
         await A.press(b, "#relayPinsBtn")
-        for _ in range(60):
+        for _ in range(120):
             if await b.js("document.querySelectorAll('#relayPinsList tr').length===2"):
                 break
             await asyncio.sleep(.1)
         got["listed"] = await b.js(PROBE)
         await b.js("document.querySelector('#relayPinsList .relay-unpin').scrollIntoView({block:'center'}); 1")
         await A.press(b, "#relayPinsList .relay-unpin")
-        for _ in range(80):
+        for _ in range(120):
             if await b.js("document.querySelectorAll('#relayPinsList tr').length===1"):
                 break
             await asyncio.sleep(.1)

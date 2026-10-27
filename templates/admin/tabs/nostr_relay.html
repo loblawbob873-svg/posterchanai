@@ -414,8 +414,7 @@
         box.addEventListener('click', async function(e){
             var b=e.target.closest('.relay-unpin'); if(!b) return;
             var row=b.closest('tr'), name=row?row.cells[0].textContent:'';
-            var ok=await (window.pcConfirm?pcConfirm('Unpin '+name+'? The next auto-clean deletes their feed posts older than the retention window. This cannot be undone.'):Promise.resolve(false));
-            if(!ok) return;
+            if(!(await pcConfirm('Unpin '+name+'? The next auto-clean deletes their feed posts older than the retention window. This cannot be undone.'))) return;
             b.disabled=true;
             f('/api/admin/nostr-relay/unpin',{method:'POST',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({pubkeys:[b.dataset.pk]})}).then(function(r){
