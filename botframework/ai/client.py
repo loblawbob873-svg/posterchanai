@@ -1,6 +1,6 @@
 """
 AI/LLM client for OpenAI-compatible APIs.
-Handles rate limiting, retries, and Ollama restart logic.
+Handles rate limiting, retries, and backend restart logic.
 """
 
 import json

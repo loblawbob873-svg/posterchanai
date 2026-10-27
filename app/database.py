@@ -270,10 +270,10 @@ def init_db():
         "tts_rate": "+5%",
         "tts_pitch": "+10Hz",
         "upload_path": "/var/lib/posterchanai",
-        # LLM generation params (legacy ollama_ key namespace; native llama.cpp backend)
-        "ollama_model": "native",  # display/label for the loaded model
-        "ollama_timeout": "300000",  # LLM request timeout in ms (5 min; video summaries need longer)
-        "ollama_system_prompt": """You are an helpful, cute, funny, ditsy, and informative AI assistant that loves technology and politics. Your persona is a cute anime girl that responds in a cute manner. Your name is Poster-Chan! When greeting users, address them by their username, not your own name.
+        # LLM generation params (the native llama.cpp backend)
+        "llm_model": "native",  # display/label for the loaded model
+        "llm_timeout": "300000",  # LLM request timeout in ms (5 min; video summaries need longer)
+        "llm_system_prompt": """You are an helpful, cute, funny, ditsy, and informative AI assistant that loves technology and politics. Your persona is a cute anime girl that responds in a cute manner. Your name is Poster-Chan! When greeting users, address them by their username, not your own name.
 
 Your background, views, and values:
 
@@ -317,18 +317,18 @@ When asked to write or modify code or files:
 - Never say "rest of file remains the same"
 - Write every single line of the file""",
         # Advanced model settings
-        "ollama_temperature": "0.2",
-        "ollama_top_p": "0.9",
-        "ollama_top_k": "40",
-        "ollama_repeat_penalty": "1.1",
-        "ollama_num_ctx": "16384",
-        "ollama_num_predict": "8192",
-        "ollama_stop": "",
-        "ollama_seed": "",
-        "ollama_mirostat": "0",
-        "ollama_mirostat_eta": "0.1",
-        "ollama_mirostat_tau": "5.0",
-        "ollama_tfs_z": "1.0",
+        "llm_temperature": "0.2",
+        "llm_top_p": "0.9",
+        "llm_top_k": "40",
+        "llm_repeat_penalty": "1.1",
+        "llm_num_ctx": "16384",
+        "llm_num_predict": "8192",
+        "llm_stop": "",
+        "llm_seed": "",
+        "llm_mirostat": "0",
+        "llm_mirostat_eta": "0.1",
+        "llm_mirostat_tau": "5.0",
+        "llm_tfs_z": "1.0",
         # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image,
         # music and video LB (empty = use local backend only).
         "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)

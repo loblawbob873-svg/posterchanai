@@ -1,6 +1,6 @@
 """
 OpenAI-compatible API router for LLM backend.
-Supports both native llama-cpp-python and Ollama backends.
+The local model is the native llama-cpp-python backend.
 Provides both /v1/* and /api/* endpoints for maximum compatibility.
 """
 import json
@@ -383,7 +383,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     api_inject_system = settings.get("api_inject_system_prompt", "true").lower() == "true"
     has_system = bool(messages and messages[0].get("role") == "system")
     if api_inject_system and not skip_load_balancer and not has_system:
-        system_prompt = settings.get("ollama_system_prompt", "")
+        system_prompt = settings.get("llm_system_prompt", "")
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt})
 
@@ -509,9 +509,9 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
             logger.warning(f"[OPENAI-API] URL fetch failed, continuing without context: {_url_err}")
 
     # Build kwargs
-    temperature = request.temperature if request.temperature is not None else float(settings.get("ollama_temperature", "0.2"))
-    top_p = request.top_p if request.top_p is not None else float(settings.get("ollama_top_p", "0.9"))
-    server_num_predict = int(settings.get("ollama_num_predict", "2048"))
+    temperature = request.temperature if request.temperature is not None else float(settings.get("llm_temperature", "0.2"))
+    top_p = request.top_p if request.top_p is not None else float(settings.get("llm_top_p", "0.9"))
+    server_num_predict = int(settings.get("llm_num_predict", "2048"))
     # CAP the client's max_tokens at the server limit (don't floor it - the old max() forced
     # every generation to ~32k). opencode sends max_tokens=32000, which makes a slow model
     # ramble for 100s+ and blow past opencode's ~125s request timeout -> retries. Capping at
@@ -523,7 +523,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     # any specific client.
     if request.tools:
         try:
-            predict_limit = int((settings.get("ollama_tool_num_predict", "16384") or "16384").strip())
+            predict_limit = int((settings.get("llm_tool_num_predict", "16384") or "16384").strip())
         except (TypeError, ValueError):
             predict_limit = 16384
     else:
@@ -539,7 +539,7 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         try:
             # Pass full server list to LoadBalancer - it will handle round-robin internally
             # This ensures proper load balancing across all servers
-            timeout = int(settings.get("ollama_timeout", "300000")) / 1000
+            timeout = int(settings.get("llm_timeout", "300000")) / 1000
             # Forward the client-requested model when it names a real local .gguf, so the
             # remote node loads it; otherwise use the admin-configured default. This lets an
             # API client (opencode) pick a model per call while the web UI stays on default.
@@ -709,7 +709,7 @@ async def _handle_list_models(db: Session):
     backend = get_backend_type(db)
 
     # Use actual server context size; minimum 16000 so OpenClaw and other clients accept it
-    setting = settings_store.get("ollama_num_ctx")
+    setting = settings_store.get("llm_num_ctx")
     ctx = int(setting) if setting and str(setting).isdigit() else 4096
     ctx = max(ctx, 16000)
 
@@ -719,7 +719,7 @@ async def _handle_list_models(db: Session):
             id=model.get("name", "unknown"),
             object="model",
             created=0,
-            owned_by="native" if backend == "native" else "ollama",
+            owned_by="native" if backend == "native" else "remote",
             root_context_length=ctx,
             context_length=ctx,
         ))

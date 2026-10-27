@@ -17,7 +17,7 @@ def main():
         "--autopost-print", action="store_true", help="Generate one in-character post and PRINT it without posting (preview)"
     )
     parser.add_argument(
-        "--ping", action="store_true", help="Pings Ollama every so often to make sure it is OK"
+        "--ping", action="store_true", help="Pings the AI backend every so often to make sure it is OK"
     )
     parser.add_argument(
         "--pleroma", action="store_true", help="Listen to Pleroma Events"

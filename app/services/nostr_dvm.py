@@ -725,7 +725,7 @@ async def _run_local(task: str, params: dict, ctx: Optional[dict] = None) -> dic
                 try:
                     _lp = s.get("llm_model_path", "")
                     model = kwargs.get("model") or (_os.path.basename(_lp) if _lp else "default")
-                    timeout = int(s.get("ollama_timeout", "300000") or "300000") / 1000
+                    timeout = int(s.get("llm_timeout", "300000") or "300000") / 1000
                     lb_kw = {k: kwargs[k] for k in ("temperature", "top_p", "max_tokens", "stop", "tools", "tool_choice") if k in kwargs}
                     lbres = await LoadBalancer(servers, timeout=timeout, model=model).chat(messages=messages, **lb_kw)
                     if isinstance(lbres, dict) and "error" not in lbres:

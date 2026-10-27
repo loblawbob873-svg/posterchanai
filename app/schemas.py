@@ -374,23 +374,23 @@ class SettingsResponse(BaseModel):
     # Admin → LLM checkbox, but was missing here — so GET /settings dropped it and the box loaded
     # unchecked no matter what was stored, then wrote "false" back on the next Save.
     llm_flash_attn: str = "false"  # enable for Qwen3/3.5 on CUDA builds; OFF on Arc/SYCL
-    # LLM generation parameters (the `ollama_` prefix is a legacy key namespace — these are the
-    # native llama.cpp backend's sampling/runtime settings, NOT an Ollama connection).
-    ollama_model: str = "native"  # display/label for the loaded model
-    ollama_timeout: str = "300000"  # LLM request timeout in ms (5 min; video summaries need longer)
-    ollama_system_prompt: str = ""
+    # LLM generation parameters: the native llama.cpp backend's sampling/runtime settings (renamed from an older
+    # prefix on 2026-10-26; settings_store.rename_settings moves a node's stored values).
+    llm_model: str = "native"  # display/label for the loaded model
+    llm_timeout: str = "300000"  # LLM request timeout in ms (5 min; video summaries need longer)
+    llm_system_prompt: str = ""
     # Advanced model settings
-    ollama_temperature: str = "0.2"
-    ollama_top_p: str = "0.9"
-    ollama_top_k: str = "40"
-    ollama_repeat_penalty: str = "1.1"
-    ollama_num_ctx: str = "auto"  # "auto" sizes the window to fit the detected GPU; or an explicit int
-    ollama_num_predict: str = "8192"
+    llm_temperature: str = "0.2"
+    llm_top_p: str = "0.9"
+    llm_top_k: str = "40"
+    llm_repeat_penalty: str = "1.1"
+    llm_num_ctx: str = "auto"  # "auto" sizes the window to fit the detected GPU; or an explicit int
+    llm_num_predict: str = "8192"
     # Separate, higher output cap used ONLY when a request carries tools (agentic coding clients
     # like opencode emit whole-file writes as one tool call - the lower num_predict cap truncates
-    # large files mid-function). Plain chat keeps ollama_num_predict so slow generations stay under
+    # large files mid-function). Plain chat keeps llm_num_predict so slow generations stay under
     # the client's request timeout.
-    ollama_tool_num_predict: str = "16384"
+    llm_tool_num_predict: str = "16384"
     # Small-context coding guidance injected server-side into the system prompt of any request that
     # carries tools (opencode et al.), so large-file editing behaves without each client needing its
     # own AGENTS.md. Empty tool_guidance_text => the built-in default in openai_api._DEFAULT_TOOL_GUIDANCE.
@@ -399,12 +399,12 @@ class SettingsResponse(BaseModel):
     # Append the TikTok-style "made with PosterChanAI" end-card to effect videos (per-user
     # avatar/@username in the web UI / Telegram; static card for bot-posted effects).
     effect_outro_enabled: str = "true"
-    ollama_stop: str = ""
-    ollama_seed: str = ""
-    ollama_mirostat: str = "0"
-    ollama_mirostat_eta: str = "0.1"
-    ollama_mirostat_tau: str = "5.0"
-    ollama_tfs_z: str = "1.0"
+    llm_stop: str = ""
+    llm_seed: str = ""
+    llm_mirostat: str = "0"
+    llm_mirostat_eta: str = "0.1"
+    llm_mirostat_tau: str = "5.0"
+    llm_tfs_z: str = "1.0"
     # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image, music
     # and video LB (Site → Load Balancing → Server URLs).
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
@@ -927,7 +927,7 @@ class ModelInfo(BaseModel):
     id: str
     object: str = "model"
     created: int = 0
-    owned_by: str = "ollama"
+    owned_by: str = "native"
     # Context size for OpenAI-compatible clients (e.g. OpenClaw); minimum 16000 for agent use
     root_context_length: Optional[int] = None
     context_length: Optional[int] = None

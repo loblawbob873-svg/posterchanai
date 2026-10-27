@@ -1,7 +1,7 @@
 """
 LLM Health Check Service
 Periodically checks the LOCAL LLM backend and handles recovery.
-Supports native llama-cpp-python, IPEX-LLM, and Ollama backends.
+The local backend is native llama-cpp-python.
 
 NOTE: This only monitors the LOCAL inference service on this server.
 It does NOT check remote servers configured in load balancing (chat_server_urls).

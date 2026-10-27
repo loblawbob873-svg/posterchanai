@@ -215,7 +215,7 @@ create_default_run_script() {
     local RUN_SCRIPT="$1"
     cat > "$RUN_SCRIPT" << 'SCRIPT'
 #!/bin/bash
-# CPU / Nostr-only / Ollama wrapper script
+# CPU / Nostr-only / remote-LLM wrapper script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 # Local env overrides (POSTERCHANAI_NOSTR_RELAY / _NOSTR_ONLY, POSTERCHANDB_DIR, …)

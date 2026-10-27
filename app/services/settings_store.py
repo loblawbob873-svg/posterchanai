@@ -541,6 +541,64 @@ def _operator_hex(op_sk) -> str:
     return pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
 
 
+# RENAMED SETTINGS. The native llama.cpp backend's sampling/runtime keys carried the prefix of an inference server
+# this app no longer has anything to do with (2026-10-26); they are `llm_*` now. A node's stored values MOVE once,
+# at startup (rename_settings, called by app/main.py before the default seeding), and until they have, the new name
+# is answered from the old one at hydrate -- so a node never reads a default where it had a value.
+_RENAMED = {"ollama_" + s: "llm_" + s for s in (
+    "model", "timeout", "system_prompt", "temperature", "top_p", "top_k", "repeat_penalty", "num_ctx", "num_predict",
+    "tool_num_predict", "stop", "seed", "mirostat", "mirostat_eta", "mirostat_tau", "tfs_z")}
+_RENAMED_FROM_RELAY: dict = {}      # old key -> the value the relay held under it at the last hydrate
+
+
+def _adopt_renamed(relay: dict) -> None:
+    """`relay`: key -> value as the relay holds it. An old name's value answers for its new name unless the relay
+    holds the new name too; the old name leaves the cache either way (nothing reads it)."""
+    for old, new in _RENAMED.items():
+        if old not in relay:
+            continue
+        _RENAMED_FROM_RELAY[old] = relay[old]
+        if new not in relay:
+            _set_local(new, relay[old])
+        with _lock:
+            _CACHE.pop(old, None)
+
+
+async def rename_settings(db) -> int:
+    """Move every renamed setting this node's relay still holds under its OLD name: write the value under the new
+    name (unless the relay already holds one -- that one is newer and wins), and only once that write has landed,
+    delete the old document. A relay that cannot be read authoritatively, or a write that does not land, changes
+    nothing: the old documents stay, keep answering through _adopt_renamed, and the next start tries again.
+    Returns the number of settings moved."""
+    op_sk = _OP_SK or _operator_seckey(db)
+    if not op_sk:
+        return 0
+    have, authoritative = _relay_setting_keys_from_db(db)
+    if not authoritative:
+        logger.info("[settings-store] rename: relay not authoritatively readable -- trying again next start")
+        return 0
+    moving = {new: str(_RENAMED_FROM_RELAY[old]) for old, new in _RENAMED.items()
+              if old in have and new not in have and old in _RENAMED_FROM_RELAY}
+    if moving:
+        wrote = await write_through(db, moving)
+        if wrote < len(moving):
+            logger.warning("[settings-store] rename: %d of %d written -- old names kept", wrote, len(moving))
+            return 0
+        for k, v in moving.items():
+            _set_local(k, v)
+    gone = 0
+    for old, new in _RENAMED.items():
+        if old in have and (new in have or new in moving):
+            try:
+                await store.delete_doc(_port(), op_sk, store.NS_SETTING + old)
+                gone += 1
+            except Exception as e:      # noqa: BLE001 -- still answered by _adopt_renamed; retried next start
+                logger.warning("[settings-store] rename: could not remove %s: %s", old, type(e).__name__)
+    if moving or gone:
+        logger.info("[settings-store] renamed %d setting(s) to llm_*, removed %d old document(s)", len(moving), gone)
+    return len(moving)
+
+
 def hydrate_from_db(db) -> int:
     """relay events → cache, SYNCHRONOUSLY: the operator's `pcai:setting:` docs read from THIS node's relay
     (relay_reader over the loopback socket; in the relay process, its own store -- see set_event_source) and
@@ -571,6 +629,7 @@ def hydrate_from_db(db) -> int:
         logger.warning("[settings-store] hydrate_from_db failed: %s", type(e).__name__)
         return 0
     changed = 0
+    seen = {}
     for d, ev in docs.items():
         key = d[len(store.NS_SETTING):]
         if _is_local_only(key):
@@ -579,10 +638,12 @@ def hydrate_from_db(db) -> int:
             data = _json.loads(nip44.decrypt_self(op_sk, ev.get("content", "")))
             val = data.get("value") if isinstance(data, dict) else data
             _HYDRATED_KEYS.add(key)   # the relay holds an authoritative value for this key
-            if _set_local(key, "" if val is None else str(val)):
+            seen[key] = "" if val is None else str(val)
+            if _set_local(key, seen[key]):
                 changed += 1
         except Exception:
             continue
+    _adopt_renamed(seen)
     _HYDRATED = True   # the relay answered to the end (even 0 docs) → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay events (sync)", changed)
     return changed
@@ -648,6 +709,7 @@ async def hydrate(db) -> int:
             continue
         if _set_local(key, value):
             changed += 1
+    _adopt_renamed({k: v for k, v in (relay or {}).items() if not _is_local_only(k)})
     _HYDRATED = True   # relay read succeeded → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay", changed)
     return changed

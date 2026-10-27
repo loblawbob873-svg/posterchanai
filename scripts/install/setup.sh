@@ -302,5 +302,5 @@ download_model() {
     echo "  Configure in Admin Settings > LLM Model Path (default: the abliterated model)."
     echo "  For agentic coding, point opencode (its own config) at Qwen3-Coder-30B-A3B if you"
     echo "  downloaded it (best), otherwise Qwen3.5-9B-Claude-Code. With a 12-16GB GPU the 30B"
-    echo "  auto-fits context via partial CPU offload - leave ollama_num_ctx on 'auto'."
+    echo "  auto-fits context via partial CPU offload - leave llm_num_ctx on 'auto'."
 }

@@ -391,7 +391,7 @@ default, but for serious opencode use download
 [`Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF)
 (`IQ4_XS`, ~16 GB) into the models volume and point opencode's `model` at its basename. It's a
 MoE (~3 B active) that reliably 1-shots small apps where 8–14 B models stall. Needs a 12 GB+ GPU
-(partial CPU offload on 12–16 GB cards; leave `ollama_num_ctx` on `auto` — it auto-sizes context
+(partial CPU offload on 12–16 GB cards; leave `llm_num_ctx` on `auto` — it auto-sizes context
 even when the weights spill to CPU).
 
 Point the **agentic/tools model** at it server-wide via **Admin → AI Settings → Agentic / Tools

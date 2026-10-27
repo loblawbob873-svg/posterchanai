@@ -211,7 +211,7 @@ class _GenMixin:
                 "content": "Please provide a message. Example: `narrate tell me a fun fact`",
             }
 
-        # Use the admin-configured persona (ollama_system_prompt) as the base, same as the normal
+        # Use the admin-configured persona (llm_system_prompt) as the base, same as the normal
         # chat path, then append TTS-mode guidance so the reply reads cleanly aloud.
         system_prompt = self.chat_service.system_prompt.replace(
             "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")

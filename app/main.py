@@ -857,6 +857,9 @@ async def startup():
                         # relay holds); the early one is deferred when the relay was not up yet, and runs
                         # here. Idempotent, so a node that already migrated early migrates nothing.
                         settings_store.migrate_legacy_table(_db)
+                        # BEFORE the seeding: a renamed setting the relay still holds under its old name must
+                        # move, not be "missing" and get its default written over the node's value.
+                        await settings_store.rename_settings(_db)
                         await settings_store.seed_relay_defaults(_db, DEFAULT_SETTINGS)
                         # Re-assert declarative env directives AFTER hydrate+seed so they win even when
                         # the relay still holds the default "false" (hydrate/seed would clobber the

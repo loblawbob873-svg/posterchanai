@@ -106,7 +106,7 @@ print_summary() {
     if [ "$INSTALL_LLM" = "1" ]; then
         echo "    LLM Backend: $LLM_BACKEND"
     else
-        echo "    LLM Backend: external (Ollama)"
+        echo "    LLM Backend: remote (another PosterChan node, via Chat server URLs)"
     fi
     if [ "$INSTALL_IMAGE" = "1" ]; then
         echo "    Image Backend: $IMAGE_BACKEND"
@@ -132,7 +132,7 @@ print_summary() {
         echo "    1. Download a GGUF model to /var/lib/posterchanai/models/"
         echo "    2. Configure model path in Admin > AI Settings"
     else
-        echo "    1. Configure Ollama URL in Admin > AI Settings"
+        echo "    1. Point Admin > AI Settings > Chat server URLs at a PosterChan node with a GPU"
     fi
 
     if [ "$INSTALL_IMAGE" = "1" ] && [ "$IMAGE_BACKEND" = "native" ]; then
@@ -220,14 +220,13 @@ show_help() {
     echo "  Full Stack       LLM + Image Generation (recommended)"
     echo "  LLM Only         Chat/text generation only"
     echo "  Image Only       Image generation only (use external LLM)"
-    echo "  Lightweight      Web UI only (external Ollama + remote posterchanai image servers)"
+    echo "  Lightweight      Web UI only (chat and images from other PosterChan nodes)"
     echo ""
     echo "LLM Backends:"
-    echo "  Intel Arc        IPEX-LLM + llama.cpp SYCL"
+    echo "  Intel Arc        llama.cpp SYCL"
     echo "  NVIDIA           llama.cpp CUDA"
     echo "  AMD              llama.cpp ROCm/HIP"
     echo "  CPU              llama.cpp (slow)"
-    echo "  Ollama           External Ollama service"
     echo ""
     echo "Image Backend:"
     echo "  Native           Built-in diffusers (CUDA/XPU/ROCm/CPU)"

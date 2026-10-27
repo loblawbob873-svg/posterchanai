@@ -654,9 +654,7 @@ document.getElementById('viewTelegramUsersBtn').addEventListener('click', async 
 // generation-parameters section (no backend dropdown to toggle).
 function updateBackendUI() {
     const nativeSettings = document.getElementById('native-settings');
-    const ollamaSettings = document.getElementById('ollama-settings');
     if (nativeSettings) nativeSettings.style.display = 'block';
-    if (ollamaSettings) ollamaSettings.style.display = 'block';
 }
 
 // Reload model button

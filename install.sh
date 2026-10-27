@@ -365,8 +365,8 @@ main() {
     # Step 7b: Provision the relay's instance (operator) key + seed the WoT; prints the instance npub.
     "${CHAT_VENV_NAME:-venv}/bin/python" scripts/init_instance_key.py || print_warning "instance key init deferred to first run"
 
-    # Step 8: Install LLM dependencies (if selected and not Ollama)
-    if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
+    # Step 8: Install LLM dependencies (if selected)
+    if [ "$INSTALL_LLM" = "1" ]; then
         setup_llama_cpp
     fi
 
@@ -461,7 +461,7 @@ main() {
     setup_systemd
 
     # Step 13: Offer model download (if local LLM)
-    if [ "$INSTALL_LLM" = "1" ] && [ "$LLM_BACKEND" != "ollama" ]; then
+    if [ "$INSTALL_LLM" = "1" ]; then
         download_model
     fi
 

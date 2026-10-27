@@ -306,7 +306,7 @@ def _compute_autofit_ctx(model_path: str, file_size: int, flash_attn: bool = Fal
                          ram_kv_fraction: float = 0.5, offload_vram_tok_per_mb: float = 1.5):
     """Pick the largest context window that fits THIS GPU's VRAM at full layers.
 
-    Used when ``ollama_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
+    Used when ``llm_num_ctx`` is "auto" (the default): a self-hosted user on a 6GB card
     gets a small full-GPU window; a 24GB card gets a large one — without anyone hand-tuning
     per machine. Mirrors ``_compute_autofit_gpu_layers``' memory model so that whatever ctx we
     pick here, the layer-autofit then confirms "full GPU" (same weights+KV+buffer estimate).
@@ -446,13 +446,13 @@ class LlamaService:
 
         # Model settings
         self.model_path = get_setting("llm_model_path", "/home/verita84/models/model.gguf")
-        self.default_model = get_setting("ollama_model", "native")
+        self.default_model = get_setting("llm_model", "native")
 
         # Context size: "auto" (the default) sizes the window to fit this GPU at full layers;
         # an explicit integer is used verbatim. "auto" is resolved at model-load time (needs the
         # model's KV dims + free VRAM), so here we only flag it and keep a safe fallback so the
         # not-yet-loaded state has a sane value.
-        raw_ctx = get_setting("ollama_num_ctx", "auto").strip().lower()
+        raw_ctx = get_setting("llm_num_ctx", "auto").strip().lower()
         self._auto_ctx = raw_ctx in ("auto", "0", "")
         configured_num_ctx = 8192 if self._auto_ctx else int(raw_ctx)
         logger.info(f"[LLAMA] _load_settings: configured_num_ctx={'auto' if self._auto_ctx else configured_num_ctx}, _model is None: {self._model is None}")
@@ -466,7 +466,7 @@ class LlamaService:
         # the reload-detection in _ensure_model_loaded doesn't see a phantom change every request.
         if not self._auto_ctx:
             self._configured_num_ctx = configured_num_ctx
-        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
+        self.num_predict = int(get_setting("llm_num_predict", "2048"))
 
         # GPU settings
         self.n_gpu_layers = int(get_setting("llm_gpu_layers", "-1"))  # -1 = all layers on GPU
@@ -508,20 +508,20 @@ class LlamaService:
         self.function_calling = get_setting("llm_function_calling", "false").lower() == "true"
 
         # Sampling settings
-        self.temperature = float(get_setting("ollama_temperature", "0.2"))
-        self.top_p = float(get_setting("ollama_top_p", "0.9"))
-        self.top_k = int(get_setting("ollama_top_k", "40"))
-        self.repeat_penalty = float(get_setting("ollama_repeat_penalty", "1.1"))
+        self.temperature = float(get_setting("llm_temperature", "0.2"))
+        self.top_p = float(get_setting("llm_top_p", "0.9"))
+        self.top_k = int(get_setting("llm_top_k", "40"))
+        self.repeat_penalty = float(get_setting("llm_repeat_penalty", "1.1"))
 
         # Advanced settings
-        self.mirostat = int(get_setting("ollama_mirostat", "0"))
-        self.mirostat_eta = float(get_setting("ollama_mirostat_eta", "0.1"))
-        self.mirostat_tau = float(get_setting("ollama_mirostat_tau", "5.0"))
-        seed_str = get_setting("ollama_seed", "")
+        self.mirostat = int(get_setting("llm_mirostat", "0"))
+        self.mirostat_eta = float(get_setting("llm_mirostat_eta", "0.1"))
+        self.mirostat_tau = float(get_setting("llm_mirostat_tau", "5.0"))
+        seed_str = get_setting("llm_seed", "")
         self.seed = int(seed_str) if seed_str.strip() else -1
 
         # Stop sequences — start with user-configured values.
-        user_stop = [s.strip() for s in get_setting("ollama_stop", "").split(",") if s.strip()]
+        user_stop = [s.strip() for s in get_setting("llm_stop", "").split(",") if s.strip()]
 
         # For Mistral-family models add the correct end-of-turn stop strings.
         # Use the full token strings, never bare "[" or "]" — those would cut off
@@ -540,7 +540,7 @@ class LlamaService:
         self.token_timeout = int(get_setting("llm_token_timeout", "600"))
 
         # System prompt
-        self.system_prompt = get_setting("ollama_system_prompt", "You are a helpful, friendly AI assistant.")
+        self.system_prompt = get_setting("llm_system_prompt", "You are a helpful, friendly AI assistant.")
 
     def _ensure_model_loaded(self, target_path: Optional[str] = None):
         """Load model if not already loaded, path changed, or configured context size changed.
@@ -662,7 +662,7 @@ class LlamaService:
             # Validate context size - warn if very large
             if self.num_ctx > 8192:
                 logger.warning(f"  WARNING: Large context size ({self.num_ctx}) may cause memory issues")
-                logger.warning("  Consider reducing ollama_num_ctx to 4096 or 2048 if you encounter 'Failed to create llama_context' errors")
+                logger.warning("  Consider reducing llm_num_ctx to 4096 or 2048 if you encounter 'Failed to create llama_context' errors")
             
             # Check available GPU memory if using GPU
             if gpu_layers > 0:
@@ -750,7 +750,7 @@ class LlamaService:
                     # Success - update num_ctx if we used a smaller value
                     if attempt_ctx != self.num_ctx:
                         logger.warning(f"  Model loaded with reduced context size: {attempt_ctx} (configured: {self.num_ctx})")
-                        logger.warning(f"  Consider updating ollama_num_ctx in admin settings to {attempt_ctx} to avoid this warning")
+                        logger.warning(f"  Consider updating llm_num_ctx in admin settings to {attempt_ctx} to avoid this warning")
                         # Update the instance variable so it uses the working context size
                         self.num_ctx = attempt_ctx
                     break  # Success, exit retry loop
@@ -848,7 +848,7 @@ class LlamaService:
             if "memory" in error_msg.lower() or "dnnl" in error_msg.lower() or "oneDNN" in error_msg:
                 logger.error(f"Memory allocation failed loading model: {e}")
                 logger.error("This usually means insufficient GPU/system memory. Try:")
-                logger.error("  - Reducing context size (ollama_num_ctx)")
+                logger.error("  - Reducing context size (llm_num_ctx)")
                 logger.error("  - Reducing batch size (llm_n_batch)")
                 logger.error("  - Using a smaller model")
                 logger.error("  - Closing other applications")
@@ -856,11 +856,11 @@ class LlamaService:
             elif "llama_context" in error_msg.lower() or "create.*context" in error_msg.lower():
                 logger.error(f"Failed to create llama context: {e}")
                 logger.error("This usually means:")
-                logger.error("  - Context size (ollama_num_ctx) is too large for available memory")
+                logger.error("  - Context size (llm_num_ctx) is too large for available memory")
                 logger.error("  - GPU memory is insufficient or fragmented")
                 logger.error("  - Model file may be corrupted")
                 logger.error("Try:")
-                logger.error("  - Reducing context size (ollama_num_ctx) - try 2048 or 4096")
+                logger.error("  - Reducing context size (llm_num_ctx) - try 2048 or 4096")
                 logger.error("  - Reducing GPU layers (llm_gpu_layers) - try 20-30 instead of -1")
                 logger.error("  - Setting llm_cpu_mode to true to use CPU instead")
                 logger.error("  - Checking GPU memory: nvidia-smi")
@@ -886,7 +886,7 @@ class LlamaService:
                 logger.error("  4. Context size too large for available memory")
                 logger.error("Try:")
                 logger.error("  - Verifying model file: file " + self.model_path)
-                logger.error("  - Reducing context size (ollama_num_ctx) - try 2048 or 4096")
+                logger.error("  - Reducing context size (llm_num_ctx) - try 2048 or 4096")
                 logger.error("  - Reducing GPU layers (llm_gpu_layers) - try 20-30 instead of -1")
                 logger.error("  - Using CPU mode temporarily (llm_cpu_mode=true)")
                 raise RuntimeError(f"Failed to load model from file: {e}. Check file integrity and memory settings.")

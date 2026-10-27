@@ -55,17 +55,17 @@ TRANSLATE: translate <language>
 SYSTEM: logs, help
 
 Provide clear, concise responses. Keep confirmations brief and professional."""
-        self.system_prompt = self._settings.get("ollama_system_prompt") or default_prompt
+        self.system_prompt = self._settings.get("llm_system_prompt") or default_prompt
         # Helper to get setting with fallback for empty strings
         def get_setting(key: str, default: str) -> str:
             val = self._settings.get(key, default)
             return val if val else default
         # These are used for chat_stream kwargs
-        self.temperature = float(get_setting("ollama_temperature", "0.2"))
-        self.top_p = float(get_setting("ollama_top_p", "0.9"))
-        self.num_predict = int(get_setting("ollama_num_predict", "2048"))
+        self.temperature = float(get_setting("llm_temperature", "0.2"))
+        self.top_p = float(get_setting("llm_top_p", "0.9"))
+        self.num_predict = int(get_setting("llm_num_predict", "2048"))
         # Stop token(s) - can be comma-separated for multiple
-        stop_setting = get_setting("ollama_stop", "").strip()
+        stop_setting = get_setting("llm_stop", "").strip()
         self.stop = [s.strip() for s in stop_setting.split(",") if s.strip()] if stop_setting else None
 
     def _get_load_balancer(self) -> Optional[LoadBalancer]:
@@ -74,7 +74,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         # Use all servers from admin UI - round-robin between all configured servers
         servers = parse_server_urls(chat_server_urls, exclude_self=False)
         if servers:
-            timeout_str = self._settings.get("ollama_timeout", "300000")
+            timeout_str = self._settings.get("llm_timeout", "300000")
             timeout = int(timeout_str if timeout_str else "300000") / 1000
             # Use llm_model_path like the IPEX service does (extract filename from full path)
             llm_path = self._settings.get("llm_model_path", "")
@@ -365,7 +365,7 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
             else:
                 # `chat_completion_stream` takes the GPU lock itself and swaps inside it
                 # (`_ensure_model_loaded`), so there is deliberately nothing to do here.
-                # Fallback to SSE parsing for Ollama - with thinking tag filtering
+                # Fallback: SSE parsing (an OpenAI-compatible stream) - with thinking tag filtering
                 buffer = ""
                 thinking_mode = None  # None=unknown, True=in thinking, False=no thinking
 

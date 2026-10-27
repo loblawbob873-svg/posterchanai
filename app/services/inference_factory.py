@@ -1,7 +1,6 @@
 """
 Inference Factory - the local LLM is always the native llama-cpp-python backend
-(SYCL on Intel Arc, CUDA on NVIDIA, HIP on AMD, CPU otherwise). Ollama and IPEX-LLM
-have been removed. Integrates with the VRAM manager for model swapping on a shared GPU.
+(SYCL on Intel Arc, CUDA on NVIDIA, HIP on AMD, CPU otherwise). Integrates with the VRAM manager for model swapping on a shared GPU.
 """
 from typing import TYPE_CHECKING
 
