@@ -847,11 +847,14 @@ def test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror():
     still register promptly, and the relay must have a link serving both."""
     stream_a, stream_b, member = key(), key(), key()
     real_session = cm._Link._session
+    # The stubborn link must END once the test is over: asyncio.run's teardown cancels every task left and waits
+    # for each, and one that swallows every cancellation held the gate for its whole 10-minute limit (deploy 89).
+    over = {"v": False}
 
     async def stubborn(self, ws):
         if pub(stream_b) in self.authors:            # the REPLACEMENT link works normally
             return await real_session(self, ws)
-        while True:                                  # the old one: cancellation lost, runs on regardless
+        while not over["v"]:                         # the old one: cancellation lost, runs on regardless
             try:
                 await real_session(self, ws)
             except asyncio.CancelledError:
@@ -876,6 +879,7 @@ def test_a_link_that_loses_its_cancellation_cannot_freeze_the_mirror():
             assert await until(lambda: node.mirror.author_ready(pub(stream_a)) and node.mirror.author_ready(pub(stream_b)),
                                15), "the replacement link never served both communities"
         finally:
+            over["v"] = True
             cm._Link._session = real_session
             await asyncio.wait_for(node.close(), 20)
             await up.close()
