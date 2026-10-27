@@ -70,3 +70,24 @@ def test_accepted_but_not_stored_is_not_published(tmp_path):
     r, attempts = _run(tmp_path, ["ok"] * 6)
     assert r.returncode != 0 and "does not hold its APK asset" in r.stdout, r.stdout
     assert attempts == 4
+
+
+def test_a_release_counts_only_once_zapstore_promoted_it():
+    """2026-10-27, Zapstore: releases are verified, then promoted, "a few minutes max" -- and an asset can be held while
+    its release is refused (the 2026-10-26 lineage refusal). The job waits for the PROMOTED kind-30063 after the publish
+    loop, never republishes for it (a second asset would be an orphan 3063, which the new check refuses), and the
+    asset wait is long enough for verification."""
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import zapstore_verify as Z
+    rel = {"kind": 30063, "tags": [["d", "place.poster.app@1.0.2621"], ["version", "1.0.2621"]]}
+    assert Z.has_release([rel], "place.poster.app", "1.0.2621")
+    assert not Z.has_release([rel], "place.poster.app", "1.0.2622")
+    assert not Z.has_release([{**rel, "kind": 3063}], "place.poster.app", "1.0.2621")
+    assert Z.release_filter("ab", "place.poster.app", "1.0.2621") == {
+        "kinds": [30063], "authors": ["ab"], "#d": ["place.poster.app@1.0.2621"]}
+    wf = (ROOT / ".github/workflows/android.yml").read_text()
+    loop = _block()
+    assert "--wait 600" in loop and "--release" not in loop, "the publish loop must wait for the asset, not the release"
+    after = wf[wf.index(loop.splitlines()[-1], wf.index("published=''")):]
+    assert "--release place.poster.app" in after[:after.index("Published 1.0.")], "no promotion check before 'Published'"

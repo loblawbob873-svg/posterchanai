@@ -408,7 +408,7 @@ jobs:
             [ "$wait" = 0 ] || { echo "::warning title=Zapstore retry::retrying the publish in ${wait}s"; sleep "$wait"; }
             if /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log \
                && ! grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log \
-               && python3 scripts/zapstore_verify.py "$zs_npub" "1.0.${{ github.run_number }}" --wait 120; then
+               && python3 scripts/zapstore_verify.py "$zs_npub" "1.0.${{ github.run_number }}" --wait 600; then
               published=1; break
             fi
           done
@@ -421,4 +421,9 @@ jobs:
             fi
             fail 'zsp could not publish a complete release (or Zapstore does not hold its APK asset)'
           fi
+          # ZAPSTORE VERIFIES, THEN PROMOTES (2026-10-27, "a few minutes max"): the asset above can be held while the
+          # RELEASE is refused (the 2026-10-26 lineage refusal was exactly that). Wait for the promoted release; never
+          # republish for it -- a second publish mints a second asset, and an orphan 3063 is what the new check refuses.
+          python3 scripts/zapstore_verify.py "$zs_npub" "1.0.${{ github.run_number }}" --release place.poster.app --wait 600 \
+            || fail 'Zapstore holds the APK but did not promote the release (its verification refused it, or is still running)'
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
