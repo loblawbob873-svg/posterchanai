@@ -146,7 +146,7 @@ async def a_bookmark_is_kept_after_a_reload_and_on_a_fresh_device(S):
     try:
         await F.wait(a, "%s.includes(%s) && %s.includes(%s)" % (LISTED, json.dumps(keep['id']), LISTED, json.dumps(drop['id'])),
                      40, 'both bookmarks listed after a reload')
-    except Exception:
+    except Exception as failure:
         # Intermittent (gate, 2026-10-26: one bookmark listed while the relay held both). Say what the client held,
         # so the next failure names the stale copy instead of only "one bookmark".
         try:
@@ -156,9 +156,9 @@ async def a_bookmark_is_kept_after_a_reload_and_on_a_fresh_device(S):
             relay:pk?(await Relay.query([{kinds:[10003],authors:[pk]}])).map(row):null})})()""")
         except Exception as e:      # noqa: BLE001 -- the dump must never replace the real failure
             state = "could not read: %r" % (e,)
-        print("bookmark state at the failure:", state, "home relay:", bookmarked(S.n, S.pk(0)),
-              "keep:", keep['id'][:8], "drop:", drop['id'][:8])
-        raise
+        # In the failure's own message: the gate's summary prints that, and never a test's stdout.
+        raise AssertionError("%s | client: %s | home relay: %s | keep %s drop %s" % (
+            failure, state, bookmarked(S.n, S.pk(0)), keep['id'][:8], drop['id'][:8])) from failure
     b = await S.device(0)                                   # a fresh device, same account
     await open_bookmarks(b)
     await F.wait(b, "%s.includes(%s) && %s.includes(%s)" % (LISTED, json.dumps(keep['id']), LISTED, json.dumps(drop['id'])),
