@@ -178,6 +178,21 @@ window.PCMusicArt = (function(){
   return { get, has, put, thumb, fromPicture, fromTags, _urls: urls };
 })();
 
+/* A SONG ROW IS PLAY, THE SONG, AND ⋯ -- every other action of the row is in ⋯'s menu ("the song list UI for each
+ * track is sloppy ... play button, song name, then hamburger menu with all the other buttons", 2026-10-26). The
+ * action buttons stay in the row, hidden, and keep every handler they had: picking a menu item presses its button,
+ * so the list's one delegated click handler (and the shared list's) runs exactly the code a visible button ran.
+ * The labels are each button's `data-label`; one marked `data-danger` is drawn as a danger item. */
+window.PCMusicRowMenu = function(btn){
+  const row = btn && btn.closest('.track'), PC = window.__PC;
+  if(!row) return;
+  const acts = [...row.querySelectorAll(':scope > button[data-label]')].filter(a => !a.disabled);
+  if(!acts.length) return;
+  if(!PC || !PC.openMenuPopover){ acts[0].click(); return; }
+  PC.openMenuPopover(btn, acts.map((a, i) => [String(i), a.dataset.label, a.dataset.danger ? 'danger' : '']),
+    k => { const a = acts[+k]; if(a && a.isConnected) a.click(); });
+};
+
 window.PCMusicFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.GUEST, S.ME, S.VIEW, S._audioEl, S._blobHave, S._musicPl, S._musicPlRepaint, S._musicQ, S._musicSwept
   const {
@@ -1013,12 +1028,12 @@ window.PCMusicFactory = function(dep){
                                              : (by ? `<span class="track-by">${enc(by)}</span><span class="track-sep"> · </span>` : '')
                                                + `<span class="track-size">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>`
                                                + (t.offline ? '<span class="track-off"> · offline</span>' : '')}</span>
-        ${t.missing ? '' : `<button class="track-more" data-sha="${t.sha}" title="More for this song" aria-label="More for this song" aria-expanded="false"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>`}
-        ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
-        ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
-        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
-        ${t.missing ? '' : `<button class="track-ren" data-sha="${t.sha}" data-name="${enc(t.m.name||'')}" title="Rename" aria-label="Rename"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`}
-        <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        ${t.missing ? '' : `<button class="track-more" data-sha="${t.sha}" title="More for this song" aria-label="More for this song" aria-haspopup="menu"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-keep${t.offline?' on':''}" data-sha="${t.sha}" title="${t.offline?'Kept on this device — tap to remove the offline copy':'Keep on this device (plays with no network)'}" aria-label="${t.offline?'Remove offline copy':'Keep offline'}" data-label="${t.offline?'Remove the offline copy':'Keep on this device'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${t.offline?'check':'download'}"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-add" data-sha="${t.sha}" title="Add to a playlist" aria-label="Add to a playlist" data-label="Add to a playlist"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.'+_musicExt(t.m))}" title="Save a copy to your files (decrypts first)" data-label="Save a copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>`}
+        ${t.missing ? '' : `<button class="track-ren" data-sha="${t.sha}" data-name="${enc(t.m.name||'')}" title="Rename" aria-label="Rename" data-label="Rename"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`}
+        <button class="track-del" data-sha="${t.sha}" title="Delete" data-label="Delete" data-danger="1"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`; });
     const first = rows.slice(0, MUS_PAGE);
     grid._musRest = rows.slice(MUS_PAGE);
@@ -1141,12 +1156,7 @@ window.PCMusicFactory = function(dep){
       if(!b && _maPhone()){ const row = ev.target && ev.target.closest && ev.target.closest('.track');
         if(row && grid.contains(row) && !row.classList.contains('gone')) b = row.querySelector('.track-play'); }
       if(!b || !grid.contains(b)) return;
-      if(b.classList.contains('track-more')){
-        const row = b.closest('.track'), open = !row.classList.contains('open');
-        grid.querySelectorAll('.track.open').forEach(r => { r.classList.remove('open'); const m=r.querySelector('.track-more'); if(m) m.setAttribute('aria-expanded','false'); });
-        row.classList.toggle('open', open); b.setAttribute('aria-expanded', open ? 'true' : 'false');
-        return;
-      }
+      if(b.classList.contains('track-more')){ window.PCMusicRowMenu(b); return; }
       if(b.classList.contains('mus-more')){ _musMore(grid, b); return; }
       const sha = b.dataset.sha;
       if(b.classList.contains('track-play')){

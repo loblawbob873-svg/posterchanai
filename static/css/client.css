@@ -12860,7 +12860,6 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
 }
 /* The browse bar holds the search too (music.js moves #ma-q in): tabs | search | sort | + | more. */
 .ma-browse .ma-q{flex:1 1 200px;min-width:0;margin:0}
-#feed .music-app .track-more{display:none}
 .ma-opt-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .ma-opt-acts:empty{display:none}
 .ma-opt-acts .btn{min-height:calc(44px / var(--zf,1))}
@@ -12881,13 +12880,34 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
   #feed .music-app .music-list .track .track-by:only-child + .track-sep{display:none}
   .music-app:not(.ma-full) #mus-refresh,.music-app:not(.ma-full) #mus-delall,
   .music-app:not(.ma-full) .music-head-secondary{display:none}
-  .music-app:not(.ma-full) .music-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 6px}
-  .music-app:not(.ma-full) .music-head-primary{display:flex;gap:8px}
+  /* THE LIST HEADER IS ONE LINE: the count, then the actions as compact buttons at its end. The older phone rule
+     above gives every header button `width:100%` for its three-column grid; under this flex row that stacked
+     Shuffle / Refresh / Keep / ⋯ into four full-width bars -- 227px before the first song of a shared playlist
+     ("shared playlists screen is wasted like before", 2026-10-26). A header with three or more actions (a shared
+     playlist) gives the count a line of its own above them; Refresh is its icon. */
+  .music-app:not(.ma-full) .music-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:0 2px;margin:0 0 4px}
+  .music-app:not(.ma-full) .music-head-primary{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;order:2;
+    width:auto;flex:0 0 auto;margin-inline-start:auto}
+  .music-app:not(.ma-full) .music-head-primary > .btn{width:auto;min-width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));
+    min-height:0;padding:0 14px;white-space:nowrap;line-height:1}
+  .music-app:not(.ma-full) .music-head-primary > #msh-refresh,.music-app:not(.ma-full) .music-head-primary > .msh-more{
+    width:calc(44px / var(--zf,1));padding:0;font-size:0;display:inline-grid;place-items:center}
+  .music-app:not(.ma-full) .music-head-primary > #msh-refresh .ic{display:block;margin:0;width:18px;height:18px}
+  .music-app:not(.ma-full) .music-head-primary > #msh-refresh,.music-app:not(.ma-full) .music-head-primary > .msh-more{line-height:0}
+  .music-app:not(.ma-full) .music-count{order:1;flex:1 1 0;width:auto;min-width:0;padding:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .music-app:not(.ma-full) .music-head:has(> .music-head-primary > :nth-child(3)) .music-count{flex-basis:100%}
+  /* The list is rows, not spaced cards. */
+  #feed .music-app:not(.ma-full) .music-list{gap:0;padding:4px 0 8px}
+  /* The plays-from-the-sharer's-copy note: one small line under the list, not two lines above it. */
+  #feed .music-app:not(.ma-full) .music-list > .msh-note{order:99;flex:none;padding:10px 6px 0;font-size:12px;line-height:1.35}
+  /* The playlist strip: a finger-sized chip, without the strip's own padding doubling the gap above the list. */
+  .music-app:not(.ma-full) .ma-pls{padding:4px 0 6px}
   /* A SONG IS ONE COMPACT ROW: play, title, "artist · album", and ⋯ for its actions -- about ten on a phone screen
      instead of two and a half cards. The row itself plays (music.js). ⋯ opens the actions on a line of their own. */
-  #feed .music-app .music-list .track{display:grid;grid-template-columns:calc(44px / var(--zf,1)) repeat(4,minmax(0,1fr)) calc(44px / var(--zf,1));
-    grid-template-areas:"play name name name name more" "play meta meta meta meta more";
-    align-items:center;column-gap:10px;row-gap:0;min-height:60px;padding:6px 6px 6px 8px;margin:0 0 2px;border-radius:12px;cursor:pointer;
+  #feed .music-app .music-list .track{display:grid;grid-template-columns:calc(44px / var(--zf,1)) minmax(0,1fr) calc(44px / var(--zf,1));
+    grid-template-areas:"play name more" "play meta more";
+    align-items:center;column-gap:10px;row-gap:0;min-height:56px;padding:4px 4px 4px 6px;margin:0;border-radius:12px;cursor:pointer;
     background:none;border:0;border-bottom:1px solid rgba(255,255,255,.05);box-shadow:none}
   #feed .music-app .music-list .track .track-play{grid-area:play;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1))}
   #feed .music-app .music-list .track .track-name{grid-area:name;min-width:0;margin:0;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;align-self:end}
@@ -12895,16 +12915,19 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
   #feed .music-app .music-list .track .track-more{grid-area:more;display:inline-grid;place-items:center;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));
     padding:0;border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer}
   #feed .music-app .music-list .track .track-more[aria-expanded="true"]{color:var(--text);background:var(--panel2,rgba(255,255,255,.06))}
-  #feed .music-app .music-list .track > .track-keep,#feed .music-app .music-list .track > .track-add,#feed .music-app .music-list .track > .track-dl,
-  #feed .music-app .music-list .track > .track-ren,#feed .music-app .music-list .track > .track-del{display:none}
-  #feed .music-app .music-list .track.open{grid-template-areas:"play name name name name more" "play meta meta meta meta more" ". k a d r x";
-    row-gap:4px;background:var(--panel2,rgba(255,255,255,.04))}
-  #feed .music-app .music-list .track.open > .track-keep{grid-area:k}#feed .music-app .music-list .track.open > .track-add{grid-area:a}
-  #feed .music-app .music-list .track.open > .track-dl{grid-area:d}#feed .music-app .music-list .track.open > .track-ren{grid-area:r}
-  #feed .music-app .music-list .track.open > .track-del{grid-area:x}
-  #feed .music-app .music-list .track.open > .track-keep,#feed .music-app .music-list .track.open > .track-add,
-  #feed .music-app .music-list .track.open > .track-dl,#feed .music-app .music-list .track.open > .track-ren,
-  #feed .music-app .music-list .track.open > .track-del{display:inline-grid;place-items:center;justify-self:center;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1))}
+  #feed .music-app .music-list .track.gone > .track-del{grid-area:more}
+}
+/* A SONG ROW IS PLAY, THE SONG, AND ⋯ -- at every width, and in a parked desktop window too (music.js
+   PCMusicRowMenu: the actions are ⋯'s menu, their buttons stay in the row, hidden). A track whose bytes are gone
+   keeps its Delete in ⋯'s place -- it is the one thing such a row is for. */
+:is(#feed,.osw-slot) .music-app .music-list .track > :is(.track-keep,.track-add,.track-dl,.track-ren,.track-del,.track-addlib){display:none}
+:is(#feed,.osw-slot) .music-app .music-list .track.gone > .track-del{display:inline-grid;place-items:center;margin-inline-start:auto}
+:is(#feed,.osw-slot) .music-app .music-list .track > .track-more{display:inline-grid;place-items:center;flex:0 0 auto;margin-inline-start:auto;
+  width:36px;height:36px;min-width:36px;padding:0;border:0;border-radius:50%;background:none;color:var(--muted);cursor:pointer}
+:is(#feed,.osw-slot) .music-app .music-list .track > .track-more:hover,
+:is(#feed,.osw-slot) .music-app .music-list .track > .track-more[aria-expanded="true"]{color:var(--text);background:var(--panel2,rgba(255,255,255,.06))}
+@media(max-width:820px),(max-height:600px){
+  :is(#feed,.osw-slot) .music-app .music-list .track > .track-more{grid-area:more;width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1));min-width:calc(44px / var(--zf,1));margin:0}
 }
 /* A phone held SIDEWAYS has the width for one browse row (tabs, then search and the icons) and none of the height
    for two: a second row left no full row of covers under the pinned bar on an 844x390 screen. */

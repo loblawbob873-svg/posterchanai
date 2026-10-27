@@ -587,16 +587,17 @@ def test_a_phone_lists_songs_as_rows_and_the_row_plays():
         await _until(b, f"__PC.MusicPlayer.cur==={json.dumps(first)}", 10, "the tapped row playing")
         await asyncio.sleep(.6)
         got["playing"] = await b.js("({bar:document.querySelector('.ma-now').checkVisibility(), rows:" + ROWS_IN_VIEW + "})")
-        # ⋯ opens THAT song's actions, one row at a time; an action from it works (add to a playlist opens its picker).
-        await A.press(b, f"#ma-lib .track[data-sha='{first}'] .track-more")
-        got["actsOpen"] = await b.js(f"[...document.querySelectorAll('#ma-lib .track.open :is({acts})')].filter(e=>e.checkVisibility()).length")
+        # The row is play, the song and ⋯ -- nothing else; ⋯ is a MENU of that song's actions, and picking one runs
+        # it (Add to a playlist opens the playlist picker for THAT song).
+        got["rowButtons"] = await b.js(f"[...document.querySelectorAll('#ma-lib .track[data-sha=\"{first}\"] button')].filter(e=>e.checkVisibility()).map(e=>e.className.split(' ')[0])")
         second = await b.js("[...document.querySelectorAll('#ma-lib .track')][1].dataset.sha")
         await A.press(b, f"#ma-lib .track[data-sha='{second}'] .track-more")
-        got["openRows"] = await b.js("[...document.querySelectorAll('#ma-lib .track.open')].map(t=>t.dataset.sha)")
-        await A.press(b, f"#ma-lib .track[data-sha='{second}'] .track-add")
-        await _until(b, "!!document.querySelector('.modal, .menu-pop, [role=dialog]')", 15, "the playlist picker")
+        await _until(b, "!!document.querySelector('.menu-pop')", 10, "the song's menu")
+        got["menu"] = await b.js("[...document.querySelectorAll('.menu-pop button')].map(e=>e.textContent.trim())")
+        await b.js("[...document.querySelectorAll('.menu-pop button')].find(e=>e.textContent.trim()==='Add to a playlist').id='pick-add'; 1")
+        await A.press(b, "#pick-add")
+        await _until(b, "!document.querySelector('.menu-pop') && !!document.querySelector('.modal, [role=dialog]')", 15, "the playlist picker")
         await b.js("__PC.closeModal && __PC.closeModal(); 1")
-        got["second"], got["openRowsWant"] = second, [second]
         assert not await b.js("__errors.slice()")
 
     _run(check, L.PLAIN + L.LIB)
@@ -604,8 +605,8 @@ def test_a_phone_lists_songs_as_rows_and_the_row_plays():
     assert got["idle"]["rows"] >= 6, ("fewer than six songs fit a 390x844 phone", got)
     assert got["actsBefore"] == 0, ("every row still shows its five action buttons", got)
     assert got["playing"]["bar"] is True and got["playing"]["rows"] >= 5, ("playing, the docked player took the list's room", got)
-    assert got["actsOpen"] == 5, ("⋯ did not show the song's actions", got)
-    assert got["openRows"] == got["openRowsWant"], ("more than one row open at once", got)
+    assert got["rowButtons"] == ["track-play", "track-more"], ("a song row shows more than play and ⋯", got)
+    assert got["menu"] == ["Keep on this device", "Add to a playlist", "Save a copy", "Rename", "Delete"], ("⋯ is not the song's actions", got)
 
 
 @CHROME
@@ -640,7 +641,9 @@ def test_the_desktop_keeps_its_player_card():
         got = await b.js("""({pos:getComputedStyle(document.querySelector('.ma-now')).position,
             card:document.querySelector('.ma-now').checkVisibility(), add:document.getElementById('ma-libadd').checkVisibility(),
             more:[...document.querySelectorAll('#ma-lib .track-more')].some(e=>e.checkVisibility())})""")
-        assert got == {"pos": "relative", "card": True, "add": False, "more": False} or (got["pos"] != "fixed" and got["card"] and not got["add"] and not got["more"]), got
+        # The card stays; a song row is play, the song and ⋯ here too ("all of the buttons can be in a hamburger menu").
+        got["inline"] = await b.js("[...document.querySelectorAll('#ma-lib .track:not(.gone) :is(.track-keep,.track-add,.track-dl,.track-ren,.track-del)')].filter(e=>e.checkVisibility()).length")
+        assert got["pos"] != "fixed" and got["card"] and not got["add"] and got["more"] and got["inline"] == 0, got
     _run(check, L.PLAIN + L.LIB)
 
 

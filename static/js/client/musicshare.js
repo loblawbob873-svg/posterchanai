@@ -888,9 +888,10 @@
       <button class="track-play" data-sha="${t.s}" aria-label="Play">${icon('play')}</button>
       <span class="track-name">${E(t.n)}</span>
       <span class="track-meta">🔒 ${mb(t.z)}</span>
-      <button class="track-addlib${inLib ? ' on' : ''}" data-sha="${t.s}" ${inLib ? 'disabled' : ''}
+      <button class="track-more" data-sha="${t.s}" title="More for this song" aria-label="More for this song" aria-haspopup="menu">${icon('more')}</button>
+      <button class="track-addlib${inLib ? ' on' : ''}" data-sha="${t.s}" ${inLib ? 'disabled' : ''} data-label="Keep in my library"
         title="${inLib ? 'Already in your library' : 'Add to my library'}" aria-label="${inLib ? 'In your library' : 'Add to my library'}">${icon(inLib ? 'check' : 'plus')}</button>
-      <button class="track-dl" data-sha="${t.s}" title="Save a copy to your files (decrypts first)" aria-label="Save a copy">${icon('download')}</button>
+      <button class="track-dl" data-sha="${t.s}" title="Save a copy to your files (decrypts first)" aria-label="Save a copy" data-label="Save a copy">${icon('download')}</button>
     </div>`;
   }
 
@@ -901,14 +902,22 @@
    * person receiving it, just a playlist somebody sent. Now: accept and it becomes a playlist chip;
    * reject and it goes away and stays away. Nothing here plays anything, because deciding whether
    * to keep a stranger's playlist is not the moment to start the music. */
+  /* WHOSE VIEW THE ELEMENT IS SHOWING. Each of these views paints, waits for a relay read, then paints again -- and
+   * the second paint used to check only that the element was still on the page. So pressing Accept (which opens the
+   * accepted playlist) or any other chip while Shared with me was still reading put Shared with me back over it: the
+   * playlist's chip selected and a screen with no songs (2026-10-26, measured: 12 songs, then 200 ms later none).
+   * Every paint of the element claims it -- music.js's own paints too, with the same `_musSeq` -- and a late one
+   * paints only if it is still the newest. */
+  function _claim(el){ const tok = {}; el._musSeq = tok; return () => el.isConnected && el._musSeq === tok; }
   async function renderIn(el, ctx){
     if(!_boot() || !el) return;
     ctx = ctx || {};
+    const mine = _claim(el);
     el.className = 'music-list msh';
     if(!_in) el.innerHTML = '<div class="spinner"></div>';
     else _paintIn(el, ctx);
     try{ await loadIn(); }catch(_){}
-    if(el.isConnected) _paintIn(el, ctx);
+    if(mine()) _paintIn(el, ctx);
   }
   /* THE "STOP" ACTIONS LIVE BEHIND ⋯ ("buttons stop getting this playlist and stop receiving from matthew
    * look bad and take up a lot of UI space" -- two long red labels wrapped across the header on a phone).
@@ -950,9 +959,10 @@
           + stoppedSenders().map(pk => ` <span class="msh-stopped-who">${E(who(pk))} <button class="btn btn-ghost small msh-unstop" data-from="${E(pk)}">Undo</button></span>`).join('')
           + `</div>` : '');
     el.onclick = async ev => {
+      const own = el._musSeq, still = () => el.isConnected && el._musSeq === own;   // see _claim
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
-      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) _paintIn(el, ctx); return; }
+      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(still()) _paintIn(el, ctx); return; }
       if(b.classList.contains('msh-stopget')){
         const sh = _in && _in.get(b.dataset.key); if(!sh) return;
         const name = (sh.body && sh.body.name) || 'this playlist';
@@ -960,7 +970,7 @@
         if(!ok) return;
         dismiss(b.dataset.key);
         toast(`you will not get “${name}” any more`);
-        if(el.isConnected) _paintIn(el, ctx);
+        if(still()) _paintIn(el, ctx);
         return;
       }
       if(b.classList.contains('msh-stop') || b.classList.contains('msh-unstop')){
@@ -968,7 +978,7 @@
         if(stop){ const ok = PC.uiConfirm ? await PC.uiConfirm(`Stop receiving shared playlists from ${who(pk)}? What they shared disappears from your list; songs you kept stay. You can undo this here.`, { ok:'Stop receiving', danger:true }) : true; if(!ok) return; }
         stopFrom(pk, stop);
         toast(stop ? `you will not receive shares from ${who(pk)}` : `receiving shares from ${who(pk)} again`);
-        if(el.isConnected) _paintIn(el, ctx);
+        if(still()) _paintIn(el, ctx);
         return;
       }
       const yes = b.classList.contains('msh-yes'), no = b.classList.contains('msh-no');
@@ -979,8 +989,8 @@
       // Accepting SHOWS it: the chip appeared in a bar that may be scrolled off screen, and "it
       // says it accepted and nothing happened" is the same complaint in a different hat. The host
       // selects the chip when it can; on its own this module still draws the playlist it just made.
-      if(yes){ if(ctx.open) ctx.open(b.dataset.key); else if(el.isConnected) renderShared(b.dataset.key, el, ctx); return; }
-      if(el.isConnected) _paintIn(el, ctx);
+      if(yes){ if(ctx.open) ctx.open(b.dataset.key); else if(still()) renderShared(b.dataset.key, el, ctx); return; }
+      if(still()) _paintIn(el, ctx);
     };
   }
 
@@ -990,9 +1000,11 @@
   async function renderShared(key, el, ctx){
     if(!_boot() || !el) return;
     ctx = ctx || {};
+    const mine = _claim(el);
     el.className = 'music-list msh';
     el.innerHTML = '<div class="spinner"></div>';
     if(!_in) { try{ await loadIn(); }catch(_){} }
+    if(!mine()) return;
     const cur = _in && _in.get(key);
     if(!cur){
       el.innerHTML = `<div class="empty">This share is no longer available — whoever shared it has stopped.</div>`;
@@ -1000,8 +1012,8 @@
     }
     let tracks;
     try{ tracks = await tracksOf(cur); }
-    catch(e){ el.innerHTML = `<div class="empty">Couldn’t open this playlist: ${E((e && e.message) || e)}</div>`; return; }
-    if(!el.isConnected) return;
+    catch(e){ if(mine()) el.innerHTML = `<div class="empty">Couldn’t open this playlist: ${E((e && e.message) || e)}</div>`; return; }
+    if(!mine()) return;
     register(cur, tracks);
     const lib = new Set((PC.musicLibrary && PC.musicLibrary()) || []);
     const missing = tracks.filter(t => !lib.has(t.s)).length;
@@ -1018,12 +1030,14 @@
           </span>
         </div>
         <span class="music-count muted small">${tracks.length} song${tracks.length === 1 ? '' : 's'} · from ${E(who(cur.from))}</span>
-        <span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>
-      </div>` + tracks.map(t => _row(t, lib.has(t.s))).join('');
+      </div>` + tracks.map(t => _row(t, lib.has(t.s))).join('')
+      + `<span class="msh-note muted small">These play from ${E(who(cur.from))}’s copy while it is shared. Keep a song and it stays yours even if the share is stopped.</span>`;
     el.onclick = async ev => {
+      const own = el._musSeq, still = () => el.isConnected && el._musSeq === own;   // see _claim
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
-      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(el.isConnected) renderShared(key, el, ctx); return; }
+      if(b.classList.contains('track-more')){ if(window.PCMusicRowMenu) window.PCMusicRowMenu(b); return; }
+      if(b.id === 'msh-refresh'){ b.disabled = true; await loadIn(); if(still()) renderShared(key, el, ctx); return; }
       /* "no way for me to remove a dupe share": a share is the sharer's document, but whether it is on
        * MY list is my answer -- the same one Reject gives, for every copy of it. Songs already kept stay. */
       if(b.id === 'msh-stopfrom'){
@@ -1032,7 +1046,7 @@
         stopFrom(cur.from, true);
         toast(`you will not receive shares from ${who(cur.from)}`);
         if(ctx.closed) try{ ctx.closed(key); }catch(_){}
-        else if(el.isConnected) renderIn(el, ctx);
+        else if(still()) renderIn(el, ctx);
         return;
       }
       if(b.id === 'msh-dismiss'){
@@ -1042,7 +1056,7 @@
         dismiss(key);
         toast(`you will not get “${name}” any more`);
         if(ctx.closed) try{ ctx.closed(key); }catch(_){}
-        else if(el.isConnected) renderIn(el, ctx);
+        else if(still()) renderIn(el, ctx);
         return;
       }
       if(b.id === 'msh-shuffle'){
@@ -1074,18 +1088,19 @@
       toast(r.added ? `kept ${r.added} song${r.added === 1 ? '' : 's'}` + (r.failed ? ` — ${r.failed} failed: ${r.error}` : '')
                     : r.skipped && !r.failed ? 'already yours' : 'not kept — ' + (r.error || 'unknown error'));
       if(ctx.libraryChanged) try{ ctx.libraryChanged(); }catch(_){}
-      if(el.isConnected) renderShared(key, el, ctx);
+      if(still()) renderShared(key, el, ctx);
     };
   }
 
   async function renderOut(el, ctx){
     if(!_boot() || !el) return;
     ctx = ctx || {};
+    const mine = _claim(el);
     el.className = 'music-list msh';
     if(!_out) el.innerHTML = '<div class="spinner"></div>';
     else _paintOut(el, ctx);
     try{ await loadOut(); }catch(_){}
-    if(el.isConnected) _paintOut(el, ctx);
+    if(mine()) _paintOut(el, ctx);
   }
   function _paintOut(el, ctx){
     const shares = outShares();
@@ -1105,9 +1120,10 @@
             </div></div>`; }).join('')
         : `<div class="empty">You haven’t shared any music${_outOk ? '' : ' — or the relays did not answer; try Refresh'}. Pick a playlist and press Share.</div>`);
     el.onclick = async ev => {
+      const own = el._musSeq, still = () => el.isConnected && el._musSeq === own;   // see _claim
       const b = ev.target.closest && ev.target.closest('button'); if(!b || !el.contains(b)) return;
       if(b.classList.contains('msh-more')){ _moreMenu(b); return; }
-      if(b.id === 'msh-refresh'){ b.disabled = true; await loadOut(); if(el.isConnected) _paintOut(el, ctx); return; }
+      if(b.id === 'msh-refresh'){ b.disabled = true; await loadOut(); if(still()) _paintOut(el, ctx); return; }
       const sh = _out && _out.get(b.dataset.id); if(!sh) return;
       const name = (sh.body && sh.body.name) || 'this share';
       if(b.classList.contains('msh-revoke') || b.classList.contains('msh-unshare')){
@@ -1120,7 +1136,7 @@
         toast(r.ok ? 'stopped sharing' + (r.released ? ` — ${r.released} shared cop${r.released === 1 ? 'y' : 'ies'} removed from the server` : '')
                      + (r.owed ? ' — the rest of its shared copies are removed the next time your relays answer in full' : '')
                    : 'not everyone could be updated — try again');
-        if(el.isConnected) _paintOut(el, ctx);
+        if(still()) _paintOut(el, ctx);
         return;
       }
       if(b.classList.contains('msh-addpeople')){
@@ -1130,7 +1146,7 @@
         if(bad.length){ toast('couldn’t find: ' + bad.join(', ')); return; }
         const r = await addRecipients(sh.id, pks);
         toast(r.ok ? `shared with ${r.sent.length} more` : (r.error || 'not everyone could be reached'));
-        if(el.isConnected) _paintOut(el, ctx);
+        if(still()) _paintOut(el, ctx);
       }
     };
   }
