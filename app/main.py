@@ -1307,10 +1307,13 @@ _DESKTOP_ASSETS = {
     "PosterChan-Setup.exe", "PosterChan-Setup.exe.blockmap",
     "PosterChan.AppImage", "PosterChan-arm64.dmg", "PosterChan-x64.dmg",
     "latest.yml", "latest-linux.yml",
+    # The installer's first source (os/gentoo.sh). CI copies the versioned tarball to this name in the ROLLING
+    # release only; before it did, this route answered the installer with the landing page.
+    "PosterChan-linux-x64.tar.zst",
 }
 _DESKTOP_ALIASES = {
     "win": "PosterChan-Setup.exe", "windows": "PosterChan-Setup.exe",
-    "linux": "PosterChan.AppImage", "appimage": "PosterChan.AppImage",
+    "linux": "PosterChan.AppImage", "appimage": "PosterChan.AppImage", "linux-tar": "PosterChan-linux-x64.tar.zst",
     "mac": "PosterChan-arm64.dmg", "mac-intel": "PosterChan-x64.dmg",
 }
 

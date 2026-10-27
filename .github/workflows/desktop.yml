@@ -589,6 +589,19 @@ jobs:
             sleep "$((attempt*2))"
           done
 
+      # ONE VERSIONLESS NAME FOR THE INSTALLER. gentoo.sh asks poster.place/desktop/PosterChan-linux-x64.tar.zst FIRST
+      # (its own host before a third party), and the rolling release only ever carried the VERSIONED name -- so
+      # poster.place could not name it, answered with its landing page, and every install fell through to the
+      # GitHub API (found by the from-scratch VM build, 2026-10-27). Copied AFTER the immutable release above,
+      # which Portage pins by version and must not gain a second name.
+      - name: Name the Linux tarball for poster.place
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=(artifacts/PosterChan-*-linux-x64.tar.zst)
+          test "${#src[@]}" -eq 1 && test -s "${src[0]}" || { echo "::error::expected one versioned tarball, got: ${src[*]}"; exit 1; }
+          cp "${src[0]}" artifacts/PosterChan-linux-x64.tar.zst
+
       - name: Publish rolling release
         uses: softprops/action-gh-release@v2
         with:

@@ -362,6 +362,8 @@ LICENSED_PACKAGES=("x11-drivers/nvidia-drivers NVIDIA-r2")
 # the 0.10.1 wayfire (its `wf-config:${SLOT}` dependency notwithstanding) and wayfire aborted at start ("double free
 # or corruption" in output_layout -- server1, measured), with Gentoo's 0.11 queued to replace ours and drop both
 # patches. Lift these only together with an overlay wayfire 0.11 and a shell built against it.
+# Gentoo has since DELETED wf-config-0.10.0 and wayfire-plugins-extra-0.10.0 (2026-10), so the overlay vendors both
+# beside its wayfire; without them a fresh install had no Wayfire at all.
 PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581" ">=gui-wm/wayfire-0.11" ">=gui-libs/wf-config-0.11" ">=gui-libs/wayfire-plugins-extra-0.11")
 # ...AND THE PACKAGE'S OWN BLACKLIST WAS NOT ENOUGH ON THE LIVE IMAGE, MEASURED ON REAL HARDWARE.
 #
@@ -418,7 +420,10 @@ PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau nvidia_drm.modeset=1'
 PC_LIVE_NOUVEAU_CMDLINE='module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm pc.gpu=nouveau'
 PC_LIVE_SOFTWARE_CMDLINE="$PC_LIVE_GPU_CMDLINE pc.gpu=software"
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher)
-MASKED_PACKAGES+=(=gui-wm/gamescope-3.16.25-r1)
+# ONE NARROW KEYWORD EXCEPTION FOR GAMESCOPE -- the 3.16 SERIES, not one version. Every gamescope in Gentoo is ~amd64;
+# this used to name =gui-wm/gamescope-3.16.25-r1, and once Gentoo dropped that ebuild the exception matched nothing,
+# so a from-scratch install could not emerge gamescope at all ("masked by: ~amd64 keyword", 2026-10-27).
+MASKED_PACKAGES+=("<gui-wm/gamescope-3.17")
 
 fixSound() {
 	/usr/bin/systemctl --user disable --now pulseaudio.socket pulseaudio.service
@@ -2696,7 +2701,15 @@ PROFILE
 			_pc_keep_if "$APPIMG" 7f454c46 "the GitHub AppImage" || true
 		}
 	fi
+	# WHAT WAS DOWNLOADED IS RECORDED HERE, and the verdict below reads THIS -- never the file again. The
+	# unpack deletes the archive it unpacked, and inside the chroot (TARGET=/, which is how finalize runs
+	# this) there is no copy: the archive IS the file. So "is it still there?" answered no about a desktop
+	# that had downloaded and unpacked perfectly, printed "could not download the PosterChan desktop", and
+	# skipped the launcher -- a machine with /opt/posterchan and no /usr/local/bin/posterchan, i.e. no
+	# shell. Measured in the from-scratch VM build, 2026-10-27.
+	PC_DESKTOP_GOT=""
 	if [ -s "$APPTAR" ]; then
+		PC_DESKTOP_GOT=tarball
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPTAR" ${TARGET}/tmp/PosterChan-linux-x64.tar.zst
 		# Unpacked into a NEW directory and moved into place, so a half-written tree is never what
 		# wayfire.ini's autostart execs. `mkdir -p /opt` first: a stage3 does not guarantee it.
@@ -2710,6 +2723,7 @@ PROFILE
 			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan-linux-x64.tar.zst'
 	elif [ -s "$APPIMG" ]; then
+		PC_DESKTOP_GOT=appimage
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPIMG" ${TARGET}/tmp/PosterChan.AppImage
 		# `mkdir -p /opt` first: a stage3 does not guarantee it, and `cd` into a directory that is not
 		# there fails the whole && chain — which showed up as "the AppImage did not extract" about an
@@ -2724,7 +2738,7 @@ PROFILE
 			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan.AppImage'
 	fi
-	if [ -s "$APPTAR" ] || [ -s "$APPIMG" ]; then
+	if [ -n "$PC_DESKTOP_GOT" ]; then
 		# A WRAPPER, NOT A SYMLINK. `AppRun` finds the binary through $APPDIR, and $APPDIR is set by
 		# the AppImage RUNTIME — which is exactly the thing extracting removes. Symlinked into
 		# /usr/local/bin it resolves to an empty string and the shell dies with
@@ -2795,6 +2809,12 @@ PROFILE
 				"${TARGET}/usr/local/libexec/posterchanos/nostr/$module.py"
 		elif [ -f "/usr/local/libexec/posterchanos/nostr/$module.py" ]; then
 			install -m 0644 "/usr/local/libexec/posterchanos/nostr/$module.py" \
+				"${TARGET}/usr/local/libexec/posterchanos/nostr/$module.py"
+		# The SYNCED OVERLAY carries both modules in posterchanos-shell's FILESDIR, as it does pc_usb_scan.py below.
+		# Without this a from-scratch install whose overlay package could not be emerged (and an installer run
+		# from os/ alone has no ../app) returned here -- before every session helper below was installed.
+		elif [ -f "${PCREPO:-/var/db/repos/posterchan}/app-misc/posterchanos-shell/files/$module.py" ]; then
+			install -m 0644 "${PCREPO:-/var/db/repos/posterchan}/app-misc/posterchanos-shell/files/$module.py" \
 				"${TARGET}/usr/local/libexec/posterchanos/nostr/$module.py"
 		else
 			echo "Missing OS identity verifier dependency: $module" >&2

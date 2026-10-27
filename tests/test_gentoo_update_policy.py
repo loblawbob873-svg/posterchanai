@@ -307,3 +307,30 @@ def test_the_session_package_caps_wayfire_for_machines_that_never_rerun_the_inst
     deps = ebuild.read_text()
     for atom in ('<gui-wm/wayfire-0.11', '<gui-libs/wf-config-0.11', '<gui-libs/wayfire-plugins-extra-0.11'):
         assert '\t' + atom + '\n' in deps, (atom, ebuild.name)
+
+
+def test_every_capped_wayfire_package_can_be_installed_from_the_overlay():
+    """The cap only works while SOMETHING carries a version under it. On 2026-10-27 the from-scratch VM build found
+    that Gentoo had deleted wf-config-0.10.0 and wayfire-plugins-extra-0.10.0: `emerge: there are no ebuilds to satisfy
+    "gui-libs/wf-config:0/0.10"`, 0.11.2 masked by our own pin, and a fresh install with no Wayfire, no session
+    package and no shell. So each capped package must have an ebuild under the cap IN THE OVERLAY, with its
+    tarball in the (thin) Manifest -- the overlay is the one tree this project controls."""
+    import re as _re
+    overlay = Path(__file__).resolve().parents[1] / 'os/overlay'
+    ebuild = sorted((overlay / 'app-misc/posterchanos-shell').glob('*.ebuild'))[-1].read_text()
+    capped = _re.findall(r'^\t<([a-z0-9-]+/[a-z0-9-]+)-(\d+\.\d+)$', ebuild, _re.M)
+    assert {c for c, _ in capped} >= {'gui-wm/wayfire', 'gui-libs/wf-config', 'gui-libs/wayfire-plugins-extra'}, capped
+    for cat_pkg, cap in capped:
+        pkg = cat_pkg.split('/')[1]
+        found = []
+        for e in (overlay / cat_pkg).glob(f'{pkg}-*.ebuild'):
+            ver = e.name[len(pkg) + 1:-len('.ebuild')]
+            nums = tuple(int(x) for x in _re.match(r'(\d+)\.(\d+)', ver).groups())
+            if nums < tuple(int(x) for x in cap.split('.')):
+                found.append(ver)
+        assert found, f'{cat_pkg} is capped below {cap} and the overlay carries no version under it'
+        manifest = (overlay / cat_pkg / 'Manifest').read_text()
+        for ver in found:
+            base = _re.sub(r'-r\d+$', '', ver)
+            assert f'DIST {pkg}-{base}.tar.xz ' in manifest, f'{cat_pkg}-{ver}: its tarball is not in the Manifest'
+    assert 'gui-libs' in (overlay / 'profiles/categories').read_text().split()

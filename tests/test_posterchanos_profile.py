@@ -879,8 +879,9 @@ class PosterChanOSProfile(unittest.TestCase):
         steam = self._fn("installSteam")
         self.assertIn("gui-wm/gamescope", self.pkgs,
                       "Gamescope is the supported fullscreen game session on PosterChanOS")
-        self.assertIn("=gui-wm/gamescope-3.16.25-r1", self.src,
-                      "testing Gamescope needs one narrow amd64 keyword exception")
+        self.assertIn('"<gui-wm/gamescope-3.17"', self.src,
+                      "testing Gamescope needs one narrow amd64 keyword exception -- a SERIES, since an exact "
+                      "version stops matching anything the day Gentoo drops that ebuild")
         self.assertNotIn("gui-wm/gamescope", steam, "Steam must work through Sway/XWayland directly")
         self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
         self.assertNotIn("com.valvesoftware.Steam", steam, "the Flatpak Steam path came back")
