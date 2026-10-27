@@ -161,15 +161,16 @@
   window.PCConcordTheme=ccTheme;
   const concordScriptUrl=document.currentScript&&document.currentScript.src;
   const callModules=new Map();
-  /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
-   * WebSocket handshakes, and copying the user's general pool into external discovery also created
-   * redundant Damus sockets. Explicit invite/bootstrap and room bundle relays remain authoritative
-   * below, even when they name one of those hosts. */
-  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
+  /* Automatic reads must contain only known Concord endpoints (copying the user's general pool into external discovery
+   * created redundant Damus sockets). Explicit invite/bootstrap and room bundle relays remain authoritative below.
+   * relay.ditto.pub is back (2026-10-26: "we should be syncing to jskitty.com, relay.ditto.pub, asia.vectorapp.io by
+   * default"): it was dropped when it refused WebSocket handshakes, and measured that night it answers -- and the
+   * node's relay no longer blocks it. */
+  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://relay.ditto.pub','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
   /* Where this node's server copies the communities it hosts (concord_mirror.py BACKUP_RELAYS -- the same three, a test
    * keeps them equal). Listed in such a community's relays so any app finds it there if this node is gone; this app
    * still writes to its home relay alone (roomPublish), and the server does the copying. */
-  const CORD_BACKUP_RELAYS=['wss://jskitty.com/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
+  const CORD_BACKUP_RELAYS=['wss://jskitty.com/nostr','wss://relay.ditto.pub','wss://asia.vectorapp.io/nostr','wss://relay.dreamith.to'];
   /* How much cached history the channel on screen decrypts before it is drawn. A channel view
    * shows a couple of dozen messages; everything past that is scrollback and belongs behind the
    * paint, not in front of it. */
@@ -2398,7 +2399,7 @@
         const targets=[...new Set([...own(kind),...bootstrap,...relays])].slice(0,9),report={};
         const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:9,exact:true,allowBlocked:true,purpose:'concord owned invitation',report,urgent:true});
         if(!current())throw new Error('Concord membership changed');
-        const missing=unanswered(targets,report),homeAnswered=own(kind).length>0&&(report.ok||[]).includes(home);
+        const missing=unansweredBesidesRefusals(targets,report),homeAnswered=own(kind).length>0&&(report.ok||[]).includes(home);
         return {events,complete:targets.length>0&&(!missing.length||homeAnswered),missing};
       },
       publish:async(event,bootstrap=[])=>{
@@ -2425,6 +2426,15 @@
     error.incomplete=true;error.missing=list;return error;
   }
   function unanswered(relays,report){return (relays||[]).filter(url=>!report.ok?.includes(url));}
+  /* WHO DID NOT ANSWER, A REFUSAL EXCEPTED. relay.damus.io answers a kind-1059 read with auth-required, and again after
+   * our AUTH: only the community's stream key may read there, so no member's client reads anything from it -- it cannot
+   * be holding something only it would show. Such a relay (`refused`, relay.js queryFrom) is not a missing answer, as
+   * long as some relay DID answer; a relay that timed out, failed or was skipped still is. */
+  function unansweredBesidesRefusals(relays,report){
+    const refused=new Set(report.refused||[]),ok=report.ok||[];
+    if(!(relays||[]).some(url=>ok.includes(url)))return unanswered(relays,report);
+    return (relays||[]).filter(url=>!ok.includes(url)&&!refused.has(url));
+  }
   async function refreshOwnedInviteLinks(p,room){
     const {api,context,relays}=await ownedInviteContext(p,room),reader=window.PosterCordReader,bundle=room.cord.bundle;
     const loadKey=room.communityId||room.naddr,known=roomControls.get(loadKey)||[],seed=reader.inspectControl(bundle,known);
@@ -2453,7 +2463,8 @@
     const known=roomControls.get(key)||[],seed=reader.inspectControl(bundle,known),report={};
     const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report,urgent:true,home:false});
     if(!scope.context.isCurrent())throw new Error('Concord membership changed');
-    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!scope.relays.every(url=>report.ok?.includes(url)))throw inviteSyncError('Current invitation registry',unanswered(scope.relays,report));
+    const refused=new Set(report.refused||[]),notOk=unansweredBesidesRefusals(scope.relays,report);
+    if(fresh.length>=1000||(report.failed||[]).some(url=>!refused.has(url))||report.held?.length||report.cooled?.length||report.unheld?.length||notOk.length)throw inviteSyncError('Current invitation registry',notOk.length?notOk:unanswered(scope.relays,report));
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
     if(!info.inviteCreators.includes(scope.context.pubkey))throw new Error('Your account cannot manage invite links');
     roomControls.set(key,wraps);
@@ -6417,7 +6428,10 @@
       for(let page=0;page<100;page++){
         if(!current())throw new Error('refounding account or membership changed');
         const report={},auth=reader.createPlaneAuth(bundle,cached,author,[relay]),filter={kinds:[1059],authors:[author],limit:1000,...(until===undefined?{}:{until})};
-        const events=await p.relayQueryFrom([relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history'});
+        /* `urgent`: a read that must COMPLETE opens its own socket. Without it a relay another read was using at that
+         * moment was skipped ("held") and the rotation stopped -- reliably, once relay.ditto.pub (also read by the
+         * background membership sweep) became one of a community's relays (2026-10-26). The invite reads do the same. */
+        const events=await p.relayQueryFrom([relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history',urgent:true});
         if(!current())throw new Error('refounding account or membership changed');
         if(!(report.ok||[]).map(normalizeRelay).includes(normalizeRelay(relay))||(report.failed||[]).length||(report.unheld||[]).length)throw new Error('every control relay must complete before refounding');
         let added=0;for(const ev of events||[])if(ev&&ev.pubkey===author&&ev.kind===1059){all.set(ev.id,ev);if(!seen.has(ev.id)){seen.add(ev.id);added++;}}

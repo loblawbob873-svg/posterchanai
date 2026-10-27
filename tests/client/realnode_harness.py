@@ -666,8 +666,8 @@ def instance_is(origin: str) -> str:
 # ------------------------------------------------------------------------------------------------- Concord
 # The public relays concord.js reads besides this node (CORD_RELAYS + DISCOVER_RELAYS + the backups
 # concord_mirror.BACKUP_RELAYS) -- what `Node(internet=CORD_PUBLIC)` stands in for.
-CORD_PUBLIC = ('wss://jskitty.com/nostr', 'wss://asia.vectorapp.io/nostr', 'wss://nostr.computingcache.com',
-               'wss://relay.dreamith.to')
+CORD_PUBLIC = ('wss://jskitty.com/nostr', 'wss://relay.ditto.pub', 'wss://asia.vectorapp.io/nostr',
+               'wss://nostr.computingcache.com', 'wss://relay.dreamith.to')
 MINT_COMMUNITIES = r'''(async(relaySets,names)=>{
   const me=__PC.me().pubkey, rooms=[];
   for(let i=0;i<names.length;i++){

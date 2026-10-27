@@ -37,3 +37,15 @@ def test_the_protocol_writer_and_reader_agree():
     r = subprocess.run(["node", "tests/client/cord_metadata_relays_runtime.mjs"], cwd=ROOT, capture_output=True,
                        text=True, timeout=60)
     assert r.returncode == 0 and r.stdout.strip().endswith("OK"), r.stdout + r.stderr
+
+
+def test_the_relays_asked_for_by_name_are_synced_by_default():
+    """2026-10-26: "for concord relays, we should be syncing to jskitty.com, relay.ditto.pub, asia.vectorapp.io by
+    default at least" -- read by every client, and copied to by this node's mirror."""
+    src = (ROOT / "static/js/client/concord.js").read_text()
+    cord = re.search(r"const CORD_RELAYS=(\[[^\]]+\])", src)
+    assert cord
+    cord = json.loads(cord.group(1).replace("'", '"'))
+    for want in ("wss://jskitty.com/nostr", "wss://relay.ditto.pub", "wss://asia.vectorapp.io/nostr"):
+        assert want in cord, ("clients do not read", want)
+        assert want in cm.BACKUP_RELAYS, ("the mirror does not copy to", want)

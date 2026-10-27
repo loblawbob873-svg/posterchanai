@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from tests.client import test_desktop_offline_full_app as desktop
+from app.services.nostr_relay import concord_mirror as _cm
 from tests.client.concord_mirror_fixture import INSTALL_NETWORK
 
 HOME = 'wss://fixture.invalid'
@@ -126,7 +127,7 @@ def test_a_community_created_on_an_instance_lists_this_nodes_relay_then_its_back
         room = await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)).find(r=>r.name==='Made here')")
         # This node's relay FIRST (where its members read and write), then the backups the server copies it to
         # (2026-10-21 "add the backups to the invite"), so any app can find it there if this node is gone.
-        backups = ['wss://jskitty.com/nostr', 'wss://nostr.computingcache.com', 'wss://relay.dreamith.to']
+        backups = list(_cm.BACKUP_RELAYS)          # the server's list, which the client mirrors
         assert room['cord']['bundle']['relays'] == [HOME] + backups, room['cord']['bundle']['relays']
         # its genesis is on this node's relay; nothing of it was handed to another relay
         wraps = await b.js('__homeWrites.filter(e=>e.kind===1059).length')
@@ -261,7 +262,7 @@ MINT_HOSTED_OLD = r'''(async()=>{
 def test_an_owner_lists_the_backups_on_a_community_made_here_before_them():
     """2026-10-21 "add the backups to the invite": the owner's app, once the node replicates the community, writes
     the backups into its authoritative relay list (CORD-02 metadata) -- once -- and still only to this node."""
-    backups = ['wss://jskitty.com/nostr', 'wss://nostr.computingcache.com', 'wss://relay.dreamith.to']
+    backups = list(_cm.BACKUP_RELAYS)
 
     async def check(b):
         await open_concord(b)
@@ -271,7 +272,7 @@ def test_an_owner_lists_the_backups_on_a_community_made_here_before_them():
         relays = ("(()=>{const all=[...__home,...__homeWrites].filter(e=>e.kind===1059);"
                   "const i=PosterCordReader.inspectControl(__bundle,[...new Map(all.map(e=>[e.id,e])).values()]);"
                   "return i.relaysAuthoritative?i.relays:null;})()")
-        await wait_for(b, relays + "&&" + relays + ".length===4", 45)
+        await wait_for(b, relays + "&&" + relays + ".length===%d" % (1 + len(backups)), 45)
         got = await b.js(relays)
         assert got == [HOME] + backups, got
         # Nothing of the community reached another relay from this app: the server does the copying.

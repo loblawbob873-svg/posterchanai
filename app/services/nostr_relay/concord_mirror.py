@@ -104,8 +104,12 @@ REGISTER_SETTLE_SECONDS = 2.5
 # registration, naming only its stream pubkeys); this node then copies every wrap of those streams to these relays
 # and reads back anything posted there. Opaque copies -- the node holds no key and decrypts nothing -- and the
 # client still talks to this relay alone, so a phone does no extra work. Chosen from the CORD relays this mirror
-# already syncs both ways (asia.vectorapp.io gates kind-1059 reads behind an AUTH, so it is not one).
-BACKUP_RELAYS = ("wss://jskitty.com/nostr", "wss://nostr.computingcache.com", "wss://relay.dreamith.to")
+# already syncs both ways. 2026-10-26: jskitty, relay.ditto.pub and asia.vectorapp.io by default (asked for by name)
+# plus relay.dreamith.to (Discover's relay) -- four, the most a community's relay list may carry beside this one. Each
+# was measured answering an author-scoped kind-1059 read, which is the read the backfill walk makes: the note that
+# asia.vectorapp.io "gates kind-1059 reads behind an AUTH" described a FILTER without authors, which jskitty refuses
+# just the same. nostr.computingcache.com is still read (CORD_RELAYS), it just no longer fits the backup list.
+BACKUP_RELAYS = ("wss://jskitty.com/nostr", "wss://relay.ditto.pub", "wss://asia.vectorapp.io/nostr", "wss://relay.dreamith.to")
 BACKFILL_PAGE = 500
 BACKFILL_PACE = 0.05        # seconds between pushed wraps: ~20/s per backup, so a long history is no burst
 

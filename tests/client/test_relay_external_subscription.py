@@ -110,7 +110,10 @@ def test_failed_external_relay_is_single_flight_and_circuit_broken(tmp_path):
     assert json.loads(run.stdout) == {"madeWhileBusy": 1, "total": 1, "concurrent": [], "cooled": []}
 
 
-def test_ditto_and_damus_are_rejected_by_external_and_pool_constructors(tmp_path):
+def test_damus_is_rejected_by_external_and_pool_constructors_and_ditto_no_longer_is(tmp_path):
+    """relay.ditto.pub was rejected while it refused WebSocket handshakes. It answers again and is a Concord default
+    (2026-10-26), so it is dialled like any relay -- read, subscribed to, written to, and kept in a configured pool. relay.damus.io
+    (which refuses the gift-wrap reads) stays rejected by both."""
     driver = tmp_path / "blocked-query.js"
     driver.write_text(textwrap.dedent(f"""
       class FakeWS {{ constructor(url){{this.url=url;FakeWS.all.push(url);}} close(){{this.closed=true;}} }} FakeWS.all=[];
@@ -127,10 +130,11 @@ def test_ditto_and_damus_are_rejected_by_external_and_pool_constructors(tmp_path
     """), encoding="utf-8")
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
-    assert json.loads(run.stdout) == {
-        "events": [], "sockets": ["wss://relay.good.example"],
-        "configured": ["wss://relay.good.example"], "afterConnect": [],
-    }
+    got = json.loads(run.stdout)
+    assert got["events"] == []
+    assert not any("damus" in u for u in got["sockets"] + got["configured"] + got["afterConnect"]), got
+    assert any("relay.ditto.pub" in u for u in got["sockets"]), ("ditto is still refused for external reads", got)
+    assert sorted(got["configured"]) == sorted(["wss://relay.ditto.pub", "wss://relay.good.example"]), got
 
 
 def test_successful_background_poll_is_throttled_and_view_leave_closes_pending_socket(tmp_path):
