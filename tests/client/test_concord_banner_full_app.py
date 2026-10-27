@@ -241,3 +241,24 @@ def test_the_settings_sheet_shows_the_icon_the_community_has():
         assert cur == '🌌', ('the sheet does not show the community icon', cur)
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_slow_relay_does_not_hold_up_the_save():
+    """Git issue "Community Banners Do Not Animate", Vyram's reply 2026-10-27: saving with an avatar or banner "seems to
+    take a long time". The edition is accepted by the room publish; the extra copy to every listed relay (above) is
+    redundancy -- and the save WAITED for it, so one slow or refusing relay held the dialog for as long as it took to
+    answer. Measured here with one relay that answers after 8s: the save must be done in under 3s, and the copy to
+    every listed relay must still be sent."""
+    async def check(b):
+        minted = await setup(b, 1280, 'Quick keeper')
+        await b.js("window.__direct=[];__PC.relayPublishTo=(relays,ev)=>{__direct.push({relays,id:ev.id});"
+                   "return new Promise(r=>setTimeout(()=>r({ok:true}),8000));};true")
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        res = await b.js(r'''(async()=>{const me=__PC.me().pubkey,room=JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+me)||'[]').find(r=>r.name==='Quick keeper');
+          const t0=performance.now();await PCConcord.saveCommunitySettings(__PC,room,{description:'quick'});
+          return {ms:performance.now()-t0,direct:__direct.length}})()''')
+        assert res['direct'] >= 1, ('the copy to every listed relay was dropped', res)
+        assert res['ms'] < 3000, ('the save waited for a slow relay', res)
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))

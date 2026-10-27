@@ -2671,7 +2671,8 @@
        * that read the community's relays: the icon and the banner each showed and vanished in turn ("banner
        * can't be used at the same time as the community icon"). Settings writes are rare and must be seen
        * everywhere, so they are also sent to every listed relay; a duplicate is harmless (same id). */
-      if(p.relayPublishTo){try{await p.relayPublishTo(relays,made.wrap,{includeManaged:true,detailed:true,authScope:auth});}catch(e){console.warn('Concord settings direct publish failed',e);}}
+      // Not awaited: the room publish above accepted the edition; one slow relay held the save open (8s measured, Vyram).
+      if(p.relayPublishTo){try{Promise.resolve(p.relayPublishTo(relays,made.wrap,{includeManaged:true,detailed:true,authScope:auth})).catch(e=>console.warn('Concord settings direct publish failed',e));}catch(e){console.warn('Concord settings direct publish failed',e);}}
       if(values.bannerRef||values.banner===null)bannerStage=null;
       if(!scope.membershipCurrent())throw new Error('Concord membership changed during profile update');   // published already: only a real membership change is an error here
       wraps=[...(wraps||[]),made.wrap];roomControls.set(loadKey,wraps);
