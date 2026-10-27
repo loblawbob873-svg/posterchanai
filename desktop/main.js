@@ -1007,6 +1007,19 @@ function installContextMenu(created) {
   });
 }
 
+/* THE APP'S NAME, NOT THE PAGE'S. A window takes its page's <title> by default, so the Windows app said "PosterChan · Nostr"
+ * in the taskbar and on Alt-Tab -- the WEB client's tab title ("Windows App says PosterChan - Nostr.. we need better
+ * name. PosterChan Desktop.", 2026-10-26). The window is "PosterChan Desktop", keeping an unread count the page puts in
+ * front of its title ("(3) …"). productName stays "PosterChan": it names the install folder and the profile directory,
+ * and renaming it would sign everybody out. tests/test_desktop_window_title_electron.py */
+function appWindowTitle(pageTitle){
+  const n = /^\((\d+)\)\s/.exec(String(pageTitle || ''));
+  return (n ? '(' + n[1] + ') ' : '') + 'PosterChan Desktop';
+}
+function keepAppTitle(w){
+  w.on('page-title-updated', (e, t) => { e.preventDefault(); w.setTitle(appWindowTitle(t)); });
+}
+
 function createWindow(assignment) {
   const primary = !assignment || assignment.primary !== false;
   const b = primary ? (cfg.bounds || {}) : (assignment.rect || {});
@@ -1045,7 +1058,8 @@ function createWindow(assignment) {
      * sway correctly allocated 1920x1080 but Electron kept submitting its requested 1280x860
      * buffer, leaving black strips on the right and bottom. The shell is still immovable and Sway
      * controls its geometry; resizable here means "honour the compositor", not user window chrome. */
-    ...(SHELL_MODE ? { kiosk: false, resizable: true, movable: false, title: 'PosterChan Desktop' } : {}),
+    title: 'PosterChan Desktop',
+    ...(SHELL_MODE ? { kiosk: false, resizable: true, movable: false } : {}),
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
@@ -1086,7 +1100,8 @@ function createWindow(assignment) {
     if (!cfg.maximized && !created.isMinimized()) cfg.bounds = created.getNormalBounds();
     saveCfg();
   };
-  if(SHELL_MODE) created.on('page-title-updated', e => e.preventDefault());
+  if(SHELL_MODE) created.on('page-title-updated', e => e.preventDefault());   // the compositor finds the shell by it
+  else keepAppTitle(created);
   created.on('close', remember);
   /* Close means HIDE while the tray is holding the app open — otherwise closing the window ends the
    * process and, with it, the folder sync the tray exists to keep running. Guarded on the tray
