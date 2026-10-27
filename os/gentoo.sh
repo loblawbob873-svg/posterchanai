@@ -147,10 +147,24 @@ REPO_CHOICE="${PC_REPO_CHOICE:-local}"
 # OpenSSH stays installed for recovery/admin use, but a fresh desktop must not expose a password
 # daemon before its administrator deliberately enables it (`systemctl enable --now sshd`).
 SERVICES+=(systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager)
-MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
+# BUILD PARALLELISM SIZED FROM RAM AS WELL AS CPUS. It was `-j<every thread>` with `--jobs 5`: up to 5 packages at
+# once, each running a compiler per thread. A C++ compile (boost, obs-studio, qtwebengine) takes 1-2 GB per job, so
+# on a 16-thread machine with 8 GB the kernel killed cc1plus -- measured in the from-scratch VM, 2026-10-27: boost
+# and obs-studio both died "Killed signal terminated program cc1plus" and the package set did not complete. Two GB
+# per compiler job (never more jobs than CPUs, at least one), and one package at a time per 8 GB (one to five): an
+# 8 GB machine builds -j4, one package at a time; 64 GB and up keeps what it had.
+buildParallelism() {   # MemTotal kB, CPUs -> "MAKE_JOBS EMERGE_JOBS"
+	awk -v kb="${1:-0}" -v c="${2:-1}" 'BEGIN {
+		m = int(kb / 2097152); if (m < 1) m = 1; if (c >= 1 && m > c) m = c
+		e = int(kb / 8388608); if (e < 1) e = 1; if (e > 5) e = 5
+		print m, e }'
+}
+read -r _PC_MAKE_JOBS _PC_EMERGE_JOBS < <(buildParallelism "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)" \
+	"$(grep -ci '^processor' /proc/cpuinfo 2>/dev/null)")
+MAKEOPTS="-j${_PC_MAKE_JOBS:-1}"
 ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
-EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
+EMERGE_DEFAULT_OPTS="--jobs ${_PC_EMERGE_JOBS:-1} --getbinpkg "
 #USEFLAG CONFIGURATION
 # zstd is GLOBAL, not per-package: the live CD build compresses its squashfs with it and
 # dracut needs to be able to read that back, so a kernel/initramfs built without the flag
@@ -1521,8 +1535,12 @@ installPackages() {
 	# with the log frozen at the same byte count and qemu at 458% CPU, which from outside is
 	# indistinguishable from a hang. A pretend pass writes the same autounmask changes, costs
 	# seconds, and leaves the merging to the one visible emerge below.
+	# UNTIL IT CONVERGES, not three times. The 32-bit chain behind nvidia-drivers/Steam/firefox-bin is deeper than three
+	# layers -- measured 2026-10-27, from scratch: libX11 -> libxcb, elfutils -> egl-x11, readline -> libasyncns, each
+	# visible only once the one above was answered -- so the third pass stopped partway, the visible emerge failed, and
+	# the install fell back to the package-by-package retry. A pass that applies nothing still ends it at once.
 	local pass
-	for pass in 1 2 3; do
+	for pass in 1 2 3 4 5 6 7 8 9 10; do
 		/usr/bin/emerge -p -uDN $PACKAGES --autounmask --autounmask-write >/dev/null 2>&1
 		# etc-update applies the ._cfg files portage staged. If it had nothing to apply, the previous
 		# pass agreed with this one and another will not help.

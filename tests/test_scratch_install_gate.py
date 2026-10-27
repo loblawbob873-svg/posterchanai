@@ -325,17 +325,22 @@ def test_autounmask_gets_more_than_one_question():
     `libudev[abi_x86_32]`; accepting THAT reveals `systemd[abi_x86_32]`. Each layer is invisible
     until the one above it is answered, so one pass stops partway and the whole set fails."""
     body = SH[SH.index("installPackages() {"):SH.index("installFlatpaks() {")]
-    assert "for pass in 1 2 3" in body, "autounmask still gets a single pass"
+    import re
+    m = re.search(r"for pass in ((?:\d+ ?)+); do", body)
+    assert m, "autounmask still gets a single pass"
+    # ...and enough of them: the 32-bit chain was measured more than three layers deep (2026-10-27, from scratch).
+    assert len(m.group(1).split()) >= 8, ("too few convergence passes for the measured chain", m.group(1))
+    start = m.start()
     # PRETEND passes. A real merge per pass, with its output silenced so three resolutions of a
     # 200-package set do not bury the log, makes the install SILENT for its longest phase —
     # measured, 15 minutes of a frozen log with qemu at 458% CPU, which reads as a hang.
-    loop = body[body.index("for pass in 1 2 3"):body.index("# Visible, and the one that")]
+    loop = body[start:body.index("# Visible, and the one that")]
     assert "emerge -p -uDN $PACKAGES" in loop, "a convergence pass must not merge anything"
-    assert body.index("for pass in 1 2 3") < body.index("if /usr/bin/emerge -uDN $PACKAGES; then"), \
+    assert start < body.index("if /usr/bin/emerge -uDN $PACKAGES; then"), \
         "the passes must run before the emerge whose success is being judged"
-    # And a pass that changed nothing ends it: three unconditional resolutions of a 200-package set
+    # And a pass that changed nothing ends it: unconditional resolutions of a 200-package set
     # is minutes of nothing on every install that never needed them.
-    assert "break" in body[body.index("for pass in 1 2 3"):]
+    assert "break" in loop
 
 
 def test_the_version_gate_is_not_defeated_by_its_own_missing_tool(tmp_path):
