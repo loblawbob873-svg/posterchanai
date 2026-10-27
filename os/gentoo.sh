@@ -5783,6 +5783,29 @@ PLUGIN
 	echo "  sudo gentoo.sh anticheat-off   undo"
 }
 
+# AN ANTI-CHEAT MACHINE KEEPS ITS SIGNED ENTRY FIRST. `efibootmgr -c` (bootloader, above) puts the new PosterChanOS
+# entry -- unsigned systemd-boot -- at the head of BootOrder, and with Secure Boot on the firmware refuses it: on a
+# machine that ran `gentoo.sh anticheat`, a `gentoo.sh bootloader` meant a machine that would not start until somebody
+# turned Secure Boot off (found 2026-10-27, answering "if i run gentoo.sh bootloader on desktop, how will it know").
+# With the anti-cheat marker present, "PosterChanOS (anti-cheat)" goes back to the front and systemd-boot stays behind
+# it as the fallback for Secure Boot off. Env for tests: PC_AC_ROOT.
+keepAnticheatFirst() {
+	local label="PosterChanOS (anti-cheat)" ac order rest
+	[ -f "${PC_AC_ROOT:-}/etc/posterchan/anticheat" ] || return 0
+	ac="$(efibootmgr 2>/dev/null | awk -v l="$label" 'index($0, l) { sub(/^Boot/, ""); sub(/\*.*/, ""); print; exit }')"
+	if [ -z "$ac" ]; then
+		echo -e "\033[1;31m  Anti-cheat mode is on but its boot entry is gone; run: sudo gentoo.sh anticheat\033[0m"
+		return 0
+	fi
+	order="$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: *//p')"
+	rest="$(printf '%s\n' "$order" | tr ',' '\n' | grep -vix "$ac" | grep -v '^$' | paste -sd, -)"
+	if efibootmgr -q -o "$ac${rest:+,$rest}" >/dev/null 2>&1; then
+		echo -e "\033[1;33m  Anti-cheat mode: \"$label\" stays first; systemd-boot is the fallback with Secure Boot off.\033[0m"
+	else
+		echo -e "\033[1;31m  Could not put \"$label\" back first; with Secure Boot on, choose it in the firmware boot menu.\033[0m"
+	fi
+}
+
 anticheatOff() {
 	local R="${PC_AC_ROOT:-}" label="PosterChanOS (anti-cheat)" kver
 	if [ -z "$R" ] && [ "$(id -u)" != 0 ]; then echo "anticheat-off: run as root" >&2; return 1; fi
@@ -5999,6 +6022,7 @@ bootloader() {
 				if efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -L PosterChanOS \
 					-l '\EFI\systemd\systemd-bootx64.efi' >/dev/null 2>&1; then
 					echo -e "\033[1;33m  Firmware boot entry created: PosterChanOS on $ESP_DISK partition $ESP_PART.\033[0m"
+					keepAnticheatFirst
 				else
 					echo -e "\033[1;31m  Could not write the firmware boot entry (efivarfs may be read-only here).\033[0m"
 					echo -e "\033[1;31m  Run this from the live session after the install finishes:\033[0m"
