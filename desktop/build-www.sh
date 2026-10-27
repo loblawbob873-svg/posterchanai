@@ -37,6 +37,7 @@ done
 cp "$SRC"/static/css/rtl.css          www/static/css/
 # Loaded at RUNTIME by music.js (the Music library views), so it is in no template either.
 cp "$SRC"/static/css/music-library.css www/static/css/
+cp "$SRC"/static/css/files-explorer.css www/static/css/
 # The translation catalogues. i18n.js fetches /static/i18n/<lang>.json at runtime, and in a bundle
 # that request is served by the bundle — so without this the language picker offers Arabic and
 # Japanese, the fetch 404s, and the client falls back to English with nothing on screen to say why.

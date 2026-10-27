@@ -1,0 +1,112 @@
+/* ===== FILES, LAID OUT LIKE FILE EXPLORER -- and dressed like this app ============================================
+   2026-10-26: "The file manager is a clunky mess ... mimic Windows File Explorer. It needs a traditional toolbar for the
+   file operations (file, edit, Admin) and to reduce the cluttered button mess ... show only the folder and the name, and
+   list of files, now we waste too much UI to folder, they are like big boxes", then "a cyberpunk UI, adaptable to each
+   theme". So, top to bottom: a MENU BAR (File / Edit / View / Admin), the address row (back, up, path, search), the list
+   -- a folder or a file is ONE row -- and a STATUS BAR. Every operation is in a menu; the controls that do them are still
+   in the page, hidden here, and the menus press them (files.js _FX_MENUS), so no operation changed, only where it is.
+   Every colour is a THEME variable (--neon --neon2 --cyan --accent-rgb --panel --panel2 --line --text --muted --bg), so
+   each theme gets its own neon. Loaded by files.js the first time Files opens. */
+
+/* ---- the frame ------------------------------------------------------------------------------------------------- */
+.fx-explorer{box-shadow:0 0 0 1px rgba(var(--accent-rgb),.16),0 18px 40px -28px rgba(var(--accent-rgb),.55)}
+.fx-main{position:relative}
+
+/* ---- the menu bar ---------------------------------------------------------------------------------------------- */
+/* 6px from the top: its row meets the sidebar's first row ("Files") on one centre line, in a desktop window and a
+   PosterChanOS one (tests/client/test_files_columns_align_full_app.py measures both). */
+.fx-menubar{display:flex;align-items:center;gap:2px;flex:1 1 100%;order:-1;min-width:0;
+  margin:0 0 2px;padding:6px 0 6px;border-bottom:1px solid var(--line)}
+.fx-menu{background:none;border:0;border-radius:6px;color:var(--text);cursor:pointer;font:inherit;font-size:12.5px;
+  font-weight:650;letter-spacing:.09em;text-transform:uppercase;line-height:1;padding:7px 12px;min-height:32px;
+  transition:background .12s,box-shadow .12s,color .12s}
+.fx-menu:hover,.fx-menu:focus-visible,.fx-menu.open{background:rgba(var(--accent-rgb),.14);color:var(--neon);outline:none;
+  box-shadow:inset 0 -2px 0 var(--neon),0 0 14px -6px var(--neon)}
+
+/* ---- what the menus now do: drawn no more ---------------------------------------------------------------------- */
+.fx-explorer .fx-views,                        /* new folder / new document / sort / tiles-details */
+.fx-explorer .files-selbar,                    /* select all / none / download / move / delete */
+.fx-explorer .sync-selbar:has(#ss-all),        /* the synced folder's same bar (the Trash's explanation stays) */
+.fx-explorer #host-pane .fx-actions,           /* This Computer's up / new / select / paste / actions row */
+.fx-explorer .fx-used,                         /* "N stored · Refresh · Check my drive": the status bar says it */
+.fx-explorer .files-page-count,                /* "Showing 60 of 900": the status bar says it */
+.fx-explorer .file-card .fc-acts,              /* six buttons on every file: one ⋯ instead */
+.fx-explorer .files-grid:not(.details) .file-card>.copy,
+.fx-explorer .files-grid:not(.details) .file-card>.del{display:none!important}
+/* The drop box and its two big buttons: the whole pane takes a drop now (files.js _fxPaneDrop). The upload
+   progress under it still shows. */
+.fx-explorer .drop-zone{margin:0;padding:0;border:0;background:none;min-height:0}
+.fx-explorer .drop-zone .dz-inner{display:none}
+.fx-main.fx-dropping{outline:2px dashed var(--cyan);outline-offset:-8px;background:rgba(var(--accent-rgb),.06)}
+.fx-main.fx-dropping::after{content:"Drop to upload here";position:absolute;inset:auto 0 40% 0;text-align:center;
+  font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--cyan);pointer-events:none;
+  text-shadow:0 0 14px var(--cyan)}
+
+/* ---- the address row ------------------------------------------------------------------------------------------- */
+.fx-explorer .fx-sep{color:var(--neon);opacity:.8}
+.fx-explorer .fx-crumb.on{color:var(--text);text-shadow:0 0 12px rgba(var(--accent-rgb),.45)}
+.fx-explorer .fx-find{border-radius:8px}
+/* The path sits beside Back / Up, as in Explorer -- not floated to the middle of the bar now that the view buttons
+   that used to fill its right half are menu items. */
+.fx-explorer .fx-crumbs{flex:1 1 auto;justify-content:flex-start}
+.fx-explorer .fx-find:focus{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon),0 0 16px -6px var(--neon)}
+
+/* ---- the list: a folder or a file is one row ------------------------------------------------------------------- */
+.fx-explorer .files-grid.details{--fx-acts:40px;--fx-box:24px}
+/* THE LIST FITS ITS PANE, NOT THE SCREEN. The columns were chosen by SCREEN width, so a pane narrowed by the sidebar
+   -- a phone held sideways (844px wide, ~400px left for the list), a narrow window -- kept Size, Type and Date at
+   their fixed widths and the Name column got NOTHING: rows of sizes and dates with no file names (measured,
+   2026-10-26). Below 640px of LIST width, Type and Date go, the way Explorer drops columns before it drops names. */
+.fx-explorer .fx-main{container-type:inline-size}
+@container (max-width:640px){
+  .fx-explorer .fx-cols,.fx-explorer .files-grid.details .file-card.row,
+  .fx-explorer #host-pane .fx-cols,.fx-explorer #host-pane .files-grid.details .file-card.row{
+    grid-template-columns:var(--fx-box) minmax(0,1fr) 72px var(--fx-acts)}
+  .fx-explorer .files-grid.details.nosel .fx-cols,.fx-explorer .files-grid.details.nosel .file-card.row{
+    grid-template-columns:minmax(0,1fr) 72px var(--fx-acts)}
+  .fx-explorer .fx-c-type,.fx-explorer .fx-c-modified,.fx-explorer .fx-type,.fx-explorer .fx-mod{display:none}
+}
+.fx-explorer .fx-col{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;letter-spacing:.12em}
+.fx-explorer .fx-col.on{color:var(--neon)}
+.fx-explorer .files-grid.details .file-card.row{min-height:40px;padding:4px 8px;transition:background .1s,box-shadow .1s}
+.fx-explorer .files-grid.details .file-card.row:hover{background:rgba(var(--accent-rgb),.08);box-shadow:inset 3px 0 0 var(--neon)}
+.fx-explorer .files-grid.details .file-card.row.selected{background:rgba(var(--accent-rgb),.18);box-shadow:inset 3px 0 0 var(--cyan)}
+.fx-explorer .fx-name .fname{font-size:14px}
+.fx-explorer .file-card.isdir .fx-ic{filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.55))}
+.fx-rowmore{display:inline-grid;place-items:center;justify-self:end;flex:0 0 auto;width:32px;height:32px;padding:0;
+  border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
+.fx-rowmore:hover,.fx-rowmore:focus-visible{color:var(--neon);background:rgba(var(--accent-rgb),.14);outline:none}
+.fx-explorer .files-grid:not(.details) .file-card .meta{display:flex;align-items:center;gap:4px}
+.fx-explorer .files-grid:not(.details) .file-card .meta .fname{flex:1 1 auto;min-width:0}
+
+/* The drive's HOME is a list of folders, one row each -- not a wall of boxes. */
+.fx-explorer .fx-home{grid-template-columns:1fr;gap:0;padding:2px 0 8px}
+.fx-explorer .fx-home-sec{margin:12px 0 2px;padding:0 8px;opacity:1;color:var(--muted);font-size:11px;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.fx-explorer .fx-home-tile{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;column-gap:10px;
+  min-height:40px;padding:4px 10px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;
+  transform:none;transition:background .1s,box-shadow .1s}
+.fx-explorer .fx-home-tile:hover,.fx-explorer .fx-home-tile:focus-visible{background:rgba(var(--accent-rgb),.08);
+  box-shadow:inset 3px 0 0 var(--neon);transform:none;outline:none}
+.fx-explorer .fx-home-ic{font-size:1.15rem;line-height:1;filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.55))}
+.fx-explorer .fx-home-name{font-weight:600;font-size:14px}
+.fx-explorer .fx-home-sub{font-size:12px;white-space:nowrap}
+
+/* ---- the status bar -------------------------------------------------------------------------------------------- */
+.fx-status{position:sticky;bottom:0;z-index:5;margin:auto -12px -12px;padding:6px 14px;background:var(--bg);
+  border-top:1px solid var(--line);color:var(--muted);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx-status::before{content:"";display:inline-block;width:6px;height:6px;margin-inline-end:8px;border-radius:50%;
+  background:var(--cyan);box-shadow:0 0 8px var(--cyan);vertical-align:1px}
+.fx-status:empty{display:none}
+
+/* ---- a phone ----------------------------------------------------------------------------------------------------- */
+@media (max-width:820px),(max-height:600px){
+  .fx-explorer .files-grid.details{--fx-acts:calc(44px / var(--zf,1));--fx-box:calc(44px / var(--zf,1))}
+  .fx-menubar{padding:0 6px 4px}
+  .fx-menu{min-height:calc(44px / var(--zf,1));padding:8px 12px}
+  .fx-explorer .files-grid.details .file-card.row{min-height:52px;padding:4px}   /* = the header's 4px, or every heading drifts */
+  .fx-rowmore{width:calc(44px / var(--zf,1));height:calc(44px / var(--zf,1))}
+  .fx-explorer .fx-home-tile{min-height:52px}
+  .fx-status{margin:0;padding:6px 10px}
+}

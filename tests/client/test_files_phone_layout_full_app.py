@@ -94,9 +94,11 @@ def test_files_all_on_a_phone(width, height, view):
         # "All": the whole drive.
         await b.js("(()=>{const a=[...document.querySelectorAll('button,[data-folder]')].find(e=>/^\\s*All( files)?\\s*$/i.test(e.textContent)||e.dataset.folder==='');a&&a.click()})()")
         await b.until("document.querySelectorAll('.file-card[data-sha]').length>=30")
+        await b.js("document.querySelector('[data-view=\"%s\"]').click()" % view)   # View menu's choice, pressed
         if view == 'details':
-            await b.js("document.querySelector('[data-view=\"details\"]').click()")
-            await b.until("!!document.querySelector('.files-grid.details .fx-mobile-actions')")
+            await b.until("!!document.querySelector('.files-grid.details .fx-rowmore')")
+        else:
+            await b.until("!document.querySelector('.files-grid.details') && document.querySelectorAll('.file-card[data-sha]').length>=30")
         top = await b.js(MEASURE)
         assert top['problems'] == [], top['problems']
         assert top['sortSelected'] == 'Newest first', top

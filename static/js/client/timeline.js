@@ -1126,7 +1126,7 @@ window.PCTimelineFactory = function(dep){
        * modal is what you get from the New Post button. A feature added to one of them and not the
        * other is invisible to almost everybody, which is exactly how this shipped the first time
        * ("i don't see mini app"). If a third composer ever appears, it needs this line too. */
-      if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app (.xdc)']);
+      if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app']);
       openMenuPopover($('#tl-cmp-attach',box), opts, a=>{
         if(a==='camera') _captureCamera(ta, box);
         else if(a==='local') $('#tl-cmp-file',box).click();

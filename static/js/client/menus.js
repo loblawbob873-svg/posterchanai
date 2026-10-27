@@ -23,6 +23,7 @@ window.PCMenusFactory = function(dep){
     effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
     launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
+    postHasMedia, sharePostToCommunities,
     postImageUrl, profOf, publish, reactionGroups, repostWithWarning, requestBlossomAccess, rxKey, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
   } = dep;
@@ -386,6 +387,8 @@ window.PCMenusFactory = function(dep){
     // An admin sees Block OR Unblock for the author, so the relay's list is read first (cached).
     if(S.IS_ADMIN && !mine){ try{ await ensureRelayBlocked(); }catch(_){} }
     const items=[['bookmark', S.BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🔗 Copy link']];
+    // A post with a picture or a video can be handed to a Communities channel (app.js sharePostToCommunities).
+    if(!dep.isGuest() && postHasMedia(id)) items.push(['sharecomm','👥 Share to Communities']);
     if(mine) items.push(['delete','🗑️ Delete','danger']);   // near the top so it's reachable on a crowded menu
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
@@ -419,6 +422,7 @@ window.PCMenusFactory = function(dep){
       if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
       if(a==='memebuild') return memeBuildPost(id, pk);
+      if(a==='sharecomm') return sharePostToCommunities(id);
       if(a==='screenshot') return screenshotPost(id);
       if(a==='rawjson') return showRawEvent(id);
       if(a==='pin') return togglePin(id);

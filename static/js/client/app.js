@@ -9090,6 +9090,7 @@
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
     npubOf, observeCelebrations, openArticle, openLightbox, openPostMenu, openRepo, openStream,
     openThread, pickEmoji, profOf, publish, renderHashtag, renderProfileView, renderThread,
+    sharePostToCommunities, postMediaOf: ev => (GUEST || !signer) ? [] : _postMedia(ev),
     renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, toggleReaction, translatePost, uiConfirm,
     uiPrompt, webxdcCardHtml, webxdcFileCard, xmrForNote, xmrTipBadge, zapAmount,
   }; }
@@ -9613,6 +9614,7 @@
     effectPost, enc, ensureRelayBlocked, fetchEvent, invalidateCounts, isMutedAuthor, isRelayBlocked,
     launchEffectStudio, linkify,
     mediaParts, memeBuildPost, modal, myReaction, myReactionIds, needProfile, niceNip05, npubOf,
+    postHasMedia, sharePostToCommunities,
     postImageUrl, profOf, publish, reactionGroups, repostWithWarning, requestBlossomAccess, rxKey, switchView, toast,
     toggleBookmark, toggleMute, toggleMuteThread, togglePin, uiPrompt, uploadBlob,
     // Report (NIP-56): a guest sees it disabled with the reason; a report also goes to THIS node's relay.
@@ -9813,6 +9815,42 @@
       const ok = m && m.addMedia && m.addMedia(url, isVid?'video/mp4':'image/jpeg', { id, pk });
       toast(ok ? '🎞️ added to the Meme Builder' : 'could not add that media');
     }).catch(()=>toast('could not open the Meme Builder'));
+  }
+  /* 👥 SHARE TO COMMUNITIES ("Add 'Share to Communities' button to social posts with a video/image, it shares the image
+   * to the community/channel of your choosing", 2026-10-26). Every image and video of the post, in its order, with the
+   * type its imeta states (else read from the extension, else asked of the server): Concord's channel picker opens over
+   * whatever screen this is, and the chosen channel's message box gets them as attachments -- nothing is sent until the
+   * person presses Send (concord.js shareInto). */
+  function _postMedia(ev){
+    const out=[], seen=new Set(), said=new Map();
+    for(const t of (ev&&ev.tags)||[]){ if(t[0]!=='imeta') continue;
+      const j=t.slice(1).join(' '), u=(/url\s+(\S+)/.exec(j)||[])[1], m=(/(?:^|\s)m\s+(\S+)/.exec(j)||[])[1];
+      if(u) said.set(u, m||''); }
+    const byExt=u=>/\.(mp4|m4v)([?#]|$)/i.test(u)?'video/mp4':/\.webm([?#]|$)/i.test(u)?'video/webm':/\.mov([?#]|$)/i.test(u)?'video/quicktime'
+      :/\.png([?#]|$)/i.test(u)?'image/png':/\.gif([?#]|$)/i.test(u)?'image/gif':/\.webp([?#]|$)/i.test(u)?'image/webp'
+      :/\.avif([?#]|$)/i.test(u)?'image/avif':/\.(jpe?g)([?#]|$)/i.test(u)?'image/jpeg':'';
+    for(const raw of ((ev&&ev.content||'').match(/https?:\/\/[^\s<]+/gi)||[])){
+      const u=raw.replace(/[)\].,!?]+$/,''); if(seen.has(u)) continue;
+      const type=said.get(u)||byExt(u);
+      if(/^(image|video)\//.test(type) || (!type && /\/[0-9a-f]{64}([?#.]|$)/i.test(u))){ seen.add(u); out.push({url:u, type}); }
+    }
+    for(const [u,m] of said){ if(!seen.has(u) && /^(image|video)\//.test(m)){ seen.add(u); out.push({url:u, type:m}); } }
+    return out.slice(0,10);
+  }
+  function postHasMedia(id){ const ev=Store.get(id); return !!(ev && _postMedia(ev).length); }
+  async function sharePostToCommunities(id){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const media=_postMedia(ev);
+    if(!media.length){ toast('this post has no image or video to share'); return; }
+    // A Blossom address says nothing of its type: ask the server once, so a video is attached as a video.
+    await Promise.all(media.filter(m=>!m.type).map(async m=>{
+      try{ const c=new AbortController(), t=setTimeout(()=>c.abort(), 4000);
+        const r=await fetch(m.url, {method:'HEAD', signal:c.signal}); clearTimeout(t);
+        m.type=String(r.headers.get('content-type')||'').split(';')[0].trim(); }catch(_){ }
+      if(!/^(image|video)\//.test(m.type||'')) m.type='image/jpeg'; }));
+    const open=mod=>{ if(!(mod && mod.shareInto && mod.shareInto({ media }))) toast('could not open Communities'); };
+    if(window.PCConcord && PCConcord.shareInto) open(PCConcord); else _withModule('concord.js','PCConcord',open);
   }
   // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
   // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
@@ -11354,7 +11392,9 @@
    * Sort and view mode are per device (localStorage), not per account: which way someone likes to
    * look at a folder belongs to the screen they are looking at it on. */
   const _FX_COLS = [['name','Name'],['size','Size'],['type','Type'],['modified','Date created']];
-  function _fxView(){ return ClientSettings.get('filesView','tiles')==='details' ? 'details' : 'tiles'; }
+  // DETAILS by default -- File Explorer's list: a folder or a file is one row (2026-10-26, "we waste too much UI to
+  // folder, they are like big boxes"). Tiles stays one View-menu choice away, and a choice already made is kept.
+  function _fxView(){ return ClientSettings.get('filesView','details')==='tiles' ? 'tiles' : 'details'; }
   function _fxSort(){
     const s = ClientSettings.get('filesSort', null);
     /* NEWEST FIRST is the default, and it is load-bearing rather than a taste: a Blossom /list comes

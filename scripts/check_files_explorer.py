@@ -62,7 +62,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 # The functions lifted out of app.js. Each is matched from `function <name>(` to the line that closes
 # it at the same indentation — app.js indents module-level functions by two spaces, so the closing
 # brace is the first line that is exactly "  }".
-LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
+LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxDelegate", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
         "_fxView", "_fxSort", "_fxCompare"]
 # Data the lifted functions close over. Same rule: taken verbatim, never restated here.
 LIFT_CONST = ["_FX_COLS", "_FX_KINDS", "_FX_SORT_CHOICES"]
@@ -103,6 +103,7 @@ def page():
 PAGE_TMPL = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/static/css/client.css">
+<link rel="stylesheet" href="/static/css/files-explorer.css">  <!-- loaded by files.js when Files opens: the shipped look -->
 </head><body>
 <div id="feed"></div>
 <nav class="mobilenav glass"><button class="nav-item"><b>Home</b></button></nav>
@@ -447,11 +448,11 @@ def judge(label, r, phone, which):
         elif r.get("homeHostW") and r["homeW"] < r["homeHostW"] * 0.8:
             bad.append(f"[home-squeezed] {label}: the tile grid is {r['homeW']}px inside a "
                        f"{r['homeHostW']}px host — it is sitting in one track of #bl-grid, not spanning it")
-        # A phone is one column by design; a desktop pane fits several, and one there means the
-        # same squeeze by another name.
-        elif not phone and r.get("homeCols", 0) < 2:
-            bad.append(f"[home-onecolumn] {label}: {r['homeTiles']} folder tiles in "
-                       f"{r.get('homeCols')} column ({r.get('homeH')}px tall) — the grid is not laying out")
+        # The home is a LIST of folders, one row each, on every screen (File Explorer's shape, 2026-10-26: "we waste
+        # too much UI to folder, they are like big boxes"). More than one column means the boxes came back.
+        elif r.get("homeCols", 0) > 1:
+            bad.append(f"[home-boxes] {label}: {r['homeTiles']} folders in {r.get('homeCols')} columns -- the home "
+                       f"is drawing boxes again, not one row per folder")
         for c in r["clipped"]:
             bad.append(f"[text-clipped] {label}: “{c['text']}” needs {c['needs']}px, has {c['shown']} ({c['cls']})")
         return bad

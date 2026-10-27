@@ -250,9 +250,10 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
         cls.grid = _decomment(_fn(cls.app, "function _renderFilesGrid("))
         cls.host = _decomment(_read(os.path.join(ROOT, "static", "js", "client", "hostfiles.js")))
 
-    def test_tiles_is_the_default_view(self):
-        """If this stops being true, this whole class is measuring the less-used screen."""
-        self.assertIn("ClientSettings.get('filesView','tiles')", self.app,
+    def test_details_is_the_default_view(self):
+        """Details (File Explorer's list) is the default since 2026-10-26. If this stops being true, re-read this class:
+        it measures both views, and the default is the one most people see."""
+        self.assertIn("ClientSettings.get('filesView','details')", self.app,
                       "the default Files view changed \u2014 re-read this test")
 
     def test_no_open_button_survives_anywhere(self):

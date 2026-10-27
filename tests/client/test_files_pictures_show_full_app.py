@@ -67,7 +67,7 @@ def test_pictures_show_in_files_on_a_server_without_previews(width):
                 {'sha256': MISSING, 'size': 68, 'type': 'image/png',
                  'url': f'{origin}/blossom/{MISSING}', 'uploaded': 1760000003},
             ]
-            await b.js("__PC.switchView('blossom')")
+            await b.js("ClientSettings.set('filesView','tiles'); __PC.switchView('blossom')")   # thumbnails are a TILES thing
             vis = ("[...document.querySelectorAll('[data-folder=\"Pics\"]')]"
                    ".find(e=>e.getClientRects().length&&e.offsetParent)")
             await H.wait(b, '!!' + vis)

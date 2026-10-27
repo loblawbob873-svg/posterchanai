@@ -409,7 +409,7 @@ Done. Mini apps now run on https://${host}, which is a different ORIGIN from htt
 that separation is the whole security model: an app is untrusted code and must not share the origin
 holding the reader's Nostr key and session.
 
-  • Post one: compose → 📎 → "🎮 Mini app (.xdc)". Apps: https://webxdc.org/apps/
+  • Post one: compose → 📎 → "🎮 Mini app". Apps: https://webxdc.org/apps/
   • Nothing to enable in Admin; nothing to restart. The client derives the sandbox origin itself.
   • Renewal: certbot registered ${host} as its own lineage; \`certbot renew\` covers it.
   • Full picture, including what is deliberately NOT done (wildcard-per-app, a port): docs/WEBXDC.md

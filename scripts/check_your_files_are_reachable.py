@@ -122,7 +122,7 @@ def lift_re(src, pattern, what):
 # Everything the two app.js surfaces below actually run. Order matters only for the consts.
 LIFT_FUNCS = ["_fmtBytes", "_fxView", "_fxSort", "_fxCompare", "_fxBlobKey", "_fxBytes", "_fxWhen",
               "_fxType", "_fxFileGlyph", "_fxIcon", "_fxEncIcon", "_fxFolderIcon", "_fxBlobName", "_fxColsHTML", "_fxDetailsRow", "_fxBindCols",
-              "_fxFolderCounts", "_fxSideHTML", "_renderFilesGrid", "musicEntries"]
+              "_fxFolderCounts", "_fxSideHTML", "_renderFilesGrid", "musicEntries", "_scrollRoot", "_fxMoreBtn", "_fxStatus"]
 LIFT_CONSTS = ["_FX_COLS", "_FX_KINDS", "_FILES_PAGE", "_THUMB_MAX", "_THUMB_EXT"]
 
 

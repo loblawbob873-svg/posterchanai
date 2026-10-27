@@ -29,6 +29,7 @@ window.PCCardsFactory = function(dep){
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
     npubOf, observeCelebrations, openArticle, openLightbox, openPostMenu, openRepo, openStream,
     openThread, pickEmoji, profOf, publish, renderHashtag, renderProfileView, renderThread,
+    sharePostToCommunities, postMediaOf,
     renderView, safePk, timeAgo, toast, toggleBookmark, togglePin, toggleReaction, translatePost, uiConfirm,
     uiPrompt, webxdcCardHtml, webxdcFileCard, xmrForNote, xmrTipBadge, zapAmount,
   } = dep;
@@ -867,6 +868,7 @@ window.PCCardsFactory = function(dep){
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}${_rtAct.pending?' rt-unconfirmed':''}" data-a="repost" title="${_rtAct.label}" aria-label="${_rtAct.label}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
+          ${postMediaOf(ev).length ? '<button class="act actc" data-a="sharecomm" title="Share to Communities" aria-label="Share to Communities"><svg class="ic b-ic" aria-hidden="true"><use href="#i-users"></use></svg></button>' : ''}
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'add another reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
           <button class="act actm ${S.BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
@@ -1491,6 +1493,7 @@ window.PCCardsFactory = function(dep){
       if(a==='react') return pickEmoji(id,pk,btn);
       if(a==='repost') return doRepost(id,pk,btn);
       if(a==='quote') return compose({quote:id});
+      if(a==='sharecomm') return sharePostToCommunities(id);
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='tip') return doTip(id,pk,art.dataset.xmr,art.dataset.xmrNote==='1');

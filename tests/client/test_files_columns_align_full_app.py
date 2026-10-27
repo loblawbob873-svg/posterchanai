@@ -20,7 +20,8 @@ def bundled_assets():
 MEASURE = r'''(()=>{const w=[...document.querySelectorAll('.osw')].pop(); if(!w) return null;
   const c=e=>{if(!e)return null;const r=e.getBoundingClientRect();return r.top+r.height/2};
   const side=w.querySelector('.fx-side .fx-tree-head');
-  const row=['#fx-back','.fx-crumb.on','#fx-find'].map(s=>c(w.querySelector(s))).filter(v=>v!=null);
+  // The pane's FIRST row is the menu bar (File / Edit / View) since 2026-10-26 -- the row the sidebar's first one meets.
+  const row=[...w.querySelectorAll('.fx-menubar .fx-menu')].map(c).filter(v=>v!=null);
   return {side:c(side), main:row, sideTop:side&&side.getBoundingClientRect().top,
           barTop:(w.querySelector('.fx-bar')||{getBoundingClientRect:()=>({top:null})}).getBoundingClientRect().top};})()'''
 

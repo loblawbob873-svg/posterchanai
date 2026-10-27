@@ -1933,7 +1933,8 @@ body.embed .app{display:block !important;height:auto !important}
 body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilenav{display:none !important}
 body.embed .main{margin:0 !important;width:100% !important;height:auto !important;overflow:visible !important}
 body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important;overflow:visible !important}
-.act.actq .q-ico{width:22px;height:22px}   /* quote: no idle colour — uniform --muted like every .act / .nav-item */
+.act.actq .q-ico{width:22px;height:22px}
+.act.actc .ic{width:22px;height:22px}   /* Share to Communities: the same size as its neighbours' icons */   /* quote: no idle colour — uniform --muted like every .act / .nav-item */
 .act .rp-ico{width:20px;height:20px}
 /* No visible scrollbar on the timeline: a 14px magenta bar down the side of the feed read as chrome
    from a different app. Scrolling itself is untouched — only the painted track/thumb is gone

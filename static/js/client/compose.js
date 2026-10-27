@@ -505,7 +505,7 @@ window.PCComposeFactory = function(dep){
         // 🎮 A webxdc mini app — a game, a poll, a shared editor — attached as a playable card.
         // Its own entry rather than a file among files: a .xdc is a zip, so picking it from "Local"
         // would upload it as an anonymous archive with no way to know it can be played.
-        if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app (.xdc)']);
+        if(window.PCWebxdc && PCWebxdc.attach) opts.push(['webxdc','🎮 Mini app']);
         openMenuPopover($('#cmp-attach',root), opts, a=>{
           if(a==='camera') _captureCamera(ta, root);
           else if(a==='local') $('#cmp-file',root).click();

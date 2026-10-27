@@ -6807,20 +6807,25 @@
     return saved().map((room,index)=>({room,index,channels:orderedChannels(room).filter(c=>c&&c.name&&c.view!=='forum')}))
       .filter(r=>r.channels.length);
   }
+  /* `media` ({url, type}) is a post's own image or video, shared from its ⋯ ("Share to Communities", 2026-10-26): it is
+   * already stored, so it is attached the way "📁 Files" attaches -- its URL with an imeta tag, nothing downloaded or
+   * uploaded again, so a long video shares as fast as a picture. */
   function shareInto(payload){
     const p=PC();if(!p||!p.modal)return false;
     const text=String(payload&&payload.text||''),files=Array.isArray(payload&&payload.files)?payload.files:[];
-    if(!text&&!files.length)return false;
+    const media=(Array.isArray(payload&&payload.media)?payload.media:[]).filter(m=>m&&/^https:\/\//i.test(String(m.url||''))).slice(0,10);
+    if(!text&&!files.length&&!media.length)return false;
     const targets=shareTargets();
     if(!targets.length){p.toast('Join a community first, then share to one of its channels');return false;}
-    const what=files.length?(files.length===1?files[0].name:files.length+' files'):'this';
+    const what=files.length?(files.length===1?files[0].name:files.length+' files')
+      :media.length?(media.length===1?(/^video\//.test(media[0].type||'')?'this video':'this image'):media.length+' images and videos'):'this';
     p.modal(`<h3>Share to a channel</h3><p class="muted">Where should ${p.enc(what)} go? It is put in the message box for you to send.</p>
       <div class="cc-share-targets">${targets.map(t=>`<div class="cc-share-room"><b>${p.enc(roomName(t.room,t.index))}</b>${
         t.channels.map(c=>`<button type="button" class="btn btn-ghost cc-share-channel" data-cc-share-room="${t.index}" data-cc-share-channel="${p.enc(c.name)}">#${p.enc(c.name)}</button>`).join('')}</div>`).join('')}</div>`,box=>{
       box.querySelectorAll('[data-cc-share-channel]').forEach(b=>b.onclick=async()=>{
         const index=Number(b.dataset.ccShareRoom),channel=b.dataset.ccShareChannel;
         try{p.closeModal&&p.closeModal();}catch(_){}
-        pendingShare={text,files};
+        pendingShare={text,files,media};
         if(p.switchView&&!(p.isView&&p.isView('concord')))p.switchView('concord');
         await activateJoinedRoom(p,index,false);
         state.channel=channel;state.thread=null;mobileChatOpen=true;mobileDrawerOpen=false;enterChatBottom();render();
@@ -7453,7 +7458,9 @@
     /* A share from another app (shareInto above) lands in the composer of the channel it was sent to. */
     if(pendingShare&&input){const s0=pendingShare;pendingShare=null;
       if(s0.text){input.value=(input.value?input.value+'\n':'')+s0.text;try{input.dispatchEvent(new Event('input',{bubbles:true}));}catch(_){}}
-      if(s0.files&&s0.files.length)void uploadAttachments(s0.files);}
+      if(s0.files&&s0.files.length)void uploadAttachments(s0.files);
+      for(const m of (s0.media||[])){ const type=String(m.type||'');
+        insertBlossomAttachment({url:m.url,type,ext:(type.split('/')[1]||'').replace(/^jpeg$/,'jpg').replace(/[^a-z0-9]/g,'').slice(0,5)}); }}
     /* PASTE IS BOUND TO THE DOCUMENT, NOT TO A CAPTURED #cc-input.
      *
      * `bind()` runs after a render, and `input` here is the element as it was at that moment — but

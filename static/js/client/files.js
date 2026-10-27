@@ -40,12 +40,15 @@ window.PCFilesFactory = function(dep){
     const n = _syncSel.size, bar = $('.sync-selbar', grid);
     if(bar) bar.classList.toggle('has-sel', n > 0);
     const c = $('#ss-count', grid); if(c) c.textContent = n ? n + ' selected' : '';
+    { const rows = grid.querySelectorAll('.file-card').length;
+      _fxStatus(grid.closest('.fx-explorer'), rows + ' item' + (rows === 1 ? '' : 's') + (n ? ' · ' + n + ' selected' : '')); }
     for(const id of ['#ss-del', '#ss-move', '#ss-none']){ const b = $(id, grid); if(b) b.disabled = !n; }
     const a = $('#ss-all', grid);
     if(a){ const every = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
       a.setAttribute('aria-pressed', every ? 'true' : 'false'); a.innerHTML = syncAllLabel(every, fileItems.length); }
   }
   async function renderBlossom(){
+    if(!document.getElementById('fx-explorer-css')) await _fxCss();
     const feed=$('#feed');
     /* AND REPAINT WHEN THE DRIVE ACTUALLY ARRIVES.
      *
@@ -221,8 +224,11 @@ window.PCFilesFactory = function(dep){
       + `<span class="fx-type">${enc(o.type)}</span>`
       + `<span class="fx-mod">${enc(o.when)}</span>`
       + `<span class="fc-acts">${o.acts || ''}</span>`
-      + (o.acts ? `<details class="fx-mobile-actions"><summary aria-label="File actions"><span class="fx-more-dots" aria-hidden="true"></span></summary><span class="fc-acts">${o.acts}</span></details>` : '')
+      + (o.acts ? `<button class="fx-rowmore" type="button" title="Actions" aria-label="Actions for ${enc(o.title || o.name)}" aria-haspopup="menu"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>` : '')
       + `</div>`;
+  }
+  function _fxMoreBtn(name){
+    return `<button class="fx-rowmore" type="button" title="Actions" aria-label="Actions for ${enc(name || 'this file')}" aria-haspopup="menu"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>`;
   }
   function _fxBindCols(grid){
     $$('.fx-col', grid).forEach(b => b.onclick = () => { _fxSetSort(b.dataset.sort); renderBlossom(); });
@@ -242,7 +248,7 @@ window.PCFilesFactory = function(dep){
   const _FX_SORT_CHOICES = [['modified',-1,'Newest first'],['modified',1,'Oldest first'],
     ['name',1,'Name A–Z'],['name',-1,'Name Z–A'],['size',-1,'Largest first'],['size',1,'Smallest first'],
     ['type',1,'Type A–Z'],['type',-1,'Type Z–A']];
-  function _fxBarHTML(crumbs, canBack, canNewFolder){
+  function _fxBarHTML(crumbs, canBack, canNewFolder, admin){
     const v = _fxView();
     const s = _fxSort();
     /* BACK AND UP — the two controls every file manager has and this one did not.
@@ -253,7 +259,17 @@ window.PCFilesFactory = function(dep){
      * the toolbar does not reflow as you navigate); `Back` is a history this pane keeps for itself,
      * because the app's own history is view-level and a folder is not a view. */
     const up = crumbs.length > 1 ? crumbs[crumbs.length - 2].to : '';
+    /* THE MENU BAR, the way Windows File Explorer has one: File / Edit / View (/ Admin). Every operation the screen
+     * offers lives in these menus ("a traditional toolbar for the file operations ... reduce the cluttered button
+     * mess", 2026-10-26). The controls that DO those operations are still drawn below, hidden (files-explorer.css):
+     * a menu item presses one, so every handler is the code it was -- see _FX_MENUS / _fxOpenMenu. */
     return `<div class="fx-bar">
+      <div class="fx-menubar" role="menubar" aria-label="File manager menu">
+        <button class="fx-menu" data-fxmenu="file" role="menuitem" aria-haspopup="menu">File</button>
+        <button class="fx-menu" data-fxmenu="edit" role="menuitem" aria-haspopup="menu">Edit</button>
+        <button class="fx-menu" data-fxmenu="view" role="menuitem" aria-haspopup="menu">View</button>
+        ${admin ? '<button class="fx-menu" data-fxmenu="admin" role="menuitem" aria-haspopup="menu">Admin</button>' : ''}
+      </div>
       <div class="fx-nav">
         <button class="fx-nb fx-locations-open" id="fx-locations-open" title="Locations" aria-label="Locations" aria-controls="fx-locations-panel" aria-expanded="false"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
         <button class="fx-nb" id="fx-back" title="Back" aria-label="Back"${canBack ? '' : ' disabled'}>‹</button>
@@ -272,7 +288,124 @@ window.PCFilesFactory = function(dep){
         <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bars"></use></svg></button>
       </div></div>`;
   }
+  /* WHAT EACH MENU HOLDS: [selector of the control that does it, label (null = the control's own words), class].
+   * Only controls present in THIS pane are offered, so the drive, a synced folder and This Computer each get the
+   * menu of what they can actually do; a control that is disabled (nothing selected) is shown disabled. */
+  const _FX_MENUS = {
+    file: [['#bl-pick, #sf-pick', 'Upload files…'], ['#bl-pickfolder', 'Upload folder…'],
+      ['#bl-newfolder, .hf-new', 'New folder'], ['#bl-newdoc', 'New document'],
+      ['#bl-seldl', 'Download selected'], ['.hf-share', 'Save to Files'], ['.fx-check', 'Check my drive…']],
+    edit: [['#bl-selall, .hf-all', null], ['#ss-all', 'Select all'], ['#bl-selnone, .hf-none, #ss-none', 'Select none'],
+      ['.hf-acts', 'Selected items…', '', 1], ['#bl-selmove, #ss-move', 'Move selected to…', '', 1], ['.hf-paste', null],
+      ['.hf-unclip', 'Cancel cut / copy'], ['#bl-seldel', 'Delete selected', 'danger'],
+      ['#ss-del', 'Delete selected on every device', 'danger'], ['#tr-reconcile', 'Reconcile Trash']],
+    view: [['.fx-vw[data-view="details"]', 'Details'], ['.fx-vw[data-view="tiles"]', 'Tiles'],
+      ['.hf-more', 'Show or hide hidden files'], ['.fx-refresh', 'Refresh']],
+    admin: [['[data-files-mode="admin"]', 'Storage by user'], ['.fx-check', 'Check my drive…']],
+  };
+  /* A menu item presses a control that is not drawn; a control that opens a popover of its own (Move to…, Actions)
+   * positions it on ITS button -- a hidden one has no box, so the popover would land in the corner. That control is
+   * handed the menu's own button instead (_fxAnchorFor). */
+  let _fxMenuAnchor = null;
+  function _fxAnchorFor(a){ return (a && a.getClientRects && a.getClientRects().length) ? a : (_fxMenuAnchor || a); }
+  function _fxPress(el, anchor){
+    _fxMenuAnchor = anchor || null;
+    try{ el.click(); } finally { setTimeout(() => { if(_fxMenuAnchor === anchor) _fxMenuAnchor = null; }, 0); }
+  }
+  function _fxOpenMenu(btn){
+    const pane = btn.closest('.fx-explorer') || document;
+    const which = btn.dataset.fxmenu, items = [], run = {};
+    const n = _filesSel.size;
+    for(const [sel, label, cls, popover] of (_FX_MENUS[which] || [])){
+      const el = pane.querySelector(sel); if(!el) continue;
+      const key = String(items.length);
+      let words = label || (el.textContent || '').trim() || el.getAttribute('aria-label') || '';
+      if(/^#bl-sel(dl|del)$/.test(sel) && n) words += ' (' + n + ')';
+      if(el.classList.contains('fx-vw') && el.classList.contains('on')) words = '✓ ' + words;
+      items.push([key, words, cls || '', el.disabled ? { disabled: true } : undefined]);
+      run[key] = () => _fxPress(el, popover ? btn : null);
+    }
+    if(which === 'view'){
+      const so = pane.querySelector('#fx-sort');
+      if(so) [...so.options].forEach(o => { const key = 's' + items.length;
+        items.push([key, (o.selected ? '✓ ' : '') + 'Sort: ' + o.textContent, '']);
+        run[key] = () => { so.value = o.value; so.dispatchEvent(new Event('change')); }; });
+    }
+    if(!items.length){ toast('nothing to do here'); return; }
+    btn.classList.add('open');
+    openMenuPopover(btn, items, k => { btn.classList.remove('open'); if(run[k]) run[k](); });
+  }
+  /* ONE FILE'S ACTIONS: its ⋯, or a right-click on it. Built from the buttons the row already carries (and hides), so
+   * a file of the drive, of a synced folder or of This Computer offers exactly what it always could. */
+  const _FX_ROW_LABEL = { copy:'Copy link', dlbtn:'Download', renbtn:'Rename', movebtn:'Move to…', del:'Delete',
+    dlsync:'Download', keepsync:'Save a copy to your drive', rnsync:'Rename', rmsync:'Delete on every device',
+    'tr-back':'Put back', 'tr-gone':'Delete permanently' };
+  function _fxRowMenu(card, anchor){
+    if(!card) return;
+    const items = [], run = {}, seen = new Set();
+    const open = card.querySelector('a.fx-name, :scope > a');
+    if(open){ items.push(['o', 'Open', '']); run.o = () => open.click(); }
+    for(const b of card.querySelectorAll('button')){
+      if(b.matches('.selbox, .fx-rowmore') || b.closest('summary')) continue;
+      const cls = [...b.classList].find(c => _FX_ROW_LABEL[c]) || '';
+      const words = _FX_ROW_LABEL[cls] || b.getAttribute('title') || b.getAttribute('aria-label') || (b.textContent || '').trim();
+      if(!words || seen.has(words)) continue;
+      seen.add(words);
+      const key = 'b' + items.length;
+      items.push([key, words, /del|rmsync|tr-gone|danger/.test(b.className) ? 'danger' : '', b.disabled ? { disabled: true } : undefined]);
+      run[key] = () => _fxPress(b, /movebtn/.test(b.className) ? anchor : null);
+    }
+    if(items.length < 2 && !open) return;
+    openMenuPopover(anchor, items, k => { if(run[k]) run[k](); });
+  }
+  // Once per page, marked on the document itself: scripts/check_files_explorer.py lifts this function by name, alone.
+  function _fxDelegate(){
+    if(document.__fxDelegated) return; document.__fxDelegated = true;
+    document.addEventListener('click', e => {
+      const t = e.target && e.target.closest ? e.target : null; if(!t) return;
+      const m = t.closest('.fx-menubar .fx-menu');
+      if(m){ e.preventDefault(); e.stopPropagation(); _fxOpenMenu(m); return; }
+      const r = t.closest('.fx-explorer .fx-rowmore');
+      if(r){ e.preventDefault(); e.stopPropagation(); _fxRowMenu(r.closest('.file-card'), r); }
+    }, true);
+    document.addEventListener('contextmenu', e => {
+      const c = e.target && e.target.closest && e.target.closest('.fx-explorer .file-card');
+      if(!c || !c.querySelector('.fx-rowmore')) return;
+      e.preventDefault(); _fxRowMenu(c, c);
+    });
+  }
+  /* THE STATUS BAR: what is here and what is picked, one line at the foot of the pane -- where the "Showing 60 of
+   * 900" and "3 selected" used to take a row each above the files. */
+  function _fxStatus(pane, text){
+    const st = (pane && pane.querySelector && pane.querySelector('#fx-status')) || document.getElementById('fx-status');
+    if(st) st.textContent = text;
+  }
+  /* THE WHOLE PANE TAKES A DROP. The drop box (and its two big buttons) is gone from view; dropping anywhere on the
+   * file list does what dropping on the box did -- the same handlers, handed the event. */
+  function _fxPaneDrop(pane, drop){
+    const main = pane && pane.querySelector('.fx-main'); if(!main || !drop) return;
+    main.ondragover = e => { if(drop.ondragover) drop.ondragover(e); if(e.defaultPrevented) main.classList.add('fx-dropping'); };
+    main.ondragleave = e => { if(!main.contains(e.relatedTarget)) main.classList.remove('fx-dropping'); };
+    main.ondrop = e => { main.classList.remove('fx-dropping'); if(drop.ondrop) drop.ondrop(e); };
+  }
+  /* files-explorer.css, the explorer's look, loaded the first time Files opens (the boot payload has no room). The
+   * first paint waits for it, briefly, so the menu bar never flashes as a row of bare buttons. */
+  let _fxCssP = null;
+  function _fxCss(){
+    if(_fxCssP) return _fxCssP;
+    _fxCssP = new Promise(res => {
+      if(document.getElementById('fx-explorer-css')) return res();
+      const l = document.createElement('link');
+      l.id = 'fx-explorer-css'; l.rel = 'stylesheet';
+      l.href = '/static/css/files-explorer.css' + (window.__VER ? ('?v=' + encodeURIComponent(window.__VER)) : '');
+      l.onload = l.onerror = () => res();
+      document.head.appendChild(l);
+      setTimeout(res, 1500);
+    });
+    return _fxCssP;
+  }
   function _fxBindBar(pane){
+    _fxDelegate();
     { const open=$('#fx-locations-open',pane), explorer=open&&open.closest('.fx-explorer');
       if(open && explorer) open.onclick=()=>{
         explorer.classList.add('fx-locations-on'); open.setAttribute('aria-expanded','true');
@@ -1771,13 +1904,13 @@ window.PCFilesFactory = function(dep){
         <div class="up-queue" id="sf-queue"></div></div>`;
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0) + head
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0, false, !!_S.IS_ADMIN) + head
       /* NOT `nosel` any more: a synced file can be picked one at a time, so this grid has the same
        * checkbox column the drive's does. Left as `nosel` the header kept 5 cells while every row
        * grew to 6, which puts every heading over the wrong column — caught by
        * scripts/check_files_explorer.py's headings-misaligned assertion. */
       + '<div class="files-grid' + (details?' details':'') + '" id="bl-grid"><div class="spinner"></div></div>'
-      + '</div></div>';
+      + '<div class="fx-status" id="fx-status" aria-live="polite"></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
     {
       const input = $('#sf-file', pane), drop = $('#sf-drop', pane), pick = $('#sf-pick', pane);
@@ -1794,6 +1927,7 @@ window.PCFilesFactory = function(dep){
           if(fs.length) _syncUploadFiles(fs);
           else toast('drop files rather than a folder — folders sync from a device');
         };
+        _fxPaneDrop(pane, drop);
       }
     }
     const grid = $('#bl-grid', pane); if(!grid) return;
@@ -1898,7 +2032,7 @@ window.PCFilesFactory = function(dep){
           type:type, when:_fxWhen(it.mtime), acts:tact });
         return `<div class="file-card${it.dir?' isdir':''}"${tnav}>
           <div class="file-icon">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
-          <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${tact?`<span class="fc-acts">${tact}</span>`:''}</div></div>`;
+          <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${tact?`<span class="fc-acts">${tact}</span>${_fxMoreBtn(it.name)}`:''}</div></div>`;
       }
       const edits = !canEdit ? ''
         : `<button class="rnsync" data-path="${enc(full)}" data-name="${enc(it.name)}" title="Rename${it.dir?' this folder everywhere':''}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`
@@ -1924,7 +2058,7 @@ window.PCFilesFactory = function(dep){
         selected:!!selc, size:_fxBytes(it.size), type:type, when:_fxWhen(it.mtime), acts:act });
       return `<div class="file-card${it.dir?' isdir':''}${selc}"${nav}>${sbox}
         <div class="file-icon"${thumbAttrs}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
-        <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
+        <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>${_fxMoreBtn(it.name)}`:''}</div></div>`;
     };
     const fileItems = items.filter(it => !it.dir);
     /* THE SAME BAR THE DRIVE USES — one selection grammar for all of Files. The synced view had
@@ -1957,6 +2091,7 @@ window.PCFilesFactory = function(dep){
       </div>` : '';
     grid.innerHTML = selbar + trashbar + (details ? _fxColsHTML(true) : '') + items.map(rowFor).join('');
     if(details) _fxBindCols(grid);
+    paintSyncBar(grid, fileItems);      // ...which also writes the status bar
     /* The two verbs. Both go through PCSync so the sweep that follows is told what happened — a
      * restore that says nothing is re-derived as "this copy is the deleted version" and undone. */
     if(_inTrash){
@@ -2057,7 +2192,7 @@ window.PCFilesFactory = function(dep){
         const opts = [['\u0000', '\u2302 ' + _S._syncRoot + ' (top level)']]
           .concat(folders.map(d => [d, '\ud83d\udcc1 ' + d]))
           .concat([['\u0001', '\u2795 New folder\u2026']]);
-        openMenuPopover(mv, opts, async (v) => {
+        openMenuPopover(_fxAnchorFor(mv), opts, async (v) => {
           let dir = v === '\u0000' ? '' : v;
           if(v === '\u0001'){
             const typed = await uiPrompt('Name of the new folder (use / for a subfolder)',
@@ -2284,6 +2419,8 @@ window.PCFilesFactory = function(dep){
       + (_hostFs() ? '<div class="fx-home-sec">This computer</div>'
                    + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
       + '</div>';
+    _fxStatus(pane, (FilesIdx.folders().length + pairs.length) + ' folder' + ((FilesIdx.folders().length + pairs.length) === 1 ? '' : 's')
+      + ' · ' + used + ' stored' + (_S._blobHave ? ' · ' + _S._blobHave.size + ' file' + (_S._blobHave.size === 1 ? '' : 's') : ''));
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
     { const rb = $('.fx-refresh', pane); if(rb) rb.onclick = async()=>{
       rb.disabled=true; rb.textContent='Waiting for signer…';
@@ -2449,7 +2586,7 @@ window.PCFilesFactory = function(dep){
       cmp: (keyOf) => _fxCompare(keyOf),
       fmtBytes: _fmtBytes,
       fmtDate: _fxWhen,
-      bar: _fxBarHTML,
+      bar: (crumbs) => _fxBarHTML(crumbs, _fxHist.length > 0, false, !!_S.IS_ADMIN),
       cols: _fxColsHTML,
       row: _fxDetailsRow,
       icon: _fxIcon,
@@ -2467,7 +2604,7 @@ window.PCFilesFactory = function(dep){
       openable: () => true,
       openFile: _openHostFile,
       toast, prompt: uiPrompt, confirm: uiConfirm,
-      menu: openMenuPopover, copy: copyValue,
+      menu: (a, items, cb) => openMenuPopover(_fxAnchorFor(a), items, cb), copy: copyValue,
     });
   }
 
@@ -2586,7 +2723,7 @@ window.PCFilesFactory = function(dep){
   async function _renderFilesEverywhere(pane){
     const q = _S._filesQ.trim(), seq = ++_fxSearchSeq;
     pane.innerHTML = '<div class="fx-explorer"><div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML([{label:'Search everywhere',to:_fxWhere()}], _fxHist.length > 0, false)
+      + '<div class="fx-main">' + _fxBarHTML([{label:'Search everywhere',to:_fxWhere()}], _fxHist.length > 0, false, !!_S.IS_ADMIN)
       + '<div class="fx-search-status muted small">Searching Blossom, Synced Folders and My Computer…</div>'
       + '<div class="fx-search-results" id="fx-search-results"><div class="spinner"></div></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
@@ -2713,9 +2850,10 @@ window.PCFilesFactory = function(dep){
      * column on a phone, where a 220px sidebar would leave nothing for the files. */
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0, true) + head
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0, true, !!_S.IS_ADMIN) + head
       + '<div class="files-selbar" id="bl-selbar"></div>'
-      + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
+      + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>'
+      + '<div class="fx-status" id="fx-status" aria-live="polite"></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
     {
       const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
@@ -2733,6 +2871,7 @@ window.PCFilesFactory = function(dep){
         if(entries.length){ _walkEntries(entries).then(fs=>{ if(fs.length) uploadFilesSeq(fs); }); }
         else { const fs=[...((dt&&dt.files)||[])]; if(fs.length) uploadFilesSeq(fs); }
       };
+      _fxPaneDrop(pane, drop);
     }
     /* HOME: folder tiles in the grid, and NOTHING fetched. It used to return before this whole
      * function ran, which took the drop zone with it — so on the one screen that says "your folders"
@@ -2904,6 +3043,9 @@ window.PCFilesFactory = function(dep){
     const bar=grid.parentNode && grid.parentNode.querySelector('#bl-selbar'); if(!bar) return;
     const vis=_filesVisibleShas(grid), n=_filesSel.size;
     grid.classList.toggle('selmode', n>0);   // drives the card cursor (tap = select, not open)
+    { const total = +grid.dataset.total || vis.length, shown = +grid.dataset.shown || vis.length;
+      _fxStatus(grid.closest('.fx-explorer'), total + ' item' + (total === 1 ? '' : 's')
+        + (shown < total ? ' · ' + shown + ' shown' : '') + (n ? ' · ' + n + ' selected' : '')); }
     const allSel = vis.length && vis.every(sha=>_filesSel.has(sha));
     /* Icons, never ☐/☑/⧉: those are TEXT, and Android's system font has none of them -- every one
      * drew as an empty tofu box. The sprite is drawn, so it looks the same on every platform. */
@@ -2946,7 +3088,7 @@ window.PCFilesFactory = function(dep){
   function _filesMassMove(btn, grid, list){
     const shas=[..._filesSel]; if(!shas.length) return;
     const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
-    openMenuPopover(btn, opts, v=>{
+    openMenuPopover(_fxAnchorFor(btn), opts, v=>{
       shas.forEach(sha=>FilesIdx.move(sha, v==='__all'?'':v));
       _filesSelClear(); toast('moved '+shas.length+' file'+(shas.length>1?'s':'')); renderBlossom();
     });
@@ -3826,6 +3968,7 @@ window.PCFilesFactory = function(dep){
                                        // "my recording isn't in the drive" bug). See _fxSort().
     if(_filesShownFolder!==_S._filesFolder){ _filesShownFolder=_S._filesFolder; _filesShown=_FILES_PAGE; _filesSelClear(); }   // reset paging AND selection on folder change (never act on off-screen files)
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
+    grid.dataset.total = inFolder.length; grid.dataset.shown = _shown.length;
     /* TILES or DETAILS — the same filtered, sorted array, drawn two ways. Every class the handlers
      * below select on (.file-card, .selbox, .del, .copy, .dlbtn, .dlenc, .movebtn, .enc-open) is
      * present in BOTH, so selecting, deleting, moving, dragging and downloading are the same code in
@@ -3874,12 +4017,12 @@ window.PCFilesFactory = function(dep){
           ? ` data-encthumb="${b.sha256}" data-encthumb-mime="${enc(m.mime||mimeForName('x.'+(ext||''))||'')}"` : '';
         return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon"${encThumb}>${_fxEncIcon(ext, m.mime)}<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span>${_fxMoreBtn(nm||dlName)}</div></div>`;
       }
       return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0" target="_blank">${blobThumb(b, ext)}</a>
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL" aria-label="Copy URL"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg></button>${del}
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span>${_fxMoreBtn(nm||dlName)}</div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_S._filesQ.trim()
         ? '<div class="empty">Nothing'+(_S._filesFolder?(' in '+enc(_S._filesFolder)):' on your drive')
           +' matches “'+enc(_S._filesQ.trim())+'”.</div>'
@@ -3960,7 +4103,7 @@ window.PCFilesFactory = function(dep){
   }
   function _moveMenu(anchor, sha){
     const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
-    openMenuPopover(anchor, opts, v=>{ FilesIdx.move(sha, v==='__all'?'':v); toast('moved'); renderBlossom(); });
+    openMenuPopover(_fxAnchorFor(anchor), opts, v=>{ FilesIdx.move(sha, v==='__all'?'':v); toast('moved'); renderBlossom(); });
   }
   // Upload a batch ONE AT A TIME (sequential), into the current folder, with a per-file progress queue.
   // In the Music folder, audio files go through the compress→encrypt pipeline; everything else uploads
