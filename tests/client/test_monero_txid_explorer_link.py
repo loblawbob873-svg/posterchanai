@@ -366,7 +366,9 @@ def _measure(width, rows_html):
     <style>html,body{{margin:0;width:100%;height:100%}}{CSS}</style>
     <main class="feed"><div class="mw-wrap"><section class="mw-card">{rows_html}</section></div></main>
     <pre id="out"></pre><script>
-    requestAnimationFrame(()=>{{
+    // Synchronously, not in requestAnimationFrame: --dump-dom can save the page before a frame runs, and the
+    // empty <pre> then failed this test about one run in four. Reading a box forces layout right here.
+    (()=>{{
       const id=document.querySelector('.mw-txid');
       const all=[...document.querySelectorAll('body *:not(#out):not(script)')];
       const boxes=all.map(x=>x.getBoundingClientRect());
@@ -376,7 +378,7 @@ def _measure(width, rows_html):
         display:id?getComputedStyle(id).display:null,
         height:id?id.getBoundingClientRect().height:0,
         wide:id?id.getBoundingClientRect().width:0 }});
-    }});
+    }})();
     </script>'''
     with tempfile.TemporaryDirectory() as td:
         f = Path(td) / "tx.html"
