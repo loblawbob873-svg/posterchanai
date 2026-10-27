@@ -4669,7 +4669,8 @@
        * browser, which is what the error card's own "Watch on YouTube" button does anyway.
        * window.open is enough — desktop/main.js's setWindowOpenHandler already routes https out to
        * shell.openExternal, so this needs no new IPC and no preload surface. */
-      if(location.protocol !== 'https:' && location.protocol !== 'http:'){
+      // The desktop app (app://) supplies the Referer itself now (desktop/main.js withYtReferer), so it plays here too.
+      if(location.protocol !== 'https:' && location.protocol !== 'http:' && location.protocol !== 'app:'){
         try{ window.open('https://www.youtube.com/watch?v='+encodeURIComponent(vid), '_blank', 'noopener'); }
         catch(_){ toast('couldn’t open YouTube'); }
         return;

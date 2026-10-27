@@ -321,6 +321,23 @@ function instance() {
  * A separate reader rather than a changed return value, because `instance()` has many callers and
  * every one of them wants the resolved URL. */
 function instanceChosen() { return cfg.instance != null && String(cfg.instance).trim() !== ''; }
+
+/* YOUTUBE PLAYS IN THE APP (2026-10-27: "youtube videos open in firefox instead of playing"). The page is app://, so
+ * Chromium sends YouTube's embed NO Referer, and YouTube answers a referrer-less embed with "Error 153" -- which is why
+ * the client used to hand every video to the system browser. The main process names the embedding site instead: the
+ * configured instance, or poster.place when there is none (the header goes to YouTube and nowhere else). Measured in a
+ * real Electron: no Referer -> Error 153; https://poster.place/ -> the player plays; https://www.youtube.com/ ->
+ * "Error 152-4" (it must be an outside site). tests/test_desktop_youtube_embed_referer.py */
+const YT_EMBED_URLS = ['https://www.youtube.com/embed/*', 'https://www.youtube-nocookie.com/embed/*'];
+function ytEmbedReferer(base) {
+  const b = String(base || '').replace(/\/+$/, '');
+  return (/^https:\/\/[^/]+$/i.test(b) ? b : DEFAULT_INSTANCE) + '/';
+}
+function withYtReferer(headers, base) {
+  const h = Object.assign({}, headers || {});
+  if (!h.Referer && !h.referer) h.Referer = ytEmbedReferer(base);
+  return h;
+}
 // origin.js, NOT `new URL(u).origin` — that is the string "null" for app:// and every other
 // non-special scheme, which made isOurs() false for our OWN pages. Read the header there before
 // touching this; it is the difference between a working app and one that hands its own URLs to
@@ -1566,6 +1583,8 @@ function wirePermissions() {
   // a game origin may request; notably absent are media, display capture, clipboard and filesystem.
   const WEBXDC_ALLOW = new Set(['pointerLock', 'fullscreen']);
   const ses = session.defaultSession;
+  ses.webRequest.onBeforeSendHeaders({ urls: YT_EMBED_URLS },
+    (d, cb) => cb({ requestHeaders: withYtReferer(d.requestHeaders, instance()) }));
 
   const permissionAllowed = (permission, from) =>
     ALLOW.has(permission) && (isOurs(from)
