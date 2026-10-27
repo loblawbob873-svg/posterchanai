@@ -6311,6 +6311,14 @@ elif [ "$1" = "livecd" ]; then
 	liveCD
 elif [ "$1" = "help" ]; then
 	show-help
+elif [ -n "${1:-}" ]; then
+	# A COMMAND THIS SCRIPT DOES NOT KNOW IS AN ERROR, NOT THE MENU. It used to fall through to the interactive
+	# installer: `gentoo.sh anticheat` on a machine whose gentoo.sh predates that command opened "Your Choice:" (measured
+	# on an install from the 20261019 ISO, 2026-10-27), and with no terminal on stdin the menu recursed until bash
+	# segfaulted. Say so and point at the two ways forward. Only NO command opens the menu.
+	echo "gentoo.sh: unknown command '$1'. 'gentoo.sh help' lists the commands this version has;" >&2
+	echo "  a command added later arrives with: sudo update-posterchan" >&2
+	exit 2
 else
 	menu
 fi
