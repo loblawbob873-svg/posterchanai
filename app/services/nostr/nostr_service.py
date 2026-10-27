@@ -29,30 +29,30 @@ logger = logging.getLogger(__name__)
 # WRITES (most of them reject an unknown pubkey's app docs) is still a useful READ source and should
 # stay. Same for auth.nostr1.com, which is alive but NIP-42 auth-gated: it CLOSEs an unauthenticated
 # REQ, which is a configuration fact, not an outage.
+#
+# REMOVED as dead, 2026-10-27 (three attempts each, direct, with and without a User-Agent): relay.froth.zone (HTTP 503
+# every time), nostr.corebreach.com (TLS handshake fails), relay.sovrgn.co.za and relay.0xchat.com (the names no longer
+# resolve). The client's own lists dropped 0xchat on 2026-10-26 for the same reason.
+# tests/test_client_relay_lists_name_no_dead_relays.py keeps them out of every list until they are measured answering.
 DEFAULT_RELAYS = [
     "wss://nos.lol/",
     "wss://relay.primal.net/",
     "wss://nostr.mom/",
     "wss://offchain.pub/",
     "wss://relay.ditto.pub/",
-    "wss://relay.froth.zone/",
     "wss://frens.nostr1.com/",
     "wss://nostr.chaima.info/",
     "wss://relay.wisp.talk/",
     "wss://eden.nostr.land/",
-    "wss://nostr.corebreach.com/",
     "wss://social.amanah.eblessing.co/",
-    "wss://relay.sovrgn.co.za/",
     "wss://nostr.azzamo.net/",
     "wss://relay.nostr.net/",
-    # 0xchat interop (NIP-17 DMs) — relay.0xchat.com is where 0xchat users + their kind-10050 live.
     # We deliberately do NOT add the highest-volume firehoses (relay.damus.io, relay.nostr.band), the
     # AUTH/paid/bridge relays (auth.nostr1.com, inbox.nostr.wine, nostr.wine[429], relay.mostr.pub), or
     # purplepag.es (profile-ONLY — it rejects every note we federate, so it's pure outbox churn): they
     # flooded the relay's startup with so much traffic/errors that it timed out bots' profile publish +
     # sync on every restart (the "bot never goes green / nip05 not set" cascade). A couple of moderate
     # extras are fine.
-    "wss://relay.0xchat.com/",
     "wss://yabu.me/",
     "wss://nostr.data.haus/",
 ]
