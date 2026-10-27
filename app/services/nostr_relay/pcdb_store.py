@@ -1266,7 +1266,9 @@ class PcdbRelayStore(RelayStore):
         bridge_dm = len(self._rule_seqs("bridge_dm", ctx))
         capped = len(self._cap_seqs(ctx, self.max_events)) if self.max_events else 0
         tiered = {label: len(self._rule_seqs("tiered", ctx, spec)) for label, spec in self._tiered_specs(now)}
+        kept = self._aged_kept_sync(ctx) if self.retention_days else {}
         return {"expired": expired, "aged": aged, "orphan_zaps": orphan_zaps, "bridge_dm": bridge_dm,
+                **kept,
                 "capped": capped, "retired": retired, "retired_by_kind": retired_by_kind,
                 **tiered,
                 "total": expired + aged + orphan_zaps + bridge_dm + capped + retired + sum(tiered.values()),
@@ -1274,6 +1276,29 @@ class PcdbRelayStore(RelayStore):
                 "free_retention_days": self.free_retention_days,
                 "paid_retention_days": self.paid_retention_days,
                 "subscribers": len(self.subscriber_pubkeys), "tiered_ok": self.tiered_ok}
+
+    def _aged_kept_sync(self, ctx: dict) -> dict:
+        """WHY OLD EVENTS STAY: past the retention window, of a kind that ages out and not written here directly --
+        and kept anyway because the author is PRESERVED (an account / bot / NIP-05 holder / pinned author here) or
+        EXEMPT (a pay-to-stay subscriber). "The database keeps growing with a 7-day cleanup" cannot be answered from
+        `aged` alone: measured 2026-10-26, 575K such events and a preview of 35K, with nothing in the relay to say
+        where the other 540K went. The top preserved authors are named so the next look is a lookup, not a guess."""
+        cutoff = ctx["now"] - self.retention_days * 86400
+        cand = lambda c, s: ((c["created"].astype(np.int64) < cutoff) & self._prunable(c, s, ctx)  # noqa: E731
+                             & (c["origin"] != _DIRECT))
+        pres = self._select(lambda c, s: cand(c, s) & np.isin(c["author"], ctx["pres"]), ("kind", "created", "origin", "author"))
+        exempt = self._select(lambda c, s: cand(c, s) & ~np.isin(c["author"], ctx["pres"])
+                              & np.isin(c["author"], ctx["exempt"]), ("kind", "created", "origin", "author"))
+        top = []
+        if len(pres):
+            with self.store._lock:
+                au = self.store.author.view(np.uint32)[pres].copy()
+            ids, counts = np.unique(au, return_counts=True)
+            for i in np.argsort(-counts)[:10]:
+                with self.store._lock:
+                    top.append([self.store._authors[int(ids[i])], int(counts[i])])
+        return {"aged_kept_preserved": int(len(pres)), "aged_kept_exempt": int(len(exempt)),
+                "preserve_authors": len(self.preserve_pubkeys), "aged_kept_top": top}
 
     def _prune_sync(self, limit: int = 0) -> tuple:
         """One prune PASS -- store.py's rules, in their order, with its budget semantics: `limit` caps

@@ -377,3 +377,24 @@ def test_the_longest_lock_hold_names_the_path_that_held_it():
     st._held(_t.perf_counter() - 0.05, "_kill_seqs")
     st._held(_t.perf_counter() - 0.01, "_decode")          # shorter: does not replace the record
     assert st.lock_stats["max_hold_site"] == "_kill_seqs" and st.lock_stats["max_hold_ms"] >= 50
+
+
+def test_a_maintenance_pass_that_only_compacted_is_logged(tmp_path):
+    """The pass logged only when something OTHER than a compaction happened, so "is compaction running?" had no
+    answer in the journal (2026-10-26: the one line in three days was a pass that also merged and snapshotted)."""
+    from app.services.posterchandb import maintenance as M
+    lines = []
+    passes = iter([{"compacted": 12, "merged": 0, "snapshot": False}, {"compacted": None, "merged": 0, "snapshot": False}])
+
+    class _M(M.Maintainer):
+        def run_pass(self):
+            try:
+                return next(passes)
+            except StopIteration:
+                self.stop_ev.set()
+                return {}
+
+    m = _M(store=type("S", (), {"path": str(tmp_path)})(), interval=0.01, log=lines.append)
+    m.start()
+    m._thread.join(5)
+    assert [l for l in lines if "maintenance:" in l] == ["[posterchandb] maintenance: {'compacted': 12, 'merged': 0, 'snapshot': False}"], lines

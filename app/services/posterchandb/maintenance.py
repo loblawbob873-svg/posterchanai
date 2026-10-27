@@ -168,7 +168,9 @@ class Maintainer:
         while not self.stop_ev.wait(self.interval):
             try:
                 self.last = self.run_pass()
-                if any(v for k, v in self.last.items() if k != "compacted"):
+                # A pass that did anything says so -- a compaction too: those were left out, so "is compaction
+                # running?" had no answer in the journal unless a merge or snapshot ran in the same pass.
+                if any(v for v in self.last.values()):
                     self.log("[posterchandb] maintenance: %s" % self.last)
             except Exception as e:      # a maintenance bug must never take the relay down
                 self.log("[posterchandb] maintenance pass failed: %r" % (e,))

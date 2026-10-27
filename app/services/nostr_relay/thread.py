@@ -1652,6 +1652,12 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                                             " ".join("%d:%d" % kv for kv in
                                                      sorted((pv.get("retired_by_kind") or {}).items())),
                                             pv.get("aged_free", 0), pv.get("aged_paid", 0))
+                                # ...and what the age rule KEPT, and why: past the window but preserved/exempt.
+                                logger.info("[nostr-relay] auto-clean DRY RUN kept past the window: %d by preserved "
+                                            "authors (%d in the preserve set), %d by pay-to-stay subscribers; "
+                                            "top preserved: %s", pv.get("aged_kept_preserved", 0),
+                                            pv.get("preserve_authors", 0), pv.get("aged_kept_exempt", 0),
+                                            " ".join("%s:%d" % (pk[:12], n) for pk, n in pv.get("aged_kept_top") or []))
                             else:
                                 removed = await _prune_fresh()   # logs the count + writes status
                                 logger.info("[nostr-relay] control: auto-clean removed %d stored event(s)",

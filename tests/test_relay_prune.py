@@ -956,3 +956,26 @@ def test_zap_receipts_of_posts_that_are_gone_are_cleaned_and_no_other(store_fact
         assert await store.count() == 2 + 3                      # kept + recent post, three receipts
 
     _run(go)
+
+
+def test_the_preview_says_how_much_the_age_rule_kept_and_for_whom(store_factory):
+    """"The database keeps growing despite the 7-day cleanup" (2026-10-26): 575K events were past the window, of a
+    kind that ages out and not written here directly, and the preview said 35K would go -- with nothing anywhere to
+    say why the other 540K stayed. The preview now counts what the age rule KEPT because the author is preserved
+    (and because they subscribe), the preserve set's size, and names the top preserved authors."""
+    mine, theirs, stranger = "b" * 64, "c" * 64, "d" * 64
+
+    async def go(loop):
+        store = store_factory(loop, retention_days=7)
+        await store.add_events_bulk([_ev(i, age_days=30, pubkey=mine) for i in range(1, 31)]
+                                    + [_ev(i, age_days=30, pubkey=theirs) for i in range(100, 110)]
+                                    + [_ev(i, age_days=30, pubkey=stranger) for i in range(200, 205)]
+                                    + [_ev(i, age_days=1, pubkey=mine) for i in range(300, 304)])   # inside the window
+        store.set_preserve_pubkeys([mine, theirs, "e" * 64])
+        return await store.prune_preview()
+
+    pv = _run(go)
+    assert pv["aged"] == 5, pv
+    assert pv["aged_kept_preserved"] == 40, ("the old events kept for preserved authors are not counted", pv)
+    assert pv["aged_kept_exempt"] == 0 and pv["preserve_authors"] == 3, pv
+    assert pv["aged_kept_top"] == [["b" * 64, 30], ["c" * 64, 10]], ("the top preserved authors are not named", pv)
