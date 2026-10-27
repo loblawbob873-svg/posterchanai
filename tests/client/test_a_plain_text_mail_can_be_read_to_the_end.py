@@ -71,7 +71,7 @@ def measure(kind: str, css: str = CSS, width: int = 390, height: int = 780) -> d
     <div class="mail-reply-row">reply</div>
   </div>
 </div>
-<pre id="out"></pre><script>requestAnimationFrame(()=>{{
+<pre id="out"></pre><script>(()=>{{   // not requestAnimationFrame: --dump-dom under load dumped before the first frame (empty <pre>)
   const read=document.querySelector('.mail-read'),
         content=document.querySelector('.mail-text,.mail-html');
   read.scrollTop=1e6;                      /* scroll as far as the reader allows */
@@ -80,7 +80,7 @@ def measure(kind: str, css: str = CSS, width: int = 390, height: int = 780) -> d
     rendered: Math.round(content.getBoundingClientRect().height),
     scrollable: Math.round(read.scrollHeight - read.clientHeight),
     bottomAfterScroll: Math.round(content.getBoundingClientRect().bottom),
-    viewport: window.innerHeight}});}});</script>"""
+    viewport: window.innerHeight}});}})();</script>"""
     with tempfile.TemporaryDirectory() as td:
         html = Path(td) / "mail.html"
         html.write_text(page, encoding="utf-8")

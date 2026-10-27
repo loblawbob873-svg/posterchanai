@@ -19,7 +19,7 @@ def run_page(width, height, body):
     html = f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
     <style>html,body{{margin:0;width:100%;height:100%}}{CSS}</style>{body}<pre id="out"></pre>
     <script>
-    requestAnimationFrame(()=>{{
+    (()=>{{   // not requestAnimationFrame: --dump-dom under load dumped before the first frame (empty <pre>)
       const all=[...document.querySelectorAll('body *:not(#out):not(script)')];
       const boxes=all.map(x=>x.getBoundingClientRect());
       const modal=document.querySelector('.modal'),qr=document.querySelector('.mw-qr img');
@@ -31,7 +31,7 @@ def run_page(width, height, body):
           clientHeight:modal.clientHeight,scrollHeight:modal.scrollHeight}}:null,
         qr:qr?{{width:qr.getBoundingClientRect().width,right:qr.getBoundingClientRect().right}}:null,fixed
       }});
-    }});
+    }})();
     </script>'''
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "wallet.html"

@@ -47,7 +47,7 @@ PAGE = """<!doctype html><meta name="viewport" content="width=device-width,initi
   <div class="os-desk" id="os-desk"></div>
   <div class="os-bar" id="os-bar"><button id="os-start">Start</button></div>
 </div>
-<pre id="out"></pre><script>requestAnimationFrame(()=>{{
+<pre id="out"></pre><script>(()=>{{   // NOT requestAnimationFrame: --dump-dom under load dumped before the first frame (empty <pre>); the rect reads force layout synchronously
   const bar = document.getElementById('os-bar').getBoundingClientRect();
   const x = Math.round(bar.left + 20), y = Math.round(bar.top + bar.height/2);
   const hit = document.elementFromPoint(x, y);
@@ -55,7 +55,7 @@ PAGE = """<!doctype html><meta name="viewport" content="width=device-width,initi
     barH: Math.round(bar.height),
     hit: hit ? (hit.id || hit.className || hit.tagName) : null,
     inBar: !!(hit && hit.closest && hit.closest('#os-bar'))}});
-}});</script>"""
+}})();</script>"""
 
 MODAL = '<div class="modal-bg"><div class="modal glass">a reply composer</div></div>'
 SUB_MODAL = '<div class="modal-bg modal-sub"><div class="modal glass">the Files picker</div></div>'
