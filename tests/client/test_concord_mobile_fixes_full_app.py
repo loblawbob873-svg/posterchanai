@@ -58,8 +58,9 @@ def test_edit_mentions_and_the_thread_bar(width):
         await wait_for(b, "document.querySelector('#cc-input').value==='Season finale tonight'")
         await b.js("(()=>{const t=document.querySelector('#cc-input');t.focus();t.setSelectionRange(t.value.length,t.value.length);"
                    "t.setRangeText(' with @',t.value.length,t.value.length,'end');t.dispatchEvent(new Event('input',{bubbles:true}));})()")
-        await wait_for(b, "document.querySelectorAll('.cc-mentions .cc-mention-opt').length>0")
-        await b.js("(()=>{const r=document.querySelector('.cc-mentions .cc-mention-opt');const o={bubbles:true,pointerId:1,clientX:5,clientY:5};"
+        # A PERSON's row: the owner is also offered @everyone (test_concord_everyone_full_app).
+        await wait_for(b, "document.querySelectorAll('.cc-mentions .cc-mention-opt:not(.cc-mention-everyone)').length>0")
+        await b.js("(()=>{const r=document.querySelector('.cc-mentions .cc-mention-opt:not(.cc-mention-everyone)');const o={bubbles:true,pointerId:1,clientX:5,clientY:5};"
                    "r.dispatchEvent(new PointerEvent('pointerdown',o));r.dispatchEvent(new PointerEvent('pointerup',o));})()")
         assert await b.js("/ with @\\S+ $/.test(document.querySelector('#cc-input').value)"), await b.js("document.querySelector('#cc-input').value")
         await b.js("document.querySelector('#cc-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}))")

@@ -541,7 +541,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     # inline here; it moved into `messageMentionsViewer` so the RENDERER can ask the same question
     # — a message that tags you has to look different, not merely raise a notification. Asserted as
     # the rule rather than as the old literal, so the next refactor does not fail for being tidy.
-    assert "messageMentionsViewer(m,viewer,me)" in CONCORD
+    assert "messageMentionsViewer(m,viewer,me,room)" in CONCORD     # the room authorizes an @everyone
     assert "(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey" in CONCORD, (
         "a p/P tag no longer decides whether a message mentions you")
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD

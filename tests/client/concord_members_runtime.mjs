@@ -139,7 +139,37 @@ if (!/class="cc-mention"/.test(rendered))
 
 /* And the ROW must carry the class the stylesheet tints — the Armada behaviour is that a message
  * which tags you LOOKS different, not merely that one word inside it does. */
-if (!/cc-mentions-me/.test(src) || !/messageMentionsViewer\(m,viewer,me\)/.test(src))
+if (!/cc-mentions-me/.test(src) || !/messageMentionsViewer\(m,viewer,me,current\)/.test(src))
   throw new Error('the message row no longer marks itself when it mentions the reader');
+
+/* ---- @EVERYONE, AS ARMADA DOES IT ------------------------------------------------------------
+ * "our concord is missing the @everyone tag" (2026-10-27). The literal `@everyone` (Armada's exact pattern)
+ * mentions every reader -- but only from the owner or a member holding MENTION_EVERYONE. The reader stub grants
+ * that ONE permission to MOD and nothing to anybody else, so a check that asked for a different permission (or
+ * none) fails here. */
+const MOD = 'f'.repeat(64);
+const asked = [];
+window.PosterCordReader = {
+  inspectControl: () => ({ controlPubkeys:[ADMIN], channels:[{id:'c1', name:'general', streamPubkeys:[]}] }),
+  authorityCitation: (bundle, wraps, pk, perm) => { asked.push(perm);
+    if (pk === MOD && perm === 'MENTION_EVERYONE') return {ok:true}; throw new Error('not authorized'); },
+};
+const ROOM_E = {...ROOM, communityId:'cid-everyone', cord:{bundle:{owner:ADMIN, community_id:'cid-everyone'}}};
+const allOf = (pk, text) => mentionsMe({pubkey:pk, text, tags:[]}, VIEWER, 'Ada Lovelace', ROOM_E);
+if (!allOf(ADMIN, 'meeting at 5 @everyone')) throw new Error('the owner\u2019s @everyone did not mention the reader');
+if (!allOf(MOD, '@everyone heads up')) throw new Error('a MENTION_EVERYONE holder\u2019s @everyone did not mention the reader');
+if (!asked.includes('MENTION_EVERYONE')) throw new Error('the permission asked was not MENTION_EVERYONE: ' + asked);
+if (allOf(TALKER, '@everyone heads up')) throw new Error('a member WITHOUT the permission reached everyone');
+for (const t of ['mail me at a@everyone.com', '@everyone_else hi', '@@everyone', '@Everyone hi'])
+  if (allOf(ADMIN, t)) throw new Error('not a mass mention, but counted as one: ' + t);
+if (mentionsMe({pubkey:ADMIN, text:'@everyone', tags:[]}, VIEWER, 'Ada Lovelace'))
+  throw new Error('with no room to authorize against, @everyone must not count');
+if (mentionsMe({pubkey:ME, text:'@everyone', tags:[]}, VIEWER, 'Ada Lovelace', {...ROOM_E, cord:{bundle:{owner:ME}}}))
+  throw new Error('my own @everyone counts as a mention of me');
+if (!api.mayMentionEveryone(ROOM_E, ADMIN) || !api.mayMentionEveryone(ROOM_E, MOD) || api.mayMentionEveryone(ROOM_E, TALKER))
+  throw new Error('the composer would offer @everyone to the wrong people');
+if (api.mayMentionEveryone({...ROOM_E, local:true}, ADMIN)) throw new Error('a local room has no roles to authorize @everyone');
+/* The notifier uses the same rule with the room: the composer and the renderer cannot disagree with it. */
+if (!/messageMentionsViewer\(m,viewer,me,room\)/.test(src)) throw new Error('notifyMentions does not pass the room');
 
 console.log('ok');
