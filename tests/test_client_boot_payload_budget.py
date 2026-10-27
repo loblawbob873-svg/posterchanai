@@ -90,7 +90,12 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: the car-button cold resume) and put the page at 8.226 MB. code.js (107 KB, the Code editor + the highlighter) left
 #: the page: its screen and Files already loaded it on demand, and the one synchronous reader (git.js's file viewer,
 #: window.PCCodeHL) now fetches it beside the file. Measured 8,516,882 B = 8.122 MB; 8.15 leaves ~28 KB.
-BUDGET_MB = 8.15
+#: RAISED 8.15 -> 8.16 on 2026-10-27, by the measured amount: 8.150 -> 8.151 MB across the day's fixes after comments
+#: were trimmed first (-1,086 B) -- the file-picker/Explorer CSS went to the lazy files-explorer.css instead (deploy 94),
+#: and what is left is Appearance's per-section text + menu colours (apptheme.js +867 B, which must paint before the
+#: app starts) and Communities' Back-closes-an-issue + Discover-stays-at-the-top (concord.js +647 B). Measured
+#: 8,547,025 B = 8.151 MB; 8.16 leaves ~10 KB -- a drift detector, not headroom.
+BUDGET_MB = 8.16
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

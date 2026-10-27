@@ -20,9 +20,7 @@
   const SECTIONS = [['social','Timeline & social'],['concord','Communities'],['messages','Messages'],['texts','Texts'],
     ['mail','Email'],['music','Music'],['notes','Notes'],['files','Files'],['ai','PosterChan AI'],['settings','Settings'],
     ['menu','Menus']];
-  /* MENUS ARE THEIR OWN SECTION ("Menu Separate Color Class", Vyram 2026-10-27): the bottom bar, the sidebar and the More /
-   * Discover / Files sheets took each section's colours as you moved between them. Coloured here, they keep these
-   * everywhere; left empty they follow the section as before. No view maps to it -- it is drawn by selector (MENU_SEL). */
+  // Menus: own colours in every section when set (Vyram 2026-10-27); drawn by selector, no view maps to it.
   const MENU_SEL = ':is(.mobilenav,.sidebar,.modal:has(.more-grid))';
   const VIEWS = {home:'social',global:'social',trending:'social',notifications:'social',profile:'social',thread:'social',
     hashtag:'social',search:'social',bookmarks:'social',lists:'social',concord:'concord',messages:'messages',texts:'texts',
@@ -104,14 +102,13 @@
     out += block(ROOT, top);
     for(const id of SEC_IDS){
       const s = t.sec[id]; if(!s) continue;
-      // A section's own TEXT colour ("Timeline & Social Color", Vyram 2026-10-27), else the app-wide one under its background.
+      // A section's own text colour, else the app-wide one under its background.
       const v = vars(s.accent || '', s.bg || '', s.text || (s.bg ? t.text : ''));
       if(id === 'menu'){
         // Whatever section is open: the menu's colours, filled in from yours where the menu has none.
         const mv = vars(s.accent || t.accent || '', s.bg || '', s.text || (s.bg ? t.text : ''));
         if(s.bg) mv.background = 'var(--panel)';
-        // !important: Communities themes its own sheets (the More sheet opened there turned red) -- a colour chosen
-        // FOR the menus is the one asked for, wherever they are drawn.
+        // !important: Communities themes its own sheets; a colour chosen for the menus wins.
         for(const k of Object.keys(mv)) mv[k] += ' !important';
         out += block(`${ROOT} ${MENU_SEL}, ${ROOT}[data-pcsec] ${MENU_SEL}`, mv);
         continue;

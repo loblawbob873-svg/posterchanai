@@ -1140,11 +1140,7 @@
    * this window would hand on. */
   let pendingHandoff=null;
   function acceptHandoff(value){ if(!accountPk()){pendingHandoff=value&&typeof value==='object'?value:{};return;} pendingHandoff=null; const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(activeGet())||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
-  /* DISCOVER READS FROM THE TOP. It is painted in the same scroller as a chat, and a chat's reader is pinned to the
-   * newest message -- so as the public listings arrived, the "growth" pinned Discover to its BOTTOM and the screen
-   * jerked down past "Find your community" ("Discover Community Loading Jerk Screen", Vyram 2026-10-27). The
-   * no-community key (`<owner>:home:<channel>`) is never pinned, whatever an earlier visit stored. The pattern is
-   * written where it is used: the scroll tests lift these functions out one at a time. */
+  /* Discover (key `<owner>:home:<ch>`) is never pinned to the bottom (Vyram 2026-10-27). Pattern inline: tests lift this. */
   function readScroll(key){ let v=null; if(scrollStates.has(key))v=scrollStates.get(key); else{ try{ const j=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(j&&typeof j==='object')v=j; }catch(_){} }
     if(/:home:[^:]*$/.test(String(key))){ v=v||{top:0}; v.pinned=false; return v; }
     return v||{pinned:true}; }
@@ -4170,8 +4166,7 @@
    * the nav. Returns whether it took the step; app.js's backButton asks before walking history. */
   function backStep(staysIn){
     if(typeof document==='undefined'||!document.body||!document.body.classList.contains('concord-view'))return false;
-    /* An open git ISSUE (or PR) closes first, then the issues list -- each is a sheet over the channel ("Back Arrow
-     * Close Issue", Vyram 2026-10-27); after that Back follows the rule above, switch included. */
+    /* An open git issue, then the issues list, close first (Vyram 2026-10-27). */
     const G=window.PCConcordGit;
     if(G&&document.getElementById('ccg-panel')){G.closePanel();return true;}
     if(G&&document.getElementById('ccg-projects')){G.closeProjects();return true;}
@@ -7159,8 +7154,7 @@
     /* `key` is the conversation that scroller SHOWS, not the one about to be drawn: a switch has already
        changed state.channel/community by now, and keyed on scrollKey() the old channel's offset was
        carried into the new one. */
-    /* Discover is never "at the bottom": while it is shorter than the screen its top IS its bottom, and that read as a
-       reader keeping up with the newest message -- so the listings' arrival pinned it to its END (Vyram's video). */
+    /* Discover is never "at the bottom" (short = top is bottom; listings then pinned it to the end). */
     try{ const ob=feed.querySelector('.cc-messages'); if(ob){ const k=ob.dataset&&ob.dataset.ccScrollKey||'';
       keepScroll={key:k,top:ob.scrollTop,atBottom:!/:home:[^:]*$/.test(k)&&ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; } }catch(_){ }
     /* AN OPEN "…" MENU SURVIVES A REPAINT. Every message that arrived, and every channel refresh,
