@@ -509,7 +509,7 @@ window.PCComposeFactory = function(dep){
         openMenuPopover($('#cmp-attach',root), opts, a=>{
           if(a==='camera') _captureCamera(ta, root);
           else if(a==='local') $('#cmp-file',root).click();
-          else if(a==='blossom') blossomPicker(ta);
+          else if(a==='blossom') blossomPicker(ta, null, {allowEncrypted:true, publishDecrypted:true});
           else if(a==='webxdc') PCWebxdc.attach(ta); });
       };
       attachEmojiAutocomplete(ta);   // `:shortcode` autocomplete, same as every other composer
@@ -591,7 +591,7 @@ window.PCComposeFactory = function(dep){
           if(has('#cmp-draft'))  items.push(['draft','☁️ Save to drafts']);
           items.push(['files','📁 Attach from Files']);
           const sel={clean:'#cmp-clean', cw:'#cmp-cw-btn', bg:'#cmp-bg-btn', draft:'#cmp-draft'};
-          openMenuPopover(mb, items, a=>{ if(a==='files'){ blossomPicker(ta); return; }
+          openMenuPopover(mb, items, a=>{ if(a==='files'){ blossomPicker(ta, null, {allowEncrypted:true, publishDecrypted:true}); return; }
             const b=sel[a] && $(sel[a],root); if(b) b.click(); }); }; }
       /* 🧹 Clean links — its OWN button, not an item in the 🤖 AI menu. It never calls the model or
        * the network (see _cleanLinksCmd / urlclean.js), and filing it under AI both misdescribed it

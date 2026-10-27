@@ -140,12 +140,12 @@ def test_view_buttons_leave_the_folder_dashboard_and_show_the_selected_file_view
     assert "_S._filesFolder === null) _S._filesFolder = ''" in bind
 
 
-def test_mobile_details_rows_collapse_actions_into_one_menu():
-    assert 'class="fx-mobile-actions"' in APP
-    assert 'summary aria-label="File actions"' in APP
-    assert 'class="fx-more-dots"' in APP
-    assert ".files-grid.details .file-card.row>.fc-acts{display:none}" in CSS
-    assert ".fx-mobile-actions>.fc-acts" in CSS
+def test_a_rows_actions_are_one_menu_on_every_screen():
+    """Since 2026-10-26 (File Explorer layout) every row, phone or desktop, carries ONE ⋯ that opens its actions as a menu
+    (files.js _fxRowMenu); the inline buttons are hidden by files-explorer.css. Behaviour: test_files_explorer_menus_full_app."""
+    assert 'class="fx-rowmore"' in APP and "_fxRowMenu" in APP
+    explorer = (Path(__file__).resolve().parents[2] / "static/css/files-explorer.css").read_text()
+    assert ".fx-explorer .file-card .fc-acts" in explorer
 
 
 def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():

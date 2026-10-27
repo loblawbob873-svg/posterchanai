@@ -77,7 +77,16 @@ class MusicInTheBuilder(unittest.TestCase):
         "nobody": every function passing `allowEncrypted: true` must branch on the encrypted flag,
         decrypt, and return from that branch."""
         opted = [m.start() for m in re.finditer(r"allowEncrypted:\s*true", self.app)]
+        # Or the caller asks the PICKER to do it (`publishDecrypted: true`, the post composers, 2026-10-26): then the
+        # picker's own link-maker must decrypt and upload before it hands back a link.
+        link = re.search(r"const _linkFor = async p => \{(.*?)\n    \};", self.app, re.S)
+        self.assertTrue(link, "the picker has no _linkFor")
+        self.assertRegex(link.group(1), r"opts\.publishDecrypted", "_linkFor decrypts regardless of the opt-in")
+        self.assertRegex(link.group(1), r"trackUrl\(p\.sha\)", "_linkFor never decrypts")
+        self.assertRegex(link.group(1), r"return await uploadBlob\(file\)", "_linkFor does not publish the decrypted copy")
         for at in opted:
+            if re.match(r"allowEncrypted:\s*true,\s*publishDecrypted:\s*true", self.app[at:at + 60]):
+                continue
             start = self.app.rfind("\n  function ", 0, at)
             start2 = self.app.rfind("\n  async function ", 0, at)
             fn = self.app[max(start, start2):at]

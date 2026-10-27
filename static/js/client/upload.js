@@ -1008,7 +1008,23 @@ window.PCUploadFactory = function(dep){
      * Every caller with a callback -- Texts, Mail, Albums, Music, Meme Builder, Concord -- takes ONE
      * file and keeps the single-tap behaviour it was written for. */
     const multi = opts.multi !== undefined ? !!opts.multi : (!!ta && !onPick);
-    const picked = [];                        // [{url, ext}] in the order they were tapped
+    const picked = [];                        // [{url, ext, sha, enc, name, type}] in the order they were tapped
+    /* THE LINK A POST CAN CARRY. A post publishes a URL, so a file of an ENCRYPTED folder (Music: every track is
+     * stored sealed) is offered only to a caller that said it publishes a decrypted copy (`publishDecrypted`, the
+     * post composers): the track is decrypted on this device, uploaded as an ordinary copy, and THAT link goes in.
+     * Said out loud, since it puts a plaintext copy on the drive ("no way to attach Music folder files in our file
+     * picker for social", 2026-10-26). Everything else is its own URL, as before. */
+    const _linkFor = async p => {
+      const _need = p.ext && !/\.[a-z0-9]{1,8}$/i.test(p.url.split('?')[0]);
+      if(!(p.enc && p.sha && opts.publishDecrypted)) return p.url+(_need?('.'+p.ext):'');
+      toast('decrypting '+(p.name||'that file')+'…');
+      const local=await trackUrl(p.sha);
+      if(!local) throw new Error('it could not be decrypted on this device');
+      const blob=await (await fetch(local)).blob();
+      const file=new File([blob], p.name||'track', { type: p.type||blob.type||'application/octet-stream' });
+      toast('adding a playable copy of '+(p.name||'that file')+' to your drive');
+      return await uploadBlob(file);
+    };
     const mbar = bg.querySelector('.bp-multi-bar');
     const syncMulti=()=>{
       if(!multi) return;
@@ -1025,15 +1041,15 @@ window.PCUploadFactory = function(dep){
     };
     if(multi){
       mbar.querySelector('.bp-multi-clear').onclick=()=>{ picked.length=0; syncMulti(); };
-      mbar.querySelector('.bp-multi-go').onclick=()=>{
+      mbar.querySelector('.bp-multi-go').onclick=async()=>{
         if(!picked.length) return;
         close();
-        for(const p of picked){
-          const _need = p.ext && !/\.[a-z0-9]{1,8}$/i.test(p.url.split('?')[0]);
-          ta.value+=(ta.value?'\n':'')+p.url+(_need?('.'+p.ext):'');
+        const n=picked.length; let done=0;
+        for(const p of picked.slice()){
+          try{ const link=await _linkFor(p); ta.value+=(ta.value?'\n':'')+link; ta.dispatchEvent(new Event('input',{bubbles:true})); done++; }
+          catch(e){ toast('could not attach '+(p.name||'a file')+' — '+((e&&e.message)||e)); }
         }
-        ta.dispatchEvent(new Event('input',{bubbles:true}));
-        toast(picked.length===1 ? 'attached' : 'attached '+picked.length+' files');
+        if(done) toast(done===1 ? 'attached' : 'attached '+done+' files'+(done<n?' of '+n:''));
       };
     }
     const closeOrDrawer=()=>{ const explorer=bg.querySelector('.bp-explorer');
@@ -1223,7 +1239,7 @@ window.PCUploadFactory = function(dep){
           const sha=el.dataset.sha||''; const isEnc=!!((FilesIdx.meta(sha)||{}).enc);
           if(multi){
             const i=picked.findIndex(p=>p.url===url);
-            if(i>=0) picked.splice(i,1); else picked.push({url, ext});
+            if(i>=0) picked.splice(i,1); else picked.push({url, ext, sha, enc:isEnc, name, type});
             syncMulti(); return;
           }
           close();
@@ -1236,12 +1252,12 @@ window.PCUploadFactory = function(dep){
                       catch(e){ console.error('[blossomPicker] the caller could not take that file', e);
                                 toast('could not attach that file'+(e&&e.message?': '+e.message:'')); }
                       return; }
-          // ...only when the URL doesn't already carry one — the server's listing now includes the
-          // extension, and appending unconditionally produced "…/<sha>.png.png" (which still served,
-          // but is what every other client shows in the note).
-          const _need = ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0]);
-          ta.value+=(ta.value?'\n':'')+url+(_need?('.'+ext):'');
-          ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
+          // ...the extension only when the URL doesn't already carry one — the server's listing now includes
+          // it, and appending unconditionally produced "…/<sha>.png.png" (which still served, but is what every
+          // other client shows in the note). _linkFor also turns an encrypted pick into a playable copy.
+          (async()=>{ try{ const link=await _linkFor({url, ext, sha, enc:isEnc, name, type});
+              ta.value+=(ta.value?'\n':'')+link; ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); }
+            catch(e){ toast('could not attach that file — '+((e&&e.message)||e)); } })(); });
 
       };
       const sorter=bg.querySelector('.bp-sort select');

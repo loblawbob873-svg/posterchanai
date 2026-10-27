@@ -1130,7 +1130,7 @@ window.PCTimelineFactory = function(dep){
       openMenuPopover($('#tl-cmp-attach',box), opts, a=>{
         if(a==='camera') _captureCamera(ta, box);
         else if(a==='local') $('#tl-cmp-file',box).click();
-        else if(a==='blossom') blossomPicker(ta);
+        else if(a==='blossom') blossomPicker(ta, null, {allowEncrypted:true, publishDecrypted:true});
         else if(a==='webxdc') PCWebxdc.attach(ta);
       });
     };
