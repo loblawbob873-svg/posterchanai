@@ -353,7 +353,78 @@
                 to count what the settings above would delete — do that first, it can be hundreds of thousands of notes —
                 then <strong>Run</strong> to apply it now. Save your changes before either; both read the <em>saved</em> settings.</small>
             </div>
+            <div class="form-group">
+                <label for="nostr_relay_pin_days">Synced users stay pinned for (days)</label>
+                <input type="number" id="nostr_relay_pin_days" name="nostr_relay_pin_days" placeholder="0" min="0">
+                <small>"Sync a user's data" <strong>pins</strong> that person, so auto-clean never deletes their history. A pin
+                expires after this many days (then the normal age rule applies to them). <code>0</code> = pins never expire.
+                Accounts and NIP-05 holders on this server are <strong>always</strong> kept, pinned or not.</small>
+            </div>
+            <div class="form-group" id="relayPins">
+                <label>Pinned authors</label>
+                <div><button type="button" id="relayPinsBtn" class="btn-secondary">↻ List pinned authors</button>
+                    <span id="relayPinsStatus" style="margin-left:.5rem;color:#9aa"></span></div>
+                <div id="relayPinsList" class="relay-pins"></div>
+                <small>Each pin, with how many old feed events it keeps past the window above. <strong>Unpin</strong> removes only
+                the pin: the next auto-clean then ages out that person's old feed posts. Members are kept anyway.</small>
+            </div>
         </fieldset>
+    <script>
+    (function(){
+        var btn=document.getElementById('relayPinsBtn'), st=document.getElementById('relayPinsStatus'),
+            box=document.getElementById('relayPinsList');
+        if(!btn) return;
+        var f=function(u,o){ return (window.csrfFetch||fetch)(u,o).then(function(r){return r.json();}); };
+        function esc(t){ var d=document.createElement('div'); d.textContent=String(t==null?'':t); return d.innerHTML; }
+        function draw(j){
+            var rows=(j&&j.list)||[];
+            if(!rows.length){ box.innerHTML='<p class="muted">No pinned authors.</p>'; return; }
+            var total=rows.reduce(function(a,r){return a+(r.member?0:r.kept);},0);
+            box.innerHTML='<p class="muted">'+rows.length+' pinned · '+total.toLocaleString()+' old events kept only by a pin'+
+                (j.days?(' · pins expire after '+j.days+' days'):' · pins never expire')+'</p>'+
+                '<table class="relay-pins-table"><tbody>'+rows.map(function(r){
+                    var who=esc(r.name||'')+' <code>'+esc((r.npub||r.pubkey).slice(0,20))+'…</code>';
+                    var when=new Date((r.pinned_at||0)*1000).toLocaleDateString();
+                    var act=r.member?'<span class="muted">member — kept anyway</span>'
+                        :'<button type="button" class="btn-secondary relay-unpin" data-pk="'+esc(r.pubkey)+'">Unpin</button>';
+                    return '<tr data-pk="'+esc(r.pubkey)+'"><td>'+who+'</td><td>'+when+'</td><td>'+
+                        Number(r.kept||0).toLocaleString()+' old</td><td>'+act+'</td></tr>';
+                }).join('')+'</tbody></table>';
+        }
+        // The relay lists pins on request into its status file; wait for a list newer than the one we had.
+        function refresh(){
+            st.textContent='listing…'; btn.disabled=true;
+            return f('/api/admin/nostr-relay/pins').then(function(before){
+                var t0=(before&&before.ts)||0;
+                return f('/api/admin/nostr-relay/pins/refresh',{method:'POST'}).then(function(r){
+                    if(!r||!r.ok) throw new Error((r&&r.error)||'relay not running');
+                    var n=0;
+                    return new Promise(function(res,rej){ (function poll(){
+                        f('/api/admin/nostr-relay/pins').then(function(j){
+                            if(j&&j.ts>t0) return res(j);
+                            if(++n>40) return rej(new Error('the relay did not answer'));
+                            setTimeout(poll,1500);
+                        }).catch(rej); })(); });
+                });
+            }).then(function(j){ draw(j); st.textContent=j.members_read?'':'(member list unreadable — Unpin is refused until it is)'; })
+              .catch(function(e){ st.textContent='✗ '+e.message; })
+              .finally(function(){ btn.disabled=false; });
+        }
+        btn.addEventListener('click', refresh);
+        box.addEventListener('click', async function(e){
+            var b=e.target.closest('.relay-unpin'); if(!b) return;
+            var row=b.closest('tr'), name=row?row.cells[0].textContent:'';
+            var ok=await (window.pcConfirm?pcConfirm('Unpin '+name+'? The next auto-clean deletes their feed posts older than the retention window. This cannot be undone.'):Promise.resolve(false));
+            if(!ok) return;
+            b.disabled=true;
+            f('/api/admin/nostr-relay/unpin',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({pubkeys:[b.dataset.pk]})}).then(function(r){
+                if(!r||!r.ok) throw new Error((r&&r.error)||'failed');
+                return refresh();
+            }).catch(function(e){ st.textContent='✗ '+e.message; b.disabled=false; });
+        });
+    })();
+    </script>
     <fieldset>
             <legend>Pay to stay (paid retention tier)</legend>
             <p class="muted" style="margin:0 0 12px">Everything a visitor publishes <em>to this relay</em> is currently kept

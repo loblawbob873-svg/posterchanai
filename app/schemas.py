@@ -726,6 +726,7 @@ class SettingsResponse(BaseModel):
     # is a permanent per-user metadata trail (pubkey + stable d-tag + timestamp) wherever it lands.
     nostr_relay_private_relays: Optional[str] = None
     nostr_relay_retention_days: Optional[int] = None  # auto-clean feed notes older than N days (0=off)
+    nostr_relay_pin_days: Optional[int] = None  # a "Sync user" pin expires after N days (0/blank = never)
     # PosterChanDB tunables (Admin → Relay → Database). Defaults, ranges and live-vs-restart live in ONE table,
     # app/services/relay_tunables.py -- tests/test_relay_tunables.py holds every default here equal to it.
     posterchandb_flush_seconds: Optional[int] = 300   # write delay before new events reach disk

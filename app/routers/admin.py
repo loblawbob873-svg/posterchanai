@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi import Query
+from fastapi import Body, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, OperationalError
 from typing import List, Optional
@@ -721,6 +721,36 @@ async def nostr_relay_paid_grant(body: dict, admin: User = Depends(get_admin_use
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status
     return relay_status()
+
+
+@router.get("/nostr-relay/pins")
+def nostr_relay_pins(admin: User = Depends(get_admin_user)):
+    """The pinned authors as the relay last listed them (POST .../pins/refresh asks it to list again)."""
+    from app.services.nostr import nostr_service
+    from app.services.nostr_relay.thread import relay_status
+    pins = dict(relay_status().get("pins") or {})
+    for r in pins.get("list") or []:
+        try:
+            r["npub"] = nostr_service.npub_of(r["pubkey"])
+        except Exception:
+            r["npub"] = r.get("pubkey", "")
+    return {"ok": True, **pins}
+
+
+@router.post("/nostr-relay/pins/refresh")
+def nostr_relay_pins_refresh(admin: User = Depends(get_admin_user)):
+    from app.services.nostr_relay.thread import trigger_pins
+    return trigger_pins()
+
+
+@router.post("/nostr-relay/unpin")
+def nostr_relay_unpin(body: dict = Body(...), admin: User = Depends(get_admin_user)):
+    """Remove pins. Only the PIN goes: an account or NIP-05 holder here stays preserved regardless."""
+    from app.services.nostr import nostr_service
+    from app.services.nostr_relay.thread import trigger_unpin
+    pks = [nostr_service.to_pubkey_hex(p) for p in (body.get("pubkeys") or [])]
+    logger.info("[admin] relay unpin of %d author(s) by %s", len(pks), getattr(admin, "username", "?"))
+    return trigger_unpin([p for p in pks if p])
 
 
 @router.get("/nostr-relay/identity")

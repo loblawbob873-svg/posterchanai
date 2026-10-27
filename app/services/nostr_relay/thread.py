@@ -866,6 +866,72 @@ def _relay_deflate():
                                           compress_settings={"memLevel": 5, "level": 3})
 
 
+# PINNED AUTHORS. "Sync a user's data" pins the author so the prune cannot delete what the sync brings in. A pin
+# used to be for ever, with nothing in the admin to see or undo it: measured 2026-10-27 on poster.place, 135 pins
+# kept ~520K events a 7-day retention would otherwise have aged out. Pins now carry the time they were made
+# (`pinned_at`), can be removed (Admin -> Relay -> Pinned authors), and optionally expire after
+# `nostr_relay_pin_days` (0 = never, the default). A pin is only ever ONE reason to keep somebody: an account or
+# NIP-05 holder here stays preserved whether or not they are pinned, and unpinning can never take that away.
+_PINS_KEY, _PINS_AT_KEY = "pinned_pubkeys", "pinned_at"
+
+
+async def _pins_read(store) -> dict:
+    """{pubkey: pinned-at}. A pin from before the dates existed is dated NOW, the first time it is read, so an expiry
+    switched on later counts from then rather than deleting every old pin at once."""
+    pins = [p for p in ((await store.kv_get(_PINS_KEY)) or "").split() if len(p) == 64]
+    try:
+        at = json.loads((await store.kv_get(_PINS_AT_KEY)) or "{}")
+    except ValueError:
+        at = {}
+    now, dirty = int(time.time()), False
+    out = {}
+    for p in pins:
+        if not isinstance(at.get(p), int):
+            at[p], dirty = now, True
+        out[p] = at[p]
+    if dirty:
+        await store.kv_set(_PINS_AT_KEY, json.dumps(out, sort_keys=True))
+    return out
+
+
+async def _pins_write(store, pins: dict) -> None:
+    await store.kv_set(_PINS_KEY, " ".join(sorted(pins)))
+    await store.kv_set(_PINS_AT_KEY, json.dumps(pins, sort_keys=True))
+
+
+async def _unpin(store, pubkeys, members) -> list:
+    """Remove these pins. The live preserve set loses only keys that are NOT members (accounts / NIP-05 holders):
+    a member who was also pinned stays protected exactly as before."""
+    pins = await _pins_read(store)
+    gone = [p for p in dict.fromkeys(pubkeys or ()) if p in pins]
+    if not gone:
+        return []
+    for p in gone:
+        pins.pop(p)
+    await _pins_write(store, pins)
+    drop = set(gone) - set(members or ())
+    if drop:
+        store.set_preserve_pubkeys(store.preserve_pubkeys - drop)
+    return gone
+
+
+def _pin_days() -> int:
+    try:
+        from app.services import settings_store
+        return max(0, int(settings_store.get("nostr_relay_pin_days", "0") or 0))
+    except (TypeError, ValueError, Exception):     # unreadable = never expire
+        return 0
+
+
+def _members_now() -> set:
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        return set(_collect_preserve_pubkeys(db))
+    finally:
+        db.close()
+
+
 async def _refresh_preserve(store) -> None:
     """UNION the current operators (registered users/bots/keys) + persisted PINNED authors (explicitly
     backfilled histories, in relay kv) into the store's preserve set, right before a prune/purge.
@@ -873,23 +939,26 @@ async def _refresh_preserve(store) -> None:
     Grow-only (extend, never replace) so a partial/failed operator re-collection can't SHRINK the set
     and expose a user to deletion. Runs the DB collection in an executor so it doesn't block the relay
     event loop. Deliberately does NOT touch the publish gate — preserving someone's notes must not
-    grant them publish/WoT/DM privileges (pin != operator)."""
-    def _collect():
-        from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            return set(_collect_preserve_pubkeys(db))
-        finally:
-            db.close()
+    grant them publish/WoT/DM privileges (pin != operator).
+
+    Pins older than `nostr_relay_pin_days` are removed here first -- only when the member set was actually read
+    (an empty read cannot tell a member from a stranger, so nothing expires that pass)."""
     try:
-        pks = await asyncio.get_event_loop().run_in_executor(None, _collect)
+        pks = await asyncio.get_event_loop().run_in_executor(None, _members_now)
     except Exception as e:
         logger.debug("[nostr-relay] preserve operator re-collect failed: %s", e)
         pks = set()
     try:
-        pinned = await store.kv_get("pinned_pubkeys")
-        if pinned:
-            pks |= {p for p in pinned.split() if len(p) == 64}
+        pins = await _pins_read(store)
+        days = _pin_days()
+        if days and pks:
+            old = [p for p, at in pins.items() if at < time.time() - days * 86400]
+            if old:
+                gone = await _unpin(store, old, pks)
+                logger.info("[nostr-relay] %d pin(s) older than %d day(s) expired (members stay preserved)",
+                            len(gone), days)
+                pins = {p: at for p, at in pins.items() if p not in gone}
+        pks |= set(pins)
     except Exception:
         pass
     if pks:
@@ -986,9 +1055,9 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
     store.set_preserve_pubkeys(cfg.get("preserve") or cfg["operator"])   # never pruned: local users,
     # NIP-05 holders on this server, and bridged users' puppets (their fedi posts mirror under those)
     try:                                            # + persisted PINNED authors (backfilled histories)
-        _pinned = await store.kv_get("pinned_pubkeys")
+        _pinned = await _pins_read(store)
         if _pinned:
-            store.extend_preserve_pubkeys([p for p in _pinned.split() if len(p) == 64])
+            store.extend_preserve_pubkeys(list(_pinned))
     except Exception:
         pass
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
@@ -1229,6 +1298,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
 
     _purge_state = {"count": None, "ts": 0}   # last block-purge result, surfaced in relay status
     _prune_state = {"count": None, "ts": 0}   # last auto-clean (age prune) result, same surfacing
+    _pins_state: dict = {}                     # Admin -> Relay -> Pinned authors (the "pins" control command)
 
     async def _purge_blocks_now() -> int:
         """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
@@ -1537,6 +1607,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                            "started": _started,
                            "block_purge": dict(_purge_state),
                            "prune": dict(_prune_state),
+                           "pins": dict(_pins_state),
                            "posterchandb": mirror_stats(),
                            **_activity()}, f)
             os.replace(tmp, _paths["status"])
@@ -1664,6 +1735,34 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                                             removed)
                         except Exception as e:
                             logger.warning("[nostr-relay] prune failed: %s", e)
+                    elif cmd.get("cmd") in ("pins", "unpin"):
+                        # Admin -> Relay -> Pinned authors: list them with what each keeps past the retention
+                        # window, or remove some. Members are read fresh so the list can say "kept anyway".
+                        try:
+                            members = await asyncio.get_event_loop().run_in_executor(None, _members_now)
+                            if cmd["cmd"] == "unpin":
+                                gone = await _unpin(store, cmd.get("pubkeys") or [], members) if members else []
+                                logger.info("[nostr-relay] control: unpinned %d author(s)%s", len(gone),
+                                            "" if members else " -- refused: the member list could not be read")
+                            pins = await _pins_read(store)
+                            kept = await store.aged_kept_by(list(pins)) if hasattr(store, "aged_kept_by") else {}
+                            names = {}
+                            for ev in await store.query([{"kinds": [0], "authors": list(pins)}], hard_cap=len(pins) + 50):
+                                try:
+                                    m = json.loads(ev.get("content") or "{}")
+                                    names[ev["pubkey"]] = str(m.get("display_name") or m.get("name") or "")[:60]
+                                except (ValueError, AttributeError):
+                                    pass
+                            _pins_state.clear()
+                            _pins_state.update({
+                                "ts": int(time.time()), "days": _pin_days(), "members_read": bool(members),
+                                "retention_days": store.retention_days,
+                                "list": sorted(({"pubkey": p, "pinned_at": at, "kept": int(kept.get(p, 0)),
+                                                 "member": p in members, "name": names.get(p, "")}
+                                                for p, at in pins.items()), key=lambda r: -r["kept"])})
+                            _write_status()
+                        except Exception as e:
+                            logger.warning("[nostr-relay] %s failed: %s", cmd["cmd"], e)
                     elif cmd.get("cmd") == "reload-nip05":
                         # Admin edited the NIP-05 identities — re-read and swap in place (the
                         # server reads cfg["nip05"] live, so no restart needed).
@@ -1737,10 +1836,9 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                         # extend (never replace) the live preserve set so the next prune can't delete
                         # what we're about to sync.
                         try:
-                            pinned = set((await store.kv_get("pinned_pubkeys") or "").split())
-                            if pk not in pinned:
-                                pinned.add(pk)
-                                await store.kv_set("pinned_pubkeys", " ".join(sorted(pinned)))
+                            pins = await _pins_read(store)
+                            pins[pk] = int(time.time())        # a re-sync renews the pin
+                            await _pins_write(store, pins)
                         except Exception as e:
                             logger.debug("[nostr-relay] pin persist failed: %s", e)
                         store.extend_preserve_pubkeys({pk})
@@ -2257,6 +2355,19 @@ def trigger_delete_author(pubkeys: list) -> dict:
     if not pks:
         return {"ok": True}
     return _drop_control({"cmd": "delete-author", "pubkeys": pks})
+
+
+def trigger_pins() -> dict:
+    """Ask the relay to (re)write its pinned-author list, with what each pin keeps, into the status file."""
+    return _drop_control({"cmd": "pins"})
+
+
+def trigger_unpin(pubkeys: list) -> dict:
+    """Remove these pins. Members (accounts / NIP-05 holders) stay preserved regardless."""
+    pks = [p for p in (pubkeys or []) if isinstance(p, str) and len(p) == 64]
+    if not pks:
+        return {"ok": False, "error": "no pubkeys"}
+    return _drop_control({"cmd": "unpin", "pubkeys": pks})
 
 
 def trigger_backfill(pubkey_hex: str, storage_pubkey: str | None = None) -> dict:

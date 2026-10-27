@@ -1300,6 +1300,31 @@ class PcdbRelayStore(RelayStore):
         return {"aged_kept_preserved": int(len(pres)), "aged_kept_exempt": int(len(exempt)),
                 "preserve_authors": len(self.preserve_pubkeys), "aged_kept_top": top}
 
+    def _aged_kept_by_sync(self, pubkeys) -> dict:
+        """{pubkey: events the AGE rule would delete were this author not preserved} -- the same candidates as
+        _aged_kept_sync (past the window, a kind that ages out, not written here directly), per author. What an
+        admin frees by unpinning somebody (Admin -> Relay -> Pinned authors)."""
+        pks = [p for p in (pubkeys or ()) if p]
+        out = {p: 0 for p in pks}
+        ids = self._author_ids(pks)
+        if not len(ids):
+            return out
+        ctx = self._ctx(int(time.time()))
+        cutoff = ctx["now"] - self.retention_days * 86400
+        sel = self._select(lambda c, s: (c["created"].astype(np.int64) < cutoff) & self._prunable(c, s, ctx)
+                           & (c["origin"] != _DIRECT) & np.isin(c["author"], ids), ("kind", "created", "origin", "author"))
+        if len(sel):
+            with self.store._lock:
+                au = self.store.author.view(np.uint32)[sel].copy()
+            uids, counts = np.unique(au, return_counts=True)
+            with self.store._lock:
+                for i, n in zip(uids, counts):
+                    out[self.store._authors[int(i)]] = int(n)
+        return out
+
+    async def aged_kept_by(self, pubkeys) -> dict:
+        return await self._r(self._aged_kept_by_sync, list(pubkeys or ()))
+
     def _prune_sync(self, limit: int = 0) -> tuple:
         """One prune PASS -- store.py's rules, in their order, with its budget semantics: `limit` caps
         the deletions of the whole pass, and `more` says a rule hit the cap. Each rule sees the previous rules'
