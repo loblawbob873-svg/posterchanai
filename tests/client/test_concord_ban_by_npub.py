@@ -4,6 +4,7 @@
 said only "Ban Todd?" -- and Todd, Beatbox and Josephus "keep reappearing": a person not on the member list at that
 moment could not be banned at all (the only ban was a member-row menu). Runs the SHIPPED helpers under node.
 """
+import re
 import json
 import subprocess
 from pathlib import Path
@@ -58,8 +59,14 @@ console.log(JSON.stringify([
     assert got[7]["error"] == "That is not an npub."                        # a note id is not an account
 
 
-def test_both_member_lists_offer_it_to_whoever_may_ban_and_it_uses_the_real_ban():
-    assert JS.count("cc-ban-npub\">Ban by npub…") + JS.count("cc-ban-npub\">Ban by npub") >= 2
+def test_the_room_menu_offers_it_only_to_whoever_may_ban_and_it_uses_the_real_ban():
+    """In the room's ☰ menu (2026-10-27: "move ban by npub button to the hamburger menu, looks ugly there" -- "only
+    admins/moderators should see it"): the hidden header button the menu row presses exists only when canBanAny,
+    and the member lists' button rows no longer carry it."""
+    assert "'+(canBanAny?'<button type=\"button\" class=\"cc-head-btn cc-ban-npub\" id=\"cc-ban-npub\" hidden" in JS
+    assert not re.search(r'class="btn btn-ghost[^"]*cc-ban-npub', JS), "Ban by npub is back in a member list (pane or dialog)"
+    menu = JS[JS.index("const more=$('#cc-head-more')"):][:2500]
+    assert "['cc-ban-npub','Ban by npub…']" in menu and ".filter(([id])=>!!$('#'+id))" in menu
     assert "canBanAny=!!current&&!current.local&&!!current.cord&&(isOwner||memberMay(current,viewer.pubkey,'BAN'))" in JS
     bind = JS[JS.index("$$('.cc-ban-npub')"):][:900]
     assert "isOwnerNow?banMember(got.target):staffModerate(got.target,'ban')" in bind

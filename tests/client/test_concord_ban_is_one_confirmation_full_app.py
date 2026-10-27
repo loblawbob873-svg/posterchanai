@@ -112,7 +112,12 @@ def test_someone_who_is_not_listed_is_banned_by_npub():
         got.update(me=me, others=others, outsider=outsider)
         await b.js(CAPTURE % (others[0], others[1]))
         await b.js("(()=>{const R=window.PosterCordReader,c=R.createBanWrap;R.createBanWrap=async(...a)=>{window.__banned=a[2];return c(...a);};})()")
-        await b.js(VISIBLE % ".cc-members-pane .cc-ban-npub" + ".click()")
+        # It lives in the room's ☰ menu: open the menu, press its row.
+        await b.js("document.getElementById('cc-head-more').click()")
+        await b.until("[...document.querySelectorAll('.menu-pop button')].some(x=>x.textContent.trim()==='Ban by npub…')")
+        got['menu'] = await b.js("[...document.querySelectorAll('.menu-pop button')].map(x=>x.textContent.trim())")
+        got['in_pane'] = await b.js("(()=>{const e=document.querySelector('.cc-members-pane .cc-ban-npub,#cc-members-dialog .cc-ban-npub');return e?e.outerHTML.slice(0,200)+' IN '+(e.closest('aside,#cc-members-dialog,header')||{}).className:false})()")
+        await b.js("[...document.querySelectorAll('.menu-pop button')].find(x=>x.textContent.trim()==='Ban by npub…').click()")
         await b.until("!!" + VISIBLE % ".uiprompt-in")
         await b.js("(()=>{const i=%s;i.value=%r;i.dispatchEvent(new Event('input',{bubbles:true}));})()" % (VISIBLE % ".uiprompt-in", npub))
         await b.js("[...document.querySelectorAll('.uiconfirm button')].find(x=>x.textContent.trim()==='Continue'&&x.getBoundingClientRect().width>0).click()")
@@ -126,6 +131,7 @@ def test_someone_who_is_not_listed_is_banned_by_npub():
         got['toast'] = await b.js("[...document.querySelectorAll('.toast')].map(t=>t.textContent).join(' | ')")
 
     asyncio.run(desktop.with_browser("online", "", check, ""))
+    assert "Ban by npub…" in got['menu'] and not got['in_pane'], ("Ban by npub is not in the room menu, or is still in the member list", got.get('menu'), got.get('in_pane'))
     assert "npub1" in got['question'] and "from this community?" in got['question'], got['question']
     assert got['banned'] == got['outsider'], ("the ban was not written for the pasted account", got)
     o = got['opts']
