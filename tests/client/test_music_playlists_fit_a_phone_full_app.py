@@ -92,9 +92,11 @@ def test_your_own_playlist_gives_the_screen_to_its_songs():
                 await b.js("(async()=>{const f=__PC.filesIdx()._norm().files;"
                            "const ids=Object.entries(f).filter(([k,m])=>m.folder==='Music').map(([k,m])=>m.sha||k);"
                            "window.__pl=await PCPlaylists.create('Gym mix', ids);})(); 1")
-                await V._until(b, "PCPlaylists.all().length===1 && !!document.querySelector('.ma-pl[data-pl=\"'+PCPlaylists.all()[0].id+'\"]')", 15, "the playlist chip")
-                await A.press(b, ".ma-pl[data-pl='%s']" % await b.js("PCPlaylists.all()[0].id"))
-                await V._until(b, "document.querySelectorAll('#ma-lib > .track').length===8 && !!document.querySelector('#ma-plbar .ma-pl.on[data-pl=\"'+PCPlaylists.all()[0].id+'\"]')", 15, "the playlist's songs")
+                await V._until(b, "PCPlaylists.all().length===1", 15, "the playlist")
+                await A.press(b, "#ma-tab-playlists")      # Playlists are a tab now (2026-10-27)
+                await V._until(b, "!!document.querySelector('.ma-plrow[data-pl=\"'+PCPlaylists.all()[0].id+'\"]')", 15, "the playlist row")
+                await A.press(b, ".ma-plrow[data-pl='%s']" % await b.js("PCPlaylists.all()[0].id"))
+                await V._until(b, "document.querySelectorAll('#ma-lib > .track').length===8 && !!document.querySelector('#ma-plbar .ma-pltitle')", 15, "the playlist's songs")
             await b.js("document.getElementById('feed').scrollTop=0; 1")
             await asyncio.sleep(.4)
             got[(w, h)] = await b.js(GEOM)
@@ -125,9 +127,15 @@ def _share_seed(n):
 
 
 async def _chip(b, label):
-    sel = await b.js("(()=>{const c=[...document.querySelectorAll('#ma-plbar .ma-pl')].find(x=>x.textContent.includes(%s));"
-                     "if(!c)return ''; c.id=c.id||('chip-'+Math.random().toString(36).slice(2)); return '#'+c.id})()" % json.dumps(label))
-    assert sel, ("no chip", label, await b.js("[...document.querySelectorAll('#ma-plbar .ma-pl')].map(x=>x.textContent.trim())"))
+    """Open a playlist (or a share inbox) the way a person does now: the Playlists tab -- or Back to it -- then its row."""
+    if await b.js("!!document.querySelector('#ma-plback')"):
+        await A.press(b, "#ma-plback")
+    elif await b.js("!document.querySelector('.ma-plrow')"):
+        await A.press(b, "#ma-tab-playlists")
+    await V._until(b, "[...document.querySelectorAll('.ma-plrow')].some(x=>x.textContent.includes(%s))" % json.dumps(label), 20, "the row " + label)
+    sel = await b.js("(()=>{const c=[...document.querySelectorAll('.ma-plrow')].find(x=>x.textContent.includes(%s));"
+                     "if(!c)return ''; c.id=c.id||('row-'+Math.random().toString(36).slice(2)); return '#'+c.id})()" % json.dumps(label))
+    assert sel, ("no row", label, await b.js("[...document.querySelectorAll('.ma-plrow')].map(x=>x.textContent.trim())"))
     await A.press(b, sel)
 
 
@@ -142,7 +150,8 @@ def test_a_shared_playlist_gives_the_screen_to_its_songs_and_keeps_both_row_acti
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}; __PC.switchView('music'); 1")
         await b.until("!!window.PCMusicShare && !!document.getElementById('ma-plbar')")
         await b.js("(async()=>{ await PCMusicShare.loadIn(); })(); 1")
-        await V._until(b, "[...document.querySelectorAll('#ma-plbar .ma-pl')].some(x=>/Shared with me\\s*1/.test(x.textContent))", 20, "the Shared with me chip")
+        await A.press(b, "#ma-tab-playlists")
+        await V._until(b, "[...document.querySelectorAll('.ma-plrow')].some(x=>/Shared with me\\s*1/.test(x.textContent))", 20, "the Shared with me row")
         await _chip(b, "Shared with me")
         await V._until(b, "!!document.querySelector('#ma-lib .msh-offer')", 15, "the offer")
         got["in"] = await b.js(GEOM)
@@ -213,14 +222,15 @@ def test_accepting_a_share_while_shared_with_me_is_still_reading_keeps_the_playl
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}; __PC.switchView('music'); 1")
         await b.until("!!window.PCMusicShare && !!document.getElementById('ma-plbar')")
         await b.js("(async()=>{ await PCMusicShare.loadIn(); })(); 1")
-        await V._until(b, "[...document.querySelectorAll('#ma-plbar .ma-pl')].some(x=>/Shared with me\\s*1/.test(x.textContent))", 20, "the Shared with me chip")
+        await A.press(b, "#ma-tab-playlists")
+        await V._until(b, "[...document.querySelectorAll('.ma-plrow')].some(x=>/Shared with me\\s*1/.test(x.textContent))", 20, "the Shared with me row")
         await b.js("window.__RELAY_MS=2500; 1")          # every relay answer from here on takes 2.5 s
         await _chip(b, "Shared with me")
         await V._until(b, "!!document.querySelector('#ma-lib .msh-offer .msh-yes')", 15, "the offer")
         await A.press(b, "#ma-lib .msh-offer .msh-yes")
         await V._until(b, "document.querySelectorAll('#ma-lib > .track.msh-track').length===12", 20, "the shared playlist's songs")
         await asyncio.sleep(4)                            # the slowed read lands in here
-        got["after"] = await b.js("({chip:(document.querySelector('#ma-plbar .ma-pl.on')||{}).textContent||'',"
+        got["after"] = await b.js("({chip:(document.querySelector('#ma-plbar .ma-pltitle')||{}).textContent||'',"
                                   "rows:document.querySelectorAll('#ma-lib > .track.msh-track').length,"
                                   "offer:!!document.querySelector('#ma-lib .msh-offer'), errors:(window.__errors||[]).slice(-5)})")
 

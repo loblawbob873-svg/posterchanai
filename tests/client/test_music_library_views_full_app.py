@@ -301,6 +301,12 @@ def test_every_new_screen_fits_a_phone(w, h):
         await _tab(b, "albums")
         await b.js("document.getElementById('feed').scrollTop=1500; 1")
         await asyncio.sleep(.3)
+        # Line a row of covers up under the pinned bar: whether a row FITS is the question, not where an arbitrary
+        # scrollTop happens to cut one (taking Search off the bar moved every row a few pixels and flipped the answer).
+        await b.js("""(()=>{const f=document.getElementById('feed'),t=document.querySelector('.ma-tabs').getBoundingClientRect();
+          const row=[...document.querySelectorAll('#ma-albums .ma-card-art')].map(e=>e.getBoundingClientRect()).find(r=>r.top>=t.bottom-1);
+          if(row) f.scrollTop+=row.top-t.bottom-2; return 1})()""")
+        await asyncio.sleep(.2)
         got["scrolled"] = await b.js("""(()=>{const f=document.getElementById('feed').getBoundingClientRect(),t=document.querySelector('.ma-tabs').getBoundingClientRect();
           const nav=document.querySelector('.mobilenav'),nr=nav&&getComputedStyle(nav).display!=='none'?nav.getBoundingClientRect():null,bottom=nr&&nr.height?nr.top:innerHeight;
           const cards=[...document.querySelectorAll('#ma-albums .ma-card-art')].map(e=>e.getBoundingClientRect());

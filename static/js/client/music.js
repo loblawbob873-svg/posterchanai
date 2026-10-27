@@ -277,6 +277,7 @@ window.PCMusicFactory = function(dep){
           <button type="button" role="tab" class="ma-tab" id="ma-tab-songs" data-tab="songs">Songs</button>
           <button type="button" role="tab" class="ma-tab" id="ma-tab-albums" data-tab="albums">Albums</button>
           <button type="button" role="tab" class="ma-tab" id="ma-tab-artists" data-tab="artists">Artists</button>
+          <button type="button" role="tab" class="ma-tab" id="ma-tab-playlists" data-tab="playlists">Playlists</button>
         </div>
         <select class="input ma-sort" id="ma-sort" aria-label="Sort songs">
           <option value="added">Recently added</option><option value="title">Title</option>
@@ -289,8 +290,7 @@ window.PCMusicFactory = function(dep){
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
-    { const q=$('#ma-q',feed), bar=$('#ma-browse',feed), sort=$('#ma-sort',feed);
-      if(q && bar && sort) bar.insertBefore(q, sort); }
+    // Search is its own line under the tabs ("looks out of place being on the same line as Songs, Albums, Artists").
     const lib=$('#ma-lib',feed);
     /* HYDRATE THE INDEX FIRST. The library lives in the files index, and this window can be the very
      * first thing opened in a session — openMusic() called loadLocal() before doing anything for
@@ -341,7 +341,9 @@ window.PCMusicFactory = function(dep){
     // Who shared music with me, behind the first paint, so the chip can say so.
     if(S.ME && !S.GUEST){
       _musicShareLoad().then(MS=>MS&&MS.loadIn()).then(()=>{ if(document.getElementById('ma-lib') && !_musicShareView()){
-        const bar=$('#ma-plbar',feed); if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); } } }).catch(()=>{});
+        const bar=$('#ma-plbar',feed); if(bar){ bar.innerHTML=_plBarHTML(); _bindPlBar(bar, paint); }
+        // The Playlists tab lists the shares too: redraw it once they are known.
+        if(_maTab==='playlists' && !S._musicPl) _maRepaint(); } }).catch(()=>{});
     }
     if(window.PCPlaylists){
       PCPlaylists.load().then(()=>{ if(document.getElementById('ma-lib')) paint(); }).catch(()=>{});
@@ -374,7 +376,7 @@ window.PCMusicFactory = function(dep){
     const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
     b('#ma-prev',()=>MusicPlayer.prev());
     b('#ma-next',()=>MusicPlayer.next());
-    b('#ma-shuffle',()=>{ MusicPlayer.shuffle=!MusicPlayer.shuffle; MusicPlayer._render(); _musicAppNow(); });
+    b('#ma-shuffle',()=>{ MusicPlayer.setShuffle(!MusicPlayer.shuffle); _musicAppNow(); });
     b('#ma-play',()=>{ if(MusicPlayer.cur) return MusicPlayer.toggle();
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
@@ -419,56 +421,100 @@ window.PCMusicFactory = function(dep){
     indexReady.then(ok=>{ if(ok) Lib.start(); }).catch(()=>{});
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
   }
+  /* PLAYLISTS ARE A TAB, AND AN OPEN ONE HAS ONE MENU (2026-10-27: "Playlists should be in a tab like Songs, Artists,
+   * Albums", and "Shared by me, Shared with me, Rename this playlist, Delete this playlist, Share ... a small button
+   * that has all that in a menu"). The chip bar above the tabs is gone: the Playlists tab lists them, and the bar is
+   * only the open playlist's title row -- back, its name, ⋯. */
+  const _PL_IN = '__shared_in', _PL_OUT = '__shared_out';
+  // The share module loads lazily: until it has, there are no shares (never a non-list to trip over).
+  function _sharesAccepted(){ const MS = window.PCMusicShare; let v = null; try{ v = MS && MS.acceptedShares && MS.acceptedShares(); }catch(_){ } return Array.isArray(v) ? v : []; }
+  function _sharesWaiting(){ const MS = window.PCMusicShare; let v = null; try{ v = MS && MS.pendingShares && MS.pendingShares(); }catch(_){ } return Array.isArray(v) ? v.length : 0; }
+  function _plTitle(id){
+    if(!id) return '';
+    const pl = PL() && PL().get(id); if(pl) return pl.name;
+    const sh = _sharesAccepted().find(x => x.key === id);
+    return sh ? sh.body.name : id === _PL_IN ? '📥 Shared with me' : id === _PL_OUT ? '📤 Shared by me' : '';
+  }
   function _plBarHTML(){
-    if(!PL()) return '';
-    const ls = PL().all();
-    const chip = (id,label,n)=>`<button class="ma-pl${S._musicPl===id?' on':''}" data-pl="${enc(id)}">${enc(label)}${n!=null?` <span class="ma-pln">${n}</span>`:''}</button>`;
-    const MS = window.PCMusicShare, real = S._musicPl && !_musicShareView();
-    return `<div class="ma-pls">
-        ${chip('', '🎵 All music', null)}
-        ${ls.map(p=>chip(p.id, p.name, p.tracks.length)).join('')}
-        <button class="ma-pl ma-plnew" id="ma-plnew" title="New playlist">＋ New</button>
-        ${MS ? MS.barHTML(S._musicPl, real) : ''}
-        ${real ? `<span class="ma-plsp"></span>
-          <button class="ma-pl" id="ma-plren" title="Rename this playlist">✎</button>
-          <button class="ma-pl" id="ma-pldel" title="Delete this playlist">🗑</button>` : ''}
+    if(!PL() || !S._musicPl) return '';
+    return `<div class="ma-plhead">
+        <button type="button" class="btn btn-ghost small ma-back" id="ma-plback" aria-label="Back to Playlists"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chevron-left"></use></svg><span>Playlists</span></button>
+        <b class="ma-pltitle">${enc(_plTitle(S._musicPl))}</b>
+        <button type="button" class="btn btn-ghost small ma-plmore" id="ma-plmore" title="Playlist options" aria-label="Playlist options"><svg class="ic b-ic" aria-hidden="true"><use href="#i-more"></use></svg></button>
       </div>`;
   }
-  function _bindPlBar(root, repaint){
-    $$('.ma-pl[data-pl]', root).forEach(b=> b.onclick=()=>{
-      const to = b.dataset.pl || null;
-      /* Leaving a playlist hands the queue BACK. Playing inside one replaces MusicPlayer.queue with
-       * that playlist; without this the queue stayed pinned to it, so ⏭ walked the playlist while
-       * the whole library was on screen. Only when nothing is playing from the old view — pressing
-       * a chip is navigation, and navigation must never interrupt the music. */
-      const leaving = !to && S._musicPl && !(S._audioEl && !S._audioEl.paused);
-      S._musicPl = to;
-      MusicPlayer._pl = _musicShareView() ? null : to;   // two pickers, one selection (shares aren't playlists)
-      // AFTER the selection moves: refreshQueue reads it, and before this it rebuilt from the playlist
-      // being left.
-      if(leaving) MusicPlayer.refreshQueue();
-      repaint(); });
-    { const sb=$('#ma-plshare', root); if(sb) sb.onclick=()=>_musicShareCurrent(); }
-    { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
-        const name = await uiPrompt('Name this playlist', { value: '', placeholder: 'New playlist' }); if(!name) return;
-        const pl = await PL().create(name.trim());
-        // create() returns null when the save did not happen — never navigate into one that is not
-        // there, which is the whole reason it reports that rather than handing the object back.
-        if(!pl){ toast('couldn’t save that playlist'); return; }
-        S._musicPl = pl.id; repaint(); }; }
-    { const rb=$('#ma-plren', root); if(rb) rb.onclick=async()=>{
-        const cur = PL().get(S._musicPl); if(!cur) return;
-        const name = await uiPrompt('Rename playlist', { value: cur.name, ok: 'Rename' }); if(!name) return;
-        if(!await PL().rename(S._musicPl, name.trim())) toast('couldn’t rename that playlist');
-        repaint(); }; }
-    { const db=$('#ma-pldel', root); if(db) db.onclick=async()=>{
-        const cur = PL().get(S._musicPl); if(!cur) return;
-        // The TRACKS are not touched — a playlist is an order over the library, and deleting one has
-        // never meant deleting music. Said out loud, because "delete" next to a list of songs reads
-        // like it might.
-        if(!await uiConfirm(`Delete “${cur.name}”? The songs stay in your library.`)) return;
-        await PL().remove(S._musicPl); S._musicPl = null; repaint(); }; }
+  function _plPick(to, repaint){
+    /* Leaving a playlist hands the queue BACK. Playing inside one replaces MusicPlayer.queue with
+     * that playlist; without this the queue stayed pinned to it, so ⏭ walked the playlist while
+     * the whole library was on screen. Only when nothing is playing from the old view — pressing
+     * a chip is navigation, and navigation must never interrupt the music. */
+    const leaving = !to && S._musicPl && !(S._audioEl && !S._audioEl.paused);
+    S._musicPl = to;
+    MusicPlayer._pl = _musicShareView() ? null : to;   // two pickers, one selection (shares aren't playlists)
+    // AFTER the selection moves: refreshQueue reads it, and before this it rebuilt from the playlist
+    // being left.
+    if(leaving) MusicPlayer.refreshQueue();
+    repaint();
   }
+  async function _plNew(repaint){
+    const name = await uiPrompt('Name this playlist', { value: '', placeholder: 'New playlist' }); if(!name) return;
+    const pl = await PL().create(name.trim());
+    // create() returns null when the save did not happen — never navigate into one that is not
+    // there, which is the whole reason it reports that rather than handing the object back.
+    if(!pl){ toast('couldn’t save that playlist'); return; }
+    S._musicPl = pl.id; repaint();
+  }
+  async function _plRename(repaint){
+    const cur = PL().get(S._musicPl); if(!cur) return;
+    const name = await uiPrompt('Rename playlist', { value: cur.name, ok: 'Rename' }); if(!name) return;
+    if(!await PL().rename(S._musicPl, name.trim())) toast('couldn’t rename that playlist');
+    repaint();
+  }
+  async function _plDelete(repaint){
+    const cur = PL().get(S._musicPl); if(!cur) return;
+    // The TRACKS are not touched — a playlist is an order over the library, and deleting one has
+    // never meant deleting music. Said out loud, because "delete" next to a list of songs reads
+    // like it might.
+    if(!await uiConfirm(`Delete “${cur.name}”? The songs stay in your library.`)) return;
+    await PL().remove(S._musicPl); S._musicPl = null; repaint();
+  }
+  /* The open playlist's ⋯: everything the chip bar used to spread across a row. */
+  function _plMenu(btn, repaint){
+    const real = !!(PL() && PL().get(S._musicPl)), view = _musicShareView() && !(window.PCMusicShare && PCMusicShare.isShare && PCMusicShare.isShare(S._musicPl));
+    const items = [];
+    if(real) items.push(['ren', 'Rename this playlist', ''], ['del', 'Delete this playlist', 'danger']);
+    if(!view) items.push(['share', 'Share', '']);
+    if(window.PCMusicShare) items.push(['in', '📥 Shared with me', ''], ['out', '📤 Shared by me', '']);
+    items.push(['new', '＋ New playlist', '']);
+    const run = { ren: () => _plRename(repaint), del: () => _plDelete(repaint), share: () => _musicShareCurrent(),
+      in: () => _plPick(_PL_IN, repaint), out: () => _plPick(_PL_OUT, repaint), new: () => _plNew(repaint) };
+    const app = window.__PC;
+    if(app && app.openMenuPopover) app.openMenuPopover(btn, items, k => { if(run[k]) run[k](); });
+  }
+  function _bindPlBar(root, repaint){
+    $$('.ma-pl[data-pl], .ma-plrow[data-pl]', root).forEach(b => b.onclick = () => _plPick(b.dataset.pl || null, repaint));
+    { const bb=$('#ma-plback', root); if(bb) bb.onclick=()=>{ _maTab = 'playlists'; _ls.set('pc_music_tab', _maTab); _plPick(null, repaint); }; }
+    { const mb=$('#ma-plmore', root); if(mb) mb.onclick=()=>_plMenu(mb, repaint); }
+    { const nb=$('#ma-plnew', root); if(nb) nb.onclick=()=>_plNew(repaint); }
+  }
+  /* The Playlists tab: your playlists, the ones shared with you that you accepted, the two share inboxes, and New. */
+  function _maPlaylistsList(lib, q){
+    lib.onclick = null;
+    const ql = String(q || '').trim().toLowerCase(), MS = window.PCMusicShare;
+    const row = (id, label, n, cls) => `<button type="button" class="ma-plrow${cls ? ' ' + cls : ''}" data-pl="${enc(id)}"><span class="ma-plname">${enc(label)}</span>${n != null ? `<span class="ma-pln">${n}</span>` : ''}</button>`;
+    const mine = (PL() ? PL().all() : []).filter(p => !ql || p.name.toLowerCase().includes(ql));
+    const shared = _sharesAccepted().filter(x => !ql || String((x.body && x.body.name) || '').toLowerCase().includes(ql));
+    const waiting = _sharesWaiting();
+    lib.innerHTML = `<div class="ma-pllist" role="list">
+        ${mine.map(p => row(p.id, p.name, p.tracks.length)).join('')}
+        ${shared.map(x => row(x.key, (x.body && x.body.name) || 'Shared playlist', null, 'ma-plshared')).join('')}
+        ${!mine.length && !shared.length ? `<p class="muted small ma-plnone">${ql ? 'No playlist matches that.' : 'No playlists yet.'}</p>` : ''}
+        ${MS ? row(_PL_IN, '📥 Shared with me', waiting || null, 'ma-plinbox') + row(_PL_OUT, '📤 Shared by me', null, 'ma-plinbox') : ''}
+        <button type="button" class="ma-plrow ma-plnew" id="ma-plnew"><span class="ma-plname">＋ New playlist</span></button>
+      </div>`;
+    _bindPlBar(lib, S._musicPlRepaint || (() => {}));
+  }
+
   /* Add a track to a playlist — or to a new one. One prompt, because a chooser that cannot also
    * create is a dead end the first time anybody uses it. */
   async function _addToPlaylist(sha){
@@ -577,7 +623,7 @@ window.PCMusicFactory = function(dep){
    * tab it came from, or from an album opened on an artist's page, to that artist. */
   const _ls = { get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : v; }catch(_){ return d; } },
                 set(k, v){ try{ localStorage.setItem(k, v); }catch(_){ } } };
-  const MA_TABS = ['songs', 'albums', 'artists'], MA_SORTS = ['added', 'title', 'artist', 'album'];
+  const MA_TABS = ['songs', 'albums', 'artists', 'playlists'], MA_SORTS = ['added', 'title', 'artist', 'album'];
   let _maTab = MA_TABS.includes(_ls.get('pc_music_tab', 'songs')) ? _ls.get('pc_music_tab', 'songs') : 'songs';
   let _maSort = MA_SORTS.includes(_ls.get('pc_music_sort', 'added')) ? _ls.get('pc_music_sort', 'added') : 'added';
   let _maNav = { page: null };          // {page:'album'|'artist', key, from?:<nav>}
@@ -607,7 +653,7 @@ window.PCMusicFactory = function(dep){
     const qi = $('#ma-q', feed);
     if(qi) qi.placeholder = !on ? 'Search your library'
       : _maNav.page === 'album' ? 'Search this album' : _maNav.page === 'artist' ? 'Search this artist'
-      : _maTab === 'albums' ? 'Search albums' : _maTab === 'artists' ? 'Search artists' : 'Search songs';
+      : _maTab === 'albums' ? 'Search albums' : _maTab === 'artists' ? 'Search artists' : _maTab === 'playlists' ? 'Search playlists' : 'Search songs';
   }
   function _maRepaint(){
     const lib = document.getElementById('ma-lib'), feed = document.getElementById('feed');
@@ -645,6 +691,7 @@ window.PCMusicFactory = function(dep){
     }
     if(_maTab === 'albums') return _maAlbumsGrid(lib, G.albums(entries).filter(a => G.matchAlbum(a, q)), q);
     if(_maTab === 'artists') return _maArtistsList(lib, G.artists(entries).filter(a => G.matchArtist(a, q)), q);
+    if(_maTab === 'playlists') return _maPlaylistsList(lib, q);
     lib.onclick = null;
     _renderMusicList(lib, null, q, null, { sort: _maSort });
   }

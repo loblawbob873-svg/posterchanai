@@ -513,6 +513,11 @@ window.PCMusicPlayerFactory = function(dep){
       if(!this._bag.length) this._bag=this._deal();
       return this._bag.shift();
     },
+    /* THE SHUFFLE SWITCH SHUFFLES THE LIBRARY ("make sure it shuffles your entire library instead of only a short list
+     * of songs", 2026-10-27). It flipped a flag on whatever the queue happened to be -- after an album, an artist or a
+     * search, that short set. Switching it ON rebuilds the queue: the chosen playlist if there is one, else every song.
+     * An album's or artist's own Shuffle button still shuffles just that set (music.js _maPlaySet). */
+    setShuffle(on){ this.shuffle=!!on; if(this.shuffle){ this.refreshQueue(); this._bagSig=''; this._bag=[]; } this._render(); },
     // Start shuffling the queue as a fresh round (the Shuffle buttons in Music and in a shared playlist).
     shufflePlay(){ this.shuffle=true; this._bagSig=''; this._bag=[]; const pick=this._nextShuffled();
       if(pick) this.play(pick, {force:true}); return pick; },
@@ -766,7 +771,7 @@ window.PCMusicPlayerFactory = function(dep){
       const d=this.el, qq=s=>d.querySelector(s), b=(s,fn)=>{ const e=qq(s); if(e) e.onclick=fn; };
       b('.mp-play',()=>this.toggle()); b('.mp-min',()=>this.setMin(true)); b('.mp-exp',()=>this.setMin(false));
       b('.mp-close',()=>this.close()); b('.mp-prev',()=>this.prev()); b('.mp-next',()=>this.next());
-      b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
+      b('.mp-shuffle',()=>{ this.setShuffle(!this.shuffle); });
       this.bindSeek(qq('.mp-seek'));
       { const ps=qq('.mp-pl'); if(ps) ps.onchange=()=>{
           this._pl = ps.value || null;

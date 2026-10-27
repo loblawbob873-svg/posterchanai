@@ -34,7 +34,15 @@ HELD = r"""(()=>{const f=window.fetch;window.fetch=(u,o)=>{if(/\/list\/[0-9a-f]{
   return Promise.resolve(new Response(JSON.stringify([1,2,3,4,5].map(i=>({sha256:String(i).repeat(64),size:1000}))),{status:200,headers:{'Content-Type':'application/json'}}));
   return f(u,o);};})();"""
 NOW = "((__PC.music().now()||{}).title||'')"
-CHIPS = "[...document.querySelectorAll('.ma-pl[data-pl]')].map(b=>b.textContent.replace(/\\s+\\d+$/,'').trim())"
+NAMES = "PCPlaylists.all().map(p=>p.name)"
+TITLE = "((document.querySelector('#ma-plbar .ma-pltitle')||{}).textContent||'')"
+
+
+async def menu(b, label):
+    """The open playlist's ⋯, then one of its items -- pressed, not called."""
+    await click(b, "#ma-plmore")
+    await b.until("!!document.querySelector('.menu-pop')")
+    await b.js("[...document.querySelectorAll('.menu-pop button')].find(x=>x.textContent.trim()===%r).click(); 1" % label)
 
 
 async def prompt(b, text):
@@ -62,17 +70,21 @@ def test_play_next_previous_equalizer_and_playlists():
         await click(b, "#ma-eq-toggle")
         await b.until("document.querySelector('#ma-eq-toggle').getAttribute('aria-expanded')==='false'")
 
-        # Playlists: new, rename, delete.
+        # Playlists: new, rename, delete -- from the Playlists tab and the open playlist's one ⋯ (2026-10-27).
+        await click(b, "#ma-tab-playlists")
+        await b.until("!!document.querySelector('#ma-plnew')")
         await b.js("document.querySelector('#ma-plnew').click(); 1")
         await prompt(b, "Road trip")
-        await b.until(f"{CHIPS}.includes('Road trip') && !!document.querySelector('#ma-plren')")
-        await b.js("document.querySelector('#ma-plren').click(); 1")
+        await b.until(f"{TITLE}==='Road trip'")
+        await menu(b, "Rename this playlist")
         await prompt(b, "Night drive")
-        await b.until(f"{CHIPS}.includes('Night drive') && !{CHIPS}.includes('Road trip')")
-        await b.js("document.querySelector('#ma-pldel').click(); 1")
+        await b.until(f"{TITLE}==='Night drive' && {NAMES}.includes('Night drive') && !{NAMES}.includes('Road trip')")
+        await menu(b, "Delete this playlist")
         await b.until("!!document.querySelector('.uiconfirm-btns [data-uc=\"1\"]')")
         await b.js("document.querySelector('.uiconfirm-btns [data-uc=\"1\"]').click(); 1")
-        await b.until(f"!{CHIPS}.includes('Night drive')")
+        await b.until(f"!{NAMES}.includes('Night drive')")
+        await click(b, "#ma-tab-songs")
+        await b.until("document.querySelectorAll('.track .track-play').length>=5")
         assert await b.js("document.querySelectorAll('.track .track-play').length") >= 5, "deleting a playlist removed songs"
 
         # A track's ＋: new playlist holding it; Close.
@@ -81,9 +93,9 @@ def test_play_next_previous_equalizer_and_playlists():
         await b.until("!!document.querySelector('#ma-pladdnew')")
         await b.js("document.querySelector('#ma-pladdnew').click(); 1")
         await prompt(b, "Favourites")
-        await b.until(f"{CHIPS}.includes('Favourites')")
-        n = await b.js("(document.querySelector('.ma-pl[data-pl]:not([data-pl=\"\"]) .ma-pln')||{}).textContent")
-        assert n == "1", ("the new playlist should hold the one track", n)
+        await b.until(f"{NAMES}.includes('Favourites')")
+        n = await b.js("PCPlaylists.all().find(p=>p.name==='Favourites').tracks.length")
+        assert n == 1, ("the new playlist should hold the one track", n)
         await b.js(f"document.querySelector('.track .track-add[data-sha=\"{sha}\"]').click(); 1")
         await b.until("!!document.querySelector('#ma-pladdclose')")
         await b.js("document.querySelector('#ma-pladdclose').click(); 1")

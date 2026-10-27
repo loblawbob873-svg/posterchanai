@@ -74,6 +74,7 @@ def test_tapping_a_song_in_a_playlist_leaves_shuffle_alone():
 def test_leaving_a_playlist_rebuilds_the_queue_from_the_new_selection():
     """refreshQueue reads MusicPlayer._pl, so it must run AFTER the selection moves."""
     music = _read("static", "js", "client", "music.js")
-    bar = music[music.index("function _bindPlBar(root, repaint){"):]
-    bar = bar[:bar.index("repaint(); });")]
+    # Every way of choosing a playlist (the Playlists tab's rows, Back, the share inboxes) goes through _plPick.
+    bar = music[music.index("function _plPick(to, repaint){"):]
+    bar = bar[:bar.index("\n  }\n")]
     assert bar.index("MusicPlayer._pl =") < bar.index("MusicPlayer.refreshQueue()"), bar

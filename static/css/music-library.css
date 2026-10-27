@@ -105,3 +105,24 @@
   .ma-arow{min-height:calc(56px / var(--zf,1))}
   #ma-opt-close{min-height:calc(44px / var(--zf,1))}
 }
+
+/* PLAYLISTS ARE A TAB, SEARCH IS ITS OWN LINE (2026-10-27). The Playlists tab's rows, the open playlist's title row
+ * (back, name, one ⋯), and the search box on its own line under the tabs. */
+.music-app > .ma-q { margin: 6px 0 4px; }
+.ma-plhead { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.ma-pltitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; }
+.ma-plmore { flex: 0 0 auto; }
+.ma-pllist { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.ma-plrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: start;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--text);
+  cursor: pointer; font: inherit; }
+.ma-plrow:hover { border-color: var(--neon); }
+.ma-plrow .ma-plname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ma-plrow .ma-pln { color: var(--muted); flex: 0 0 auto; }
+.ma-plrow.ma-plnew { border-style: dashed; color: var(--cyan); border-color: var(--cyan); }
+.ma-plnone { margin: 6px 2px; }
+@media (max-width: 820px), (max-height: 600px) {
+  .music-app:not(.ma-full) > .ma-q,
+  .ma-plrow, .ma-plhead button { min-height: calc(44px / var(--zf, 1)); }
+  .ma-plhead button { min-width: calc(44px / var(--zf, 1)); }
+}
