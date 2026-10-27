@@ -275,7 +275,9 @@ def own_media_hosts() -> set:
     placed in blossom_public_url.
     """
     own = set()
-    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
+    # site_url is THIS instance -- the app's own pages and files (custom emoji /client/emoji/…, /static/…). Missing
+    # here, a Meme Builder layer using one of the instance's own emoji was "refused media source" (2026-10-27).
+    for key in ("site_url", "blossom_public_url", "nostr_dvm_blossom_url"):
         h = urlparse(settings_store.get(key) or "").hostname
         if h:
             own.add(h.lower())
