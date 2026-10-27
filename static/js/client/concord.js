@@ -1140,7 +1140,14 @@
    * this window would hand on. */
   let pendingHandoff=null;
   function acceptHandoff(value){ if(!accountPk()){pendingHandoff=value&&typeof value==='object'?value:{};return;} pendingHandoff=null; const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(activeGet())||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
-  function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
+  /* DISCOVER READS FROM THE TOP. It is painted in the same scroller as a chat, and a chat's reader is pinned to the
+   * newest message -- so as the public listings arrived, the "growth" pinned Discover to its BOTTOM and the screen
+   * jerked down past "Find your community" ("Discover Community Loading Jerk Screen", Vyram 2026-10-27). The
+   * no-community key (`<owner>:home:<channel>`) is never pinned, whatever an earlier visit stored. The pattern is
+   * written where it is used: the scroll tests lift these functions out one at a time. */
+  function readScroll(key){ let v=null; if(scrollStates.has(key))v=scrollStates.get(key); else{ try{ const j=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(j&&typeof j==='object')v=j; }catch(_){} }
+    if(/:home:[^:]*$/.test(String(key))){ v=v||{top:0}; v.pinned=false; return v; }
+    return v||{pinned:true}; }
   function writeScroll(key,st){ scrollStates.set(key,st); try{ sessionStorage.setItem('pc.concord.scroll.'+key,JSON.stringify({top:Number(st.top)||0,height:Number(st.height)||0,pinned:st.pinned!==false})); }catch(_){} }
   /* A PROGRAMMATIC SCROLL IS TOLD APART FROM A FINGER BY WHERE IT LANDED, NOT BY WHEN IT HAPPENED.
    *
@@ -7152,8 +7159,10 @@
     /* `key` is the conversation that scroller SHOWS, not the one about to be drawn: a switch has already
        changed state.channel/community by now, and keyed on scrollKey() the old channel's offset was
        carried into the new one. */
-    try{ const ob=feed.querySelector('.cc-messages'); if(ob)keepScroll={key:ob.dataset&&ob.dataset.ccScrollKey||'',top:ob.scrollTop,
-      atBottom:ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; }catch(_){ }
+    /* Discover is never "at the bottom": while it is shorter than the screen its top IS its bottom, and that read as a
+       reader keeping up with the newest message -- so the listings' arrival pinned it to its END (Vyram's video). */
+    try{ const ob=feed.querySelector('.cc-messages'); if(ob){ const k=ob.dataset&&ob.dataset.ccScrollKey||'';
+      keepScroll={key:k,top:ob.scrollTop,atBottom:!/:home:[^:]*$/.test(k)&&ob.scrollHeight-ob.clientHeight-ob.scrollTop<=2}; } }catch(_){ }
     /* AN OPEN "…" MENU SURVIVES A REPAINT. Every message that arrived, and every channel refresh,
        rebuilt the room and dropped `cc-actions-open` with it — the menu shut under the person using
        it, and on a phone (no hover to hold the toolbar up) it vanished outright: "the concord post
