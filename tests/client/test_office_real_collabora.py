@@ -221,6 +221,22 @@ async def editor_loaded(d, after=0):
 
 
 async def type_in_editor(d, text):
+    """Type into the document, and wait for the editor to say it changed -- as a person watches the words appear.
+    Under load the first keys can reach an editor that is not yet taking input (the gate once had Save answer, rightly,
+    "no changes to save"); a person whose words did not appear types them again, once."""
+    for attempt in range(2):
+        since = await d.b.js('Date.now()')
+        await _type_once(d, text)
+        try:
+            await F.wait(d, "(window.__officeMsgs||[]).some(m=>m.id==='Doc_ModifiedStatus'&&m.v&&m.v.Modified===true"
+                            "&&m.at>=%d)" % since, 30, 'the editor said the document changed')
+            return
+        except AssertionError:
+            if attempt:
+                raise
+
+
+async def _type_once(d, text):
     """Click into the document inside the editor frame and TYPE (CDP key input into the focused frame)."""
     rect = await d.b.js("(()=>{const r=document.querySelector('.office-frame').getBoundingClientRect();"
                         "return {x:r.left,y:r.top,w:r.width,h:r.height}})()")
