@@ -170,8 +170,14 @@ def frame_shape(frame: str) -> str:
         msg = json.loads(frame)
         verb = str(msg[0])[:8]
         if verb == "REQ":
-            kinds = sorted({int(k) for f in msg[2:] if isinstance(f, dict) for k in (f.get("kinds") or [])})
-            return "REQ " + (",".join(map(str, kinds[:4])) + ("+" if len(kinds) > 4 else "") or "any")
+            fs = [f for f in msg[2:] if isinstance(f, dict)]
+            kinds = sorted({int(k) for f in fs for k in (f.get("kinds") or [])})
+            shape = "REQ " + (",".join(map(str, kinds[:4])) + ("+" if len(kinds) > 4 else "") or "any")
+            # Counts and flags only -- which CLIENT PATH sent it (a live room stream has authors + since, a peer lobby
+            # a limit, ...), never an author, a tag or a time.
+            authors = sum(len(f.get("authors") or []) for f in fs)
+            return shape + (" a%d" % authors if authors else "") + (" since" if any("since" in f for f in fs) else "") \
+                + (" limit" if any("limit" in f for f in fs) else "")
         if verb == "EVENT" and isinstance(msg[1], dict):
             return "EVENT %d" % int(msg[1].get("kind", -1))
         return verb
@@ -194,7 +200,8 @@ def _report() -> None:
     longs = sorted(_long.items(), key=lambda x: -len(x[1]))[:8]
     if longs:
         logger.info("[concord-tunnel] long tunnels closed, by who ended them (median s): %s",
-                    ", ".join("%s by %s x%d (%ds)" % (h, who, len(v), sorted(v)[len(v) // 2]) for (h, who), v in longs))
+                    ", ".join("%s by %s %s x%d (%ds)" % (h, who, sh, len(v), sorted(v)[len(v) // 2])
+                              for (h, who, sh), v in longs))
     _dials.clear()
     _short.clear()
     _shapes.clear()
@@ -217,7 +224,7 @@ def closed(url: str, first_frame: str, seconds: float, ended_by: str = "") -> No
     says why (2026-10-28: 61 of jskitty's 69 dials in ten minutes were long)."""
     h = _host(url)
     if seconds >= SHORT_TUNNEL_S:
-        k = (h, ended_by or "?")
+        k = (h, ended_by or "?", frame_shape(first_frame))
         _long.setdefault(k, []).append(seconds)
         return
     _short[h] = _short.get(h, 0) + 1

@@ -134,7 +134,7 @@ def test_room_realtime_listens_on_managed_and_external_relays():
     authenticated sockets even for pooled URLs, keeping the account socket identity intact.
     """
     assert "const pooled=plane?null:R.subscribe(filters,{onEvent:receive})" in CONCORD
-    assert "external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):R.subscribeFrom(urls,filters,{onEvent:receive})" in CONCORD
+    assert "external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive,live:true,timeout:0},plane):R.subscribeFrom(urls,filters,{onEvent:receive,live:true,timeout:0})" in CONCORD
     assert "R.waitForSubscription(pooled,urls)" in CONCORD
     assert "if(external.hasTargets&&external.ready)" in CONCORD
     assert "await Promise.any(gates)" in CONCORD

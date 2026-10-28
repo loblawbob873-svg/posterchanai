@@ -335,13 +335,16 @@ def test_a_short_tunnel_is_reported_by_what_it_asked_for_never_by_its_values(cli
     with caplog.at_level(logging.INFO, logger=tun.logger.name):
         tun.dialled("wss://relay.ditto.pub")
     assert "jskitty.com 1 (1 short)" in caplog.text, caplog.text
-    assert "jskitty.com REQ 1059,10009 x1" in caplog.text, caplog.text
+    assert "jskitty.com REQ 1059,10009 x1" in caplog.text, caplog.text   # no authors, no since, no limit
     assert "ab" * 32 not in caplog.text
 
 
 def test_the_first_frame_shape_carries_no_values():
     assert tun.frame_shape('["EVENT",{"kind":1059,"content":"secret","pubkey":"x"}]') == "EVENT 1059"
-    assert tun.frame_shape('["REQ","x",{"authors":["a"]}]') == "REQ any"
+    assert tun.frame_shape('["REQ","x",{"authors":["a"]}]') == "REQ any a1"
+    assert tun.frame_shape('["REQ","x",{"kinds":[1059],"authors":["%s","%s"],"since":1793000000}]' % ("a" * 64, "b" * 64)) \
+        == "REQ 1059 a2 since"
+    assert tun.frame_shape('["REQ","x",{"kinds":[1059],"authors":["a"],"limit":1000}]') == "REQ 1059 a1 limit"
     assert tun.frame_shape('["REQ","x",{"kinds":[1,2,3,4,5,6]}]') == "REQ 1,2,3,4+"
     assert tun.frame_shape("not json") == "?"
     assert tun.frame_shape('["AUTH",{"kind":22242}]') == "AUTH"
@@ -359,8 +362,8 @@ def test_a_long_tunnel_is_reported_by_who_ended_it(monkeypatch, caplog):
     tun.closed("wss://jskitty.com/nostr", '["REQ","z",{"kinds":[1059]}]', 300.0, "relay")
     with caplog.at_level(logging.INFO, logger=tun.logger.name):
         tun.dialled("wss://jskitty.com/nostr")
-    assert "jskitty.com by client x2 (90s)" in caplog.text, caplog.text
-    assert "jskitty.com by relay x1 (300s)" in caplog.text, caplog.text
+    assert "jskitty.com by client REQ 1059 x2 (90s)" in caplog.text, caplog.text
+    assert "jskitty.com by relay REQ 1059 x1 (300s)" in caplog.text, caplog.text
 
 
 def test_the_pipe_says_the_client_ended_it(client, monkeypatch):

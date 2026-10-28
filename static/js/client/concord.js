@@ -8631,7 +8631,9 @@
     /* subscribeFrom intentionally skips URLs already owned by Relay's managed pool. Using it alone
      * therefore subscribed to NOTHING for the common case where a Concord relay was also a normal
      * account relay. Listen on the pool and only use temporary sockets for the remaining URLs. */
-    const pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):R.subscribeFrom(urls,filters,{onEvent:receive});
+    /* LIVE, NO TIMEOUT: without them relay.js closes the room sockets after 60 s and never redials -- a mini app stopped
+     * hearing the others a minute in, and each reopen was a fresh tunnel to the community's relays (2026-10-28). */
+    const pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive,live:true,timeout:0},plane):R.subscribeFrom(urls,filters,{onEvent:receive,live:true,timeout:0});
     const gates=[];
     if(pooled&&R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
     if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
@@ -8665,7 +8667,7 @@
     const R=(window.PCConcordRelay||window.Relay),x=await webxdcCordParts(ctx);
     if(!R||!R.subscribe||!R.subscribeFrom||!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
     const seen=new Set(),receive=async wrap=>{try{const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,[wrap]);if(!x.plane.current())return;for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}catch(_){}};
-    const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive},plane):R.subscribeFrom(x.relays,filters,{onEvent:receive});
+    const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive,live:true,timeout:0},plane):R.subscribeFrom(x.relays,filters,{onEvent:receive,live:true,timeout:0});
     /* Backfill after opening the live subscription, so an advertisement published during the query
      * cannot fall into the gap. The id set makes the overlap harmless. */
     /* Do not hold joinRealtimeChannel (and Quake's host-election burst) behind a ten-second history
