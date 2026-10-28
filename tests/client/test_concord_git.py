@@ -63,3 +63,10 @@ def test_the_new_script_ships_everywhere_concord_does():
 
 def test_a_gif_community_icon_keeps_its_animation():
     _node("tests/client/concord_gif_icon_runtime.mjs")
+
+
+def test_the_outside_index_is_not_asked_on_every_refresh():
+    """index.ngit.dev was asked once per watched repository per minutely refresh -- a fresh tunnelled socket each
+    time (16 dials in ten minutes from one node, 2026-10-28). The shipped refresh asks it only to find a repository's
+    relays, then at most every 30 minutes."""
+    _node("tests/client/concord_git_index_runtime.mjs")

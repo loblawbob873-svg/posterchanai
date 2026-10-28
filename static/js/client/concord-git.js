@@ -371,7 +371,7 @@
   if(typeof document==='undefined'){root.PCConcordGit={core};return;}
 
   /* ───────────────────────────── data ───────────────────────────── */
-  const CACHE_PREFIX='pc.ccgit.v1.',CACHE_MAX_EVENTS=600,CACHE_MAX_BYTES=400000,REFRESH_MS=60000;
+  const CACHE_PREFIX='pc.ccgit.v1.',CACHE_MAX_EVENTS=600,CACHE_MAX_BYTES=400000,REFRESH_MS=60000,INDEX_EVERY_MS=1800000;
   const repoState=new Map();   // coordinate -> {events:Map, ann, loadedAt, loading, relays:Set, first}
   let host=null;               // {repaint, notify, viewer, roomChannels} handed in by concord.js
   const P=()=>window.__PCConcordP?window.__PCConcordP():window.__PC;
@@ -423,9 +423,15 @@
        * the relays that actually hold the issues: "the projects page ... all 0's", then "finally loaded -- took
        * forever" (2026-10-22). Only a repository whose relays are not known yet has to wait for it. Each step that
        * brings something repaints (`progress`), so the issues are on screen before their comments arrive. */
+      /* …AND NOT EVERY MINUTE. The index is somebody else's relay and every ask is a fresh tunnelled socket: once per
+       * watched repository per refresh was ~16 dials to index.ngit.dev every ten minutes from one node (2026-10-28,
+       * the week jskitty blocked us for churning). It is asked when the repository's relays are not known yet, and
+       * otherwise at most every INDEX_EVERY_MS for a newer announcement. */
       const annF=[{kinds:[ANN],authors:[address.owner],'#d':[address.identifier],limit:4}];
-      const fromIndex=query([DISCOVERY_RELAY],annF);
       let relays=relaysFor(coord,hints);
+      const askIndex=!relays.length||Date.now()-(s.indexAt||0)>=INDEX_EVERY_MS;
+      if(askIndex)s.indexAt=Date.now();
+      const fromIndex=askIndex?query([DISCOVERY_RELAY],annF):Promise.resolve([]);
       if(relays.length)added+=absorb(coord,s,await query(relays,annF));
       else{added+=absorb(coord,s,await fromIndex);relays=relaysFor(coord,hints);}
       if(!relays.length){s.loadedAt=Date.now();return added;}
@@ -1030,5 +1036,5 @@
     paneRows,channelHasGit,channelIntroHtml,hasRepos,activeRepos,latestAt,watch,openTicket,closePanel,openProjects,closeProjects,
     newIssue,pickRepository,connectFlow,settingsHtml,bindSettings,attachmentsOf,
     /* For tests and the harness. */
-    _state:repoState,_absorb:(coord,evs)=>absorb(coord,stateOf(coord),evs),_md:md,_rowHtml:rowHtml};
+    _state:repoState,_refresh:(coord,hints)=>refreshRepo(coord,hints),_absorb:(coord,evs)=>absorb(coord,stateOf(coord),evs),_md:md,_rowHtml:rowHtml};
 })(typeof window!=='undefined'?window:globalThis);
