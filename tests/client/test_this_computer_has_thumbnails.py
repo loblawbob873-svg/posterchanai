@@ -42,10 +42,10 @@ class TestTheTileAsksForAPicture(unittest.TestCase):
         self.assertIn("e.broken", fn)
 
     def test_the_web_and_the_apk_are_unaffected(self):
-        """`pcHost` exists only in the desktop shell; everywhere else keeps the glyph it had."""
+        """A bridge exists only in the desktop shell (pcHost) or the APK (phonefiles.js); the web keeps its glyph."""
         fn = HOST[HOST.index("const thumbAttr"):]
         fn = fn[: fn.index("const cells")]
-        self.assertIn("window.pcHost && pcHost.fileUrl", fn)
+        self.assertIn("h && h.fileUrl ? h.fileUrl(e.path) : ''", fn)
         self.assertIn("return ''", fn)
 
 

@@ -47,6 +47,7 @@ NOT_SHELL = {
     "preview", "screenshare", "share", "signer", "sync", "tor", "vault",
     "ringtone",     # a Capacitor plugin User Settings calls; its rules are javac-RUN by test_android_ringtone.py
     "health",       # the AppHealth Capacitor plugin; ExitReasons is javac-RUN by test_android_exit_reasons.py
+    "files",        # Files' "This phone": PhoneFilesCore javac-RUN + the plugin compiled by test_android_phone_files.py
 }
 
 # WHAT IS SHIMMED, AND WHY. HomeActivity reads the music service's now-playing state and presses its

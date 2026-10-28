@@ -108,7 +108,7 @@ class ALocalDocumentCanBeOpenedInOffice(unittest.TestCase):
         """An .odt is a ZIP. Round-tripping it through `writeText` saves a file LibreOffice then
         refuses to open, with nothing said at the time it was destroyed."""
         office = self._opener()
-        self.assertIn("pcHost.writeBytes(", office)
+        self.assertIn("_hb().writeBytes(", office)      # the desktop bridge or the phone's (phonefiles.js)
         self.assertNotIn("writeText(", office)
 
     def test_the_bridge_that_button_calls_actually_exists(self):

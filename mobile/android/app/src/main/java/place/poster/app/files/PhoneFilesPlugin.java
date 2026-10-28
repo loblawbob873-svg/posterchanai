@@ -112,8 +112,7 @@ public final class PhoneFilesPlugin extends Plugin {
         try { getActivity().startActivity(i); }
         catch (Exception e) { getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
       } else {
-        getActivity().requestPermissions(new String[]{
-            Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ);
+        getActivity().requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQ);
       }
       JSObject r = new JSObject(); r.put("opened", true); call.resolve(r);
     } catch (Exception e) { fail(call, e); }

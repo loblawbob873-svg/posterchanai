@@ -178,8 +178,8 @@ class TestTheCallersUseIt(unittest.TestCase):
         # The media branch lives in the opener the chooser shares with `pc-open`.
         body = APP[APP.index("async function _hostOpenPreview("):]
         body = body[: body.index("\n  }\n")]
-        self.assertIn("pcHost.fileUrl", body, "media is still read whole into the renderer")
-        self.assertIn("pcHost.read", body,
+        self.assertIn("_hb().fileUrl", body, "media is still read whole into the renderer")
+        self.assertIn("_hb().read", body,
                       "the byte path is gone, so a picture or a PDF has no way to open")
 
     def test_preview_accepts_a_url_for_media_only(self):

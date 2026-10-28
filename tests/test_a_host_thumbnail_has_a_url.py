@@ -76,4 +76,4 @@ def test_the_caller_still_fails_soft_for_a_host_without_the_bridge():
     at = hf.index("const thumbAttr =")
     body = hf[at: hf.index("};", at)]
     assert "catch(_)" in body and "return ''" in body
-    assert "window.pcHost && pcHost.fileUrl" in body
+    assert "h && h.fileUrl ? h.fileUrl(e.path) : ''" in body     # no bridge (the web): no URL, the glyph

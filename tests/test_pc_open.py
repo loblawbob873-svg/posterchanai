@@ -297,7 +297,7 @@ class WhereAFileLands(unittest.TestCase):
     def route(self, app, items, fail=None):
         js = """
 const calls = [];
-const window = { pcHost: { read(){} } }; const pcHost = window.pcHost;
+const window = { pcHost: { read(){} } }; const pcHost = window.pcHost; const _hb = () => window.pcHost;
 const mimeForName = () => '';
 const FAIL = %s;
 const stub = (n) => async (...a) => { calls.push([n, a[0]]); if (FAIL === n) throw new Error(n + ' broke'); return true; };

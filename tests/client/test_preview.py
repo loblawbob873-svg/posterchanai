@@ -169,7 +169,7 @@ class PreviewIsReachable(unittest.TestCase):
         # The opener is shared with `pc-open`; the byte path and the name live there.
         s = self.app.index("async function _hostOpenPreview(")
         opener = self.app[s:self.app.index("\n  }\n", s)]
-        self.assertIn("window.pcHost.read(path, 256 * 1024 * 1024)", opener)
+        self.assertIn("_hb().read(path, 256 * 1024 * 1024)", opener)
         # The name is resolved into `nm` first, because the streamed branch needs it too.
         self.assertIn("P.open({ name:nm", opener)
 

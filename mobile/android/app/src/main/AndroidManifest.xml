@@ -1043,9 +1043,9 @@
          files, notifications, and network-state for the relay reconnect logic. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Files' "This phone" (files/PhoneFilesPlugin): "All files access" on 11+, which the person turns on in
-         Settings themselves; the storage permissions only where they still mean something (8-10; READ to 12). -->
+         Settings themselves. 8-10 browse with READ_EXTERNAL_STORAGE (below) only: WRITE is never asked for
+         (tests/test_android_media_save.py), so there the phone's files are read-only. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Lets the signer ASK for the Doze exemption in one tap instead of dropping somebody into an
