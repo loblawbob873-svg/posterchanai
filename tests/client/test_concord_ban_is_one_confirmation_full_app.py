@@ -138,3 +138,49 @@ def test_someone_who_is_not_listed_is_banned_by_npub():
     assert o and o['removed'] == [got['outsider']], ("the ban never reached key rotation for that account", got['toast'])
     kept = {r['pubkey'] for r in o['recipients']}
     assert {got['me']} | set(got['others']) <= kept, "a listed member lost access when an outsider was banned"
+
+
+# createBanWrap that, the FIRST time it signs, lets a control event land meanwhile -- as a role grant's own refresh did in
+# the gate ("Community moderation needs attention: Concord membership changed while signing").
+MOVE_WHILE_SIGNING = r"""(()=>{const R=window.PosterCordReader,c=R.createBanWrap;window.__banSigns=0;
+  R.createBanWrap=async(...a)=>{window.__banSigns++;
+    if(window.__banSigns===1){const room=JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0];
+      PCConcord.__testNoteControl(room.communityId||room.naddr,{kind:1059,id:'c'.repeat(64),pubkey:'7'.repeat(64),created_at:2,tags:[],content:'',sig:'0'.repeat(128)});}
+    return c(...a);};})()"""
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_a_control_change_while_the_ban_is_signed_signs_it_again():
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", dict(width=1500, height=900, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js(SETUP)
+        await b.js(MEMBERS)
+        await b.js("PCConcord.render()")
+        await b.until("document.querySelectorAll('.cc-members-pane .cc-member').length>=20")
+        me = await b.js("__PC.me().pubkey")
+        others = await b.js("[...document.querySelectorAll('.cc-members-pane .cc-member')].map(r=>r.dataset.ccMember).filter(pk=>pk!==%r)" % me)
+        target = others[0]
+        await b.js(CAPTURE % (target, others[1]))
+        await b.js(MOVE_WHILE_SIGNING)
+        x, y = await b.js("(()=>{const r=document.querySelector('.cc-members-pane .cc-member[data-cc-member=\"%s\"]').getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()" % target)
+        await b.call("Input.dispatchMouseEvent", dict(type="mousePressed", x=x, y=y, button="right", buttons=2, clickCount=1))
+        await b.call("Input.dispatchMouseEvent", dict(type="mouseReleased", x=x, y=y, button="right", buttons=0, clickCount=1))
+        await b.until("!!document.querySelector('[data-cc-member-ban]')")
+        await b.js("document.querySelector('[data-cc-member-ban]').click()")
+        await asyncio.sleep(.8)
+        ban = "[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Ban'&&x.getBoundingClientRect().width>0)"
+        await b.js(ban + ".click()")
+        await asyncio.sleep(1.5)
+        got['toast'] = await b.js("[...document.querySelectorAll('.toast')].map(t=>t.textContent).join(' | ')")
+        got['signs'] = await b.js("window.__banSigns")
+        got['opts'] = await b.js("window.__opts||null")
+        got['target'] = target
+
+    asyncio.run(desktop.with_browser("online", "", check, ""))
+    assert "membership changed while signing" not in got['toast'], ("the ban was dropped because controls moved", got['toast'])
+    assert got['signs'] >= 2, ("the ban was not signed again on the moved controls", got)   # + key rotation's own ban
+    assert got['opts'] and got['opts']['removed'] == [got['target']], ("the ban never went through", got['toast'])
