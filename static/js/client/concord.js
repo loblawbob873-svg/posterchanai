@@ -3841,7 +3841,10 @@
   function discoverInvites(text,source){
     const content=String(text||''),pattern=/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi;
     const matches=[...content.matchAll(pattern)];
-    const blurb=content.replace(pattern,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim();
+    // A `nostr:` reference is never a name ("our room is not appearing right" in Discover: "showing as nostr:naddr",
+    // 2026-10-27 -- a post that opened with a mention had become the room's title).
+    const blurb=content.replace(pattern,'').replace(/\b(?:nostr:)?(?:npub|nprofile|naddr|note|nevent)1[023456789acdefghjklmnpqrstuvwxyz]+/gi,'')
+      .replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim();
     return matches.map(match=>{
       const url=match[0].replace(/[),.;!?]+$/,''),parsed=inviteParts(url);if(!parsed)return null;
       // Directory announcements contain several distinct invites. Use the label beside this
@@ -3856,6 +3859,12 @@
       return {...parsed,name:name.slice(0,80)||'Public Concord community',description:blurb,source,...(pic?{icon:pic}:{})};
     }).filter(Boolean);
   }
+  /* A COMMUNITY'S OWN LISTING NAMES IT. Discover gathers every post carrying an invite, and the newest used to win --
+   * so somebody's later post that merely mentioned the link ("nostr:npub… Are you checking out Communities?") renamed
+   * the room. The listing (announceListing: tagged concord + community) beats a mention; among equals, newest wins. */
+  function isListingPost(ev){const tags=(ev&&ev.tags)||[];return tags.some(t=>t&&t[0]==='t'&&t[1]==='concord')&&tags.some(t=>t&&t[0]==='t'&&t[1]==='community');}
+  function discoveryWins(old,item){const ol=isListingPost(old&&old.source),nl=isListingPost(item&&item.source);
+    if(ol!==nl)return nl;return Number(item&&item.source&&item.source.created_at)>Number(old&&old.source&&old.source.created_at);}
   /* v2 BECAUSE v1 HOLDS RECORDS NOTHING CAN CLEAR, AND THAT IS A COMMUNITY HIDDEN FOR EVER.
    *
    * A build of this file seeded the ledger from EVERY winning tombstone, and a tombstone with no
@@ -4248,7 +4257,7 @@
     /* Public cards are summaries of their announcement event. Do not hydrate every invite merely
        because it scrolled into Discover: that multiplied 24 cards by every bootstrap/control relay
        (including legacy Ditto invites). Full bootstrap is reserved for the explicit Join action. */
-    const onEvent=ev=>{if(signal&&signal.aborted)return;for(const item of discoverInvites(ev.content,ev)){const index=listings.findIndex(old=>sameRoom(old,item));if(index<0)listings.push(item);else if(Number(ev.created_at)>Number(listings[index].source.created_at))listings[index]=mergeRoom(listings[index],item);recoverOwnedInvite(p,item);}discovered=uniqueRooms(listings.filter(l=>!withdrawnListings.has(l.source&&l.source.id))).sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at));paintDiscovery();};
+    const onEvent=ev=>{if(signal&&signal.aborted)return;for(const item of discoverInvites(ev.content,ev)){const index=listings.findIndex(old=>sameRoom(old,item));if(index<0)listings.push(item);else if(discoveryWins(listings[index],item))listings[index]=mergeRoom(listings[index],item);recoverOwnedInvite(p,item);}discovered=uniqueRooms(listings.filter(l=>!withdrawnListings.has(l.source&&l.source.id))).sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at));paintDiscovery();};
     const filters=DIRECTORY_FILTERS;
     /* THE LIST IS DECIDED BY A READ SOMEBODY ANSWERED, NEVER BY THE FIRST EOSE.
      *
