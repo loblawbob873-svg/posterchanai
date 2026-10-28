@@ -104,7 +104,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: it), its comment cut to one line first: 8.1662 MB measured.
 #: ...and 8.167 -> 8.168 (2026-10-28) for _replaceableCreatedAt (app.js): a same-second edit of a replaceable list lost
 #: the newer version about half the time (bookmarks in the gate); a boot-path fix, two comments cut first: 8.1676 MB.
-BUDGET_MB = 8.168
+#: ...and 8.168 -> 8.170 (2026-10-28) for the event cache written once a minute instead of every 0.7 s (disk wear,
+#: store.js: two write queues, the unload spill into localStorage) and the phone-storage bridge hook in hostfiles.js,
+#: comments cut first: 8.1697 MB measured.
+BUDGET_MB = 8.170
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

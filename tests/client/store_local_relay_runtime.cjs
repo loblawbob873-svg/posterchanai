@@ -59,6 +59,8 @@ async function scenario(name, { mode, url = 'ws://127.0.0.1:21001/', held = [], 
     localStorage: { _d: {}, getItem(k){ return this._d[k] || null; }, setItem(k, v){ this._d[k] = String(v); }, removeItem(k){ delete this._d[k]; } },
     navigator: { onLine: true }, pcShell: { localRelay: () => url } };
   ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx;
+  // The page can be hidden: the event CACHE is written once a minute or when the page goes away (store_write_delay_runtime.cjs).
+  const hide = []; ctx.addEventListener = (t, f) => { if (t === 'pagehide') hide.push(f); };
   vm.createContext(ctx); vm.runInContext(SRC, ctx);
   const S = ctx.window.Store;
   S.setViewer('me'.padEnd(64, '0'));
@@ -69,6 +71,7 @@ async function scenario(name, { mode, url = 'ws://127.0.0.1:21001/', held = [], 
   S.saveEvent(note);
   await new Promise(r => setTimeout(r, 900));               // the 700 ms write batch
   if (killAfterSend){ for (const s of state.sockets) if (s.readyState === 1) s.close(); await new Promise(r => setTimeout(r, 900)); }
+  hide.forEach(f => f({})); await new Promise(r => setTimeout(r, 50));   // the page goes away: nothing buffered is lost
   const ids = [...(idb.stores.events || new Map()).keys()];
   return { name, backend: S.backend(), stats: S.backendStats(), frames: state.frames.length,
     idbEvents: ids.length, idbHasNote: ids.includes(note.id), memPosts: S.query([{ kinds: [1] }]).length,

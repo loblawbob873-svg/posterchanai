@@ -475,10 +475,34 @@
       if (_lrLive() || !LR.ws || Date.now() - t0 > ms){ clearInterval(iv); res(_lrLive()); } }, 25); });
   }
   // batched writes — one transaction (or one burst of frames) per burst instead of per event
-  let _wbuf = [], _wt = null;
-  function _flushWrites(){
-    _wt = null; if (!_wbuf.length) return;
-    const batch = _wbuf; _wbuf = [];
+  /* The CACHE is written once a minute (disk wear, 2026-10-28); the account's own events, pinned documents and the
+   * local relay keep 0.7 s; hiding the page writes everything, and a full buffer is written early. */
+  const IDB_FLUSH_MS = 60000, WBUF_MAX = 2000;
+  const _wq = { fast: { buf: [], t: null, ms: 700 }, slow: { buf: [], t: null, ms: IDB_FLUSH_MS } };
+  function _queueWrite(ev){
+    const q = (LR.url || _isPinned(ev) || (ev && ev.pubkey && ev.pubkey === _pinnedViewer())) ? _wq.fast : _wq.slow;
+    q.buf.push(ev);
+    if (q.buf.length >= WBUF_MAX){ clearTimeout(q.t); q.t = null; _flushWrites(q); }
+    else if (!q.t) q.t = setTimeout(() => { q.t = null; _flushWrites(q); }, q.ms);
+  }
+  function _flushNow(){ for (const q of [_wq.fast, _wq.slow]){ clearTimeout(q.t); q.t = null; _flushWrites(q); } }
+  /* An IndexedDB write started at unload does not finish (a reload lost a bookmarked post): pagehide ALSO puts the
+   * buffer in localStorage (synchronous, bounded) and init takes it back. */
+  const SPILL = 'pc_store_spill', SPILL_MAX = 1500000;
+  function _spill(){
+    const all = _wq.fast.buf.concat(_wq.slow.buf);
+    if (!all.length) return;
+    try {
+      const keep = []; let n = 2;
+      for (let i = all.length - 1; i >= 0; i--){ const j = JSON.stringify(all[i]); if (n + j.length + 1 > SPILL_MAX) break; keep.push(j); n += j.length + 1; }
+      localStorage.setItem(SPILL, '[' + keep.join(',') + ']');
+    } catch(_){ }
+  }
+  try{ document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') _flushNow(); }); }catch(_){ }
+  try{ window.addEventListener('pagehide', () => { _spill(); _flushNow(); }); }catch(_){ }
+  function _flushWrites(q){
+    if (!q.buf.length) return;
+    const batch = q.buf; q.buf = [];
     const idb = [];
     for (const ev of batch){
       if (_lrLive() && ev && ev.sig && _lrSend(ev)){ if (_isPinned(ev)) idb.push(ev); }
@@ -665,6 +689,11 @@
         await _hydrateProfiles();
       } catch(e){ console.warn('hydrate failed', e); }
       await _hydrateFromLocalRelay();
+      // _spill's leftovers from the last page.
+      try {
+        const raw = localStorage.getItem(SPILL);
+        if (raw){ localStorage.removeItem(SPILL); for (const ev of JSON.parse(raw) || []) this.saveEvent(ev); }
+      } catch(_){ }
       setTimeout(() => { _pruneIDB(); _pruneProfiles(); }, 8000);   // trim the on-disk stores after startup (non-blocking)
     },
     /* Where this cache is writing: 'relay' while the PosterChanOS local relay's socket is open, else
@@ -721,7 +750,7 @@
       mem.events.set(ev.id, ev);
       _indexAdd(ev);
       if (mem.events.size > MEM_MAX) _evictMem();   // bound in-memory cache (also reindexes)
-      if (db || LR.url){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch writes (relay or IDB)
+      if (db || LR.url) _queueWrite(ev);   // batched: see IDB_FLUSH_MS
       return true;
     },
     /* Remove every event matching a predicate, from memory AND from disk. Store.query() collapses
