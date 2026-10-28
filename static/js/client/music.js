@@ -655,7 +655,19 @@ window.PCMusicFactory = function(dep){
       : _maNav.page === 'album' ? 'Search this album' : _maNav.page === 'artist' ? 'Search this artist'
       : _maTab === 'albums' ? 'Search albums' : _maTab === 'artists' ? 'Search artists' : _maTab === 'playlists' ? 'Search playlists' : 'Search songs';
   }
+  /* NOT UNDER A FINGER. The background tag/cover passes repaint the whole list; one landing between a press and its
+   * release puts them on different rows, so no click happens and the tap is lost (the gate's phone-layout test,
+   * 2026-10-28: the list was rebuilt 2.3 s after it appeared). While a press is down on the list the repaint waits
+   * and runs once it is released. */
+  let _maHeld = false, _maHeldAt = 0, _maHeldRepaint = false;
+  document.addEventListener('pointerdown', e => {
+    _maHeld = !!(e.target && e.target.closest && e.target.closest('#ma-lib')); _maHeldAt = Date.now(); }, true);
+  const _maRelease = () => { if(!_maHeld) return; _maHeld = false;
+    if(_maHeldRepaint){ _maHeldRepaint = false; setTimeout(_maRepaint, 0); } };   // after the click it ends in
+  document.addEventListener('pointerup', _maRelease, true);
+  document.addEventListener('pointercancel', _maRelease, true);
   function _maRepaint(){
+    if(_maHeld && Date.now() - _maHeldAt < 8000){ _maHeldRepaint = true; return; }   // a lost pointerup cannot stall it
     const lib = document.getElementById('ma-lib'), feed = document.getElementById('feed');
     if(!lib || !feed || !lib.isConnected) return;
     const sel = S._musicPl && window.PCPlaylists && PCPlaylists.get(S._musicPl);

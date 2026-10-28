@@ -510,3 +510,31 @@ def test_the_apk_hides_the_widget_and_tells_android_the_artist():
     assert last["title"] == "Neon Rain" and last["artist"] == "Kaito Vega" and last["album"] == "Night City", got
     assert got["state"]["widgetHidden"], ("the floating widget drew over the APK", got["state"])
     assert got["state"]["playing"], got["state"]
+
+
+@CHROME
+def test_a_tap_held_across_a_background_repaint_still_plays():
+    """The gate's flaky phone-layout failure (2026-10-28, the whole record: '1111 playing' never came, nothing playing):
+    the background tag pass rebuilds the whole list ~2.3 s after it appears, and a press and release that straddle the
+    rebuild land on different rows, so no click happens. A press held across that moment must still play, and the
+    held repaint must still happen afterwards."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 360, "height": 720, "deviceScaleFactor": 2, "mobile": True})
+        await _music(b)
+        sel = f".track .track-play[data-sha='{S1}']"
+        await b.js("window.__rebuilt=0;new MutationObserver(ms=>{for(const m of ms)for(const n of m.removedNodes)"
+                   "if(n.querySelector&&n.querySelector('.track-play'))__rebuilt++}).observe(document.getElementById('ma-lib'),{childList:true,subtree:true});1")
+        xy = await b.js(f"(()=>{{const e=document.querySelector({json.dumps(sel)});e.scrollIntoView({{block:'center'}});"
+                        "const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()")
+        await b.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xy["x"], "y": xy["y"], "button": "left", "clickCount": 1})
+        await b.js("window.__rebuilt=0;1")           # only what happens under the finger
+        await asyncio.sleep(4)                       # past the tag pass's repaint (measured at 2.3 s)
+        got["rebuiltWhileHeld"] = await b.js("__rebuilt")
+        await b.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xy["x"], "y": xy["y"], "button": "left", "clickCount": 1})
+        got["state"] = await F.until_state(b, lambda s: s["cur"] == S1 and s["playing"], what="the held tap played")
+        await b.until("__rebuilt>0")                 # the repaint that waited for the release did happen
+
+    _run(check, F.PLAIN + F.LIB + F.HELD, 360, 720)
+    assert got["rebuiltWhileHeld"] == 0, ("the list was rebuilt under the finger", got)
