@@ -101,13 +101,15 @@ class Upstream:
     """A community relay: serves REQs (limit/until honoured, newest first), stores EVENTs it accepts, and
     streams new matching events to open subscriptions. `refuse` answers every REQ with CLOSED."""
 
-    def __init__(self, events=(), *, refuse="", accept=True):
+    def __init__(self, events=(), *, refuse="", accept=True, hang_up_on_refusal=False):
         self.events = list(events)
         self.refuse = refuse
         self.accept = accept
+        self.hang_up = hang_up_on_refusal
         self.subs: dict = {}
         self.writes: list = []
         self.reqs: list = []
+        self.connections = 0
 
     async def start(self):
         self.srv = await websockets.serve(self._h, "127.0.0.1", 0)
@@ -120,6 +122,7 @@ class Upstream:
         await self.srv.wait_closed()
 
     async def _h(self, ws):
+        self.connections += 1
         mine = self.subs.setdefault(ws, {})
         try:
             async for raw in ws:
@@ -129,6 +132,9 @@ class Upstream:
                     self.reqs.append(filters)
                     if self.refuse:
                         await ws.send(json.dumps(["CLOSED", sid, self.refuse]))
+                        if self.hang_up:
+                            await ws.close()
+                            return
                         continue
                     seen = {}
                     for f in filters:
@@ -178,8 +184,8 @@ def closed_port_url():
 class Node:
     """This node: the shipped RelayServer + ConcordMirror over a memory store, listening on a real socket."""
 
-    def __init__(self, operators, cfg=None, **mirror_kw):
-        self.store = MemStore()
+    def __init__(self, operators, cfg=None, store=None, **mirror_kw):
+        self.store = store or MemStore()
         self.cfg = {"wot_enabled": False, "concord_mirror": True, **(cfg or {})}
         self.server = RelayServer(self.store, Gate(operators), self.cfg)
         mirror_kw.setdefault("url_ok", lambda u, c: "")
@@ -1026,3 +1032,83 @@ def test_the_relay_hands_the_mirror_the_proxys_tor_list(monkeypatch):
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "app/services/nostr_relay/thread.py").read_text()
     assert '"concord_mirror_tor": _concord_tor_hops()' in src
+
+
+# --- NOT HAMMERING OTHER RELAYS ---------------------------------------------------------------------------------
+# 2026-10-28, jskitty (the most-used CORD relay) on why it blocked this node's IP: "11-15% of our relay bandwidth",
+# "churning connections/websockets" beyond Vector and Armada combined, "pulling our entire database multiple times a
+# day". Measured here the same day: every registration that changed a relay's set of streams REPLACED its link -- a new
+# socket -- and every connection walked every stream's history back to the beginning.
+
+def _history_reqs(up):
+    return [f for fs in up.reqs for f in fs if f.get("kinds") == [1059] and "limit" in f]
+
+
+def test_another_community_on_the_same_relay_is_added_to_the_open_connection():
+    s1, s2, member = key(), key(), key()
+    now = int(time.time())
+    hist = [wrap(s1, created_at=now - 500 + i) for i in range(5)] + [wrap(s2, created_at=now - 400 + i) for i in range(5)]
+
+    async def go():
+        up = await Upstream(hist).start()
+        node = await Node({pub(member)}).start()
+        try:
+            assert (await node.publish(registration(member, [up.url], [pub(s1)], group="aa" * 32)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(s1)))
+            conns, before = up.connections, len(_history_reqs(up))
+            assert (await node.publish(registration(member, [up.url], [pub(s2)], group="bb" * 32)))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(s2)))
+            assert up.connections == conns, ("a new community opened a new socket", conns, up.connections)
+            later = _history_reqs(up)[before:]
+            assert later and all(f["authors"] == [pub(s2)] for f in later), ("history re-read for streams already read", later)
+            assert node.mirror.author_ready(pub(s1)), "the community already mirrored went unavailable meanwhile"
+            got, _ = await node.req([{"kinds": [1059], "authors": [pub(s2)], "limit": 100}])
+            assert len(got) == 5
+        finally:
+            await node.close()
+            await up.close()
+    run(go())
+
+
+def test_after_a_restart_history_is_read_only_since_the_last_complete_walk():
+    stream, member = key(), key()
+    now = int(time.time())
+    hist = [wrap(stream, created_at=now - 50_000 + i * 100) for i in range(20)]
+
+    async def go():
+        up = await Upstream(hist).start()
+        store = MemStore()
+        node = await Node({pub(member)}, store=store).start()
+        try:
+            assert (await node.publish(registration(member, [up.url], [pub(stream)])))[2] is True
+            assert await until(lambda: node.mirror.author_ready(pub(stream)))
+        finally:
+            await node.close()
+        first = len(_history_reqs(up))
+        node = await Node({pub(member)}, store=store).start()           # the relay restarted
+        try:
+            assert await until(lambda: node.mirror.author_ready(pub(stream)))
+            again = _history_reqs(up)[first:]
+            assert again and all(f.get("since", 0) >= now - 3600 for f in again), \
+                ("the whole history was read again after a restart", again)
+        finally:
+            await node.close()
+            await up.close()
+    run(go())
+
+
+def test_a_relay_that_refuses_the_mirror_is_not_redialled_for_hours():
+    stream, member = key(), key()
+
+    async def go():
+        up = await Upstream([], refuse="auth-required: authenticate", hang_up_on_refusal=True).start()
+        node = await Node({pub(member)}).start()
+        try:
+            await node.publish(registration(member, [up.url], [pub(stream)]))
+            assert await until(lambda: up.connections >= 1)
+            await asyncio.sleep(9)                    # the old 2 s/4 s/8 s backoff dialled it three more times
+            assert up.connections == 1, ("a relay that refused us was dialled again", up.connections)
+        finally:
+            await node.close()
+            await up.close()
+    run(go())

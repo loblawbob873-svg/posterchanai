@@ -127,6 +127,7 @@ async def concord_relay(websocket: WebSocket):
                 upstream_cm = concord_tunnel.connect(target, hop)
                 upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.open_timeout(hop) + 1)
                 concord_tunnel.hop_result(target, hop, True)
+                concord_tunnel.dialled(target)
                 break
             except Exception as e:
                 concord_tunnel.hop_result(target, hop, False)

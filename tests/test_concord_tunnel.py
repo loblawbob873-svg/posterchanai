@@ -301,3 +301,14 @@ def test_a_relay_that_stays_unreachable_is_asked_less_and_less_often(monkeypatch
     tun.all_hops_failed(url)
     assert tun._unreachable["asia.vectorapp.io"] - clock[0] == 120, "a host that was reached kept its long pause"
     assert not tun.unreachable("wss://jskitty.com/nostr"), "one host's failures paused another"
+
+
+def test_every_dial_is_counted_and_reported_per_host(monkeypatch, caplog):
+    """jskitty blocked this node for churning websockets (2026-10-28); the count is what tells us whether we still do."""
+    monkeypatch.setattr(tun, "_dials", {})
+    monkeypatch.setattr(tun, "_dials_since", time.monotonic() - tun.DIAL_REPORT_EVERY - 1)
+    import logging
+    with caplog.at_level(logging.INFO, logger=tun.logger.name):
+        tun.dialled("wss://jskitty.com/nostr")
+    assert any("jskitty.com 1" in r.getMessage() for r in caplog.records), caplog.text
+    assert tun._dials == {}

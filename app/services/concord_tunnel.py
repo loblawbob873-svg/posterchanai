@@ -153,6 +153,25 @@ def refused(pk: str, why: str) -> None:
                 pk[:8], why, _open.get(pk, 0), _total)
 
 
+# HOW OFTEN WE DIAL SOMEBODY ELSE'S RELAY, said every 10 minutes (2026-10-28: jskitty blocked this node for
+# "churning connections/websockets"). Counted per far host when a tunnel actually reaches it.
+DIAL_REPORT_EVERY = 600
+_dials: dict[str, int] = {}
+_dials_since = time.monotonic()
+
+
+def dialled(url: str) -> None:
+    global _dials_since
+    h = _host(url)
+    _dials[h] = _dials.get(h, 0) + 1
+    if time.monotonic() - _dials_since >= DIAL_REPORT_EVERY:
+        top = sorted(_dials.items(), key=lambda x: -x[1])[:8]
+        logger.info("[concord-tunnel] dialled in the last %d min: %s", int((time.monotonic() - _dials_since) / 60),
+                    ", ".join("%s %d" % (k, v) for k, v in top))
+        _dials.clear()
+        _dials_since = time.monotonic()
+
+
 def acquire(pk: str) -> bool:
     global _total
     if _total >= GLOBAL_MAX or _open.get(pk, 0) >= PER_MEMBER:

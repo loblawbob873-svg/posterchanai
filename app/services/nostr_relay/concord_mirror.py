@@ -87,6 +87,13 @@ HISTORY_PAGE = 500
 HISTORY_PAGES_MAX = 200
 AUTHOR_CHUNK = 250
 MAX_CHUNKS = 20
+# NOT HAMMERING ANYBODY (2026-10-28, jskitty blocked this node: "11-15% of our relay bandwidth", "churning
+# connections", "pulling our entire database multiple times a day"). A stream's history is walked to the beginning
+# ONCE per relay; after that a connection reads only since the last complete walk (minus an overlap), and a full walk
+# is repeated at most every FULL_WALK_EVERY. A relay that refuses the subscription is left alone for REFUSED_PAUSE.
+FULL_WALK_EVERY = 7 * 86400
+WALK_OVERLAP = 600
+REFUSED_PAUSE = 6 * 3600
 LINK_STOP_WAIT = 5.0      # how long anything waits for an old link to finish; after that it is left to die alone
 DIRECTORY_FRESH = 600
 DIRECTORY_STALE = 6 * 3600
@@ -231,6 +238,14 @@ class _Link:
         self.pending: dict = {}      # event id -> Future[bool] (an OK we are waiting for)
         self.held: set = set()       # wrap ids this upstream showed us on this connection (bounded: one history walk)
         self.backfilled = 0
+        self.unwalked: set = set()   # streams whose history THIS connection has not finished reading
+        self.sessions = 0            # connections opened, and history pages asked for: what the far relay sees
+        self.pages = 0
+        self.since_of: dict = {}     # stream -> the `since` its history was read from on this connection (0 = all)
+        self._live: set = set()
+        self._wrap_subs: set = set()
+        self._todo: list = []        # history groups still to read: (authors, since)
+        self._hist: dict = {}
 
     def start(self) -> None:
         self.task = asyncio.create_task(self._run())
@@ -259,6 +274,113 @@ class _Link:
     def ready(self) -> bool:
         return self.connected and self.synced and not self.refused
 
+    def ready_for(self, author: str) -> bool:
+        """This stream's history is read on this connection (others may still be reading: a community just added)."""
+        return self.connected and not self.refused and author in self.authors and author not in self.unwalked
+
+    def update(self, authors) -> None:
+        """A changed set of streams, applied to the OPEN connection: live subscriptions are re-sent and only the
+        streams that are new here have their history read. Replacing the link (a new socket, every history again)
+        is what a relay operator sees as churn and harvesting."""
+        new = frozenset(authors)
+        added = sorted(new - self.authors)
+        self.authors = new
+        self.unwalked &= new
+        if self.ws is not None and self.connected and not self.stopped:
+            t = asyncio.create_task(self._apply_update(added))
+            self.mirror._stopping.add(t)
+            t.add_done_callback(self.mirror._stopping.discard)
+
+    async def _apply_update(self, added) -> None:
+        ws = self.ws
+        if ws is None:
+            return
+        try:
+            old, self._live = list(self._live), set()
+            for sid in old:
+                self._wrap_subs.discard(sid)
+                await ws.send(json.dumps(["CLOSE", sid]))
+            await self._subscribe_live(ws, sorted(self.authors))
+            if added:
+                self.unwalked |= set(added)
+                self.synced = False
+                self._todo.extend(self._history_groups(added))
+                if self._hist.get("sid") is None:
+                    await self._next_page(ws)
+        except Exception as e:                      # the connection went: the next session starts from the new set
+            logger.debug("[concord-mirror] %s update failed: %s", self.url, e)
+
+    def _history_groups(self, authors) -> list:
+        """(chunk, since) to read: a stream walked here within FULL_WALK_EVERY reads only since that walk."""
+        now = int(time.time())
+        walked = self.mirror.walked.get(self.url, {})
+        full, inc = [], {}
+        for a in sorted(authors):
+            t = walked.get(a)
+            if t and now - t < FULL_WALK_EVERY:
+                inc[a] = max(0, int(t) - WALK_OVERLAP)
+            else:
+                full.append(a)
+        groups = [(full[i:i + AUTHOR_CHUNK], 0) for i in range(0, len(full), AUTHOR_CHUNK)]
+        inc_sorted = sorted(inc, key=inc.get)
+        for i in range(0, len(inc_sorted), AUTHOR_CHUNK):
+            ch = inc_sorted[i:i + AUTHOR_CHUNK]
+            groups.append((ch, min(inc[a] for a in ch)))
+        for ch, since in groups:
+            for a in ch:
+                self.since_of[a] = since
+        return groups[:MAX_CHUNKS]
+
+    async def _subscribe_live(self, ws, authors) -> None:
+        now = int(time.time())
+        for i in range(0, len(authors), AUTHOR_CHUNK):
+            ch = authors[i:i + AUTHOR_CHUNK]
+            for flt in ({"kinds": [WRAP_KIND], "authors": ch, "since": now - 120},
+                        {"kinds": [LIVE_KIND], "authors": ch, "since": now - 60}):
+                sid = "l" + uuid.uuid4().hex[:12]
+                self._live.add(sid)
+                if flt["kinds"] == [WRAP_KIND]:
+                    self._wrap_subs.add(sid)
+                await ws.send(json.dumps(["REQ", sid, flt]))
+
+    async def _next_page(self, ws) -> None:
+        hist = self._hist
+        if hist.get("sid"):
+            try:
+                await ws.send(json.dumps(["CLOSE", hist["sid"]]))
+            except Exception:
+                pass
+        done = (hist.get("chunk") is None or hist["got"] == 0 or hist["pages"] >= HISTORY_PAGES_MAX
+                or self.mirror._chunk_full(hist["chunk"]))
+        if done:
+            if hist.get("chunk") is not None:
+                # Read to the end (not cut off at HISTORY_PAGES_MAX, not refused): remembered, so the next connection
+                # reads only what is new.
+                if hist["got"] == 0 and not self.refused and hist["pages"] < HISTORY_PAGES_MAX:
+                    self.mirror._walked(self.url, hist["chunk"], self._session_at)
+                self.unwalked -= set(hist["chunk"])
+            if not self._todo:
+                hist.update(sid=None, chunk=None)
+                self.synced = not self.refused and not self.unwalked
+                if self.synced:
+                    self.mirror._schedule_backfill(self)
+                return
+            chunk, since = self._todo.pop(0)
+            hist.update(chunk=chunk, since=since, until=None, pages=0)
+        else:
+            oldest = hist["oldest"]
+            hist["until"] = oldest if hist["until"] is None or oldest < hist["until"] else oldest - 1
+        flt = {"kinds": [WRAP_KIND], "authors": hist["chunk"], "limit": HISTORY_PAGE}
+        if hist.get("since"):
+            flt["since"] = hist["since"]
+        if hist["until"] is not None:
+            flt["until"] = hist["until"]
+        hist.update(sid="h" + uuid.uuid4().hex[:12], got=0, oldest=None)
+        hist["pages"] += 1
+        self.pages += 1
+        self._wrap_subs.add(hist["sid"])
+        await ws.send(json.dumps(["REQ", hist["sid"], flt]))
+
     async def _run(self) -> None:
         backoff = 2.0
         while not self.stopped:
@@ -280,6 +402,10 @@ class _Link:
                 self.connected = False
                 self.synced = False
                 self._settle_pending()
+            if self.refused:
+                # It answered, and the answer was no: asking again in seconds changes nothing but its logs.
+                await asyncio.sleep(REFUSED_PAUSE + random.uniform(0, 600))
+                continue
             if time.monotonic() - opened >= 60:
                 backoff = 2.0
             await asyncio.sleep(backoff + random.uniform(0, backoff))
@@ -287,53 +413,16 @@ class _Link:
 
     async def _session(self, ws) -> None:
         self.held = set()          # what THIS connection's history walk shows: a backup that lost data is refilled
-        authors = sorted(self.authors)
-        chunks = [authors[i:i + AUTHOR_CHUNK] for i in range(0, len(authors), AUTHOR_CHUNK)][:MAX_CHUNKS]
-        now = int(time.time())
-        live, wrap_subs = set(), set()
-        for ch in chunks:
-            for flt in ({"kinds": [WRAP_KIND], "authors": ch, "since": now - 120},
-                        {"kinds": [LIVE_KIND], "authors": ch, "since": now - 60}):
-                sid = "l" + uuid.uuid4().hex[:12]
-                live.add(sid)
-                if flt["kinds"] == [WRAP_KIND]:
-                    wrap_subs.add(sid)
-                await ws.send(json.dumps(["REQ", sid, flt]))
-        # HISTORY: one chunk at a time, paged backwards to the beginning. Walked in full on every
-        # connection — "the newest page is already here" says nothing about the pages behind it when
-        # the last session was cut off half-way, and a mirror that stops there serves a room with a
-        # hole in it as if it were whole. Bounded by HISTORY_PAGES_MAX and by the community budget.
-        todo = list(chunks)
-        hist = {"sid": None, "chunk": None, "until": None, "got": 0, "oldest": None, "pages": 0}
-
-        async def next_page():
-            if hist["sid"]:
-                try:
-                    await ws.send(json.dumps(["CLOSE", hist["sid"]]))
-                except Exception:
-                    pass
-            done = (hist["chunk"] is None or hist["got"] == 0 or hist["pages"] >= HISTORY_PAGES_MAX
-                    or self.mirror._chunk_full(hist["chunk"]))
-            if done:
-                if not todo:
-                    hist["sid"] = None
-                    self.synced = not self.refused
-                    if self.synced:
-                        self.mirror._schedule_backfill(self)
-                    return
-                hist.update(chunk=todo.pop(0), until=None, pages=0)
-            else:
-                oldest = hist["oldest"]
-                hist["until"] = oldest if hist["until"] is None or oldest < hist["until"] else oldest - 1
-            flt = {"kinds": [WRAP_KIND], "authors": hist["chunk"], "limit": HISTORY_PAGE}
-            if hist["until"] is not None:
-                flt["until"] = hist["until"]
-            hist.update(sid="h" + uuid.uuid4().hex[:12], got=0, oldest=None)
-            hist["pages"] += 1
-            wrap_subs.add(hist["sid"])
-            await ws.send(json.dumps(["REQ", hist["sid"], flt]))
-
-        await next_page()
+        self._session_at = int(time.time())
+        self.sessions += 1
+        self._live, self._wrap_subs, self._hist = set(), set(), {"sid": None, "chunk": None}
+        authors = sorted(self.authors)[:AUTHOR_CHUNK * MAX_CHUNKS]
+        self.unwalked = set(authors)
+        self.since_of = {}
+        await self._subscribe_live(ws, authors)
+        self._todo = self._history_groups(authors)
+        hist = self._hist
+        await self._next_page(ws)
         while not self.stopped:
             # asyncio.timeout, NOT asyncio.wait_for: on Python 3.11 wait_for can swallow a cancellation that arrives
             # as recv() completes -- on a relay that streams constantly that is not rare, and the link then never
@@ -352,7 +441,7 @@ class _Link:
             if not isinstance(msg, list) or not msg:
                 continue
             typ = msg[0]
-            if typ == "EVENT" and len(msg) >= 3 and (msg[1] in live or msg[1] == hist["sid"]):
+            if typ == "EVENT" and len(msg) >= 3 and (msg[1] in self._live or msg[1] == hist["sid"]):
                 if isinstance(msg[2], dict) and isinstance(msg[2].get("id"), str) and len(self.held) < 300_000:
                     self.held.add(msg[2]["id"])
                 await self.mirror._ingest(msg[2], self)
@@ -364,8 +453,8 @@ class _Link:
                     hist["got"] += 1
                     hist["oldest"] = ca if hist["oldest"] is None else min(hist["oldest"], ca)
             elif typ == "EOSE" and len(msg) >= 2 and msg[1] == hist["sid"]:
-                await next_page()
-            elif typ == "CLOSED" and len(msg) >= 2 and msg[1] in wrap_subs:
+                await self._next_page(ws)
+            elif typ == "CLOSED" and len(msg) >= 2 and msg[1] in self._wrap_subs:
                 # A refused WRAP subscription (auth-required is the common one: a relay that gates
                 # gift wraps behind an AUTH as the stream key, which this node does not hold and must
                 # not). Never "in step" on this connection; readers are told to go direct.
@@ -406,6 +495,7 @@ class _Link:
     def status(self) -> dict:
         return {"relay": self.url, "streams": len(self.authors), "connected": self.connected,
                 "synced": self.synced, "refused": self.refused, "error": self.last_error,
+                "sessions": self.sessions, "history_pages": self.pages,
                 **({"backfilled": self.backfilled} if self.backfilled else {})}
 
 
@@ -525,6 +615,7 @@ class ConcordMirror:
         # Streams of communities HOSTED here, ever: their wraps are this node's originals, never mirror copies, so they
         # are never deleted when a registration lapses, never counted against a budget, never refused on a read.
         self.hosted_ever: set = set()
+        self.walked: dict = {}       # relay url -> {stream: unix time its history was last read to the beginning}
         # Streams whose copy this node DELETED because no registration names them any more -> when. A device that
         # registered one still reads it here; it is told `unavailable:`, never an EOSE over the emptied store.
         self.dropped: dict = {}
@@ -558,6 +649,8 @@ class ConcordMirror:
             self.counts = {a: int(n) for a, n in (data.get("counts") or {}).items()}
             self.hosted_ever = {str(a) for a in (data.get("hosted") or []) if _HEX64.match(str(a))}
             self.dropped = {str(a): float(t) for a, t in (data.get("dropped") or {}).items() if _HEX64.match(str(a))}
+            self.walked = {str(u): {str(a): int(t) for a, t in (m or {}).items() if _HEX64.match(str(a))}
+                           for u, m in (data.get("walked") or {}).items() if isinstance(m, dict)}
         except Exception as e:
             logger.warning("[concord-mirror] could not read the saved registrations (%s) — starting empty", e)
         self._loaded = True
@@ -634,8 +727,10 @@ class ConcordMirror:
             # held -- every registration on the node stuck behind it (poster.place 2026-10-14 21:37-21:46).
             stale = []
             for url in list(self.links):
-                if url not in want or self.links[url].authors != frozenset(want[url]):
+                if url not in want:
                     stale.append(self.links.pop(url))
+                elif self.links[url].authors != frozenset(want[url]):
+                    self.links[url].update(want[url])       # the SAME connection: no new socket, no history re-read
             for url, authors in want.items():
                 if url not in self.links:
                     link = _Link(self, url, authors)
@@ -668,6 +763,10 @@ class ConcordMirror:
                 now = time.time()
                 for a in dropped:
                     self.dropped[a] = now
+                # Its copies go, so "walked here already" goes too: named again, it is read from the beginning.
+                for m in self.walked.values():
+                    for a in dropped:
+                        m.pop(a, None)
                 try:
                     await self.store.delete_pubkeys(dropped, spare_preserved=True)
                 except Exception as e:
@@ -675,6 +774,17 @@ class ConcordMirror:
                 for a in dropped:
                     self.counts.pop(a, None)
                 self._dirty()
+
+    def _walked(self, url: str, authors, at: int) -> None:
+        m = self.walked.setdefault(url, {})
+        for a in authors:
+            m[a] = int(at)
+        self._dirty()
+
+    def _walked_kept(self) -> dict:
+        """Only streams still registered, on relays still linked: bounded by the registry itself."""
+        named, urls = self.registered_authors(), set(self._desired())
+        return {u: {a: t for a, t in m.items() if a in named} for u, m in self.walked.items() if u in urls}
 
     def _dirty(self) -> None:
         if self._save_task is None or self._save_task.done():
@@ -690,7 +800,7 @@ class ConcordMirror:
         try:
             await self.store.kv_set(KV_KEY, json.dumps({"regs": self.regs, "counts": self.counts,
                                                         "hosted": sorted(self.hosted_ever),
-                                                        "dropped": self.dropped}))
+                                                        "dropped": self.dropped, "walked": self._walked_kept()}))
         except Exception as e:
             logger.warning("[concord-mirror] could not save the registrations: %s", e)
 
@@ -724,7 +834,7 @@ class ConcordMirror:
                 return False
         for url in self._relays_for(author):
             link = self.links.get(url)
-            if link is not None and author in link.authors and link.ready:
+            if link is not None and link.ready_for(author):
                 return True
         return False
 
@@ -975,6 +1085,9 @@ class ConcordMirror:
         authors = sorted(self.hosted_authors() & link.authors)
         if not authors:
             return 0
+        # `link.held` is what THIS connection read, and a stream read incrementally was read only since `since_of`:
+        # older wraps are judged "not held" by nothing, so they are not compared (a full walk re-checks them weekly).
+        floor = min((link.since_of.get(a, 0) for a in authors), default=0)
         # Newest first, a page at a time, `until` = the oldest timestamp seen (INCLUSIVE, so wraps sharing that second
         # are not skipped); ids already collected are dropped, and a page that adds nothing new is the end.
         missing, seen, until = [], set(), None
@@ -992,7 +1105,7 @@ class ConcordMirror:
                 break
             for ev in fresh:
                 seen.add(ev["id"])
-                if ev["id"] not in link.held:
+                if ev["id"] not in link.held and int(ev.get("created_at", 0)) >= floor:
                     missing.append(ev)
             if len(page) < BACKFILL_PAGE:
                 break
