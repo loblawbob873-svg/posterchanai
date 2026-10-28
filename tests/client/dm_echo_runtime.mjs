@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+import { clientSource, clientSourceAt, installStateGlobals, shippedDmKey } from './client_source.mjs';
 
 const source = clientSource();
 function extract(decl){
@@ -33,6 +33,7 @@ function run({ ingestReturns }){
   const dmPeers = new Map();
   const calls = { refreshed: 0 };
   const context = {
+    DmKey: shippedDmKey(),
     dmPeers,
     signer:{ nip17wrap: async (pk, text) => ({ toPeer:{id:'peer-id'}, toSelf:{id:'self-id'} }) },
     Store:{ saveEvent(){} },

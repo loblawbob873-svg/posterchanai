@@ -95,7 +95,12 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: and what is left is Appearance's per-section text + menu colours (apptheme.js +867 B, which must paint before the
 #: app starts) and Communities' Back-closes-an-issue + Discover-stays-at-the-top (concord.js +647 B). Measured
 #: 8,547,025 B = 8.151 MB; 8.16 leaves ~10 KB -- a drift detector, not headroom.
-BUDGET_MB = 8.16
+#: RAISED 8.16 -> 8.166 on 2026-10-27, by the measured amount, after reclaiming first: today's long Concord/bell comments
+#: condensed (-1,149 B) and the Secure Boot settings page moved to an on-demand module (ossecureboot.js). What is left is
+#: GROUP DMs ("yes do the group DMs"): the conversation key and its label (app.js DmKey), the list's group rows, and
+#: delivery to every member (dms.js) -- all of it on the boot path, since an incoming DM is filed at login. Measured
+#: 8.1656 MB (the New message dialog's recipient chips included); 8.166 leaves ~0.5 KB. The next reclaim is still an on-demand module (see the split notes above).
+BUDGET_MB = 8.166
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

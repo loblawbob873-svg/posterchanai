@@ -64,4 +64,18 @@ function stateShim(code){
   return out.join('\n');
 }
 
-module.exports = { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals, stateShim };
+/* The SHIPPED group-DM conversation key (app.js `const DmKey = {...}`), for harnesses that run sendDm / ingestWrap /
+ * renderDmThread out of the source: the real rule, never a stand-in. Its few lookups (profiles, names) are stubbed. */
+function dmKeySource(){
+  const src = clientSource(), i = src.indexOf('  const DmKey = {');
+  if(i < 0) throw new Error('app.js has no DmKey');
+  return src.slice(i, src.indexOf('\n  };\n', i) + 5);
+}
+function shippedDmKey(){
+  const vm = require('node:vm');
+  const ctx = { profOf: () => ({}), needProfile(){}, niceNip05: () => '', NT: () => ({ nip19: { npubEncode: p => 'npub' + p } }) };
+  vm.runInNewContext(dmKeySource() + '\nthis.DmKey = DmKey;', ctx);
+  return ctx.DmKey;
+}
+
+module.exports = { CLIENT, splitModules, clientSource, clientSourceAt, installStateGlobals, stateShim, dmKeySource, shippedDmKey };

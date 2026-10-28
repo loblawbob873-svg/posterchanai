@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { clientSource, clientSourceAt, installStateGlobals } from './client_source.mjs';
+import { clientSource, clientSourceAt, installStateGlobals, shippedDmKey } from './client_source.mjs';
 
 const source = clientSource();
 const declaration = 'async function sendDm(pk, text){';
@@ -15,6 +15,7 @@ if(end < 0) throw new Error('sendDm extraction failed');
 
 const calls={saved:0,ingested:0,published:[],remounted:0,inbox:0};
 const context={
+  DmKey: shippedDmKey(),
   signer:{nip17wrap:async(pk,text)=>({toPeer:{id:'peer',pk,text},toSelf:{id:'self',pk,text}})},
   Store:{saveEvent:()=>{calls.saved++;}},
   /* TRUE, because that is what a successful ingest answers — sendDm now uses the result to decide

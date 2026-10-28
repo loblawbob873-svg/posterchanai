@@ -18,7 +18,7 @@ window.PCDmThreadFactory = function(dep){
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
     niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
-    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute,
+    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute, DmKey,
   } = dep;
   // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
   // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
@@ -184,13 +184,14 @@ window.PCDmThreadFactory = function(dep){
     // ALL peers, so a busy inbox leaves old threads showing only their newest message). NIP-17 is
     // already fully loaded by its no-limit live sub; this targeted query backfills LEGACY kind-4 for
     // this peer. Runs in the background so the thread still renders instantly from what's cached.
-    if(!_dmFull.has(pk)){ _dmFull.add(pk);
+    const group = DmKey.isGroup(pk);   // a group DM (DmKey): NIP-17 only, several members
+    if(!group && !_dmFull.has(pk)){ _dmFull.add(pk);
       Relay.query([{kinds:[4], authors:[pk], '#p':[S.ME.pubkey]}, {kinds:[4], authors:[S.ME.pubkey], '#p':[pk]}])
         .then(evs=>{ let added=false; for(const e of (evs||[])){ Store.saveEvent(e); if(ingestDM(e)) added=true; }
           if(added) _scheduleDmRefresh(); })   // re-render only if new msgs arrived (no loop: _dmFull set)
         .catch(()=>{});
     }
-    const p=profOf(pk); needProfile(pk);
+    const p=group?{}:profOf(pk); if(group) DmKey.peers(pk).forEach(needProfile); else needProfile(pk);
     const _hid=_dmHidden();
     const all=(dmPeers.get(pk)||[]).filter(m=>!_hid.has(m.id));   // "Delete for me" — local only
     // PAGINATION: render only the last N messages (1 on open) so a long thread opens instantly on mobile;
@@ -220,18 +221,21 @@ window.PCDmThreadFactory = function(dep){
     //  * a small time on every bubble, so you can tell when something was said.
     const GROUP_GAP = 5 * 60;
     const bubble=(m, prev)=>{
-      const startsGroup = !prev || prev.mine!==m.mine || (m.t||0)-(prev.t||0) > GROUP_GAP;
+      const startsGroup = !prev || prev.mine!==m.mine || (group && prev.from!==m.from) || (m.t||0)-(prev.t||0) > GROUP_GAP;
+      // In a group every run of someone else's messages is labelled with who wrote it.
+      const who = group && !m.mine && startsGroup && m.from ? `<span class="b-who" data-prof="${enc(m.from)}">${enc(DmKey.label(m.from))}</span>` : '';
       const newDay = !prev || new Date((prev.t||0)*1000).toDateString() !== new Date((m.t||0)*1000).toDateString();
       const sep = newDay && m.t ? `<div class="dm-day"><span>${enc(_dmDayLabel(m.t))}</span></div>` : '';
       // A reply arrives as "> quoted\n\nmessage" (see _dmReply). Render that leading quote as a
       // block so it reads like a reply instead of a stray angle bracket.
       const body = m.text==null ? '<span class="muted small">decrypting…</span>' : _dmBodyHtml(m);
       return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
-        + `<span class="b-txt">${body}</span>`
+        + who + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
     };
     const _msgsHtml = `${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}`;
-    const _peerName = emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'));
+    const _peerName = group ? enc(DmKey.label(pk)) + ` <span class="dm-n">👥 ${DmKey.peers(pk).length + 1}</span>`
+      : emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'));
     const _muteLabel = isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute';
     // A refresh of the conversation ALREADY on screen touches only the message list. Rebuilding the
     // pane wholesale is what ate a half-typed message every time a DM arrived, and the draft is not
@@ -250,7 +254,7 @@ window.PCDmThreadFactory = function(dep){
       { const mb=$('#dm-mute'); if(mb) mb.textContent=_muteLabel; }
       { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.innerHTML=_peerName; }
     } else {
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${_peerName}</b><span class="spacer"></span><button class="mini dm-lock" id="dm-lock" aria-label="Encrypt attachments">🔒</button><button class="mini" id="dm-mute" title="Mute this sender">${_muteLabel}</button></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name"${group?'':` data-prof="${pk}"`} style="cursor:pointer">${_peerName}</b><span class="spacer"></span><button class="mini dm-lock" id="dm-lock" aria-label="Encrypt attachments">🔒</button>${group?'':`<button class="mini" id="dm-mute" title="Mute this sender">${_muteLabel}</button>`}</div>
       <div class="dm-msgs" id="dm-msgs">${_msgsHtml}</div>
       <div class="dm-compose">
         <div class="dm-replybar" id="dm-replybar" hidden></div>
@@ -276,7 +280,9 @@ window.PCDmThreadFactory = function(dep){
       $$('.dm-peer').forEach(e=>e.classList.remove('active'));
       const th=$('#dm-thread'); if(th) th.innerHTML='<div class="empty">Select a conversation, or start one.</div>';
     };
-    { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>renderProfileView(pk); }
+    { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>group
+        ? toast('In this conversation: you, ' + DmKey.peers(pk).map(x=>DmKey.label(x)).join(', '))
+        : renderProfileView(pk); }
     // Mute the DM sender straight from the conversation. Muting drops back to the list (the thread
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
     // Close the thread only AFTER the mute actually lands — toggleMute now no-ops on a relay failure, so

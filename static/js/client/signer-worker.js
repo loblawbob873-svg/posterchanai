@@ -102,12 +102,14 @@ self.onmessage = async (e) => {
         if (!SK) return reply(id, false, null, 'no local key');
         // args.tags (when given) already includes the p-tag plus any NIP-30 custom-emoji tags the
         // page built for this message — the worker has no access to the emoji map.
+        // args.peers: every recipient of a group DM (one p tag each); a 1:1 is args.peer alone.
+        const peers = Array.isArray(args.peers) && args.peers.length ? args.peers : [args.peer];
         const rumor = { kind: 14, created_at: Math.floor(Date.now()/1000),
-                        tags: args.tags || [['p', args.peer]], content: args.text };
-        // a gift wrap for the recipient AND one to ourselves so we keep a copy of what we sent
-        const toPeer = NT.nip59.wrapEvent(rumor, SK, args.peer);
+                        tags: args.tags || peers.map(p => ['p', p]), content: args.text };
+        // a gift wrap for each recipient AND one to ourselves so we keep a copy of what we sent
+        const toPeers = peers.map(p => NT.nip59.wrapEvent(rumor, SK, p));
         const toSelf = NT.nip59.wrapEvent(rumor, SK, PK);
-        return reply(id, true, { toPeer, toSelf });
+        return reply(id, true, { toPeer: toPeers[0], toPeers, toSelf });
       }
       case 'nip17unwrap': {                     // args.wrap (kind 1059) -> inner kind-14 rumor
         if (!SK) return reply(id, false, null, 'no local key');

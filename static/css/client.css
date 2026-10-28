@@ -6263,6 +6263,7 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
   border-radius:10px}
 .dm-rb-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
 .dm-rb-who{font-size:11px;color:var(--neon);letter-spacing:.03em}
+.bubble .b-who{display:block;font-size:11px;font-weight:600;color:var(--neon);margin-bottom:2px;cursor:pointer}.dm-n{font-size:11px;color:var(--muted);font-weight:500}
 .dm-rb-txt{font-size:15px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dm-replybar .mini{flex:0 0 auto;width:36px;height:36px}
 /* `display:flex` above outranks the `hidden` attribute -- with no reply pending, an empty banner sat over

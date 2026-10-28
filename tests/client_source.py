@@ -104,3 +104,10 @@ def client_source_path_for(needle: str) -> Path:
     if len(hits) != 1:
         raise AssertionError(f"{needle!r} is in {len(hits)} client files: {[h.name for h in hits]}")
     return hits[0]
+
+
+def dm_key_source() -> str:
+    """The SHIPPED group-DM conversation key (app.js `const DmKey = {...}`) for harnesses that run the DM code."""
+    src = client_source()
+    i = src.index("  const DmKey = {")
+    return src[i:src.index("\n  };\n", i) + 5]

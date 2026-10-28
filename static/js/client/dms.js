@@ -12,7 +12,7 @@ window.PCDmsFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.GUEST, S.LOGO, S.ME, S.NO_IMAGES, S.VIEW, S._cordDirectOwner, S._dmDone, S._dmLoaded, S._dmTotal, S._dmUnread, S.dmActive, S.signer
   const {
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
-    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor,
+    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor, DmKey,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
@@ -855,12 +855,13 @@ window.PCDmsFactory = function(dep){
     if(rumor?.kind===3313){try{return await _ingestCordDirectWrap(ev,live);}catch(_){_wrapTried.delete(ev.id);return false;}}
     if(!rumor || (rumor.kind!==14 && rumor.kind!==15) || rumor.content==null) return false;
     const mine = rumor.pubkey===S.ME.pubkey;
-    const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
-    if(!peer) return false; needProfile(peer);
+    // The conversation is everyone in it (DmKey) -- filed by sender, a group split into a 1:1 per member.
+    const peer = DmKey.ofRumor(rumor, S.ME.pubkey);
+    if(!peer) return false; DmKey.peers(peer).forEach(needProfile); needProfile(rumor.pubkey);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     const atts=_dmAttachmentMeta(rumor);
-    arr.push({ id:ev.id, mine, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
+    arr.push({ id:ev.id, mine, from:rumor.pubkey, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
                /* The peer wrap and our self-copy have different outer ids. WebXDC must use the
                   shared INNER rumor id or the two recipients derive different game sessions. */
                xdcMessageId:rumor.id||ev.id, tags:(rumor.tags||[]).map(t=>t.slice()),
@@ -879,12 +880,12 @@ window.PCDmsFactory = function(dep){
     // front, so the relay's echo is deduped above before it can reach this. What's left is the
     // arriving ones — server notifications, and your own notes from another device.
     const selfNote = mine && peer === S.ME.pubkey;
-    if((!mine || selfNote) && !isMutedAuthor(peer) && (rumor.created_at||0) > _seen){
+    if((!mine || selfNote) && !isMutedAuthor(rumor.pubkey) && (rumor.created_at||0) > _seen){
       S._dmUnread++; bumpDm();
       // The interrupting toast/OS notification stays gated on `live`, so restoring a backlog on login
       // doesn't fire a burst of them. It names the SENDER only, never the message — so it says the same
       // thing whether or not "Hide DM previews until opened" is on.
-      if(live) _dmNotify(selfNote ? null : peer, selfNote, selfNote ? rumor.content : '');
+      if(live) _dmNotify(selfNote ? null : rumor.pubkey, selfNote, selfNote ? rumor.content : '');
     }
     _scheduleDmRefresh();
     return true;
@@ -1019,8 +1020,12 @@ window.PCDmsFactory = function(dep){
   }
 
   async function sendDm(pk, text){
+    const members = DmKey.peers(pk);
+    if(members.length > 1 && !(S.signer && S.signer.nip17wrap))
+      throw new Error('group messages need NIP-17, which this signer cannot make');
     if(S.signer && S.signer.nip17wrap){
-      const { toPeer, toSelf } = await S.signer.nip17wrap(pk, text);
+      const { toPeer, toPeers, toSelf } = await S.signer.nip17wrap(pk, text);
+      const peerWraps = (toPeers && toPeers.length) ? toPeers : [toPeer];
       /* TELL THE NATIVE LAYER WE PUBLISHED THESE, before either is on a relay.
        *
        * NIP-17 writes a SELF-COPY wrap so this account's other devices see what it sent, and that
@@ -1041,7 +1046,7 @@ window.PCDmsFactory = function(dep){
        * So the ACCOUNT is told too, and the push is never sent rather than sent and then dropped.
        * Both are kept: the device-local one still works with no instance at all, and it is the
        * faster of the two when the sender and the receiver are the same phone. */
-      const _wrapIds=[toSelf&&toSelf.id,toPeer&&toPeer.id].filter(Boolean);
+      const _wrapIds=[toSelf&&toSelf.id,...peerWraps.map(w=>w&&w.id)].filter(Boolean);
       try{ const P=_capPlugin('PosterChanPush','notePublished');
            if(P)void P.notePublished({ids:_wrapIds}); }catch(_){ }
       void _notePublishedWraps(_wrapIds);
@@ -1061,7 +1066,8 @@ window.PCDmsFactory = function(dep){
       const echoed = await ingestWrap(toSelf, false);   // show our own message right away
       if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id);
       _keepDmOpen(pk);
-      const r1=await Relay.publish(toPeer), r2=await Relay.publish(toSelf);
+      const rs=[]; for(const w of peerWraps) rs.push(await Relay.publish(w));
+      const r1=rs[0], r2=await Relay.publish(toSelf);
       _keepDmOpen(pk);
       /* WRITTEN OFFLINE, SENT WHEN BACK. The message was already in the thread (the echo above), so a
        * publish that could not reach a relay left something that LOOKED sent and never would be. Both
@@ -1069,7 +1075,7 @@ window.PCDmsFactory = function(dep){
        * reached: a relay that ANSWERED no has refused it, and retrying a refusal sends nothing. */
       const unreached = r => !!r && r.ok === false && !r.noQueue && (r.msg === 'offline' || navigator.onLine === false);
       if(unreached(r1) && window.Outbox && Outbox.canQueue(1059)){
-        Outbox.add(toPeer, S.ME.pubkey); if(unreached(r2)) Outbox.add(toSelf, S.ME.pubkey);
+        peerWraps.forEach((w,i)=>{ if(unreached(rs[i])) Outbox.add(w, S.ME.pubkey); }); if(unreached(r2)) Outbox.add(toSelf, S.ME.pubkey);
         toast('you’re offline — the message will be sent when you’re back online');
         return;
       }
@@ -1081,18 +1087,20 @@ window.PCDmsFactory = function(dep){
       // relays already in our pool + is bounded, so it's a no-op when the peer reads our relay. We only
       // warn when NOTHING accepted it — our relay rejects wraps to a non-WoT recipient (expected for an
       // external user), which is fine once their own inbox relay has taken it.
-      dmInboxRelays(pk).then(({relays:inbox, answered})=>{
-        if(!inbox.length){
-          /* TWO DIFFERENT SENTENCES, because they are two different situations and only one of them
-           * is about the recipient. Telling somebody "they have no inbox" when we simply could not
-           * reach a single indexer is how a working account gets written off as unreachable. */
-          if(r1 && r1.ok===false) toast(answered
-            ? 'message not delivered — recipient has no DM inbox relays'
-            : 'message not delivered — could not look up their DM inbox; try again');
-          return;
-        }
-        Relay.publishTo(inbox, toPeer).then(n=>{ if(r1 && r1.ok===false && !n) toast('message not delivered — no inbox relay accepted it'); });
-      }).catch(()=>{});
+      members.forEach((member, i) => { const wrap = peerWraps[i] || peerWraps[0], ri = rs[i] || r1;
+        const who = members.length > 1 ? ' for one member' : '';
+        dmInboxRelays(member).then(({relays:inbox, answered})=>{
+          if(!inbox.length){
+            /* TWO DIFFERENT SENTENCES, because they are two different situations and only one of them
+             * is about the recipient. Telling somebody "they have no inbox" when we simply could not
+             * reach a single indexer is how a working account gets written off as unreachable. */
+            if(ri && ri.ok===false) toast(answered
+              ? 'message not delivered'+who+' — recipient has no DM inbox relays'
+              : 'message not delivered'+who+' — could not look up their DM inbox; try again');
+            return;
+          }
+          Relay.publishTo(inbox, wrap).then(n=>{ if(ri && ri.ok===false && !n) toast('message not delivered'+who+' — no inbox relay accepted it'); });
+        }).catch(()=>{}); });
     } else {
       const ct=await S.signer.nip04enc(pk, text); await publish(4, ct, [['p',pk]]);
       _keepDmOpen(pk);

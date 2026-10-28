@@ -12,7 +12,7 @@
  * the message arrives — and that a wrap which succeeded is never decrypted twice.
  */
 import vm from 'node:vm';
-import { clientSourceAt, installStateGlobals } from './client_source.mjs';
+import { clientSourceAt, installStateGlobals, shippedDmKey } from './client_source.mjs';
 
 // ingestWrap lives in dms.js (split out of app.js): read every split module beside that app.js, too.
 const source = clientSourceAt(process.argv[2] || new URL('../../static/js/client/app.js', import.meta.url));
@@ -35,6 +35,7 @@ function harness({ failFirst, selfNote=false }){
   let failed = false;
   const ctx = {
     dmPeers, _wrapTried, ME:{pubkey:ME_PK},
+    DmKey: shippedDmKey(),
     _dmTotal:0, _dmDone:0, _dmTick(){}, needProfile(){}, _scheduleDmRefresh(){},
     _dmAttachmentMeta: () => [],
     DmCache:{ get: async () => null, put(){} },

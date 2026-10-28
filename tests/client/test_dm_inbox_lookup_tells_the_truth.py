@@ -109,7 +109,7 @@ def test_the_lookup_reports_whether_anybody_actually_answered():
 
 def test_the_two_failures_do_not_share_a_sentence():
     """The user-visible half. One of these is about the recipient and the other is about us."""
-    send = APP[APP.index("dmInboxRelays(pk).then("):][:1400]
+    send = APP[APP.index("dmInboxRelays(member).then("):][:1400]
     assert "recipient has no DM inbox relays" in send
     assert "could not look up" in send, (
         "an unreachable lookup still tells the sender the recipient has no inbox — a confident "

@@ -1702,9 +1702,12 @@
     },
   };
 
+  // `peer`: a pubkey, a group key "a,b,c" or a list -- one rumor, wrapped to each recipient and to us.
+  function _dmRecipients(peer){ return (Array.isArray(peer) ? peer : String(peer || '').split(',')).filter(Boolean); }
   async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text){
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(text||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     const now = Math.floor(Date.now()/1000);
+    const rcpt = _dmRecipients(peer);
     const randPast = () => now - Math.floor(Math.random()*2*86400);   // NIP-59 timing privacy
     async function wrapFor(recipient){
       // The rumor (the real message) ALWAYS addresses the conversation `peer`, even for the
@@ -1714,14 +1717,16 @@
       // (signer-worker.js nip17wrap), which wraps ONE peer-addressed rumor for both copies.
       // NIP-30 tags ride INSIDE the rumor, so a custom emoji renders in the peer's client too (the
       // wrap layers are opaque — a tag on the outside would be both useless and a metadata leak).
-      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: InstEmoji.tagsFor(text, [['p', peer]]), content: text };
+      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: InstEmoji.tagsFor(text, rcpt.map(r => ['p', r])), content: text };
       rumor.id = await _eventId(rumor);                          // unsigned rumor — id only, no sig
       const sealContent = await nip44enc(recipient, JSON.stringify(rumor));
       const seal = await signEvent({ kind: 13, created_at: randPast(), tags: [], content: sealContent });
       const { wrap } = await Relay.worker.call('giftwrapSeal', { seal, recipient });
       return wrap;
     }
-    return { toPeer: await wrapFor(peer), toSelf: await wrapFor(myPk) };
+    const toPeers = [];
+    for(const r of rcpt) toPeers.push(await wrapFor(r));
+    return { toPeer: toPeers[0], toPeers, toSelf: await wrapFor(myPk) };
   }
 
   /* ---------- The remote signers (NIP-55, NIP-46) and the signer service: moved to static/js/client/signer.js (its own <script> tag) ----------
@@ -1849,7 +1854,8 @@
       cordRekeyEncrypt: (peer, bytes) => Relay.worker.call('cordRekeyEncrypt', { peer, bytes, owner: pubkey }).then(r=>r.ct),
       nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
-      nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text, tags: InstEmoji.tagsFor(text, [['p', peer]]) }),
+      nip17wrap: (peer, text) => { const peers = _dmRecipients(peer);
+        return Relay.worker.call('nip17wrap', { peer: peers[0], peers, text, tags: InstEmoji.tagsFor(text, peers.map(r => ['p', r])) }); },
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
     });
   }
@@ -12333,7 +12339,39 @@
   /* Declared HERE, outside dms.js, because the rest of app.js (the Messages list, openDm, switchView,
    * the window handoff, PC.dmStats) and dmthread.js read or write them too: a variable cannot be
    * forwarded to a module, so app.js owns them and dms.js reaches them through `dep`/`S.<name>`. */
-  const dmPeers = new Map();  // peer -> [{ev, text}]
+  const dmPeers = new Map();  // conversation key -> [{ev, text}]  (see DmKey: a peer, or "a,b,c" for a group)
+  /* Group DMs (2026-10-27): a conversation is "everyone but me, sorted, comma-joined", Armada's dmConvKey. A 1:1 is
+   * the peer's pubkey as before; a group is "a,b,c". tests/client/test_group_dms.py. */
+  const DmKey = {
+    SEP: ',',
+    isPk: v => /^[0-9a-f]{64}$/.test(String(v || '')),
+    peers(key){ return String(key || '').split(',').filter(Boolean); },
+    isGroup(key){ return String(key || '').includes(','); },
+    ofRumor(rumor, self){
+      const rec = new Set();
+      for(const t of (rumor && rumor.tags) || []) if(t && t[0] === 'p' && DmKey.isPk(t[1])) rec.add(t[1]);
+      if(rumor && rumor.pubkey !== self){
+        if(!DmKey.isPk(rumor.pubkey)) return '';
+        rec.add(rumor.pubkey); rec.delete(self);
+        return rec.size ? [...rec].sort().join(',') : '';
+      }
+      if(!rec.size) return '';
+      rec.delete(self);
+      return rec.size ? [...rec].sort().join(',') : self;
+    },
+    of(pks, self){
+      const set = new Set((pks || []).map(x => String(x || '').toLowerCase()).filter(DmKey.isPk));
+      const toSelf = set.has(self); set.delete(self);
+      return set.size ? [...set].sort().join(',') : (toSelf ? self : '');
+    },
+    label(key){
+      const name = pk => { const p = profOf(pk) || {}; needProfile(pk);
+        return p.name || p.display_name || niceNip05(p.nip05) || (NT().nip19.npubEncode(pk).slice(0, 12) + '…'); };
+      const ps = DmKey.peers(key);
+      if(ps.length <= 3) return ps.map(name).join(', ');
+      return ps.slice(0, 3).map(name).join(', ') + ` +${ps.length - 3}`;
+    },
+  };
   let dmActive = null;
   let _dmHandoffScroll = null;
   const _dmFull = new Set();   // peers whose full DM history has been backfilled on open (once each)
@@ -12409,7 +12447,7 @@
       get signer(){ return signer; },
     },
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
-    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor,
+    _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor, DmKey,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
     notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
@@ -12477,22 +12515,25 @@
     if(!list || !$('#dm-rows',list)) return {peers:[],hidePrev:true};
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);
-    const peers=[...dmPeers.keys()].filter(pk=>!isMutedAuthor(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
+    const peers=[...dmPeers.keys()].filter(pk=>DmKey.isGroup(pk) ? !DmKey.peers(pk).every(isMutedAuthor) : !isMutedAuthor(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     // A messenger list, not a directory: avatar, name, the last line, WHEN it happened, and unread
     // weight. Previously every row was an identical name+preview pill with no time and no way to see
     // what was new — "a long boring list".
     const rows = peers.map(pk=>{
-      const p=profOf(pk); needProfile(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
-      const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,80)) : '🔒 …');
-      const nm = p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
+      const group = DmKey.isGroup(pk), lead = group ? DmKey.peers(pk)[0] : pk;
+      const p=profOf(lead); needProfile(lead); const last=dmPeers.get(pk).slice(-1)[0]||{};
+      const by = group && !last.mine && last.from ? enc(DmKey.label(last.from)) + ': ' : '';
+      const prev = hidePrev ? '••• tap to view' : (last.text!=null ? by + enc(last.text.slice(0,80)) : '🔒 …');
+      const nm = group ? DmKey.label(pk) : (p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…'));
       // Unread = their newest message is newer than the last time this tab was opened. Cheap, and it
       // can't mark your OWN message unread.
       // …this device's mark or the account's (dmSeenFor, pcai:seen), whichever is later.
       const unread = !!(last.t && last.t > dmSeenFor(pk) && !last.mine);
-      return `<div class="dm-peer${unread?' unread':''}" data-peer="${pk}" data-name="${enc((nm||'').toLowerCase())}">
-        <img alt="" class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+      const prof = group ? '' : ` data-prof="${pk}"`;
+      return `<div class="dm-peer${unread?' unread':''}${group?' dm-group':''}" data-peer="${pk}" data-name="${enc((nm||'').toLowerCase())}">
+        <img alt="" class="dmav"${prof} src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div class="dm-peer-main">
-          <div class="dm-peer-top"><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b>
+          <div class="dm-peer-top"><b class="name"${prof}>${group ? enc(nm) + ` <span class="dm-n" title="${DmKey.peers(pk).length + 1} people">👥 ${DmKey.peers(pk).length + 1}</span>` : emojiName(pk,nm)}</b>
             <span class="dm-when">${enc(_dmWhen(last.t))}</span></div>
           <div class="dm-peer-bot"><span class="dm-prev">${last.mine?'<span class="dm-you">You: </span>':''}${prev}</span>
             ${unread?'<i class="dm-dot" aria-label="unread"></i>':''}</div>
@@ -12594,7 +12635,8 @@
     /* Sticky for the same reason as the two composers above: this one is a message to somebody,
      * typed once, with no draft anywhere to recover it from. */
     modal(`<h3 class="cmp-hd"><svg class="ic h-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New message<button class="modal-x" id="dm-close" title="Close" aria-label="Close">&#215;</button></h3>
-      <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
+      <div class="dm-chips" id="dm-to-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
+      <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain — add several for a group" autocomplete="off">
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
       <div class="dm-atts" id="dm-atts-new" hidden></div>
@@ -12602,15 +12644,22 @@
       <div class="muted small" id="dm-status"></div>`, root=>{
       root.classList.add('modal-sticky');
       { const x=$('#dm-close',root); if(x) x.onclick=()=>closeModal(); }
-      let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
+      let toPk=null; const toPks=[]; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
+      // Several people make a group DM (DmKey): each pick becomes a chip; typed npubs/NIP-05s may be listed too.
+      const chips=()=>{ const c=$('#dm-to-chips',root); if(!c) return;
+        c.innerHTML=toPks.map((pk,i)=>`<span class="tag-chip dm-chip">${enc(DmKey.label(pk))}<button type="button" data-x="${i}" aria-label="Remove" style="background:none;border:0;color:inherit;cursor:pointer;padding:0 2px">×</button></span>`).join('');
+        $$('[data-x]',c).forEach(b=>b.onclick=()=>{ toPks.splice(+b.dataset.x,1); chips(); to.focus(); }); };
       const _newSync=wireImgAttach(body, $('#dm-atts-new',root), {enc:true});   // paste-to-attach + preview strip here too
       to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
         const pk=safePk(v); if(pk){ toPk=pk; ac.classList.add('hidden'); return; }
-        const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
+        const last=v.split(/[\s,]+/).pop()||'';   // suggestions are for the name being typed now
+        const q=last.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
         const matches=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
         if(!matches.length){ ac.classList.add('hidden'); return; }
         ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img alt="" src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
-        $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
+        $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); const pk=el.dataset.pk;
+          if(!toPks.includes(pk)) toPks.push(pk); chips();
+          to.value=to.value.trim().replace(/[^\s,]*$/,'').replace(/[\s,]+$/,''); toPk=null; ac.classList.add('hidden'); to.focus(); });
       });
       $('#dm-attach',root).onclick=e=>dmAttachMenu(e.currentTarget, body, $('#dm-file',root), $('#dm-status',root));
       // Honours the same 🔒 preference as an open thread's composer — it is a per-DEVICE choice, and
@@ -12621,14 +12670,20 @@
       $('#dm-files',root).onclick=dmPickMedia(body, $('#dm-status',root));
       { const g=$('#dm-gif',root); if(g) g.onclick=dmPickGif(body); }
       $('#dm-go',root).onclick=async()=>{
-        let pk=toPk||safePk(to.value.trim().replace(/^@/,''));
-        const v=to.value.trim();
-        if(!pk && /^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(v)){ $('#dm-status',root).textContent='resolving…'; pk=await nip05Resolve(v.toLowerCase()); }
+        const picked=[...toPks];
+        if(toPk) picked.push(toPk);
+        else for(const part of to.value.split(/[\s,]+/).map(x=>x.trim()).filter(Boolean)){
+          let one=safePk(part.replace(/^@/,''));
+          if(!one && /^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(part)){ $('#dm-status',root).textContent='resolving…'; one=await nip05Resolve(part.toLowerCase()); }
+          if(!one){ $('#dm-status',root).textContent=(picked.length||toPks.length)?'could not find '+part:'pick a valid recipient (npub / NIP-05)'; return; }
+          picked.push(one);
+        }
+        const pk=DmKey.of(picked, ME.pubkey);   // one person: their key, as before; several: a group "a,b,c"
         if(!pk){ $('#dm-status',root).textContent='pick a valid recipient (npub / NIP-05)'; return; }
         const txt=body.value.trim(); if(!txt){ $('#dm-status',root).textContent='write a message'; return; }
         const go=$('#dm-go',root); if(go.disabled) return; go.disabled=true; $('#dm-status',root).textContent='sending…';   // guard double-send
         // Send BEFORE closing so a failure keeps the modal (typed text + uploaded attachments intact).
-        try{ await sendDm(pk, txt); closeModal(); if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
+        try{ await sendDm(pk, txt); closeModal(); if(!dmPeers.has(pk))dmPeers.set(pk,[]); DmKey.peers(pk).forEach(needProfile); switchView('messages'); setTimeout(()=>openDm(pk),80); }
         catch(e){ go.disabled=false; $('#dm-status',root).textContent='dm failed: '+((e&&e.message)||e); }
       };
       to.focus();
@@ -12685,7 +12740,7 @@
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
     niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
-    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute,
+    uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute, DmKey,
   }; }
   function _dmThreadMod(){ return _lzGet('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
   function _dmThreadLoad(){ return _lzLoad('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }

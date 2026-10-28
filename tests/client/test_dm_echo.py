@@ -44,7 +44,7 @@ def test_a_refused_ingest_still_shows_your_message():
 def test_the_answer_from_ingest_is_actually_used():
     """It was awaited and thrown away — the bug in one line."""
     send = APP_JS[APP_JS.index("async function sendDm(pk, text){"):]
-    send = send[:send.index("dmInboxRelays(pk)")]
+    send = send[:send.index("dmInboxRelays(member)")]
     assert "const echoed = await ingestWrap(toSelf, false)" in send, (
         "sendDm ignores whether its own copy was ingested again")
     assert "if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id)" in send

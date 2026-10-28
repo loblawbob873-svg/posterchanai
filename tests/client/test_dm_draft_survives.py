@@ -40,7 +40,7 @@ import subprocess
 import tempfile
 
 import pytest
-from tests.client_source import client_source, state_shims
+from tests.client_source import client_source, dm_key_source, state_shims
 
 CHROME = shutil.which("google-chrome-stable") or shutil.which("google-chrome") or shutil.which("chromium")
 
@@ -97,6 +97,8 @@ def _sources():
     m = re.search(r"^  (const enc = .*?;)$", src, re.M)
     assert m, "enc is no longer a one-line const in app.js"
     out.append(m.group(1))
+    # The group-DM conversation key the renderer asks whether a thread is a group: the shipped one.
+    out.append(dm_key_source())
     # The draft map itself.
     m = re.search(r"^\s*(const _dmDrafts = new Map\(\);)", src, re.M)
     assert m, "_dmDrafts is gone — the draft is no longer kept anywhere"

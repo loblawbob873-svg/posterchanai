@@ -96,7 +96,8 @@ def test_the_sender_records_both_wraps_before_they_are_published():
     send = APP.split("async function sendDm(", 1)[1]
     send = send[:send.index("Store.saveEvent") + 40]
     assert "notePublished" in send, send[:400]
-    assert "toSelf&&toSelf.id" in send and "toPeer&&toPeer.id" in send, send[:400]
+    # Every recipient's wrap: a group DM has one per member (peerWraps), a 1:1 has one.
+    assert "toSelf&&toSelf.id" in send and "peerWraps.map(w=>w&&w.id)" in send, send[:400]
     assert send.index("notePublished") < send.index("Store.saveEvent"), (
         "record it before anything can await — the push can arrive while this function is still in "
         "flight")
