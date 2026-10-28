@@ -544,6 +544,11 @@
                 <small>Domain-based denylist: any account whose profile NIP-05 or relay list lives on one of these domains is denied at ingest; already-stored posts are removed by the nightly purge / “Purge now”. One domain per line; suffix match, so <code>mostr.pub</code> also covers <code>bsky-bridge.mostr.pub</code>. Use this for real Nostr relays you want to exclude — the checkbox above already covers the AP/Bluesky bridges.</small>
             </div>
             <div class="form-group">
+                <label for="nostr_relay_trusted_bridge_domains">Trusted bridges (by domain)</label>
+                <textarea id="nostr_relay_trusted_bridge_domains" name="nostr_relay_trusted_bridge_domains" rows="3" placeholder="glowers.club"></textarea>
+                <small>Accounts a bridge <strong>vouches for</strong> may publish here though they are not in the Web of Trust: the profile's NIP-05 must be <code>name@</code> one of these domains <strong>and</strong> the domain's <code>/.well-known/nostr.json</code> must answer with that key (a profile's claim alone is never enough). Only those accounts &mdash; not the people they follow. Exact domain; re-checked daily, so a bridge removing someone takes effect. Blocked accounts are still refused.</small>
+            </div>
+            <div class="form-group">
                 <button type="button" id="relayPurgeBlocksBtn" class="btn-secondary">🧹 Purge existing notes now</button>
                 <span id="relayPurgeBlocksStatus" style="margin-left:.5rem;"></span>
                 <small>Block filters apply automatically to <strong>new</strong> notes at ingest, and a purge of already-stored matches runs <strong>nightly</strong> (small hours). Click to apply the blocked words / languages / accounts / bridges to already-stored notes <strong>right now</strong> — e.g. when illegal content has just arrived and shouldn’t wait. One-shot and heavy on a large store. Counts are logged.</small>

@@ -795,6 +795,7 @@ class SettingsResponse(BaseModel):
     nostr_relay_blocked_words: Optional[str] = None
     nostr_relay_blocked_pubkeys: Optional[str] = None
     nostr_relay_blocked_relays: Optional[str] = None
+    nostr_relay_trusted_bridge_domains: Optional[str] = None   # NIP-05 domains whose accounts may publish (bridges)
     nostr_relay_block_bridged: Optional[bool] = False
     nostr_relay_block_json_posts: Optional[bool] = True
     # Concord mirror: members' joined communities are held on this relay so clients read only here (concord_mirror.py).

@@ -26,6 +26,7 @@
         nostr_dvm_peers: ['peer', 'peer', 'npub1… wss://their-relay.example/relay'],
         nostr_relay_blocked_words: ['word', 'word or phrase', 'a word or phrase'],
         nostr_relay_blocked_relays: ['domain', 'domain', 'mostr.pub'],
+        nostr_relay_trusted_bridge_domains: ['domain', 'bridge domain', 'glowers.club'],
         nostr_relay_nip05_relays: ['relay', 'relay', 'wss://relay.example'],
         nostr_relay_upstream_relays: ['relay', 'relay', 'wss://relay.example'],
         nostr_relay_private_relays: ['relay', 'relay', 'wss://your-other-node.example'],

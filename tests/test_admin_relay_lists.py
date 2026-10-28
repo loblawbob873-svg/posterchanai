@@ -187,6 +187,7 @@ SPELLINGS = {
     "nostr_relay_private_relays": ("wss://mirror.example\nwss://keep.example\nWSS://MIRROR.EXAMPLE/", "wss://keep.example", "wss://mirror.example/"),
     "nostr_relay_nip05_relays": ("wss://relay.poster.place/\nwss://keep.example\nwss://relay.poster.place", "wss://keep.example", "wss://RELAY.poster.place"),
     "nostr_relay_blocked_relays": ("mostr.pub\nkeep.example\nMOSTR.PUB", "keep.example", "Mostr.Pub"),
+    "nostr_relay_trusted_bridge_domains": ("glowers.club\nkeep.example\nGLOWERS.CLUB", "keep.example", "Glowers.Club"),
     "nostr_relay_posterchan_origins": ("https://poster.place\nhttps://keep.example\nhttps://POSTER.place/", "https://keep.example", "https://poster.place/"),
     "nostr_relay_wot_seeds": (f"{NPUB_A}\n{PKB}\n{PKA}", PKB, PKA.upper() if False else NPUB_A),
     "nostr_dvm_peers": (f"{NPUB_A} wss://peer.example\n{PKB} wss://keep.example\n{PKA} wss://peer.example/", f"{PKB} wss://keep.example", f"{PKA} WSS://peer.example"),

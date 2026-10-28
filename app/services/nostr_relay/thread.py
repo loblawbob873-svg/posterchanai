@@ -477,6 +477,10 @@ def _read_config() -> dict:
             # bridge relayed them. The domain blocklist above can't catch these — a mirror's nip05 is
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
+            # Trusted bridge domains (server._trusted_bridge_author): exact domains whose NIP-05 vouches let an
+            # account publish here from outside the web of trust.
+            "trusted_bridge_domains": {d for d in (t.strip().lower().rstrip(".") for t in
+                                       g("nostr_relay_trusted_bridge_domains", "").replace(",", "\n").split()) if d},
             "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
             # CONCORD MIRROR (concord_mirror.py): members' joined communities are mirrored into this relay so their
             # clients read only here. BLANK = ON (g() maps "" to the default). It dials out ONLY through the proxy's
@@ -1677,6 +1681,7 @@ async def _main(cfg: dict, store: RelayStore | None = None) -> None:
                         try:
                             fresh = _read_config()
                             cfg["blocked_pubkeys"] = fresh["blocked_pubkeys"]
+                            cfg["trusted_bridge_domains"] = fresh.get("trusted_bridge_domains") or set()
                             # Firehose callbacks and active sync/backfill passes retain these sets.
                             # Mutate them in place so a live edit reaches every ingestion path,
                             # including clear-all, without restarting or deleting stored events.

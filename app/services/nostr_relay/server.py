@@ -681,6 +681,28 @@ def _client_family(headers) -> str:
     return "origin=%s ua=%s" % (origin, fam)
 
 
+# A TRUSTED BRIDGE (Admin -> Nostr Relay -> Trusted bridge domains; 2026-10-28, glowers.club's Matrix bridge): an
+# account outside the web of trust may publish when its profile's NIP-05 is name@<a trusted domain> AND that domain's
+# nostr.json answers with this key. The profile's claim is never proof alone. Cached per key: a yes for a day, a no for
+# an hour (an unreachable domain is a no), so a bridge revoking somebody takes effect.
+_BRIDGE_OK_FOR = 86400
+_BRIDGE_NO_FOR = 3600
+
+
+async def _nip05_lookup(domain: str, name: str):
+    """The pubkey `domain` says `name` is, or None (no such name, or the domain could not be asked)."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False, trust_env=False) as c:
+            r = await c.get(f"https://{domain}/.well-known/nostr.json", params={"name": name})
+        if r.status_code != 200:
+            return None
+        pk = ((r.json() or {}).get("names") or {}).get(name)
+        return pk.lower() if isinstance(pk, str) and re.fullmatch(r"[0-9a-fA-F]{64}", pk) else None
+    except Exception:
+        return None
+
+
 def _note_confined_refusal(conn, typ, msg) -> None:
     """Tally what a confined socket asked for that it was refused: message type + kinds, never content."""
     try:
@@ -1980,6 +2002,36 @@ class RelayServer:
                 return True
         return False
 
+    async def _trusted_bridge_author(self, ev) -> bool:
+        """True when a trusted bridge domain vouches (NIP-05) for this event's author -- see _nip05_lookup."""
+        domains = self.cfg.get("trusted_bridge_domains") or ()
+        pk = ev.get("pubkey", "")
+        if not domains or not pk:
+            return False
+        cache = self.__dict__.setdefault("_bridge_vouched", {})
+        hit = cache.get(pk)
+        if hit and hit[1] > time.monotonic() and hit[2] in domains:   # a domain taken off the list stops vouching
+            return hit[0]
+        prof = ev if ev.get("kind") == 0 else None
+        if prof is None:
+            try:
+                found = await self.store.query([{"kinds": [0], "authors": [pk], "limit": 1}])
+                prof = found[0] if found else None
+            except Exception:
+                prof = None
+        try:
+            nip05 = str((json.loads(prof.get("content") or "{}") or {}).get("nip05") or "") if prof else ""
+        except (ValueError, TypeError, AttributeError):
+            nip05 = ""
+        name, _, domain = nip05.strip().lower().rpartition("@")
+        if not name or domain not in domains:
+            return False                         # not a claim we would check: no lookup, nothing cached
+        ok = (await _nip05_lookup(domain, name)) == pk
+        cache[pk] = (ok, time.monotonic() + (_BRIDGE_OK_FOR if ok else _BRIDGE_NO_FOR), domain)
+        if len(cache) > 20000:
+            cache.clear()
+        return ok
+
     async def _collab_for_known_repo(self, ev) -> bool:
         """True if a NIP-34 git collaboration event (patch/issue/reply/status) a-tags a repo whose PUBLIC
         30617 announcement is on THIS relay. Scopes issue/patch acceptance to KNOWN public repos (private
@@ -2347,7 +2399,8 @@ class RelayServer:
                 self._refuse(conn, eid, ev, "blocked: comment on an unknown repo's issue")
                 return
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")) and not (
-                kind in _GIT_TAGGING_KINDS and await self._tags_known_git_event(ev)):
+                kind in _GIT_TAGGING_KINDS and await self._tags_known_git_event(ev)) \
+                and not await self._trusted_bridge_author(ev):
             # (A reaction, label, deletion or repost of an accepted issue/patch/PR is GRASP-01's
             # "other events that tag accepted git events" — accepted from anyone. A deletion still only
             # removes its own author's event; the store applies NIP-09 as for any other kind-5.)

@@ -23,6 +23,7 @@ LISTS = {
     "nostr_dvm_peers": "peer",
     "nostr_relay_blocked_words": "word",
     "nostr_relay_blocked_relays": "domain",
+    "nostr_relay_trusted_bridge_domains": "domain",
     "nostr_relay_nip05_relays": "relay",
     "nostr_relay_upstream_relays": "relay",
     "nostr_relay_private_relays": "relay",
