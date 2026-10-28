@@ -80,3 +80,27 @@ def test_an_apk_without_the_plugin_shows_no_restart_row():
 
     asyncio.run(desktop.with_browser("online", "", check, native(with_report=False)))
     assert got["row"] is False, got
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_row_says_how_busy_the_main_thread_was():
+    """A tablet: "social took about 20 s, same for messages" -- and the report could not say whether those seconds were
+    the CPU or the network. Three 300 ms tasks block the page; the row and the copy must count them."""
+    got = {}
+
+    async def check(b):
+        # Real page tasks (a DevTools evaluate is not one): three 300 ms timers.
+        await b.js("for(let i=0;i<3;i++)setTimeout(()=>{const t=performance.now();while(performance.now()-t<300){}},200*i+50);1")
+        await asyncio.sleep(2)
+        await _phone_pane(b)
+        await b.until("/main thread busy/.test((document.querySelector('#us-health-sum')||{}).textContent||'')")
+        got["sum"] = await b.js("document.querySelector('#us-health-sum').textContent")
+        await b.js("document.querySelector('#us-health-copy').click()")
+        await b.until("__copied.length>0")
+        got["copied"] = json.loads(await b.js("__copied[__copied.length-1]||'{}'"))
+
+    asyncio.run(desktop.with_browser("online", "", check, native()))
+    busy = got["copied"]["page"]["busy"]
+    assert busy["longTasks2m"] >= 3 and busy["busyMs2m"] >= 850 and busy["longestMs"] >= 290, got
+    assert "main thread busy" in got["sum"], got
+    assert "status" in got["copied"]["page"]["relay"], got

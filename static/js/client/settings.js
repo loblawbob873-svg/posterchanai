@@ -139,6 +139,8 @@ window.PCSettingsFactory = function(dep){
       if(bad.length>1) bits.push(bad.length+' unexpected ends recorded');
     }
     if(m.totalMb) bits.push('device memory '+m.availMb+' / '+m.totalMb+' MB free'+(m.lowMemory?' (LOW)':''));
+    const b=r&&r.page&&r.page.busy;
+    if(b) bits.push('main thread busy '+(b.busyMs2m/1000).toFixed(1)+' s in the last 2 min ('+b.longTasks2m+' long tasks, longest '+b.longestMs+' ms)');
     if(m.appPssMb) bits.push('app now '+m.appPssMb+' MB');
     if(r&&r.rendererDeaths) bits.push(r.rendererDeaths+' display recoveries this session');
     return bits.join(' · ');
@@ -1471,6 +1473,8 @@ window.PCSettingsFactory = function(dep){
           const page=()=>{ const o={nodes:document.getElementsByTagName('*').length};
             try{ const pm=performance.memory; if(pm) o.jsHeapMb=Math.round(pm.usedJSHeapSize/1048576); }catch(_){}
             try{ if(window.PCOS&&PCOS.parkStats) o.windows=PCOS.parkStats(); }catch(_){}
+            try{ if(window.PCBusyReport) o.busy=PCBusyReport(); }catch(_){}
+            try{ const R=window.Relay; if(R) o.relay={status:R.status, sockets:R._conns?R._conns.size:-1, asleep:!!(R.asleep&&R.asleep())}; }catch(_){}
             return o; };
           let rep=null;
           const read=()=>Promise.resolve(H.report()).then(r=>{ rep={...(r||{}),page:page()};

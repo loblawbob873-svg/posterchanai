@@ -1584,6 +1584,14 @@ window.PCTimelineFactory = function(dep){
           return (k ? 'card ' + String(k.dataset.key).slice(0, 10) : (n && (n.id || n.className || n.nodeName)) || '?') + ' ' +
             Math.round(s.previousRect.top) + '→' + Math.round(s.currentRect.top); }) }); })
     .observe({ type:'layout-shift', buffered:false }); }catch(_){ }
+  // Long tasks of the last 2 min, always on, for Restarts & memory: CPU or network? (tablet "social ~20 s", 2026-10-28)
+  const busy = [];
+  try{ new window.PerformanceObserver(list => { const now = Date.now();
+      for(const e of list.getEntries()) busy.push([now, Math.round(e.duration)]);
+      while(busy.length && (now - busy[0][0] > 120000 || busy.length > 3000)) busy.shift(); })
+    .observe({ type:'longtask', buffered:false }); }catch(_){ }
+  window.PCBusyReport = () => { const now = Date.now(), b = busy.filter(x => now - x[0] <= 120000);
+    return { longTasks2m: b.length, busyMs2m: b.reduce((s, x) => s + x[1], 0), longestMs: b.reduce((m, x) => Math.max(m, x[1]), 0) }; };
   document.addEventListener('touchstart', attach, { capture:true, passive:true });
   window.PCScrollReport = () => ({ v: 2, ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
     zoom: getComputedStyle(document.body).zoom || '', desktop: document.body.classList.contains('os-on'),
