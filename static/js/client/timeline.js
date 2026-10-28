@@ -1590,8 +1590,8 @@ window.PCTimelineFactory = function(dep){
       for(const e of list.getEntries()) busy.push([now, Math.round(e.duration)]);
       while(busy.length && (now - busy[0][0] > 120000 || busy.length > 3000)) busy.shift(); })
     .observe({ type:'longtask', buffered:false }); }catch(_){ }
-  window.PCBusyReport = () => { const now = Date.now(), b = busy.filter(x => now - x[0] <= 120000);
-    return { longTasks2m: b.length, busyMs2m: b.reduce((s, x) => s + x[1], 0), longestMs: b.reduce((m, x) => Math.max(m, x[1]), 0) }; };
+  const busyOf = b => ({ longTasks2m: b.length, busyMs2m: b.reduce((s, x) => s + x[1], 0), longestMs: b.reduce((m, x) => Math.max(m, x[1]), 0) });
+  window.PCBusyReport = () => busyOf(busy.filter(x => Date.now() - x[0] <= 120000));
   document.addEventListener('touchstart', attach, { capture:true, passive:true });
   window.PCScrollReport = () => ({ v: 2, ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio,
     zoom: getComputedStyle(document.body).zoom || '', desktop: document.body.classList.contains('os-on'),
