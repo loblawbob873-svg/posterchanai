@@ -572,6 +572,26 @@ def _wait_proxy_listener(process: subprocess.Popen, host: str, port: int,
     raise RuntimeError(f"HTTP proxy did not listen on {connect_host}:{port}: {last_error}")
 
 
+def socks_backends(ss=None) -> list:
+    """The Tor daemons' SOCKS ports, IN ORDER -- Tor 1, Tor 2, then the pool -- as (port, exit label).
+
+    ONE list for the proxy's backends and for every caller that walks the Tors itself (Concord's tunnel and mirror,
+    concord_tunnel.egress_hops), so the two can never disagree about which daemons exist or which comes first."""
+    if ss is None:
+        from app.services import settings_store as ss
+    l1 = ((ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
+    out = [(ss.get_int("proxy_socks_port", 9052), l1)]
+    tor_default = os.environ.get("POSTERCHANAI_TOR_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    tor2_default = os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    if ss.get_bool("tor_enabled", tor_default) and ss.get_bool("tor2_enabled", tor2_default):
+        l2 = ((ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
+        out.append((ss.get_int("tor2_socks_port", 9062), l2))
+    if ss.get_bool("tor_enabled", tor_default):
+        from app.services.tor_service import pool_plan
+        out += [(d["socks"], d["label"]) for d in pool_plan(ss)]
+    return out
+
+
 def start_http_proxy_process(
     listen_host: str = "127.0.0.1",
     listen_port: int = 8118,
@@ -715,18 +735,7 @@ def start_from_settings() -> bool:
     # keeps torrent traffic from ever leaking the real IP. Each backend is labelled with its exit
     # region so the proxy log says which daemon served/failed a request. Only LB onto the 2nd port
     # when this deployment actually runs it, else it is a dead port.
-    _l1 = ((_ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
-    _socks_ports = [f"{_ss.get_int('proxy_socks_port', 9052)}:{_l1}"]
-    _tor_default = os.environ.get("POSTERCHANAI_TOR_ENABLED", "true").strip().lower() \
-        in ("1", "true", "yes", "on")
-    _tor2_default = os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true").strip().lower() \
-        in ("1", "true", "yes", "on")
-    if _ss.get_bool("tor_enabled", _tor_default) and _ss.get_bool("tor2_enabled", _tor2_default):
-        _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
-        _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
-    if _ss.get_bool("tor_enabled", _tor_default):
-        from app.services.tor_service import pool_plan
-        _socks_ports += [f"{d['socks']}:{d['label']}" for d in pool_plan(_ss)]
+    _socks_ports = [f"{port}:{label}" for port, label in socks_backends(_ss)]
     # Second listener: Tor1 → Tor2 → DIRECT. This is what the node's own SearXNG points at, so a
     # search rides Tor when Tor is up and still works when it isn't — SearXNG has no fallback of its
     # own, so without this a Tor outage turns every search (AI web lookups, news, the bots, the Web

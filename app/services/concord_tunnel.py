@@ -42,10 +42,19 @@ OPEN_TIMEOUT = 20
 # The client gives a control-history read 10 s and a send 5 s, so a 20 s Tor attempt in front of the direct hop
 # meant NO answer ever arrived in time: the room had no control events, its channels did not exist, and every
 # send failed with "this channel is no longer available with your current community membership" -- to the
-# community's own owner. A host Tor failed for is remembered for TOR_BAD_FOR seconds and dialled direct first.
+# community's own owner.
+#
+# TOR 1, TOR 2, ... THEN DIRECT -- EACH A WHOLE HANDSHAKE, AND NOTHING SKIPS AHEAD TO DIRECT (2026-10-27: "make sure our
+# concord uses the http proxy correctly! tor1 tor2 then default"). The proxy listener only fails over on a CONNECT
+# error, so a relay that timed out or refused over one exit went straight to this node's own address; and a host that
+# had failed over Tor once was then dialled DIRECT FIRST for half an hour. jskitty.com and asia.vectorapp.io answered
+# hundreds of those an hour from this IP and now 403 it with any User-Agent -- while jskitty answers every Tor exit and
+# asia.vectorapp.io answers one of four. So every Tor daemon the proxy runs is tried in the proxy's own order
+# (http_proxy_service.socks_backends), DNS through Tor too (socks5h); the circuit that last worked for a host goes
+# FIRST for GOOD_FOR seconds (an order among Tor circuits, never a shortcut to direct); direct is the last hop only.
 TOR_OPEN_TIMEOUT = 6
-TOR_BAD_FOR = 1800
-_tor_bad: dict[str, float] = {}
+GOOD_FOR = 1800
+_good: dict[str, tuple[str, float]] = {}
 
 _open: dict[str, int] = {}
 _total = 0
@@ -155,23 +164,39 @@ def _host(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
 
-def hops(url: str, proxy: str) -> tuple:
-    """The order to try: Tor first, unless Tor failed for this host lately -- then direct first."""
-    if _tor_bad.get(_host(url), 0) > time.monotonic():
-        return (None, proxy)
-    return (proxy, None)
+def tor_hops() -> list:
+    """socks5h URLs of this node's Tor daemons, in the proxy's order; [] when it runs none (or cannot say)."""
+    try:
+        from app.services.http_proxy_service import socks_backends
+        return [f"socks5h://127.0.0.1:{int(port)}" for port, _label in socks_backends()]
+    except Exception:
+        return []
 
 
-def tor_result(url: str, ok: bool) -> None:
+def egress_hops(url: str, tors=None) -> list:
+    """The order to dial `url`: every Tor daemon (the one that last worked for this host first), then direct (None).
+    `tors` is the relay process's list (from its config); None reads this process's settings."""
+    tors = list(tor_hops() if tors is None else tors)
+    good = _good.get(_host(url))
+    if good and good[1] > time.monotonic() and good[0] in tors:
+        tors.remove(good[0])
+        tors.insert(0, good[0])
+    return tors + [None]
+
+
+def hop_result(url: str, hop: str | None, ok: bool) -> None:
+    """Remember the Tor circuit that reached `url`'s host; forget it when it stops working."""
+    if not hop:
+        return
     host = _host(url)
     if ok:
-        _tor_bad.pop(host, None)
-    else:
-        _tor_bad[host] = time.monotonic() + TOR_BAD_FOR
-        if len(_tor_bad) > 4096:                     # bounded: drop what has expired
+        _good[host] = (hop, time.monotonic() + GOOD_FOR)
+        if len(_good) > 4096:                        # bounded: drop what has expired
             now = time.monotonic()
-            for h in [h for h, t in _tor_bad.items() if t <= now]:
-                _tor_bad.pop(h, None)
+            for h in [h for h, (_, t) in _good.items() if t <= now]:
+                _good.pop(h, None)
+    elif _good.get(host, ("",))[0] == hop:
+        _good.pop(host, None)
 
 
 def open_timeout(proxy: str | None) -> float:

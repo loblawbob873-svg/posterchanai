@@ -793,22 +793,23 @@ def test_a_reader_that_covers_the_refused_relay_gets_this_nodes_copy_and_is_told
     run(go())
 
 
-def test_the_mirror_reaches_a_relay_tor_times_out_on(monkeypatch):
-    """Measured 2026-10-14: asia.vectorapp.io (a CORD relay) timed out over Tor 2 times in 3 and answered direct in
-    ~1 s; the mirror was Tor-only and held NO link to it, so every room hosted there was read past it. The mirror
-    now dials Tor first with a short timeout, then direct, and goes direct first for a host Tor failed for."""
+def test_the_mirror_walks_every_tor_then_direct(monkeypatch):
+    """"tor1 tor2 then default" (2026-10-27): the mirror dials each Tor daemon in the proxy's order, then direct, and
+    the circuit that worked goes first next time -- never direct first (asia.vectorapp.io answers ONE of four exits,
+    and the old direct-first memory sent this node's own address to a relay that now 403s it)."""
     import websockets
     from app.services import concord_tunnel as tun
     from app.services.nostr_relay import concord_mirror as cm
-    monkeypatch.setattr(tun, "_tor_bad", {})
-    seen = []
+    T1, T2 = "socks5h://127.0.0.1:9052", "socks5h://127.0.0.1:9062"
+    monkeypatch.setattr(tun, "_good", {})
+    seen, works = [], {T2}
 
     class _CM:
         def __init__(self, proxy):
             self.proxy = proxy
 
         async def __aenter__(self):
-            if self.proxy:
+            if self.proxy not in works:
                 raise TimeoutError("timed out during opening handshake")
             return "socket"
 
@@ -821,16 +822,19 @@ def test_the_mirror_reaches_a_relay_tor_times_out_on(monkeypatch):
     monkeypatch.setattr(websockets, "connect", connect)
     m = cm.ConcordMirror.__new__(cm.ConcordMirror)
     m._open_override = None
-    m.cfg = {"concord_mirror_proxy": "http://127.0.0.1:8119"}
+    m.cfg = {"concord_mirror_proxy": "http://127.0.0.1:8119", "concord_mirror_tor": [T1, T2]}   # as thread.py builds it
 
     async def go():
-        async with m._open("wss://asia.vectorapp.io/nostr") as ws:
-            assert ws == "socket"
-        async with m._open("wss://asia.vectorapp.io/nostr") as ws:
-            assert ws == "socket"
+        for _ in range(2):
+            async with m._open("wss://asia.vectorapp.io/nostr") as ws:
+                assert ws == "socket"
     asyncio.run(go())
-    assert seen == [("http://127.0.0.1:8119", tun.TOR_OPEN_TIMEOUT), (None, tun.OPEN_TIMEOUT),
-                    (None, tun.OPEN_TIMEOUT)], seen
+    assert seen == [(T1, tun.TOR_OPEN_TIMEOUT), (T2, tun.TOR_OPEN_TIMEOUT), (T2, tun.TOR_OPEN_TIMEOUT)], seen
+    # Only when no Tor circuit answers does the mirror dial this node's own address -- last.
+    seen.clear(); works.clear(); works.add(None)
+    asyncio.run(go())
+    assert [p for p, _ in seen][:3] == [T2, T1, None], seen   # Tor 2 had worked: it leads, then Tor 1, then direct
+
 
 
 
@@ -1010,3 +1014,15 @@ def test_a_stream_this_node_stopped_mirroring_is_unavailable_not_an_empty_room()
             await node.close()
             await up.close()
     run(go())
+
+
+def test_the_relay_hands_the_mirror_the_proxys_tor_list(monkeypatch):
+    """The mirror runs in the relay process: its Tor list comes through the config the relay thread builds, from the
+    same socks_backends() the proxy's backends are built from."""
+    from app.services.nostr_relay import thread
+    from app.services import http_proxy_service as hp
+    monkeypatch.setattr(hp, "socks_backends", lambda ss=None: [(9052, "us"), (9062, "ca")])
+    assert thread._concord_tor_hops() == ["socks5h://127.0.0.1:9052", "socks5h://127.0.0.1:9062"]
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app/services/nostr_relay/thread.py").read_text()
+    assert '"concord_mirror_tor": _concord_tor_hops()' in src

@@ -484,6 +484,8 @@ def _read_config() -> dict:
             # socket): with the proxy off there is no URL here and the mirror refuses every registration.
             "concord_mirror": gb("nostr_relay_concord_mirror", True),
             "concord_mirror_proxy": _fallback_proxy_url(g, gi, gb),
+            # ...and the Tor daemons behind it, walked one by one before direct (concord_tunnel.egress_hops).
+            "concord_mirror_tor": _concord_tor_hops() if _fallback_proxy_url(g, gi, gb) else [],
             "nip05_domain": g("nostr_relay_nip05_domain", ""),
             # New-post limits (spamguard.py), every route into the timeline. 0 = off.
             "posts_per_min": tun["nostr_relay_posts_per_min"],
@@ -545,6 +547,15 @@ def _read_config() -> dict:
         return cfg
     finally:
         db.close()
+
+
+def _concord_tor_hops() -> list:
+    """The proxy's Tor daemons as socks5h URLs, in its order (concord_tunnel.tor_hops); [] when unknown."""
+    try:
+        from app.services.concord_tunnel import tor_hops
+        return tor_hops()
+    except Exception:
+        return []
 
 
 def _fallback_proxy_url(g, gi, gb) -> str:

@@ -14,12 +14,17 @@ from app.services import concord_tunnel as tun
 PK = "ab" * 32
 
 
+TOR1, TOR2 = "socks5h://127.0.0.1:9052", "socks5h://127.0.0.1:9062"
+TORS = (TOR1, TOR2)
+
+
 @pytest.fixture(autouse=True)
 def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_key", lambda: b"k" * 32)
     monkeypatch.setattr(tun, "_open", {})
     monkeypatch.setattr(tun, "_total", 0)
-    monkeypatch.setattr(tun, "_tor_bad", {})
+    monkeypatch.setattr(tun, "_good", {})
+    monkeypatch.setattr(tun, "tor_hops", lambda: list(TORS))
 
 
 def test_a_ticket_names_its_member_and_expires():
@@ -94,7 +99,7 @@ def test_frames_pass_both_ways_through_the_fallback_proxy(client):
     with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={t}") as ws:
         ws.send_text('["REQ","x",{"kinds":[1059]}]')
         assert "echo:" in ws.receive_text()
-    assert client.seen == [("wss://jskitty.com/nostr", "http://127.0.0.1:8119")], "not dialled through the proxy"
+    assert client.seen == [("wss://jskitty.com/nostr", TOR1)], "not dialled through Tor 1 first"
     assert tun._open == {} and tun._total == 0, "a closed tunnel was not released"
 
 
@@ -143,16 +148,11 @@ def test_no_proxy_means_no_tunnel(client, monkeypatch):
     assert client.seen == [], "the server dialled a relay directly, without the proxy"
 
 
-def test_a_relay_that_refuses_tor_is_reached_on_the_direct_hop(client, monkeypatch):
-    """Measured 2026-10-13 after deploy 217: through the fallback proxy relay.damus.io answered HTTP 503 (it refuses
-    Tor exits) and asia.vectorapp.io -- one of the four CORD relays -- timed out, while both answered DIRECT. The
-    proxy's own Tor -> Tor -> direct chain falls back only on a CONNECT error, never on a refusal after it, so the
-    tunnel takes that last hop itself."""
-    seen = []
-
+def _dialer(seen, works):
+    """connect() that records each hop and succeeds only on the hops in `works`."""
     def connect(url, proxy):
         seen.append(proxy)
-        if proxy:
+        if proxy not in works:
             class Refused:
                 async def __aenter__(self):
                     raise TimeoutError("timed out during opening handshake")
@@ -161,12 +161,59 @@ def test_a_relay_that_refuses_tor_is_reached_on_the_direct_hop(client, monkeypat
                     return False
             return Refused()
         return _Upstream()
-    monkeypatch.setattr(tun, "connect", connect)
-    with client.websocket_connect(f"/ws/concord-relay?u=wss://asia.vectorapp.io/nostr&t={tun.issue(PK)}") as ws:
+    return connect
+
+
+def _open_one(client, url):
+    with client.websocket_connect(f"/ws/concord-relay?u={url}&t={tun.issue(PK)}") as ws:
         ws.send_text('["REQ","x",{}]')
         assert "echo:" in ws.receive_text()
-    assert seen == ["http://127.0.0.1:8119", None], seen
+
+
+def test_tor1_then_tor2_then_direct(client, monkeypatch):
+    """"make sure our concord uses the http proxy correctly! tor1 tor2 then default" (2026-10-27). The proxy listener
+    fails over only on a CONNECT error, so a relay that timed out over one exit went straight to this node's own
+    address; jskitty.com and asia.vectorapp.io then 403'd this IP with any User-Agent. Every Tor daemon is a whole
+    handshake attempt, in the proxy's order; direct only after all of them."""
+    seen = []
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {None}))
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    assert seen == [TOR1, TOR2, None], seen
     assert tun._open == {} and tun._total == 0
+
+
+def test_a_tor1_failure_goes_to_tor2_never_to_direct(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {TOR2, None}))
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    assert seen == [TOR1, TOR2], ("direct was dialled while a Tor circuit still worked", seen)
+
+
+def test_the_circuit_that_worked_goes_first_and_direct_never_does(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {TOR2, None}))
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    assert seen == [TOR1, TOR2, TOR2], seen
+    # A host that only answered DIRECT is still tried over Tor first the next time.
+    seen.clear()
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {None}))
+    _open_one(client, "wss://relay.damus.io")
+    _open_one(client, "wss://relay.damus.io")
+    assert seen == [TOR1, TOR2, None, TOR1, TOR2, None], ("a host was dialled direct first", seen)
+    # ...and a circuit that stops working loses its place.
+    seen.clear()
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {TOR1}))
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    assert seen == [TOR2, TOR1], seen
+
+
+def test_the_tor_list_is_the_proxys_own(monkeypatch):
+    from app.services import http_proxy_service as hp
+    monkeypatch.undo()
+    monkeypatch.setattr(hp, "socks_backends", lambda ss=None: [(9052, "us"), (9062, "ca"), (9072, "us3")])
+    assert tun.tor_hops() == ["socks5h://127.0.0.1:9052", "socks5h://127.0.0.1:9062", "socks5h://127.0.0.1:9072"]
+    assert tun.egress_hops("wss://jskitty.com/nostr")[-1] is None
 
 
 def test_the_handshake_does_not_wait_for_the_far_relay(client, monkeypatch):
@@ -206,36 +253,8 @@ def test_a_far_relay_nobody_can_reach_closes_the_open_tunnel(client, monkeypatch
 
 
 def test_tor_gets_seconds_not_the_clients_whole_budget():
-    """Measured 2026-10-14: asia.vectorapp.io timed out over Tor at the full 20 s, 2 times in 3, while it answered
-    direct in ~1 s. The client gives a control read 10 s and a send 5 s, so Tor-then-direct at 20 s meant the
-    room's channels never arrived and the OWNER got "this channel is no longer available with your current
-    community membership". A healthy Tor dial opens in 3-5 s."""
-    assert tun.open_timeout("http://127.0.0.1:8119") + 1 + 2 < 10, "Tor (+1 s grace) + a ~1-2 s direct hop must fit in a 10 s read"
+    """Measured 2026-10-14: a Tor attempt at the full 20 s outlived the client's 10 s control read. A healthy Tor dial
+    opens in 2-5 s (asia.vectorapp.io's one working circuit: 4.0 s, 2026-10-27), and the circuit that worked is tried
+    first next time, so a remembered host fits the read."""
+    assert tun.open_timeout(TOR1) + 1 < 10
     assert tun.open_timeout(None) == tun.OPEN_TIMEOUT
-
-
-def test_a_host_tor_failed_for_is_dialled_direct_first_next_time(client, monkeypatch):
-    seen = []
-
-    def connect(url, proxy):
-        seen.append(proxy)
-        if proxy:
-            class Refused:
-                async def __aenter__(self):
-                    raise TimeoutError("timed out during opening handshake")
-
-                async def __aexit__(self, *a):
-                    return False
-            return Refused()
-        return _Upstream()
-    monkeypatch.setattr(tun, "connect", connect)
-    for _ in range(2):
-        with client.websocket_connect(f"/ws/concord-relay?u=wss://asia.vectorapp.io/nostr&t={tun.issue(PK)}") as ws:
-            ws.send_text('["REQ","x",{}]')
-            assert "echo:" in ws.receive_text()
-    assert seen == ["http://127.0.0.1:8119", None, None], seen
-    # ...and only that host: another relay still goes through Tor first.
-    with client.websocket_connect(f"/ws/concord-relay?u=wss://jskitty.com/nostr&t={tun.issue(PK)}") as ws:
-        ws.send_text('["REQ","x",{}]')
-        assert "echo:" in ws.receive_text()
-    assert seen[-2] == "http://127.0.0.1:8119", seen

@@ -71,7 +71,7 @@ def test_the_concord_tunnel_and_mirror_paths_read_such_a_relay():
         ws = await cm.__aenter__()
         await ws.send("tunnel"); a = await ws.recv(); await cm.__aexit__(None, None, None)
         peer_ua._refused.clear()
-        concord_tunnel._tor_bad.clear()
+        concord_tunnel._good.clear()
         async with concord_mirror._TorThenDirect(url, "") as ws:        # what this node's mirror opens (direct hop)
             await ws.send("mirror"); b = await ws.recv()
         return a, b

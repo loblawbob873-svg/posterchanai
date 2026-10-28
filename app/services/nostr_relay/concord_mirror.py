@@ -178,27 +178,29 @@ def normalize_relay(url: str) -> str:
 
 
 class _TorThenDirect:
-    """`async with` a websocket: through `proxy` first, then direct -- concord_tunnel's hop order and memory."""
+    """`async with` a websocket: every Tor daemon in the proxy's order, then direct -- concord_tunnel's order."""
 
-    def __init__(self, url: str, proxy: str):
-        self.url, self.proxy, self._cm = url, proxy, None
+    def __init__(self, url: str, proxy: str, tors=None):
+        self.url, self.proxy, self.tors, self._cm = url, proxy, tors, None
 
     async def __aenter__(self):
         from app.services import concord_tunnel as tun
         from app.services.nostr import peer_ua   # PosterChan/Server, dropped for a relay that refuses it (jskitty: 403)
         last = None
-        for hop in tun.hops(self.url, self.proxy):
+        # Tor 1, Tor 2, ... then direct: the tunnel's order and memory (concord_tunnel.egress_hops). With no proxy
+        # configured this node dials direct, as before.
+        # `tors`: this node's Tor daemons from the relay's config; without that list, the fallback proxy listener.
+        hops = tun.egress_hops(self.url, self.tors or [self.proxy]) if self.proxy else [None]
+        for hop in hops:
             cm = peer_ua.connect(self.url, proxy=hop or None, open_timeout=tun.open_timeout(hop),
                                  max_size=4 * 1024 * 1024, ping_interval=None)
             try:
                 ws = await cm.__aenter__()
             except Exception as e:
-                if hop:
-                    tun.tor_result(self.url, False)
+                tun.hop_result(self.url, hop, False)
                 last = e
                 continue
-            if hop:
-                tun.tor_result(self.url, True)
+            tun.hop_result(self.url, hop, True)
             self._cm = cm
             return ws
         raise last or ConnectionError("unreachable")
@@ -532,20 +534,17 @@ class ConcordMirror:
         return str(self.cfg.get("concord_mirror_proxy") or "")
 
     def _open(self, url: str):
-        """A websocket to `url` through the FALLBACK proxy (Tor 1 → Tor 2 → direct), then DIRECT.
+        """A websocket to `url`: each of this node's Tor daemons in the proxy's order, then DIRECT, last.
 
-        The proxy's own chain falls back only on a CONNECT error, never on a Tor dial that TIMES OUT. Measured
-        2026-10-14: asia.vectorapp.io -- a CORD relay -- timed out over Tor 2 times in 3 and answered direct in
-        ~1 s, and this mirror, "never direct", held no link to it at all; every room hosted there was read
-        through the tunnel instead, which made the same 20 s Tor attempt in front of the client's 10 s read.
-        The same rule as the tunnel (concord_tunnel.hops): Tor first with a short timeout, a host Tor failed
-        for goes direct first for a while. Still no mirror at all without a proxy (the operator's opt-in)."""
+        The proxy's own chain falls back only on a CONNECT error, never on a Tor dial that TIMES OUT or is refused,
+        so each Tor daemon is a whole handshake here (concord_tunnel.egress_hops, "tor1 tor2 then default",
+        2026-10-27). Still no mirror at all without a proxy (the operator's opt-in)."""
         if self._open_override is not None:
             return self._open_override(url)
         proxy = self._proxy()
         if not proxy:
             raise Unavailable("no outbound proxy configured")
-        return _TorThenDirect(url, proxy)
+        return _TorThenDirect(url, proxy, self.cfg.get("concord_mirror_tor") or None)
 
     # -- lifecycle --------------------------------------------------------------------------------------
     async def start(self) -> None:
