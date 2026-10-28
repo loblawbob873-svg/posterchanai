@@ -331,6 +331,10 @@ window.PCDmThreadFactory = function(dep){
     { const g=$('#dm-gif'); if(g) g.onclick=dmPickGif(inp); }
     let _dmSending=false;
     const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
+      /* FOCUS STAYS IN THE CONVERSATION ("I pressed enter after sending DM and the convo closed", twice, 2026-10-28):
+       * the send button is disabled while it sends, which throws focus to <body>, and the pane re-render replaces the
+       * box -- so the next Enter went to the page's keys instead of the message box. Put it back on the LIVE box. */
+      const typing=document.activeElement===inp||document.activeElement===$('#dm-send');
       /* SIGNING IS REMOTE for PosterChan Signer logins and may take seconds. Show that fact on the
        * very first frame; an unchanged icon made a healthy signer round-trip indistinguishable from
        * a dead click, so people pressed Send repeatedly and waited with no idea what was happening. */
@@ -360,9 +364,12 @@ window.PCDmThreadFactory = function(dep){
       finally{ _dmSending=false;
         if(busyBtn && busyBtn.isConnected){ busyBtn.disabled=false; busyBtn.classList.remove('busy'); busyBtn.title='Send'; busyBtn.setAttribute('aria-label','Send'); }
         if(busyState && busyState.isConnected) busyState.textContent='';
+        const live=document.getElementById('dm-in'), a=document.activeElement;
+        if(typing && live && (!a || a===document.body || a===busyBtn || !a.isConnected)) live.focus();
       } };
     attachEmojiAutocomplete($('#dm-in'));   // `:shortcode` suggestions in DMs too (the rumor carries the tags)
-    $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
+    $('#dm-send').onclick=send; $('#dm-send').onmousedown=e=>e.preventDefault();   // pressing Send leaves focus in the box
+    $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     // One row that GROWS to a cap (messenger behaviour), and a send button that only lights up when
     // there's something to send. The old box was a fixed 2 rows with a resize handle, which ate the
     // thread on a phone and never fit a long message.
