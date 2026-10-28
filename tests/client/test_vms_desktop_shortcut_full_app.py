@@ -85,3 +85,31 @@ def test_the_start_menu_and_desktop_icon_open_virtual_machines_once_with_this_co
         assert not await b.js('__errors'), await b.js('__errors')
 
     asyncio.run(desktop.with_browser('online', '', check, LOCAL_MACHINE))
+
+
+# The signer worker takes its time with the saved key (a loaded machine): the session restore is slow.
+SLOW_RESTORE = r'''
+(()=>{const post=Worker.prototype.postMessage;Worker.prototype.postMessage=function(m,...r){
+  if(m&&m.op==='setKey'&&sessionStorage.getItem('__slowKey')){const w=this;setTimeout(()=>post.call(w,m,...r),2500);return;}
+  return post.call(this,m,...r);};})();
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_virtual_machines_opened_before_the_session_is_restored_shows_the_machines_once_it_is():
+    """The gate's flaky failure, reproduced 2 in 8 under load: the window opened and said "Sign in to manage virtual
+    machines." to a signed-in person -- the icon was clicked while the saved session was still being restored, and
+    nothing repainted the screen when it landed."""
+    async def check(b):
+        await desktop.login(b)
+        origin = await b.js('location.origin')
+        await b.js("sessionStorage.setItem('__slowKey','1')")
+        await b.call('Page.navigate', {'url': origin + '/index.html'})
+        await b.until("!!document.querySelector('#os-root .os-icons .os-icon[data-view=\"vms\"]')")
+        signed = await b.js("!!(__PC.me&&__PC.me())")
+        await b.js("document.querySelector('#os-root .os-icons .os-icon[data-view=\"vms\"]').click()")
+        await b.until(WINDOWS + "===1 && !!document.querySelector('.vms-host[data-host=\"local\"]')")
+        assert not signed, 'the restore was not slow: this test no longer opens the screen before it lands'
+        assert not await b.js("/Sign in to manage/.test(document.body.innerText)")
+
+    asyncio.run(desktop.with_browser('online', '', check, LOCAL_MACHINE + SLOW_RESTORE))

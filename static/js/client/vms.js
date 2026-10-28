@@ -2161,8 +2161,13 @@ html.pc-oswin .vmc{top:38px}
     if(!pk){
       const feed = document.querySelector('#feed');
       if(feed) feed.innerHTML = '<div class="empty">Sign in to manage virtual machines.</div>';
+      // Opened while the saved session is still being restored (a desktop icon right after start): nothing else
+      // repaints this window when it lands, so look again for a while.
+      S.signWait = (S.signWait || 0) + 1;
+      if(S.signWait <= 80) setTimeout(() => { if(PC.isView && PC.isView('vms')) render(); }, 250);
       return;
     }
+    S.signWait = 0;
     const inst = instanceHost();
     if(inst) mergeHosts([inst], 'instance');
     if(hasLocal() && !hostOf(LOCAL_PK)) S.hosts.unshift({ pubkey: LOCAL_PK, relay: '', name: 'This computer', source: 'local' });
