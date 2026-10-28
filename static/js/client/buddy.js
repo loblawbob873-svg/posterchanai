@@ -36,7 +36,7 @@
   };
   const who = () => pref().who;
   const SRC = (i, w) => '/static/mascot/' + CHARS[w || who()].dir + '/dance-' + i + '.webp';
-  let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0, nativeUp = false, wired = false;
+  let el = null, desk = null, opts = {}, timer = 0, frame = 1, loaded = false, drag = null, pressT = 0, passT = 0, nativeUp = false, wired = false;
   /* PosterChanOS with real app windows: her own always-on-top window draws her. */
   const native = () => { try{ return !!(window.pcBuddy && window.PCOSWin && PCOSWin.enabled()); }catch(_){ return false; } };
 
@@ -231,7 +231,8 @@
     if(x < r.left || x > r.right || y < r.top || y > r.bottom) return false;
     const ready = im.complete && im.naturalWidth;
     const m = alphaMaps.get(im.src) || (ready ? alphaMap(im) : null) || (!ready && shownMap);
-    if(!m) return true;
+    // Nothing drawn yet (no frame has loaded) is nothing to hit; a drawn frame we cannot read stays solid.
+    if(!m) return !!ready;
     const k = Math.min(r.width / m.w, r.height / m.h), dw = m.w * k, dh = m.h * k;
     const ox = r.left + (r.width - dw) / 2, oy = r.top + (r.height - dh) / 2;
     const u = (x - ox) / dw, v = (y - oy) / dh;
@@ -268,6 +269,12 @@
     el.addEventListener('wheel', ev => { if(!ev.ctrlKey) return; ev.preventDefault(); resize(ev.deltaY < 0 ? 1 : -1); }, { passive: false });
     el.addEventListener('pointerdown', ev => {
       if(ev.button !== 0) return;
+      // Touch on her empty air passes through: the tap's click is hit-tested on lift (tablet, 2026-10-28).
+      if(ev.pointerType !== 'mouse' && !opaqueAt(ev.clientX, ev.clientY)){
+        el.style.pointerEvents = 'none'; clearTimeout(passT);
+        passT = setTimeout(() => { if(el && !pref().clickThrough) el.style.pointerEvents = ''; }, 800);
+        return;
+      }
       ev.stopPropagation();
       const z = zf(), r = el.getBoundingClientRect();
       drag = { id: ev.pointerId, sx: ev.clientX, sy: ev.clientY, ox: (ev.clientX - r.left) / z, oy: (ev.clientY - r.top) / z, moved: false };

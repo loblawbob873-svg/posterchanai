@@ -2111,8 +2111,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    A lone picture in a TIMELINE card now fills the column inside a frame clamped between 16:9 and 4:5 (height
    56.25%-125% of the column, at most 520px on a wide screen; container units so it holds with or without
    the size hint): photos fill it
-   letterboxed whole, like videos -- NEVER trimmed ("we should not be cropping notes on the timeline, that is terrible",
-   2026-10-28; it was object-fit:cover with the trimmed part a tap away in the lightbox). Quotes, notifications and an
+   letterboxed whole like videos, never trimmed (object-fit:cover cropped them, 2026-10-28). Quotes, notifications and an
    opened post keep their own sizes.
    tests/client/test_timeline_media_frame_full_app.py. */
 #tl-notes .media-row:not(.quoted .media-row){container-type:inline-size}

@@ -121,9 +121,8 @@ window.PCMusicPlayerFactory = function(dep){
     /* "I am here" — no state, so it can be sent when there is nothing playing, which is exactly when
      * it matters. Never starts the service (the native side no-ops without one), so this cannot put a
      * notification on screen for a player that has never played. */
-    /* WHO STARTED THE MUSIC ("opening posterchan apps randomly starts music", 2026-10-28; presses are logged, starts
-     * were not). Every play() here notes its caller; a `play` with none in 10 s was the WebView/Android. Last 10 in
-     * pc_music_starts, shown in Settings → Phone → Music & car controls. */
+    /* WHO STARTED THE MUSIC (2026-10-28): every play() here notes its caller; a `play` with none in 10 s was the
+     * WebView/Android. Last 10 in pc_music_starts (Settings → Phone → Music & car controls). */
     _wrapPlay(el){
       if(!el || el._pcPlayWrapped) return; el._pcPlayWrapped=true;
       const real=el.play, mp=this;

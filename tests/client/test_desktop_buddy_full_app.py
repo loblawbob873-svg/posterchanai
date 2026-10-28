@@ -319,10 +319,26 @@ def test_clicks_go_through_her_while_her_next_dance_frame_is_still_arriving():
     _click_through(pending_frame=True)
 
 
-def _click_through(pending_frame):
+@CHROME
+def test_a_tap_goes_through_her_transparent_parts_and_not_through_her():
+    """A TABLET (2026-10-28): the click-through only ever ran for a mouse, so on touch her whole rectangle took every
+    tap -- in desktop mode at 1408 px her box stood over the Messages window's Send button. Real touch taps (CDP
+    touch input, which the page sees as pointerType 'touch' and a synthesized click)."""
+    _click_through(pending_frame=False, touch=True)
+
+
+async def _tap(b, x, y):
+    await b.call("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+    await asyncio.sleep(.05)
+    await b.call("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+
+
+def _click_through(pending_frame, touch=False):
     res = {}
 
     async def check(b):
+        if touch:
+            await b.call("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5})
         await desktop.login(b)
         await b.until("document.body.classList.contains('os-on') && !!document.querySelector('#os-desk')")
         await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
@@ -339,15 +355,22 @@ def _click_through(pending_frame):
         corner = (box["l"] + 4, box["t"] + 4)
         body = (box["l"] + box["w"] / 2, box["t"] + box["h"] * 0.55)
         for x, y in (corner,):
-            await _mouse(b, x, y, "mouseMoved", 0)
-            await asyncio.sleep(.1)
-            await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
+            if touch:
+                await _tap(b, x, y)
+            else:
+                await _mouse(b, x, y, "mouseMoved", 0)
+                await asyncio.sleep(.1)
+                await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
         await asyncio.sleep(.2)
         res["corner"] = await b.js("({under:__under, happy:document.querySelector('.os-buddy').classList.contains('happy')})")
         x, y = body
-        await _mouse(b, x, y, "mouseMoved", 0)
-        await asyncio.sleep(.1)
-        await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
+        if touch:
+            await asyncio.sleep(1)      # past the pass-through window the corner tap opened
+            await _tap(b, x, y)
+        else:
+            await _mouse(b, x, y, "mouseMoved", 0)
+            await asyncio.sleep(.1)
+            await _mouse(b, x, y, "mousePressed"); await _mouse(b, x, y, "mouseReleased", 0)
         await asyncio.sleep(.2)
         res["body"] = await b.js("({under:__under, happy:document.querySelector('.os-buddy').classList.contains('happy')})")
 
