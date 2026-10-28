@@ -189,7 +189,7 @@
    * for the second read. */
   const FIRST_PAINT_MESSAGES=24;
   const DISCOVER_RELAYS=['wss://relay.dreamith.to'];
-  const LEGACY_RECOVERY_RELAYS=['wss://relay.ditto.pub','wss://relay.damus.io'];
+  const LEGACY_RECOVERY_RELAYS=['wss://relay.ditto.pub'];   // never damus (relay.js _BLOCKED_RELAY_HOST)
   /* Invite relays bootstrap the first read; authenticated metadata owns subsequent transport. */
   function roomRelays(bundle){
     let listed=bundle?.relays||[],authoritative=false;

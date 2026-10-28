@@ -102,6 +102,9 @@ def check_target(url: str) -> tuple[bool, str]:
         return False, "bad url"
     if p.scheme not in ("ws", "wss") or not p.hostname:
         return False, "not a relay url"
+    from app.services.nostr.peer_ua import never_dial
+    if never_dial(str(url)):
+        return False, "this node never dials that relay"
     from app.services.search_service import is_safe_url
     http = ("https" if p.scheme == "wss" else "http") + str(url)[len(p.scheme):]
     ok, why = is_safe_url(http)

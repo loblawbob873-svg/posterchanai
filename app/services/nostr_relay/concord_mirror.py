@@ -155,6 +155,9 @@ def default_url_ok(url: str, cfg: dict) -> str:
     if p.port not in (None, 443):
         return "only relays on port 443 are mirrored"
     host = p.hostname.lower()
+    from app.services.nostr.peer_ua import never_dial
+    if never_dial(u):
+        return "this node never dials that relay (rate-limited)"
     if _host_blocked(host, cfg.get("blocked_relays")):
         return BLOCKLISTED
     if host in _own_hosts(cfg):

@@ -78,23 +78,21 @@ def test_the_discovery_set_is_not_one_outage_wide():
     original four were down when this was measured."""
     hosts = _discovery()
     assert len(hosts) >= 6, "the discovery set is back to a handful of specialist indexers: %r" % hosts
-    for needed in ("relay.damus.io", "nos.lol", "relay.primal.net"):
+    # relay.damus.io held these lists too, and is never dialled since 2026-10-27 ("super rate-limited"):
+    # tests/client/test_never_dial_damus.py.
+    for needed in ("nos.lol", "relay.primal.net", "user.kindpag.es"):
         assert any(needed in h for h in hosts), (
             "%s is not in the discovery set — it is one of the relays that actually holds these "
             "lists" % needed)
 
 
-def test_a_blocked_but_reachable_relay_is_still_asked_for_a_relay_list():
-    """relay.damus.io is on the pool's blocked-host set (it is a firehose we do not want in the
-    shared pool). That is right for the pool and wrong for a one-author, two-kind, limit-2 read —
-    it made the one reachable relay holding the answer the one we refused to ask."""
+def test_the_inbox_lookup_never_reaches_damus():
+    """The lookup passes `allowBlocked` (its discovery relays are not pool relays), and relay.damus.io is still never
+    asked: "we should never connect to the damus relay, it's super rate-limited" (2026-10-27). Run, not grepped, by
+    tests/client/test_never_dial_damus.py; here, that the opt-out did not come back as a damus exception."""
     body = _fn("async function dmInboxRelays(pk)")
-    assert "allowBlocked:true" in body.replace(" ", ""), (
-        "the inbox lookup refuses the blocked hosts again, including the one that has the data")
-    relay = (ROOT / "static/js/client/relay.js").read_text(encoding="utf-8")
-    assert "relay.damus.io" in relay.split("_queryFromBlockedHosts", 1)[1][:200], (
-        "re-point this test: damus is no longer on the blocked-host set, so the opt-out above may "
-        "no longer be needed")
+    assert "damus" not in body.split("/*", 1)[0] + "".join(p.split("*/", 1)[-1] for p in body.split("/*")[1:])
+    assert not any("damus" in h for h in _discovery())
 
 
 def test_the_lookup_reports_whether_anybody_actually_answered():

@@ -111,7 +111,9 @@
   /* Deployment-denied relay hosts. These two consistently refuse/time out and have appeared through
      legacy saved rooms, user relay migrations and external reads. Check at every constructor path so
      no persisted spelling can bypass a higher-level list cleanup. */
-  /* relay.ditto.pub left this list 2026-10-26 (it answers again; a Concord default). */
+  /* relay.ditto.pub left this list 2026-10-26 (it answers again; a Concord default). relay.damus.io is NEVER dialled,
+     by any path, `allowBlocked` included ("we should never connect to the damus relay, it's super rate-limited",
+     2026-10-27); the server's twin is peer_ua.NEVER_DIAL. A community may still list it -- we just never connect. */
   var _BLOCKED_RELAY_HOST = /^wss?:\/\/(?:relay\.damus\.io)(?::\d+)?(?:[\/?#]|$)/i;
   function _isBlockedRelay(u){ return _BLOCKED_RELAY_HOST.test(String(u||'').trim()); }
 
@@ -1429,7 +1431,7 @@
       const slot=u=>authScope?u+'\0plane:'+authScope.pubkey:u;
       const blocked=u=>{try{return this._queryFromBlockedHosts.has(new URL(String(u)).hostname.toLowerCase());}catch(_){return true;}},
         now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
-        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && (urgent || (!this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now)) && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
+        .filter(u => !_isBlockedRelay(u) && (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && (urgent || (!this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now)) && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
         .slice(0, max);
       /* AN EMPTY ANSWER IS NOT AN ANSWER UNLESS SOMEBODY ANSWERED — say which relays did.
        *

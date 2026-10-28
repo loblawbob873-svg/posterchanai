@@ -21,8 +21,9 @@ if(nip44Calls!==1||nip04Calls!==0||joined.groups.length!==2||joined.groups[1].id
    own relay and NO kind-10009 at all, so its NIP-29 list lives only on the relays that gate
    refused to open. The churn complaint is about how OFTEN, not about whether. */
 if(poolQueries!==1||!listedQueries.length)throw new Error('the first membership read skipped the external union');
-if(!listedQueries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.opts.allowBlocked&&q.opts.failureCooldown>=1800000))
-  throw new Error('the union omitted the recovery relays or lost its bounded long circuit');
+/* relay.damus.io left the recovery relays 2026-10-27: it is never dialled ("super rate-limited", test_never_dial_damus). */
+if(!listedQueries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&!q.relays.some(u=>/damus/.test(u))&&q.opts.allowBlocked&&q.opts.failureCooldown>=1800000))
+  throw new Error('the union omitted the recovery relays, named damus, or lost its bounded long circuit');
 if(listedQueries[0].relays.includes('wss://current-app.example')||listedQueries[0].filters[0].kinds[0]!==10009||listedQueries[0].filters[0].authors[0]!==viewer.pubkey||!listedQueries[0].opts.exact)
   throw new Error('kind-10009 union query was malformed or duplicated the connected pool relay');
 /* …AND EVERY PASS AFTER IT IS LOCAL-ONLY. That is what makes the 60/120s recovery timer free,

@@ -977,9 +977,8 @@ window.PCDmsFactory = function(dep){
         // Stranger (not in our WoT) → ask external discovery relays. They're untrusted, so VERIFY
         // signatures before trusting a relay list — a forged one would misroute the (encrypted) wrap.
         const report={};
-        /* `allowBlocked` on purpose: relay.damus.io is on the pool's blocked-host list (it is a
-         * firehose we do not want in the shared pool) and it is one of the few relays that reliably
-         * holds these lists. This read is one author, two kinds, limit 2 — bounded and cheap. */
+        /* `allowBlocked`: these discovery relays are not pool relays. relay.damus.io is never dialled even
+         * so (relay.js); the others hold these lists. One author, two kinds, limit 2 — bounded and cheap. */
         let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }],
                                       {purpose:'dm inbox discovery', report, allowBlocked:true,
                                        max:DISCOVERY_RELAYS.length});

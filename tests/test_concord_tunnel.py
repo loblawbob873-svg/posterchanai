@@ -199,8 +199,8 @@ def test_the_circuit_that_worked_goes_first_and_direct_never_does(client, monkey
     # A host that only answered DIRECT is still tried over Tor first the next time.
     seen.clear()
     monkeypatch.setattr(tun, "connect", _dialer(seen, {None}))
-    _open_one(client, "wss://relay.damus.io")
-    _open_one(client, "wss://relay.damus.io")
+    _open_one(client, "wss://relay.primal.net")
+    _open_one(client, "wss://relay.primal.net")
     assert seen == [TOR1, TOR2, None, TOR1, TOR2, None], ("a host was dialled direct first", seen)
     # ...and a circuit that stops working loses its place.
     seen.clear()

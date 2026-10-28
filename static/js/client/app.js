@@ -8542,8 +8542,7 @@
    * WebSocket handshake from some networks entirely (TCP 443 opens, TLS never completes). Both are
    * kept — they still WORK AS READS, which is how a zap.stream room is joined — but relay.primal.net
    * is added because a stream announced only to relays that reject it is not announced at all. */
-  const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io',
-                         'wss://relay.primal.net'];
+  const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.primal.net'];   // never damus (relay.js)
 
   /* ---------- Live streams and Go Live: moved to static/js/client/streams.js, loaded on first use ----------
    * The code lives in streams.js as a factory; app.js keeps only these entry points. Each one is
@@ -12377,7 +12376,7 @@
    * a console error -- the post-deploy sign-in check failed on the 0xchat one. Replaced by relays measured the same day
    * ANSWERING with kind-10050 inbox lists (indexer.coracle.social is an indexer like purplepag.es was).
    * tests/test_client_relay_lists_name_no_dead_relays.py */
-  const DISCOVERY_RELAYS = ['wss://indexer.coracle.social/', 'wss://user.kindpag.es/', 'wss://relay.damus.io/',
+  const DISCOVERY_RELAYS = ['wss://indexer.coracle.social/', 'wss://user.kindpag.es/',
                             'wss://nos.lol/', 'wss://relay.primal.net/', 'wss://relay.snort.social/', 'wss://nostr.mom/'];
 
   /* ---------- DMs (NIP-17 + NIP-04) and the kind-10050 inbox list: moved to static/js/client/dms.js (its own <script> tag) ----------
@@ -13425,7 +13424,7 @@
   // Thread context fallback: our relay is WoT-gated, so a post we replied to whose author isn't in
   // the trust set isn't stored here. Fetch such a missing event from public relays (UNTRUSTED → the
   // signer worker verifies the signature before we display it), so threads aren't truncated.
-  const PUBLIC_FALLBACK_RELAYS = ['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net'];   // relay.nostr.band: no answer (2026-10-26)
+  const PUBLIC_FALLBACK_RELAYS = ['wss://nos.lol','wss://relay.primal.net'];   // never damus (relay.js)   // relay.nostr.band: no answer (2026-10-26)
   function fetchFromPublicRelays(filters, timeout=4500, extraRelays){
     // Query the event's OWN relay hints (from an nevent or a NIP-10 e-tag) alongside the public
     // fallbacks — so a parent whose author is outside our WoT is found where it actually lives.

@@ -17,6 +17,22 @@ import time
 from urllib.parse import urlsplit
 
 UA = "PosterChan/Server"
+
+# RELAYS THIS NODE NEVER DIALS, from any process, for any feature ("we should never connect to the damus relay, it's
+# super rate-limited", 2026-10-27). Every outbound relay socket comes through connect() below, so this is the one
+# place the rule can live; the client's twin is relay.js _BLOCKED_RELAY_HOST. A community may still LIST such a relay
+# (its list is not ours to edit) -- we just never open a socket to it.
+NEVER_DIAL = frozenset({"relay.damus.io"})
+
+
+class NeverDialled(ConnectionRefusedError):
+    """Raised instead of opening a socket to a NEVER_DIAL host."""
+
+
+def never_dial(url: str) -> bool:
+    return _host(url) in NEVER_DIAL
+
+
 REFUSED_FOR = 6 * 3600
 _refused: dict[str, float] = {}
 
@@ -70,6 +86,8 @@ class connect:
         return await cm
 
     async def _open(self, entered):
+        if never_dial(self.url):
+            raise NeverDialled(f"{_host(self.url)} is never dialled from this node")
         if "user_agent_header" in self.kw:
             return await self._one(entered)
         ua = header(self.url)
