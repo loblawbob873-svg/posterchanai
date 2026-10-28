@@ -375,10 +375,18 @@ window.PCTimelineFactory = function(dep){
    *
    * Re-entering the view re-subscribes through renderTimeline's own `Relay.close(subs[view])` +
    * fullSub() path, which is what already ran on every return, so nothing new can go wrong there. */
+  // On the desktop the feed is on screen only inside an open window: VIEW alone kept a firehose for nobody (10-28).
+  function _feedOnScreen(){
+    try{
+      if(!(window.PCOS && PCOS.isOn && PCOS.isOn())) return true;
+      const f = document.getElementById('feed');
+      return !!(f && f.closest('.osw') && !f.closest('.osw.minimised'));
+    }catch(_){ return true; }
+  }
   function _parkOffscreenTimelines(){
     for(const v of _TL_SUB_VIEWS){
       const id = subs[v];
-      if(!id || S.VIEW===v) continue;
+      if(!id || (S.VIEW===v && _feedOnScreen())) continue;
       if(_visibleSlot(v)) continue;
       try{ Relay.close(id); }catch(_){}
       subs[v] = null;

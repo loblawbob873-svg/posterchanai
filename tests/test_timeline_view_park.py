@@ -42,7 +42,9 @@ def _fn_source():
     assert park, "_parkOffscreenTimelines moved — re-point this test"
     vis = re.search(r"function _visibleSlot\(view\)\{.*?\n  \}", APP, re.S)
     assert vis, "_visibleSlot moved — re-point this test"
-    return views.group(0) + "\n" + park.group(0) + "\n" + vis.group(0)
+    feed = re.search(r"function _feedOnScreen\(\)\{.*?\n  \}", APP, re.S)
+    assert feed, "_feedOnScreen moved — re-point this test"
+    return views.group(0) + "\n" + feed.group(0) + "\n" + park.group(0) + "\n" + vis.group(0)
 
 
 def test_it_only_ever_touches_the_two_timeline_subs():

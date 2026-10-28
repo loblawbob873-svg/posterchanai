@@ -1876,8 +1876,7 @@
     if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(['client','PosterChan AI']);
     return tags;
   }
-  /* A new version of a replaceable event is NEWER than the one it replaces: a same-second tie keeps the LOWER id
-   * (NIP-01), so a second bookmark/follow/mute in that second was lost ~half the time. Bounded against skewed clocks. */
+  // A replaceable's new version is newer than the held one: a same-second tie keeps the LOWER id (NIP-01).
   function _replaceableCreatedAt(kind, tags, now){
     const addressable = kind >= 30000 && kind < 40000;
     if(!(kind === 0 || kind === 3 || (kind >= 10000 && kind < 20000) || addressable) || !ME || !ME.pubkey) return now;
@@ -14838,6 +14837,7 @@
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
     isView: view => VIEW === view,
+    parkTimelines: () => { try{ _parkOffscreenTimelines(); }catch(_){} },
     /* /client/config as this page holds it. Virtual Machines reads `vmhost` from it (this instance's
      * own VM host); a bundle with no instance answers {} and the screen relies on the user's list. */
     clientConfig: () => CFG || {},

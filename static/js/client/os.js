@@ -185,6 +185,7 @@
   let realHome = null;             // …and where it belongs when the desktop closes
 
   const PC = () => window.__PC || {};
+  const _parkSoon = () => setTimeout(() => { try{ PC().parkTimelines(); }catch(_){ } }, 0);
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const enc = s => String(s == null ? '' : s)
@@ -6359,6 +6360,7 @@
     if(i < 0) return;
     wins.splice(i, 1);
     _coverSoon();                          // what this window hid is uncovered now
+    _parkSoon();
     disposeWindow(w);
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
@@ -6415,6 +6417,7 @@
   function minimise(w){
     w.min = true;
     w.el.classList.add('minimised');
+    _parkSoon();
     /* A minimised native window is STASHED in the compositor's scratchpad. Hiding only our frame
      * would leave the app itself on screen with no title bar — a browser nobody can move, close or
      * identify. */
@@ -12530,7 +12533,7 @@
       try{ PC().toast && PC().toast(msg); }catch(_){}
       return;
     }
-    on = true;
+    on = true; _parkSoon();
     try{ if(window.__PC && __PC.bumpNotif) __PC.bumpNotif(); }catch(_){}   // DMs count in this bell (notifs.js notifUnread)
     _watchSheets();        // only a desktop that really entered raises itself for sheets
     /* The composer opens as its own window while the desktop is up — see _composeInWindow. */

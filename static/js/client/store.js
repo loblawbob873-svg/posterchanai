@@ -475,8 +475,7 @@
       if (_lrLive() || !LR.ws || Date.now() - t0 > ms){ clearInterval(iv); res(_lrLive()); } }, 25); });
   }
   // batched writes — one transaction (or one burst of frames) per burst instead of per event
-  /* The CACHE is written once a minute (disk wear, 2026-10-28); the account's own events, pinned documents and the
-   * local relay keep 0.7 s; hiding the page writes everything, and a full buffer is written early. */
+  // The cache is written once a minute (disk wear); own/pinned events and the local relay at 0.7 s.
   const IDB_FLUSH_MS = 60000, WBUF_MAX = 2000;
   const _wq = { fast: { buf: [], t: null, ms: 700 }, slow: { buf: [], t: null, ms: IDB_FLUSH_MS } };
   function _queueWrite(ev){
@@ -486,8 +485,7 @@
     else if (!q.t) q.t = setTimeout(() => { q.t = null; _flushWrites(q); }, q.ms);
   }
   function _flushNow(){ for (const q of [_wq.fast, _wq.slow]){ clearTimeout(q.t); q.t = null; _flushWrites(q); } }
-  /* An IndexedDB write started at unload does not finish (a reload lost a bookmarked post): pagehide ALSO puts the
-   * buffer in localStorage (synchronous, bounded) and init takes it back. */
+  // An IDB write started at unload is lost: pagehide also spills to localStorage; init takes it back.
   const SPILL = 'pc_store_spill', SPILL_MAX = 1500000;
   function _spill(){
     const all = _wq.fast.buf.concat(_wq.slow.buf);
