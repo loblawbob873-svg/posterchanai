@@ -111,7 +111,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: posterchan apps randomly starts music" left no trace -- presses were logged, starts were not. 8.1716 MB measured.
 #: ...and 8.172 -> 8.173 for the always-on long-task count (timeline.js) in Restarts & memory: a tablet's "social ~20 s"
 #: could not be told apart as CPU or network. 8.1726 MB measured.
-BUDGET_MB = 8.173
+#: ...and 8.173 -> 8.174 for what the page HOLDS in the same report (store/Concord counts, saved-data size): that
+#: tablet's 73 MB heap could not be attributed. 8.1732 MB measured.
+BUDGET_MB = 8.174
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

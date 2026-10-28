@@ -104,3 +104,8 @@ def test_the_row_says_how_busy_the_main_thread_was():
     assert busy["longTasks2m"] >= 3 and busy["busyMs2m"] >= 850 and busy["longestMs"] >= 290, got
     assert "main thread busy" in got["sum"], got
     assert "status" in got["copied"]["page"]["relay"], got
+    holds = got["copied"]["page"]["holds"]
+    assert holds["events"] >= 0 and holds["localStorageKb"] >= 0 and isinstance(holds["biggestKb"], list), got
+    assert "holds " in got["sum"] and "KB saved data" in got["sum"], got
+    # keys are named, account keys never: a 64-hex pubkey in a key name is replaced
+    assert not any(len(x) > 0 and __import__("re").search(r"[0-9a-f]{64}", x) for x in holds["biggestKb"]), holds

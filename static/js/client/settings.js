@@ -140,6 +140,8 @@ window.PCSettingsFactory = function(dep){
     }
     if(m.totalMb) bits.push('device memory '+m.availMb+' / '+m.totalMb+' MB free'+(m.lowMemory?' (LOW)':''));
     const b=r&&r.page&&r.page.busy;
+    const hd=r&&r.page&&r.page.holds;
+    if(hd&&hd.localStorageKb!=null) bits.push('holds '+(hd.events||0)+' events, '+((hd.concord&&hd.concord.messages)||0)+' community messages, '+hd.localStorageKb+' KB saved data');
     if(b) bits.push('main thread busy '+(b.busyMs2m/1000).toFixed(1)+' s in the last 2 min ('+b.longTasks2m+' long tasks, longest '+b.longestMs+' ms)');
     if(m.appPssMb) bits.push('app now '+m.appPssMb+' MB');
     if(r&&r.rendererDeaths) bits.push(r.rendererDeaths+' display recoveries this session');
@@ -1474,6 +1476,11 @@ window.PCSettingsFactory = function(dep){
             try{ const pm=performance.memory; if(pm) o.jsHeapMb=Math.round(pm.usedJSHeapSize/1048576); }catch(_){}
             try{ if(window.PCOS&&PCOS.parkStats) o.windows=PCOS.parkStats(); }catch(_){}
             try{ if(window.PCBusyReport) o.busy=PCBusyReport(); }catch(_){}
+            // What the page HOLDS, to say which collection a big heap is (a tablet: 73 MB).
+            try{ const h=o.holds={}; if(window.Store&&Store.memStats) Object.assign(h,Store.memStats());
+              if(window.PCConcord&&PCConcord.memStats) h.concord=PCConcord.memStats();
+              let n=0,big=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i),l=(localStorage.getItem(k)||'').length; n+=l; big.push([k.replace(/[0-9a-f]{64}/g,'…'),l]); }
+              h.localStorageKb=Math.round(n/1024); h.biggestKb=big.sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,l])=>k+' '+Math.round(l/1024)); }catch(_){}
             try{ const R=window.Relay; if(R) o.relay={status:R.status, sockets:R._conns?R._conns.size:-1, asleep:!!(R.asleep&&R.asleep())}; }catch(_){}
             return o; };
           let rep=null;

@@ -668,6 +668,7 @@
   }
 
   const Store = {
+    memStats(){ return { events: mem.events.size, profiles: mem.profiles.size }; },   // Restarts & memory
     async init(){
       LR.url = _lrUrl();
       if (LR.url) _lrOpen();
