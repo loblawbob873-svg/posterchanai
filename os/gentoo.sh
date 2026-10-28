@@ -5678,6 +5678,54 @@ setDevices() {
 	partitionDetection
 }
 
+# THE SELF-UNLOCKING ENTRY'S KEEPER (anticheat and anticheat-off both use it). Saves the normal entry's options line
+# (root=, rd.luks.uuid=, rd.luks.key=) -- or keeps the saved one -- and installs the kernel-install plugin that rebuilds
+# that entry for every kernel. 0 = installed; 1 = nothing to keep (a passphrase install, whose entry never unlocked by
+# itself); 2 = could not write it. Env for tests: PC_AC_ROOT.
+anticheatKeyfilePlugin() {
+	local R="${PC_AC_ROOT:-}" mid opts
+	mid="$(cat "$R/etc/machine-id" 2>/dev/null)"
+	opts="$(cat "$R/etc/posterchan/keyfile-entry.options" 2>/dev/null)"
+	[ -n "$opts" ] || opts="$(for e in "$R"/boot/loader/entries/"$mid"-*.conf; do sed -n 's/^options //p' "$e" 2>/dev/null; done | grep -m1 'rd.luks.key=')"
+	[ -n "$opts" ] || return 1
+	mkdir -p "$R/etc/posterchan" "$R/etc/kernel/install.d" && printf '%s\n' "$opts" >"$R/etc/posterchan/keyfile-entry.options" || return 2
+	cat >"$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" <<'PLUGIN'
+#!/bin/sh
+# gentoo.sh anticheat: the NORMAL systemd-boot entry keeps unlocking the disk by itself. installkernel has no dracut
+# in anti-cheat mode, so this builds what it used to: linux, the keyfile initramfs (/etc/dracut.conf) and the entry.
+# Never fails a kernel install: a problem is said, and the entry is only written once its initramfs carries the key.
+R="${PC_AC_ROOT:-}"; kver="$2"
+mid="$(cat "$R/etc/machine-id" 2>/dev/null)"; [ -n "$mid" ] && [ -n "$kver" ] || exit 0
+dir="$R/boot/$mid/$kver"; entry="$R/boot/loader/entries/$mid-$kver.conf"
+case "$1" in
+remove) rm -f "$entry"; rm -rf "$dir"; exit 0 ;;
+add) ;;
+*) exit 0 ;;
+esac
+opts="$(cat "$R/etc/posterchan/keyfile-entry.options" 2>/dev/null)"
+[ -n "$opts" ] || { echo "posterchan: no saved options for the self-unlocking entry; run: sudo gentoo.sh anticheat" >&2; exit 0; }
+img=""
+for c in "$R/usr/lib/modules/$kver/vmlinuz" "$R/boot/vmlinuz-$kver"; do [ -s "$c" ] && { img="$c"; break; }; done
+[ -n "$img" ] || { echo "posterchan: no kernel image for $kver; the self-unlocking entry was not updated" >&2; exit 0; }
+mkdir -p "$dir" "$R/boot/loader/entries" && cp -f "$img" "$dir/linux.new" && mv -f "$dir/linux.new" "$dir/linux" || exit 0
+if ! dracut --force --add " crypt systemd-cryptsetup dm rootfs-block " "$dir/initrd.new" "$kver" \
+   || ! lsinitrd "$dir/initrd.new" 2>/dev/null | grep -q 'boot/keyfile.key'; then
+	rm -f "$dir/initrd.new"
+	echo "posterchan: the keyfile initramfs for $kver did not build; the self-unlocking entry was not updated" >&2
+	exit 0
+fi
+mv -f "$dir/initrd.new" "$dir/initrd"
+# installkernel's uki layout also copies the signed image to EFI/Linux/<entry-token>-<version>.efi, which systemd-boot
+# lists BY ITSELF -- and where the entry token is the machine-id (a from-scratch install) that copy matches the loader's
+# default "<machine-id>-*" and wins over this entry: it asks for the passphrase (measured, VM, 2026-10-27). The
+# anti-cheat entry boots its own copy in EFI/posterchan (95-posterchan-anticheat), so this one serves nothing.
+rm -f "$R"/boot/EFI/Linux/*-"$kver".efi
+printf 'title Current\nversion %s\noptions %s\nmachine-id %s\nlinux /%s/%s/linux\ninitrd /%s/%s/initrd\n' \
+	"$kver" "$opts" "$mid" "$mid" "$kver" "$mid" "$kver" >"$entry.new" && mv -f "$entry.new" "$entry"
+PLUGIN
+	chmod 0755 "$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" || return 2
+}
+
 # ANTI-CHEAT READY: `gentoo.sh anticheat` (and `anticheat-off` to undo). OPT-IN, and it changes how this machine boots.
 #
 # Easy Anti-Cheat Linux v2 (Epic, 2026-10-14) checks how the machine booted: Secure Boot, a kernel and modules signed
@@ -5756,46 +5804,12 @@ PLUGIN
 	# THE NORMAL ENTRY KEEPS UNLOCKING ITSELF. Its options line (root=, rd.luks.uuid=, rd.luks.key=) is saved for the
 	# plugin, which rebuilds that entry for every kernel from here on; dracut stays installed (in world) for it. A
 	# machine whose entry never unlocked by itself (a passphrase install) has nothing to keep and gets no plugin.
-	local mid opts
+	local opts kp mid
 	mid="$(cat "$R/etc/machine-id" 2>/dev/null)"
-	opts="$(for e in "$R"/boot/loader/entries/"$mid"-*.conf; do sed -n 's/^options //p' "$e" 2>/dev/null; done | grep -m1 'rd.luks.key=')"
-	if [ -n "$opts" ]; then
-		mkdir -p "$R/etc/posterchan" && printf '%s\n' "$opts" >"$R/etc/posterchan/keyfile-entry.options" || return 1
-		cat >"$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" <<'PLUGIN'
-#!/bin/sh
-# gentoo.sh anticheat: the NORMAL systemd-boot entry keeps unlocking the disk by itself. installkernel has no dracut
-# in anti-cheat mode, so this builds what it used to: linux, the keyfile initramfs (/etc/dracut.conf) and the entry.
-# Never fails a kernel install: a problem is said, and the entry is only written once its initramfs carries the key.
-R="${PC_AC_ROOT:-}"; kver="$2"
-mid="$(cat "$R/etc/machine-id" 2>/dev/null)"; [ -n "$mid" ] && [ -n "$kver" ] || exit 0
-dir="$R/boot/$mid/$kver"; entry="$R/boot/loader/entries/$mid-$kver.conf"
-case "$1" in
-remove) rm -f "$entry"; rm -rf "$dir"; exit 0 ;;
-add) ;;
-*) exit 0 ;;
-esac
-opts="$(cat "$R/etc/posterchan/keyfile-entry.options" 2>/dev/null)"
-[ -n "$opts" ] || { echo "posterchan: no saved options for the self-unlocking entry; run: sudo gentoo.sh anticheat" >&2; exit 0; }
-img=""
-for c in "$R/usr/lib/modules/$kver/vmlinuz" "$R/boot/vmlinuz-$kver"; do [ -s "$c" ] && { img="$c"; break; }; done
-[ -n "$img" ] || { echo "posterchan: no kernel image for $kver; the self-unlocking entry was not updated" >&2; exit 0; }
-mkdir -p "$dir" "$R/boot/loader/entries" && cp -f "$img" "$dir/linux.new" && mv -f "$dir/linux.new" "$dir/linux" || exit 0
-if ! dracut --force --add " crypt systemd-cryptsetup dm rootfs-block " "$dir/initrd.new" "$kver" \
-   || ! lsinitrd "$dir/initrd.new" 2>/dev/null | grep -q 'boot/keyfile.key'; then
-	rm -f "$dir/initrd.new"
-	echo "posterchan: the keyfile initramfs for $kver did not build; the self-unlocking entry was not updated" >&2
-	exit 0
-fi
-mv -f "$dir/initrd.new" "$dir/initrd"
-# installkernel's uki layout also copies the signed image to EFI/Linux/<entry-token>-<version>.efi, which systemd-boot
-# lists BY ITSELF -- and where the entry token is the machine-id (a from-scratch install) that copy matches the loader's
-# default "<machine-id>-*" and wins over this entry: it asks for the passphrase (measured, VM, 2026-10-27). The
-# anti-cheat entry boots its own copy in EFI/posterchan (95-posterchan-anticheat), so this one serves nothing.
-rm -f "$R"/boot/EFI/Linux/*-"$kver".efi
-printf 'title Current\nversion %s\noptions %s\nmachine-id %s\nlinux /%s/%s/linux\ninitrd /%s/%s/initrd\n' \
-	"$kver" "$opts" "$mid" "$mid" "$kver" "$mid" "$kver" >"$entry.new" && mv -f "$entry.new" "$entry"
-PLUGIN
-		chmod 0755 "$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install"
+	anticheatKeyfilePlugin; kp=$?
+	[ "$kp" = 2 ] && { echo "anticheat: could not install the self-unlocking entry's keeper" >&2; return 1; }
+	if [ "$kp" = 0 ]; then
+		opts="$(cat "$R/etc/posterchan/keyfile-entry.options")"
 		emerge --noreplace sys-kernel/dracut || return 1
 	fi
 	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
@@ -5893,11 +5907,16 @@ anticheatOff() {
 	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
 	efibootmgr | awk -v l="$label" 'index($0, l) { sub(/^Boot/, ""); sub(/\*.*/, ""); print }' | while read -r n; do efibootmgr -q -b "$n" -B; done
 	rm -f "$R/etc/portage/package.use/zz-posterchan-anticheat" "$R/etc/kernel/install.d/95-posterchan-anticheat.install" \
-		"$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" "$R/etc/posterchan/keyfile-entry.options" \
 		"$R/etc/sysctl.d/99-posterchan-anticheat.conf" "$R/etc/posterchan/anticheat"
 	[ -f "$R/etc/crypttab" ] && sed -i -e '/^# gentoo.sh anticheat:/d' -e 's|^# \(luks-\)|\1|' "$R/etc/crypttab"
 	# installkernel gets dracut back and the kernel is reinstalled, so the keyfile unlock is built into an initramfs again.
+	# THE KEEPER STAYS THROUGH THAT REINSTALL. kernel-install writes the entry's options from the RUNNING kernel's command
+	# line, and this runs booted from the signed image ("quiet lockdown=integrity": no root=, no key) -- where the entry
+	# token is the machine-id (a from-scratch install) that overwrote the self-unlocking entry and the next boot asked
+	# for the passphrase (measured, VM, 2026-10-27). The plugin runs after it (96 > 90) and writes the entry back.
+	anticheatKeyfilePlugin
 	emerge -1 sys-kernel/installkernel "=sys-kernel/gentoo-kernel-bin-$kver" || return 1
+	rm -f "$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" "$R/etc/posterchan/keyfile-entry.options"
 	echo "anticheat-off: back to the normal boot entry. Secure Boot can stay on only if you keep shim; turn it off to use systemd-boot."
 }
 

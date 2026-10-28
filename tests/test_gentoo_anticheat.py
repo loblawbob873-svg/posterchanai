@@ -91,7 +91,13 @@ class Machine:
             # machine-id on a from-scratch install -- BEFORE the 96 plugin runs; another kernel's copy sits beside it.
             (r / "boot/EFI/Linux").mkdir(parents=True)
             (r / "boot/EFI/Linux" / f"{MID}-6.10.0-old.efi").write_text("other kernel")
-            image_line += (f'; echo uki > "{r}/boot/EFI/Linux/{MID}-{KREL}.efi"'
+            # ...and 90-loaderentry writes the entry from the RUNNING kernel's command line -- the signed image's, with no
+            # root= and no key (what anticheat-off met on the from-scratch VM, 2026-10-27).
+            entry = r / "boot/loader/entries" / f"{MID}-{KREL}.conf"
+            # (Only with the normal layout back: in anti-cheat mode the layout is uki and 90-loaderentry quits -- measured.)
+            image_line += (f'; [ -f "{r}/etc/portage/package.use/zz-posterchan-anticheat" ] || '
+                           f'printf "title Gentoo\\noptions quiet lockdown=integrity\\n" > "{entry}"'
+                           f'; echo uki > "{r}/boot/EFI/Linux/{MID}-{KREL}.efi"'
                            f'; echo {KREL} > "{r}/boot/EFI/posterchan/posterchanos.version"'
                            f'; [ -x "{plug}" ] && PC_AC_ROOT="{r}" "{plug}" add {KREL} /x "{r}/usr/lib/modules/{KREL}/vmlinuz"')
             _exe(self.bin / "dracut", f'{L}; out="${{@: -2:1}}"; echo "{"usr/lib/systemd/systemd-cryptsetup etc/crypttab boot/keyfile.key" if initrd_has_key else "usr/lib/systemd/systemd-cryptsetup"}" > "$out"')
@@ -110,7 +116,7 @@ class Machine:
         _exe(self.bin / "fake-gentoo-sh", f'{L}; true')
 
     def run(self, fn="anticheatSetup", **env):
-        script = _fn("anticheatSetup") + _fn("anticheatOff") + f"\n{fn}\n"
+        script = _fn("anticheatKeyfilePlugin") + _fn("anticheatSetup") + _fn("anticheatOff") + f"\n{fn}\n"
         e = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", PC_AC_ROOT=str(self.r),
                  PC_GENTOO_SH=str(self.bin / "fake-gentoo-sh"), **env)
         p = subprocess.run(["bash", "-c", script], env=e, capture_output=True, text=True, timeout=60)
@@ -313,3 +319,30 @@ def test_anticheat_off_takes_the_plugin_and_its_options_away(tmp_path):
     assert rc == 0, out
     assert not (m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install").exists()
     assert not (m.r / "etc/posterchan/keyfile-entry.options").exists()
+
+
+
+def test_anticheat_off_leaves_the_normal_entry_unlocking_by_itself(tmp_path):
+    """anticheat-off reinstalls the kernel while booted from the signed image; kernel-install then writes the entry
+    from THAT command line (no root=, no key) and, where the entry token is the machine-id, over the self-unlocking
+    entry -- the from-scratch VM asked for the passphrase after it (2026-10-27). The keeper stays through that
+    reinstall, writes the entry back, and only then goes."""
+    m = Machine(tmp_path, keyfile=True)
+    assert m.run()[0] == 0
+    rc, out, _ = m.run("anticheatOff")
+    assert rc == 0, out
+    assert f"options {OPTS}" in _entry(m), _entry(m)
+    assert not (m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install").exists()
+    assert not (m.r / "etc/posterchan/keyfile-entry.options").exists()
+
+
+def test_anticheat_off_on_a_machine_set_up_before_the_keeper_existed(tmp_path):
+    """A machine that ran an older anticheat has no saved options and no plugin; anticheat-off still keeps its entry."""
+    m = Machine(tmp_path, keyfile=True)
+    assert m.run()[0] == 0
+    (m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install").unlink()
+    (m.r / "etc/posterchan/keyfile-entry.options").unlink()
+    (m.r / "boot/loader/entries" / f"{MID}-{KREL}.conf").write_text(f"title Current\noptions {OPTS}\n")
+    rc, out, _ = m.run("anticheatOff")
+    assert rc == 0, out
+    assert f"options {OPTS}" in _entry(m), _entry(m)
