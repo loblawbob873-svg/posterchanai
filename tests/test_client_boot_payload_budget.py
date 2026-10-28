@@ -102,7 +102,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: 8.1656 MB (the New message dialog's recipient chips included); 8.166 leaves ~0.5 KB. The next reclaim is still an on-demand module (see the split notes above).
 #: ...and 8.166 -> 8.167 the same evening for the upload resend on a busy store (upload.js, at boot: Files saves through
 #: it), its comment cut to one line first: 8.1662 MB measured.
-BUDGET_MB = 8.167
+#: ...and 8.167 -> 8.168 (2026-10-28) for _replaceableCreatedAt (app.js): a same-second edit of a replaceable list lost
+#: the newer version about half the time (bookmarks in the gate); a boot-path fix, two comments cut first: 8.1676 MB.
+BUDGET_MB = 8.168
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

@@ -1876,8 +1876,19 @@
     if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(['client','PosterChan AI']);
     return tags;
   }
+  /* A new version of a replaceable event is NEWER than the one it replaces: a same-second tie keeps the LOWER id
+   * (NIP-01), so a second bookmark/follow/mute in that second was lost ~half the time. Bounded against skewed clocks. */
+  function _replaceableCreatedAt(kind, tags, now){
+    const addressable = kind >= 30000 && kind < 40000;
+    if(!(kind === 0 || kind === 3 || (kind >= 10000 && kind < 20000) || addressable) || !ME || !ME.pubkey) return now;
+    const f = { authors:[ME.pubkey], kinds:[kind] };
+    if(addressable){ const d = (tags || []).find(t => t && t[0] === 'd'); f['#d'] = [d ? String(d[1] || '') : '']; }
+    let newest = 0;
+    try{ for(const e of (Store.query([f]) || [])) if(e && e.created_at > newest) newest = e.created_at; }catch(_){ }
+    return newest >= now && newest - now < 600 ? newest + 1 : now;
+  }
   async function sign(kind, content, tags=[], createdAt){
-    const tpl = { kind, content, tags, created_at: createdAt || Math.floor(Date.now()/1000), pubkey: ME.pubkey };
+    const tpl = { kind, content, tags, created_at: createdAt || _replaceableCreatedAt(kind, tags, Math.floor(Date.now()/1000)), pubkey: ME.pubkey };
     return await signer.signEvent(tpl);
   }
   // NIP-78's 2026-09-03 privacy revision requires same-owner NIP-42 authentication before a relay
@@ -2008,9 +2019,7 @@
     // — so fetch it here before tagging rather than silently publishing a bare :shortcode:.
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     tags = _enrichTags(kind, tags, content);
-    // An explicit created_at, for replaceable documents whose next version must be STRICTLY newer than the
-    // last: two saves in one second tie, and NIP-01 then keeps the LOWER id -- the newer edit lost about
-    // half the time. 30078 (app documents) and 30006 (photo albums, albums.js) pass one.
+    // 30078/30006 callers may pass an explicit created_at (see _replaceableCreatedAt for the default).
     const ev = await sign(kind, content, tags, (kind===30078 || kind===30006) && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
     if((_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     if(opts && opts.deferLocal && (!ME || ME.pubkey!==postingAuthor)) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};

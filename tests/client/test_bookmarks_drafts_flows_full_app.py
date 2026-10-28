@@ -19,6 +19,7 @@ Harness: tests/client/discover_flows_harness.py. Fail-first: PC_JOURNEY_OVERRIDE
 import asyncio
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -372,3 +373,30 @@ async def a_slow_drafts_answer_is_drawn_when_it_lands(S):
 @CHROME
 def test_a_slow_drafts_answer_is_drawn_when_it_lands(ran):
     ran('a_slow_drafts_answer_is_drawn_when_it_lands')
+
+
+@scenario
+async def bookmarks_made_in_the_same_second_are_all_kept(S):
+    """The gate's record of the "one of two bookmarks after a reload" flake (2026-10-28): both kind-10003 versions
+    carried the SAME created_at, so NIP-01's tie rule (lower id wins) kept the older list on this device while the
+    relay kept the newer. The page clock is frozen inside one second and three posts are bookmarked; after a reload
+    all three must be listed."""
+    author = await S.device(1)
+    notes = [await F.post_note(author, 'Same-second bookmark %d (%d)' % (i, S.base)) for i in range(3)]
+    a = await S.device(0)
+    # Every page this device opens (opening a post navigates) reads one second off its clock.
+    frozen = "(()=>{const t=%d;Date.now=()=>t;})()" % (int(time.time()) * 1000 + 500)
+    await a.b.call('Page.addScriptToEvaluateOnNewDocument', {'source': frozen})
+    await a.b.js(frozen)
+    for i, n in enumerate(notes):
+        await press_bookmark(a, n['id'])
+        await F.until(lambda: len(bookmarked(S.n, S.pk(0)) or []) == i + 1, 30, 'bookmark %d on the home relay' % (i + 1), a)
+    await reload(a)
+    await open_bookmarks(a)
+    want = " && ".join("%s.includes(%s)" % (LISTED, json.dumps(n['id'])) for n in notes)
+    await F.wait(a, want, 40, 'all three bookmarks listed after a reload')
+
+
+@CHROME
+def test_bookmarks_made_in_the_same_second_are_all_kept(ran):
+    ran('bookmarks_made_in_the_same_second_are_all_kept')
