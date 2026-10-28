@@ -312,3 +312,36 @@ def test_every_dial_is_counted_and_reported_per_host(monkeypatch, caplog):
         tun.dialled("wss://jskitty.com/nostr")
     assert any("jskitty.com 1" in r.getMessage() for r in caplog.records), caplog.text
     assert tun._dials == {}
+
+
+def test_a_short_tunnel_is_reported_by_what_it_asked_for_never_by_its_values(client, monkeypatch, caplog):
+    """The dial count says THAT we churn a far relay; this says WHICH client path does it: tunnels that close within
+    seconds of their dial, grouped by the verb and kinds of their first frame. A filter value (an author, a tag) and
+    any content never reach the log."""
+    import logging
+    monkeypatch.setattr(tun, "_dials", {})
+    monkeypatch.setattr(tun, "_short", {})
+    monkeypatch.setattr(tun, "_shapes", {})
+    monkeypatch.setattr(tun, "_dials_since", time.monotonic())
+    t = tun.issue(PK)
+    with client.websocket_connect("/ws/concord-relay?u=wss://jskitty.com/nostr&t=" + t) as ws:
+        ws.send_text('["REQ","s1",{"kinds":[1059],"#p":["%s"]},{"kinds":[10009]}]' % ("ab" * 32))
+        ws.receive_text()
+    for _ in range(50):
+        if tun._shapes:
+            break
+        time.sleep(0.02)
+    monkeypatch.setattr(tun, "_dials_since", time.monotonic() - tun.DIAL_REPORT_EVERY - 1)
+    with caplog.at_level(logging.INFO, logger=tun.logger.name):
+        tun.dialled("wss://relay.ditto.pub")
+    assert "jskitty.com 1 (1 short)" in caplog.text, caplog.text
+    assert "jskitty.com REQ 1059,10009 x1" in caplog.text, caplog.text
+    assert "ab" * 32 not in caplog.text
+
+
+def test_the_first_frame_shape_carries_no_values():
+    assert tun.frame_shape('["EVENT",{"kind":1059,"content":"secret","pubkey":"x"}]') == "EVENT 1059"
+    assert tun.frame_shape('["REQ","x",{"authors":["a"]}]') == "REQ any"
+    assert tun.frame_shape('["REQ","x",{"kinds":[1,2,3,4,5,6]}]') == "REQ 1,2,3,4+"
+    assert tun.frame_shape("not json") == "?"
+    assert tun.frame_shape('["AUTH",{"kind":22242}]') == "AUTH"

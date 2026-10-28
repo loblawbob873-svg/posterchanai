@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import json
 import time
 from urllib.parse import urlparse
 
@@ -156,20 +157,60 @@ def refused(pk: str, why: str) -> None:
 # HOW OFTEN WE DIAL SOMEBODY ELSE'S RELAY, said every 10 minutes (2026-10-28: jskitty blocked this node for
 # "churning connections/websockets"). Counted per far host when a tunnel actually reaches it.
 DIAL_REPORT_EVERY = 600
+SHORT_TUNNEL_S = 15      # a tunnel closed this soon after its dial carried one read or one send, not a subscription
 _dials: dict[str, int] = {}
+_short: dict[str, int] = {}
+_shapes: dict[tuple, int] = {}
 _dials_since = time.monotonic()
 
 
-def dialled(url: str) -> None:
+def frame_shape(frame: str) -> str:
+    """What a client's FIRST frame asked for, as a verb and kinds -- never a filter value or any content."""
+    try:
+        msg = json.loads(frame)
+        verb = str(msg[0])[:8]
+        if verb == "REQ":
+            kinds = sorted({int(k) for f in msg[2:] if isinstance(f, dict) for k in (f.get("kinds") or [])})
+            return "REQ " + (",".join(map(str, kinds[:4])) + ("+" if len(kinds) > 4 else "") or "any")
+        if verb == "EVENT" and isinstance(msg[1], dict):
+            return "EVENT %d" % int(msg[1].get("kind", -1))
+        return verb
+    except Exception:
+        return "?"
+
+
+def _report() -> None:
     global _dials_since
+    if time.monotonic() - _dials_since < DIAL_REPORT_EVERY:
+        return
+    mins = int((time.monotonic() - _dials_since) / 60)
+    top = sorted(_dials.items(), key=lambda x: -x[1])[:8]
+    logger.info("[concord-tunnel] dialled in the last %d min: %s", mins,
+                ", ".join("%s %d (%d short)" % (k, v, _short.get(k, 0)) for k, v in top))
+    shapes = sorted(_shapes.items(), key=lambda x: -x[1])[:8]
+    if shapes:
+        logger.info("[concord-tunnel] short tunnels by first frame: %s",
+                    ", ".join("%s %s x%d" % (h, sh, n) for (h, sh), n in shapes))
+    _dials.clear()
+    _short.clear()
+    _shapes.clear()
+    _dials_since = time.monotonic()
+
+
+def dialled(url: str) -> None:
     h = _host(url)
     _dials[h] = _dials.get(h, 0) + 1
-    if time.monotonic() - _dials_since >= DIAL_REPORT_EVERY:
-        top = sorted(_dials.items(), key=lambda x: -x[1])[:8]
-        logger.info("[concord-tunnel] dialled in the last %d min: %s", int((time.monotonic() - _dials_since) / 60),
-                    ", ".join("%s %d" % (k, v) for k, v in top))
-        _dials.clear()
-        _dials_since = time.monotonic()
+    _report()
+
+
+def closed(url: str, first_frame: str, seconds: float) -> None:
+    """A dialled tunnel ended. The SHORT ones are the churn a far relay sees: one websocket per read or send."""
+    if seconds >= SHORT_TUNNEL_S:
+        return
+    h = _host(url)
+    _short[h] = _short.get(h, 0) + 1
+    key = (h, frame_shape(first_frame))
+    _shapes[key] = _shapes.get(key, 0) + 1
 
 
 def acquire(pk: str) -> bool:
@@ -266,8 +307,9 @@ def connect(url: str, proxy: str | None):
                            ping_interval=None)
 
 
-async def pipe(client, upstream) -> None:
-    """Frames both ways, unchanged, until either side closes. `client` is a Starlette WebSocket."""
+async def pipe(client, upstream, first: list | None = None) -> None:
+    """Frames both ways, unchanged, until either side closes. `client` is a Starlette WebSocket.
+    `first` (a list) receives the client's first frame, for `closed()`'s report."""
     async def down():
         async for msg in upstream:
             await client.send_text(msg if isinstance(msg, str) else msg.decode("utf-8", "replace"))
@@ -277,6 +319,8 @@ async def pipe(client, upstream) -> None:
             data = await client.receive_text()
             if len(data) > MAX_FRAME:
                 return
+            if first is not None and not first:
+                first.append(data)
             await upstream.send(data)
     tasks = [asyncio.ensure_future(down()), asyncio.ensure_future(up())]
     try:
