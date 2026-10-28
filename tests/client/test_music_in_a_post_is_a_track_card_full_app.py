@@ -91,6 +91,11 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
             Path(os.environ['PC_TRACK_SHOTS']).mkdir(parents=True, exist_ok=True)
             Path(os.environ['PC_TRACK_SHOTS'], f'track-{width}.png').write_bytes(base64.b64decode(shot))
         got['viewUrl'] = await b.js("location.href")
+        # Every play() the page makes and how it ended, so a gate flake says WHY it did not play (it has failed there
+        # as "play did not play" with nothing else to go on, and does not reproduce even at 6x CPU throttle).
+        await b.js("(()=>{const p=HTMLMediaElement.prototype.play;window.__plays=[];HTMLMediaElement.prototype.play=function(){"
+                   "const r=p.apply(this,arguments),rec={src:String(this.currentSrc||this.src).slice(-30)};__plays.push(rec);"
+                   "if(r&&r.then)r.then(()=>rec.ok=true,e=>rec.err=String(e&&e.name||e));return r;};return true})()")
         await _click(b, '#feed .pc-track .pct-play')
         # Starting audio is not instant under load: wait for it (10 s) rather than reading at a fixed 0.2 s, which
         # failed as "play did not play" in the gate while the track was still starting.
@@ -104,6 +109,9 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
         got['stillHere'] = await b.js("location.href")
         await _click(b, '#feed .pc-track:nth-of-type(1) .pct-play')
         got['errors'] = await b.js('__errors')
+        got['audio'] = await b.js("(()=>{const a=document.querySelector('#feed .pc-track audio')||[...document.querySelectorAll('audio')].pop();"
+                                  "return a?{paused:a.paused,ready:a.readyState,net:a.networkState,err:a.error&&a.error.code,src:String(a.currentSrc).slice(-30)}:null})()")
+        got['plays'] = await b.js('window.__plays||[]')
         got['ranges'] = await b.js('__ranges')
 
     asyncio.run(desktop.with_browser('online', '', check, SEED))
@@ -121,7 +129,8 @@ def test_a_posted_track_shows_its_cover_title_and_artist_and_plays(width):
         assert L['barsClear'], ("the bars run under the time (40 bars x 2px minimum did not fit a phone)", width)
     assert all(r.startswith('bytes=0-') for r in got['ranges']), ("tags must be read from the head of the file only", got['ranges'])
     first = got['playing'][0]
-    assert first['playing'] and first['label'].startswith('Pause'), ("play did not play", first)
+    assert first['playing'] and first['label'].startswith('Pause'), ("play did not play", first['label'], got.get('audio'),
+                                                                     got.get('plays'), got.get('errors'))
     s = got['seeked'][0]
     assert s['now'] in ('49', '50', '51') and 18 <= s['lit'] <= 22 and s['time'] in ('1:38', '1:39', '1:40', '1:41'), ("seeking by the bars failed", s)
     assert got['stillHere'] == got['viewUrl'], "pressing the player opened the post instead"
