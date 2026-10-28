@@ -189,8 +189,11 @@ def test_a_save_after_a_forked_history_still_changes_the_community():
           {description:'original',icon:'🌌'},__PC.me().pubkey,__PC.signTemplate);__relaySeed([made.wrap]);})()''')
         # The fork: saves written from an EMPTY read are fresh v1s; repeat until one of them sorts below the
         # creation v1 (the shape PosterChan has: the rogue v1 anchors, the original v2 owns the next slot).
+        # UP TO 4000 TRIES, NOT 40. Each try sorts below with p = (the creation v1's id) / 2^256, uniform -- so the
+        # chance n tries all miss averages 1/(n+1): 1 run in 41 at 40 (3 of 8 desktop CI runs failed here, 2026-10-27),
+        # 1 in 4001 now. Measured: 300 tries take 0.5 s, and the loop stops at the first that lands.
         got = await b.js(r'''(async()=>{const C=()=>''' + CONTROLS + r''';let n=0;
-          for(;n<40;n++){const made=await PosterCordReader.createMetadataWrap(__cordBundle,[],{description:'WIPED'},__PC.me().pubkey,__PC.signTemplate);
+          for(;n<4000;n++){const made=await PosterCordReader.createMetadataWrap(__cordBundle,[],{description:'WIPED'},__PC.me().pubkey,__PC.signTemplate);
             __relaySeed([made.wrap]);if(PosterCordReader.inspectControl(__cordBundle,C()).description==='WIPED')break;}
           return {n,desc:PosterCordReader.inspectControl(__cordBundle,C()).description}})()''')
         assert got['desc'] == 'WIPED', ('could not reproduce the fork', got)

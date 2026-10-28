@@ -103,8 +103,11 @@ async def _save_succeeds(b, before):
     await b.until('!(' + OPEN + ')')
     await _assert_left(b, before, 'save')
     assert any(t == 'Settings saved' for t in await b.js('__toasts')), await b.js('__toasts')
-    saved = await b.js("JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey))[0].description")
-    assert saved == 'Our saved description'
+    # The room record is written as the save settles; on a slower runner that can land a moment after the sheet closes
+    # (desktop CI, 2026-10-24: read as None). Wait for it -- a save that never persists still fails here.
+    stored = "(JSON.parse(localStorage.getItem('pc.concord.rooms.v1.'+__PC.me().pubkey)||'[]')[0]||{}).description"
+    await b.until(stored + " === 'Our saved description'")
+    assert await b.js(stored) == 'Our saved description'
 
 
 VARIANTS = [(1280, 'page'), (390, 'page'), (1280, 'desk')]
