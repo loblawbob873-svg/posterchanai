@@ -5787,6 +5787,11 @@ if ! dracut --force --add " crypt systemd-cryptsetup dm rootfs-block " "$dir/ini
 	exit 0
 fi
 mv -f "$dir/initrd.new" "$dir/initrd"
+# installkernel's uki layout also copies the signed image to EFI/Linux/<entry-token>-<version>.efi, which systemd-boot
+# lists BY ITSELF -- and where the entry token is the machine-id (a from-scratch install) that copy matches the loader's
+# default "<machine-id>-*" and wins over this entry: it asks for the passphrase (measured, VM, 2026-10-27). The
+# anti-cheat entry boots its own copy in EFI/posterchan (95-posterchan-anticheat), so this one serves nothing.
+rm -f "$R"/boot/EFI/Linux/*-"$kver".efi
 printf 'title Current\nversion %s\noptions %s\nmachine-id %s\nlinux /%s/%s/linux\ninitrd /%s/%s/initrd\n' \
 	"$kver" "$opts" "$mid" "$mid" "$kver" "$mid" "$kver" >"$entry.new" && mv -f "$entry.new" "$entry"
 PLUGIN
@@ -5803,6 +5808,8 @@ PLUGIN
 		v="$(cat "$esp/EFI/posterchan/posterchanos.version" 2>/dev/null)"
 		e="$R/boot/loader/entries/$mid-$v.conf"; i="$R/boot/$mid/$v/initrd"
 		grep -qs 'rd.luks.key=' "$e" && lsinitrd "$i" 2>/dev/null | grep -q 'boot/keyfile.key' && ok=1
+		# ...and nothing in EFI/Linux competes with it for systemd-boot's default (see the plugin).
+		ls "$esp"/EFI/Linux/*-"$v".efi >/dev/null 2>&1 && ok=0
 		[ "$ok" = 1 ] || { echo "anticheat: the normal entry for $v would not unlock the disk by itself ($e)" >&2; return 1; }
 		echo "anticheat: the normal boot entry still unlocks the disk by itself ($v)"
 	fi

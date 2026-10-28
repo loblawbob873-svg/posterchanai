@@ -87,7 +87,12 @@ class Machine:
             (r / "usr/lib/modules" / KREL).mkdir(parents=True)
             (r / "usr/lib/modules" / KREL / "vmlinuz").write_text("bzImage")
             plug = r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install"
-            image_line += (f'; echo {KREL} > "{r}/boot/EFI/posterchan/posterchanos.version"'
+            # installkernel's uki layout (90-uki-copy) puts the signed image in EFI/Linux under the entry token -- the
+            # machine-id on a from-scratch install -- BEFORE the 96 plugin runs; another kernel's copy sits beside it.
+            (r / "boot/EFI/Linux").mkdir(parents=True)
+            (r / "boot/EFI/Linux" / f"{MID}-6.10.0-old.efi").write_text("other kernel")
+            image_line += (f'; echo uki > "{r}/boot/EFI/Linux/{MID}-{KREL}.efi"'
+                           f'; echo {KREL} > "{r}/boot/EFI/posterchan/posterchanos.version"'
                            f'; [ -x "{plug}" ] && PC_AC_ROOT="{r}" "{plug}" add {KREL} /x "{r}/usr/lib/modules/{KREL}/vmlinuz"')
             _exe(self.bin / "dracut", f'{L}; out="${{@: -2:1}}"; echo "{"usr/lib/systemd/systemd-cryptsetup etc/crypttab boot/keyfile.key" if initrd_has_key else "usr/lib/systemd/systemd-cryptsetup"}" > "$out"')
             _exe(self.bin / "lsinitrd", 'tr " " "\n" < "$1"')
@@ -261,6 +266,10 @@ def test_the_normal_entry_keeps_its_keyfile_unlock_through_the_kernel_reinstall(
     assert "boot/keyfile.key" in (m2.r / "boot" / MID / KREL / "initrd").read_text()
     assert (m2.r / "boot" / MID / KREL / "linux").read_text() == "bzImage"
     assert "emerge --noreplace sys-kernel/dracut" in calls, "dracut must stay installed for the plugin"
+    # The signed image's EFI/Linux copy matched systemd-boot's default "<machine-id>-*" and booted INSTEAD of this
+    # entry, asking for the passphrase (from-scratch VM, 2026-10-27). Gone; another kernel's file is not touched.
+    assert not (m2.r / "boot/EFI/Linux" / f"{MID}-{KREL}.efi").exists(), "a competing EFI/Linux image was left"
+    assert (m2.r / "boot/EFI/Linux" / f"{MID}-6.10.0-old.efi").exists()
     assert "still unlocks the disk by itself" in out
 
 
