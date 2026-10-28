@@ -24,6 +24,7 @@ def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_open", {})
     monkeypatch.setattr(tun, "_total", 0)
     monkeypatch.setattr(tun, "_good", {})
+    monkeypatch.setattr(tun, "_unreachable", {}, raising=False)
     monkeypatch.setattr(tun, "tor_hops", lambda: list(TORS))
 
 
@@ -258,3 +259,24 @@ def test_tor_gets_seconds_not_the_clients_whole_budget():
     first next time, so a remembered host fits the read."""
     assert tun.open_timeout(TOR1) + 1 < 10
     assert tun.open_timeout(None) == tun.OPEN_TIMEOUT
+
+
+def test_a_relay_no_hop_reached_is_not_dialled_again_for_a_while(client, monkeypatch):
+    """Each retry of an unreachable relay is every Tor circuit plus this node's address; every page of every member
+    retries every few seconds. For UNREACHABLE_FOR the answer is given without dialling anything."""
+    seen = []
+    monkeypatch.setattr(tun, "connect", _dialer(seen, set()))
+    for _ in range(3):
+        with pytest.raises(WebSocketDisconnect) as e:
+            with client.websocket_connect(f"/ws/concord-relay?u=wss://asia.vectorapp.io/nostr&t={tun.issue(PK)}") as ws:
+                ws.receive_text()
+        assert e.value.code == 4502
+    assert seen == [TOR1, TOR2, None], ("an unreachable relay was dialled again inside its window", seen)
+    # Another relay is unaffected, and once the window passes the whole chain is tried again.
+    monkeypatch.setattr(tun, "connect", _dialer(seen, {TOR1}))
+    _open_one(client, "wss://jskitty.com/nostr")
+    monkeypatch.setitem(tun._unreachable, "asia.vectorapp.io", 0.0)
+    seen.clear()
+    _open_one(client, "wss://asia.vectorapp.io/nostr")
+    assert seen == [TOR1], seen
+    assert tun._open == {} and tun._total == 0

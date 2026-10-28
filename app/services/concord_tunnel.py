@@ -55,6 +55,12 @@ OPEN_TIMEOUT = 20
 TOR_OPEN_TIMEOUT = 6
 GOOD_FOR = 1800
 _good: dict[str, tuple[str, float]] = {}
+# A HOST NO HOP REACHED IS NOT DIALLED AGAIN FOR A WHILE. Every page of every member retries a relay it cannot reach
+# every few seconds, and each retry is now every Tor circuit plus this node's address: asia.vectorapp.io, unreachable
+# both ways on 2026-10-27, would have been five connections per retry from here. For UNREACHABLE_FOR seconds the
+# tunnel answers "unreachable" without dialling; the first tunnel after that tries the whole chain again.
+UNREACHABLE_FOR = 120
+_unreachable: dict[str, float] = {}
 
 _open: dict[str, int] = {}
 _total = 0
@@ -182,6 +188,25 @@ def egress_hops(url: str, tors=None) -> list:
         tors.remove(good[0])
         tors.insert(0, good[0])
     return tors + [None]
+
+
+def unreachable(url: str) -> bool:
+    """True while `url`'s host is inside its UNREACHABLE_FOR window."""
+    until = _unreachable.get(_host(url))
+    if until is None:
+        return False
+    if until <= time.monotonic():
+        _unreachable.pop(_host(url), None)
+        return False
+    return True
+
+
+def all_hops_failed(url: str) -> None:
+    _unreachable[_host(url)] = time.monotonic() + UNREACHABLE_FOR
+    if len(_unreachable) > 4096:
+        now = time.monotonic()
+        for h in [h for h, t in _unreachable.items() if t <= now]:
+            _unreachable.pop(h, None)
 
 
 def hop_result(url: str, hop: str | None, ok: bool) -> None:
