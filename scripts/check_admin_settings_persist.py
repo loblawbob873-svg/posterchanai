@@ -36,7 +36,16 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 9561)
+def _free_port() -> int:
+    import socket
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        return so.getsockname()[1]
+
+
+# A FREE port unless the runner names one: a fixed 9561 collided with other checks on a loaded CI runner, and the
+# required test then SKIPPED ("Chrome did not start"), which blocks the desktop apps' publish (2026-10-28, twice).
+CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 0) or _free_port()
 os.environ["POSTERCHANAI_LOCAL_SETTINGS"] = os.path.join(tempfile.mkdtemp(prefix="pc-admin-persist-"), "local.json")
 os.environ.pop("POSTERCHANDB_MODE", None)
 
@@ -205,7 +214,9 @@ async def run():
     keys = sorted(set(ROUND1) | set(ROUND2))
     try:
         tab = None
-        for _ in range(100):          # poll the port: Chrome 153 writes no DevToolsActivePort for a fixed port
+        for _ in range(300):          # poll the port: Chrome 153 writes no DevToolsActivePort for a fixed port
+            if proc.poll() is not None:     # it exited: waiting longer changes nothing
+                break
             try:
                 tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json/list", timeout=2))
                 tab = next(t for t in tabs if t.get("type") == "page")
