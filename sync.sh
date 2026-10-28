@@ -15,9 +15,12 @@ fi
 # costing a full ~25-minute suite run to discover that sync.sh had edited its own inputs.
 #
 # Bumping first is also the honest order: the tree that gets tested is then the tree that gets pushed.
-if [ -x .venv/bin/python ] && ! .venv/bin/python scripts/bump_desktop_overlay.py --check >/tmp/pc-overlay-check.log 2>&1; then
+# venv-unified is this deployment's venv (.venv is an older layout no node has): checking only .venv meant this
+# never ran, and PosterChanOS stayed on whatever desktop somebody last pinned by hand (1.0.2049 vs 2053, 2026-10-28).
+_BPY=venv-unified/bin/python; [ -x .venv/bin/python ] && _BPY=.venv/bin/python
+if [ -x "$_BPY" ] && ! "$_BPY" scripts/bump_desktop_overlay.py --check >/tmp/pc-overlay-check.log 2>&1; then
     echo "[sync] completed desktop release is newer — updating the Gentoo package"
-    .venv/bin/python scripts/bump_desktop_overlay.py
+    "$_BPY" scripts/bump_desktop_overlay.py
 fi
 
 _regression_receipt=$(mktemp) || exit 1

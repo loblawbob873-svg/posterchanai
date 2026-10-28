@@ -13,6 +13,27 @@ def test_deploy_reconciles_completed_desktop_release_before_commit_and_publish()
     assert "scripts/bump_desktop_overlay.py\n" in sync
 
 
+def _run_bump_block(tmp_path, venv):
+    """Runs sync.sh's own bump block in a tree that has only `venv` and a stub python recording its calls."""
+    import subprocess
+    sync = (ROOT / "sync.sh").read_text()
+    start = sync.index("# venv-unified is this deployment's venv") if "# venv-unified is this" in sync else \
+        sync.index("if [ -x .venv/bin/python ] && ! .venv/bin/python scripts/bump_desktop_overlay.py --check")
+    end = sync.index("\nfi\n", start) + 4
+    py = tmp_path / venv / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text('#!/bin/sh\necho "$@" >> calls\nfor a; do [ "$a" = --check ] && exit 1; done\nexit 0\n')
+    py.chmod(0o755)
+    subprocess.run(["bash", "-c", sync[start:end]], cwd=tmp_path, check=True, capture_output=True)
+    return (tmp_path / "calls").read_text().splitlines() if (tmp_path / "calls").exists() else []
+
+
+def test_the_bump_runs_with_the_venv_this_deployment_has(tmp_path):
+    """Only .venv was checked, which no node has -- so the overlay was never bumped by a deploy."""
+    calls = _run_bump_block(tmp_path, "venv-unified")
+    assert calls == ["scripts/bump_desktop_overlay.py --check", "scripts/bump_desktop_overlay.py"], calls
+
+
 def test_overlay_publisher_never_downgrades_from_the_mutable_rolling_feed():
     publish = (ROOT / "scripts/publish_overlay.sh").read_text()
     assert "latest-linux.yml" not in publish
