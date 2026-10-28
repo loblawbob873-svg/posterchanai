@@ -37,10 +37,11 @@ window.PCMusicPlayerFactory = function(dep){
       // position (it would mis-overlap the sidebar + block its clicks). Same fix as the popovers.
       const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.documentElement.appendChild(d); this.el=d;
       if(!S._audioEl) S._audioEl=new Audio();
+      this._wrapPlay(S._audioEl);
       this._loadEQ();
       S._audioEl.ontimeupdate=()=>this._tick();
       S._audioEl.onended=()=>this.next();
-      S._audioEl.onplay=()=>{ this._closedUI=false; this._render(); this._startViz(); this._media(); };
+      S._audioEl.onplay=()=>{ this._noteStart(); this._closedUI=false; this._render(); this._startViz(); this._media(); };
       S._audioEl.onpause=()=>{ this._render(); this._media(); };
       // Hardware / keyboard media keys (play/pause, ⏮/⏭) + OS lock-screen controls via MediaSession.
       if('mediaSession' in navigator){ const ms=navigator.mediaSession; try{
@@ -120,6 +121,35 @@ window.PCMusicPlayerFactory = function(dep){
     /* "I am here" — no state, so it can be sent when there is nothing playing, which is exactly when
      * it matters. Never starts the service (the native side no-ops without one), so this cannot put a
      * notification on screen for a player that has never played. */
+    /* WHO STARTED THE MUSIC ("opening posterchan apps randomly starts music", 2026-10-28; presses are logged, starts
+     * were not). Every play() here notes its caller; a `play` with none in 10 s was the WebView/Android. Last 10 in
+     * pc_music_starts, shown in Settings → Phone → Music & car controls. */
+    _wrapPlay(el){
+      if(!el || el._pcPlayWrapped) return; el._pcPlayWrapped=true;
+      const real=el.play, mp=this;
+      el.play=function(){ mp._willAt=Date.now(); mp._willWhy=mp._callers(new Error().stack); return real.apply(el, arguments); };
+    },
+    _callers(stack){
+      const out=[];
+      for(const line of String(stack||'').split('\n').slice(2)){
+        const m=/at (?:Object\.|MusicPlayer\.)?([\w$.<>]+) /.exec(line) || /^([\w$.<>]+)@/.exec(line.trim());
+        if(m && !out.includes(m[1])) out.push(m[1]);
+        if(out.length>=4) break;
+      }
+      return out.join(' < ') || 'PosterChan code';
+    },
+    _noteStart(){
+      try{
+        const el=S._audioEl, ours=this._willAt && Date.now()-this._willAt<10000;
+        const rec={ at:Date.now(), by: ours ? this._willWhy : 'NOT PosterChan code: the WebView/Android started it',
+          tap: !!(navigator.userActivation && navigator.userActivation.isActive), pos: Math.round((el&&el.currentTime)||0),
+          pageAgeS: Math.round(performance.now()/1000), visible: document.visibilityState };
+        this._willAt=0;
+        let a=[]; try{ a=JSON.parse(localStorage.getItem('pc_music_starts')||'[]'); }catch(_){}
+        if(!Array.isArray(a)) a=[];
+        a.unshift(rec); localStorage.setItem('pc_music_starts', JSON.stringify(a.slice(0,10)));
+      }catch(_){}
+    },
     _nativeAck(){
       const P=_capPlugin('MusicControls','ack'); if(!P) return;
       try{ const r=P.ack(); if(r&&r.catch) r.catch(()=>{}); }catch(_){}

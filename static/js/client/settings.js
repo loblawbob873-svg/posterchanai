@@ -907,6 +907,7 @@ window.PCSettingsFactory = function(dep){
           <div id="us-music-row" class="fld" style="margin-top:10px">Music &amp; car controls
             <div class="muted small" id="us-music-sum">Checking…</div>
             <div class="small" id="us-music-presses" style="margin-top:4px"></div>
+            <div class="small" id="us-music-starts" style="margin-top:4px"></div>
             <div class="set-actions" style="margin-top:6px"><button class="btn btn-ghost small" id="us-music-refresh">Refresh</button><button class="btn btn-ghost small" id="us-music-copy">Copy music report</button></div>
             <div class="muted small">If a car, headset or lock-screen button does nothing, press it, then come back here: this says which part of the phone received the press and what came of it.</div>
           </div>
@@ -1436,7 +1437,7 @@ window.PCSettingsFactory = function(dep){
      * last presses: what was pressed, which session delivered it, and whether the page answered. "Car buttons do
      * nothing at all" is four different failures that look the same from the seat; this is where they differ.
      * The same lines go to `adb logcat -s PosterChanMusic`. An APK older than the call loses the row. */
-    { const row=$('#us-music-row'), sum=$('#us-music-sum'), list=$('#us-music-presses'),
+    { const row=$('#us-music-row'), sum=$('#us-music-sum'), list=$('#us-music-presses'), startsEl=$('#us-music-starts'),
             rf=$('#us-music-refresh'), cp=$('#us-music-copy');
       const M=_capPlugin('MusicControls','status');
       if(row){
@@ -1444,6 +1445,11 @@ window.PCSettingsFactory = function(dep){
         else{
           let rep=null;
           const read=()=>Promise.resolve(M.status()).then(r=>{ rep=r||{};
+              /* Who started the music, from the page's own record (MusicPlayer._noteStart) -- presses above, starts here. */
+              try{ const a=JSON.parse(localStorage.getItem('pc_music_starts')||'[]'); rep.starts=Array.isArray(a)?a:[]; }catch(_){ rep.starts=[]; }
+              if(startsEl) startsEl.innerHTML = rep.starts.length
+                ? '<div class="muted">Music started:</div>'+rep.starts.map(x=>'<div class="us-music-start">'+enc(new Date(Number(x.at)||0).toLocaleTimeString())+' · '+enc(x.by||'?')+' · at '+enc(String(x.pos||0))+'s · '+(x.tap?'after a tap':'no tap')+' · page '+enc(String(x.pageAgeS||0))+'s old · '+enc(x.visible||'')+'</div>').join('')
+                : '';
               if(sum) sum.textContent=_musicStatusLine(rep);
               if(list){ const ps=Array.isArray(rep.presses)?rep.presses:[];
                 list.innerHTML = ps.length

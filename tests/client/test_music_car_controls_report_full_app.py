@@ -99,3 +99,51 @@ def test_an_apk_without_the_call_shows_no_music_row():
 
     asyncio.run(desktop.with_browser("online", "", check, native(with_status=False)))
     assert got["row"] is False, got
+
+
+def _silent_wav():
+    import base64
+    import struct
+    n = 8000  # one second at 8 kHz, 8-bit mono
+    head = b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 8000, 1, 8) \
+        + b"data" + struct.pack("<I", n)
+    return "data:audio/wav;base64," + base64.b64encode(head + b"\x80" * n).decode()
+
+
+CATCH_AUDIO = "{const A=window.Audio;window.Audio=function(){const e=new A(...arguments);window.__audio=e;return e;};}"
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+def test_the_row_says_who_started_the_music():
+    """2026-10-28: "opening posterchan apps on android randomly starts music" (no car involved). Presses were the
+    only thing recorded, and nothing was pressed. Every start is recorded now: a play() this client made names the
+    code path; a start nobody here asked for (the WebView/Android resuming the element) says so."""
+    got = {}
+
+    async def check(b):
+        await b.js("__PC.MusicPlayer.ensure()")
+        await b.until("!!window.__audio")
+        await b.js("__audio.src=%s" % json.dumps(_silent_wav()))
+        # A real click first, as a person would: Chrome refuses audio before any user activation.
+        for kind in ("mousePressed", "mouseReleased"):
+            await b.call("Input.dispatchMouseEvent", {"type": kind, "x": 1430, "y": 990, "button": "left", "clickCount": 1})
+        await b.js("__PC.MusicPlayer.toggle()")                       # ours: the player's own toggle
+        await b.until("JSON.parse(localStorage.getItem('pc_music_starts')||'[]').length>=1")
+        await b.js("__audio.pause()")
+        await b.js("HTMLMediaElement.prototype.play.call(__audio)")   # not ours: the platform resuming it
+        await b.until("JSON.parse(localStorage.getItem('pc_music_starts')||'[]').length>=2")
+        got["starts"] = await b.js("JSON.parse(localStorage.getItem('pc_music_starts'))")
+        await b.js("__audio.pause()")
+        await _phone_pane(b)
+        await b.until("/Music started/.test((document.querySelector('#us-music-starts')||{}).textContent||'')")
+        got["row"] = await b.js("document.querySelector('#us-music-starts').textContent")
+        await b.js("document.querySelector('#us-music-copy').click()")
+        await b.until("__copied.length>0")
+        got["copied"] = json.loads(await b.js("__copied[__copied.length-1]||'{}'"))
+
+    asyncio.run(desktop.with_browser("online", "", check, native() + CATCH_AUDIO))
+    newest, older = got["starts"][0], got["starts"][1]
+    assert newest["by"].startswith("NOT PosterChan code"), got
+    assert "toggle" in older["by"], got
+    assert "NOT PosterChan code" in got["row"] and "toggle" in got["row"], got
+    assert len(got["copied"].get("starts") or []) == 2, got

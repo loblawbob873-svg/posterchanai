@@ -107,7 +107,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.168 -> 8.170 (2026-10-28) for the event cache written once a minute instead of every 0.7 s (disk wear,
 #: store.js: two write queues, the unload spill into localStorage) and the phone-storage bridge hook in hostfiles.js,
 #: comments cut first: 8.1697 MB measured.
-BUDGET_MB = 8.170
+#: ...and 8.170 -> 8.172 (2026-10-28) for the music-start recorder (musicplayer.js + its Settings row): "opening
+#: posterchan apps randomly starts music" left no trace -- presses were logged, starts were not. 8.1716 MB measured.
+BUDGET_MB = 8.172
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
