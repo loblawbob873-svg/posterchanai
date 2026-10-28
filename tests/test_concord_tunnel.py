@@ -384,6 +384,11 @@ def test_the_report_names_the_kind_of_client_never_the_device():
     assert tun.client_kind("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 PosterChan/1.0 Chrome/141 Electron/38.2.0 Safari/537.36") == "desktop"
     assert tun.client_kind("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141 Safari/537.36") == "browser"
     assert tun.client_kind("") == "?"
+    # The desktop app strips Electron/ from its UA; its ORIGIN says what it is (and the APK's).
+    chrome = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/141 Safari/537.36"
+    assert tun.client_kind(chrome, "app://posterchan") == "desktop"
+    assert tun.client_kind(chrome, "https://localhost") == "apk"
+    assert tun.client_kind(chrome, "https://poster.place") == "browser"
 
 
 def test_a_long_tunnel_is_reported_with_its_client_kind(monkeypatch, caplog):

@@ -218,9 +218,16 @@ def dialled(url: str) -> None:
 _long: dict[tuple, list] = {}
 
 
-def client_kind(user_agent: str) -> str:
+def client_kind(user_agent: str, origin: str = "") -> str:
     """Which KIND of client opened a tunnel -- the APK's WebView, the desktop app, or a browser. The platform only,
-    never the device or the person: enough to say which build churns a far relay."""
+    never the device or the person: enough to say which build churns a far relay. The ORIGIN decides first: the
+    desktop app strips Electron/ from its user agent on purpose (Google sign-in), so by UA alone it reads as a
+    browser; it loads from app://posterchan, the APK from https://localhost (Capacitor)."""
+    o = str(origin or "").lower()
+    if o.startswith("app://"):
+        return "desktop"
+    if o in ("https://localhost", "http://localhost", "capacitor://localhost"):
+        return "apk"
     ua = str(user_agent or "")
     if "Electron/" in ua:
         return "desktop"
