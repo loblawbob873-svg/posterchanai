@@ -167,6 +167,9 @@ CHECKS = {
     # repeat under throttled 4G, through the CDN and the real cache headers.
     "check_client_load_speed":         dict(group="ui", secs=240),
     "check_client_load_speed_live":    dict(group="live", secs=420, live_args=["{live}"]),
+    # "Tablet super laggy opening any desktop apps, social ~20 s" (2026-10-28): desktop-mode windows opened over and
+    # over at the tablet's size and phone-speed CPU -- each open timed, plus slowdown and heap growth over a session.
+    "check_desktop_windows_live":      dict(group="live", secs=420, live_args=["{live}"]),
     # A real profile never skips a reply the relay has ("there is no way I have an 11 day reply gap"):
     # the profile's Replies list compared, pair by pair, with the instance's own relay.
     "check_profile_continuity_live":   dict(group="live", secs=420, live_args=["{live}"]),

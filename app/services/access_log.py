@@ -16,17 +16,22 @@ def redact(path: str) -> str:
 
 
 class RedactSecrets(logging.Filter):
+    """Every string argument, not one position: an HTTP request is logged by uvicorn.access with the path third, a
+    WEBSOCKET handshake (`"WebSocket %s" [accepted]`, every tunnel) by uvicorn.error with the path second."""
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            args = record.args
-            if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-                record.args = args[:2] + (redact(args[2]),) + args[3:]
+            if isinstance(record.args, tuple):
+                record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
         except Exception:
             pass   # a log line is never refused for this
         return True
 
 
+LOGGERS = ("uvicorn.access", "uvicorn.error")
+
+
 def install() -> None:
-    log = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, RedactSecrets) for f in log.filters):
-        log.addFilter(RedactSecrets())
+    for name in LOGGERS:
+        log = logging.getLogger(name)
+        if not any(isinstance(f, RedactSecrets) for f in log.filters):
+            log.addFilter(RedactSecrets())
