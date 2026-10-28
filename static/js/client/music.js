@@ -660,14 +660,18 @@ window.PCMusicFactory = function(dep){
    * 2026-10-28: the list was rebuilt 2.3 s after it appeared). While a press is down on the list the repaint waits
    * and runs once it is released. */
   let _maHeld = false, _maHeldAt = 0, _maHeldRepaint = false;
+  const _maHeldNow = () => _maHeld && Date.now() - _maHeldAt < 8000;   // a lost pointerup cannot stall it
+  const _maDeferred = new Map();   // list element -> its newest held-back repaint (_renderMusicList)
   document.addEventListener('pointerdown', e => {
     _maHeld = !!(e.target && e.target.closest && e.target.closest('#ma-lib')); _maHeldAt = Date.now(); }, true);
   const _maRelease = () => { if(!_maHeld) return; _maHeld = false;
-    if(_maHeldRepaint){ _maHeldRepaint = false; setTimeout(_maRepaint, 0); } };   // after the click it ends in
+    const later = [..._maDeferred.values()]; _maDeferred.clear();
+    if(_maHeldRepaint){ _maHeldRepaint = false; later.push(_maRepaint); }
+    if(later.length) setTimeout(() => later.forEach(f => { try{ f(); }catch(_){ } }), 0); };   // after the click
   document.addEventListener('pointerup', _maRelease, true);
   document.addEventListener('pointercancel', _maRelease, true);
   function _maRepaint(){
-    if(_maHeld && Date.now() - _maHeldAt < 8000){ _maHeldRepaint = true; return; }   // a lost pointerup cannot stall it
+    if(_maHeldNow()){ _maHeldRepaint = true; return; }
     const lib = document.getElementById('ma-lib'), feed = document.getElementById('feed');
     if(!lib || !feed || !lib.isConnected) return;
     const sel = S._musicPl && window.PCPlaylists && PCPlaylists.get(S._musicPl);
@@ -1081,6 +1085,10 @@ window.PCMusicFactory = function(dep){
    * would silently throw away the one thing the user arranged. */
   function _renderMusicList(grid, list, q, only, opts){
     if(!grid) return;
+    // EVERY rebuild of a list under a held press waits for its release, not only _maRepaint's (the offline marks
+    // arriving late re-rendered it directly, and the gate's phone-layout tap was lost again).
+    if(_maHeldNow() && grid.isConnected && grid.closest && grid.closest('#ma-lib')){
+      _maDeferred.set(grid, () => _renderMusicList(grid, list, q, only, opts)); return; }
     /* Which tracks are already on this device — read ONCE, then from memory.
      *
      * The list repaints on every keystroke of the search box, so this cannot be an IDB scan per

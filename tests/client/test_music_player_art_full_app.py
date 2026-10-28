@@ -538,3 +538,39 @@ def test_a_tap_held_across_a_background_repaint_still_plays():
 
     _run(check, F.PLAIN + F.LIB + F.HELD, 360, 720)
     assert got["rebuiltWhileHeld"] == 0, ("the list was rebuilt under the finger", got)
+
+
+# This device's offline copies are listed from IndexedDB ('pcmusic'); on a loaded machine that answer lands seconds
+# after the list first paints, and the list repaints itself with the marks.
+SLOW_OFFLINE_MARKS = r'''
+(()=>{const open=indexedDB.open.bind(indexedDB);indexedDB.open=function(name,...r){const q=open(name,...r);
+  if(name!=='pcmusic')return q;
+  const p=new Proxy(q,{set(t,k,v){if(k==='onsuccess'){t.onsuccess=e=>setTimeout(()=>v.call(t,e),3000);return true;}t[k]=v;return true;},
+    get(t,k){const v=t[k];return typeof v==='function'?v.bind(t):v;}});return p;};})();
+'''
+
+
+@CHROME
+def test_a_tap_held_while_the_offline_marks_arrive_still_plays():
+    """The SECOND way a tap was lost (the gate's record again after the tag-pass fix, 2026-10-28: nothing playing):
+    the list re-renders itself directly when this device's offline marks arrive, not through the repaint that waits.
+    Every rebuild of the list now waits for a held press."""
+    got = {}
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": 360, "height": 720, "deviceScaleFactor": 2, "mobile": True})
+        await _music(b)
+        sel = f".track .track-play[data-sha='{S1}']"
+        xy = await b.js(f"(()=>{{const e=document.querySelector({json.dumps(sel)});e.scrollIntoView({{block:'center'}});"
+                        "const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()")
+        await b.js("window.__rebuilt=0;new MutationObserver(ms=>{for(const m of ms)for(const n of m.removedNodes)"
+                   "if(n.querySelector&&n.querySelector('.track-play'))__rebuilt++}).observe(document.getElementById('ma-lib'),{childList:true,subtree:true});1")
+        await b.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": xy["x"], "y": xy["y"], "button": "left", "clickCount": 1})
+        await b.js("window.__rebuilt=0;1")
+        await asyncio.sleep(4)                       # past the offline marks (3 s here)
+        got["rebuiltWhileHeld"] = await b.js("__rebuilt")
+        await b.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": xy["x"], "y": xy["y"], "button": "left", "clickCount": 1})
+        got["state"] = await F.until_state(b, lambda s: s["cur"] == S1 and s["playing"], what="the held tap played")
+
+    _run(check, SLOW_OFFLINE_MARKS + F.PLAIN + F.LIB + F.HELD, 360, 720)
+    assert got["rebuiltWhileHeld"] == 0, ("the list was rebuilt under the finger", got)
