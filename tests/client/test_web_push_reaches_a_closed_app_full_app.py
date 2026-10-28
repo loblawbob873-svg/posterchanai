@@ -133,7 +133,7 @@ def test_push_enabled_in_the_app_reaches_it_closed_and_stops_when_turned_off(tmp
             await pg.until("__toasts.some(t=>/Push notifications on/.test(t))", 30, 'notifications on')
             rows = api.run(push_store.subs_where(lambda r: r.get('pubkey') == me))
             assert [(r['endpoint'], r['p256dh'], r['auth']) for r in rows] == \
-                [(sub['endpoint'], sub['keys']['p256dh'], sub['keys']['auth'])], rows
+                [(sub['endpoint'], sub['keys']['p256dh'], sub['keys']['auth'])], ('the subscription stored', rows)
             from app.services import push_service
             assert await pg.js('window.__askedKey') == push_service.get_public_key(), \
                 'the browser subscribed with a key that is not this node\'s VAPID key'
@@ -177,7 +177,7 @@ def test_push_enabled_in_the_app_reaches_it_closed_and_stops_when_turned_off(tmp
                     break
                 await asyncio.sleep(.1)
             assert shown == [{'title': 'PosterChan', 'body': 'Alice mentioned you', 'tag': 'nostr-' + ev['id'],
-                              'eid': ev['id']}], shown
+                              'eid': ev['id']}], ('the notification shown by the worker', shown)
 
             # Turned OFF in the app: the server forgets the device and nothing more is sent to it.
             pg = await ph.open(init=STUB.replace('__SUB__', json.dumps(sub)))
