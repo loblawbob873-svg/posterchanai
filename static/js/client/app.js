@@ -6526,7 +6526,7 @@
     _bmFetch=(async()=>{
       const got=await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10003], limit:1 }], (evs)=>{
         if(!ME || ME.pubkey!==owner || GUEST) return;
-        // Not `_bmReadFor` here: this first runs on the CACHED list, and an old cached list is not one a relay confirmed.
+        // No `_bmReadFor` here: a cached list is not one a relay confirmed.
         if(evs.length) BOOKMARKS=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
         if(VIEW==='bookmarks'){ if(_bmPaint) renderBookmarks(); }
         else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on posts already on screen
@@ -6535,7 +6535,7 @@
     })().finally(()=>{ _bmFetch=null; _bmPaint=false;
       // The screen was waiting on THIS read (a spinner or "couldn't read"): draw its verdict.
       if(VIEW==='bookmarks' && $('#feed .bm-wait')) renderBookmarks();
-      // Still unconfirmed with Bookmarks open (the read timed out under load): ask again, a few times, spaced out.
+      // Unconfirmed with Bookmarks open: ask again (up to 4 times).
       if(ME && ME.pubkey===owner && _bmReadFor!==owner && VIEW==='bookmarks' && (fetchBookmarks._tries=(fetchBookmarks._tries||0)+1)<=4)
         setTimeout(()=>{ if(VIEW==='bookmarks' && !_bmFetch && ME && ME.pubkey===owner && _bmReadFor!==owner) fetchBookmarks(); }, 3000);
       if(_bmReadFor===owner) fetchBookmarks._tries=0; });

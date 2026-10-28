@@ -82,7 +82,7 @@
   function preload(){
     const w = who();
     if(loaded === w) return; loaded = w;     // only the chosen one's frames are ever fetched
-    for(let i = 1; i <= FRAMES; i++){ const im = new Image(); im.decoding = 'async'; im.src = SRC(i, w); }
+    for(let i = 1; i <= FRAMES; i++){ const im = new Image(); im.decoding = 'async'; im.onload = () => alphaMap(im); im.src = SRC(i, w); }
   }
   function show(i){ frame = i; const im = el && el.querySelector('img'); if(im && im.getAttribute('src') !== SRC(i)) im.setAttribute('src', SRC(i)); }
   function tick(){
@@ -221,15 +221,17 @@
     if(map) alphaMaps.set(key, map);
     return map;
   }
-  /* Is she drawn at this point of the viewport? Unknown (frame not decoded yet) answers yes, so her
-   * box never goes dead to a click before her picture has loaded. */
+  /* Is she drawn here? A frame still arriving is judged by the one on screen (answering yes made her box
+   * swallow every click on a loaded machine); nothing decoded yet answers yes, so her box never goes dead. */
+  let shownMap = null;
   function opaqueAt(x, y){
     const im = el && el.querySelector('img');
     if(!im) return false;
     const r = im.getBoundingClientRect();
     if(x < r.left || x > r.right || y < r.top || y > r.bottom) return false;
-    if(!im.complete || !im.naturalWidth) return true;
-    const m = alphaMap(im); if(!m) return true;
+    const ready = im.complete && im.naturalWidth;
+    const m = alphaMaps.get(im.src) || (ready ? alphaMap(im) : null) || (!ready && shownMap);
+    if(!m) return true;
     const k = Math.min(r.width / m.w, r.height / m.h), dw = m.w * k, dh = m.h * k;
     const ox = r.left + (r.width - dw) / 2, oy = r.top + (r.height - dh) / 2;
     const u = (x - ox) / dw, v = (y - oy) / dh;
@@ -257,7 +259,9 @@
     el.setAttribute('role', 'img');
     el.setAttribute('aria-label', me.name + ' dancing. Drag to move; right-click or long-press to hide or switch.');
     el.title = me.name + ' — click me, drag me, right-click to hide or switch';
-    const im = document.createElement('img'); im.alt = ''; im.draggable = false; im.src = SRC(frame);
+    const im = document.createElement('img'); im.alt = ''; im.draggable = false;
+    shownMap = null; im.addEventListener('load', () => { const m = alphaMap(im); if(m) shownMap = m; });
+    im.src = SRC(frame);
     el.appendChild(im);
     el.addEventListener('pointerenter', ev => { if(ev.pointerType !== 'touch' && !opaqueAt(ev.clientX, ev.clientY)){ el.style.pointerEvents = 'none'; return; } if(!drag && !el.classList.contains('happy')) show(2); });
     el.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); menu(ev.clientX, ev.clientY); });

@@ -299,11 +299,27 @@ def test_on_posterchanos_her_size_and_the_monitor_she_was_left_on_are_saved_and_
     assert res["after_restart"] == {"out": "DP-1", "fx": 0.25, "fy": 0.75, "size": 1.25}, ("a restart forgot where she was left", res["after_restart"])
 
 
-@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+CHROME = pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+
+
+@CHROME
 def test_clicks_go_through_her_transparent_parts_and_not_through_her():
     """'is it possible to make posterchan/axolotl so it don't interfere with clicking widgets/app elements
     behind it?' Real mouse input: a button lies under her box. A click on the empty air in her box's
     corner reaches the button; a click on her body reaches her (she reacts) and not the button."""
+    _click_through(pending_frame=False)
+
+
+@CHROME
+def test_clicks_go_through_her_while_her_next_dance_frame_is_still_arriving():
+    """The gate's flaky click-through failure ({'under': 0, 'happy': True} for the corner), reproduced: on a loaded
+    machine the next dance frame is still downloading when the mouse arrives, and a frame not yet decoded used to
+    answer "she is drawn here" everywhere, so her whole box swallowed the click. The frame on screen meanwhile
+    (the browser keeps showing the last one) decides."""
+    _click_through(pending_frame=True)
+
+
+def _click_through(pending_frame):
     res = {}
 
     async def check(b):
@@ -312,6 +328,9 @@ def test_clicks_go_through_her_transparent_parts_and_not_through_her():
         await b.until("(()=>{const i=document.querySelector('#os-desk .os-buddy img');return !!i&&i.complete&&i.naturalWidth>0})()")
         await asyncio.sleep(.5)
         box = await b.js(f"{RECT}('.os-buddy')")
+        if pending_frame:       # a frame that never arrives (a blackhole address): pending for the whole test
+            await b.js("(()=>{const i=document.querySelector('#os-desk .os-buddy img');"
+                       "i.setAttribute('src','http://10.255.255.1/dance-3.webp');return true})()")
         # A button under her whole box.
         await b.js(f"""(()=>{{const d=document.querySelector('#os-desk'),z=parseFloat(getComputedStyle(document.body).zoom)||1,dr=d.getBoundingClientRect();
             const t=document.createElement('button');t.id='under';t.textContent='under';window.__under=0;t.onclick=()=>window.__under++;
