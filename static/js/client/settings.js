@@ -1475,7 +1475,7 @@ window.PCSettingsFactory = function(dep){
           const page=()=>{ const o={nodes:document.getElementsByTagName('*').length};
             try{ const pm=performance.memory; if(pm) o.jsHeapMb=Math.round(pm.usedJSHeapSize/1048576); }catch(_){}
             try{ if(window.PCOS&&PCOS.parkStats) o.windows=PCOS.parkStats(); }catch(_){}
-            try{ if(window.PCBusyReport) o.busy=PCBusyReport(); }catch(_){}
+            try{ if(window.PCBusyReport) o.busy=window.PCBusyReport(); }catch(_){}
             // What the page HOLDS, to say which collection a big heap is (a tablet: 73 MB).
             try{ const h=o.holds={}; if(window.Store&&Store.memStats) Object.assign(h,Store.memStats());
               if(window.PCConcord&&PCConcord.memStats) h.concord=PCConcord.memStats();
