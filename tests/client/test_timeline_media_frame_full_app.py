@@ -48,7 +48,10 @@ MEASURE = r'''(()=>{const out={};for(const n of document.querySelectorAll('#tl-n
   const car=n.querySelector('.media-car');
   const imgs=[...n.querySelectorAll('img')].filter(i=>!i.closest('.av')&&!i.classList.contains('av')&&!i.classList.contains('emoji-inline')&&i.getBoundingClientRect().width>40);
   out[m[1]]={col:bw,carousel:car?{w:Math.round(car.getBoundingClientRect().width),h:Math.round(car.getBoundingClientRect().height)}:null,
-    imgs:imgs.map(i=>{const r=i.getBoundingClientRect();return [Math.round(r.width),Math.round(r.height),i.naturalWidth&&+(i.naturalWidth/i.naturalHeight).toFixed(2),i.parentElement.className.slice(0,30)]})};}
+    imgs:imgs.map(i=>{const r=i.getBoundingClientRect();return [Math.round(r.width),Math.round(r.height),i.naturalWidth&&+(i.naturalWidth/i.naturalHeight).toFixed(2),i.parentElement.className.slice(0,30),
+      (()=>{if(!i.naturalWidth)return null;const fit=getComputedStyle(i).objectFit,sx=r.width/i.naturalWidth,sy=r.height/i.naturalHeight;
+        /* the share of the picture NOT drawn: cover scales to the larger factor and trims the overflow */
+        return fit==='cover'?+(1-Math.min(sx,sy)/Math.max(sx,sy)).toFixed(3):(fit==='fill'?null:0);})()]})};}
   return out;})()'''
 
 
@@ -77,6 +80,8 @@ def test_a_lone_picture_gets_one_frame_whatever_its_shape(width):
     col = got["landscape"]["col"]
     for name, (w, h, *_rest) in singles.items():
         assert abs(w - col) <= 2, (name, "a lone picture does not span the column", w, col)
+        # "we should not be cropping notes on the timeline, that is terrible" (2026-10-28): the WHOLE picture is drawn.
+        assert _rest[-1] == 0, (name, "part of the picture is trimmed off (share not drawn)", _rest[-1])
         assert h >= 0.55 * col - 2, (name, "wider than 16:9 -- a sliver of a picture", h, col)
         assert h <= 1.26 * col + 2, (name, "taller than 4:5 -- most of a phone screen", h, col)
     heights = [h for (_w, h, *_r) in singles.values()]
