@@ -60,7 +60,11 @@ _good: dict[str, tuple[str, float]] = {}
 # both ways on 2026-10-27, would have been five connections per retry from here. For UNREACHABLE_FOR seconds the
 # tunnel answers "unreachable" without dialling; the first tunnel after that tries the whole chain again.
 UNREACHABLE_FOR = 120
+# ...doubling while it stays that way, up to UNREACHABLE_MAX: asia.vectorapp.io refused every Tor daemon and this
+# node's address all day on 2026-10-27, and a flat two minutes still walked the whole chain ~19 times an hour.
+UNREACHABLE_MAX = 1800
 _unreachable: dict[str, float] = {}
+_strikes: dict[str, int] = {}
 
 _open: dict[str, int] = {}
 _total = 0
@@ -205,18 +209,23 @@ def unreachable(url: str) -> bool:
 
 
 def all_hops_failed(url: str) -> None:
-    _unreachable[_host(url)] = time.monotonic() + UNREACHABLE_FOR
+    host = _host(url)
+    n = _strikes[host] = _strikes.get(host, 0) + 1
+    _unreachable[host] = time.monotonic() + min(UNREACHABLE_MAX, UNREACHABLE_FOR * 2 ** (n - 1))
     if len(_unreachable) > 4096:
         now = time.monotonic()
         for h in [h for h, t in _unreachable.items() if t <= now]:
             _unreachable.pop(h, None)
+            _strikes.pop(h, None)
 
 
 def hop_result(url: str, hop: str | None, ok: bool) -> None:
     """Remember the Tor circuit that reached `url`'s host; forget it when it stops working."""
+    host = _host(url)
+    if ok:
+        _strikes.pop(host, None)                     # reached by any hop: the next failure starts the pause over
     if not hop:
         return
-    host = _host(url)
     if ok:
         _good[host] = (hop, time.monotonic() + GOOD_FOR)
         if len(_good) > 4096:                        # bounded: drop what has expired

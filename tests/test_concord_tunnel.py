@@ -25,6 +25,7 @@ def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_total", 0)
     monkeypatch.setattr(tun, "_good", {})
     monkeypatch.setattr(tun, "_unreachable", {}, raising=False)
+    monkeypatch.setattr(tun, "_strikes", {}, raising=False)
     monkeypatch.setattr(tun, "tor_hops", lambda: list(TORS))
 
 
@@ -280,3 +281,23 @@ def test_a_relay_no_hop_reached_is_not_dialled_again_for_a_while(client, monkeyp
     _open_one(client, "wss://asia.vectorapp.io/nostr")
     assert seen == [TOR1], seen
     assert tun._open == {} and tun._total == 0
+
+
+def test_a_relay_that_stays_unreachable_is_asked_less_and_less_often(monkeypatch):
+    """Measured on poster.place 2026-10-27: asia.vectorapp.io unreachable through all four Tor daemons and direct, and
+    the flat two-minute pause still walked the whole chain ~19 times an hour. Each full failure in a row doubles the
+    pause, up to UNREACHABLE_MAX; reaching the host by any hop starts it over."""
+    clock = [1000.0]
+    monkeypatch.setattr(tun.time, "monotonic", lambda: clock[0])
+    url = "wss://asia.vectorapp.io/nostr"
+    pauses = []
+    for _ in range(7):
+        assert not tun.unreachable(url)
+        tun.all_hops_failed(url)
+        pauses.append(tun._unreachable["asia.vectorapp.io"] - clock[0])
+        clock[0] += pauses[-1] + 1
+    assert pauses == [120, 240, 480, 960, 1800, 1800, 1800], pauses
+    tun.hop_result(url, None, True)                      # this node's own address got through
+    tun.all_hops_failed(url)
+    assert tun._unreachable["asia.vectorapp.io"] - clock[0] == 120, "a host that was reached kept its long pause"
+    assert not tun.unreachable("wss://jskitty.com/nostr"), "one host's failures paused another"
