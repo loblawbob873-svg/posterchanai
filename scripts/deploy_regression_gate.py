@@ -418,6 +418,16 @@ def _run_required_sharded(groups, base, root, env, directory, report, timeout=No
             if flaky:
                 out.append('[regressions] FLAKY UNDER LOAD (failed in parallel, passed alone): '
                            + ', '.join(flaky) + '\n')
+                for c in failed:
+                    name = _node_id(c, root)
+                    if name not in flaky:
+                        continue
+                    fail = c.find('failure') if c.find('failure') is not None else c.find('error')
+                    first = (str(fail.get('message') or fail.text or '').strip().splitlines() or [''])[0][:240]
+                    out.append(f'[regressions]   {name}: {first}\n')
+                    kept = _keep_flaky(name, '%s\n\n%s' % (fail.get('message') or '', fail.text or ''))
+                    if kept:
+                        out.append(f'[regressions]     whole failure: {kept}\n')
                 cases = [again[_node_id(c, root)] if c in failed and _node_id(c, root) in flaky else c
                          for c in cases]
                 if not [c for c in cases if c.find('failure') is not None or c.find('error') is not None]:

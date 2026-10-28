@@ -222,14 +222,15 @@ crash=os.environ.get('FULL_CRASH_FILE','')
 full='-o' in sys.argv and '--noconftest' not in sys.argv
 if full and crash and crash in files:
     raise SystemExit(2)
+req_flaky='' if (full or 'retry' in report) else os.environ.get('REQ_FLAKY_FILE','')
 cases=''.join('<testcase classname="%s" name="t" file="%s" time="0.5">%s</testcase>'
-              % (f[:-3].replace('/','.'), f, '<failure message="AssertionError: the canary text never appeared&#10;second line">tb</failure>' if (full and f==fail) else '') for f in files) \
+              % (f[:-3].replace('/','.'), f, '<failure message="AssertionError: the canary text never appeared&#10;second line">tb</failure>' if ((full and f==fail) or f==req_flaky) else '') for f in files) \
       or '<testcase name="required"/>'
 Path(report).write_text('<testsuites><testsuite>'+cases+'</testsuite></testsuites>')
 log=os.environ.get('FULL_SEEN') if full else os.environ.get('REQ_SEEN')
 if log:
     with open(log,'a') as out: out.write('\\n'.join(files)+'\\n')
-raise SystemExit(1 if (full and fail in files) else 0)
+raise SystemExit(1 if ((full and fail in files) or req_flaky in files) else 0)
 '''
 
 
@@ -322,6 +323,19 @@ def test_a_test_that_fails_only_under_parallel_load_is_reported_not_blocking(tmp
     text = kept[0].read_text()
     assert 'second line' in text and 'tb' in text and 'test_a_text_you_can_notice' in text, text
     assert str(kept[0]) in result.stdout, 'the report does not say where the whole failure was kept'
+
+
+def test_a_required_test_that_fails_only_under_load_is_reported_with_its_whole_failure(tmp_path):
+    # Deploy 114: the REQUIRED stage's flaky line named two tests and nothing else -- no reason, no record.
+    victim = next(t for t in gate_module().TESTS if '::' not in t and 'regression_gate' not in t)
+    result = subprocess.run([sys.executable, str(GATE), '--full'],
+                            env=_full_env(tmp_path, REQ_FLAKY_FILE=victim),
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'FLAKY UNDER LOAD' in result.stdout and 'the canary text never appeared' in result.stdout, result.stdout
+    kept = sorted((tmp_path / 'cache' / 'posterchanai' / 'flaky').glob('*.txt'))
+    assert len(kept) == 1 and 'second line' in kept[0].read_text(), (kept, result.stdout)
+    assert str(kept[0]) in result.stdout
 
 
 def test_the_full_suite_runs_async_tests_with_their_plugin(source_gate, tmp_path):
