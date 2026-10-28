@@ -114,7 +114,7 @@ class FilesOpenInCode(unittest.TestCase):
             body = _decomment(_fn(self.app, head))
             self.assertIn("await _withModule('code.js', 'PCCode')", body, head)
         host = self.app[self.app.index("id:'code', icon:'&lt;/&gt;'"):
-                        self.app.index("id:'host', icon:'🖥")]
+                        self.app.index("id:'host', icon:_hostPhone()")]
         # The chooser and `pc-open` share ONE opener; the wait lives in it.
         self.assertIn("await _hostOpenCode(path)", host)
         opener = _decomment(_fn(self.app, "async function _hostOpenCode("))

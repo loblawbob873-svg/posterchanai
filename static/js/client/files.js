@@ -66,6 +66,10 @@ window.PCFilesFactory = function(dep){
         if(_S.VIEW==='blossom' && _S._filesTab===_wasTab) renderBlossom();
       });
     }
+    /* THIS PHONE (phonefiles.js) is fetched the first time Files is drawn inside the APK, not on every page load
+     * everywhere; Files draws again once it is there. */
+    if(!_phoneAsked && window.Capacitor && !window.pcPhoneHost){ _phoneAsked = true;
+      _withModule('phonefiles.js', 'pcPhoneHost').then(h => { if(h && _S.VIEW==='blossom') renderBlossom(); }, () => {}); }
     /* One Explorer-style navigation tree replaces the duplicate row of source tabs. */
     feed.innerHTML='<div id="files-pane"></div>';
     const pane=$('#files-pane',feed);
@@ -670,6 +674,26 @@ window.PCFilesFactory = function(dep){
   /* ONE opener for both surfaces. The sidebar chip and the home-screen tile are two ways to the
    * same place, and two copies of "where does this start" is how they end up starting somewhere
    * different. */
+  /* THE PHONE'S VOLUMES: internal storage, then any SD card or USB stick, one chip each (the desktop's drive chips
+   * come from pcDrives, which a phone does not have). Read once per Files visit and redrawn if it changed. */
+  let _fxPhoneRoots = null, _fxPhoneAsked = 0;
+  function _fxPhoneHTML(here){
+    const H2 = _hostFs();
+    if(H2 && Date.now() - _fxPhoneAsked > 5000){ _fxPhoneAsked = Date.now();
+      H2.roots().then(rs => { const before = JSON.stringify(_fxPhoneRoots); _fxPhoneRoots = rs || [];
+        if(JSON.stringify(_fxPhoneRoots) !== before && _S.VIEW === 'blossom') renderBlossom(); }, () => {}); }
+    const chips = (_fxPhoneRoots || [{ name: 'Internal storage', path: '', kind: 'home' }]).map(r => {
+      const on = !!(_S._hostOn && here && r.path && (here === r.path || here.startsWith(r.path + '/')));
+      return `<button class="folder-chip${on ? ' active' : ''}" data-hostroot="${enc(r.path || '')}" title="${enc(r.name)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${r.kind === 'home' ? 'folder' : 'drive'}"></use></svg>${enc(r.name)}</button>`;
+    }).join('');
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_S._hostOn?' active':''}${_S._fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>${enc(_hostLabel())}</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer">${chips}</div></section>`;
+  }
+  function _openHostRoot(path){
+    if(!path) return _openHostFiles(true);
+    _S._syncRoot=''; _S._syncPath=''; _S._filesFolder=null; _S._hostOn=true; _S._filesTab='computer'; _S._fxMobileSource='computer';
+    const H2 = _hostFs(); if(H2) H2.enter(path);
+    renderBlossom();
+  }
   function _openHostFiles(goHome=false){
     _S._syncRoot=''; _S._syncPath=''; _S._filesFolder=null; _S._hostOn=true; _S._filesTab='computer'; _S._fxMobileSource='computer';
     const H2 = _hostFs();
@@ -1558,11 +1582,12 @@ window.PCFilesFactory = function(dep){
      * the theme rather than a section nobody wrote CSS for. */
     _fxDrivesRefresh();
     const here = (_S._hostOn && _hostFs() && _hostFs().at()) || '';
+    if(_hostPhone()) return _fxPhoneHTML(here);
     const drives = (_fxDrives || []).map(d => {
       const on = !!(d.mountpoint && here && (here === d.mountpoint || here.startsWith(d.mountpoint + '/')));
       return `<span class="fx-drive-row"><button class="folder-chip fx-drive${on ? ' active' : ''}" data-drive="${enc(d.dev)}" title="${enc(d.label)} — ${enc(d.fstype)}${d.mountpoint ? '' : ', not mounted yet'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-drive"></use></svg>${enc(d.label)}<span class="muted small"> ${enc(_fxDriveSize(d.size))}</span></button>${d.mountpoint ? `<button class="btn btn-ghost small fx-drive-eject" data-drive-eject="${enc(d.dev)}" title="Eject ${enc(d.label)} safely" aria-label="Eject ${enc(d.label)}">⏏</button>` : ''}</span>`;
     }).join('');
-    return `<section class="fx-tree-node"><button class="fx-tree-head${_S._hostOn?' active':''}${_S._fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_S._hostOn && !drives.includes(' active"') ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button>${drives}</div></section>`;
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_S._hostOn?' active':''}${_S._fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>${enc(_hostLabel())}</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_S._hostOn && !drives.includes(' active"') ? ' active' : ''}" data-host="1" title="Browse this device's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>${_hostPhone() ? 'Internal storage' : 'Home'}</button>${drives}</div></section>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -1730,6 +1755,7 @@ window.PCFilesFactory = function(dep){
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>_fxOpenFolder(b.dataset.folder));
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>_fxOpenSynced(b.dataset.synckey));
     $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>_openHostFiles(true));
+    $$('.folder-chip[data-hostroot]', r).forEach(b=> b.onclick=()=>_openHostRoot(b.dataset.hostroot));
     $$('[data-drive]', r).forEach(b=> b.onclick=()=>_fxOpenDrive(b.dataset.drive));
     $$('[data-drive-eject]', r).forEach(b=> b.onclick=(ev)=>{ ev.stopPropagation(); _fxEjectDrive(b.dataset.driveEject); });
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
@@ -2532,8 +2558,9 @@ window.PCFilesFactory = function(dep){
       /* The machine's own disk, on the landing screen as well as in the sidebar — this is where
        * somebody arrives, and on PosterChanOS it is the source they reach for first. Absent where
        * there is no filesystem to browse. */
-      + (_hostFs() ? '<div class="fx-home-sec">This computer</div>'
-                   + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
+      + (_hostFs() ? (_hostPhone()
+                     ? '<div class="fx-home-sec">This phone</div>' + tile('📱', 'Files on this phone', 'browse this phone\u2019s storage', 'data-hosthome="1"')
+                     : '<div class="fx-home-sec">This computer</div>' + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"')) : '')
       + '</div>';
     _fxStatus(pane, (FilesIdx.folders().length + pairs.length) + ' folder' + ((FilesIdx.folders().length + pairs.length) === 1 ? '' : 's')
       + ' · ' + used + ' stored' + (_S._blobHave ? ' · ' + _S._blobHave.size + ' file' + (_S._blobHave.size === 1 ? '' : 's') : ''));
@@ -2553,12 +2580,17 @@ window.PCFilesFactory = function(dep){
    * carried their own copy of "how Office opens a local document" would drift the first time either
    * was edited, which is how the host chooser lost Office in the first place. Each one resolves when
    * the app owns the file and THROWS with the reason otherwise; the caller decides how to say it. */
+  /* THE BRIDGE TO THIS DEVICE'S OWN FILES: the desktop app's, or the phone's (phonefiles.js) -- hostfiles.js picks. */
+  const _hb = () => (window.PCHostFiles && PCHostFiles.host && PCHostFiles.host()) || window.pcHost || null;
+  const _hostPhone = () => !!(_hb() && _hb().phone);
+  let _phoneAsked = false;
+  const _hostLabel = () => (window.PCHostFiles && PCHostFiles.label) ? PCHostFiles.label() : 'My Computer';
   async function _hostOpenPreview(path, name, mime){
     const nm = name || String(path).split('/').pop() || path, type = mime || mimeForName(nm) || '';
     if(_fileWindow('hostPreview', [path, name, mime], nm)) return true;
     /* MEDIA IS STREAMED, EVERYTHING ELSE IS READ.
      *
-     * `pcHost.read` pulls the WHOLE file through the bridge -- a synchronous read in the
+     * `_hb().read` pulls the WHOLE file through the bridge -- a synchronous read in the
      * desktop's main process, then the bytes into this heap. For a picture or a PDF that is
      * fine and it is what has always happened. For a video it is why one was a black box
      * with dead controls ("playing video ... is black, buttons hidden") and why a big one
@@ -2566,23 +2598,23 @@ window.PCFilesFactory = function(dep){
      * range-requested, so the player can neither seek nor start before the last byte, and
      * past the bridge's ceiling the read is refused outright.
      *
-     * `pcHost.fileUrl` is an address main.js serves with Accept-Ranges. Absent on a build
+     * `_hb().fileUrl` is an address main.js serves with Accept-Ranges. Absent on a build
      * without the handler, and on the web, where this whole branch is unreachable -- so the
      * fallback is the path that was here before, not a failure. */
     const streamable = /^(video|audio)\//i.test(type)
                     || /\.(mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(nm);
     const P = await _withModule('preview.js', 'PCPreview');
-    if(streamable && window.pcHost && pcHost.fileUrl){
-      if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path), onClose: _fileWindowDone }))
+    if(streamable && _hb() && _hb().fileUrl){
+      if(!P || !P.open({ name:nm, mime:type, url:_hb().fileUrl(path), onClose: _fileWindowDone }))
         throw new Error('nothing here can show that file');
       return true;
     }
     toast('opening…');
-    const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
+    const bytes = await _hb().read(path, 256 * 1024 * 1024);
     const blob = new Blob([bytes], { type });
     let hostMtime = 0;
-    const hostSave = /\.pdf$/i.test(nm) && pcHost.writeBytes ? async (b)=>{
-      const info=await pcHost.writeBytes(path, new Uint8Array(await b.arrayBuffer()), hostMtime||0);
+    const hostSave = /\.pdf$/i.test(nm) && _hb().writeBytes ? async (b)=>{
+      const info=await _hb().writeBytes(path, new Uint8Array(await b.arrayBuffer()), hostMtime||0);
       if(info && info.mtime) hostMtime=info.mtime;
     } : null;
     if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob, saveBack: hostSave, onClose: _fileWindowDone }))
@@ -2594,14 +2626,14 @@ window.PCFilesFactory = function(dep){
    * destroys it. `mtime` is the compare-and-swap guard for the first save. */
   async function _hostOpenOffice(path, name, mime, mtime){
     if(_fileWindow('hostOffice', [path, name, mime, mtime], name || String(path).split('/').pop())) return true;
-    if(!(window.pcHost && pcHost.read)) throw new Error('this build cannot read a file on this computer');
+    if(!(_hb() && _hb().read)) throw new Error('this build cannot read a file on this computer');
     let openedMtime = Number(mtime) || 0;
-    const bytes = await pcHost.read(path, 128 * 1024 * 1024);
+    const bytes = await _hb().read(path, 128 * 1024 * 1024);
     const nm = name || String(path).split('/').pop() || 'document';
     const f = fileFromBytes(bytes, nm, mime || mimeForName(nm) || '');
     await _officeSession(f, async (updated) => {
-      if(!(pcHost.writeBytes)) throw new Error('this build cannot save back to this computer');
-      const info=await pcHost.writeBytes(path,new Uint8Array(await updated.arrayBuffer()),openedMtime||0);
+      if(!(_hb().writeBytes)) throw new Error('this build cannot save back to this computer');
+      const info=await _hb().writeBytes(path,new Uint8Array(await updated.arrayBuffer()),openedMtime||0);
       if(info&&info.mtime)openedMtime=info.mtime;
     });
     return true;
@@ -2647,7 +2679,7 @@ window.PCFilesFactory = function(dep){
       if(app === 'auto'){
         app = it.kind === 'dir' ? 'files'
             : _previewable(name, mime) ? 'preview'
-            : (_officeable(name, mime) && window.pcHost && pcHost.read) ? 'office'
+            : (_officeable(name, mime) && _hb() && _hb().read) ? 'office'
             : 'code';
       }
       try{
@@ -2740,7 +2772,7 @@ window.PCFilesFactory = function(dep){
          * (which refuses a .odt as binary) and "hand it to the machine" — so from Home, clicking an
          * .odt could not open it in the office suite this OS ships with. Same session machinery as
          * the other two; only the writer differs (see _hostOpenOffice). */
-        const officeChoice = (_officeable(name || path, mime) && window.pcHost && pcHost.read) ? [{
+        const officeChoice = (_officeable(name || path, mime) && _hb() && _hb().read) ? [{
           id:'office', icon:'📝', label:'PosterChan Office',
           hint:'Edit it here — saves straight back to this computer',
           run:async() => {
@@ -2766,8 +2798,8 @@ window.PCFilesFactory = function(dep){
         } },
         /* Last on the list, and never absent: this is what clicking the file did before the editor
          * existed, and for most files it is still the answer. */
-        { id:'host', icon:'🖥', label:'This computer',
-          hint:'Hand it to whatever this machine opens that with',
+        { id:'host', icon:_hostPhone() ? '📱' : '🖥', label:_hostPhone() ? 'Another app' : 'This computer',
+          hint:_hostPhone() ? 'Open it in an app on this phone' : 'Hand it to whatever this machine opens that with',
           run:() => { if(openHere) openHere(); } }]));
     }
   }
@@ -2782,7 +2814,7 @@ window.PCFilesFactory = function(dep){
     const cap = 256 * 1024 * 1024;
     if((+entry.size || 0) > cap)
       throw new Error('this file is over 256 MB; local sharing needs the streaming uploader first');
-    const H = window.pcHost;
+    const H = _hb();
     if(!H || typeof H.read !== 'function') throw new Error('this build cannot read local files');
     _uploadBadge('Sharing ' + (entry.name || 'file') + ' with Blossom…');
     try{

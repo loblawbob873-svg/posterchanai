@@ -18,7 +18,8 @@
 (function(root){
   'use strict';
 
-  const HOST = () => root.pcHost || null;
+  // The desktop's bridge, or the phone's storage (phonefiles.js, same shapes).
+  const HOST = () => root.pcHost || root.pcPhoneHost || null;
   const available = () => !!HOST();
 
   const H = (s) => String(s == null ? '' : s)
@@ -167,8 +168,10 @@
     if(!_act || !_pane || !_pane.isConnected) return null;
     return { act: _act, selected: _sel.size, clip: _clipboard ? pasteLabel(_clipboard) : '' };
   }
+  const host = () => HOST();
+  const label = () => { const h = HOST(); return (h && h.label) || 'My Computer'; };
   const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs,
-                allSelected, pasteLabel, clipNote, doneNote, H, edit };
+                allSelected, pasteLabel, clipNote, doneNote, H, edit, host, label };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
@@ -259,15 +262,14 @@
      * bridge, no bytes in this renderer's heap, and the browser decodes and scales it. Only IMAGES,
      * and only small ones: a thumbnail is worth a decode, and a 40MB RAW file is not.
      *
-     * Absent on the web and in the APK, where `pcHost` does not exist -- those keep the glyph they
-     * have always had, which is why this is an attribute and not a second code path. */
+     * On a phone it is Capacitor's file route. Absent on the web, which keeps its glyph. */
     const THUMB_EXT = /^(?:png|jpe?g|jfif|gif|webp|avif|bmp|ico)$/i;
     const THUMB_MAX = 12 * 1024 * 1024;
     const thumbAttr = (e, ext) => {
       try{
         if(e.dir || e.broken || !THUMB_EXT.test(String(ext || ''))) return '';
         if(Number(e.size) > THUMB_MAX) return '';
-        const url = window.pcHost && pcHost.fileUrl ? pcHost.fileUrl(e.path) : '';
+        const h = HOST(), url = h && h.fileUrl ? h.fileUrl(e.path) : '';
         return url ? ` style="background-image:url('${H(url)}')" data-thumb-host="1"` : '';
       }catch(_){ return ''; }
     };
@@ -325,13 +327,18 @@
      * declared inside rowsHTML(); the list painted normally, then every regular file click threw
      * `openable is not defined` before Video/Preview/Code/host opening could run. */
     const openable = u.openable || (() => false);
-    let listing = null, err = '';
+    let listing = null, err = '', needsAccess = false;
     try{ listing = await read(_path); }
-    catch(e){ err = String((e && e.message) || e); }
+    catch(e){ err = String((e && e.message) || e); needsAccess = !!(e && e.needsAccess); }
     /* NAVIGATED AWAY WHILE IT READ. A directory on a sleeping USB disk takes seconds, and painting
      * its contents into a pane that is now showing something else is how a file manager shows you
      * the wrong folder's files under the right folder's name. */
     if(!pane.isConnected) return;
+    if(err && needsAccess && HOST().askAccess){      // not "empty": the phone has not granted access yet
+      HOST().askAccess(pane, (u.bar ? u.bar(barCrumbs(_path, _home)) : '') , err, () => render(pane, ui), u.toast);
+      if(u.bindBar) u.bindBar();
+      return;
+    }
     if(err){
       const upPath = parentPath(_path);
       const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';

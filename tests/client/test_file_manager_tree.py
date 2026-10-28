@@ -12,7 +12,9 @@ def test_file_manager_uses_collapsible_blossom_and_computer_roots():
     assert 'data-fxtoggle="computer"' in APP
     assert 'data-fxtoggle="synced"' in APP
     assert '<b>Files</b>' in APP
-    assert '<b>My Computer</b>' in APP
+    # Named by hostfiles.js: "My Computer" on a desktop, "This phone" on Android (phonefiles.js).
+    assert '<b>${enc(_hostLabel())}</b>' in APP
+    assert "(h && h.label) || 'My Computer'" in (ROOT / 'static/js/client/hostfiles.js').read_text()
     assert '<b>Synced Folders</b>' in APP
     assert "pc.files.tree." in APP
     assert "aria-expanded" in APP

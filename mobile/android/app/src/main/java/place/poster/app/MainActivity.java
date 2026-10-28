@@ -89,6 +89,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.weather.WeatherPlugin.class);
         registerPlugin(place.poster.app.health.AppHealthPlugin.class);
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
+        // Files' "This phone": the phone's own storage (files/PhoneFilesCore confines it to the storage roots).
+        registerPlugin(place.poster.app.files.PhoneFilesPlugin.class);
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSharePlugin.class);

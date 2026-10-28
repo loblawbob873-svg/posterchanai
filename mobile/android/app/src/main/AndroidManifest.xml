@@ -13,6 +13,7 @@
 
     <application
         android:name=".PosterChanApp"
+        android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -1041,6 +1042,10 @@
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching
          files, notifications, and network-state for the relay reconnect logic. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Files' "This phone" (files/PhoneFilesPlugin): "All files access" on 11+, which the person turns on in
+         Settings themselves; the storage permissions only where they still mean something (8-10; READ to 12). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Lets the signer ASK for the Doze exemption in one tap instead of dropping somebody into an
