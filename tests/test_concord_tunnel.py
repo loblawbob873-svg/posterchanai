@@ -368,7 +368,7 @@ def test_a_long_tunnel_is_reported_by_who_ended_it(monkeypatch, caplog):
 
 def test_the_pipe_says_the_client_ended_it(client, monkeypatch):
     seen = []
-    monkeypatch.setattr(tun, "closed", lambda url, frame, secs, who: seen.append((frame, who)))
+    monkeypatch.setattr(tun, "closed", lambda url, frame, secs, who, client="": seen.append((frame, who)))
     with client.websocket_connect("/ws/concord-relay?u=wss://jskitty.com/nostr&t=" + tun.issue(PK)) as ws:
         ws.send_text('["REQ","s",{"kinds":[1059]}]')
         ws.receive_text()
@@ -377,3 +377,21 @@ def test_the_pipe_says_the_client_ended_it(client, monkeypatch):
             break
         time.sleep(0.02)
     assert seen == [('["REQ","s",{"kinds":[1059]}]', "client")], seen
+
+
+def test_the_report_names_the_kind_of_client_never_the_device():
+    assert tun.client_kind("Mozilla/5.0 (Linux; Android 16; SM-X400 Build/x; wv) AppleWebKit/537.36 Chrome/141 Safari/537.36") == "apk"
+    assert tun.client_kind("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 PosterChan/1.0 Chrome/141 Electron/38.2.0 Safari/537.36") == "desktop"
+    assert tun.client_kind("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141 Safari/537.36") == "browser"
+    assert tun.client_kind("") == "?"
+
+
+def test_a_long_tunnel_is_reported_with_its_client_kind(monkeypatch, caplog):
+    import logging
+    for name in ("_dials", "_short", "_shapes", "_long"):
+        monkeypatch.setattr(tun, name, {})
+    monkeypatch.setattr(tun, "_dials_since", time.monotonic() - tun.DIAL_REPORT_EVERY - 1)
+    tun.closed("wss://jskitty.com/nostr", '["REQ","x",{"kinds":[1059],"authors":["a"],"since":1}]', 60.0, "client", "apk")
+    with caplog.at_level(logging.INFO, logger=tun.logger.name):
+        tun.dialled("wss://jskitty.com/nostr")
+    assert "jskitty.com by client REQ 1059 a1 since [apk] x1 (60s)" in caplog.text, caplog.text

@@ -218,13 +218,24 @@ def dialled(url: str) -> None:
 _long: dict[tuple, list] = {}
 
 
-def closed(url: str, first_frame: str, seconds: float, ended_by: str = "") -> None:
+def client_kind(user_agent: str) -> str:
+    """Which KIND of client opened a tunnel -- the APK's WebView, the desktop app, or a browser. The platform only,
+    never the device or the person: enough to say which build churns a far relay."""
+    ua = str(user_agent or "")
+    if "Electron/" in ua:
+        return "desktop"
+    if "; wv)" in ua or "PosterChanApp" in ua:
+        return "apk"
+    return "browser" if ua else "?"
+
+
+def closed(url: str, first_frame: str, seconds: float, ended_by: str = "", client: str = "") -> None:
     """A dialled tunnel ended. The SHORT ones are the churn a far relay sees: one websocket per read or send. The
     long ones are subscriptions; when they are re-dialled again and again, who ended them and after how long is what
     says why (2026-10-28: 61 of jskitty's 69 dials in ten minutes were long)."""
     h = _host(url)
     if seconds >= SHORT_TUNNEL_S:
-        k = (h, ended_by or "?", frame_shape(first_frame))
+        k = (h, ended_by or "?", frame_shape(first_frame) + (" [%s]" % client if client else ""))
         _long.setdefault(k, []).append(seconds)
         return
     _short[h] = _short.get(h, 0) + 1

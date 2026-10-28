@@ -146,7 +146,8 @@ async def concord_relay(websocket: WebSocket):
         except Exception:
             pass
         finally:
-            concord_tunnel.closed(target, info.get("first", ""), time.monotonic() - began, info.get("ended_by", ""))
+            concord_tunnel.closed(target, info.get("first", ""), time.monotonic() - began, info.get("ended_by", ""),
+                                  concord_tunnel.client_kind(websocket.headers.get("user-agent", "")))
             try:
                 await upstream_cm.__aexit__(None, None, None)
             except Exception:
