@@ -345,3 +345,32 @@ def test_the_first_frame_shape_carries_no_values():
     assert tun.frame_shape('["REQ","x",{"kinds":[1,2,3,4,5,6]}]') == "REQ 1,2,3,4+"
     assert tun.frame_shape("not json") == "?"
     assert tun.frame_shape('["AUTH",{"kind":22242}]') == "AUTH"
+
+
+def test_a_long_tunnel_is_reported_by_who_ended_it(monkeypatch, caplog):
+    """Most of jskitty's dials were LONG tunnels (subscriptions) re-dialled again and again; who ends them -- the
+    member's client or the far relay -- and after how long is what says why."""
+    import logging
+    for name in ("_dials", "_short", "_shapes", "_long"):
+        monkeypatch.setattr(tun, name, {})
+    monkeypatch.setattr(tun, "_dials_since", time.monotonic() - tun.DIAL_REPORT_EVERY - 1)
+    tun.closed("wss://jskitty.com/nostr", '["REQ","x",{"kinds":[1059]}]', 40.0, "client")
+    tun.closed("wss://jskitty.com/nostr", '["REQ","y",{"kinds":[1059]}]', 90.0, "client")
+    tun.closed("wss://jskitty.com/nostr", '["REQ","z",{"kinds":[1059]}]', 300.0, "relay")
+    with caplog.at_level(logging.INFO, logger=tun.logger.name):
+        tun.dialled("wss://jskitty.com/nostr")
+    assert "jskitty.com by client x2 (90s)" in caplog.text, caplog.text
+    assert "jskitty.com by relay x1 (300s)" in caplog.text, caplog.text
+
+
+def test_the_pipe_says_the_client_ended_it(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(tun, "closed", lambda url, frame, secs, who: seen.append((frame, who)))
+    with client.websocket_connect("/ws/concord-relay?u=wss://jskitty.com/nostr&t=" + tun.issue(PK)) as ws:
+        ws.send_text('["REQ","s",{"kinds":[1059]}]')
+        ws.receive_text()
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.02)
+    assert seen == [('["REQ","s",{"kinds":[1059]}]', "client")], seen

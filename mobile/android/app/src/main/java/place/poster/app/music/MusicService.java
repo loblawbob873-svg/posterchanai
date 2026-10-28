@@ -505,17 +505,18 @@ public class MusicService extends MediaBrowserServiceCompat {
   private void revive(final String action) {
     revived++;
     final long before = lastWebAt;
+    final long parkedAt = System.currentTimeMillis();
     try {
       // PARKED BEFORE THE START, and NOT dressed as a launcher press. See LaunchPress: an
       // ACTION_MAIN + CATEGORY_LAUNCHER intent at a singleTask activity is discarded on a warm
       // start, extras and all, and this is the path taken when the player is not answering — i.e.
       // precisely when the press must survive.
-      LaunchPress.request(action, System.currentTimeMillis());
+      LaunchPress.request(action, parkedAt);
       // AND WHERE TO LAND. Dragging the app to the foreground to perform a music press and putting
       // the person on whatever screen they left is the other half of "opens up default posterchan
       // app page instead of music". `__music` is the client's own name for the player (app.js's
       // More menu uses the same string), not a view slug.
-      place.poster.app.home.LaunchView.request("__music", System.currentTimeMillis());
+      place.poster.app.home.LaunchView.request("__music", parkedAt);
       startActivity(new Intent(this, MainActivity.class)
           .putExtra(MusicPlugin.EXTRA_LAUNCH_ACTION, action)
           .putExtra(MusicPlugin.EXTRA_LAUNCH_AT, System.currentTimeMillis())
@@ -528,7 +529,9 @@ public class MusicService extends MediaBrowserServiceCompat {
     note(action + ": the player is not answering — asked the app to come back");
     handler.postDelayed(() -> {
       if (lastWebAt != before) { note(action + ": the player came back and did it"); return; }
-      note(action + ": the player never came back (Android refuses to open an app from the background)");
+      boolean dropped = LaunchPress.abandonRefused(parkedAt, place.poster.app.sms.AppVisible.shownAt());
+      note(action + ": the player never came back (Android refuses to open an app from the background)"
+          + (dropped ? " -- dropped, so opening the app later does not start it" : ""));
       markGone();
     }, REVIVE_MS);
   }

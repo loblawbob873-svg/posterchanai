@@ -117,4 +117,9 @@ public final class LaunchView {
 
     /** Drop anything parked. Used when the app is told to open nothing in particular. */
     public static synchronized void clear() { pending = ""; at = 0L; }
+
+    /** Drop the parked view only if it is still THIS request -- never one somebody made after it. */
+    public static synchronized void clearIf(String view, long when) {
+        if (pending.equals(view) && at == when) { pending = ""; at = 0L; }
+    }
 }

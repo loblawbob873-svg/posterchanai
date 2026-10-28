@@ -140,13 +140,13 @@ async def concord_relay(websocket: WebSocket):
                 concord_tunnel.all_hops_failed(target)
             await websocket.close(code=4502, reason="relay unreachable")
             return
-        first, began = [], time.monotonic()
+        info, began = {}, time.monotonic()
         try:
-            await concord_tunnel.pipe(websocket, upstream, first)
+            await concord_tunnel.pipe(websocket, upstream, info)
         except Exception:
             pass
         finally:
-            concord_tunnel.closed(target, first[0] if first else "", time.monotonic() - began)
+            concord_tunnel.closed(target, info.get("first", ""), time.monotonic() - began, info.get("ended_by", ""))
             try:
                 await upstream_cm.__aexit__(None, None, None)
             except Exception:

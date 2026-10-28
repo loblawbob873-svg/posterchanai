@@ -191,9 +191,14 @@ def _report() -> None:
     if shapes:
         logger.info("[concord-tunnel] short tunnels by first frame: %s",
                     ", ".join("%s %s x%d" % (h, sh, n) for (h, sh), n in shapes))
+    longs = sorted(_long.items(), key=lambda x: -len(x[1]))[:8]
+    if longs:
+        logger.info("[concord-tunnel] long tunnels closed, by who ended them (median s): %s",
+                    ", ".join("%s by %s x%d (%ds)" % (h, who, len(v), sorted(v)[len(v) // 2]) for (h, who), v in longs))
     _dials.clear()
     _short.clear()
     _shapes.clear()
+    _long.clear()
     _dials_since = time.monotonic()
 
 
@@ -203,11 +208,18 @@ def dialled(url: str) -> None:
     _report()
 
 
-def closed(url: str, first_frame: str, seconds: float) -> None:
-    """A dialled tunnel ended. The SHORT ones are the churn a far relay sees: one websocket per read or send."""
-    if seconds >= SHORT_TUNNEL_S:
-        return
+_long: dict[tuple, list] = {}
+
+
+def closed(url: str, first_frame: str, seconds: float, ended_by: str = "") -> None:
+    """A dialled tunnel ended. The SHORT ones are the churn a far relay sees: one websocket per read or send. The
+    long ones are subscriptions; when they are re-dialled again and again, who ended them and after how long is what
+    says why (2026-10-28: 61 of jskitty's 69 dials in ten minutes were long)."""
     h = _host(url)
+    if seconds >= SHORT_TUNNEL_S:
+        k = (h, ended_by or "?")
+        _long.setdefault(k, []).append(seconds)
+        return
     _short[h] = _short.get(h, 0) + 1
     key = (h, frame_shape(first_frame))
     _shapes[key] = _shapes.get(key, 0) + 1
@@ -307,9 +319,9 @@ def connect(url: str, proxy: str | None):
                            ping_interval=None)
 
 
-async def pipe(client, upstream, first: list | None = None) -> None:
+async def pipe(client, upstream, info: dict | None = None) -> None:
     """Frames both ways, unchanged, until either side closes. `client` is a Starlette WebSocket.
-    `first` (a list) receives the client's first frame, for `closed()`'s report."""
+    `info` (a dict) receives `first` (the client's first frame) and `ended_by` ("relay"/"client") for `closed()`."""
     async def down():
         async for msg in upstream:
             await client.send_text(msg if isinstance(msg, str) else msg.decode("utf-8", "replace"))
@@ -319,12 +331,15 @@ async def pipe(client, upstream, first: list | None = None) -> None:
             data = await client.receive_text()
             if len(data) > MAX_FRAME:
                 return
-            if first is not None and not first:
-                first.append(data)
+            if info is not None and "first" not in info:
+                info["first"] = data
             await upstream.send(data)
     tasks = [asyncio.ensure_future(down()), asyncio.ensure_future(up())]
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if info is not None:
+            # Who ended it, for closed(): the far relay (its stream finished) or the member's client.
+            info["ended_by"] = "relay" if tasks[0].done() else "client"
     finally:
         for t in tasks:
             t.cancel()

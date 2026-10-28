@@ -18,10 +18,15 @@ package place.poster.app.sms;
 public final class AppVisible {
 
     private static volatile boolean on = false;
+    private static volatile long shownAt = 0L;
 
     private AppVisible() { }
 
-    public static void set(boolean visible) { on = visible; }
+    public static void set(boolean visible) { on = visible; if (visible) shownAt = System.currentTimeMillis(); }
 
     public static boolean is() { return on; }
+
+    /** When the app last came on screen (wall clock, ms), 0 if never in this process. MusicService reads it to tell a
+     *  revive Android REFUSED from one that is merely slow -- see LaunchPress.abandonRefused. */
+    public static long shownAt() { return shownAt; }
 }

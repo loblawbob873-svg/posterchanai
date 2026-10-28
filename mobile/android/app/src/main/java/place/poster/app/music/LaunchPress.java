@@ -76,4 +76,26 @@ public final class LaunchPress {
 
     /** Drop anything parked. */
     public static synchronized void clear() { pending = ""; at = 0L; }
+
+    /**
+     * A REVIVE ANDROID REFUSED LEAVES NOTHING BEHIND (2026-10-28: "opening posterchan apps on android randomly
+     * starts music"). A press with no live page -- a car's PLAY, Bluetooth autoplay as a car connects, the standby
+     * session -- parks itself here and in LaunchView ("land on Music") and asks for the app; from the background
+     * Android 10+ refuses that start silently. The park outlived the refusal by its whole minute, so the next
+     * PosterChan screen the person opened for any other reason -- Files, Texts -- landed on Music and started the
+     * song. `appShownAt` is when the app last came on screen: if it has not since the park, nobody saw the press
+     * and nobody will, so it is dropped (only that park: a newer press or a tile's own view is left alone).
+     * A start that was merely slow has shown the app by then and keeps its press for the page to perform.
+     * Returns whether it dropped anything.
+     */
+    public static boolean abandonRefused(long parkedAt, long appShownAt) {
+        if (appShownAt >= parkedAt) return false;
+        boolean dropped;
+        synchronized (LaunchPress.class) {
+            dropped = !pending.isEmpty() && at == parkedAt;
+            if (dropped) { pending = ""; at = 0L; }
+        }
+        place.poster.app.home.LaunchView.clearIf("__music", parkedAt);
+        return dropped;
+    }
 }

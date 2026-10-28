@@ -48,6 +48,9 @@ from app.role import owns as _owns
 from fastapi.responses import JSONResponse
 
 # Initialize FastAPI app
+from app.services import access_log as _access_log   # no URL-borne credential in the access log
+_access_log.install()
+
 app = FastAPI(
     title="Posterchanai",
     description="AI Chat Application",

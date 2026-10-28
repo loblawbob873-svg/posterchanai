@@ -186,3 +186,63 @@ class TheLandingIsNotDrivenByVisibilityAlone(unittest.TestCase):
         self.assertIn('notifyListeners("launchView"', home)
         main = strip_comments((JAVA / "MainActivity.java").read_text())
         self.assertIn("announceLaunchView", method(main, "public void onNewIntent"))
+
+
+REFUSED = r"""
+import place.poster.app.music.LaunchPress;
+import place.poster.app.home.LaunchView;
+
+public class Refused {
+    static int failed = 0;
+    static void ok(String what, boolean cond) {
+        if (!cond) { failed++; System.out.println("FAIL " + what); } else System.out.println("ok   " + what);
+    }
+    public static void main(String[] a) {
+        long t = 1_000_000_000L;
+        // A car connects with no page running: the service parks PLAY + "land on Music" and asks for the app.
+        // Android refuses the background start; 20 s later the app has not been on screen since the park.
+        LaunchPress.request("play", t); LaunchView.request("__music", t);
+        LaunchPress.abandonRefused(t, t - 3_600_000L);
+        // Half a minute later the person opens Files: nothing parked may be performed.
+        ok("a refused revive's press is not performed by a later open", "".equals(LaunchPress.take(t + 30_000)));
+        ok("nor does the later open land on Music", "".equals(LaunchView.take(t + 30_000)));
+
+        // A SLOW start that did put the app on screen keeps its press for the page.
+        LaunchPress.request("play", t); LaunchView.request("__music", t);
+        ok("a slow start keeps it", !LaunchPress.abandonRefused(t, t + 5_000));
+        ok("…and the page still performs it", "play".equals(LaunchPress.take(t + 25_000)));
+        LaunchView.clear();
+
+        // A NEWER park (another press) or a tile's own view is never dropped by an older refusal.
+        LaunchPress.request("play", t); LaunchPress.request("next", t + 10);
+        LaunchView.request("files", t + 10);
+        LaunchPress.abandonRefused(t, 0L);
+        ok("a newer press survives", "next".equals(LaunchPress.take(t + 20)));
+        ok("a tile's own view survives", "files".equals(LaunchView.take(t + 20)));
+        System.out.println(failed == 0 ? "ALL OK" : ("FAILED " + failed));
+    }
+}
+"""
+
+
+@unittest.skipIf(not HAVE_JDK, "no JDK on this node")
+class ARefusedReviveLeavesNothingBehind(unittest.TestCase):
+    """2026-10-28: "opening posterchan apps on android randomly starts music". A press with no live page parks itself
+    and asks for the app; Android refuses that from the background, and the park used to wait out its minute for the
+    next unrelated open."""
+    def test_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "Refused.java").write_text(REFUSED)
+            r = subprocess.run(["javac", "-nowarn", "-d", str(d), "-sourcepath", str(ROOT / "mobile/android/app/src/main/java"),
+                                str(MUSIC / "LaunchPress.java"), str(JAVA / "home/LaunchView.java"), str(d / "Refused.java")],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = subprocess.run(["java", "-cp", str(d), "Refused"], capture_output=True, text=True)
+            self.assertIn("ALL OK", r.stdout, r.stdout + r.stderr)
+
+    def test_the_service_asks_after_its_wait(self):
+        block = method(strip_comments((MUSIC / "MusicService.java").read_text()), "private void revive")
+        self.assertIn("LaunchPress.abandonRefused(parkedAt, place.poster.app.sms.AppVisible.shownAt())", block)
+        self.assertIn("LaunchPress.request(action, parkedAt)", block)
+        self.assertIn('LaunchView.request("__music", parkedAt)', block)
