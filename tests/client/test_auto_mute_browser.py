@@ -7,7 +7,7 @@ import json
 
 import pytest
 from tests.client.test_emoji_pack_tabs_layout import chrome
-from tests.client_source import client_source, state_shims
+from tests.client_source import client_source, dm_key_source, state_shims
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -83,7 +83,7 @@ let docQueries=0;
 const Relay={worker:{call:async(_method,{event})=>({valid:NT().verifyEvent(event)})},query:filters=>{
   if((filters[0]['#d']||[]).includes('pcai:automute')){docQueries++;return Promise.resolve(answer(filters));}
   queryCalls++;return hold?new Promise(resolve=>pending.push(()=>resolve(answer(filters)))):Promise.resolve(answer(filters));}};
-''' + controller + toggle + recount + rows + timeline + r'''
+''' + controller + toggle + recount + dm_key_source() + rows + timeline + r'''
 document.querySelector('#user-settings').innerHTML=`PANEL`;
 document.querySelector('#dm-list').innerHTML='<input id="dm-search"><div id="dm-rows"></div>';
 _renderDmPeerRows();

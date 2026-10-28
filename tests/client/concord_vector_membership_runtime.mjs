@@ -47,8 +47,9 @@ const distributed=await window.PCConcord.membershipEvents({
 },hex('9'));
 if(!distributed.some(e=>e.id===poolEvent.id)||!distributed.some(e=>e.id===legacyEvent.id))
   throw new Error('a pool hit cancelled the external union and hid the distributed shard');
-if(!queries.length||!queries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.options.allowBlocked&&q.options.failureCooldown>=1800000))
-  throw new Error('the union omitted the recovery relays or lost its bounded long circuit');
+/* relay.damus.io left the recovery relays 2026-10-27: it is never dialled ("super rate-limited", test_never_dial_damus). */
+if(!queries.length||!queries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&!q.relays.some(u=>/damus/.test(u))&&q.options.allowBlocked&&q.options.failureCooldown>=1800000))
+  throw new Error('the union omitted the recovery relays, named damus, or lost its bounded long circuit');
 /* ONCE PER SESSION. Every pass after the first is local-only, which is what makes the recovery
    timer free — the actual complaint was sockets reopening for ever, not opening once. */
 const swept=queries.length;
