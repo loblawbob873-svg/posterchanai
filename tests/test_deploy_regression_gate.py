@@ -315,6 +315,13 @@ def test_a_test_that_fails_only_under_parallel_load_is_reported_not_blocking(tmp
     # evidence there will ever be, and without it every flaky test can only be guessed at (2026-10-07).
     assert 'the canary text never appeared' in result.stdout, result.stdout
     assert 'second line' not in result.stdout, "the whole message was printed, not its first line"
+    # ...and the WHOLE failure is kept in a file: the first line of a browser test's failure is a 240-character
+    # prefix of a state dump, which named neither the step nor the state in a dozen deploys (2026-10-27).
+    kept = sorted((tmp_path / 'cache' / 'posterchanai' / 'flaky').glob('*.txt'))
+    assert len(kept) == 1, (kept, result.stdout)
+    text = kept[0].read_text()
+    assert 'second line' in text and 'tb' in text and 'test_a_text_you_can_notice' in text, text
+    assert str(kept[0]) in result.stdout, 'the report does not say where the whole failure was kept'
 
 
 def test_the_full_suite_runs_async_tests_with_their_plugin(source_gate, tmp_path):

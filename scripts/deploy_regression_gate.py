@@ -894,7 +894,7 @@ def _run_shards(root, env, directory, files, shards, durations, captured, remote
             subprocess.run([*_SSH, remote[0], 'rm -rf gate/' + shlex.quote(run_id)], capture_output=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
             pass
-    bad, cases, times, why = [], 0, {}, {}
+    bad, cases, times, why, whole = [], 0, {}, {}, {}
     for index, code, output, report in results:
         try:
             parsed = list(ET.parse(report).getroot().iter('testcase'))
@@ -917,6 +917,7 @@ def _run_shards(root, env, directory, files, shards, durations, captured, remote
                 # re-run alone leaves this parallel failure as the ONLY record of why it failed.
                 fail = case.find('failure') if case.find('failure') is not None else case.find('error')
                 why[bad[-1]] = (str(fail.get('message') or fail.text or '').strip().splitlines() or [''])[0][:240]
+                whole[bad[-1]] = '%s\n\n%s' % (fail.get('message') or '', fail.text or '')
         if code == 1 and not any(c.find('failure') is not None or c.find('error') is not None for c in parsed):
             bad.append(f'shard {index} exited 1 with no failing case recorded')
     if times:
@@ -952,9 +953,30 @@ def _run_shards(root, env, directory, files, shards, durations, captured, remote
         for name in flaky:
             if why.get(name):
                 print(f'[regressions]   {name}: {why[name]}')
+            # The first line of a browser test's failure is the head of a state dump, cut at 240 characters: it
+            # named neither the step nor the state for a dozen deploys. The whole failure is kept for the next look.
+            kept = _keep_flaky(name, whole.get(name))
+            if kept:
+                print(f'[regressions]     whole failure: {kept}')
     if bad:
         return False, f'{len(bad)} failing in the full suite ({elapsed:.0f}s):\n  ' + '\n  '.join(bad[:60])
     return True, f'{cases} cases across the full suite in {elapsed:.0f}s'
+
+
+def _keep_flaky(name, text):
+    """Write a flaky test's whole parallel failure under the cache (the last 200 kept); its path, or None."""
+    if not text:
+        return None
+    try:
+        where = DURATIONS.parent / 'flaky'
+        where.mkdir(parents=True, exist_ok=True)
+        path = where / ('%s-%s.txt' % (time.strftime('%Y%m%d-%H%M%S'), re.sub(r'[^\w.-]+', '_', name)[-120:]))
+        path.write_text(name + '\n\n' + text)
+        for old in sorted(where.glob('*.txt'))[:-200]:
+            old.unlink()
+        return path
+    except OSError:
+        return None
 
 
 def run_gate(root=ROOT, receipt=None, full=False, jobs=0):
