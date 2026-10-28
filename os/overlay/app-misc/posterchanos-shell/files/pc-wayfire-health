@@ -196,6 +196,16 @@ def output_is_off(name):
     return enabled.get(name) is False
 
 
+def capture_room(target):
+    """view-shot writes inside the COMPOSITOR, and a failed write is a libpng abort that takes Wayfire and every
+    window with it (the laptop, 2026-10-27, /tmp full). No room, or no answer, means do not ask for the write."""
+    need = int(os.environ.get("PC_CAPTURE_MIN_FREE") or 64 * 1024 * 1024)
+    try:
+        return shutil.disk_usage(os.path.dirname(target) or ".").free >= need
+    except OSError:
+        return False
+
+
 def owned_capture(shell, target):
     """Read the exact mapped view, never the other application covering its output."""
     if not shell or not shell.get("id") or not shell.get("pid"):
@@ -204,7 +214,7 @@ def owned_capture(shell, target):
         methods = request("list-methods").get("methods", [])
     except Exception:
         methods = []
-    if "view-shot/capture" in methods:
+    if "view-shot/capture" in methods and capture_room(target):
         try:
             request("view-shot/capture", {"view-id": int(shell["id"]), "file": target},
                     timeout=VIEW_SHOT_TIMEOUT)

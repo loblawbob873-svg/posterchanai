@@ -3967,60 +3967,7 @@
 
   let _osSettingsPage='displays';
 
-  /* SECURE BOOT ("anti-cheat") -- System Settings' view of pc-anticheat (desktop/anticheat.js). Asked for with the
-   * installer's checkbox, 2026-10-27. The helper runs the set-up as a service and keeps the state; this page says
-   * what that state asks of the person next. The one-time code is shown ONLY while MokManager still needs it (the
-   * helper drops it once Secure Boot is on), and every cost is stated before the button, not after it. */
-  function _secureBootPage(ac, err){
-    const head=`<header class="os-set-pagehead"><div>${iconSvg('i-shield')}</div><span><h2>Secure Boot</h2><p>Anti-cheat mode: a Gentoo-signed kernel, started by Secure Boot, for games whose anti-cheat requires it.</p></span></header>`;
-    if(err) return head+`<div class="empty" data-sb-error>${enc(err)}</div>`;
-    const st=ac.state||'off', costs=`<ul class="os-sb-costs"><li>About 600 MB is downloaded, then the computer is set up to start through Secure Boot.</li>
-      <li>You type the disk password at every startup, and hibernation is turned off (sleep still works).</li>
-      <li>On the next restart a blue <b>MokManager</b> screen asks you to approve Gentoo's key once, with a one-time code shown here.</li>
-      <li>Then switch Secure Boot on in the computer's firmware settings.</li></ul>`;
-    const card=(title, body, actions)=>`<section class="os-set-card os-sb" data-sb-state="${enc(st)}"><div class="os-set-cardhead"><b>${title}</b></div>${body}${actions?`<div class="os-set-actions">${actions}</div>`:''}</section>`;
-    const busy=['requested','running','undoing'].includes(st);
-    let html;
-    if(ac.nvidia && st==='off' && !ac.installed){
-      html=card('Not available on this computer', `<p class="muted">This computer has an NVIDIA graphics card. NVIDIA's driver is built on this machine and is not signed, so Secure Boot refuses to load it.</p>`, '');
-    }else if(st==='off'){
-      html=card('Secure Boot is off', costs, `<button class="btn primary" data-sb-setup>Set up Secure Boot</button>`);
-    }else if(busy){
-      html=card(st==='undoing'?'Turning anti-cheat mode off…':'Setting up Secure Boot…',
-        `<p class="muted">${st==='undoing'?'The normal boot entry is being put back.':'Downloading and installing the signed kernel. This can take a while; you can keep using the computer.'} This page updates by itself.</p>`, '');
-    }else if(st==='enrol'){
-      const pw=String(ac.password||'');
-      html=card('Restart to finish',
-        `<ol class="os-sb-steps"><li>Restart the computer. A blue <b>MokManager</b> screen appears.</li>
-          <li>Choose <b>Enroll MOK</b> → <b>Continue</b> → <b>Yes</b>, and type these ${pw.length} digits:</li></ol>
-         <div class="os-sb-code" data-sb-code>${enc(pw)}</div>
-         <ol class="os-sb-steps" start="3"><li>Choose <b>Reboot</b>, open the firmware settings and switch <b>Secure Boot</b> on.</li>
-          <li>Start <b>PosterChanOS (anti-cheat)</b> and type the disk password.</li></ol>`,
-        `<button class="btn" data-sb-undo>Undo</button>`);
-    }else if(st==='enabled'){
-      html=card(ac.secureBoot==='enabled'?'Secure Boot is on':'Set up — switch Secure Boot on',
-        ac.secureBoot==='enabled'
-          ? `<p class="muted">This computer started through Secure Boot with the signed kernel. Run <code>pc-eac-check</code> in a terminal to see what an anti-cheat will check.</p>`
-          : `<p class="muted">The signed kernel is installed, but Secure Boot is still off in the firmware. Open the firmware settings, switch Secure Boot on, and start <b>PosterChanOS (anti-cheat)</b>.</p>`,
-        `<button class="btn" data-sb-undo>Turn anti-cheat mode off</button>`);
-    }else{
-      html=card('Setting up Secure Boot did not finish',
-        `<p class="muted">The set-up stopped before it finished. What it said last:</p><pre class="os-sb-log" data-sb-log>${enc(ac.log||'(no output)')}</pre>`,
-        `<button class="btn primary" data-sb-setup>Try again</button>${ac.installed?'<button class="btn" data-sb-undo>Turn anti-cheat mode off</button>':''}`);
-    }
-    return head+html;
-  }
-  function _bindSecureBoot(host, rerender){
-    const act=(sel, fn, label)=>{ const b=host.querySelector(sel); if(!b) return;
-      b.onclick=async()=>{ b.disabled=true; b.textContent=label;
-        try{ await fn(); }catch(e){ PC().toast(String((e&&e.message)||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,'')); }
-        rerender(); }; };
-    act('[data-sb-setup]', ()=>pcAnticheat.setup(), 'Starting…');
-    act('[data-sb-undo]', async()=>{
-      const ok=await PC().uiConfirm('Turn anti-cheat mode off?\n\nThe computer goes back to its normal boot entry. Switch Secure Boot off in the firmware afterwards.',
-        { ok:'Turn it off', cancel:'Keep it' });
-      if(ok) await pcAnticheat.undo(); }, 'Working…');
-  }
+
 
   /* POWER → HIBERNATION → WHEN THE COMPUTER SLEEPS. Shown only once hibernation is ready, because
    * before that the only honest answer is "it sleeps". The choice is the delay between sleeping and
@@ -4600,14 +4547,8 @@
       if(!alive()) return;
     }
     let clock={}, zones=[], clockError='';
-    let anticheat={}, anticheatError='';
-    if(_osSettingsPage==='secureboot'){
-      if(!window.pcAnticheat) anticheatError='Secure Boot settings are unavailable on this device.';
-      else{ const r=await _settingsRead(pcAnticheat.status(), 'Secure Boot');
-            if(r.ok) anticheat=r.value||{};
-            else anticheatError = r.timedOut ? 'The Secure Boot helper did not answer.' : 'Could not read the Secure Boot state: '+r.error; }
-      if(!alive()) return;
-    }
+    let sb=null;
+    if(_osSettingsPage==='secureboot'){ sb=await _loadPage('ossecureboot.js','PCSecureBoot','the Secure Boot page').catch(()=>null); if(!alive()) return; }
     if(_osSettingsPage==='datetime'){
       if(!window.pcDateTime) clockError='Date and time controls are unavailable on this device.';
       else{
@@ -4653,7 +4594,7 @@
         <button data-page="datetime" class="${_osSettingsPage==='datetime'?'on':''}">${iconSvg('i-clock')} Date &amp; Time</button>
         <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('i-user')} Users</button>
         ${window.pcServer?`<button data-page="server" class="${_osSettingsPage==='server'?'on':''}">${iconSvg('i-relay')} PosterChan Server</button>`:''}
-        ${window.pcAnticheat?`<button data-page="secureboot" class="${_osSettingsPage==='secureboot'?'on':''}">${iconSvg('i-shield')} Secure Boot</button>`:''}
+        ${window.pcAnticheat&&pcAnticheat.available()?`<button data-page="secureboot" class="${_osSettingsPage==='secureboot'?'on':''}">${iconSvg('i-shield')} Secure Boot</button>`:''}
         <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('i-refresh')} Updates</button>
         <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('i-chart')} About</button>
         <button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('i-drive')} Installation media</button>
@@ -4664,7 +4605,7 @@
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
         <option value="page:search" ${_osSettingsPage==='search'?'selected':''}>Search</option>
         <option value="page:datetime" ${_osSettingsPage==='datetime'?'selected':''}>Date &amp; Time</option>
-        <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option>${window.pcServer?`<option value="page:server" ${_osSettingsPage==='server'?'selected':''}>PosterChan Server</option>`:''}${window.pcAnticheat?`<option value="page:secureboot" ${_osSettingsPage==='secureboot'?'selected':''}>Secure Boot</option>`:''}<option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
+        <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option>${window.pcServer?`<option value="page:server" ${_osSettingsPage==='server'?'selected':''}>PosterChan Server</option>`:''}${window.pcAnticheat&&pcAnticheat.available()?`<option value="page:secureboot" ${_osSettingsPage==='secureboot'?'selected':''}>Secure Boot</option>`:''}<option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
         <option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>Installation media</option>
       </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
@@ -4737,7 +4678,7 @@
           <div class="os-set-card" data-pcserver-ai><div class="os-set-cardhead"><b>AI features</b><span>Installed into the server with PosterChan's own installer, in the background. Large downloads — each says how large before it starts.</span></div>
           <div class="os-printer-list" data-srv-features></div>
           <pre class="os-liveusb-status os-server-log" data-srv-job hidden></pre></div>`:`<div class="empty">The PosterChan server is not available on this device.</div>`}</section>
-        <section data-settings-page="secureboot" ${_osSettingsPage==='secureboot'?'':'hidden'}>${_osSettingsPage==='secureboot'?_secureBootPage(anticheat, anticheatError):''}</section>
+        <section data-settings-page="secureboot" data-sb-host ${_osSettingsPage==='secureboot'?'':'hidden'}>${sb?'':'<div class="empty" data-sb-error>The Secure Boot page could not be loaded.</div>'}</section>
         <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
           <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
           <section class="os-about-grid os-set-card"><div><span>Running build</span><b><code>${enc(String(window.__PC_BUILD||'unknown').slice(0,16))}</code></b></div><div><span>Update channel</span><b>${window.pcShell?'Desktop automatic':'Web deployment'}</b></div></section>
@@ -5045,12 +4986,7 @@
         if(window.pcShell&&pcShell.retry)pcShell.retry();else location.reload();
       };
       _bindSearchPrefs(host.querySelector('[data-search-prefs]'));
-      if(_osSettingsPage==='secureboot'){
-        _bindSecureBoot(host, ()=>{ if(alive()) renderSystemSettings(); });
-        /* The set-up runs for minutes as a service: look again while it does, and stop once the page is left. */
-        if(['requested','running','undoing'].includes(anticheat.state))
-          setTimeout(()=>{ if(alive() && _osSettingsPage==='secureboot') renderSystemSettings(); }, 5000);
-      }
+      if(sb&&_osSettingsPage==='secureboot') sb.mount(host.querySelector('[data-sb-host]'),{iconSvg,enc,PC,read:_settingsRead,alive:()=>alive()&&_osSettingsPage==='secureboot'});
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
@@ -5135,20 +5071,21 @@
   /* THE INSTALLER'S PAGE IS LOADED ONLY WHEN IT IS OPENED. It is needed on exactly one kind of
    * machine — a live USB — so every other page load, on every platform, would pay for it for
    * nothing. Same version query as this file, so a cached old copy cannot outlive an update. */
-  let _installerLoad = null;
-  function _loadInstaller(){
-    if(window.PCInstaller) return Promise.resolve(window.PCInstaller);
-    if(!_installerLoad) _installerLoad = new Promise((resolve, reject) => {
+  const _pageLoads = {};
+  function _loadPage(file, global, what){
+    if(window[global]) return Promise.resolve(window[global]);
+    if(!_pageLoads[file]) _pageLoads[file] = new Promise((resolve, reject) => {
       const me = document.querySelector('script[src*="/static/js/client/os.js"]');
       const q = me && me.getAttribute('src').indexOf('?') >= 0 ? me.getAttribute('src').slice(me.getAttribute('src').indexOf('?')) : '';
       const s = document.createElement('script');
-      s.src = '/static/js/client/osinstall.js' + q;
-      s.onload = () => window.PCInstaller ? resolve(window.PCInstaller) : reject(new Error('the installer page did not load'));
-      s.onerror = () => { _installerLoad = null; reject(new Error('the installer page could not be loaded')); };
+      s.src = '/static/js/client/' + file + q;
+      s.onload = () => window[global] ? resolve(window[global]) : reject(new Error(what + ' did not load'));
+      s.onerror = () => { delete _pageLoads[file]; reject(new Error(what + ' could not be loaded')); };
       (document.head || document.documentElement).appendChild(s);
     });
-    return _installerLoad;
+    return _pageLoads[file];
   }
+  function _loadInstaller(){ return _loadPage('osinstall.js', 'PCInstaller', 'the installer page'); }
   function paintInstaller(slot){
     if(!window.PCInstaller){ slot.innerHTML = '<div class="os-pop-none">The installer could not be loaded.</div>'; return () => {}; }
     return window.PCInstaller.paint(slot);

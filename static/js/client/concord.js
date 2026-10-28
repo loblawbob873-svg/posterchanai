@@ -2122,9 +2122,7 @@
     return out;
   }
   function escCode(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  /* A SHARED POST IS A CARD, the way Armada draws it (ChatContent.tsx: `nostr:nevent1/note1`, or a link whose LAST path
-   * segment is one, becomes an EmbeddedNote fetched through the nevent's relays). Drawn with the timeline's own quote
-   * card (__PC.quotedDiv); the link text itself is dropped from the prose -- the card opens the post. 2026-10-27. */
+  /* A shared post is a card, as Armada draws it (ChatContent.tsx EmbeddedNote), via __PC.quotedDiv. */
   const NOTE_REF_RE=/(?:nostr:|https?:\/\/[^\s<>"']*\/)((?:nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]{10,})(?=$|[\s?#)\]"'<>.,!])/gi;
   function noteRefsOf(text){
     const out=[],seen=new Set(),NT=window.NostrTools;if(!NT||!NT.nip19)return out;
@@ -3493,11 +3491,7 @@
     const profile=(viewer&&viewer.profile)||{};
     return [me,profile.name,profile.display_name,viewer&&viewer.npub,viewer&&viewer.pubkey].filter(Boolean);
   }
-  /* @EVERYONE, AS ARMADA DOES IT ("our concord is missing the @everyone tag", 2026-10-27). CORD reserves the
-   * MENTION_EVERYONE permission bit and defines no tag for it, so the wire form is the literal lowercase `@everyone`
-   * in the text (Armada src/concord/lib/everyoneMention.ts, this exact pattern: never inside a word, an email or a
-   * longer handle like `@everyone_else`). It counts only from the owner or a member holding MENTION_EVERYONE --
-   * anybody can TYPE it, and a member who may not reaches nobody. */
+  /* @everyone as Armada does it (lib/everyoneMention.ts): literal text, counted only from the owner or MENTION_EVERYONE. */
   const EVERYONE_RE=/(^|[^\p{L}\p{N}_@])@everyone(?![\p{L}\p{N}_])/u;
   function hasEveryoneMention(text){ return EVERYONE_RE.test(String(text||'')); }
   function mayMentionEveryone(room,pubkey){
@@ -7601,8 +7595,7 @@
           ['cc-notify-head',concordNotifyOn()?'Notifications: on':'Notifications: off'],
           ['cc-direct-send','Invite an account'],['cc-copy-link','Copy invite link'],['cc-manage-links','Invitation links'],
           ['cc-direct-inbox',inbox?'Invitations ('+inbox+')':'Invitations'],['cc-publish-listing','Publish to Armada Discover'],
-          // Ban by npub (not on the member list: a second account, somebody kicked) -- here rather than in the Members
-          // dialog's button row ("looks ugly there", 2026-10-27). Present only for a viewer allowed to ban.
+          // Ban by npub: in this menu, for a viewer allowed to ban (2026-10-27).
           ['cc-ban-npub','Ban by npub…'],
           ['cc-leave-shortcut','Leave community']].filter(([id])=>!!$('#'+id));
         if(!p.openMenuPopover||!rows.length)return;

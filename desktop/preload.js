@@ -577,10 +577,16 @@ if (isOurPage) {
 
   /* Secure Boot ("anti-cheat"): System Settings reads the state and, for the administrator, asks for it or undoes
    * it. The helper (pc-anticheat) does the work as a service; nothing here takes an argument. */
-  let _anticheatHere = false;
-  try { _anticheatHere = ipcRenderer.sendSync('pc:anticheat:available') === true; } catch (_) {}
-  /* Only where the helper is installed (PosterChanOS): on Windows or another Linux there is no page to show. */
-  if (_anticheatHere) contextBridge.exposeInMainWorld('pcAnticheat', {
+  /* `available()` is asked LAZILY, like pcInstaller.isLive(): a sendSync while the preload evaluates blocks the page on
+   * a main process that never answers it. Only where the helper is installed (PosterChanOS) does it say yes. */
+  let _anticheatHere = null;
+  contextBridge.exposeInMainWorld('pcAnticheat', {
+    available: () => {
+      if (_anticheatHere === null) {
+        try { _anticheatHere = ipcRenderer.sendSync('pc:anticheat:available') === true; } catch (_) { _anticheatHere = false; }
+      }
+      return _anticheatHere;
+    },
     status: () => ipcRenderer.invoke('pc:anticheat:status'),
     setup: () => ipcRenderer.invoke('pc:anticheat:setup'),
     undo: () => ipcRenderer.invoke('pc:anticheat:undo'),

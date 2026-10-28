@@ -118,8 +118,12 @@ def test_registered_everywhere_a_desktop_screen_has_to_be(where, needle):
 
 def test_the_page_is_loaded_on_demand_not_by_every_client():
     """Only a live USB ever opens it: a page tag would put it on every cold load, everywhere."""
-    assert "osinstall.js" not in (ROOT / "templates/client.html").read_text()
-    assert "'/static/js/client/osinstall.js'" in OS_JS
+    page = (ROOT / "templates/client.html").read_text()
+    # The Secure Boot settings page (PosterChanOS only) rides the same loader, for the same reason.
+    for file, glob in (("osinstall.js", "PCInstaller"), ("ossecureboot.js", "PCSecureBoot")):
+        assert file not in page, f"{file} is a <script> tag on every cold load"
+        assert re.search(r"_loadPage\(\s*'%s'\s*,\s*'%s'" % (re.escape(file), glob), OS_JS), f"os.js never loads {file}"
+    assert "'/static/js/client/' + file" in OS_JS, "the on-demand loader no longer builds the module's own path"
 
 
 def test_no_native_dialog_in_the_installer():

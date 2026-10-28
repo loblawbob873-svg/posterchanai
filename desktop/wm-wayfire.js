@@ -107,6 +107,12 @@ function randrHead(h){
 }
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
+/* Room for one view-shot PNG: 64 MB covers a 4K window uncompressed; PC_CAPTURE_MIN_FREE (bytes) is for tests. */
+function captureRoom(dir){
+  const need=Number(process.env.PC_CAPTURE_MIN_FREE||64*1024*1024);
+  try{const st=fs.statfsSync(dir);return st.bavail*st.bsize>=need;}catch(_){return false;}
+}
+
 class WayfireWM{
   constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this._watchEvents=null;this._rewatching=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;this._work=[];}
   available(){return this.paths.length>0;}
@@ -412,6 +418,11 @@ class WayfireWM{
   captureView(id){
     const n=Number(id);
     if(!Number.isFinite(n))return Promise.resolve('');
+    /* NEVER ASK FOR THE WRITE WHERE IT CANNOT LAND. view-shot writes the PNG inside the COMPOSITOR, and a failed
+     * write is a libpng error Wayfire does not catch: SIGABRT, every window gone (measured on the laptop 2026-10-27,
+     * /tmp -- a RAM tmpfs -- full). No room, or a filesystem that cannot be asked, costs one preview (main falls
+     * back to grim), never the desktop. */
+    if(!captureRoom(os.tmpdir()))return Promise.resolve('');
     const file=path.join(os.tmpdir(),'pc-view-'+process.pid+'-'+n+'-'+Date.now()+'.png');
     return this._send('view-shot/capture',{'view-id':n,file}).then(()=>{
       const b=fs.readFileSync(file);

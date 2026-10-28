@@ -25,6 +25,9 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 GENTOO = (ROOT / "os/gentoo.sh").read_text(encoding="utf-8")
 KVER = "6.18.54"
+KREL = "6.18.54-gentoo-dist-bin"
+MID = "0123456789abcdef0123456789abcdef"
+OPTS = "quiet splash rd.luks.key=/boot/keyfile.key root=UUID=aaaa rootflags=subvol=@gentoo rw rd.luks.uuid=luks-1234"
 ROOT_GUID = "4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
 pytestmark = pytest.mark.skipif(not shutil.which("bash"), reason="bash required")
 
@@ -44,7 +47,7 @@ class Machine:
     """A fake PosterChanOS install: UEFI, LUKS root on vda2 (unlocked as luks-x), ESP on vda1."""
 
     def __init__(self, tmp: Path, *, nvidia_gpu=False, nvidia_pkg=True, uefi=True, luks=True,
-                 mok_queues=True, enrolled=False, image=True):
+                 mok_queues=True, enrolled=False, image=True, keyfile=False, initrd_has_key=True):
         self.r, self.bin, self.log = tmp / "root", tmp / "bin", tmp / "calls.log"
         self.bin.mkdir(parents=True); self.log.write_text("")
         r = self.r
@@ -73,6 +76,21 @@ class Machine:
         _exe(self.bin / "lsblk", f'{L}; case "${{@: -1}}" in /dev/vda1|/dev/vda2) echo vda;; *) echo vda2;; esac')
         image_line = (f'mkdir -p "{r}/boot/EFI/posterchan"; echo uki > "{r}/boot/EFI/posterchan/posterchanos.efi"'
                       if image else "true")
+        if keyfile:
+            # An auto-unlocking install, as bootloader() leaves it: the "Current" entry carries rd.luks.key=, and the
+            # kernel reinstall runs kernel-install's plugins -- here, the one that keeps that entry unlocking itself.
+            (r / "etc/machine-id").write_text(MID + "\n")
+            (r / "boot/loader/entries").mkdir(parents=True)
+            (r / "boot/loader/entries" / f"{MID}-{KREL}.conf").write_text(
+                f"title Current\nversion {KREL}\noptions {OPTS}\nmachine-id {MID}\n"
+                f"linux /{MID}/{KREL}/linux\ninitrd /{MID}/{KREL}/initrd\n")
+            (r / "usr/lib/modules" / KREL).mkdir(parents=True)
+            (r / "usr/lib/modules" / KREL / "vmlinuz").write_text("bzImage")
+            plug = r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install"
+            image_line += (f'; echo {KREL} > "{r}/boot/EFI/posterchan/posterchanos.version"'
+                           f'; [ -x "{plug}" ] && PC_AC_ROOT="{r}" "{plug}" add {KREL} /x "{r}/usr/lib/modules/{KREL}/vmlinuz"')
+            _exe(self.bin / "dracut", f'{L}; out="${{@: -2:1}}"; echo "{"usr/lib/systemd/systemd-cryptsetup etc/crypttab boot/keyfile.key" if initrd_has_key else "usr/lib/systemd/systemd-cryptsetup"}" > "$out"')
+            _exe(self.bin / "lsinitrd", 'tr " " "\n" < "$1"')
         _exe(self.bin / "emerge", f'{L}; case "$*" in *gentoo-kernel-bin*) {image_line};; esac; true')
         for t in ("sfdisk",):
             _exe(self.bin / t, f'{L}; true')
@@ -220,3 +238,69 @@ def test_a_password_chosen_for_the_person_is_handed_over_as_a_hash(tmp_path):
     assert "mokutil --generate-hash=31415926" in calls
     assert "mokutil --list-new" in calls
     assert "Done." in out
+
+
+
+# ---- THE NORMAL ENTRY STILL UNLOCKS ITSELF ("do option 1", 2026-10-27) ---------------------------------------------
+# gentoo.sh exists to boot without a disk password. Anti-cheat mode takes dracut away from installkernel, which is
+# what built the normal entry's keyfile initramfs; the 96 plugin builds it instead, for every kernel from then on.
+
+def _entry(m):
+    return (m.r / "boot/loader/entries" / f"{MID}-{KREL}.conf").read_text()
+
+
+def test_the_normal_entry_keeps_its_keyfile_unlock_through_the_kernel_reinstall(tmp_path):
+    m2 = Machine(tmp_path, keyfile=True)
+    rc, out, calls = m2.run()
+    assert rc == 0, out
+    plug = m2.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install"
+    assert plug.exists() and os.access(plug, os.X_OK)
+    assert (m2.r / "etc/posterchan/keyfile-entry.options").read_text().strip() == OPTS
+    e = _entry(m2)
+    assert f"options {OPTS}" in e and f"initrd /{MID}/{KREL}/initrd" in e and f"linux /{MID}/{KREL}/linux" in e
+    assert "boot/keyfile.key" in (m2.r / "boot" / MID / KREL / "initrd").read_text()
+    assert (m2.r / "boot" / MID / KREL / "linux").read_text() == "bzImage"
+    assert "emerge --noreplace sys-kernel/dracut" in calls, "dracut must stay installed for the plugin"
+    assert "still unlocks the disk by itself" in out
+
+
+def test_an_initramfs_without_the_key_is_never_booted_and_the_setup_says_so(tmp_path):
+    m = Machine(tmp_path, keyfile=True, initrd_has_key=False)
+    before = _entry(m)
+    rc, out, _ = m.run()
+    assert rc != 0 and "would not unlock the disk by itself" in out, out
+    assert _entry(m) == before, "an entry naming a key-less initramfs replaced the working one"
+    assert not (m.r / "boot" / MID / KREL / "initrd").exists()
+
+
+def test_a_passphrase_install_has_nothing_to_keep(tmp_path):
+    m = Machine(tmp_path, keyfile=True)
+    (m.r / "boot/loader/entries" / f"{MID}-{KREL}.conf").write_text(
+        f"title Current\noptions root=UUID=aaaa rw rd.luks.uuid=luks-1234\n")
+    rc, out, calls = m.run()
+    assert rc == 0, out
+    assert not (m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install").exists()
+    assert "sys-kernel/dracut" not in calls
+
+
+def test_the_plugin_removes_its_entry_with_the_kernel_and_never_fails_an_install(tmp_path):
+    m = Machine(tmp_path, keyfile=True)
+    assert m.run()[0] == 0
+    plug = m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install"
+    e = dict(os.environ, PATH=f"{m.bin}:/usr/bin:/bin", PC_AC_ROOT=str(m.r))
+    (m.r / "etc/posterchan/keyfile-entry.options").unlink()
+    r = subprocess.run([str(plug), "add", "6.99.0-gentoo-dist-bin", "/x", "/y"], env=e, capture_output=True, text=True)
+    assert r.returncode == 0 and "no saved options" in r.stderr
+    r = subprocess.run([str(plug), "remove", KREL], env=e, capture_output=True, text=True)
+    assert r.returncode == 0
+    assert not (m.r / "boot/loader/entries" / f"{MID}-{KREL}.conf").exists()
+    assert not (m.r / "boot" / MID / KREL).exists()
+
+
+def test_anticheat_off_takes_the_plugin_and_its_options_away(tmp_path):
+    m = Machine(tmp_path, keyfile=True)
+    assert m.run()[0] == 0
+    rc, out, _ = m.run("anticheatOff")
+    assert rc == 0, out
+    assert not (m.r / "etc/kernel/install.d/96-posterchan-keyfile-entry.install").exists()
+    assert not (m.r / "etc/posterchan/keyfile-entry.options").exists()

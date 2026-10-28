@@ -29,6 +29,7 @@ dir) · 2 could not run (no root, no Secure Boot firmware, no virt-fw-vars).
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import re
 import shutil
@@ -193,6 +194,61 @@ def fw(tool, src, dst, *opts, evidence=None, label=""):
     return r.returncode == 0
 
 
+# Phase 1b's guest side, carried on the ESP: a long command TYPED over the serial console arrives with characters
+# doubled or dropped (measured 2026-10-27: `machine--id`, `head --n1`, `[[ -n`), so it is a file the guest runs.
+TEST_1B = r"""#!/bin/sh
+# A KERNEL UPDATE, as anti-cheat mode meets one: the normal entry and its initramfs for this version go, and
+# kernel-install puts the kernel back the way an emerge of a new gentoo-kernel-bin does.
+v=$(cat /boot/EFI/posterchan/posterchanos.version); m=$(cat /etc/machine-id)
+# In anti-cheat mode installkernel's layout is `uki`: an emerge hands kernel-install the signed uki.efi (90-uki-copy
+# refuses anything without the .efi suffix -- measured), so the update is played with that image.
+img=/usr/lib/modules/$v/uki.efi
+echo "V=$v M=$m IMG=$img"
+cp -f "$img" /root/k.efi || { echo "KI=no-image"; exit 0; }
+rm -f "/boot/loader/entries/$m-$v.conf"; rm -rf "/boot/$m/$v"
+kernel-install -v add "$v" /root/k.efi >/boot/pc-test-ki.log 2>&1; echo "KI=$?"
+{ cat /boot/loader/loader.conf; for e in /boot/loader/entries/*.conf; do echo "== $e"; cat "$e"; done
+  ls -la /boot/EFI/Linux; cat /etc/kernel/install.conf /etc/kernel/entry-token
+  ls /etc/kernel/install.d /usr/lib/kernel/install.d
+  for i in /boot/*/*/initrd; do echo "== $i keyfile: $(lsinitrd "$i" 2>/dev/null | grep -c boot/keyfile.key)"; done
+} >/boot/pc-test-state.txt 2>&1
+efibootmgr -v >/boot/pc-test-efi.txt 2>&1
+# $1: the entry the machine booted through BEFORE anti-cheat mode -- the normal boot, whatever the firmware calls it
+# (a fresh variable store has no systemd-boot entry at all and boots the removable path, "UEFI Misc Device").
+[ -n "$1" ] && efibootmgr -q -n "$1" && echo "NEXT=$1"
+echo T1B-DONE
+"""
+
+
+def put_on_esp(disk, evidence, src, name):
+    """Copy `src` onto the ESP of the test's overlay (the root is encrypted; the ESP is /boot in the guest)."""
+    mnt = Path(evidence, "espmnt")
+    mnt.mkdir(exist_ok=True)
+    nbd = None
+    try:
+        subprocess.run(["modprobe", "nbd", "max_part=8"], capture_output=True, timeout=30)
+        for dev in ("/dev/nbd0", "/dev/nbd1", "/dev/nbd2"):
+            if subprocess.run(["qemu-nbd", "--connect", dev, str(disk)], capture_output=True, timeout=60).returncode == 0:
+                nbd = dev
+                break
+        if not nbd:
+            return False
+        time.sleep(1.5)
+        if subprocess.run(["mount", "-o", "rw", nbd + "p1", str(mnt)], capture_output=True, timeout=60).returncode != 0:
+            return False
+        try:
+            shutil.copyfile(src, Path(mnt, name))
+            subprocess.run(["sync"], capture_output=True, timeout=30)
+            return True
+        finally:
+            subprocess.run(["umount", str(mnt)], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        if nbd:
+            subprocess.run(["qemu-nbd", "--disconnect", nbd], capture_output=True, timeout=60)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("disk", help="an INSTALLED PosterChanOS qcow2 (kept by the install gates); never written")
@@ -200,6 +256,8 @@ def main():
     ap.add_argument("--memory", type=int, default=4096)
     ap.add_argument("--cpus", type=int, default=4)
     ap.add_argument("--label", default="", help="what the disk is, for the report (live-ISO / from-scratch)")
+    ap.add_argument("--gentoo-sh", default="", help="run THIS gentoo.sh in the guest (a tree under test) instead of "
+                                                   "the installed one / update-posterchan's")
     args = ap.parse_args()
     tag = f" [{args.label}]" if args.label else ""
     if os.geteuid() != 0:
@@ -212,7 +270,11 @@ def main():
         return 2
     evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pc-secureboot-"))
     evidence.mkdir(parents=True, exist_ok=True)
-    run = Path(tempfile.mkdtemp(prefix="pcsb-"))
+    # ON DISK, AND GONE WHEN THE RUN ENDS, PASS OR FAIL. The overlay grows by gigabytes (the anti-cheat set-up writes a
+    # kernel and its packages), and on the laptop /tmp is a RAM tmpfs: failed runs' overlays filled it, and a full
+    # /tmp took the desktop down with them (2026-10-27). The evidence is kept; the disk image never is.
+    run = Path(tempfile.mkdtemp(prefix="pcsb-", dir=str(evidence.parent)))
+    atexit.register(shutil.rmtree, run, True)
     disk = Path(run, "overlay.qcow2")
     subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-b", str(Path(args.disk).resolve()), "-F", "qcow2",
                     str(disk)], check=True, timeout=60)
@@ -227,6 +289,16 @@ def main():
     # "" also means "already there": a disk kept by the live-ISO gate carries both from its own server stage. The
     # boot below is what says whether the shell is really there.
     print(f"OK  boot entry made audible for the test ({added or 'already in place'})")
+    t1b = Path(run, "pc-test-1b.sh")
+    t1b.write_text(TEST_1B)
+    if not put_on_esp(disk, evidence, t1b, "pc-test-1b.sh"):
+        print("FAIL  could not put the phase-1b script on the test disk's ESP")
+        return 1
+    if args.gentoo_sh:
+        if not put_on_esp(disk, evidence, args.gentoo_sh, "pc-test-gentoo.sh"):
+            print(f"FAIL  could not put {args.gentoo_sh} on the test disk's ESP")
+            return 1
+        print(f"OK  the gentoo.sh under test is on the ESP: {args.gentoo_sh}")
     proc, con_p, sh_p, mon = qemu(disk, code, v_off, run, "1", args.memory, args.cpus, net=True)
     try:
         con = attach(con_p, open(Path(evidence, "1-console.log"), "w", encoding="utf-8"))
@@ -238,6 +310,8 @@ def main():
             print(f"FAIL  the installed system never gave the test a root shell with Secure Boot off{tag}")
             return 1
         print(f"OK  booted normally with Secure Boot off{tag}")
+        # The entry this normal boot came through, for 1b (the marker is split so the echoed command cannot match it).
+        normal = ask("efibootmgr | sed -n 's/^BootCurrent: //p'; echo BC''-END", r"([0-9A-Fa-f]{4})\s*\r?\nBC-END", 30)
         # The signed image ignores any command line, so this is the only way to see its boot: systemd's debug
         # shell on ttyS1, switched on inside the system. On the test's overlay only.
         ask("mkdir -p /etc/systemd/system/debug-shell.service.d && printf '[Service]\\nTTYPath=/dev/ttyS1\\n' "
@@ -246,6 +320,8 @@ def main():
         # An install from an ISO older than the anti-cheat mode (it arrived 2026-10-23) has a gentoo.sh that does not know
         # the command -- `gentoo.sh anticheat` then opens the interactive installer menu (measured on the 20261019 ISO's
         # install). The way such a machine gets it is the way its owner would: update-posterchan.
+        if args.gentoo_sh:
+            ask("install -m 0755 /boot/pc-test-gentoo.sh /usr/bin/gentoo.sh; echo GS-$?", r"GS-(\d+)", 30)
         has = ask("grep -c '^anticheatSetup()' /usr/bin/gentoo.sh; echo H-END", r"(\d+)\s*\r?\nH-END", 30)
         if has == "0":
             print(f"..  this install's gentoo.sh predates the anti-cheat mode: `update-posterchan` first{tag}")
@@ -283,8 +359,44 @@ def main():
             print(f"FAIL  after anticheat: key queued={queued}, boot entry={entry}{tag}")
             return 1
         print(f"OK  `gentoo.sh anticheat` finished: Gentoo's key queued for MOK, the anti-cheat boot entry made{tag}")
+        # Measured 2026-10-27: right after `anticheat` the old entry is untouched -- what loses the keyfile unlock is the
+        # NEXT kernel, because installkernel no longer has dracut to build it. pc-test-1b.sh plays that kernel update.
+        # Markers split with '' so the guest's echo of the typed command cannot match them (measured: it did).
+        out1b = ask(f"sh /boot/pc-test-1b.sh {normal or ''}; echo T1B''-END", r"(?s)(.*?)T1B-END", 1200) or ""
+        for f in ("pc-test-ki.log", "pc-test-state.txt", "pc-test-efi.txt"):
+            Path(evidence, "1b-" + f).write_text(ask(f"cat /boot/{f}; echo F''-END", r"(?s)(.*)F-END", 30) or "")
+        ki = (re.findall(r"KI=(\S+)", out1b) or ["?"])[-1]
+        print(f"..  kernel update simulated: kernel-install add exited {ki} (evidence 1b-pc-test-*){tag}")
+        if "NEXT=" not in out1b:
+            print(f"FAIL  could not find the systemd-boot firmware entry to boot next (see 1b-pc-test-efi.txt){tag}")
+            return 1
         ask("systemctl poweroff", r"$", 5)
         stop(proc, 180)
+    finally:
+        stop(proc, 5)
+
+    # ---- 1b. The NORMAL entry still unlocks the disk by itself while anti-cheat mode is on ---------------------------
+    # The automatic unlock is the point of gentoo.sh ("the entire point of gentoo.sh was to let user boot into system with
+    # no disk password", 2026-10-26); anti-cheat mode must leave the systemd-boot entry -- the fallback with Secure Boot
+    # off -- doing exactly that ("do option 1", 2026-10-27). Nobody types anything here: a passphrase prompt is a FAIL.
+    proc, con_p, sh_p, mon = qemu(disk, code, v_off, run, "1b", args.memory, args.cpus, net=False)
+    try:
+        c1b = attach(con_p, open(Path(evidence, "1b-console.log"), "w", encoding="utf-8"))
+        if c1b:
+            drain(c1b)
+        ask, _ = root_shell(sh_p, evidence, 600)
+        if not ask:
+            mon.shot(Path(evidence, "1b-no-shell.ppm"))
+            print(f"FAIL  in anti-cheat mode the normal entry did not unlock the disk by itself (Secure Boot off); "
+                  f"see {evidence}/1b-pc-test-state.txt and 1b-no-shell.ppm{tag}")
+            return 1
+        cur = ask("cat /proc/cmdline; echo CL''-END", r"(?s)(.*?)CL-END", 30) or ""
+        if "rd.luks.key=" not in cur:
+            print(f"FAIL  the boot that reached a shell was not the keyfile entry: {cur.strip()[-200:]!r}{tag}")
+            return 1
+        print(f"OK  anti-cheat mode: the normal entry still unlocks the disk by itself with Secure Boot off{tag}")
+        ask("systemctl poweroff", r"$", 5)
+        stop(proc, 120)
     finally:
         stop(proc, 5)
 
@@ -396,11 +508,11 @@ def main():
             return 1
         print(f"OK  shim -> the Gentoo-signed kernel image booted with Secure Boot ON (passphrase typed at its prompt){tag}")
         checks = {
-            "Secure Boot enabled (mokutil)": ("mokutil --sb-state 2>&1; echo C-END", r"SecureBoot enabled"),
-            "lockdown=integrity": ("cat /sys/kernel/security/lockdown; echo C-END", r"\[integrity\]"),
-            "kexec off": ("sysctl -n kernel.kexec_load_disabled; echo C-END", r"(?m)^1\s*$"),
-            "booted the signed image": ("cat /proc/cmdline; echo C-END", r"lockdown=integrity"),
-            "kernel says Secure Boot": ("dmesg | grep -i 'secure boot' | head -3; echo C-END", r"(?i)secure boot enabled"),
+            "Secure Boot enabled (mokutil)": ("mokutil --sb-state 2>&1; echo C''-END", r"SecureBoot enabled"),
+            "lockdown=integrity": ("cat /sys/kernel/security/lockdown; echo C''-END", r"\[integrity\]"),
+            "kexec off": ("sysctl -n kernel.kexec_load_disabled; echo C''-END", r"(?m)^1\s*$"),
+            "booted the signed image": ("cat /proc/cmdline; echo C''-END", r"lockdown=integrity"),
+            "kernel says Secure Boot": ("dmesg | grep -i 'secure boot' | head -3; echo C''-END", r"(?i)secure boot enabled"),
         }
         bad = []
         for name, (cmd, want) in checks.items():
@@ -410,7 +522,7 @@ def main():
                 bad.append(f"{name}: {out.strip()[-160:]!r}")
             else:
                 print(f"OK  {name}{tag}")
-        eac = ask("pc-eac-check 2>&1 | tail -20; echo EAC-RC=${PIPESTATUS[0]}; echo C-END", r"(?s)(.*?)C-END", 60) or ""
+        eac = ask("pc-eac-check 2>&1 | tail -20; echo EAC-RC=${PIPESTATUS[0]}; echo C''-END", r"(?s)(.*?)C-END", 60) or ""
         Path(evidence, "pc-eac-check.txt").write_text(eac)
         print(f"..  pc-eac-check (full output in {evidence}/pc-eac-check.txt):")
         for line in eac.strip().splitlines()[-12:]:

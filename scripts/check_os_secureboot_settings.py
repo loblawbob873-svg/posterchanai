@@ -46,6 +46,7 @@ window.__PC.toast = (t) => { window.__toasts.push(String(t)); };
 const A = window.__ac = { state: 'off', secureBoot: 'disabled', nvidia: false, installed: false, password: '',
                           log: '', calls: [], refuse: false };
 window.pcAnticheat = {
+  available: () => A.here !== false,
   status: async () => { const o = { state: A.state, requested: A.state === 'requested', installed: A.installed,
                                     secureBoot: A.secureBoot, nvidia: A.nvidia };
                         if (A.state === 'enrol') o.password = A.password;
@@ -107,6 +108,9 @@ DRIVE = r"""(async () => {
   A.nvidia = true; A.refuse = false;
   $('.os-set-nav [data-page="secureboot"]').click(); await sleep(400);
   out.nvidia = { text: text(), button: !!$('[data-sb-setup]') };
+  A.here = false;
+  $('.os-set-nav [data-page="displays"]').click(); await sleep(400);
+  out.notHereNav = !!$('.os-set-nav [data-page="secureboot"]');
   delete window.pcAnticheat;
   $('.os-set-nav [data-page="displays"]').click(); await sleep(400);
   out.absentNav = !!$('.os-set-nav [data-page="secureboot"]');
@@ -155,6 +159,8 @@ def verdict(o):
     nv = o.get("nvidia", {})
     if nv.get("button") or "NVIDIA" not in nv.get("text", ""):
         p.append(f"nvidia: {nv}")
+    if o.get("notHereNav"):
+        p.append("a desktop whose bridge says the helper is not installed still shows a Secure Boot page")
     if o.get("absentNav"):
         p.append("a desktop without the bridge still shows a Secure Boot page")
     if o.get("native"):
