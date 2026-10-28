@@ -34,8 +34,21 @@ def bundled_assets():
     yield from desktop.bundle.__wrapped__()
 
 
+# The device's envelope cache refuses one control event (as it does an event over MAX_EVENT_BYTES, or after eviction).
+REFUSE_ONE = r'''(()=>{const C=window.PCConcordCache,put=C.put,get=C.get;window.__refused=null;
+  const keep=evs=>(evs||[]).filter(e=>{if(!e||e.kind!==1059)return true;if(!window.__refused)window.__refused=e.id;return e.id!==window.__refused;});
+  C.put=(k,evs,o)=>put(k,String(k).includes('control')?keep(evs):evs,o);
+  C.get=async(...a)=>{const r=await get(...a);return String(a[0]).includes('control')?keep(r):r;};return true;})()'''
+# ...and the community's relays hold its control events (a real community's relays do).
+ON_RELAYS = r'''(urls=>{for(const u of urls)for(const ev of __home.filter(e=>e.kind===1059))__upHeld.push({url:u,ev});return true;})(%s)'''
+
+
 @pytest.mark.skipif(not T.CHROME, reason='Chrome required')
-def test_live_streams_are_not_redialled_every_minute():
+@pytest.mark.parametrize('cache', ['whole', 'refuses-one'])
+def test_live_streams_are_not_redialled_every_minute(cache):
+    """'refuses-one': the community's relays hold a control event this device's cache does not. Inside the metadata
+    read's once-a-minute rate limit a refresh got only the cache back, so the control set -- and with it every live
+    stream's key -- flipped each minute: the 60 s redial measured on production."""
     got = {}
     from tests.client.test_concord_reads_only_the_relays_this_node_cannot_full_app import MINT as M, REFUSER
     mint = M.replace(json.dumps(base.CORD_RELAYS + [REFUSER]), json.dumps(RELAYS)).replace("'Partly here'", "'Live here'")
@@ -43,7 +56,10 @@ def test_live_streams_are_not_redialled_every_minute():
     async def check(b):
         await base.open_concord(b)
         assert await b.js(SEND_LOG)
+        if cache == 'refuses-one':
+            assert await b.js(REFUSE_ONE)
         assert await b.js(mint)
+        assert await b.js(ON_RELAYS % json.dumps(RELAYS))
         await b.js('PCConcord.render()')
         await base.wait_for(b, LIVE_SINCE_MARK + '>0', 60)   # the community's live streams are open
         await asyncio.sleep(10)

@@ -6679,7 +6679,11 @@
       const room=selected.room,bundle=room.cord.bundle,
         reader=window.PosterCordReader,loadKey=room.communityId||room.naddr,
         seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle),context=cordPlaneContext(p,bundle,roomControls.get(loadKey)||[],room),
-        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,[...cachedWraps,...((only&&only.extra)||[])],{plane:context,signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
+        /* WHAT IS HELD STAYS HELD: inside the read's once-a-minute limit a refresh gets nothing from the relays, and the
+         * device cache can hold fewer control events than they do (one over MAX_EVENT_BYTES, an eviction) -- so the set
+         * shrank and grew back every minute, and every live stream keyed on it was redialled each time: jskitty's
+         * "churning connections" (2026-10-28, 51 redials in 5 min in tests/client/test_concord_live_streams_...). */
+        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,[...(roomControls.get(loadKey)||[]),...cachedWraps,...((only&&only.extra)||[])],{plane:context,signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
         info=reader.inspectControl(bundle,wraps||[]);
       if(!context.current())return;
       await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);if(!context.current())return;roomControls.set(loadKey,wraps||[]);
