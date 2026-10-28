@@ -509,6 +509,10 @@ window.PCUploadFactory = function(dep){
     // chunks, so a multi-GB ISO is never resident. With opts.onProgress we use XHR, the only reliable
     // way to report upload progress; otherwise fetch.
     let d = (file.size > CHUNK_OVER && server === _blossomBuiltin().url) ? await _putChunked(file, server, hdr, hash, opts) : null;
+    // Our server's 503 (storage busy) is resent after Retry-After, 3 tries: tests/test_blossom_busy_store.py.
+    const refused = (status, reason, body, retryAfter) => Object.assign(
+      new Error(_uploadRefusal(status, reason, body)), { status, retryAfter });
+    for(let attempt = 1; !d; attempt++){ try{
     if(!d && opts && typeof opts.onProgress === 'function'){
       d = await new Promise((resolve, reject) => {
         const x = new XMLHttpRequest();
@@ -517,7 +521,7 @@ window.PCUploadFactory = function(dep){
         x.upload.onprogress = e => { try{ opts.onProgress({ loaded: e.loaded, total: e.total || file.size }); }catch(_){} };
         x.onload = () => {
           if(x.status>=200 && x.status<300){ let j={}; try{ j=JSON.parse(x.responseText); }catch(_){} resolve(j); }
-          else reject(new Error(_uploadRefusal(x.status, x.getResponseHeader('x-reason'), x.responseText)));
+          else reject(refused(x.status, x.getResponseHeader('x-reason'), x.responseText, x.getResponseHeader('retry-after')));
         };
         x.onerror = () => reject(new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`));
         x.send(file);
@@ -532,9 +536,15 @@ window.PCUploadFactory = function(dep){
         // a custom server — it doesn't send CORS headers allowing this site to upload to it.
         throw new Error(`couldn't reach ${server} — check the URL, and that the server allows cross-origin (CORS) uploads`);
       }
-      if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(_uploadRefusal(res.status, res.headers.get('x-reason'), t)); }
+      if(!res.ok){ const t=await res.text().catch(()=>''); throw refused(res.status, res.headers.get('x-reason'), t, res.headers.get('retry-after')); }
       d=await res.json();
     }
+    } catch(e){
+      if(!(e && e.status === 503 && attempt < 3 && server === _blossomBuiltin().url)) throw e;
+      const secs = Math.min(30, Math.max(2, Number(e.retryAfter) || 5));
+      try{ if(opts && typeof opts.onRetry === 'function') opts.onRetry({ attempt, secs }); }catch(_){}
+      await new Promise(r => setTimeout(r, secs * 1000));
+    } }
     // The URL must carry a file extension so clients (incl. linkify below) can detect the media type
     // and embed/play it. Our server now returns one (BUD-02), and other servers may not — so append
     // ours only when the returned URL doesn't already end in an extension, never blindly (that made

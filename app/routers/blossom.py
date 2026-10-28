@@ -44,7 +44,7 @@ def _unavailable(e) -> JSONResponse:
     """The blob index could not be asked (still loading, being migrated, relay down). A 503 with
     Retry-After — never a 404 or an empty listing, which a client would act on as "not here"."""
     logger.warning("[blossom] blob index unavailable: %s", e)
-    r = _err(503, "blob index temporarily unavailable, retry shortly")
+    r = _err(503, "storage temporarily unavailable, retry shortly")
     r.headers["Retry-After"] = "30"
     return r
 

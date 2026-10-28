@@ -551,13 +551,26 @@ def _proxy_headers() -> dict:
     return lb_auth.headers()
 
 
+# A STORAGE NODE THAT DID NOT ANSWER IS "TRY AGAIN", NOT "THE UPLOAD FAILED". Measured 2026-10-27 12:10-12:11: six
+# uploads in a row died with httpx.ReadTimeout from the storage node (nas, its disks saturated by a backup) and went
+# back to the client as 500 "storage error" -- a lost save, with nothing telling the client a retry would work. These
+# become Unavailable, which the route answers 503 + Retry-After; the client resends (the blob is content-addressed).
+_STORE_BUSY = (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError,
+               httpx.WriteError)
+
+
 async def _proxy_put(storage_url: str, sha256: str, data: bytes, mime: str) -> str:
     """Upload bytes to the storage server under _blossom/blossom/<ab>/<sha>. Returns rel-path."""
     subdir = f"blossom/{sha256[:2]}"
     url = f"{storage_url.rstrip('/')}/api/storage/upload-file"
     files = {"file": (sha256, data, mime or "application/octet-stream")}
     form = {"username": _PROXY_USER, "path": subdir}
-    r = await _client().post(url, headers=_proxy_headers(), files=files, data=form)
+    try:
+        r = await _client().post(url, headers=_proxy_headers(), files=files, data=form)
+    except _STORE_BUSY as e:
+        raise Unavailable(f"the storage node did not answer ({type(e).__name__})") from e
+    if r.status_code in (502, 503, 504):
+        raise Unavailable(f"the storage node is busy (HTTP {r.status_code})")
     if r.status_code != 200:
         raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
     return (r.json().get("path") or f"{subdir}/{sha256}")
@@ -573,8 +586,13 @@ async def _proxy_put_file(storage_url: str, sha256: str, path: str, mime: str) -
         files = {"file": (sha256, fh, mime or "application/octet-stream")}
         # No TOTAL timeout (a multi-GB VOD upload can outlast the shared client's 120s cap), but keep
         # finite read/write timeouts so a stalled connection fails instead of pinning the task forever.
-        r = await _client().post(url, headers=_proxy_headers(), files=files, data=form,
-                                 timeout=httpx.Timeout(None, connect=10.0, read=600.0, write=600.0))
+        try:
+            r = await _client().post(url, headers=_proxy_headers(), files=files, data=form,
+                                     timeout=httpx.Timeout(None, connect=10.0, read=600.0, write=600.0))
+        except _STORE_BUSY as e:
+            raise Unavailable(f"the storage node did not answer ({type(e).__name__})") from e
+    if r.status_code in (502, 503, 504):
+        raise Unavailable(f"the storage node is busy (HTTP {r.status_code})")
     if r.status_code != 200:
         raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
     return (r.json().get("path") or f"{subdir}/{sha256}")

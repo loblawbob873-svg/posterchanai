@@ -100,7 +100,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: GROUP DMs ("yes do the group DMs"): the conversation key and its label (app.js DmKey), the list's group rows, and
 #: delivery to every member (dms.js) -- all of it on the boot path, since an incoming DM is filed at login. Measured
 #: 8.1656 MB (the New message dialog's recipient chips included); 8.166 leaves ~0.5 KB. The next reclaim is still an on-demand module (see the split notes above).
-BUDGET_MB = 8.166
+#: ...and 8.166 -> 8.167 the same evening for the upload resend on a busy store (upload.js, at boot: Files saves through
+#: it), its comment cut to one line first: 8.1662 MB measured.
+BUDGET_MB = 8.167
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
