@@ -165,7 +165,7 @@ class TpmBox(Box):
     """A machine set up for Secure Boot: a root on LUKS, a key file, and (maybe) a TPM whose PCR 7 is `pcr`."""
 
     def __init__(self, tmp, sb="SecureBoot enabled", tpm=True, pcr="AA" * 32, enrolled=False, keyfile=True, enroll_rc=0,
-                 tpm_support=True):
+                 tpm_support=True, unseal_ok=True):
         super().__init__(tmp, sb=sb)
         (self.root / "etc/posterchan/anticheat").write_text("2026-10-29")
         self.tpm = tmp / "tpm0"
@@ -179,7 +179,8 @@ class TpmBox(Box):
         self.slots.write_text("tpm2\n" if enrolled else "")
         L = f'echo "$(basename "$0") $*" >> "{self.calls}"'
         _exe(self.bin / "findmnt", 'echo /dev/mapper/root')
-        _exe(self.bin / "cryptsetup", f'{L}; [ "$1" = status ] && [ "$2" = root ] && echo "  device:  /dev/nvme0n1p2"; true')
+        _exe(self.bin / "cryptsetup", f'{L}; [ "$1" = status ] && [ "$2" = root ] && echo "  device:  /dev/nvme0n1p2"; '
+                                      f'case "$*" in *--test-passphrase*) exit {0 if unseal_ok else 1};; esac; true')
         _exe(self.bin / "systemd-cryptenroll",
              f'{L}; [ "$1" = --version ] && {{ echo "systemd 261 (261.2) +PAM {"+TPM2" if tpm_support else "-TPM2"} +CRYPTSETUP"; exit 0; }}; '
              f'if [ $# -eq 1 ]; then echo "SLOT TYPE"; echo "   0 password"; cat "{self.slots}" | sed "s/^/   1 /"; exit 0; fi; '
@@ -198,8 +199,25 @@ def test_the_first_secure_boot_start_seals_the_disk_key_into_the_tpm_with_nothin
     """"tpm unlock should be automatic" (2026-10-29): enrolled with the existing key file, sealed to PCR 7."""
     r, calls, st = TpmBox(tmp_path).tpm_run()
     assert r.returncode == 0, r.stderr
-    assert f"systemd-cryptenroll /dev/nvme0n1p2 --unlock-key-file={tmp_path}/keyfile.key --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7" in calls
+    assert f"systemd-cryptenroll /dev/nvme0n1p2 --unlock-key-file={tmp_path}/keyfile.key --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 --tpm2-public-key=" in calls
+    assert "cryptsetup open --test-passphrase --token-only --token-type systemd-tpm2 /dev/nvme0n1p2" in calls
     assert st == "on"
+
+
+def test_a_seal_the_tpm_cannot_open_is_never_reported_on(tmp_path):
+    """The laptop, 2026-10-29: enrolment succeeded, and the TPM refused the image's RSA-4096 key at every start."""
+    r, calls, st = TpmBox(tmp_path, unseal_ok=False).tpm_run()
+    assert st == "failed" and r.returncode != 0, (st, calls)
+
+
+def test_a_seal_from_before_the_fix_is_redone_once(tmp_path):
+    box = TpmBox(tmp_path, enrolled=True)
+    box.state.mkdir(parents=True, exist_ok=True)
+    (box.state / "anticheat-tpm.pcr7").write_text("AA" * 32 + "\n")        # v1: bound to the image key too
+    r, calls, st = box.tpm_run()
+    assert "--tpm2-public-key=" in calls and st == "on", calls
+    r, calls, st = box.tpm_run()
+    assert calls.count("--wipe-slot=tpm2 --tpm2-device") == 1, "a v2 seal was redone at every start"
 
 
 def test_a_current_seal_is_left_alone_and_a_stale_one_is_redone(tmp_path):

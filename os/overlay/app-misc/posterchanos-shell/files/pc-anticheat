@@ -179,12 +179,17 @@ tpm)
 	dev="$(cryptsetup status "${src##*/}" 2>/dev/null | awk '$1 == "device:" {print $2}')"
 	[ -n "$dev" ] || { tpmsay failed; echo "pc-anticheat tpm: the root is not on a LUKS device ($src)" >&2; exit 1; }
 	pcr="$(cat "$TPMDEV/pcr-sha256/7" 2>/dev/null)"
+	# The record is "v2 <PCR 7>": a v1 seal (bare PCR value) was ALSO bound to the signed kernel image's RSA-4096 key
+	# (systemd-cryptenroll picks the image's .pcrpkey up by itself), which the laptop's TPM refuses to load -- it asked
+	# for the password at every start (2026-10-29). A v1 record therefore never matches, and the slot is sealed again.
 	if systemd-cryptenroll "$dev" 2>/dev/null | grep -q tpm2 && [ -n "$pcr" ] \
-		&& [ "$pcr" = "$(cat "$STATE_DIR/anticheat-tpm.pcr7" 2>/dev/null)" ]; then
+		&& [ "v2 $pcr" = "$(cat "$STATE_DIR/anticheat-tpm.pcr7" 2>/dev/null)" ]; then
 		tpmsay on; exit 0
 	fi
-	if systemd-cryptenroll "$dev" --unlock-key-file="$KEYFILE" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7; then
-		[ -n "$pcr" ] && printf '%s\n' "$pcr" >"$STATE_DIR/anticheat-tpm.pcr7"
+	# PCR 7 only (`--tpm2-public-key=` turns the image key off), then PROVE the TPM opens it before saying "on".
+	if systemd-cryptenroll "$dev" --unlock-key-file="$KEYFILE" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 --tpm2-public-key= \
+		&& cryptsetup open --test-passphrase --token-only --token-type systemd-tpm2 "$dev"; then
+		[ -n "$pcr" ] && printf 'v2 %s\n' "$pcr" >"$STATE_DIR/anticheat-tpm.pcr7"
 		tpmsay on
 	else
 		tpmsay failed; exit 1
