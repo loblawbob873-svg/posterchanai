@@ -832,9 +832,8 @@ window.PCDmsFactory = function(dep){
      * so an invite from Armada went to the stock relays -- which this inbox never read: "No pending invitations"
      * for a direct invite Armada had just confirmed as sent (2026-10-22). The scan follows the same rule. */
     const watch=delivery.relays.length?delivery.relays:CORD_STOCK_RELAYS;
-    // Live with no 60 s default timeout, and through Concord's tunnel door (2026-10-28).
-    const R=window.PCConcordRelay||Relay;
-    if(watch.length && R.subscribeFrom)external=R.subscribeFrom(watch,filters,{...handlers,live:true,timeout:0,max:8});
+    // Live with no timeout: relay.js's 60 s default ended it, and an invite arriving later was missed (2026-10-28).
+    if(watch.length && Relay.subscribeFrom)external=Relay.subscribeFrom(watch,filters,{...handlers,live:true,timeout:0,max:8});
   }
   // CORD-05's stock relays (Armada src/concord/lib/stockRelays.ts, the invite-link relay dictionary 1..4).
   const CORD_STOCK_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to'];
