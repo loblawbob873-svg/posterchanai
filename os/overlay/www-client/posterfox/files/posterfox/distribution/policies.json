@@ -42,7 +42,38 @@
       "extensions.activeThemeID": {
         "Value": "cyberpunk-theme@poster.place",
         "Status": "default"
+      },
+      "places.history.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "browser.formfill.enable": {
+        "Value": false,
+        "Status": "default"
+      },
+      "privacy.userContext.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "privacy.userContext.ui.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "browser.sessionstore.resume_from_crash": {
+        "Value": false,
+        "Status": "default"
       }
+    },
+    "SanitizeOnShutdown": {
+      "Cache": true,
+      "Cookies": true,
+      "Downloads": true,
+      "FormData": true,
+      "History": true,
+      "Sessions": true,
+      "SiteSettings": true,
+      "OfflineApps": true,
+      "Locked": false
     }
   }
 }

@@ -1,4 +1,4 @@
-# PosterFox 5: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 6: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -1337,6 +1337,7 @@ posterfox_distribution() {
 	# update with the browser and need no addons.mozilla.org round trip.
 	insinto "${MOZILLA_FIVE_HOME}/browser/extensions"
 	newins "${FILESDIR}/posterfox/extensions/posterchan-cyberpunk.xpi" cyberpunk-theme@poster.place.xpi
+	newins "${FILESDIR}/posterfox/extensions/posterfox-tab-containers.xpi" tab-containers@posterfox.poster.place.xpi
 
 	# Default prefs, and the autoconfig hook that reads this computer's PosterChan instance and loads the
 	# window chrome (posterfox.cfg -- it runs with chrome privileges, so it is installed read-only, root-owned).

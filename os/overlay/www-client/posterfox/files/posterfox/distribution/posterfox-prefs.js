@@ -28,3 +28,15 @@ pref("browser.discovery.enabled", false);
 // PosterChan window does.
 pref("browser.tabs.inTitlebar", 1);
 pref("browser.compactmode.show", true);
+
+// PRIVATE BY DEFAULT (asked 2026-10-28): no history, everything cleared on exit, every tab its own container.
+// Not Firefox's "Never remember history" (permanent private browsing): containers do not work in private browsing.
+// So: no history or form history kept, the shutdown sanitizer (policies.json SanitizeOnShutdown) clears cookies, site
+// data, cache, downloads, sessions and site settings, and the Tab Containers add-on gives every tab its own
+// container. Saved passwords are NOT cleared. These are defaults: anyone can change them in Settings.
+pref("places.history.enabled", false);
+pref("browser.formfill.enable", false);
+pref("privacy.userContext.enabled", true);
+pref("privacy.userContext.ui.enabled", true);
+pref("browser.sessionstore.resume_from_crash", false);
+pref("browser.startup.page", 1);
