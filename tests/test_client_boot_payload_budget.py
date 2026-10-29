@@ -134,7 +134,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: follow a raised window, carry a window along, the startup-app workspace) and the letterboxing rules that stop every
 #: shared picture from being cropped (client.css). Photos' Synced tab is in photos.js, which loads on first open.
 #: 8.2037 MB measured.
-BUDGET_MB = 8.205
+#: ...and 8.205 -> 8.207 for `settle` in relay.js queryFrom/publishTo (answer on the FIRST relay that answers, not the
+#: slowest) and its use by Concord's settings save -- a silent relay held a banner Save 15 s (Vyram); comments cut to
+#: one line each first. 8.2062 MB measured.
+BUDGET_MB = 8.207
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

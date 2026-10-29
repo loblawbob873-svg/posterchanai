@@ -14935,8 +14935,9 @@
     relayPublish: ev => Relay.publish(ev),
     relayPublishTo: (relays, ev, opts) => Relay.publishTo(relays, ev, opts),
     // A wrap for a Concord community this node's relay holds goes there first (concord.js roomPublish).
-    relayPublishRoom: (relays, ev, authScope=null, via=null) => {
-      const direct=(r,e,a)=>Relay.publishTo(r, e, {includeManaged:true, detailed:true, authScope:a, via});
+    relayPublishRoom: (relays, ev, authScope=null, via=null, opts=null) => {
+      if(via&&typeof via!=="function"){opts=via;via=null;}   // unwrapped call: (relays, ev, auth, opts)
+      const direct=(r,e,a)=>Relay.publishTo(r, e, {...(opts||{}), includeManaged:true, detailed:true, authScope:a, via});
       const m=window.PCConcordMirror;
       return m&&m.publish ? m.publish(relays, ev, authScope, direct) : direct(relays, ev, authScope);
     },

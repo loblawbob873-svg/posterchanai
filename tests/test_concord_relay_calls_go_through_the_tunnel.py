@@ -44,7 +44,7 @@ def test_the_wrappers_cover_every_method_that_dials_a_relay():
 
 def test_the_app_doors_pass_via_down():
     assert "relayPublishTo: (relays, ev, opts) => Relay.publishTo(relays, ev, opts)" in APP
-    assert "relayPublishRoom: (relays, ev, authScope=null, via=null) => {" in APP
+    assert "relayPublishRoom: (relays, ev, authScope=null, via=null, opts=null) => {" in APP
     assert "authScope:a, via});" in APP
     assert "publishNip29Authed: async (relay, template, via=null) =>" in APP
     assert ",{via});" in APP

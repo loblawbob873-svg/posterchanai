@@ -1207,7 +1207,8 @@
       if(!this._home) return { ok:false, accepted:0, uncertain:false, msg:'this node’s relay is not connected' };
       return this.publishTo([this._home], event, { timeout, max:1, includeManaged:true, detailed:true });
     },
-    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null, via=null } = {}){
+    // `settle`: answer `settle` ms after the FIRST accept, not the slowest relay (the rest finish in the background).
+    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null, via=null, settle=0 } = {}){
       // Room sends must reach their exact relay set even when those URLs are already pooled.
       // Keep the external-only default for callers that already used publish() for the pool.
       const finishResults = results => {
@@ -1224,11 +1225,15 @@
       const targets = [...new Set((urls||[]).map(_relayUrl).filter(u=>u&&!_isBlockedRelay(u)))]
         .filter(u => includeManaged || !this._conns.has(u)).slice(0, max);
       if (!targets.length) return finishResults([]);
-      return Promise.all(targets.map(u => new Promise(resolve => {
+      const sofar=[];let early=null,settleTm=null;
+      const earlyAnswer=settle>0?new Promise(r=>{early=r;}):null;
+      const all=Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm, attempted=false,auth=null,authRejected=false;
         const fin = (ok, msg='', rejected=false) => { if (done) return; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
-          resolve({ok,uncertain:!ok&&attempted&&!rejected,msg}); };
+          const r={ok,uncertain:!ok&&attempted&&!rejected,msg};sofar.push(r);
+          if(ok&&early&&!settleTm)settleTm=setTimeout(()=>early(finishResults(sofar.slice())),settle);
+          resolve(r); };
         try { ws = new WebSocket(via?via(u):u); } catch(_){ return fin(false,'could not connect to a room relay'); }
         // CONNECTING HAS ITS OWN BOUND (2026-10-23). `timeout` is how long the relay gets to ANSWER an offered event; it
         // used to run from before the socket opened, so a connection slower than 5 s (a phone radio, a loaded box) ended
@@ -1252,7 +1257,8 @@
             fin(m[2],m[2]?String(m[3]||''):String(m[3]||'room relay rejected the message'),!m[2]); };
         ws.onerror = () => fin(false,'room relay connection failed',authRejected);
         ws.onclose = () => fin(false,'room relay connection closed',authRejected);
-      }))).then(finishResults);
+      }))).then(rs=>{clearTimeout(settleTm);return finishResults(rs);});
+      return earlyAnswer?Promise.race([all,earlyAnswer]):all;
     },
     /* A temporary LIVE subscription to one or more relays outside the user's normal pool.
      * Remote Desktop address discovery uses this for a peer's advertised relay: publishing the
@@ -1423,7 +1429,8 @@
     /* `via` (queryFrom/publishTo/subscribeFrom/publishAuthed): a function from a relay url to the url actually
      * DIALED -- Concord passes this node's tunnel (/ws/concord-relay) so a client talks only to its instance.
      * Everything else (targets, cooldowns, reports, AUTH's relay tag) keeps the REAL relay url. */
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null, subPrefix='' } = {}){
+    // `settle`: after the FIRST EOSE the rest get `settle` ms, then end `late` (events kept, no cooldown).
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null, subPrefix='', settle=0 } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
@@ -1457,13 +1464,17 @@
        * alone, and still cools the relay down if it fails. */
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = (subPrefix||'qf') + Math.random().toString(36).slice(2,9);
+      const lates=new Set();let settleTm=null;
       return Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm,auth; const got = [];
         const abort = () => fin('abort');
         const stop = () => fin('abort');
+        const late = () => fin('late');lates.add(late);
         const fin = (outcome='failure') => { if (done) return;if(authScope&&!authScope.current())outcome='abort'; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (signal) signal.removeEventListener('abort', abort);
-          Relay._queryFromStops.delete(stop);if(owns)Relay._queryFromActive.delete(slot(u));
+          Relay._queryFromStops.delete(stop);if(owns)Relay._queryFromActive.delete(slot(u));lates.delete(late);
+          if(outcome==='success'&&settle>0&&!settleTm)settleTm=setTimeout(()=>{for(const f of [...lates])f();},settle);
+          if(outcome==='late')note('late',u);
           if(outcome==='refused'){ note('refused',u); outcome='failure'; }
           if(outcome==='failure'){
             note('failed',u);
@@ -1502,7 +1513,7 @@
           else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin('success'); };
         ws.onerror = () => fin('failure');
         ws.onclose = () => fin('failure');
-      }))).then(rs => rs.flat());
+      }))).then(rs => {clearTimeout(settleTm);return rs.flat();});
     }
   };
 

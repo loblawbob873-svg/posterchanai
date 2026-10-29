@@ -300,8 +300,8 @@
     const over={
       relayQueryFrom:(relays,filters,o)=>afterTicket(()=>raw.relayQueryFrom(relays,filters,viaOpts(o))),
       relayPublishTo:(relays,ev,o)=>afterTicket(()=>{const vo=viaOpts(o);return sendOr(raw.relayPublishTo(relays,ev,vo),vo,()=>raw.relayPublishTo(relays,ev,o));}),
-      relayPublishRoom:(relays,ev,auth=null)=>{const via=cordVia(raw);
-        return sendOr(raw.relayPublishRoom(relays,ev,auth,via),via,()=>raw.relayPublishRoom(relays,ev,auth,null));},
+      relayPublishRoom:(relays,ev,auth=null,opts=null)=>{const via=cordVia(raw);
+        return sendOr(raw.relayPublishRoom(relays,ev,auth,via,opts),via,()=>raw.relayPublishRoom(relays,ev,auth,null,opts));},
       publishNip29Authed:(relay,template)=>{const via=cordVia(raw);const go=raw.publishNip29Authed(relay,template,via);
         return via?go.catch(e=>{if(!SOCKET_FAIL.test(String(e&&e.message||'')))throw e;return raw.publishNip29Authed(relay,template,null);}):go;},
     };
@@ -597,7 +597,7 @@
     stop.ready=Promise.all(subscriptions.map(sub=>sub.ready)).then(results=>results.every(Boolean));
     return stop;
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null,urgent=false,home=true}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null,urgent=false,home=true,settle=0}={}){
     /* THIS NODE'S RELAY FIRST (see homeServes). It answering -- EOSE, even an empty one -- is the answer;
      * a rate-limited skip is the old rate limit; anything else is "could not ask" and the read goes on
      * to the community's own relays below, unchanged. */
@@ -610,7 +610,7 @@
         /* The other half: the relays this node said it cannot read -- only those, through the tunnel. Not
          * reaching them leaves the node's answer standing; it is never thrown away for a relay that refused. */
         if(direct&&direct.length){
-          let extra=[];try{extra=await cordQuery(p,direct,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,plane,report:null,urgent,home:false});}catch(_){extra=[];}
+          let extra=[];try{extra=await cordQuery(p,direct,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,plane,report:null,urgent,home:false,settle});}catch(_){extra=[];}
           if(extra.length){const byId=new Map();for(const ev of [...(got||[]),...extra])if(ev&&ev.id)byId.set(ev.id,ev);got=[...byId.values()];}
         }
         cordQuery.lastUnreadablePlanes=[];return got||[];}
@@ -653,7 +653,7 @@
           let events;
           try{
             events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
-              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report,urgent});
+              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report,urgent,settle});
           }catch(err){ firstFailure=firstFailure||err; continue; }
           succeeded++;
           if(!plane.current())return [];
@@ -671,7 +671,7 @@
       return [...byId.values()];
     }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report,urgent})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report,urgent,settle})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -2656,6 +2656,7 @@
     if(job.state==='failed'){const retry=document.createElement('button');retry.type='button';retry.className='btn btn-ghost cc-icon-retry';retry.textContent='Retry';
       retry.onclick=()=>{const p=PC();if(p)startIconUpload(p,String(box.value||'').trim());};line.appendChild(retry);}
   }
+  const SAVE_SETTLE_MS=1000;
   async function saveCommunitySettings(p,room,values){
     const owner=p.viewer?.().pubkey,identity=roomIdentity(room),loadKey=room.communityId||room.naddr;
     const stillHere=()=>p.viewer?.().pubkey===owner&&saved().some(r=>roomIdentity(r)===identity);
@@ -2689,7 +2690,8 @@
       let wraps,scope,before,made;
       for(let attempt=0;;attempt++){
         const seed=reader.inspectControl(bundle,[]);
-        const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,urgent:true,plane:cordPlaneContext(p,bundle,[],room)});
+        // settle: the first relay to ANSWER is the read; a silent one held Save 10 s here + 5 s publishing (Vyram).
+        const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,urgent:true,settle:SAVE_SETTLE_MS,plane:cordPlaneContext(p,bundle,[],room)});
         if(!Array.isArray(fresh)||!fresh.length)throw new Error('could not read this community’s current settings from its relays — nothing was changed, try again');
         const byId=new Map();for(const w of [...(roomControls.get(loadKey)||[]),...fresh])if(w&&w.id)byId.set(w.id,w);
         wraps=[...byId.values()];
@@ -2700,7 +2702,7 @@
         if(scope.current())break;
         if(attempt>=2)throw new Error('this community’s settings kept changing while saving — nothing was changed, try again');
       }
-      const auth=cordPlaneAuth(p,scope,made.wrap.pubkey,relays),accepted=await p.relayPublishRoom(relays,made.wrap,auth);
+      const auth=cordPlaneAuth(p,scope,made.wrap.pubkey,relays),accepted=await p.relayPublishRoom(relays,made.wrap,auth,{settle:SAVE_SETTLE_MS});
       if(!accepted?.ok)throw new Error('community relays rejected the profile update');
       /* AND STRAIGHT TO THE COMMUNITY'S OWN RELAYS. This node's relay answers OK once ANY one upstream took the
        * write, and its upstreams are the relays it mirrors -- not necessarily the ones the community lists, nor
