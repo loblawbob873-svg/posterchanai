@@ -149,7 +149,7 @@ def test_only_the_reader_can_unpin_a_room():
         got['moved'] = await b.js(AT)
         # ...and then the room grows, as pictures settle.
         await b.js("(()=>{const r=[...document.querySelectorAll('.cc-message')].pop(),d=document.createElement('div');d.style.height='300px';r.appendChild(d);})()")
-        for _ in range(30):           # settled within 3 s (a loaded gate is slow to run the correction), never left
+        for _ in range(30):           # deadline: back at the newest message within 3 s of growing (a loaded gate runs the correction late; a room left unpinned never gets there)
             await asyncio.sleep(0.1)
             got['grown'] = await b.js(AT)
             if got['grown']['fromBottom'] <= 2:
