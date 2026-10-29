@@ -4352,7 +4352,7 @@
     for(let t = Date.now(); !open() && Date.now() - t < 25000;) await new Promise(r => setTimeout(r, 250));
     await new Promise(r => requestAnimationFrame(() => r()));
     if(_wsCur !== ws){ _wsTileOnArrive.set(ws, { layout, page: () => _tileStartupInPage(views, layout, ws) }); return false; }
-    return arrangeInPage(layout, true).ok;
+    return arrangeInPage(layout).ok;
   }
   let _startupRan=false;
   /* Once per desktop session. Each monitor's renderer opens the apps pinned to it; the main one the rest. */
@@ -7355,9 +7355,11 @@
   }
   /* Arrange every open window on this desktop, most recently used first (the front window gets the
      big tile). Minimised windows are left where they are. */
-  function arrangeInPage(layout, here){
+  function arrangeInPage(layout){
     if(!TILE_LAYOUTS.includes(layout)) return { ok: false, why: 'unknown layout' };
-    const list = wins.filter(w => !w.min && w.el && w.el.isConnected && !(here && w.offws)).sort((a, b) => _zOf(b) - _zOf(a));
+    /* THIS WORKSPACE ONLY: a window parked on another workspace held a grid cell and left a hole on screen ("so
+     * much wasted monitor space": 4 windows on a 3x3 grid, the other 3 on workspace 2). */
+    const list = wins.filter(w => !w.min && !w.offws && w.el && w.el.isConnected).sort((a, b) => _zOf(b) - _zOf(a));
     if(!list.length){ try{ PC().toast('No windows to arrange'); }catch(_){ } return { ok: false, why: 'no windows' }; }
     list.forEach((w, i) => snapTo(w, `tile:${layout}:${i}:${list.length}`, { focus: false }));
     return { ok: true, layout, count: list.length };
