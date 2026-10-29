@@ -73,7 +73,9 @@ STATE = """(()=>{const P=__PC.music();const n=P.now();
     musicWindows:[...document.querySelectorAll('#os-desk .osw')].filter(w=>title(w)==='Music').length,
     library:!!document.getElementById('ma-lib'),
     title:(document.querySelector('%s .wgt-mtitle')||{}).textContent,
-    icon:((document.querySelector('%s [data-m=toggle] use')||{getAttribute:()=>''}).getAttribute('href'))}})()""" % (WGT, WGT)
+    icon:((document.querySelector('%s [data-m=toggle] use')||{getAttribute:()=>''}).getAttribute('href')),
+    eq:(()=>{const m=document.querySelector('%s .wgt-music'), i=m&&m.querySelector('.wgt-eq i');
+      return {cls:!!m&&m.classList.contains('playing'), anim:i?getComputedStyle(i).animationName:'', running:i?i.getAnimations().length:0};})()}})()""" % (WGT, WGT, WGT)
 
 
 async def press(b, which):
@@ -133,6 +135,9 @@ def test_play_and_shuffle_on_the_widget_play_and_do_not_open_music(path, button)
         got = await until_state(b, lambda s: "Stub Song" in (s["title"] or "") and s["icon"] == "#i-pause")
         assert "Stub Song" in (got["title"] or ""), f"{path}/{button}: the widget does not show the track: {got}"
         assert got["icon"] == "#i-pause", f"{path}/{button}: the widget's main button is not Pause: {got}"
+        # THE BARS MOVE while it plays ("same issue on desktop music widget", 2026-10-29: no bar movement).
+        assert got["eq"]["cls"] and got["eq"]["anim"] == "profEq" and got["eq"]["running"] > 0, \
+            f"{path}/{button}: the widget's equaliser does not move while the music plays: {got['eq']}"
         # …and Pause on the widget pauses it.
         await press(b, "toggle")
         got = await until_state(b, lambda s: bool(s["now"]) and not s["now"].get("playing"))
@@ -161,6 +166,10 @@ def test_a_music_window_that_holds_a_track_is_driven_not_doubled():
         await b.js(PEER)
         await b.js("__peerCh.postMessage({state:{now:{title:'Remote Song',playing:true,t:10,d:100,next:'',pos:1,total:3},shuffling:false}})")
         await b.until(f"/Remote Song/.test(document.querySelector('{WGT} .wgt-mtitle').textContent)")
+        # Its bars move for the Music window's song too ("same issue on desktop music widget", 2026-10-29).
+        eq = await b.js(f"""(()=>{{const m=document.querySelector('{WGT} .wgt-music'), i=m&&m.querySelector('.wgt-eq i');
+          return {{cls:!!m&&m.classList.contains('playing'), running:i?i.getAnimations().length:0}};}})()""")
+        assert eq["cls"] and eq["running"] > 0, ("the widget's bars do not move for the Music window's song", eq)
         for which in ("toggle", "next", "prev", "shuffle"):
             await b.js("__peer.length=0")
             await press(b, which)

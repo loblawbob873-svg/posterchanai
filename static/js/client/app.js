@@ -11846,8 +11846,9 @@
         if(t==='play') document.querySelectorAll('.pc-track audio').forEach(o=>{ if(o!==a&&!o.paused) o.pause(); });
         _trackPaint(card); return;
       }
+      // On at play, off at a stop -- never on timeupdate (it fires while playing: the bars froze, 10-09..10-29).
       const prof=a.closest&&a.closest('.prof-track');
-      if(prof) prof.classList.toggle('playing', t==='play'||t==='playing');
+      if(prof && t!=='timeupdate' && t!=='loadedmetadata') prof.classList.toggle('playing', t==='play'||t==='playing');
     }, true));
     /* CAPTURE PHASE, and the click stops here — the .img-hold lesson: #feed's own click opens the post, and
      * the bars (a div[role=slider]) are not in its skip list, so tapping them to seek OPENED THE POST
