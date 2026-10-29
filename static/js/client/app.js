@@ -215,8 +215,7 @@
       el.dataset.blobTried = '1';
       try{
         const url = (el.dataset.osrc || el.currentSrc || el.src).split('#')[0].replace(/[?&]_r=\d+/,'');
-        /* THE SESSION GOES TO THIS INSTANCE ONLY. This sent the Bearer token and the cookies to whatever host the
-         * picture came from; a picture somebody posted is not a reason to hand them our credentials. */
+        // Our session goes to THIS instance only, never to the host of a picture somebody posted.
         let own = false;
         try{ const o = new URL(url, location.href).origin; own = o === location.origin || o === new URL(_instanceBase() || location.origin).origin; }catch(_){}
         const r = await fetch(url, own ? { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' }
@@ -14175,14 +14174,9 @@
     if(bare.length <= _LINK_LABEL_MAX) return u;   // untouched — the common case
     return bare.slice(0, _LINK_LABEL_MAX - 1) + '…';
   }
-  /* IS THIS URL A BLOSSOM BLOB? -- the one answer for every place that turns a URL into an <img>/<video> (linkify, the
-   * card's media row, the profile Media tab, the share/lightbox pickers). Four copies of `/\/[0-9a-f]{64}(\?|#|$)/`
-   * disagreed with nothing and were all wrong the same way.
-   * A Blossom blob address (BUD-01: https://server/<sha256>) has the hash AS the path, or directly under a storage
-   * segment (this node serves /blossom/<sha256>). Any other path that merely ENDS in 64 hex characters -- a market
-   * product, a git commit, an event viewer -- is a page: drawn as an <img> it failed, and __blobFallback then fetched
-   * the page from the browser ("blocked by CORS policy" for plebeian.market/products/<id>, poster.place 2026-10-29).
-   * And a URL the post itself names as a REFERENCE (an `r` tag) without describing it as media (imeta) is a link. */
+  /* The ONE rule for "is this URL a Blossom blob" (linkify, cards, Media tab, pickers): the hash is the whole path or sits
+   * under a storage segment, and a post's own `r` reference is a link. A page that merely ENDS in a hash (a market
+   * product) was drawn as an <img> and re-fetched from the browser. tests/client/test_hash_links_are_links_full_app.py */
   function _blossomBlobUrl(u, ev){
     let path = ''; try{ path = new URL(u).pathname; }catch(_){ return false; }
     if(!/^\/(?:(?:blossom|media|blob|blobs|files?|uploads?)\/)?[0-9a-f]{64}$/i.test(path)) return false;
