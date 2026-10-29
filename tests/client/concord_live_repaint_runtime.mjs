@@ -17,7 +17,7 @@ assert(painters.includes('function paintPane(')&&painters.includes('function kee
  * paints can disagree about what a message looks like. */
 assert.equal((code.match(/function messagesPaneHtml\(/g)||[]).length,1,
   'one builder, so the two paints cannot disagree about what a message looks like');
-for(const painter of ['  function render(){','  function patchMessageList(){']){
+for(const painter of ['  function render(','  function patchMessageList(']){
   const from=code.indexOf(painter),body=code.slice(from,code.indexOf('\n  }',from));
   assert(body.includes('messagesPaneHtml(p,'),painter.trim()+' must build its rows with the shared builder');
 }

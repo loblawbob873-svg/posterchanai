@@ -1094,7 +1094,7 @@
    * focus, and on Android that closes the soft keyboard mid-sentence. So this replaces the ONE pane
    * the new message belongs to and leaves the composer, its text, its selection and the keyboard
    * untouched. It is not a second source of truth — the same messagesPaneHtml() render() uses. */
-  function patchMessageList(){
+  function patchMessageList(paneHtml){
     const p=PC();
     if(!p||typeof p.isView!=='function'||!p.isView('concord'))return false;
     /* The same ownership proof render() demands. On the windowed desktop #feed belongs to whichever
@@ -1123,7 +1123,8 @@
     /* Where the reader was, written back IN THIS TASK, as render() does: the rAF restore below runs a
      * frame later, and until then a reader at the bottom sat one new message above it. */
     const was={top:scroller.scrollTop,atBottom:scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop<=2};
-    paintPane(scroller,messagesPaneHtml(p,messages,current,viewer,me));
+    /* render() hands over the pane it has just built for these same messages rather than building it twice. */
+    paintPane(scroller,typeof paneHtml==='string'?paneHtml:messagesPaneHtml(p,messages,current,viewer,me));
     try{ const st=readScroll(scrollKey()); setProgrammaticScroll(scroller,st.pinned!==false||was.atBottom?scroller.scrollHeight:was.top); }catch(_){ }
     if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);hydrateNoteEmbeds(p,scroller);
     wireRoomMedia(p);
@@ -7031,7 +7032,7 @@
     for(const r of rows){const hit=!q||(r.textContent||'').toLowerCase().includes(q);r.style.setProperty('display',hit?'':'none','important');if(hit)shown++;}
     const none=document.querySelector('.cc-public-nomatch');if(none)none.hidden=!(q&&rows.length&&!shown);
   }
-  let _ccLastHtml='',_ccLastRoot=null;   // what render() last drew, and its root -- see below
+  let _ccLastHtml='',_ccLastShell='',_ccLastRoot=null;   // what render() last drew (whole, and without the message pane), and its root -- see below
   let renderedAccount='';
   function render(){
     if(!TUNNEL.ticket&&!TUNNEL.off&&tunnelBase(PC()))refreshTunnel();
@@ -7193,6 +7194,7 @@
       focusedId=document.activeElement&&feed.contains(document.activeElement)?document.activeElement.id:'';
       { const ae=document.activeElement; memberFocus=ae&&ae.classList&&ae.classList.contains('cc-member-search')&&feed.contains(ae)
           ?{dlg:!!ae.closest('#cc-members-dialog'),at:ae.selectionStart}:null; } }catch(_){ }
+    const _pane=messagesPaneHtml(p,messages,current,viewer,me);
     const _html=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities" data-cc-sig="${p.enc(railSig(rooms))}"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${railHtml(p,rooms)}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
@@ -7201,7 +7203,7 @@
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-theme" title="Concord theme" aria-label="Concord theme"><svg class="ic"><use href="#i-palette"></use></svg></button><button class="cc-head-btn${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify" title="Notification settings: ${concordNotifyOn()?'community notifications on — tap to turn off':'community notifications off — tap to turn on'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic" id="cc-topic" role="button" tabindex="0" title="Show the whole topic">${p.enc(current?.cord?.bundle?.dissolved?'Dissolved by its owner — history is read-only':current?.cord?.bundle?.removed?'You were removed from this community — history is read-only':(current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span>${current&&current.description?'<button class="cc-head-btn cc-topic-open" id="cc-topic-open" title="Topic" aria-label="Show the channel topic">ⓘ</button>':''}<span class="cc-spacer"></span>${current&&current.cord&&!current.local?`<button class="cc-head-btn" id="cc-pins" title="Pinned messages" aria-label="Pinned messages">📌${(pinsOf(current,state.channel).length||'')?`<small>${pinsOf(current,state.channel).length}</small>`:''}</button>`:''}${threadToggleHtml(p,current)}${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>'+(canBanAny?'<button type="button" class="cc-head-btn cc-ban-npub" id="cc-ban-npub" hidden title="Ban an account by its npub" aria-label="Ban by npub">Ban by npub…</button>':'')+'<button class="cc-head-btn" id="cc-search" title="Search this community" aria-label="Search this community"><svg class="ic"><use href="#i-search"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn cc-notify-head${concordNotifyOn()?'':' cc-notify-off'}" id="cc-notify-head" title="Community notifications ${concordNotifyOn()?'on':'off'}" aria-label="Community notifications ${concordNotifyOn()?'on':'off'}" aria-pressed="${concordNotifyOn()}"><svg class="ic"><use href="#${concordNotifyOn()?'i-bell':'i-bell-off'}"></use></svg></button><button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations${pendingInviteCount?' ('+pendingInviteCount+' waiting)':''}">Invites${pendingInviteCount?`<small class="cc-invite-count">${pendingInviteCount}</small>`:''}</button>${current&&window.PCConcordGit&&PCConcordGit.channelHasGit(channelsOf(current).find(c=>c.name===(state.channel||'general')))?'<button class="cc-head-btn" id="ccg-head-issues" title="Issues and pull requests" aria-label="Issues and pull requests"><svg class="ic"><use href="#i-bug"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members" aria-label="Members"><svg class="ic"><use href="#i-users"></use></svg></button><button class="cc-head-btn cc-head-more" id="cc-head-more" title="Room menu" aria-label="Room menu"><svg class="ic" aria-hidden="true"><use href="#i-menu"></use></svg></button></header>
-        ${nodeBlockNoteHtml(p,current,memberPks,canBanAny)}<div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
+        ${nodeBlockNoteHtml(p,current,memberPks,canBanAny)}<div class="cc-messages">${_pane}</div>
         <div class="cc-reply${editTarget?' cc-editing':''}${replyTarget||editTarget?'':' hidden'}" id="cc-reply">${editTarget?`<span>Editing message — <b>Enter</b> to save, <b>Esc</b> to cancel</span><button id="cc-edit-cancel" aria-label="Cancel edit">×</button>`:replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-typing" id="cc-typing" aria-live="polite"></div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':editTarget?'Edit your message':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>${editTarget?'Save':'Send'}</button></div>
       </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value=""><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div><div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div></div></div><div class="cc-join cc-invite-sheet${pendingInvite?'':' hidden'}" id="cc-invite-sheet">${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><button type="button" class="btn btn-ghost cc-icon-pick" data-cc-icon-pick="cc-community-icon">Upload image…</button><div class="cc-icon-status" id="cc-community-icon-status" role="status" aria-live="polite" hidden></div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div>`;
     /* THE SAME SCREEN IS NOT DRAWN TWICE. "Communities: keeps flashing every few seconds" -- measured on
@@ -7220,12 +7222,27 @@
     const _key=_html.replace(/(<textarea id="cc-input"[^>]*>)[\s\S]*?(<\/textarea>)/,'$1$2')
       +'\u0001'+String(memberRows);
     if(_key===_ccLastHtml&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed)return;
+    /* ONLY THE MESSAGES CHANGED? THEN THE SCROLLER STAYS ("Smoother Community Scrolling": a room went BLACK for
+     * seconds while being scrolled on a phone). Every live tick -- a message, a reaction, a profile landing --
+     * came through here and replaced the whole workspace, `.cc-messages` included: measured, 260 of 260 rows
+     * and the scroller itself new on every arriving message. A new scroller is a new compositor layer with
+     * no raster at all, and while a finger is scrolling Chromium shows it before its tiles exist, so a busy
+     * room under a moving finger stayed unpainted for as long as messages kept coming. When everything
+     * outside the pane is what is on screen and it is the same conversation, the pane is patched in place
+     * instead -- the path a live tick already took while somebody was typing (patchMessageList: unchanged
+     * rows kept, the scroller, its position and a running fling untouched). */
+    const _paneAt=_key.indexOf('<div class="cc-messages">'+_pane+'</div>'),
+      _shell=_paneAt<0?'':_key.slice(0,_paneAt+25)+_key.slice(_paneAt+25+_pane.length);
+    if(_shell&&_shell===_ccLastShell&&autoOpen<0&&!resumeRequested&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed){
+      const ob=feed.querySelector('.cc-messages');
+      if(ob&&ob.dataset&&ob.dataset.ccScrollKey===scrollKey()&&patchMessageList(_pane)){_ccLastHtml=_key;paintUnreadBadge();return;}
+    }
     /* A FULL REBUILD, deliberately: everything outside the message list is bound with listeners that a
      * kept node would collect once per repaint (the composer's own input handlers among them). The
      * players are carried across (keepVideos -- a synchronous move does not pause or reload one), and
      * the list's rows are stamped so the next LIVE tick (patchMessageList) can keep every unchanged one. */
     const oldVideos=new Map(); try{ for(const v of feed.querySelectorAll('.cc-message video'))oldVideos.set(videoKey(v),v); }catch(_){}
-    feed.innerHTML=_html;_ccLastHtml=_key;_ccLastRoot=feed.firstElementChild;
+    feed.innerHTML=_html;_ccLastHtml=_key;_ccLastShell=_shell;_ccLastRoot=feed.firstElementChild;
     try{ const nb=feed.querySelector('.cc-messages'); if(nb&&nb.dataset)nb.dataset.ccScrollKey=scrollKey(); }catch(_){ }
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
     keepGlowsOnTheBeat(feed);
