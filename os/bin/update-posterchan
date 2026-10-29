@@ -46,15 +46,83 @@ if [ -x /usr/local/bin/pc-kernel-guard ]; then
 		|| echo "${RED}The kernel check found a problem it could not fix — read the lines above before rebooting.${OFF}"
 fi
 
-# POSTERFOX, FROM ITS SIGNED BINARY ONLY -- and here, before any "Already up to date" exit, because the browser updates
-# on its own schedule (posterfox/tools/release.sh publishes a build when Mozilla or a library it links against moves).
-# --usepkgonly is the point: no matching binary yet means keep the installed browser, never "compile Firefox from
-# source on this machine for the next three hours". A failure here never stops the PosterChan update below.
-if [ -n "$(qlist -I www-client/posterfox 2>/dev/null)" ]; then
-	echo "${CYA}Checking PosterFox${OFF}"
-	emerge -u --usepkgonly --getbinpkg --quiet-build=n www-client/posterfox \
-		|| echo "${YEL}PosterFox: no newer binary for this machine yet -- keeping the one installed.${OFF}"
-fi
+# POSTERFOX, FROM ITS SIGNED BINARY ONLY. --usepkgonly/--getbinpkgonly is the point: no matching binary yet means keep
+# the browser this machine has, never "compile Firefox from source on this machine for the next three hours". A
+# failure here never stops the PosterChan update. Run after the overlay sync (the ebuild must be visible) and before
+# any "Already up to date" exit, because the browser updates on its own schedule (posterfox/tools/release.sh).
+#
+# A MACHINE INSTALLED BEFORE POSTERFOX IS GIVEN IT HERE, not only a machine that already has it: "i don't see posterfox
+# in gentoo yet" (2026-10-29) -- gentoo.sh sets up the keyword, the signed binhost and its key on a FRESH install
+# only, so every earlier machine kept firefox-bin for ever while the session's mimeapps already named posterfox.desktop.
+# The same three pieces gentoo.sh writes (MASKED_PACKAGES, the [posterchan] binrepo, trustPosterchanBinhost), each only
+# when missing; firefox-bin stays installed (the session falls back to it, and removing a browser is the user's call).
+POSTERCHAN_BINPKG_FPR="7B690AA70C09AD1AD7748CF5B6F8DA9DDF2EF936"
+_pc_posterfox_adopt() {
+	local etc="${PC_PORTAGE_ETC:-/etc/portage}"
+	local kw="$etc/package.accept_keywords" g="$etc/gnupg"
+	# PosterFox's own keyword, and NSS's: the binary links the ~amd64 NSS it was built against. Each only when absent.
+	local atom
+	for atom in www-client/posterfox dev-libs/nss; do
+		grep -rqs "^$atom[[:space:]]" "$kw" && continue
+		if [ -f "$kw" ]; then echo "$atom ~amd64" >>"$kw"
+		else mkdir -p "$kw" && echo "$atom ~amd64" >>"$kw/posterchanos-posterfox"; fi
+	done
+	mkdir -p "$etc/binrepos.conf"
+	grep -rqs 'posterchan-binpkgs' "$etc/binrepos.conf" || printf '%s\n' '[posterchan]' 'priority = 10000' \
+		'sync-uri = https://gentoo.poster.place/posterchan-binpkgs' 'verify-signature = true' \
+		>"$etc/binrepos.conf/posterchan.conf"
+	[ -d "$g" ] || { command -v getuto >/dev/null 2>&1 && getuto; }
+	[ -d "$g" ] || { echo "${YEL}PosterFox: no Portage keyring to verify its signed package -- keeping Firefox.${OFF}"; return 1; }
+	# --check-trustdb AS ROOT, after the lsign: Portage verifies as an unprivileged user that cannot rewrite the
+	# trustdb, so a stale one reads the freshly signed key as TRUST_UNDEFINED and refuses the package ("GnuPG
+	# verification failed" -- measured on a systemd stage3, 2026-10-29). A key that is known but not yet valid
+	# (an earlier run stopped here) is signed again rather than skipped.
+	gpg --homedir "$g" --batch --list-keys --with-colons "$POSTERCHAN_BINPKG_FPR" 2>/dev/null | grep -q '^pub:[fu]:' && return 0
+	cat >"$g/posterchanos-binpkgs.asc" <<'POSTERCHAN_KEY'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEauK9bRYJKwYBBAHaRw8BAQdAZ0D2o4q7e0eAjBCcnnGJ8Lux+zs62Cwt6512
+MqZarZa0M1Bvc3RlckNoYW5PUyBiaW5hcnkgcGFja2FnZXMgPGJpbnBrZ3NAcG9z
+dGVyLnBsYWNlPoi1BBMWCgBdFiEEe2kKpwwJrRrXdIz1tvjand8u+TYFAmrivW0b
+FIAAAAAABAAObWFudTIsMi41KzEuMTIsMiwyAhsDBQkJZgGABQsJCAcCAiICBhUK
+CQgLAgQWAgMBAh4HAheAAAoJELb42p3fLvk2CDMBANb44Z17SvXrOuyLrZ1mQuUn
+Exg33Yv4Rx4Zo/I9paSpAQCh5lVzxOOl3ba8PSKnaE7QG3za8Zk/YiLjGfvI3NrV
+Ag==
+=uBjZ
+-----END PGP PUBLIC KEY BLOCK-----
+POSTERCHAN_KEY
+	gpg --homedir "$g" --batch --quiet --import "$g/posterchanos-binpkgs.asc" \
+		&& gpg --homedir "$g" --batch --yes --pinentry-mode loopback --passphrase-file "$g/pass" \
+			--quick-lsign-key "$POSTERCHAN_BINPKG_FPR" \
+		&& gpg --homedir "$g" --batch --check-trustdb \
+		|| { echo "${YEL}PosterFox: could not trust its package key -- keeping Firefox.${OFF}"; return 1; }
+}
+_pc_posterfox() {
+	if [ -n "$(qlist -I www-client/posterfox 2>/dev/null)" ]; then
+		echo "${CYA}Checking PosterFox${OFF}"
+		emerge -u --usepkgonly --getbinpkg --quiet-build=n www-client/posterfox \
+			|| echo "${YEL}PosterFox: no newer binary for this machine yet -- keeping the one installed.${OFF}"
+		return 0
+	fi
+	echo "${CYA}Installing PosterFox, PosterChanOS's browser${OFF}"
+	_pc_posterfox_adopt || return 0
+	# PLANNED FIRST. PosterFox itself must come as its signed BINARY; a dependency this machine lacks may build (measured
+	# on a bare desktop/systemd stage3: nss and xdg-utils, minutes), but never a toolchain or another browser -- that
+	# is the "compile Firefox for three hours" this exists to prevent, arriving by the back door.
+	local plan
+	plan="$(emerge -p --getbinpkg --usepkg --noreplace www-client/posterfox 2>&1)"
+	if ! printf '%s\n' "$plan" | grep -q '^\[binary[^]]*\] www-client/posterfox-'; then
+		echo "${YEL}PosterFox has no binary package for this machine yet -- keeping Firefox; the next update tries again.${OFF}"
+		return 0
+	fi
+	if printf '%s\n' "$plan" | grep -E '^\[ebuild' | grep -qE '\] (dev-lang/rust|llvm-core/|sys-devel/(clang|llvm|gcc)|www-client/|dev-qt/qtwebengine|net-libs/webkit-gtk)'; then
+		echo "${YEL}PosterFox would need a compiler toolchain built on this machine first -- keeping Firefox.${OFF}"
+		return 0
+	fi
+	emerge --getbinpkg --usepkg --noreplace --quiet-build=n www-client/posterfox \
+		|| echo "${YEL}PosterFox did not install -- keeping Firefox; the next update tries again.${OFF}"
+	return 0
+}
 
 # THE LIVE MEDIUM'S INSTALLER LAUNCHER DOES NOT BELONG ON AN INSTALLED MACHINE. Every install copied
 # it off the image (gentoo.sh now strips it at install time); on a machine that is not a live boot
@@ -205,6 +273,7 @@ if [ -n "$have_pkgs" ]; then
 			echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
 		fi
 	fi
+	_pc_posterfox
 	PKGS="$(_pc_update_set)"
 	echo "${CYA}Updating${OFF} $PKGS"
 	if ! emerge -u --quiet-build=n $PKGS; then

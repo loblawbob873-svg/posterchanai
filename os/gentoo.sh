@@ -1184,6 +1184,7 @@ POSTERCHAN_KEY
 	chroot "$TARGET" gpg --homedir /etc/portage/gnupg --batch --quiet --import /etc/portage/gnupg/posterchanos-binpkgs.asc \
 		&& chroot "$TARGET" gpg --homedir /etc/portage/gnupg --batch --yes --pinentry-mode loopback \
 			--passphrase-file /etc/portage/gnupg/pass --quick-lsign-key "$POSTERCHAN_BINPKG_FPR" \
+		&& chroot "$TARGET" gpg --homedir /etc/portage/gnupg --batch --check-trustdb \
 		|| { echo -e "\033[1;31m  ✗ could not trust the PosterChanOS package key -- PosterFox will not install\033[0m"; return 1; }
 }
 

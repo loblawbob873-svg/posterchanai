@@ -7,11 +7,12 @@
 # of posterchan-open.desktop and posterchan-extract.desktop (archives); tests/test_pc_open.py fails if they disagree.
 [Default Applications]
 # THE WEB IS POSTERFOX'S: every link, from the desktop, a terminal or another app, opens in PosterChanOS's own browser
-# ("on OS, we need to make sure that posterfox opens all the browsing windows"). The menu entry is posterfox.desktop.
-x-scheme-handler/http=posterfox.desktop
-x-scheme-handler/https=posterfox.desktop
-text/html=posterfox.desktop
-application/xhtml+xml=posterfox.desktop
+# ("on OS, we need to make sure that posterfox opens all the browsing windows"). The menu entry is posterfox.desktop;
+# firefox-bin.desktop follows it for a machine still waiting on its PosterFox binary (the first INSTALLED entry wins).
+x-scheme-handler/http=posterfox.desktop;firefox-bin.desktop;
+x-scheme-handler/https=posterfox.desktop;firefox-bin.desktop;
+text/html=posterfox.desktop;firefox-bin.desktop;
+application/xhtml+xml=posterfox.desktop;firefox-bin.desktop;
 application/msword=posterchan-open.desktop
 application/vnd.openxmlformats-officedocument.wordprocessingml.document=posterchan-open.desktop
 application/vnd.oasis.opendocument.text=posterchan-open.desktop

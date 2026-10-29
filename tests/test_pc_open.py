@@ -414,9 +414,9 @@ class ThePackage(unittest.TestCase):
         defaults = dict(l.split("=", 1) for l in body.splitlines() if l and not l.startswith("#"))
         office = {k for k, v in defaults.items() if v == "posterchan-open.desktop"}
         self.assertEqual(sorted(office), sorted(types), "the defaults and the .desktop disagree")
-        self.assertEqual(set(defaults.values()), {"posterchan-open.desktop", "posterchan-extract.desktop", "posterfox.desktop"})
-        # The browser types, and only those, are PosterFox's.
-        self.assertEqual(sorted(k for k, v in defaults.items() if v == "posterfox.desktop"),
+        self.assertEqual(set(defaults.values()), {"posterchan-open.desktop", "posterchan-extract.desktop", "posterfox.desktop;firefox-bin.desktop;"})
+        # The browser types, and only those, are PosterFox's (firefox-bin only while its binary has not landed).
+        self.assertEqual(sorted(k for k, v in defaults.items() if v == "posterfox.desktop;firefox-bin.desktop;"),
                          ["application/xhtml+xml", "text/html", "x-scheme-handler/http", "x-scheme-handler/https"])
         eb = self.ebuild()
         self.assertIn('doins "${FILESDIR}/posterchan-open.desktop"', eb)
