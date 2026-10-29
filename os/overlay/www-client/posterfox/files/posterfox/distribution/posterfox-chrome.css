@@ -1,36 +1,114 @@
-/* PosterFox window chrome: the browser window drawn like a PosterChan window (static/css/client.css .osw-bar).
- * Registered by posterfox.cfg as a user sheet, scoped to the browser window only -- never to web pages. Colours
- * come from the cyberpunk theme's variables where Firefox exposes them, so another theme still looks like itself. */
+/* PosterFox window chrome: the browser drawn as a PosterChan desktop window.
+ *
+ * The values are the PosterChan desktop's own (static/css/client.css, cyberpunk theme): a window's title bar
+ * (.osw-bar) is 34px of --panel2 over a --line hairline, its buttons (.osw-b) are 38x34 quiet glyphs, close turns
+ * #e81123, and the focused window wears a cyan -> magenta -> green -> magenta -> cyan ring (.osw.focused::after).
+ * On PosterChanOS Firefox is not hosted in a PosterChan frame (pc_os_host_native is off), so its own tab strip IS
+ * its title bar: that is the surface that has to look like one. The thin accent border around the whole window is
+ * drawn by the compositor (posterchan-shell.cpp) for every toplevel, Firefox included.
+ *
+ * The cyberpunk colours (violet toolbar, selected-tab violet, popups) are the cyberpunk THEME's own
+ * (posterchanai/os/firefox-theme/manifest.json), repeated here so the look does not depend on the theme add-on loading.
+ *
+ * Registered by posterfox.cfg as a user sheet, scoped to the browser window and its popups -- never web pages.
+ */
 @-moz-document url("chrome://browser/content/browser.xhtml") {
   :root {
-    --pf-neon: #3ce8ff;
-    --pf-neon2: #ff5cf0;
-    --pf-line: rgba(60, 232, 255, .35);
+    --pc-bg: #0a0a0f;
+    --pc-panel: #12121c;
+    --pc-panel2: #1a1a2a;
+    --pc-line: rgba(125, 210, 255, .16);
+    --pc-text: #edeefa;
+    --pc-muted: #9fa1c6;
+    --pc-neon: #3ce8ff;
+    --pc-neon2: #ff5cf0;
+    --pc-green: #00ff88;
+    --pc-violet: #1c0f36;
+    --pc-violet-line: #3a1f66;
+    --pc-tab: #26124a;
+    --pc-icons: #d8daf2;
+    --pc-popup: #12121a;
+    --pc-popup-border: #34345a;
+    --pc-highlight: #257281;
+    --pc-ring: linear-gradient(90deg, var(--pc-neon), var(--pc-neon2), var(--pc-green), var(--pc-neon2), var(--pc-neon));
   }
-  /* A thin neon edge round the whole window, like every PosterChan window (the compositor cannot frame Firefox). */
-  :root[sizemode="normal"] #navigator-toolbox {
-    border-top: 1px solid var(--pf-line) !important;
+  #navigator-toolbox, #urlbar, .tab-label, menupopup, panel {
+    font-family: Inter, "Noto Sans", system-ui, sans-serif !important;
   }
-  :root[sizemode="normal"]:-moz-window-inactive #navigator-toolbox { border-top-color: rgba(125, 125, 160, .25) !important; }
-  /* Window controls: the quiet glyph buttons PosterChan windows use, close glowing magenta. */
+
+  /* ---- the title bar: the tab strip ---- */
+  #TabsToolbar {
+    background: var(--pc-panel2) !important;
+    border-bottom: 1px solid var(--pc-line) !important;
+    min-height: 34px !important;
+  }
+  /* The focused window's ring, along the top edge (the compositor draws the rest of the frame). */
+  :root:not(:-moz-window-inactive) #TabsToolbar { box-shadow: inset 0 1px 0 0 rgba(60, 232, 255, .55) !important; }
+  :root:not(:-moz-window-inactive) #navigator-toolbox::before {
+    content: ""; display: block; height: 2px; background: var(--pc-ring);
+  }
+  .tabbrowser-tab { min-height: 34px !important; }
+  .tab-background {
+    border-radius: 8px !important;
+    margin-block: 4px !important;
+    background-color: transparent !important;
+  }
+  .tab-label { font-size: 12px !important; font-weight: 600 !important; }
+  .tabbrowser-tab:not([selected]) .tab-label { color: var(--pc-muted) !important; }
+  .tabbrowser-tab:hover:not([selected]) .tab-background { background-color: rgba(255, 255, 255, .06) !important; }
+  /* The selected tab wears the focused-window ring. */
+  .tab-background[selected] {
+    background: linear-gradient(var(--pc-tab), var(--pc-tab)) padding-box, var(--pc-ring) border-box !important;
+    border: 1px solid transparent !important;
+    box-shadow: 0 0 14px -4px rgba(60, 232, 255, .45) !important;
+  }
+
+  /* ---- window buttons: PosterChan's quiet glyph buttons ---- */
   .titlebar-buttonbox .titlebar-button {
-    border-radius: 6px !important;
-    margin: 4px 2px !important;
-    padding: 6px 10px !important;
-    opacity: .85;
+    width: 38px !important; min-height: 34px !important;
+    padding: 0 !important; margin: 0 !important;
+    border-radius: 0 !important; background: transparent !important;
+    color: var(--pc-muted) !important; fill: var(--pc-muted) !important;
   }
-  .titlebar-buttonbox .titlebar-button:hover {
-    background-color: rgba(60, 232, 255, .16) !important;
-    box-shadow: 0 0 10px rgba(60, 232, 255, .35);
-    opacity: 1;
+  .titlebar-buttonbox .titlebar-button:hover { background: rgba(255, 255, 255, .10) !important; color: var(--pc-text) !important; fill: var(--pc-text) !important; }
+  .titlebar-buttonbox .titlebar-close:hover { background: #e81123 !important; color: #fff !important; fill: #fff !important; }
+
+  /* ---- toolbar and address bar ---- */
+  #nav-bar {
+    background: var(--pc-violet) !important;
+    border-top: 1px solid var(--pc-violet-line) !important;
+    border-bottom: 1px solid var(--pc-violet-line) !important;
+    box-shadow: none !important;
   }
-  .titlebar-buttonbox .titlebar-close:hover {
-    background-color: rgba(255, 45, 111, .85) !important;
-    box-shadow: 0 0 12px rgba(255, 45, 111, .6);
+  #urlbar-background {
+    background: var(--pc-bg) !important;
+    border: 1px solid rgba(60, 232, 255, .30) !important;
+    border-radius: 10px !important;
   }
-  /* The selected tab carries the accent line on top, the way the focused window's title does. */
-  .tab-background[selected] { box-shadow: inset 0 2px 0 var(--pf-neon) !important; }
-  .tabbrowser-tab:hover .tab-background:not([selected]) { box-shadow: inset 0 2px 0 rgba(255, 92, 240, .5) !important; }
-  /* Same type as the desktop. */
-  #navigator-toolbox, #urlbar, .tab-label { font-family: Inter, "Noto Sans", system-ui, sans-serif !important; }
+  #urlbar[focused] #urlbar-background {
+    border-color: var(--pc-neon) !important;
+    box-shadow: 0 0 0 1px var(--pc-neon), 0 0 16px -2px rgba(60, 232, 255, .55) !important;
+  }
+  toolbarbutton:hover > .toolbarbutton-icon, toolbarbutton:hover > .toolbarbutton-badge-stack {
+    background-color: rgba(60, 232, 255, .14) !important;
+  }
+  #PersonalToolbar { background: var(--pc-violet) !important; border-bottom: 1px solid var(--pc-violet-line) !important; }
+  #nav-bar toolbarbutton, #PersonalToolbar toolbarbutton, #TabsToolbar toolbarbutton { fill: var(--pc-icons) !important; color: var(--pc-text) !important; }
+  .tab-throbber[busy], .tab-icon-overlay { color: var(--pc-neon2) !important; }
+
+  /* ---- menus and panels: the desktop's popovers ---- */
+  menupopup, panel {
+    --panel-background: var(--pc-popup) !important;
+    --panel-color: var(--pc-text) !important;
+    --panel-border-color: var(--pc-popup-border) !important;
+    --panel-border-radius: 12px !important;
+    --panel-shadow: 0 18px 50px rgba(0, 0, 0, .55), 0 0 20px -6px rgba(60, 232, 255, .35) !important;
+  }
+  menupopup menuitem[_moz-menuactive], panelview .subviewbutton:hover {
+    background-color: var(--pc-highlight) !important; color: #fff !important;
+  }
+
+  /* ---- the sidebar (PosterChan AI lives here) ---- */
+  #sidebar-box, #sidebar-header, #sidebar-main { background: var(--pc-popup) !important; color: var(--pc-text) !important; }
+  #sidebar-splitter { border-color: var(--pc-line) !important; }
 }
