@@ -37,8 +37,11 @@
   }
 
   /* ---- the title bar: the tab strip ---- */
+  /* NO BACKGROUND OF ITS OWN: the tab strip is where the PosterChan Cyberpunk theme draws its neon wash and mascot
+     (theme_frame, on #navigator-toolbox). A colour here painted over it -- "we have a posterchan theme for firefox"
+     (2026-10-29): the theme was active and its banner could not be seen. */
   #TabsToolbar {
-    background: var(--pc-panel2) !important;
+    background: transparent !important;
     border-bottom: 1px solid var(--pc-line) !important;
     min-height: 34px !important;
   }

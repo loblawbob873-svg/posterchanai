@@ -1,4 +1,4 @@
-# PosterFox 9: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 11: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -29,6 +29,8 @@ MOZ_ESR=
 POSTERFOX_UBO="1.75.0"
 POSTERFOX_PB="2026.9.15"
 POSTERFOX_PB_AMO="5032646"
+POSTERFOX_PCP="1.4.13"
+POSTERFOX_PCP_AMO="5085730"
 
 MOZ_PV=${PV}
 MOZ_PV_SUFFIX=
@@ -74,6 +76,7 @@ SRC_URI="${MOZ_SRC_BASE_URI}/source/${MOZ_P}.source.tar.xz -> ${MOZ_P_DISTFILES}
 	${PATCH_URIS[@]}
 	https://github.com/gorhill/uBlock/releases/download/${POSTERFOX_UBO}/uBlock0_${POSTERFOX_UBO}.firefox.signed.xpi -> posterfox-ublock0-${POSTERFOX_UBO}.xpi
 	https://addons.mozilla.org/firefox/downloads/file/${POSTERFOX_PB_AMO}/privacy_badger17-${POSTERFOX_PB}.xpi -> posterfox-privacybadger-${POSTERFOX_PB}.xpi
+	https://addons.mozilla.org/firefox/downloads/file/${POSTERFOX_PCP_AMO}/posterchan_passwords-${POSTERFOX_PCP}.xpi -> posterfox-posterchan-${POSTERFOX_PCP}.xpi
 	wasm-sandbox? (
 		amd64? ( https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VER/.*/}/wasi-sdk-${WASI_SDK_VER}-x86_64-linux.tar.gz )
 		arm64? ( https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VER/.*/}/wasi-sdk-${WASI_SDK_VER}-arm64-linux.tar.gz )
@@ -1333,6 +1336,9 @@ posterfox_distribution() {
 	insinto "${MOZILLA_FIVE_HOME}/distribution/extensions"
 	newins "${DISTDIR}/posterfox-ublock0-${POSTERFOX_UBO}.xpi" uBlock0@raymondhill.net.xpi
 	newins "${DISTDIR}/posterfox-privacybadger-${POSTERFOX_PB}.xpi" jid1-MnnxcxisBPnSXQ@jetpack.xpi
+	# PosterChan's own add-on (passwords, bookmarks, the NIP-07 signer), AMO-signed like the two above, so AMO keeps it
+	# current between browser releases.
+	newins "${DISTDIR}/posterfox-posterchan-${POSTERFOX_PCP}.xpi" passwords@poster.place.xpi
 	# PosterChan's own add-ons live in the APPLICATION scope, unsigned (this build allows app,system), so they
 	# update with the browser and need no addons.mozilla.org round trip.
 	insinto "${MOZILLA_FIVE_HOME}/browser/extensions"
