@@ -150,6 +150,10 @@ _relay_pause_streak: dict = {}    # relay -> consecutive pause cycles (no succes
 
 
 def _relay_paused(relay: str) -> bool:
+    if peer_ua.never_dial(relay):
+        # Never dialled at all (peer_ua.NEVER_DIAL): skipped like a paused relay. Left to the dial, every query to a
+        # community listing relay.damus.io logged two warnings and counted a breaker strike (~150 lines / 2h, 10-29).
+        return True
     _sync_breaker()
     return time.time() < _relay_paused_until.get(relay, 0)
 

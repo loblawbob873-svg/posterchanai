@@ -595,6 +595,8 @@ def test_objects_are_only_a_members_own_posts(client, world):
     world["relay"][mine["id"]] = mine
     note = client.get(f"/ap/objects/{mine['id']}", headers={"Accept": "application/activity+json"}).json()
     assert note["attributedTo"] == f"{BASE}/ap/users/alice" and "public words" in note["content"]
+    # A server probing with HEAD before fetching got 405 (248 in two hours on poster.place, 2026-10-29).
+    assert client.head(f"/ap/objects/{mine['id']}", headers={"Accept": "application/activity+json"}).status_code == 200
     mirror = member_post("not mine", tags=[["proxy", "https://m.example/1", "activitypub"]])
     world["relay"][mirror["id"]] = mirror
     assert client.get(f"/ap/objects/{mirror['id']}").status_code == 404

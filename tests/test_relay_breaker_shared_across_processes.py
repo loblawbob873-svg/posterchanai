@@ -113,3 +113,21 @@ def test_a_recovery_clears_only_that_relay(tmp_path):
     _in_process(path, "r._note_relay_refused('wss://a.example/')\nr._note_relay_refused('wss://b.example/')")
     _in_process(path, "r._note_relay_ok('wss://a.example/')")
     assert set(json.loads(path.read_text())) == {"wss://b.example/"}
+
+
+def test_a_never_dialled_relay_is_skipped_before_any_dial():
+    from app.services.nostr import relay as r
+    dials = []
+
+    async def connect(url, **kw):
+        dials.append(url)
+        raise AssertionError("dialled")
+
+    orig = r.peer_ua.connect
+    r.peer_ua.connect = connect
+    try:
+        got = asyncio.run(r.query(["wss://relay.damus.io"], [{"kinds": [1], "limit": 1}], timeout=1))
+    finally:
+        r.peer_ua.connect = orig
+    assert dials == [] and not got, (dials, got)
+    assert "wss://relay.damus.io" not in r._relay_fail

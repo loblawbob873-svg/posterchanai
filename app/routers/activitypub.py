@@ -316,7 +316,7 @@ async def outbox(name: str, page: str = "", max_id: int = 0, after: str = ""):
     return _ap({**_collection(url, total), "first": f"{url}?page=true"})
 
 
-@router.get("/ap/objects/{event_id}")
+@router.api_route("/ap/objects/{event_id}", methods=["GET", "HEAD"])   # HEAD: servers probe before fetching
 async def note(event_id: str, request: Request):
     """A member's post, straight from the relay. Anything that is not a member's own public note
     (a mirror, somebody else's event, a DM) is 404 -- this is not a window onto the relay."""

@@ -1613,6 +1613,23 @@ async def opensearch_descriptor(request: Request):
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
+# BROWSERS AND LINK-PREVIEW FETCHERS ASK THE ROOT FOR AN ICON whatever the page declares: ~500 404s in two hours on
+# poster.place (2026-10-29) for /favicon.ico, /favicon.png and /apple-touch-icon.png. Each answers with the shipped icon.
+_ROOT_ICONS = {"favicon.ico": "favicon.png", "favicon.png": "favicon.png",
+               "apple-touch-icon.png": "apple-touch-icon.png", "apple-touch-icon-precomposed.png": "apple-touch-icon.png"}
+
+
+def _root_icon(file):
+    async def icon():
+        return FileResponse(os.path.join(os.path.dirname(__file__), "..", "static", file), media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    return icon
+
+
+for _name, _file in _ROOT_ICONS.items():
+    app.add_api_route("/" + _name, _root_icon(_file), methods=["GET", "HEAD"], include_in_schema=False)
+
+
 @app.get("/manifest.json")
 async def manifest():
     """Serve manifest from root for PWA"""
