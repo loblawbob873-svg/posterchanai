@@ -17,9 +17,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# An image that CHANGES needs a NEW key: Cloudflare's edge keeps site/* for a month regardless of the
+# cache-control sent here and ignores the query string, so a re-rendered poster uploaded over the old
+# key kept serving the old picture (measured 2026-10-29: HIT, last-modified of the previous upload).
+# index.html (max-age=300) is what moves readers onto the new key.
 FILES = [
     ("index.html", ROOT / "os/iso-site/index.html", "text/html; charset=utf-8", "public, max-age=300"),
-    ("site/posterchan-os.webp", ROOT / "docs/promo/posterchan-os.webp", "image/webp", "public, max-age=86400"),
+    ("site/posterchan-os-v2.webp", ROOT / "docs/promo/posterchan-os.webp", "image/webp", "public, max-age=86400"),
     ("site/posterchanos-desktop.webp", ROOT / "docs/promo/posterchanos-desktop.webp", "image/webp", "public, max-age=86400"),
     ("site/posterfox.webp", ROOT / "docs/promo/posterfox.webp", "image/webp", "public, max-age=86400"),
 ]

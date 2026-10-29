@@ -58,7 +58,7 @@ class FakeR2:
 def test_the_publisher_writes_only_the_page():
     r2 = FakeR2()
     site.publish(r2, log=lambda m: None)
-    assert r2.puts == ["index.html", "site/posterchan-os.webp", "site/posterchanos-desktop.webp", "site/posterfox.webp"]
+    assert r2.puts == ["index.html", "site/posterchan-os-v2.webp", "site/posterchanos-desktop.webp", "site/posterfox.webp"]
 
 
 @pytest.mark.parametrize("key", ["posterchanos.iso", "posterchanos.iso.sha256", "site/../posterchanos.iso", "other.html"])
