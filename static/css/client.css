@@ -1139,7 +1139,7 @@ body.no-topsearch .topbar .searchbox{display:none}
    window it is a toolbar now — Back, labelled, on the left and the PosterChan avatar on the right
    where IE3 kept its logo. `--pc-logo` follows Admin → Site's custom logo (app.js). The phone keeps
    the compact arrow: the label and avatar only exist inside a desktop window. */
-:root{--pc-logo:url("/static/posterchan-relay.png")}
+:root{--pc-logo:url("/static/posterchan-badge.png")}   /* the app icon's round face badge (scripts/make_app_icon.py) */
 .pc-nav-label,.pc-nav-logo{display:none}
 /* TWO KINDS OF WINDOW, ONE ROW. `body.os-on .osw` is a window drawn INSIDE the desktop page (desktop
    mode in a browser); `html.pc-oswin` is a PosterChanOS window, which is a separate document with no
@@ -1154,7 +1154,7 @@ body.os-on .osw .pc-nav-back,html.pc-oswin .pc-nav-back{display:inline-flex;alig
 body.os-on .osw .pc-nav-back:hover,html.pc-oswin .pc-nav-back:hover{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18)}
 body.os-on .osw .pc-nav-label,html.pc-oswin .pc-nav-label{display:inline}
 body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-left:auto;width:36px;height:36px;flex:0 0 36px;
-  border-radius:9px;background:var(--pc-logo) center/cover no-repeat;border:1px solid var(--line);
+  border-radius:50%;background:var(--pc-logo) center/cover no-repeat;border:0;
   box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 /* THE WINDOW'S AVATAR, top right of its title row. They have no Back row for the
    badge to live in (a post or a profile does), so in a PosterChanOS window it sits at the end of the
@@ -1165,14 +1165,14 @@ body.os-on .osw .pc-nav-logo,html.pc-oswin .pc-nav-logo{display:block;margin-lef
    exactly what goes stale when a view is added. A window whose Back row already carries the avatar
    (.pc-navbar: posts, profiles, articles) does not get a second; the timelines hide the title row. */
 html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;margin-left:auto;
-  width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
-  border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
+  width:36px;height:36px;flex:0 0 36px;border-radius:50%;background:var(--pc-logo) center/cover no-repeat;
+  border:0;box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
 /* …AND ON A PHONE, every screen's title row gets it too ("do that for mobile") -- the same badge,
    top right. The search box, where a screen keeps one, shrinks to make room (it is flex:1). */
 @media(max-width:820px){
   .main:not(.has-navbar)>.topbar::after{content:"";display:block;margin-left:auto;
-    width:36px;height:36px;flex:0 0 36px;border-radius:9px;background:var(--pc-logo) center/cover no-repeat;
-    border:1px solid var(--line);box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
+    width:36px;height:36px;flex:0 0 36px;border-radius:50%;background:var(--pc-logo) center/cover no-repeat;
+    border:0;box-shadow:0 0 12px rgba(var(--accent-rgb),.28)}
   .topbar .searchbox{margin-right:10px}
 }
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */

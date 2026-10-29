@@ -130,6 +130,8 @@ def outputs():
     on_plate(512, 0.8).save(ROOT / "static/icon-512-maskable.png")
     on_plate(180, 0.92).convert("RGB").save(ROOT / "static/apple-touch-icon.png")   # iOS rounds its own corners
     icon(512).save(ROOT / "desktop/icon.png")
+    # The window avatar (--pc-logo, top right of every window's title row, 36 CSS px): her face, sharp up to 3x.
+    Image.open(SMALL).convert("RGBA").resize((108, 108), Image.LANCZOS).save(ROOT / "static/posterchan-badge.png")
     for d, k in DENS.items():
         icon(int(48 * k)).save(RES / f"mipmap-{d}/ic_launcher.png")
         icon(int(48 * k)).save(RES / f"mipmap-{d}/ic_launcher_round.png")

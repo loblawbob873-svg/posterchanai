@@ -3,7 +3,7 @@
 Reported: "make each PosterChanOS/desktop mode window look better, it's ugly now with the back button"
 -- in a window the content opened with a strip holding one small "←" at the far left and nothing
 else. It is a toolbar now (`_navTopHtml`, one builder for profile and post): a labelled pill Back on
-the left, the avatar (`--pc-logo`, the brand logo) at the right, flush under the title bar and
+the left, the avatar (`--pc-logo`, the round PosterChan badge) at the right, flush under the title bar and
 sticky while the content scrolls. On a phone, where there is no window, the row stays the compact
 arrow it was -- the label and the avatar exist only inside a desktop window.
 
@@ -60,7 +60,8 @@ def test_a_desktop_window_gets_a_toolbar_with_back_and_the_avatar():
     assert w['label'] == 'Back', 'the Back button has no label in a window: %r' % w
     assert w['logoShown'], 'no avatar at the right of the row: %r' % w
     assert w['logoRight'] <= 16 and w['backLeft'] <= 16, 'Back and the avatar are not at the two ends: %r' % w
-    assert w['brand'] and w['brand'] in w['logoImage'], 'the avatar is not the brand logo: %r' % w
+    # The window avatar is the app icon's round face badge (2026-10-29), not the sidebar's brand portrait.
+    assert 'posterchan-badge.png' in w['logoImage'], 'the avatar is not the PosterChan badge: %r' % w
     assert abs(w['gap']) <= 1, 'a gap between the title bar and the toolbar: %r' % w
     assert w['sticky'] == 'sticky', w
     assert got['backWorks'], 'Back no longer leaves the profile'

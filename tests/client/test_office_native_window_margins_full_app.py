@@ -64,7 +64,7 @@ def test_files_and_office_windows_carry_the_posterchan_avatar_top_right():
         office = await b.js(LOGO)
         for name, m in (('Files', files), ('Office', office)):
             assert m and m['visible'], f'{name}: no title row: {m}'
-            assert m['content'] not in ('none', 'normal') and 'posterchan-relay' in m['bg'] and m['w'] == '36px', \
+            assert m['content'] not in ('none', 'normal') and 'posterchan-badge' in m['bg'] and m['w'] == '36px', \
                 f'{name}: no PosterChan avatar at the end of the title row: {m}'
 
     extra = office.BOUNDARIES + "window.pcShell.windowContext={role:'app',view:'blossom'};window.pcShell.backgroundOwner=false;"
@@ -86,7 +86,7 @@ def test_every_window_with_a_title_row_carries_the_avatar(view):
     extra = "window.pcShell.windowContext={role:'app',view:'%s'};window.pcShell.backgroundOwner=false;" % view
     asyncio.run(desktop.with_browser('online', '?pcwin=' + view, check, extra))
     assert got.get('visible'), got
-    assert got['content'] not in ('none', 'normal') and 'posterchan-relay' in got['bg'], f'{view}: no avatar: {got}'
+    assert got['content'] not in ('none', 'normal') and 'posterchan-badge' in got['bg'], f'{view}: no avatar: {got}'
 
 
 def test_a_window_with_a_back_row_does_not_get_a_second_avatar():
