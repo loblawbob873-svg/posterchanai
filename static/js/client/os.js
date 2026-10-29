@@ -4353,7 +4353,11 @@
      * returned unless PosterChanOS's window manager was present, so the list saved and nothing ever opened. */
     const native = !!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled());
     // PosterChanOS waits for its window manager (a later call); only the plain app opens them in this page.
-    if(!native && !(window.pcShell && window.pcAutostart && pcAutostart.shell === false)) return 0;
+    if(!native){
+      let shell = true;
+      try{ shell = window.pcShell && window.pcAutostart && pcAutostart.isShell ? await pcAutostart.isShell() : true; }catch(_){ shell = true; }
+      if(shell !== false || _startupRan) return 0;
+    }
     _startupRan=true;
     if(!native){
       const views=_startupViews().filter(v=>apps().some(a=>a.view===v && !a.off));

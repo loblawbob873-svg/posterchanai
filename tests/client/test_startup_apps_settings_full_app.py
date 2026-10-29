@@ -234,7 +234,7 @@ def test_a_startup_app_switched_off_stays_off_when_an_older_account_copy_arrives
 WINDOWS_FIXTURE = r'''
 window.__startupSaves=[];
 window.pcShell=Object.assign(window.pcShell||{},{backgroundOwner:true});
-window.pcAutostart={programs:false,platform:'win32',shell:false,list:async()=>[],add:async()=>'',addApp:async()=>'',set:async()=>({}),remove:async()=>({}),run:async()=>({ok:true})};
+window.pcAutostart={programs:false,platform:'win32',isShell:async()=>false,list:async()=>[],add:async()=>'',addApp:async()=>'',set:async()=>({}),remove:async()=>({}),run:async()=>({ok:true})};
 '''
 
 

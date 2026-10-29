@@ -3148,7 +3148,7 @@ ipcMain.handle('pc:shell:output', (e) => {
  * pulled workspace 2's windows into the grid. Keyed by the renderer that said so: each monitor has its own. */
 const _offWorkspace = new Map();
 function offWorkspaceIds(){ const all = new Set(); for(const s of _offWorkspace.values()) for(const id of s) all.add(id); return all; }
-ipcMain.on('pc:is-shell', (e) => { e.returnValue = SHELL_MODE; });
+ipcMain.handle('pc:is-shell', () => SHELL_MODE);
 // "Play in VLC" from the Preview: a video this browser cannot decode (desktop/player.js).
 ipcMain.handle('pc:play-in-player', (e, bytes, name) => {
   if (!SHELL_MODE || !fromOurPage(e)) return 'refused';
