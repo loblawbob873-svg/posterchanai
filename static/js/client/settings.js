@@ -621,6 +621,8 @@ window.PCSettingsFactory = function(dep){
   }
   let _settingsServerDown = '';          // why the server half of Settings is unavailable this time, '' when it is fine
   const SESSION_WAIT_MS = 6000;          // how long Settings waits for an app session before drawing the device panes
+  // Profile themes and songs (proftheme.js): this device's own switches, on unless turned off.
+  const _lsOn = k => { try{ return localStorage.getItem(k) !== '0'; }catch(_){ return true; } };
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     const generation=++_userSettingsRender,owner=S.ME&&S.ME.pubkey;
@@ -778,6 +780,9 @@ window.PCSettingsFactory = function(dep){
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
           <div id="us-look">${_lookPaneHtml()}</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Show profile themes<label class="switch"><input type="checkbox" id="set-prof-themes" ${_lsOn('pc_prof_themes')?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Play a profile&#8217;s song when it opens<label class="switch"><input type="checkbox" id="set-prof-autoplay" ${_lsOn('pc_prof_autoplay')?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">MySpace-style profiles: their own colours, font, background and song. On this device only.</div>
         </div>
         <div class="us-pane active" data-pane="profile">
           <div class="muted small" id="us-build" style="margin:-2px 0 6px">Build <code>${enc(String(window.__PC_BUILD||'unknown'))}</code>${_standalone()||BUNDLED?' \u00b7 this app':' \u00b7 this server'}</div>
@@ -1169,6 +1174,9 @@ window.PCSettingsFactory = function(dep){
         S._vimPane='feed';
         toast(vk.checked ? 'vim keys on — hjkl to move, gg / G for top and bottom' : 'vim keys off');
       }; }
+    for(const [id, key] of [['set-prof-themes','pc_prof_themes'],['set-prof-autoplay','pc_prof_autoplay']]){
+      const el=$('#'+id); if(el) el.onchange=()=>{ try{ localStorage.setItem(key, el.checked?'1':'0'); }catch(_){} };
+    }
     { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
         S.NO_IMAGES = ni.checked; ClientSettings.set('noImages', S.NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: S.NO_IMAGES });
         toast(S.NO_IMAGES?'data saver on — tap to load images':'images load automatically');

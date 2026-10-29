@@ -190,8 +190,44 @@ window.PCProfileFactory = function(dep){
        for the rest of the visit. Exactly the feed card's bug (`_tipMarks`) on the profile screen.
        Added and BOUND here, because a button that appears and does nothing is the worse failure. */
     _patchProfileTips(feed, pk, p);
-    const music=feed.querySelector('#prof-music');
-    if(music){ music.innerHTML=_profileMusicHtml(p); _bindProfileMusic(music); }
+    /* Only when the songs CHANGED: the profile's song may be playing (proftheme.js), and new markup is a new
+     * <audio> -- the refresh that lands a second after the page opened would stop it mid-bar. */
+    const music=feed.querySelector('#prof-music'), mh=_profileMusicHtml(p);
+    if(music && music.dataset.html!==mh){ music.innerHTML=mh; music.dataset.html=mh; _bindProfileMusic(music); }
+  }
+
+  /* MYSPACE PROFILES ("Vyram wants profiles to be themeable like myspace", 2026-10-29): the profile's theme (kind
+   * 16767, Ditto's and Armada's) and its song starting on open -- proftheme.js, fetched the first time a profile has
+   * either. Cache first, then the relays; a newer theme repaints without restarting the song. The viewer's two
+   * switches are this device's (Settings -> Appearance), on unless turned off. */
+  const _ptOn = k => { try{ return localStorage.getItem(k) !== '0'; }catch(_){ return true; } };
+  let _ptLoading = null;
+  function _ptModule(){
+    if(window.PCProfileTheme) return Promise.resolve(window.PCProfileTheme);
+    if(!_ptLoading){
+      const me=document.querySelector('script[src*="/static/js/client/profile.js"]'), src=(me&&me.getAttribute('src'))||'/static/js/client/profile.js';
+      _ptLoading=new Promise((ok, no)=>{ const s=document.createElement('script'); s.src=src.replace('/profile.js','/proftheme.js');
+        s.onload=()=> window.PCProfileTheme ? ok(window.PCProfileTheme) : no(new Error('proftheme.js'));
+        s.onerror=()=>{ _ptLoading=null; no(new Error('proftheme.js')); }; document.head.appendChild(s); });
+    }
+    return _ptLoading;
+  }
+  function _profileTheme(pk, gen){
+    const feed=$('#feed'), marker=feed && feed.querySelector('.prof'); if(!marker) return;
+    const opts={ theme: _ptOn('pc_prof_themes'), autoplay: _ptOn('pc_prof_autoplay'),
+                 busy: () => !!(navigator.mediaSession && navigator.mediaSession.playbackState==='playing') };
+    const newest=evs=>(evs||[]).filter(e=>e && e.kind===16767 && e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0]||null;
+    let shown=null; try{ shown=newest(Store.query([{kinds:[16767],authors:[pk],limit:1}])); }catch(_){}
+    const run=ev=>{ if(gen!==_profGen || !marker.isConnected) return;
+      if(!ev && !feed.querySelector('.prof-track audio')) return;
+      _ptModule().then(m=>{ if(gen===_profGen && marker.isConnected) m.apply(feed, marker, ev, opts); }, ()=>{}); };
+    run(shown);
+    if(!opts.theme) return;
+    Relay.query([{kinds:[16767],authors:[pk],limit:1}]).then(r=>{
+      const n=newest(r); if(!n || (shown && n.created_at<=shown.created_at)) return;
+      try{ Store.saveEvent(n); }catch(_){}
+      shown=n; run(n);
+    }).catch(()=>{});
   }
 
   /* A profile page normally loads only the newest handful of notes, so its local cache cannot tell
@@ -391,7 +427,7 @@ window.PCProfileFactory = function(dep){
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img alt="" src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img alt="" class="pav" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'">
-        <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof" title="Edit your profile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button><button class="btn btn-ghost small" id="open-settings" title="Settings" aria-label="Settings"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg><span class="lbl">Settings</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
+        <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof" title="Edit your profile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button><button class="btn btn-ghost small" id="theme-prof" title="Your page's colours, font, background and borders"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Theme</button><button class="btn btn-ghost small" id="open-settings" title="Settings" aria-label="Settings"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg><span class="lbl">Settings</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
           <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
@@ -518,7 +554,9 @@ window.PCProfileFactory = function(dep){
     /* Wrapped like every other binding here: an equaliser that fails to attach must cost the
      * equaliser, never the tabs, the follow stats or Copy npub below it — that is the whole reason
      * `_bind` exists on this screen. */
-    _bind('the profile music equaliser', () => _bindProfileMusic(feed));
+    _bind('the profile music equaliser', () => { _bindProfileMusic(feed);
+      const pm=$('#prof-music'); if(pm) pm.dataset.html=_profileMusicHtml(p); });   // what _patchProfileHeader compares
+    _bind('the profile theme and song', () => _profileTheme(pk, myGen));
     _bind('the verified badge', () => decorateVerified($('#prof-vchk'), pk, p.nip05));
     _bind('the addresses granted here', () => _paintHereAddresses(pk));
     /* COPY NPUB IS BOUND EARLY AND ON ITS OWN. It is one line, it can only fail if the element is
@@ -614,6 +652,12 @@ window.PCProfileFactory = function(dep){
       peopleModal('Followers', _prof.followers||[]);
     }; }
     if(mine){ const ep=$('#edit-prof'); if(ep) ep.onclick=()=>editProfile(p);
+      const tp=$('#theme-prof'); if(tp) tp.onclick=()=>_ptModule().then(m=>{
+        let cur=null; try{ cur=Store.query([{kinds:[16767],authors:[pk],limit:1}]).sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+        m.openEditor({ current: cur, modal, closeModal, toast, enc, uploadBlob, publish,
+          onSaved: ev => { try{ Store.saveEvent(ev); }catch(_){} const f=$('#feed'), mk=f&&f.querySelector('.prof');
+            if(mk) m.apply(f, mk, ev, { theme: _ptOn('pc_prof_themes'), autoplay: false }); } });
+      }, ()=>toast('Could not load the theme editor -- check your connection and try again'));
               const os=$('#open-settings'); if(os) os.onclick=()=>switchView('settings'); }
     else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
       const cb=$('#call-prof'); if(cb)cb.onclick=()=>startCall(pk, {video:false}); }
