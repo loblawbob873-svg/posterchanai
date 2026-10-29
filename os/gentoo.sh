@@ -6149,9 +6149,27 @@ bootloader() {
 	mkdir -p /var/tmp
 	chmod 1777 /var/tmp
 	[ ! -e /boot/EFI ] || chmod -R 740 /boot/EFI
-	rm -rf /boot/loader/entries/*
+	[ -f "/etc/disk" ] || rm -rf /boot/loader/entries/*
 	if [ -f "/etc/disk" ]; then
 		partitionDetection
+		# THE ROOT FILE SYSTEM'S UUID, OR NO ENTRY AT ALL. It was read only from the mapper name this
+		# script assumes (/dev/mapper/luks-<uuid>); a machine started some other way -- Secure Boot mode
+		# opens the disk as /dev/mapper/root -- has no such device, blkid printed nothing, and the entry
+		# and the initramfs were written with `root=UUID=` and no value: "a start job is running for
+		# /dev/disk/by-uuid" for ever (the laptop, 2026-10-29). What is mounted at / is the answer when
+		# the name is wrong; when neither answers, stop BEFORE the old entries are removed.
+		ROOT_FS_UUID="$(/sbin/blkid -s UUID -o value "$ROOT_MAPPER_NAME" 2>/dev/null)"
+		[ -n "$ROOT_FS_UUID" ] || ROOT_FS_UUID="$(/usr/bin/findmnt -no UUID / 2>/dev/null | head -1)"
+		if [ -z "$ROOT_FS_UUID" ]; then
+			echo -e "\033[1;31mCould not tell the root file system's UUID ($ROOT_MAPPER_NAME, or what is mounted at /).\033[0m"
+			echo -e "\033[1;31mThe boot entries were left as they are.\033[0m"
+			return 1
+		fi
+		# What starts this machine today is kept until what replaces it has been CHECKED (pc-boot-check below):
+		# the entries, and the initramfs this run rebuilds. Old kernels are pruned only after that check.
+		_pc_boot_keep="$(mktemp -d /var/tmp/pc-boot-keep.XXXXXX)" || return 1
+		cp -a /boot/loader/entries "$_pc_boot_keep/" 2>/dev/null || true
+		rm -rf /boot/loader/entries/*
 		echo
 		echo -e "\033[1;33mInstalling Bootloader...................\033[0m"
 		sleep 3
@@ -6301,7 +6319,7 @@ bootloader() {
 		OFFSET=$(btrfs inspect-internal map-swapfile /swap/swap -r)
 		UUID=$(/usr/bin/findmnt -no UUID -T /swap/swap | head -1)
 
-		KERNEL_COMMAND_LINE="quiet splash usbcore.quirks=0bda:8156,0bda:8153 rd.luks.key=/boot/keyfile.key mitigations=off resume=UUID=$UUID resume_offset=$OFFSET root=UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) rootflags=subvol=@$ROOT_NAME rw"
+		KERNEL_COMMAND_LINE="quiet splash usbcore.quirks=0bda:8156,0bda:8153 rd.luks.key=/boot/keyfile.key mitigations=off resume=UUID=$UUID resume_offset=$OFFSET root=UUID=$ROOT_FS_UUID rootflags=subvol=@$ROOT_NAME rw"
 		rm -f /etc/crypttab
 		echo >/etc/dracut.conf
 		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
@@ -6322,9 +6340,6 @@ bootloader() {
 			fi
 		fi
 
-        echo -e "\033[1;33mRemoving old kernels\033[0m"
-        echo
-        pc_prune_kernels "$MACHINE_ID" "$KERNEL_VERSION"
 		# REBUILD THE INITRD THE LOADER ACTUALLY USES. `--regenerate-all` writes the conventional
 		# /boot/initramfs-$KERNEL_VERSION.img, but the entry below boots the Boot Loader Spec path
 		# /boot/$MACHINE_ID/$KERNEL_VERSION/initrd.  liveISOinstall() had already put a preliminary
@@ -6332,6 +6347,7 @@ bootloader() {
 		# regenerated encrypted-root image sat unused while systemd-boot loaded the old one and
 		# dropped into maintenance mode.
 		INITRD="/boot/$MACHINE_ID/$KERNEL_VERSION/initrd"
+		[ ! -s "$INITRD" ] || cp -a "$INITRD" "$_pc_boot_keep/initrd" || return 1
 		# PLYMOUTH IS EMBEDDED IN THE INITRAMFS. Selecting the PosterChan theme after dracut means
 		# this boot still contains Gentoo's default and the new choice appears only after some later
 		# kernel rebuild. Choose it first, then build the image that systemd-boot actually names.
@@ -6400,6 +6416,28 @@ bootloader() {
 			echo -e "\033[1;32m◆ BOOT ENTRY WRITTEN ◆ $LOADER_FILE\033[0m"
 			echo -e "\033[1;32m  kernel + initramfs are in /boot/$MACHINE_ID/$KERNEL_VERSION\033[0m"
 		fi
+		# WILL IT START? Asked of the files before this says it is done -- root=, the encrypted partition, and
+		# whether the key INSIDE the initramfs opens the disk. On the laptop (2026-10-29) this function reported
+		# a written entry that said `root=UUID=` with no value, and the machine never started. A failed check
+		# puts the old entries and initramfs back, so the machine still starts the way it did this morning.
+		local _pc_check="${PC_BOOT_CHECK:-/usr/local/bin/pc-boot-check}"
+		[ -x "$_pc_check" ] || _pc_check="$(dirname "$(readlink -f "$0")")/bin/pc-boot-check"
+		if [ -x "$_pc_check" ]; then
+			if ! "$_pc_check"; then
+				echo -e "\033[1;31m◆ THE NEW BOOT ENTRY WOULD NOT START THIS MACHINE ◆ the previous one is put back.\033[0m"
+				rm -f "$LOADER_FILE"
+				cp -a "$_pc_boot_keep/entries/." /boot/loader/entries/ 2>/dev/null || true
+				[ ! -s "$_pc_boot_keep/initrd" ] || cp -a "$_pc_boot_keep/initrd" "$INITRD"
+				rm -rf "$_pc_boot_keep"
+				return 1
+			fi
+		else
+			echo -e "\033[1;33m  pc-boot-check is not installed here: the entry was not checked.\033[0m"
+		fi
+		rm -rf "$_pc_boot_keep"
+		echo -e "\033[1;33mRemoving old kernels\033[0m"
+		echo
+		pc_prune_kernels "$MACHINE_ID" "$KERNEL_VERSION"
 	else
 		echo -e "\033[1;33mError, Missing /etc/disk\033[0m"
 		exit 1

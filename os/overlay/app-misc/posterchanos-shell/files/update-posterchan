@@ -45,6 +45,13 @@ if [ -x /usr/local/bin/pc-kernel-guard ]; then
 	/usr/local/bin/pc-kernel-guard --repair \
 		|| echo "${RED}The kernel check found a problem it could not fix — read the lines above before rebooting.${OFF}"
 fi
+# AND WILL THE NEXT START OPEN THIS DISK? An update can bring a kernel, and with it a new initramfs: pc-boot-check
+# asks whether every boot entry still names this root and whether the key inside its initramfs opens the disk --
+# said HERE, before the restart, not discovered at it (the laptop, 2026-10-29).
+if [ -x /usr/local/bin/pc-boot-check ]; then
+	/usr/local/bin/pc-boot-check --quiet \
+		|| echo "${RED}The boot check found a problem — do NOT restart until it is fixed (sudo pc-boot-check shows it).${OFF}"
+fi
 
 # POSTERFOX, FROM ITS SIGNED BINARY ONLY. --usepkgonly/--getbinpkgonly is the point: no matching binary yet means keep
 # the browser this machine has, never "compile Firefox from source on this machine for the next three hours". A

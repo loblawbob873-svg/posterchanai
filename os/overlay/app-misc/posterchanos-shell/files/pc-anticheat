@@ -49,6 +49,11 @@ rootdev() {   # the LUKS device the root file system is on
 	local src; src="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*//')"
 	cryptsetup status "${src##*/}" 2>/dev/null | awk '$1 == "device:" {print $2}'
 }
+boot_check() {   # pc-boot-check: do this machine's boot entries still start it? (absent = cannot ask; says so)
+	local c="${PC_BOOT_CHECK:-/usr/local/bin/pc-boot-check}"
+	[ -x "$c" ] || { echo "pc-anticheat: pc-boot-check is not installed -- the boot was not checked" >&2; return 0; }
+	"$c" --quiet
+}
 rebuild_initrds() {   # every startup image of this machine, with the dracut.conf as it now stands
 	# EVERY image on the boot partition, not only those with an entry: an old kernel's directory outlives its entry
 	# and still held the key on the laptop (6.18.43/.48, 2026-10-29). One whose kernel is gone cannot be rebuilt and
@@ -156,7 +161,7 @@ run)
 	fi
 	;;
 run-off)
-	if "$GENTOO_SH" anticheat-off >"$LOG" 2>&1; then
+	if "$GENTOO_SH" anticheat-off >"$LOG" 2>&1 && boot_check >>"$LOG" 2>&1; then
 		rm -f "$REQUEST"
 		# The TPM unlock belongs to Secure Boot mode: off, its key slot goes too (the key file still opens the disk).
 		dev="$(rootdev)"
@@ -226,6 +231,12 @@ travel)
 		: >"$TRAVEL/on"
 		rm -f "$STATE_DIR/anticheat-tpm.pcr7" "$KEYFILE"
 		printf '{"state": "travel", "at": %s}\n' "$(date +%s)" >"$TPMSTATE"
+		# Every start must now ASK -- checked from the files (no key anywhere on the boot partition, every entry
+		# still names this machine's root and disk). If not, it all goes back the way it was.
+		if ! boot_check >&2; then
+			"$0" travel off >&2 || true
+			echo "travel mode: the boot check refused the result -- everything was put back" >&2; exit 1
+		fi
 		;;
 	off)
 		[ -e "$TRAVEL/on" ] || exit 0
@@ -233,7 +244,10 @@ travel)
 		cp -a "$TRAVEL/keyfile.key" "$KEYFILE" && chmod 0400 "$KEYFILE" || exit 1
 		sed -i 's|^# travel mode: ||' "$DRACUT_CONF"
 		rebuild_initrds || { echo "travel mode: the startup images could not be rebuilt" >&2; exit 1; }
-		rm -f "$TRAVEL/on" "$TPMSTATE" "$TRAVEL/keyfile.key"
+		rm -f "$TRAVEL/on" "$TPMSTATE"
+		# The key back in every image, opening the disk -- or say so and keep the kept copy; never report it done.
+		boot_check >&2 || { echo "travel mode off: the boot check found a problem -- do not restart; the key is kept in $TRAVEL" >&2; exit 1; }
+		rm -f "$TRAVEL/keyfile.key"
 		"$0" tpm || true      # re-seal now when Secure Boot is on; otherwise at the next Secure Boot start
 		;;
 	*) echo "usage: pc-anticheat travel on|off" >&2; exit 2 ;;

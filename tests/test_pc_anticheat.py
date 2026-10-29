@@ -277,8 +277,10 @@ def test_a_systemd_without_tpm_support_is_rebuilt_once_in_the_background(tmp_pat
 # off puts it all back and re-seals. The stubs record every call and keep the real files.
 
 class TravelBox(TpmBox):
-    def __init__(self, tmp, dracut_rc=0, **kw):
+    def __init__(self, tmp, dracut_rc=0, check_rc=0, **kw):
         super().__init__(tmp, enrolled=True, **kw)
+        # pc-boot-check, as a stub that records being asked and answers check_rc.
+        _exe(self.bin / "pc-boot-check", f'echo "pc-boot-check $*" >> "{self.calls}"; exit {check_rc}')
         mid = "m" * 32
         self.esp = tmp / "esp"
         (self.root / "etc/machine-id").write_text(mid + "\n")
@@ -304,7 +306,7 @@ class TravelBox(TpmBox):
     def travel(self, how):
         env = {"PATH": f"{self.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(self.state), "PC_AC_ROOT": str(self.root),
                "PC_GENTOO_SH": str(self.bin / "gentoo.sh"), "PC_AC_TPM": str(self.tpm), "PC_AC_KEYFILE": str(self.keyfile),
-               "PC_AC_ESP": str(self.esp)}
+               "PC_AC_ESP": str(self.esp), "PC_BOOT_CHECK": str(self.bin / "pc-boot-check")}
         r = subprocess.run(["bash", str(HELPER), "travel", how], capture_output=True, text=True, timeout=60, env=env)
         return r, self.calls.read_text() if self.calls.exists() else ""
 
@@ -365,7 +367,7 @@ def test_turning_secure_boot_mode_off_takes_the_tpm_slot_with_it(tmp_path):
     (box.state / "anticheat-tpm.json").write_text('{"state": "on"}')
     env = {"PATH": f"{box.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(box.state), "PC_AC_ROOT": str(box.root),
            "PC_GENTOO_SH": str(box.bin / "gentoo.sh"), "PC_AC_TPM": str(box.tpm), "PC_AC_KEYFILE": str(box.keyfile),
-           "PC_AC_ESP": str(box.esp)}
+           "PC_AC_ESP": str(box.esp), "PC_BOOT_CHECK": str(box.bin / "pc-boot-check")}
     _exe(box.bin / "gentoo.sh", "true")
     r = subprocess.run(["bash", str(HELPER), "run-off"], capture_output=True, text=True, timeout=60, env=env)
     assert r.returncode == 0, r.stderr
@@ -373,3 +375,36 @@ def test_turning_secure_boot_mode_off_takes_the_tpm_slot_with_it(tmp_path):
     assert f"--unlock-key-file={box.keyfile} --wipe-slot=tpm2" in calls, calls
     assert not (box.state / "anticheat-tpm.json").exists()
     assert box.keyfile.exists(), "the key file that unlocks the disk must stay"
+
+
+
+# ---- EVERY CHANGE TO HOW THE MACHINE STARTS IS CHECKED BEFORE IT IS REPORTED ("we need to prevent this", 10-29) ----
+
+def test_travel_mode_is_checked_and_a_refused_result_is_put_back(tmp_path):
+    box = TravelBox(tmp_path, check_rc=1)
+    r, calls = box.travel("on")
+    assert r.returncode != 0 and "boot check refused" in r.stderr, r.stderr
+    assert "pc-boot-check --quiet" in calls
+    assert box.keyfile.read_bytes() == b"k" * 64, "the key file was not put back"
+    assert not (box.root / "etc/posterchan/travel/on").exists()
+    assert box.initrd.read_text().strip() == "with key"
+
+
+def test_travel_mode_off_is_never_reported_done_unchecked(tmp_path):
+    box = TravelBox(tmp_path)
+    assert box.travel("on")[0].returncode == 0
+    _exe(box.bin / "pc-boot-check", "exit 1")
+    r, _ = box.travel("off")
+    assert r.returncode != 0 and "do not restart" in r.stderr, r.stderr
+    assert (box.root / "etc/posterchan/travel/keyfile.key").exists(), "the only kept copy of the key was deleted"
+
+
+def test_secure_boot_mode_off_fails_when_the_boot_check_does(tmp_path):
+    box = TravelBox(tmp_path, check_rc=1)
+    env = {"PATH": f"{box.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(box.state), "PC_AC_ROOT": str(box.root),
+           "PC_GENTOO_SH": str(box.bin / "gentoo.sh"), "PC_AC_TPM": str(box.tpm), "PC_AC_KEYFILE": str(box.keyfile),
+           "PC_AC_ESP": str(box.esp), "PC_BOOT_CHECK": str(box.bin / "pc-boot-check")}
+    _exe(box.bin / "gentoo.sh", "true")
+    r = subprocess.run(["bash", str(HELPER), "run-off"], capture_output=True, text=True, timeout=60, env=env)
+    st = json.loads((box.state / "anticheat.json").read_text())["state"]
+    assert r.returncode != 0 and st == "failed", (st, r.stderr)

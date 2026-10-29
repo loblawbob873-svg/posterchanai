@@ -1,0 +1,109 @@
+#!/bin/bash
+# pc-boot-check — will THIS machine's boot entries start THIS machine? Answered from the files, before a restart.
+#
+#   pc-boot-check            check every boot entry of this machine; exit 0 = they boot, 1 = a problem (printed)
+#   pc-boot-check --quiet    only the problems
+#   exit 2 = it could not check (not root, no machine-id, no boot partition) -- never read as "fine"
+#
+# WHY THIS EXISTS: THE BOOT LOADER AND THE DISK UNLOCK WERE BROKEN TOGETHER, OVER AND OVER, AND EVERY TOOL THAT
+# DID IT REPORTED SUCCESS. On the laptop (192.168.0.154), one day, 2026-10-29: `gentoo.sh bootloader` wrote
+# `root=UUID=` with no value into the entry and the initramfs ("a start job is running for /dev/disk/by-uuid", for
+# ever), and travel mode's first run left the key file inside two old kernels' images on the unencrypted boot
+# partition. Before that, a TPM seal that could never unseal. Each was a file that looked right and was never
+# asked the one question that matters -- so every tool that changes how this machine starts runs this before it
+# may say it is done (gentoo.sh bootloader, pc-anticheat, update-posterchan), and puts the old state back when
+# it fails.
+#
+# For each Boot Loader Spec entry of this machine (/boot/loader/entries/<machine-id>-*.conf):
+#   1. its kernel and initramfs exist and are not empty;
+#   2. root=UUID=<x> has a value, and it is the file system mounted at / right now;
+#   3. rd.luks.uuid=luks-<u> names an encrypted (crypto_LUKS) partition on this machine;
+#   4. with rd.luks.key=<file>: that file is INSIDE the initramfs, and the copy in there OPENS the disk
+#      (cryptsetup --test-passphrase -- the key on the boot partition is not the one that boots);
+#   5. the root the initramfs carries itself (etc/cmdline.d) has a value and agrees with the entry.
+# An entry without rd.luks.key (a password install) asks for the password: that is not a problem.
+# TRAVEL MODE (/etc/posterchan/travel/on, pc-anticheat travel) turns 4 around: every start must ASK, so the key file
+# must be on the boot partition nowhere -- not beside the entries and not inside ANY initramfs there, entry or not
+# (two old kernels' images kept it on the laptop, 2026-10-29).
+#
+# Env for tests: PC_ROOT (a fake /), PC_ROOT_UUID (the UUID mounted at /).
+set -u
+R="${PC_ROOT:-}"
+QUIET=0; [ "${1:-}" = --quiet ] && QUIET=1
+RED=$'\e[1;31m'; GRN=$'\e[1;32m'; OFF=$'\e[0m'
+PROBLEMS=0
+say() { [ "$QUIET" = 1 ] || echo "${GRN}[boot]${OFF} $*"; }
+bad() { echo "${RED}[boot]${OFF} $*"; PROBLEMS=$((PROBLEMS + 1)); }
+
+[ -n "$R" ] || [ "$(id -u)" = 0 ] || { echo "pc-boot-check: run it as root (it opens the initramfs and tests the disk key)" >&2; exit 2; }
+mid="$(cat "$R/etc/machine-id" 2>/dev/null)"
+[ -n "$mid" ] || { echo "pc-boot-check: no machine-id -- cannot tell which entries are this machine's" >&2; exit 2; }
+ESP="$R/boot"
+[ -d "$ESP/loader/entries" ] || { echo "pc-boot-check: no boot entries under $ESP/loader/entries" >&2; exit 2; }
+ROOT_UUID="${PC_ROOT_UUID:-$(findmnt -no UUID / 2>/dev/null | head -1)}"
+TRAVEL=0; [ -e "$R/etc/posterchan/travel/on" ] && TRAVEL=1
+
+arg() { printf '%s\n' $2 | sed -n "s/^$1=//p" | tail -1; }   # the value of the last NAME= in an options line
+
+n=0
+for e in "$ESP"/loader/entries/"$mid"-*.conf; do
+	[ -f "$e" ] || continue
+	n=$((n + 1)); name="${e##*/}"; before=$PROBLEMS
+	opts="$(sed -n 's/^options[[:space:]]\{1,\}//p' "$e" | tr '\n' ' ')"
+	linux="$(awk '$1 == "linux" {print $2; exit}' "$e")"; img="$(awk '$1 == "initrd" {print $2; exit}' "$e")"
+	[ -n "$linux" ] && [ -s "$ESP$linux" ] || bad "$name: its kernel ($linux) is missing"
+	[ -n "$img" ] && [ -s "$ESP$img" ] || { bad "$name: its initramfs ($img) is missing"; img=""; }
+	root="$(arg root "$opts")"
+	case "$root" in
+	"") bad "$name: no root= -- the machine would not know what to start" ;;
+	UUID=) bad "$name: root=UUID= has no value -- the start waits for /dev/disk/by-uuid for ever" ;;
+	UUID=*) [ -z "$ROOT_UUID" ] || [ "${root#UUID=}" = "$ROOT_UUID" ] \
+			|| bad "$name: root=$root, but the file system mounted at / is UUID=$ROOT_UUID" ;;
+	esac
+	lu="$(arg rd.luks.uuid "$opts")"; lu="${lu#luks-}"; dev=""
+	if [ -n "$lu" ]; then
+		dev="$(blkid -t UUID="$lu" -o device 2>/dev/null | head -1)"
+		if [ -z "$dev" ]; then bad "$name: rd.luks.uuid=luks-$lu names no partition on this machine"
+		elif [ "$(blkid -s TYPE -o value "$dev" 2>/dev/null)" != crypto_LUKS ]; then bad "$name: $dev (UUID $lu) is not an encrypted partition"; dev=""
+		fi
+	fi
+	key="$(arg rd.luks.key "$opts")"
+	if [ -n "$img" ]; then
+		listing="$(lsinitrd "$ESP$img" 2>/dev/null)"
+		[ -n "$listing" ] || bad "$name: its initramfs cannot be read"
+		if [ -n "$key" ] && [ "$TRAVEL" = 1 ]; then
+			printf '%s\n' "$listing" | grep -q " ${key#/}\$" && bad "$name: travel mode is on, but the key file is inside its initramfs"
+		elif [ -n "$key" ] && [ -n "$dev" ]; then
+			if ! printf '%s\n' "$listing" | grep -q " ${key#/}\$"; then
+				bad "$name: rd.luks.key=$key, but that file is not inside the initramfs -- it would ask for the password"
+			else
+				tmp="$(mktemp)"; chmod 600 "$tmp"
+				lsinitrd -f "${key#/}" "$ESP$img" >"$tmp" 2>/dev/null
+				if [ ! -s "$tmp" ] || ! cryptsetup open --test-passphrase --key-file "$tmp" "$dev" >/dev/null 2>&1; then
+					bad "$name: the key inside the initramfs does not open $dev -- it would ask for the password"
+				fi
+				rm -f "$tmp"
+			fi
+		fi
+		for f in $(printf '%s\n' "$listing" | grep -o 'etc/cmdline\.d/[^ ]*\.conf' | sort -u); do
+			ir="$(lsinitrd -f "$f" "$ESP$img" 2>/dev/null | tr ' ' '\n' | sed -n 's/^root=//p' | tail -1)"
+			[ -n "$ir" ] || continue
+			case "$ir" in
+			UUID=) bad "$name: the initramfs itself carries root=UUID= with no value ($f)" ;;
+			*) [ "$ir" = "$root" ] || bad "$name: the initramfs carries root=$ir, the entry root=$root ($f)" ;;
+			esac
+		done
+	fi
+	if [ "$TRAVEL" = 1 ]; then u=" and asks for the disk password"; else u="${key:+ and unlocks its disk by itself}"; fi
+	[ "$PROBLEMS" = "$before" ] && say "$name: starts this machine$u"
+done
+if [ "$TRAVEL" = 1 ]; then
+	[ ! -e "$ESP/keyfile.key" ] || bad "travel mode is on, but the key file is still on the boot partition ($ESP/keyfile.key)"
+	for i in "$ESP/$mid"/*/initrd; do
+		[ -f "$i" ] || continue
+		lsinitrd "$i" 2>/dev/null | grep -q " boot/keyfile\.key\$" && bad "travel mode is on, but $i still holds the key file"
+	done
+fi
+[ "$n" -gt 0 ] || { bad "no boot entry for this machine (machine-id $mid) under $ESP/loader/entries"; }
+[ "$PROBLEMS" = 0 ] || { echo "${RED}[boot]${OFF} $PROBLEMS problem(s): do not restart until they are fixed."; exit 1; }
+exit 0

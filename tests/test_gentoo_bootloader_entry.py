@@ -47,9 +47,12 @@ STUBS = {
     "plymouth-set-default-theme": '#!/bin/sh\nexit 0\n',
     "depmod": '#!/bin/sh\nexit 0\n',
     "btrfs": '#!/bin/sh\necho 12345\n',
-    "findmnt": '#!/bin/sh\necho 9999-8888\n',
+    # PC_NO_ROOT: nothing is mounted at / that findmnt can name (the last-resort answer is gone too).
+    "findmnt": '#!/bin/sh\ncase "$*" in *" /") [ "${PC_NO_ROOT:-0}" = 1 ] && exit 1;; esac\necho 9999-8888\n',
     "blkid": ('#!/bin/sh\n'
-              'if [ "$1" = "-s" ]; then echo "1111-2222-3333"; exit 0; fi\n'
+              # PC_NO_MAPPER: the machine was started another way, so /dev/mapper/luks-<uuid> does not exist
+              'if [ "$1" = "-s" ]; then case "$*" in */dev/mapper/*) [ "${PC_NO_MAPPER:-0}" = 1 ] && exit 2;; esac\n'
+              '  echo "1111-2222-3333"; exit 0; fi\n'
               'echo "/dev/nvme0n1p1: TYPE=\\"vfat\\""\n'
               'echo "/dev/nvme0n1p2: TYPE=\\"crypto_LUKS\\""\n'),
 }
@@ -80,7 +83,7 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
                            body.index("plymouth-set-default-theme"))
         self.assertGreater(body.rindex("ln -sfn posterchanos/posterchanos.plymouth"),
                            body.index("plymouth-set-default-theme"))
-    def _run(self, *, kernel=True, modules=True, bootctl_rc=0):
+    def _run(self, *, kernel=True, modules=True, bootctl_rc=0, no_mapper=False, no_root=False, old_entry=False, check_rc=None):
         src = open(SH, encoding="utf-8").read()
         body = (_fn(src, "partitionDetection") + "\n\n" +
                 _fn(src, "_pc_record_plymouth_theme") + "\n\n" +
@@ -113,16 +116,24 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         open(os.path.join(target, "etc", "machine-id"), "w").write(MID + "\n")
         open(os.path.join(target, "etc", "disk"), "w").write("/dev/nvme0n1\nroot\nswapfile\n")
         open(os.path.join(target, "swap", "swap"), "w").write("")
+        if old_entry:
+            os.makedirs(os.path.join(target, "boot/loader/entries"), exist_ok=True)
+            open(os.path.join(target, "boot/loader/entries", "old.conf"), "w").write("title Working\n")
         os.makedirs(stub, exist_ok=True)
         for name, text in STUBS.items():
             p = os.path.join(stub, name)
             open(p, "w").write(text)
             os.chmod(p, 0o755)
+        check = os.path.join(stub, "pc-boot-check")
+        open(check, "w").write("#!/bin/sh\necho '[stub] pc-boot-check'\nexit %d\n" % (check_rc or 0))
+        os.chmod(check, 0o755)
 
         script = os.path.join(d, "run.sh")
         open(script, "w").write("#!/bin/bash\nR=\"$1\"\nTARGET=\"$R\"\nAUTO_DECRYPT=False\n" + body + "\nbootloader\n")
         env = dict(os.environ, PATH=stub + os.pathsep + os.environ["PATH"],
-                   PC_BOOTCTL_RC=str(bootctl_rc))
+                   PC_BOOTCTL_RC=str(bootctl_rc), PC_NO_MAPPER="1" if no_mapper else "0",
+                   PC_NO_ROOT="1" if no_root else "0",
+                   PC_BOOT_CHECK=check if check_rc is not None else os.path.join(stub, "absent"))
         r = subprocess.run(["bash", script, target], capture_output=True, text=True,
                            timeout=120, env=env)
         return target, (r.stdout or "") + (r.stderr or "")
@@ -130,6 +141,41 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
     def _entries(self, target):
         d = os.path.join(target, "boot", "loader", "entries")
         return [os.path.join(d, f) for f in os.listdir(d)] if os.path.isdir(d) else []
+
+    # THE LAPTOP, 2026-10-29: `gentoo.sh bootloader` run on a machine started through Secure Boot mode, where
+    # the disk is open as /dev/mapper/root -- not the /dev/mapper/luks-<uuid> this script assumes. blkid printed
+    # nothing, and the entry and the initramfs said `root=UUID=` with no value: the next start waited on
+    # /dev/disk/by-uuid" for ever.
+
+
+    def test_the_root_comes_from_what_is_mounted_when_the_mapper_name_is_wrong(self):
+        target, out = self._run(no_mapper=True)
+        entries = self._entries(target)
+        self.assertTrue(entries, out)
+        text = "".join(open(e).read() for e in entries) + open(os.path.join(target, "etc/dracut.conf")).read()
+        self.assertNotRegex(text, r"root=UUID=(\s|$)", "an empty root= was written")
+        self.assertIn("root=UUID=9999-8888 ", text, out)
+
+    # "we need to prevent this" (2026-10-29): the new entry is CHECKED (pc-boot-check) before this says it is
+    # done; a failed check puts back what started the machine before, and no old kernel is pruned.
+    def test_an_entry_the_check_refuses_is_replaced_by_the_one_that_worked(self):
+        target, out = self._run(old_entry=True, check_rc=1)
+        self.assertIn("[stub] pc-boot-check", out)
+        self.assertIn("WOULD NOT START THIS MACHINE", out)
+        self.assertEqual([os.path.basename(e) for e in self._entries(target)], ["old.conf"], out)
+        self.assertNotIn("Removing old kernels", out, "old kernels were pruned before the new boot was proven")
+
+    def test_a_checked_entry_stays_and_only_then_are_old_kernels_pruned(self):
+        target, out = self._run(old_entry=True, check_rc=0)
+        names = [os.path.basename(e) for e in self._entries(target)]
+        self.assertIn(f"{MID}-{KVER}.conf", names, out)
+        self.assertLess(out.index("[stub] pc-boot-check"), out.index("Removing old kernels"), out)
+
+    def test_with_no_root_to_name_nothing_is_removed(self):
+        target, out = self._run(no_mapper=True, no_root=True, old_entry=True)
+        self.assertIn("Could not tell the root file system's UUID", out)
+        self.assertEqual([os.path.basename(e) for e in self._entries(target)], ["old.conf"],
+                         "the working entries were deleted for an entry that could not be written")
 
     def test_package_kernel_entries_keep_the_installed_loader_default(self):
         target, out = self._run()
