@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the iso.poster.place splash page: os/iso-site/index.html plus its two images.
+"""Publish the iso.poster.place splash page: os/iso-site/index.html plus its images.
 
 The page lives in the same R2 bucket as the ISO and is reached at `/` through ONE Cloudflare URL
 Rewrite rule on poster.place: `(http.host eq "iso.poster.place" and http.request.uri.path eq "/")`
@@ -21,6 +21,7 @@ FILES = [
     ("index.html", ROOT / "os/iso-site/index.html", "text/html; charset=utf-8", "public, max-age=300"),
     ("site/posterchan-os.webp", ROOT / "docs/promo/posterchan-os.webp", "image/webp", "public, max-age=86400"),
     ("site/posterchanos-desktop.webp", ROOT / "docs/promo/posterchanos-desktop.webp", "image/webp", "public, max-age=86400"),
+    ("site/posterfox.webp", ROOT / "docs/promo/posterfox.webp", "image/webp", "public, max-age=86400"),
 ]
 
 

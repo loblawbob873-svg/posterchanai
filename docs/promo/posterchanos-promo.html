@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>PosterChanOS promo poster</title>
+<!-- Source of docs/promo/posterchan-os.webp (1080x1350). Render with scripts/make_promo_poster.py.
+     The mascot is an image layer cut from the original poster (src/posterchanos-mascot.png), with its own
+     glow behind her; everything else is drawn here. Keep exactly 12 cards: that is what fits. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=block">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1350px;overflow:hidden}
+body{position:relative;font-family:Inter,system-ui,sans-serif;color:#eef1ff;background:#151426}
+/* the stage above the footer: grid + glows */
+.stage{position:absolute;left:0;top:0;width:1080px;height:1200px;overflow:hidden;
+  background:
+    radial-gradient(ellipse 760px 230px at 28% 100%,rgba(34,211,238,.20),transparent 70%),
+    radial-gradient(ellipse 620px 170px at 85% 100%,rgba(34,211,238,.10),transparent 70%),
+    radial-gradient(circle 360px at 770px 449px,rgba(34,211,238,.20),rgba(34,211,238,.06) 70%,transparent 100%),
+    linear-gradient(180deg,#151426 0%,#17162b 55%,#161628 100%)}
+.grid{position:absolute;inset:0;
+  background-image:linear-gradient(rgba(34,211,238,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,.07) 1px,transparent 1px);
+  background-size:54px 54px;background-position:0 0px;
+  -webkit-mask-image:radial-gradient(circle 430px at 790px 520px,#000 30%,transparent 100%);
+          mask-image:radial-gradient(circle 430px at 790px 520px,#000 30%,transparent 100%)}
+.ring{position:absolute;left:491px;top:170px;width:558px;height:558px;border-radius:50%;
+  border:2px solid rgba(34,211,238,.55);box-shadow:0 0 60px rgba(34,211,238,.18),inset 0 0 80px rgba(34,211,238,.10)}
+.mascot{position:absolute;left:690px;top:120px;width:390px;height:1079px}
+
+.eyebrow{position:absolute;left:64px;top:60px;font:600 19.5px/1 Orbitron,sans-serif;letter-spacing:.17em;color:#22d3ee}
+.pill{position:absolute;left:657px;top:64px;width:359px;height:42px;border:2px solid rgba(34,211,238,.75);border-radius:22px;
+  display:flex;align-items:center;justify-content:center;font:500 16px/1 Orbitron,sans-serif;letter-spacing:.19em;color:#22d3ee;padding-left:.19em}
+h1{position:absolute;left:64px;top:96.5px;font:900 93px/88px Orbitron,sans-serif;letter-spacing:.005em}
+h1 .a{display:block;color:#fff}
+h1 .b{display:block;background:linear-gradient(90deg,#22d3ee,#2ee6c0 70%,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{position:absolute;left:64px;top:283px;width:600px;font:400 23px/31px Inter,sans-serif;color:#a5adcb}
+
+ul.cards{position:absolute;left:64px;top:365px;width:640px;list-style:none;display:flex;flex-direction:column;gap:6px}
+.cards li{position:relative;height:61px;border:1px solid rgba(34,211,238,.28);border-radius:12px;
+  background:linear-gradient(180deg,rgba(18,18,33,.90),rgba(14,14,27,.86));padding:5px 12px 0 48px;overflow:hidden}
+.cards li::before{content:'';position:absolute;left:16.5px;top:13.5px;width:13.5px;height:13.5px;transform:rotate(45deg);border-radius:2px;
+  background:linear-gradient(135deg,#7fe8ff,#2ee6c0);box-shadow:0 0 10px rgba(34,211,238,.8)}
+.cards li.badge::before{display:none}
+.cards li.badge img{position:absolute;left:5px;top:6px;width:48px;height:48px;filter:drop-shadow(0 0 6px rgba(167,110,255,.55))}
+.cards li.badge{padding-left:58px}
+.cards h2{font:700 21.1px/26px Inter,sans-serif;color:#f4f6ff;white-space:nowrap;letter-spacing:-.003em}
+.cards h2 b{color:#22d3ee;font-weight:800}
+.cards li.badge h2 b{background:linear-gradient(90deg,#c084fc,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
+.cards p{font:400 16px/20px Inter,sans-serif;color:#a9b0cc;white-space:nowrap;margin-top:1px}
+
+.foot{position:absolute;left:0;top:1200px;width:1080px;height:150px;background:#080b18;border-top:2px solid #40c5dc;
+  box-shadow:0 -6px 24px rgba(34,211,238,.25)}
+.dl{position:absolute;left:64px;top:39px;font:400 20.7px/1 Inter,sans-serif;color:#a5adcb;letter-spacing:.02em}
+.iso{position:absolute;left:63px;top:65px;font:700 41px/1 Orbitron,sans-serif;letter-spacing:.01em;
+  background:linear-gradient(90deg,#22d3ee,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}
+.free{position:absolute;right:64px;top:48px;font:400 19px/1 Inter,sans-serif;color:#a5adcb}
+.gh{position:absolute;right:64px;top:77px;font:700 23px/1 Inter,sans-serif;color:#fff;display:flex;align-items:center;gap:6px}
+.gh svg{width:23px;height:23px}
+</style></head>
+<body>
+<div class="stage">
+  <div class="grid"></div>
+  <div class="ring"></div>
+  <img class="mascot" src="src/posterchanos-mascot.png" alt="">
+</div>
+
+<div class="eyebrow">A LINUX DISTRO BUILT ON NOSTR</div>
+<div class="pill">GENTOO · WAYFIRE · NOSTR</div>
+<h1><span class="a">POSTER</span><span class="b">CHANOS</span></h1>
+<p class="lede">A Gentoo desktop whose desktop IS PosterChan.<br>Sign in with your Nostr key and it is yours.</p>
+
+<ul class="cards">
+  <li><h2>Your desktop <b>is</b> your account</h2><p>apps, files &amp; layout follow your key to any machine</p></li>
+  <li><h2>Every app is a real <b>window</b></h2><p>snap, Alt+Tab &amp; multi-monitor, with PosterFox &amp; Steam beside them</p></li>
+  <li><h2><b>AI</b> in every title bar</h2><p>it fills, clicks &amp; scrolls the window for you, on your own node</p></li>
+  <li><h2><b>Telegram</b> built in</h2><p>a full Telegram client; the session lives on your node</p></li>
+  <li><h2><b>Jellyfin</b> media center</h2><p>movies &amp; shows with subtitles and watch progress</p></li>
+  <li><h2><b>Virtual machine</b> manager</h2><p>create, run &amp; open consoles, managed over Nostr</p></li>
+  <li><h2>A full <b>office suite</b></h2><p>edit Word, Excel &amp; PowerPoint files</p></li>
+  <li><h2><b>Notes</b> over Nostr</h2><p>an encrypted notebook on every device; imports Joplin</p></li>
+  <li class="badge"><img src="src/posterfox-badge.png" alt=""><h2><b>PosterFox</b> browser</h2><p>Firefox without telemetry; every tab its own container &amp; identity; Tor tabs</p></li>
+  <li><h2>Encrypted drive &amp; <b>folder sync</b></h2><p>your files on Blossom, synced between all your devices</p></li>
+  <li><h2><b>Quick Settings</b> &amp; <b>Tor</b></h2><p>Wi-Fi, Bluetooth, per-app volume, and Tor in one tap</p></li>
+  <li><h2>Gentoo + <b>Wayfire</b>, fully encrypted</h2><p>Intel, AMD &amp; NVIDIA, with LUKS full-disk encryption</p></li>
+</ul>
+
+<footer class="foot">
+  <div class="dl">Download it at</div>
+  <div class="iso">iso.poster.place</div>
+  <div class="free">Free &amp; open source on GitHub</div>
+  <div class="gh"><svg viewBox="0 0 16 16" fill="#fff" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github.com/loblawbob873-svg/posterchanai</div>
+</footer>
+</body></html>
