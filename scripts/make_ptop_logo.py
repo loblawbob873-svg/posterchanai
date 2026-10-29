@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Rebuild ptop's LOGO from the app icon (static/icon-512.png): PosterChan from the hood to the waist,
-background keyed out, a neon rim (cyan -> magenta) so the black hoodie reads on a dark terminal.
+"""Rebuild ptop's LOGO from the app icon's drawing (branding/posterchan-art-source.png, cut out exactly as
+scripts/make_app_icon.py cuts it -- the icon itself is a round badge now, and keying its corner would key out her
+black hoodie and keep the badge): PosterChan from the hood to the waist, a neon rim (cyan -> magenta) so the black hoodie reads on a dark terminal.
 Prints the Python tuple to paste over LOGO in os/overlay/app-misc/posterchanos-shell/files/ptop."""
+import importlib.util
 import os
 import sys
 
@@ -13,15 +15,16 @@ CROP = 0.55            # of the figure's height: hood to waist
 CYAN, MAGENTA = (0, 240, 255), (255, 43, 214)
 
 
+def _icon_maker():
+    spec = importlib.util.spec_from_file_location("make_app_icon", os.path.join(ROOT, "scripts", "make_app_icon.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def build(height=HEIGHT):
-    im = Image.open(os.path.join(ROOT, "static", "icon-512.png")).convert("RGBA")
-    bg = im.getpixel((2, 2))[:3]
-    px = im.load()
-    for y in range(im.height):
-        for x in range(im.width):
-            r, g, b, _ = px[x, y]
-            if abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2]) < 18:
-                px[x, y] = (r, g, b, 0)
+    maker = _icon_maker()
+    im = maker.cutout(Image.open(maker.SOURCE))
     x0, y0, x1, y1 = im.getchannel("A").getbbox()
     im = im.crop((x0, y0, x1, y0 + int((y1 - y0) * CROP)))
     w = round(im.width * height / im.height)

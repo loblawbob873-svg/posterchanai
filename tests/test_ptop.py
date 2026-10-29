@@ -8,6 +8,7 @@ its software (the PosterChanOS overlay ebuild, gentoo.sh, install.sh, the Docker
 import importlib.machinery
 import importlib.util
 import os
+import random
 import re
 import stat
 import subprocess
@@ -531,12 +532,19 @@ def test_through_a_real_gnu_screen_the_colours_arrive():
 def test_the_256_colour_fallback_picks_the_nearest_xterm_colour():
     m = _load()
     p = m.Paint("256")
-    errs = []
-    for rgb in _logo_pixels(m):
+    # NEAREST, exactly: no other of the 240 colours is closer, for the portrait's pixels and for any colour
+    # (a mean-error threshold measured the picture, and a new drawing tipped it without the picker changing).
+    pal = {i: _xterm_rgb(i) for i in range(16, 256)}
+    err = lambda a, b: sum((x - y) ** 2 for x, y in zip(a, b))
+    rnd = random.Random(1)
+    colours = list(_logo_pixels(m)) + [tuple(rnd.randrange(256) for _ in range(3)) for _ in range(3000)]
+    worse = []
+    for rgb in colours:
         idx = int(re.search(r"\[38;5;(\d+)m", p._code(rgb)).group(1))
-        got = _xterm_rgb(idx)
-        errs.append(sum(abs(a - b) for a, b in zip(rgb, got)))
-    assert sum(errs) / len(errs) < 30, "mean error %.1f per pixel" % (sum(errs) / len(errs))
+        best = min(err(rgb, c) for c in pal.values())
+        if err(rgb, _xterm_rgb(idx)) > best:
+            worse.append(rgb)
+    assert not worse, "%d colours were not given their nearest xterm colour, e.g. %s" % (len(worse), worse[:5])
     # and greys use the grey ramp, not a tinted cube colour
     idx = int(re.search(r"\[38;5;(\d+)m", p._code((128, 128, 128))).group(1))
     assert _xterm_rgb(idx) == (128, 128, 128)
