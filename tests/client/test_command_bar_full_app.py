@@ -108,7 +108,7 @@ def test_ask_ai_puts_the_question_in_ai_chat_and_does_not_send_it():
         await b.until(OPEN)
         await b.until(FOCUSED)
         await b.call('Input.insertText', {'text': 'what is a microkernel'})
-        await b.until("[...document.querySelectorAll('.cmd-sec[data-source=more] .cmd-row b')].length===2")
+        await b.until("[...document.querySelectorAll('.cmd-sec[data-source=more] .cmd-row b')].length===3")
         got['more'] = await b.js("[...document.querySelectorAll('.cmd-sec[data-source=more] .cmd-row b')].map(x=>x.textContent)")
         # Move the highlight to the Ask AI row with the arrow keys, the way a person would.
         for _ in range(12):
@@ -120,7 +120,8 @@ def test_ask_ai_puts_the_question_in_ai_chat_and_does_not_send_it():
         got['sent'] = await b.js("(window.__chatRequests||[]).length")
 
     asyncio.run(desktop.with_browser('online', '', check))
-    assert got['more'] == ['Search Nostr for “what is a microkernel”', 'Ask AI: “what is a microkernel”'], got['more']
+    assert got['more'] == ['Search Nostr for “what is a microkernel”', 'Do it: “what is a microkernel”',
+                           'Ask AI: “what is a microkernel”'], got['more']
     assert got['sent'] == 0, "the question was sent without the person pressing send"
 
 

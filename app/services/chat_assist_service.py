@@ -26,7 +26,7 @@ from app.services.texts_ai_service import TextsAiError as AssistError
 logger = logging.getLogger(__name__)
 
 MEDIA = {"telegram": "Telegram chat message", "dm": "direct message (DM)"}
-ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps", "window_recipe", "window_feed", "window_note", "window_contact", "window_calc")
+ACTIONS = ("reply", "summarize", "links", "window", "window_event", "window_steps", "window_recipe", "window_feed", "window_note", "window_contact", "window_calc", "desktop_steps")
 
 # A summary may read further back than a reply needs, but a whole year of a group chat never goes to
 # the model: the newest SUMMARY_MSGS messages, each clipped, and a total ceiling on top.

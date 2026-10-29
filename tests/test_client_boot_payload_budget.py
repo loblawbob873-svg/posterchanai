@@ -126,7 +126,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.188 -> 8.192 for the Screen Recorder's entry points and PER-APP VOLUME's boot hook (os.js: every media
 #: element plays at its window's level -- it must be in place before anything plays; the mixer panel itself,
 #: appmixer.js, loads on first open). 8.1915 MB measured.
-BUDGET_MB = 8.192
+#: ...and 8.192 -> 8.195 for the DESKTOP ASSISTANT's runner in os.js (each step is one of os.js's own window,
+#: workspace and volume functions, which only it can reach); its panel, deskassist.js, loads on first use. 8.1939 MB.
+BUDGET_MB = 8.195
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

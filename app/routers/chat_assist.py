@@ -56,6 +56,10 @@ class AssistReq(BaseModel):
     target: int = 0               # action=window_feed recipe=reply: the post (1-based) to reply to
     subject: str = "posts"        # action=window_feed: "posts" (a timeline) or "notes" (the notebook)
     title: str = ""               # action=window_note: the open note's title
+    # action=desktop_steps (the command bar's "Do it"): what is on the desktop, as the client sees it.
+    apps: list = Field(default_factory=list, max_length=200)
+    open_windows: list = Field(default_factory=list, max_length=60)
+    workspaces: int = 1
 
 
 @router.post("")
@@ -95,6 +99,10 @@ async def chat_assist(req: AssistReq, db: Session = Depends(get_db),
         if action == "window_feed":
             return {"ok": True, **(await svc.window_feed(
                 db, user, req.posts, req.recipe, req.instruction, req.target, req.subject))}
+        if action == "desktop_steps":
+            from app.services import desktop_assist
+            return {"ok": True, **(await desktop_assist.desktop_steps(
+                db, user, req.instruction, req.apps, req.open_windows, req.workspaces, req.today))}
         if action == "window_calc":
             return {"ok": True, **(await svc.window_calc(db, user, req.instruction))}
         if action == "window_contact":

@@ -11121,6 +11121,43 @@
       out.push(A('🖥️', 'System settings', ['wifi', 'display', 'sound', 'bluetooth'], () => openSystemSettings()));
     return out;
   }
+  /* ✨ "Do it" (the command bar): the desktop assistant. The model only proposes; deskassist.js shows its steps as
+   * buttons and each press runs ONE of these -- os.js's own functions, the same ones the menus and keys run. A window
+   * is named by its number in the list the model saw, and windows opened by earlier steps are numbered after them. */
+  function _assistContext(){
+    const list = wins.filter(w => !w.closed);
+    return { list, ctx: { apps: apps().filter(a => a.view && !/^__|^app:/.test(a.view)).map(a => ({ view: a.view, label: a.label })),
+      open_windows: list.map(w => ({ title: w.title, view: w.view, ws: (w.ws | 0) + 1, focused: !!w.focused })),
+      workspaces: wsCount() } };
+  }
+  function _assistRunner(list){
+    const refs = list.slice();
+    return async st => {
+      const win = st.win ? refs[st.win - 1] : null;
+      if(st.win && (!win || !wins.includes(win))) throw new Error('that window is not open any more');
+      switch(st.do){
+        case 'open': { openLauncherApp(st.view); const w = wins.find(x => sameAppWindow(x.view, st.view)); if(w && !refs.includes(w)) refs.push(w); return; }
+        case 'snap': focusWin(win); snapTo(win, st.zone); return;
+        case 'arrange': arrangeInPage(st.mode); return;
+        case 'workspace': if(st.n > wsCount()) addWs(); else switchWs(st.n - 1); return;
+        case 'move': moveToWs(win, st.n - 1); return;
+        case 'close': closeWin(win); return;
+        case 'volume': setAppVolume(st.app, st.level == null ? null : st.level / 100, st.mute == null ? (st.level != null ? false : null) : st.mute); return;
+        case 'screenshot': shoot(st.mode); return;
+        case 'record': openLauncherApp('recorder'); return;
+        case 'search': desktopSearch(st.text); return;
+        case 'post': if(PC().compose) PC().compose({ text: st.text }); return;
+        case 'note': if(!(await _aiSaveNote(String(st.text).split('\n')[0].slice(0, 80) || 'Note', st.text))) throw new Error('the note was not saved'); return;
+      }
+      throw new Error('unknown step');
+    };
+  }
+  async function openAssistant(q){
+    const A = await PC().loadModule('deskassist.js', 'PCDeskAssist');
+    const { list, ctx } = _assistContext();
+    A.open(q, { ask: body => _aiPost(Object.assign({ action: 'desktop_steps', instruction: q, today: _aiToday() }, ctx, body || {})),
+                run: _assistRunner(list) });
+  }
   async function openCmdbar(fromCompositor){
     if(fromCompositor){ try{ await _raiseShell(); }catch(_){ } }
     const C = await PC().loadModule('cmdbar.js', 'PCCmdbar');
@@ -11129,6 +11166,7 @@
       data: (key, q) => _searchData(key, q),
       actions: _cmdActions(),
       nostr: q => desktopSearch(q),
+      assist: q => openAssistant(q),
       ai: q => {
         openLauncherApp('ai');
         // AI chat draws its box once it opens: the question is put IN it, never sent for you.
@@ -14196,7 +14234,7 @@
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
                   isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow, parkStats,
-                  openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false), appVolumes, setAppVolume, openMixer,
+                  openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false), appVolumes, setAppVolume, openMixer, openAssistant,
                   workspaces: () => ({ count: wsCount(), current: _wsCur }), switchWorkspace: i => switchWs(i), addWorkspace: () => addWs(),
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

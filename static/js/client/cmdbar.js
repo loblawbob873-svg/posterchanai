@@ -125,6 +125,7 @@
     }
     const more = [];
     if(api.nostr) more.push({ icon:'🔎', title:`Search Nostr for “${q.trim()}”`, sub:'Posts, people and hashtags', run:() => api.nostr(q.trim()) });
+    if(api.assist) more.push({ icon:'🪄', title:`Do it: “${q.trim()}”`, sub:'The assistant plans it on this desktop — you press to run each step', run:() => api.assist(q.trim()) });
     if(api.ai) more.push({ icon:'✨', title:`Ask AI: “${q.trim()}”`, sub:'Opens AI chat with this question', run:() => api.ai(q.trim()) });
     fill('more', more);
   }
