@@ -123,21 +123,10 @@ async def concord_relay(websocket: WebSocket):
         # Tor gets concord_tunnel.TOR_OPEN_TIMEOUT, and a host it failed for goes direct first for a while.
         # Every Tor daemon in the proxy's order, then DIRECT last (concord_tunnel.egress_hops) -- unless no hop reached
         # this host a moment ago, when the answer is the same and nothing is dialled (concord_tunnel.unreachable).
-        for hop in ([] if concord_tunnel.unreachable(target) else concord_tunnel.egress_hops(target)):
-            try:
-                upstream_cm = concord_tunnel.connect(target, hop)
-                upstream = await asyncio.wait_for(upstream_cm.__aenter__(), timeout=concord_tunnel.open_timeout(hop) + 1)
-                concord_tunnel.hop_result(target, hop, True)
-                concord_tunnel.dialled(target)
-                break
-            except Exception as e:
-                concord_tunnel.hop_result(target, hop, False)
-                logger.info("[concord-tunnel] could not reach %s %s: %s", concord_tunnel._host(target),
-                            "through Tor " + hop.rsplit(":", 1)[-1] if hop else "directly", type(e).__name__)
-                upstream_cm = upstream = None
+        # concord_tunnel.open_upstream: one dial at a time to a host nothing reached lately (a burst of tunnels to a
+        # dead relay walked the whole chain once EACH), and nothing at all inside a host's pause.
+        upstream_cm, upstream = await concord_tunnel.open_upstream(target)
         if upstream is None:
-            if not concord_tunnel.unreachable(target):
-                concord_tunnel.all_hops_failed(target)
             await websocket.close(code=4502, reason="relay unreachable")
             return
         info, began = {}, time.monotonic()

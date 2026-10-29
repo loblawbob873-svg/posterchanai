@@ -66,6 +66,12 @@ UNREACHABLE_FOR = 120
 UNREACHABLE_MAX = 1800
 _unreachable: dict[str, float] = {}
 _strikes: dict[str, int] = {}
+# ONE DIAL AT A TIME TO A HOST NOT KNOWN TO ANSWER. Concord opens several tunnels to one relay at once, so when a
+# failing host's pause ran out they ALL walked the whole chain together, before the first could record the failure:
+# measured on poster.place 2026-10-29, asia.vectorapp.io six full chains in 9 s, fifteen in 20 s -- the backoff above
+# never got the chance to work. A host something reached in the last GOOD_FOR seconds is dialled in parallel as before.
+_reached: dict[str, float] = {}
+_dialing: dict[str, asyncio.Lock] = {}
 
 _open: dict[str, int] = {}
 _total = 0
@@ -321,6 +327,11 @@ def hop_result(url: str, hop: str | None, ok: bool) -> None:
     host = _host(url)
     if ok:
         _strikes.pop(host, None)                     # reached by any hop: the next failure starts the pause over
+        _reached[host] = time.monotonic() + GOOD_FOR
+        if len(_reached) > 4096:
+            now = time.monotonic()
+            for h in [h for h, t in _reached.items() if t <= now]:
+                _reached.pop(h, None)
     if not hop:
         return
     if ok:
@@ -368,3 +379,50 @@ async def pipe(client, upstream, info: dict | None = None) -> None:
     finally:
         for t in tasks:
             t.cancel()
+
+
+def _known_to_answer(host: str) -> bool:
+    t = _reached.get(host)
+    return bool(t and t > time.monotonic())
+
+
+async def _dial_chain(target: str):
+    """Every hop in order (egress_hops); the first that opens wins. (context manager, socket), or (None, None)."""
+    for hop in egress_hops(target):
+        cm = None
+        try:
+            cm = connect(target, hop)
+            up = await asyncio.wait_for(cm.__aenter__(), timeout=open_timeout(hop) + 1)
+            hop_result(target, hop, True)
+            dialled(target)
+            return cm, up
+        except Exception as e:
+            hop_result(target, hop, False)
+            logger.info("[concord-tunnel] could not reach %s %s: %s", _host(target),
+                        "through Tor " + hop.rsplit(":", 1)[-1] if hop else "directly", type(e).__name__)
+    if not unreachable(target):
+        all_hops_failed(target)
+    return None, None
+
+
+async def open_upstream(target: str):
+    """The far relay's socket for a tunnel, or (None, None) when no hop reaches it (or it is inside its pause).
+
+    A host nothing has reached lately is dialled by ONE tunnel at a time: the others wait for that attempt and then
+    either dial in parallel (it got through) or answer "unreachable" without dialling (it did not)."""
+    host = _host(target)
+    if unreachable(target):
+        return None, None
+    if not _known_to_answer(host):
+        lock = _dialing.get(host)
+        if lock is None:
+            lock = _dialing[host] = asyncio.Lock()
+            if len(_dialing) > 4096:
+                for h in [h for h, lk in _dialing.items() if not lk.locked() and h != host]:
+                    _dialing.pop(h, None)
+        async with lock:
+            if unreachable(target):
+                return None, None
+            if not _known_to_answer(host):
+                return await _dial_chain(target)
+    return await _dial_chain(target)

@@ -26,6 +26,8 @@ def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_good", {})
     monkeypatch.setattr(tun, "_unreachable", {}, raising=False)
     monkeypatch.setattr(tun, "_strikes", {}, raising=False)
+    monkeypatch.setattr(tun, "_reached", {}, raising=False)
+    monkeypatch.setattr(tun, "_dialing", {}, raising=False)
     monkeypatch.setattr(tun, "tor_hops", lambda: list(TORS))
 
 
@@ -400,3 +402,67 @@ def test_a_long_tunnel_is_reported_with_its_client_kind(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger=tun.logger.name):
         tun.dialled("wss://jskitty.com/nostr")
     assert "jskitty.com by client REQ 1059 a1 since [apk] x1 (60s)" in caplog.text, caplog.text
+
+
+def _slow_dialer(seen, works, delay=0.05):
+    """connect() that takes `delay` seconds to answer -- long enough for a burst to overlap."""
+    import asyncio
+
+    def connect(url, proxy):
+        seen.append(proxy)
+
+        class Slow:
+            async def __aenter__(self):
+                await asyncio.sleep(delay)
+                if proxy not in works:
+                    raise TimeoutError("timed out during opening handshake")
+                return _Upstream()
+
+            async def __aexit__(self, *a):
+                return False
+        return Slow()
+    return connect
+
+
+def test_a_burst_of_tunnels_to_a_dead_relay_dials_the_chain_once(monkeypatch):
+    """Measured on poster.place 2026-10-29: asia.vectorapp.io six full chains (four Tor daemons and this node's address,
+    each) in 9 s, fifteen in 20 s -- Concord opens several tunnels to one relay at once, and every one of them walked
+    the whole chain before the first could record the failure. One walks it; the rest get the answer."""
+    import asyncio
+    seen = []
+    monkeypatch.setattr(tun, "connect", _slow_dialer(seen, set()))
+
+    async def burst():
+        return await asyncio.gather(*[tun.open_upstream("wss://asia.vectorapp.io/nostr") for _ in range(6)])
+    got = asyncio.run(burst())
+    assert all(up is None for _, up in got), got
+    assert seen == [TOR1, TOR2, None], ("the burst dialled the chain more than once", seen)
+
+
+def test_a_burst_to_a_relay_that_answers_still_opens_every_tunnel(monkeypatch):
+    """The first tunnel to a host nothing has reached yet goes alone; once it got through, the rest dial in parallel
+    (its working circuit first) -- a healthy relay is never made to wait in line."""
+    import asyncio
+    seen = []
+    monkeypatch.setattr(tun, "connect", _slow_dialer(seen, {TOR2}))
+
+    async def burst():
+        return await asyncio.gather(*[tun.open_upstream("wss://nos.lol") for _ in range(5)])
+    got = asyncio.run(burst())
+    assert all(up is not None for _, up in got), got
+    assert seen[:2] == [TOR1, TOR2] and seen[2:] == [TOR2] * 4, ("after the first got through, the circuit that worked "
+                                                                  "should go first for the rest", seen)
+
+
+def test_a_relay_reached_lately_is_dialled_in_parallel(monkeypatch):
+    import asyncio
+    seen = []
+    monkeypatch.setattr(tun, "connect", _slow_dialer(seen, {TOR1}, delay=0.2))
+    tun.hop_result("wss://nos.lol", TOR1, True)
+
+    async def burst():
+        t0 = asyncio.get_running_loop().time()
+        await asyncio.gather(*[tun.open_upstream("wss://nos.lol") for _ in range(5)])
+        return asyncio.get_running_loop().time() - t0
+    took = asyncio.run(burst())
+    assert took < 0.6, ("five dials to a known-good relay were serialized: %.2fs" % took)
