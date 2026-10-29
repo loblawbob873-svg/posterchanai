@@ -169,7 +169,7 @@ window.PCRecorderFactory = function(dep){
     else if(auds.length > 1){
       // MediaRecorder records ONE audio track; two would silently lose one. Mix them.
       try{
-        mixCtx = new AudioContext(); const dst = mixCtx.createMediaStreamDestination();
+        mixCtx = new window.AudioContext(); const dst = mixCtx.createMediaStreamDestination();
         for(const tr of auds) mixCtx.createMediaStreamSource(new MediaStream([tr])).connect(dst);
         tracks.push(dst.stream.getAudioTracks()[0]);
       }catch(_){ tracks.push(auds[0]); }

@@ -2826,6 +2826,9 @@
                   {...X('Explain this result','How the calculation works, step by step','Explain the calculation shown, step by step.'),need:'calc'}],
       xdc:[X('What are these apps','What each mini app does','What does each mini app shown here do?'),help],
       chess:games, holdem:games, hangman:games, ttt:games, connect4:games, blackjack:games, __games:games,
+      photos:[X('Describe these photos','What the pictures shown here are about','Describe the photos shown here: one short line each, saying who posted it.'),
+              X('Caption ideas','Captions for a photo of mine','Suggest three short captions for a photo post, in the style of the ones shown here.'),help],
+      recorder:[X('How do I use this','Recording, trimming, saving and posting','How do I record my screen here, trim the recording, and post it or keep it in Files?'),help],
       blossom:files, sync:files, __files:files,
       __installer:screen, __golive:screen, __remote:screen,
     };

@@ -128,7 +128,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: appmixer.js, loads on first open). 8.1915 MB measured.
 #: ...and 8.192 -> 8.195 for the DESKTOP ASSISTANT's runner in os.js (each step is one of os.js's own window,
 #: workspace and volume functions, which only it can reach); its panel, deskassist.js, loads on first use. 8.1939 MB.
-BUDGET_MB = 8.195
+#: ...and 8.195 -> 8.196 for the ✨ window buttons of Photos and the Screen Recorder (every window has its own) and
+#: redrawing AI chat after a sign-in. 8.1952 MB measured.
+BUDGET_MB = 8.196
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

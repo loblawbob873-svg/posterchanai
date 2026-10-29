@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # creation with NO prefix at all, because an unnamed `tmpXXXX` can never be attributed to us.
 _APP_TEMP_PREFIXES: Tuple[str, ...] = (
     "chromeshot_",
+    "client_clip_",          # the Screen Recorder's trim (client.py /media/clip-video)
     "client_compress_",
     "fahh_pad_",
     "ffshot_",
