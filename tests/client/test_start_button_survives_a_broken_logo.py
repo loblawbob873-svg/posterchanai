@@ -37,7 +37,10 @@ class TheButtonOutlivesItsImage(unittest.TestCase):
 
     def test_it_falls_back_to_the_bundled_file(self):
         fn = body(self.raw, "function _keepStartVisible")
-        self.assertIn("/static/posterchan-relay.png", fn)
+        # The round PosterChan badge (2026-10-29): a file that ships, and is precached so it is there offline too.
+        self.assertIn("/static/posterchan-badge.png", fn)
+        self.assertTrue((OS_JS.parent.parent.parent / "posterchan-badge.png").is_file())
+        self.assertIn("'/static/posterchan-badge.png'", (OS_JS.parent / "sw.js").read_text())
         self.assertIn("addEventListener('error'", fn)
 
     def test_and_then_to_something_that_needs_no_file(self):

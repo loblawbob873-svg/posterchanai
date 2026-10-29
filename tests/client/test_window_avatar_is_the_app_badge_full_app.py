@@ -37,3 +37,27 @@ def test_the_title_row_avatar_is_the_round_app_badge():
     assert 'posterchan-badge.png' in a['bg'], ("the window avatar is not the new badge", got)
     assert a['radius'] == '50%', ("the badge is not drawn round", got)
     assert got['loads'] and got['loads'] >= 108, ("the badge image does not load (or is too small for a 3x screen)", got)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_the_sidebar_logo_and_the_start_button_are_the_badge_too():
+    """"switch the sidebar and start button logo too" (2026-10-29). The start button wears whatever the sidebar's brand
+    logo shows (os.js brandLogo), so both are measured: the sidebar at desktop width, the start button in desktop mode."""
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=1440, height=900, deviceScaleFactor=1, mobile=False))
+        await desktop.login(b)
+        got['sidebar'] = await b.js("""(()=>{const i=document.querySelector('.sidebar .brand-logo'),cs=getComputedStyle(i);
+          return {src:i.getAttribute('src'), radius:cs.borderTopLeftRadius, w:i.getBoundingClientRect().width, loaded:i.complete&&i.naturalWidth};})()""")
+        await b.js("try{ if(window.PCOS && !PCOS.isOn()) PCOS.enter(); }catch(e){}")
+        await b.until("!!document.querySelector('.os-start img')")
+        await b.until("document.querySelector('.os-start img').complete")
+        got['start'] = await b.js("""(()=>{const i=document.querySelector('.os-start img'),cs=getComputedStyle(i);
+          return {src:i.getAttribute('src'), radius:cs.borderTopLeftRadius, loaded:i.naturalWidth};})()""")
+
+    asyncio.run(desktop.with_browser('online', '', check))
+    s, st = got['sidebar'], got['start']
+    assert 'posterchan-badge.png' in s['src'] and s['loaded'], ("the sidebar logo is not the badge", got)
+    assert s['radius'] == '50%', ("the sidebar badge is not drawn round", got)
+    assert 'posterchan-badge.png' in st['src'] and st['loaded'], ("the start button is not the badge", got)

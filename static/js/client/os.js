@@ -1424,8 +1424,8 @@
     if(!img || img.dataset.guarded) return;
     img.dataset.guarded = '1';
     img.addEventListener('error', () => {
-      if(img.src.indexOf('/static/posterchan-relay.png') < 0){
-        img.src = '/static/posterchan-relay.png';
+      if(img.src.indexOf('/static/posterchan-badge.png') < 0){
+        img.src = '/static/posterchan-badge.png';
         img.addEventListener('error', () => _startGlyph(img), { once: true });
         return;
       }
@@ -1450,7 +1450,7 @@
   function brandLogo(){
     const img = document.querySelector('.brand-logo');
     const src = img && (img.getAttribute('src') || img.src);
-    return src || '/static/posterchan-relay.png';
+    return src || '/static/posterchan-badge.png';
   }
 
   /* A SCANNED PROGRAM'S OWN PICTURE, when the machine could find one. `iconUri` is a data: URI the
