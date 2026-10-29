@@ -1,4 +1,4 @@
-# PosterFox 7: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 8: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -1213,7 +1213,7 @@ src_install() {
 
 	# Install menu
 	local app_name="PosterFox"
-	local desktop_file="${FILESDIR}/icon/${PN}-r3.desktop"
+	local desktop_file="${FILESDIR}/icon/firefox-r3.desktop"
 	local exec_command="${PN}"
 	local icon="${PN}"
 	local use_wayland="false"
