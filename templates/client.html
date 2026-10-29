@@ -318,6 +318,8 @@
             <button class="nav-item nav-golive hidden" id="nav-golive"><svg class="ic"><use href="#i-live"></use></svg><span>Go Live</span></button>
             {% if not nostr_only %}<button class="nav-item" data-view="translate"><svg class="ic"><use href="#i-translate"></use></svg><span>Live Translate</span></button>{% endif %}
             <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
+            <!-- Photos (client/photos.js): NIP-68 pictures + the profile's NIP-51 albums. Relay-only, like Notes. -->
+            <button class="nav-item" data-view="photos"><svg class="ic"><use href="#i-image"></use></svg><span>Photos</span></button>
             <button class="nav-item" data-view="calculator"><svg class="ic"><use href="#i-calc"></use></svg><span>Calculator</span></button>
             <!-- Telegram (client/telegram.js): computers and tablets only -- phones already run Telegram. -->
             <button class="nav-item nav-tg" data-view="tg"><svg class="ic"><use href="#i-send"></use></svg><span>Telegram</span></button>

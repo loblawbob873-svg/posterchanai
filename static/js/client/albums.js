@@ -367,5 +367,5 @@ window.PCAlbumsFactory = function(dep){
     });
   }
 
-  return { mount, openAlbum, albumOf, latest, withPhotos, withoutPhoto, withTag, picTags, imageOf, editAlbum };
+  return { mount, openAlbum, readAlbums, albumForm, albumOf, latest, withPhotos, withoutPhoto, withTag, picTags, imageOf, editAlbum };
 };

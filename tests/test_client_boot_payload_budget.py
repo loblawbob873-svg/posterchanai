@@ -121,7 +121,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: 8.1792 MB measured.
 #: ...and 8.180 -> 8.185 for WORKSPACES (virtual desktops): window ownership, the tray switcher, the switch label, keys and
 #: the compositor ticks -- boot code, since every window and the taskbar read it. 8.1845 MB measured.
-BUDGET_MB = 8.185
+#: ...and 8.185 -> 8.188 for the Thunderbird-safe calendar parser (quote-aware ical.js, a boot module) and the PHOTOS
+#: entry points (nav item, route, deps -- photos.js and its CSS load on first open). 8.1871 MB measured.
+BUDGET_MB = 8.188
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
