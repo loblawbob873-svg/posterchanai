@@ -23,7 +23,7 @@ def bundled_assets():
 
 
 AT = """(()=>{const m=document.querySelector('.cc-messages');
-  return {fromBottom: Math.round(m.scrollHeight-m.clientHeight-m.scrollTop), h: m.clientHeight};})()"""
+  return {fromBottom: Math.round(m.scrollHeight-m.clientHeight-m.scrollTop), h: m.clientHeight, top: Math.round(m.scrollTop), sh: m.scrollHeight};})()"""
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
@@ -169,5 +169,7 @@ def test_only_the_reader_can_unpin_a_room():
     assert got['moved']['fromBottom'] <= 2, ("a scroll nobody made took the room off its newest message", got)
     assert got['grown']['fromBottom'] <= 2, ("after a scroll nobody made, the room no longer followed its newest message", got)
     assert got['wheeled']['fromBottom'] > 300, ("a real wheel did not move the reader up -- the room is fighting them", got)
-    assert abs(got['later']['fromBottom'] - got['wheeled']['fromBottom']) <= 2, ("the room pulled a reader who had scrolled up back down", got)
+    # Judged on the reader's POSITION: the fixture's content can re-lay out under a reader (measured: 201px shorter
+    # a moment later), which moves 'fromBottom' while nobody scrolled anything.
+    assert abs(got['later']['top'] - got['wheeled']['top']) <= 2, ("the room moved a reader who had scrolled up", got)
     assert got['errors'] == []
