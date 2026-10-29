@@ -42,8 +42,17 @@ def _expand(text, ebuild):
     pvr = ebuild.name[len(pn) + 1:-len('.ebuild')]
     pv = re.sub(r'-r\d+$', '', pvr)
     env = {'PN': pn, 'PV': pv, 'PVR': pvr, 'P': f'{pn}-{pv}', 'PF': f'{pn}-{pvr}'}
-    env.update(re.findall(r'^([A-Z_][A-Z0-9_]*)="([^"$]*)"\s*$', ebuild.read_text(), re.M))
-    return re.sub(r'\$\{(\w+)\}', lambda m: env.get(m.group(1), m.group(0)), text)
+    # Each variable's FIRST top-level assignment, quoted or not, may itself name variables (Gentoo's firefox
+    # ebuild builds MOZ_P_DISTFILES from MOZ_PN and MOZ_PV_DISTFILES). Later assignments sit inside conditionals
+    # (an ESR or _rc branch) and use ${VAR/pat/rep} forms this does not model, so the first one is the default.
+    for name, quoted, bare in re.findall(r'^([A-Z_][A-Z0-9_]*)=(?:"([^"]*)"|([^\s"]*))\s*$', ebuild.read_text(), re.M):
+        env.setdefault(name, quoted if quoted or not bare else bare)
+    sub = lambda t: re.sub(r'\$\{(\w+)\}', lambda m: env.get(m.group(1), m.group(0)), t)
+    for _ in range(6):
+        text, before = sub(text), text
+        if text == before:
+            break
+    return text
 
 
 @pytest.mark.parametrize('ebuild', [e for e in EBUILDS if ' -> ' in e.read_text()], ids=lambda p: p.name)

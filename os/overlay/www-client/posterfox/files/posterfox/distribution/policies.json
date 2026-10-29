@@ -1,0 +1,37 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableFeedbackCommands": true,
+    "DisableAppUpdate": true,
+    "DontCheckDefaultBrowser": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "UserMessaging": {
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "MoreFromMozilla": false,
+      "SkipOnboarding": true,
+      "Locked": false
+    },
+    "FirefoxHome": {
+      "SponsoredTopSites": false,
+      "SponsoredPocket": false,
+      "SponsoredStories": false,
+      "Stories": false,
+      "Locked": false
+    },
+    "ExtensionSettings": {
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "force_installed",
+        "install_url": "file:///usr/lib64/posterfox/distribution/extensions/uBlock0@raymondhill.net.xpi",
+        "private_browsing": true
+      }
+    },
+    "Preferences": {
+      "browser.tabs.inTitlebar": { "Value": 1, "Status": "default" },
+      "extensions.activeThemeID": { "Value": "cyberpunk-theme@poster.place", "Status": "default" }
+    }
+  }
+}
