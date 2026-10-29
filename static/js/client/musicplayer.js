@@ -31,6 +31,7 @@ window.PCMusicPlayerFactory = function(dep){
      * -- the previous one is revoked the moment the track changes, so a long session is one picture,
      * not a picture per song (the tablet is the device that runs out of memory). */
     _tags:new Map(), _cover:null,
+    _PRESS_FRESH_MS:10000,   // _nativeInit: an older press is not performed
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
@@ -83,13 +84,15 @@ window.PCMusicPlayerFactory = function(dep){
       this._nativeWired=true;
       try{ P.addListener('musicTransport', e=>{
         const a=(e&&e.action)||'', v=Number((e&&e.value)||0);
-        /* THE ACK IS FIRST AND UNCONDITIONAL. It is the service's only proof that anybody received
-         * the press, and it must not depend on the press being PERFORMABLE: a page that has just
-         * reloaded holds no track, so `_nativePush` (below, and rightly) refuses to send state for a
-         * player that has nothing to state — which would make a live, healthy client look exactly
-         * like a dead one. The service would then wake an app that is already awake and write "the
-         * player stopped responding" across a notification the user is looking at. */
+        /* THE ACK IS FIRST AND UNCONDITIONAL: the service's only proof the page is alive, performable press or not. */
         this._nativeAck();
+        /* A press runs when it is MADE, not when a frozen renderer thaws ("opening Files started playing music"):
+         * MusicPlugin stamps `at`; a stale sound-making press is reported, not played. No `at` (old APK) = as before. */
+        const at=Number((e&&e.at)||0), late=at>0 ? Math.abs(Date.now()-at) : 0;
+        if(late>this._PRESS_FRESH_MS && (a==='play'||a==='next'||a==='prev')){
+          this._nativeBlocked({ message:a+' press arrived '+Math.round(late/1000)+' s late (app asleep), not performed' });
+          return;
+        }
         if(a==='play'){ this._resumeOrPlay(); }
         else if(a==='pause'){ if(S._audioEl) S._audioEl.pause(); }
         // …and a skip on a page holding nothing is a RESUME, not a skip: next() there walks an empty

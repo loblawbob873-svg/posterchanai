@@ -51,6 +51,10 @@ public class MusicPlugin extends Plugin {
       JSObject data = new JSObject();
       data.put("action", action);
       data.put("value", value);
+      /* WHEN the press was made. A backgrounded app's renderer is frozen, so this event can wait in it and run
+       * minutes later, when the person next opens the app -- the page performs a sound-making press only while
+       * it is fresh (musicplayer.js _nativeInit), or "opening Files started playing music". */
+      data.put("at", System.currentTimeMillis());
       notifyListeners("musicTransport", data);
     };
     MusicService.setListener(transportListener);

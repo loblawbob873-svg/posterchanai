@@ -284,6 +284,19 @@ def test_the_transport_listener_is_armed_at_startup_not_at_first_play():
     assert startup.index("MusicPlayer._nativeInit();") < startup.index("MusicPlayer.consumeLaunch();")
 
 
+def test_every_transport_press_says_when_it_was_made():
+    """"Opening Files started playing music" (2026-10-29): a PLAY made while the app was in the background is handed
+    to a page whose renderer Android has frozen, and runs when the app is next opened. The page can refuse a stale
+    press only if the event says when it was made -- stamped in the ONE listener every emit() goes through, at emit
+    time. The page's half (it does not play a late press) is tests/client/
+    test_a_late_music_press_does_not_start_playback_full_app.py."""
+    load = re.search(r"public void load\(\) \{(.*?)\n  \}", PLUGIN, re.S)
+    assert load, "MusicPlugin.load moved — re-point this test"
+    body = load.group(1)
+    assert 'data.put("at", System.currentTimeMillis());' in body, body
+    assert body.index('data.put("at"') < body.index('notifyListeners("musicTransport", data)'), body
+
+
 def test_a_destroyed_bridge_cannot_keep_receiving_transport_presses():
     """MusicService outlives an Activity. A static listener aimed at that Activity's destroyed
     bridge makes emit() appear successful, preventing the cold-press revival path from running."""
