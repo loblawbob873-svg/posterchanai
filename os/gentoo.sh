@@ -4213,6 +4213,8 @@ liveCD() {
 	local EXCLUDES=(
 		proc sys dev run tmp mnt media lost+found
 		var/tmp var/cache/distfiles var/cache/binpkgs var/lib/portage/distfiles
+		# PosterFox's build scratch on the build VM (posterfox/tools/release.sh, ~40 GB while building): never OS payload.
+		var/tmp-build
 		# Previous release images and installer-test disks are build artifacts, not OS payloads.
 		# Keep the host's copies; including them nests old images and private VM state in the ISO.
 		var/iso var/cache/binhost

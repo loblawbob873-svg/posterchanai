@@ -19,6 +19,8 @@ def test_previous_iso_vm_and_binhost_cache_are_not_os_payload(tmp_path):
         "var/iso/pc-install.qcow2",
         "var/cache/binhost/binhost/Packages",
         "var/cache/binhost/binhost/desktop.gpkg.tar",
+        # PosterFox's build scratch on the build VM (posterfox/tools/release.sh): ~40 GB while a build runs.
+        "var/tmp-build/portage/www-client/posterfox-159.0-r9/work/x.o",
     )
     payloads = ("usr/bin/gentoo.sh", "opt/posterchan/resources/app.asar",
                 "var/db/pkg/app-misc/posterchan-desktop-1.0.1586/CONTENTS")
