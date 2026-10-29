@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from app.auth import get_admin_user
 from app.services.user_table import UserRow as User
-from app.services import emoji_service
+from app.services import emoji_service, emoji_sets
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/emoji", tags=["admin"])
@@ -82,12 +82,16 @@ async def upload_emoji(pack: str = Form(emoji_service.ROOT_PACK),
             errors.append({"file": f.filename or "?", "error": str(e)})
         finally:
             await f.close()
+    if added:
+        emoji_sets.schedule_publish()
     return JSONResponse({"ok": bool(added), "added": added, "errors": errors})
 
 
 @router.post("/rename")
 async def rename_emoji(body: EmojiRename, admin: User = Depends(get_admin_user)):
     try:
+        emoji_sets.schedule_publish()
+
         return JSONResponse({"ok": True, **emoji_service.rename_emoji(body.pack, body.shortcode,
                                                                       body.new_shortcode)})
     except ValueError as e:
@@ -98,6 +102,8 @@ async def rename_emoji(body: EmojiRename, admin: User = Depends(get_admin_user))
 async def delete_emoji(body: EmojiRef, admin: User = Depends(get_admin_user)):
     try:
         emoji_service.delete_emoji(body.pack, body.shortcode)
+        emoji_sets.schedule_publish()
+
         return JSONResponse({"ok": True})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -106,6 +112,8 @@ async def delete_emoji(body: EmojiRef, admin: User = Depends(get_admin_user)):
 @router.post("/pack")
 async def create_pack(body: PackRef, admin: User = Depends(get_admin_user)):
     try:
+        emoji_sets.schedule_publish()
+
         return JSONResponse({"ok": True, "name": emoji_service.create_pack(body.name)})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -114,8 +122,21 @@ async def create_pack(body: PackRef, admin: User = Depends(get_admin_user)):
 @router.post("/pack/delete")
 async def delete_pack(body: PackRef, admin: User = Depends(get_admin_user)):
     try:
+        emoji_sets.schedule_publish()
+
         return JSONResponse({"ok": True, "removed": emoji_service.delete_pack(body.name)})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OSError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sets")
+async def emoji_sets_listing(admin: User = Depends(get_admin_user)):
+    """The packs as Nostr emoji sets (kind 30030): each one's naddr, which any Nostr client can open and add."""
+    return JSONResponse({"sets": emoji_sets.listing()})
+
+
+@router.post("/sets/publish")
+async def emoji_sets_publish(admin: User = Depends(get_admin_user)):
+    return JSONResponse(await emoji_sets.publish_all(force=True))

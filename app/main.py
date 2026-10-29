@@ -891,6 +891,12 @@ async def startup():
                         await blossom_service.publish_operator_server_list(_db)
                     except Exception as e:
                         logging.warning(f"Blossom kind-10063 advertise failed: {e}")
+                    try:
+                        # The emoji packs as Nostr emoji sets (kind 30030); unchanged packs publish nothing.
+                        from app.services import emoji_sets
+                        await emoji_sets.publish_all()
+                    except Exception as e:
+                        logging.warning(f"Emoji sets publish failed: {e}")
                     finally:
                         _db.close()
                 _aio.create_task(_hydrate_settings())

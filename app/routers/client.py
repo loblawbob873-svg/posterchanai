@@ -389,6 +389,17 @@ def _emoji_base(request: Request) -> str:
     return f"{proto}://{host}/client/emoji"
 
 
+@router.get("/emoji-sets")
+async def client_emoji_sets():
+    """The emoji packs as Nostr emoji sets: the operator pubkey, this node's relay and each set's d-tag -- what
+    Settings -> Social needs to add them to a person's kind-10030 list (static/js/client/emojisets.js)."""
+    from app.services import emoji_sets
+    rows = emoji_sets.listing()
+    _sk, pk = emoji_sets._operator()
+    return JSONResponse({"pubkey": pk if rows else "", "relay": emoji_sets._relay_url(),
+                         "sets": [{"d": r["d"], "title": r["title"], "count": r["count"]} for r in rows]})
+
+
 @router.get("/emojis")
 async def client_emojis(request: Request):
     """The instance's custom emoji, for the client's picker.

@@ -879,6 +879,11 @@ window.PCSettingsFactory = function(dep){
             </div>
             <div class="muted small">The export is a <code>following_accounts.csv</code> in the format Mastodon, Pleroma, Akkoma and GoToSocial import — and so does this page, from theirs or from here.</div>
           </div>
+          <div class="us-conn"><div class="set-title small">This server's emoji in other Nostr clients</div>
+            <div class="us-plr-import"><button class="btn btn-ghost small" id="us-emoji-sets">Add the emoji packs to my Nostr emoji list</button>
+              <span class="muted small" id="us-emoji-sets-said" role="status"></span></div>
+            <div class="muted small">Amethyst, Nostrudel, Coracle and other Nostr apps then offer these packs in their emoji pickers. Packs you added elsewhere are kept.</div>
+          </div>
         </div>
         <div class="us-pane" data-pane="keys">
           <div class="muted small">API keys let external apps use the AI API as you.</div>
@@ -1441,6 +1446,12 @@ window.PCSettingsFactory = function(dep){
      * last presses: what was pressed, which session delivered it, and whether the page answered. "Car buttons do
      * nothing at all" is four different failures that look the same from the seat; this is where they differ.
      * The same lines go to `adb logcat -s PosterChanMusic`. An APK older than the call loses the row. */
+    { const b=$('#us-emoji-sets'), said=$('#us-emoji-sets-said');
+      if(b) b.onclick=async()=>{ b.disabled=true; if(said) said.textContent='Adding…';
+        try{ const M=await window.__PC.loadModule('emojisets.js','PCEmojiSets'); const r=await M.addAll();
+          if(said) said.textContent = r.added ? `Added ${r.added} pack${r.added===1?'':'s'}.` : `All ${r.total} pack${r.total===1?' is':'s are'} already in your list.`; }
+        catch(e){ if(said) said.textContent=(e&&e.message)||String(e); }
+        finally{ b.disabled=false; } }; }
     { const row=$('#us-music-row'), sum=$('#us-music-sum'), list=$('#us-music-presses'), startsEl=$('#us-music-starts'),
             rf=$('#us-music-refresh'), cp=$('#us-music-copy');
       const M=_capPlugin('MusicControls','status');

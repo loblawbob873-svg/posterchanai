@@ -186,6 +186,56 @@ async function emojiInit() {
     };
 
     emojiLoad(false);
+    emojiSetsLoad();
+    const pub = _em('emojiSetsPublish');
+    if (pub) pub.onclick = async () => {
+        pub.disabled = true; _em('emojiSetsStatus').textContent = 'Publishing…';
+        try {
+            const r = await fetch('/api/admin/emoji/sets/publish', { method: 'POST' });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+            _em('emojiSetsStatus').textContent = j.skipped ? ('Not published: ' + j.skipped)
+                : `Published ${j.published} of ${j.sets} set${j.sets === 1 ? '' : 's'}` + (j.withdrawn ? `, withdrew ${j.withdrawn}` : '');
+            emojiSetsLoad();
+        } catch (err) { _em('emojiSetsStatus').textContent = 'Failed: ' + err.message; }
+        finally { pub.disabled = false; }
+    };
+}
+
+// The packs as Nostr emoji sets: each one's naddr, with Copy (a plain textarea copy works in every shell).
+async function emojiSetsLoad() {
+    const box = _em('emojiSets');
+    if (!box) return;
+    try {
+        const r = await fetch('/api/admin/emoji/sets');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const sets = (await r.json()).sets || [];
+        box.replaceChildren();
+        if (!sets.length) {
+            box.textContent = 'No sets yet: set the NIP-05 domain (Admin → Nostr Relay) and add a pack.';
+            return;
+        }
+        for (const s of sets) {
+            const row = document.createElement('div'); row.className = 'emoji-set';
+            const name = document.createElement('b'); name.textContent = s.title;
+            const n = document.createElement('span'); n.className = 'emoji-set-n'; n.textContent = `${s.count} emoji`;
+            const code = document.createElement('code'); code.className = 'emoji-set-naddr'; code.textContent = s.naddr; code.title = s.naddr;
+            const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn-secondary'; copy.textContent = 'Copy link';
+            copy.onclick = async () => {
+                const ok = await emojiCopy('nostr:' + s.naddr);
+                copy.textContent = ok ? 'Copied' : 'Copy failed'; setTimeout(() => { copy.textContent = 'Copy link'; }, 1500);
+            };
+            row.append(name, n, code, copy);
+            box.appendChild(row);
+        }
+    } catch (err) { box.textContent = 'Could not load the sets: ' + err.message; }
+}
+
+async function emojiCopy(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (_) {}
+    t.remove(); return ok;
 }
 
 // Every tab is in the DOM from the start (they're shown/hidden), so this could wire on load — but

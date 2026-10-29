@@ -41,4 +41,15 @@
             <div class="emoji-more"><button type="button" class="btn-secondary" id="emojiMore" hidden>Load more</button></div>
         </div>
     </fieldset>
+    <fieldset>
+        <legend>Nostr emoji sets</legend>
+        <p class="bots-hint">Every pack is published as a Nostr <b>emoji set</b> (NIP-51 kind 30030), signed by this
+            node's key on its relay, so Amethyst, Nostrudel, Coracle and other Nostr clients can add it. Share a set's
+            link; it updates by itself a few seconds after you add, rename or delete an emoji.</p>
+        <div class="emoji-bar">
+            <button type="button" class="btn-secondary" id="emojiSetsPublish">Publish now</button>
+            <span class="emoji-status" id="emojiSetsStatus"></span>
+        </div>
+        <div class="emoji-sets" id="emojiSets"></div>
+    </fieldset>
 </div>

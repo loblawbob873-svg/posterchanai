@@ -748,3 +748,14 @@
     .pcdb-stats { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .pcdb-stats dd { margin: 0 0 8px; }
 }
+
+/* Nostr emoji sets: one row per set -- name, count, its naddr (ellipsised, full on hover) and Copy. Wraps on a phone. */
+.emoji-sets { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.emoji-set { display: grid; grid-template-columns: minmax(80px, auto) auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
+    padding: 8px 10px; border: 1px solid var(--border-color, #333); border-radius: 8px; }
+.emoji-set-n { color: var(--text-secondary); font-size: 12px; }
+.emoji-set-naddr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; min-width: 0; }
+@media (max-width: 640px) {
+    .emoji-set { grid-template-columns: 1fr auto; }
+    .emoji-set-naddr { grid-column: 1 / -1; }
+}
