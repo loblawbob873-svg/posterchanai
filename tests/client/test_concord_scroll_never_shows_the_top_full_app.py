@@ -89,8 +89,11 @@ def test_the_room_never_flashes_its_oldest_messages(width):
         seen = await b.js("__stopWatch(),__seen")
         assert seen, "sending did not repaint the room — the check saw nothing"
         assert all(s["fromBottom"] <= 2 for s in seen), f"sending showed the room away from the newest message: {seen}"
-        # Reading back when one arrives.
-        await b.js("const b=document.querySelector('.cc-messages');b.scrollTop=Math.max(0,b.scrollTop-900);b.dispatchEvent(new Event('scroll'))")
+        # Reading back when one arrives -- scrolled up with a real wheel: only the reader's own input unpins a room.
+        r = await b.js("(()=>{const q=document.querySelector('.cc-messages').getBoundingClientRect();return {x:q.left+q.width/2,y:q.top+q.height/2};})()")
+        for _ in range(3):
+            await b.call('Input.dispatchMouseEvent', {'type': 'mouseWheel', 'x': r['x'], 'y': r['y'], 'deltaX': 0, 'deltaY': -300})
+            await asyncio.sleep(.1)
         await asyncio.sleep(.6)
         before = await b.js("Math.round(document.querySelector('.cc-messages').scrollTop)")
         await b.js(WATCH)

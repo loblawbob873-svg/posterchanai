@@ -1232,7 +1232,11 @@
    *
    * A `scroll` event cannot START a gesture — our own writes fire one, and that would latch this
    * on for ever. It only EXTENDS one that a real input device began, which is how momentum past
-   * the end of the finger keeps counting. */
+   * the end of the finger keeps counting.
+   *
+   * It is also the only thing that may UNPIN a room ("the scroll is not at the latest message", the laptop
+   * 10-29: saved state pinned:false, nobody had scrolled). A scroll with no hand on it -- a resize, a clamp,
+   * a re-render after Send -- was judged by distance and left the room off its newest message for good. */
   let chatGestureUntil=0;
   function chatHandOn(){ return Date.now()<chatGestureUntil; }
   function scrollGesture(scroller){
@@ -1241,6 +1245,8 @@
     const on=(type,fn)=>{ try{ if(scroller.addEventListener)scroller.addEventListener(type,fn,{passive:true}); }catch(_){ } };
     on('pointerdown',begin); on('touchstart',begin); on('touchmove',begin);
     on('wheel',begin); on('keydown',begin); on('scroll',extend);
+    /* Scrolling keys reach the room with focus on the page, not on the scroller. */
+    if(!scrollGesture.keys){ scrollGesture.keys=1; try{ document.addEventListener('keydown',e=>{ if(/^(PageUp|PageDown|ArrowUp|ArrowDown|Home|End| )$/.test(e.key)&&!/^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||''))begin(); },true); }catch(_){ } }
     return chatHandOn;
   }
   /* A REPAINT MID-FLICK IS A JERK NO RESTORE CAN UNDO.
@@ -7412,7 +7418,7 @@
       boundOwnerPk=String((boundRoom&&boundRoom.cord&&boundRoom.cord.bundle&&
         (boundRoom.cord.bundle.owner||boundRoom.cord.bundle.creator_npub))||''),
       isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey;
-    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||programmaticScrollEvent(scroller)||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
+    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||programmaticScrollEvent(scroller)||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); /* only the reader unpins a room (scrollGesture) */ if(!chatHandOn()&&st.pinned!==false){ setProgrammaticScroll(scroller,scroller.scrollHeight); return; } st.top=scroller.scrollTop;st.height=scroller.scrollHeight;if(chatHandOn())st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(activeGet()||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
