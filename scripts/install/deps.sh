@@ -173,6 +173,25 @@ check_dependencies() {
         esac
     fi
 
+    # Tor. Optional, and the app says so at every start when it is missing ("[TOR] Tor binary not found. Install: apt
+    # install tor", measured on a fresh Debian install 2026-10-29) -- so the installer says it first, with the command
+    # for this distribution. The Docker image ships it; a bare-metal install only has it if the operator adds it.
+    # Without it, outbound traffic that the app's proxy would send through Tor goes direct, or is refused where a
+    # feature must not use this server's own address.
+    if command -v tor &>/dev/null; then
+        print_success "tor found (the app's outbound proxy can use it)"
+    else
+        print_warning "tor not found - optional; the app's outbound proxy cannot route through Tor"
+        case "$DISTRO" in
+            gentoo) echo "  Install with: emerge -av net-vpn/tor" ;;
+            arch)   echo "  Install with: pacman -S tor" ;;
+            debian) echo "  Install with: apt install tor" ;;
+            fedora) echo "  Install with: dnf install tor" ;;
+            suse)   echo "  Install with: zypper install tor" ;;
+            *)      echo "  Install Tor for your distribution" ;;
+        esac
+    fi
+
     # Check for pax-utils (scanelf) - needed for Intel Arc on hardened kernels
     if [ "$BACKEND" = "intel" ]; then
         if ! command -v scanelf &>/dev/null; then
