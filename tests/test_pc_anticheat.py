@@ -288,6 +288,10 @@ class TravelBox(TpmBox):
             "title Current\nversion 6.18.54-gentoo-dist\noptions rd.luks.key=/boot/keyfile.key\n")
         self.initrd = self.esp / mid / "6.18.54-gentoo-dist/initrd"
         self.initrd.write_text("with key")
+        (self.root / "usr/lib/modules/6.18.54-gentoo-dist").mkdir(parents=True)
+        # An uninstalled kernel's directory: no entry, no modules, and the key still inside (the laptop, 6.18.43).
+        self.orphan = self.esp / mid / "6.18.43-gentoo-dist/initrd"
+        self.orphan.parent.mkdir(parents=True); self.orphan.write_text("with key")
         self.conf = self.root / "etc/dracut.conf"
         self.conf.write_text('add_dracutmodules+=" crypt systemd-cryptsetup dm rootfs-block "\n'
                              'install_items+=" /boot/unlock.sh /boot/keyfile.key "\n')
@@ -315,6 +319,7 @@ def test_travel_mode_takes_the_key_out_of_every_place_a_start_could_find_it(tmp_
     assert not box.keyfile.exists(), "the key file is still on the unencrypted boot partition"
     assert f"--unlock-key-file={kept} --wipe-slot=tpm2" in calls, "the TPM still opens the disk by itself"
     assert box.initrd.read_text().strip() == "no key", "the startup image still carries the key"
+    assert not box.orphan.exists(), "an old kernel's image kept the key on the boot partition"
     assert "# travel mode: install_items" in box.conf.read_text()
     assert (box.root / "etc/posterchan/travel/on").exists()
     # ...and the boot service leaves it that way.

@@ -49,15 +49,21 @@ rootdev() {   # the LUKS device the root file system is on
 	local src; src="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*//')"
 	cryptsetup status "${src##*/}" 2>/dev/null | awk '$1 == "device:" {print $2}'
 }
-rebuild_initrds() {   # every installed kernel's startup image, with the dracut.conf as it now stands
-	local mid e kver img n=0
+rebuild_initrds() {   # every startup image of this machine, with the dracut.conf as it now stands
+	# EVERY image on the boot partition, not only those with an entry: an old kernel's directory outlives its entry
+	# and still held the key on the laptop (6.18.43/.48, 2026-10-29). One whose kernel is gone cannot be rebuilt and
+	# boots nothing; with the key going away ("$1" = strip) it is deleted, otherwise left alone.
+	local mid img kver n=0
 	mid="$(cat "${PC_AC_ROOT:-}/etc/machine-id" 2>/dev/null)"
-	for e in "$ESP_DIR"/loader/entries/"$mid"-*.conf; do
-		[ -f "$e" ] || continue
-		kver="$(awk '$1 == "version" {print $2}' "$e")"; img="$ESP_DIR/$mid/$kver/initrd"
-		[ -n "$kver" ] && [ -f "$img" ] || continue
-		dracut --force --quiet --add " crypt systemd-cryptsetup dm rootfs-block " "$img" "$kver" || return 1
-		n=$((n + 1))
+	for img in "$ESP_DIR/$mid"/*/initrd; do
+		[ -n "$mid" ] && [ -f "$img" ] || continue
+		kver="$(basename "$(dirname "$img")")"
+		if [ -d "${PC_AC_ROOT:-}/usr/lib/modules/$kver" ] || [ -d "${PC_AC_ROOT:-}/lib/modules/$kver" ]; then
+			dracut --force --quiet --add " crypt systemd-cryptsetup dm rootfs-block " "$img" "$kver" || return 1
+			n=$((n + 1))
+		elif [ "${1:-}" = strip ]; then
+			rm -f "$img" || return 1
+		fi
 	done
 	[ "$n" -gt 0 ]
 }
@@ -206,7 +212,7 @@ travel)
 		# The images first (the step that can fail on its own), so a failure leaves everything as it was.
 		sed -i 's|^\(install_items+=.*/boot/keyfile.key.*\)$|# travel mode: \1|' "$DRACUT_CONF"
 		undo_images() { sed -i 's|^# travel mode: ||' "$DRACUT_CONF"; rebuild_initrds; }
-		rebuild_initrds || { undo_images; echo "travel mode: the startup images could not be rebuilt -- nothing was changed" >&2; exit 1; }
+		rebuild_initrds strip || { undo_images; echo "travel mode: the startup images could not be rebuilt -- nothing was changed" >&2; exit 1; }
 		if systemd-cryptenroll "$dev" 2>/dev/null | grep -q tpm2; then
 			systemd-cryptenroll "$dev" --unlock-key-file="$TRAVEL/keyfile.key" --wipe-slot=tpm2 \
 				|| { undo_images; echo "travel mode: the TPM key could not be removed -- nothing was changed" >&2; exit 1; }
