@@ -87,3 +87,13 @@ def test_trusting_the_key_imports_and_lsigns_it_in_portages_keyring(tmp_path):
     assert "--import /etc/portage/gnupg/posterchanos-binpkgs.asc" in calls
     assert "--quick-lsign-key 7B690AA70C09AD1AD7748CF5B6F8DA9DDF2EF936" in calls
     assert "BEGIN PGP PUBLIC KEY BLOCK" in (tmp_path / "etc/portage/gnupg/posterchanos-binpkgs.asc").read_text()
+
+
+def test_the_session_accepts_either_browser_and_the_browser_comes_first():
+    """posterchanos-shell used to REQUIRE firefox-bin, so the ISO could not drop it; it accepts PosterFox or firefox-bin
+    now. The browser step must run before the shell package is emerged, or Portage would pick PosterFox THROUGH the
+    shell's dependency -- outside installBrowser's binary-only guard."""
+    eb = next((ROOT / "os/overlay/app-misc/posterchanos-shell").glob("posterchanos-shell-*.ebuild")).read_text()
+    assert "|| ( www-client/posterfox www-client/firefox-bin )" in eb
+    assert not re.search(r"^\twww-client/firefox-bin$", eb, re.M)
+    assert SRC.index("gentoo.sh browser; then") < SRC.index("/usr/bin/gentoo.sh posterchan-shell")

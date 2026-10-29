@@ -26,6 +26,9 @@ KEYWORDS="amd64"
 IUSE="monero gamescope +office"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
+# The BROWSER is PosterFox, or firefox-bin where gentoo.sh's installBrowser had no PosterFox binary to use: either one
+# satisfies the session, so a machine that already has firefox-bin is never made to fetch -- or compile -- PosterFox by
+# an update. On a fresh install the browser is in place before this package is emerged (gentoo.sh browser runs first).
 RDEPEND="
 	>=dev-lang/python-3.10
 	app-arch/libarchive
@@ -48,7 +51,7 @@ RDEPEND="
 	gui-apps/wl-clipboard
 	x11-misc/ydotool
 	app-misc/ddcutil
-	www-client/firefox-bin
+	|| ( www-client/posterfox www-client/firefox-bin )
 	net-wireless/bluez
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
