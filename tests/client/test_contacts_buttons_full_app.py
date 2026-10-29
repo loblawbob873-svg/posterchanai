@@ -128,6 +128,8 @@ def test_share_and_delete_a_contact():
         await contacts(b)
         await b.until("!!document.querySelector('.ct-row[data-uid=alice]')")
         await b.js("document.querySelector('.ct-row[data-uid=alice]').click(); 1")
+        await b.until("!!document.querySelector('#ctc-edit')")
+        await b.js("document.querySelector('#ctc-edit').click(); 1")
         await b.until("!!document.querySelector('#cc-share')")
         await b.js("document.querySelector('#cc-share').click(); 1")
         await b.until("__shared.length===1")
@@ -135,7 +137,7 @@ def test_share_and_delete_a_contact():
         await b.js("document.querySelector('#cc-del').click(); 1")
         await confirm(b)
         await b.until("__calls.some(c=>c.op==='DELETE /api/contacts/cards?book=main&uid=alice')")
-        await b.until("!document.querySelector('#cc-del') && !document.querySelector('.ct-row[data-uid=alice]')")
+        await b.until("!document.querySelector('#cc-del') && !document.querySelector('.ctc') && !!document.querySelector('#ct-new') && !document.querySelector('.ct-row[data-uid=alice]')")
         assert not await b.js("__errors"), await b.js("__errors")
     _run(check)
 

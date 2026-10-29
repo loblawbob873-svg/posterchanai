@@ -4498,6 +4498,7 @@
           // return to the results — otherwise it leaves the whole screen with the article still up
           // and the results (which are the thing you were working through) gone.
           if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
+          if(window.PCContacts && PCContacts.cardOpen && PCContacts.cardOpen()){ try{ PCContacts.closeCard(); }catch(_){} return; }
           // A VM console is a full-window overlay over the Virtual Machines screen: Back closes the
           // console and returns to the VM, never leaves the view with a guest's screen still up.
           if(window.PCVms && PCVms.consoleOpen && PCVms.consoleOpen()){ try{ PCVms.closeConsole(); }catch(_){} return; }

@@ -132,7 +132,17 @@ async def open_row(d, name):
     sel = "[...document.querySelectorAll('#feed .ct-row')].find(r=>r.querySelector('.ct-name').textContent.trim()===%s)" % json.dumps(name)
     await F.wait(d, "!!" + sel, 20, 'the row for ' + name)
     await d.b.js(sel + ".click();true")
+    # A tap shows the contact's card; its Edit opens the editor.
+    await F.wait(d, "!!document.querySelector('#feed .ctc #ctc-edit')", 15, 'the card for ' + name)
+    await d.b.js("document.querySelector('#ctc-edit').click();true")
     await F.wait(d, "!!document.querySelector('#cc-save')", 15, 'the editor for ' + name)
+
+
+async def back_to_list(d):
+    """A saved edit lands back on the contact's card; its Back arrow returns to the list."""
+    await F.wait(d, "!!document.querySelector('#ctc-back') && !document.querySelector('#cc-save')", 20, 'the card after Save')
+    await d.b.js("document.querySelector('#ctc-back').click();true")
+    await F.wait(d, "!!document.querySelector('#ct-new')", 15, 'the list again')
 
 
 def js_list(v):
@@ -171,6 +181,7 @@ async def add_edit_and_delete_reach_the_relay_and_a_fresh_device(S):
     await open_row(d, 'Ada Lovelace')
     await fill_and_save(d, phone='+15550199')
     await F.until(lambda: '+15550199' in by_fn(ctx.cards(pk, book)).get('Ada Lovelace', ''), 20, 'the edit on the relay', d)
+    await back_to_list(d)
     assert '+15550100' not in by_fn(ctx.cards(pk, book))['Ada Lovelace']
     # A second contact, then a FRESH device of the same account reads both back through the node.
     await d.b.js("document.querySelector('#ct-new').click();true")

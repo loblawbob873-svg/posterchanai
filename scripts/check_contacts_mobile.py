@@ -22,6 +22,8 @@ Assertions, each a way a contact list specifically breaks:
   under-nav            The list's bottom sits under the fixed .mobilenav.
   state-lost           Leaving the view and coming back must keep the book and the search. #feed is
                        shared and blanked on entry.
+  card-*               Tapping a contact shows its CARD (no form fields), within the screen, every
+                       control at least 44px on a phone; Edit on the card opens the editor.
   editor-loses-data    Opening a contact and saving must preserve the photo and the unknown fields;
                        this is the whole reason vcard.js keeps them.
 
@@ -104,6 +106,11 @@ window.__PC = {
   ensureAiSession: async () => ({ can_ai:true }),
   uiConfirm: async () => true,
   switchView: v => { window.__view = v; },
+  copyValue: () => true,
+  // app.js's on-demand loader: a tapped contact's card (contactcard.js) arrives through it.
+  loadModule: (file, glob) => window[glob] ? Promise.resolve(window[glob]) : new Promise(res => {
+    const s = document.createElement('script'); s.src = '/static/js/client/' + file;
+    s.onload = () => res(window[glob] || null); s.onerror = () => res(null); document.head.appendChild(s); }),
   get ME(){ return {pubkey:'me'}; },
   get VIEW(){ return window.__view; },
 };
@@ -178,6 +185,17 @@ EDITOR = r"""(async () => {
   const row = [...document.querySelectorAll('.ct-row')].find(r => r.dataset.uid === 'c-fire');
   if (!row) return {error:'no row for c-fire'};
   row.click();
+  for(let i=0;i<60 && !document.querySelector('#feed .ctc');i++) await new Promise(r=>setTimeout(r,50));
+  const ctc = document.querySelector('#feed .ctc');
+  if (!ctc) return {error:'tapping a contact showed no contact card'};
+  const card = { inputs: ctc.querySelectorAll('input, textarea, select').length,
+    modal: !!document.querySelector('#modal-root .modal'),
+    wide: document.documentElement.scrollWidth > window.innerWidth + 1,
+    name: (ctc.querySelector('.ctc-name') || {}).textContent || '',
+    small: [...ctc.querySelectorAll('button')].filter(b => { const q = b.getBoundingClientRect();
+      return q.height < 44 || (b.classList.contains('ctc-act') && q.width < 44); })
+      .map(b => (b.id || b.className).slice(0, 20) + ':' + Math.round(b.getBoundingClientRect().height)) };
+  document.querySelector('#ctc-edit').click();
   await new Promise(r=>setTimeout(r,250));
   const m = document.querySelector('#modal-root .modal');
   if (!m) return {error:'no editor opened'};
@@ -211,7 +229,7 @@ EDITOR = r"""(async () => {
   m.querySelector('#cc-save').click();
   await new Promise(r=>setTimeout(r,300));
   const saved = window.__saved;
-  return { fields: inputs.length, small, wide, actions,
+  return { card, fields: inputs.length, small, wide, actions,
            sentVcf: saved ? String(saved.vcf) : '', uid: saved ? saved.uid : '' };
 })()"""
 
@@ -472,6 +490,17 @@ async def drive(url):
                     problems.append((label, "missing-control",
                                      f"the contact editor did not open ({(ed or {}).get('error')})"))
                 else:
+                    c = ed["card"]
+                    if c["inputs"] or c["modal"]:
+                        problems.append((label, "card-is-a-form",
+                                         f"tapping a contact opened a form ({c['inputs']} fields)"))
+                    if c["name"].strip() != "Fire DEPARTMENT":
+                        problems.append((label, "card-missing", f"the card is titled {c['name']!r}"))
+                    if c["wide"]:
+                        problems.append((label, "horizontal-overflow", "the contact card is wider than the screen"))
+                    if phone:
+                        for sm in c["small"]:
+                            problems.append((label, "card-tiny-tap", sm))
                     if ed["wide"]:
                         problems.append((label, "horizontal-overflow",
                                          "the editor is wider than the screen"))

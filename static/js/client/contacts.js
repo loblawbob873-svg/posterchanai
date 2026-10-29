@@ -34,7 +34,7 @@
     // on this device is NOT an empty book: drawn as "No contacts in this book yet" it told a fresh
     // device that the address book had been emptied.
     failed:{},
-    scroll:0,
+    scroll:0, open:'',          // the contact shown (contactcard.js), '' = the list
   };
 
   function init(){
@@ -302,6 +302,9 @@
         const r = $('#ct-retry', feed); if(r) r.onclick = ()=>{ r.disabled = true; load(); };
         return;
       }
+      const oc = S.open && cards().find(x => x.uid === S.open);
+      if(oc && window.PCContactCard) return PCContactCard.render(feed, oc, cardDeps);
+      S.open = '';
       /* The contacts ARE on screen; what failed is finding out whether they changed. A banner over
        * the list says so without taking the list away — the distinction the old error page could
        * not draw, because it replaced the whole view. */
@@ -343,19 +346,40 @@
       }
       wireList(root);
       const sc = $('#feed');
-      if(sc) sc.onscroll = ()=>{ if(inView()) S.scroll = sc.scrollTop; };
+      if(sc) sc.onscroll = ()=>{ if(inView() && !S.open) S.scroll = sc.scrollTop; };
     }
 
     function wireList(root){
       $$('.ct-row', root).forEach(b => b.onclick = ()=>{
         const c = cards().find(x => x.uid === b.dataset.uid);
-        if(c) editCard(c);
+        if(c) openCard(c);
       });
       $$('.ct-jump', root).forEach(b => b.onclick = ()=>{
         const el = $('#ct-l-' + CSS.escape(b.dataset.l), root);   // '#' is a letter here, and '#ct-l-#' is not a selector
         if(el) el.scrollIntoView({ block:'start' });
       });
     }
+
+    async function openCard(c){
+      const m = await PC.loadModule('contactcard.js', 'PCContactCard');
+      if(!m) return editCard(c);
+      if(inView()){ S.open = c.uid; paint(); }
+    }
+    const dial = n => { window.location.href = 'tel:' + encodeURIComponent(n); };
+    async function textTo(n){
+      const P = PC.capPlugin ? PC.capPlugin('Sms', 'openConversation') : null;   // the PLUGIN, not the method
+      if(P){
+        try{ const r = await P.openConversation({ address:n }); if(r && r.opened) return; }catch(err){
+          toast('could not open Texts: ' + ((err && err.message) || 'error')); return;
+        }
+      }
+      /* Browser/PosterChanOS: use the existing Texts window, never a popup. Its late loader can
+         finish after switchView, so carry the requested recipient until render consumes it. */
+      window.__PC_SMS_OPEN_ADDRESS = n;
+      PC.switchView('texts');
+    }
+    const closeCard = () => { S.open = ''; paint(); };
+    const cardDeps = { back: closeCard, edit: c => editCard(c), text: textTo };
 
     // ---- editor ------------------------------------------------------------------------------
     function fieldRows(kind, rows, ph){
@@ -469,21 +493,9 @@
         const share = $('#cc-share', root);
         const firstNumber = () => String((((c.tels||[]).find(t=>String((t&&t.value)||'').trim()))||{}).value||'').trim();
         const call = $('#cc-call', root);
-        if(call) call.onclick = ()=>{ const n=firstNumber();if(n)window.location.href='tel:'+encodeURIComponent(n); };
+        if(call) call.onclick = ()=>{ const n=firstNumber(); if(n) dial(n); };
         const text = $('#cc-text', root);
-        if(text) text.onclick = async ()=>{
-          const n=firstNumber(); if(!n)return;
-          const open = PC.capPlugin ? PC.capPlugin('Sms', 'openConversation') : null;
-          if(open){
-            try{ const r=await open({address:n});if(r&&r.opened)return; }catch(err){
-              toast('could not open Texts: '+((err&&err.message)||'error')); return;
-            }
-          }
-          /* Browser/PosterChanOS: use the existing Texts window, never a popup. Its late loader can
-             finish after switchView, so carry the requested recipient until render consumes it. */
-          window.__PC_SMS_OPEN_ADDRESS=n;
-          PC.switchView('texts');
-        };
+        if(text) text.onclick = ()=>{ const n=firstNumber(); if(n) textTo(n); };
         if(share) share.onclick = async ()=>{
           const name = V().displayName(c) || 'Contact';
           const vcf = V().serialize(c);
@@ -519,7 +531,7 @@
       if(!inView()) return false;
       const card = cards().find(c => (c.tels || []).some(t => _numKey(t && t.value) === wanted));
       if(!card){ S.q = String(number || ''); paint(); return false; }
-      editCard(card);
+      openCard(card);
       return true;
     }
 
@@ -1396,6 +1408,8 @@
       },
       openPhone,
       addPhone,
+      cardOpen: () => !!S.open && inView(),   // Android Back closes the card first (app.js)
+      closeCard,
       reload: load,
       /* ⋯ → Addressbooks, reachable without the DOM. The row that decides whether this phone can
        * sync to its own Contacts app is inside it, and "it renders nothing at all" is precisely the

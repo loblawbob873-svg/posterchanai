@@ -141,6 +141,8 @@ async def a_contact_from_the_phone_shows_on_the_web_and_the_web_edit_reaches_the
     await F.wait(d, "%s.includes('Anna Müller')" % names, 30, "the phone's contact on the web")
     await d.b.js("[...document.querySelectorAll('#feed .ct-row')].find(r=>r.querySelector('.ct-name').textContent"
                  ".trim()==='Anna Müller').click();true")
+    await F.wait(d, "!!document.querySelector('#ctc-edit')", 15, "the contact's card")
+    await d.b.js("document.querySelector('#ctc-edit').click();true")
     await F.wait(d, "!!document.querySelector('#cc-save') && !!document.querySelector('#cc-family')", 15, 'the editor')
     await d.b.js("(()=>{const i=document.querySelector('#cc-family');i.value='Müller-Lüdenscheidt';"
                  "i.dispatchEvent(new Event('input',{bubbles:true}));return true})()")
