@@ -119,7 +119,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: open, never at boot. 8.1774 MB measured.
 #: ...and 8.178 -> 8.180 for the Snap Layouts CARDS (thirds, two-thirds + a third, half + quarters) and their zones.
 #: 8.1792 MB measured.
-BUDGET_MB = 8.180
+#: ...and 8.180 -> 8.185 for WORKSPACES (virtual desktops): window ownership, the tray switcher, the switch label, keys and
+#: the compositor ticks -- boot code, since every window and the taskbar read it. 8.1845 MB measured.
+BUDGET_MB = 8.185
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

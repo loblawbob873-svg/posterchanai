@@ -1820,6 +1820,7 @@
 
   function focusWin(w, render){
     if(!w) return;
+    if((w.ws | 0) !== _wsCur && wins.includes(w)){ _wsCur = w.ws | 0; _wsApply(); _wsSay(); }
     w.lastFocus = Date.now();           // capParked keeps the most recently used windows' content
     w.hibernated = false;
     const focusToken=_claimFocus();
@@ -2517,7 +2518,7 @@
     desk.appendChild(el);
     // noFeed is set BEFORE the focusWin at the end of this function, or that call claims the one live
     // #feed into a window with no use for it — blanking whichever window was actually showing something.
-    const w = { id: ++seq, view, title: label, icon, el, body: $('.osw-body', el),
+    const w = { id: ++seq, ws: _wsCur, view, title: label, icon, el, body: $('.osw-body', el),
                 slot: $('.osw-slot', el), min: false, max: false, rect: r,
                 render: render || null, noFeed: !!noFeed,
                 messagesTab:(view==='messages'||view==='concord')?view:'' };
@@ -2569,6 +2570,8 @@
       focusWin(w, false);
       showCtx(e.clientX, e.clientY, [
         {label:'Move to other display', run:()=>{moveToOtherMonitor(w);}},
+        {sep:true},
+        ..._wsMenu(w),
         {sep:true},
         {label:'Snap left', run:()=>snapTo(w,'left')},
         {label:'Snap right', run:()=>snapTo(w,'right')},
@@ -5777,7 +5780,7 @@
       if(!scale) return;
 
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
-                                             minimised: !!w.min,
+                                             minimised: !!(w.min || w.offws),
                                              rect: _frameRect(w), w }));
       /* A native surface is a floating Sway window and the desktop renderer is tiled, so a native
        * surface wins compositor stacking even when one of our HTML windows has the higher desktop
@@ -5787,7 +5790,7 @@
        * or leaving a black rectangle. Focusing the native frame raises its z and the same plan
        * restores its real surface immediately. */
       const htmls = wins.filter(w => w.native == null)
-        .map(w => ({z:_zOf(w), minimised:!!w.min, rect:_frameRect(w)}));
+        .map(w => ({z:_zOf(w), minimised:!!(w.min || w.offws), rect:_frameRect(w)}));
       const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
       const stash = new Set(plan.stash);
       for(const it of items){
@@ -6409,11 +6412,73 @@
      * making a moved Terminal maximise back on monitor one. Ordinary closes retain normal focus. */
     if(opts && opts.preserveFocus) drawBar();
     else{
-      const next = wins.filter(x => !x.min).pop();
+      const next = wins.filter(x => !x.min && !x.offws).pop();
       if(next) focusWin(next); else drawBar();
     }
   }
 
+  /* WORKSPACES (virtual desktops): every window belongs to one; switching hides the others' windows and their taskbar
+   * buttons (a native app inside a frame is stashed in the compositor exactly as a minimised one is -- nsync reads
+   * `offws`). How many there are is remembered per device; a window opened lands on the workspace in front. */
+  const WS_KEY = 'osWorkspaces', WS_MAX = 9;
+  let _wsN = 0, _wsCur = 0;
+  function wsCount(){ if(!_wsN){ try{ const v = settings().get(WS_KEY, null); _wsN = Math.max(1, Math.min(WS_MAX, (v && v.n) | 0)); }catch(_){ _wsN = 1; } } return _wsN || 1; }
+  function _wsSave(){ try{ settings().set(WS_KEY, { n: wsCount() }); }catch(_){ } }
+  function _wsApply(){
+    for(const w of wins){
+      const off = (w.ws | 0) !== _wsCur;
+      w.offws = off;
+      if(w.el) w.el.classList.toggle('osw-offws', off);
+    }
+    if(nativeWins().length) nsync();
+    drawBar();
+  }
+  function _wsSay(){
+    if(!root) return;
+    let t = root.querySelector('.os-ws-say');
+    if(!t){ t = document.createElement('div'); t.className = 'os-ws-say'; root.appendChild(t); }
+    t.textContent = 'Workspace ' + (_wsCur + 1);
+    t.classList.remove('on'); void t.offsetWidth; t.classList.add('on');
+  }
+  function switchWs(i){
+    i = Math.max(0, Math.min(wsCount() - 1, i | 0));
+    if(i === _wsCur) return;
+    _wsCur = i;
+    _wsApply();
+    const top = wins.filter(w => !w.min && !w.offws).sort((a, b) => _zOf(b) - _zOf(a))[0];
+    if(top) focusWin(top);
+    _wsSay();
+  }
+  function addWs(){
+    if(wsCount() >= WS_MAX){ osSay('Nine workspaces is the most'); return; }
+    _wsN = wsCount() + 1; _wsSave(); switchWs(_wsN - 1);
+  }
+  function removeWs(i){
+    const n = wsCount(); if(n <= 1) return;
+    const into = i > 0 ? i - 1 : 0;
+    for(const w of wins){ const k = w.ws | 0; if(k === i) w.ws = into; else if(k > i) w.ws = k - 1; }
+    _wsN = n - 1; _wsSave();
+    if(_wsCur >= i && _wsCur > 0) _wsCur--;
+    _wsApply(); _wsSay();
+  }
+  function moveToWs(w, i){
+    if(!w) return;
+    if(i >= wsCount()){ if(wsCount() >= WS_MAX) return; _wsN = wsCount() + 1; _wsSave(); i = _wsN - 1; }
+    w.ws = i; _wsApply();
+  }
+  function _wsMenu(w){
+    const items = [];
+    for(let i = 0; i < wsCount(); i++) if(i !== (w.ws | 0)) items.push({ label: 'Move to workspace ' + (i + 1), run: () => moveToWs(w, i) });
+    if(wsCount() < WS_MAX) items.push({ label: 'Move to a new workspace', run: () => moveToWs(w, wsCount()) });
+    return items;
+  }
+  function _wsBarHtml(){
+    const n = wsCount();
+    let h = '<div class="os-ws" role="tablist" aria-label="Workspaces">';
+    if(n > 1) for(let i = 0; i < n; i++)
+      h += `<button class="os-ws-b${i === _wsCur ? ' on' : ''}" data-ws="${i}" role="tab" aria-selected="${i === _wsCur}" title="Workspace ${i + 1} (Ctrl+Alt+Left/Right)">${i + 1}</button>`;
+    return h + `<button class="os-ws-add" title="New workspace" aria-label="New workspace">+</button></div>`;
+  }
   function minimise(w){
     w.min = true;
     w.el.classList.add('minimised');
@@ -6423,7 +6488,7 @@
      * identify. */
     if(nativeWins().length) nsync();
     if(realFeed && realFeed.parentElement === w.body) releaseFeed(true);   // it is coming back
-    const next = wins.filter(x => !x.min).pop();
+    const next = wins.filter(x => !x.min && !x.offws).pop();
     if(next) focusWin(next); else drawBar();
   }
 
@@ -11088,7 +11153,7 @@
             client goes blank, with nothing thrown and nothing logged. It has happened. tests/client/
             test_every_shipped_module_parses.py mutates this line to prove that check is real, so the
             marker is load-bearing: deleting it turns the guard red rather than silently blind. The
-            dashes are -- and not em-dashes for the same reason: keep this plain. -->${pinHtml + wins.map(w =>
+            dashes are -- and not em-dashes for the same reason: keep this plain. -->${pinHtml + wins.filter(w => (w.ws | 0) === _wsCur).map(w =>
          `<button class="os-task${_webTaskActive(w) ? ' on' : ''}"
                   data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
@@ -11105,6 +11170,7 @@
                   data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
+         ${_wsBarHtml()}
          ${(window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()) || !_popupWindows()
            ? `<button class="os-arrange" id="os-arrange" title="Arrange windows (Super+G)" aria-label="Arrange windows"><svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>` : ''}
          <div class="os-sys" id="os-shell"></div>
@@ -11126,6 +11192,12 @@
     try{ if(window.PCOSShell && PCOSShell.available()) PCOSShell.paintTray($('#os-shell', bar)); }
     catch(_){}
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
+    $$('.os-ws-b', bar).forEach(b => {
+      b.onclick = (e) => { e.stopPropagation(); switchWs(+b.dataset.ws); };
+      b.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation();
+        showCtx(e.clientX, e.clientY, [{ label: 'Remove workspace ' + (+b.dataset.ws + 1), run: () => removeWs(+b.dataset.ws) }], b); };
+    });
+    { const add = $('.os-ws-add', bar); if(add) add.onclick = (e) => { e.stopPropagation(); addWs(); }; }
     _keepStartVisible($('#os-start img', bar));
     /* There is deliberately no New post button here. One was added when posting appeared impossible
      * on the desktop — but the real cause was the compose MODAL rendering behind it (see the
@@ -12719,6 +12791,8 @@
             }
             else if(p === 'pc:start:close') toggleStart(false);
             else if(p === 'pc:cmdbar') openCmdbar(true).catch(osSay);
+            else if(p === 'pc:ws:next') switchWs(_wsCur + 1);
+            else if(p === 'pc:ws:prev') switchWs(_wsCur - 1);
             /* A compositor action as well as a pointer target: this keeps the taskbar flyout
              * automatable/accessibility-reachable and lets the two-output ownership gate prove that
              * exactly one notification surface opens on the focused monitor. */
@@ -13376,6 +13450,13 @@
      * composer belongs to whatever is focused, not to the desktop. */
     const t = e.target;
     const typing = !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+    // Workspaces: Ctrl+Alt+Left/Right switch; with Shift the focused window goes along.
+    if(e.ctrlKey && e.altKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')){
+      e.preventDefault(); e.stopPropagation();
+      const to = _wsCur + (e.key === 'ArrowLeft' ? -1 : 1);
+      if(e.shiftKey){ const f = wins.find(w => w.el.classList.contains('focused')); if(f && to >= 0 && to < wsCount()) moveToWs(f, to); }
+      switchWs(to); return;
+    }
     // The command bar: Ctrl+Space from anywhere, Ctrl+K when not typing (in a text box Ctrl+K belongs to the box).
     if(e.ctrlKey && !e.altKey && !e.metaKey && (e.code === 'Space' || (!typing && (e.key === 'k' || e.key === 'K')))){
       e.preventDefault(); e.stopPropagation(); openCmdbar(false).catch(osSay); return;
@@ -14066,6 +14147,7 @@
                   wantsDesktop,
                   isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow, parkStats,
                   openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false),
+                  workspaces: () => ({ count: wsCount(), current: _wsCur }), switchWorkspace: i => switchWs(i), addWorkspace: () => addWs(),
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

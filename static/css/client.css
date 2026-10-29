@@ -12942,3 +12942,16 @@ article.note.ai-found,.notif.ai-found{box-shadow:inset 3px 0 0 var(--neon),0 0 0
   .music-app:not(.ma-full) .ma-tabs{flex:1 1 auto}
   .music-app:not(.ma-full) .ma-browse .ma-q{flex:1 1 160px}
 }
+
+/* Workspaces (os.js switchWs): a window on another workspace is not drawn at all; the switcher sits in the tray. */
+.osw.osw-offws{display:none!important}
+.os-ws{display:flex;align-items:center;gap:3px;margin-inline-end:6px}
+.os-ws-b,.os-ws-add{min-width:22px;height:22px;padding:0 6px;border-radius:6px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:700 11px Orbitron,Inter,sans-serif;cursor:pointer;line-height:1}
+.os-ws-b.on{color:var(--bg);background:var(--neon);border-color:var(--neon);box-shadow:var(--glow)}
+.os-ws-b:hover,.os-ws-add:hover{color:var(--neon);border-color:var(--neon)}
+.os-ws-say{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);z-index:350;pointer-events:none;opacity:0;
+  font:800 22px Orbitron,Inter,sans-serif;letter-spacing:.08em;color:var(--neon);text-shadow:0 0 14px rgba(var(--accent-rgb),.8);
+  padding:14px 26px;border-radius:14px;background:var(--panel2);border:1px solid rgba(var(--accent-rgb),.5)}
+.os-ws-say.on{animation:osWsSay .9s ease-out}
+@keyframes osWsSay{0%{opacity:0;transform:translate(-50%,-50%) scale(.94)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}70%{opacity:1}100%{opacity:0}}
