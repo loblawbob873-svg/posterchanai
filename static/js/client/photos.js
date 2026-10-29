@@ -330,6 +330,7 @@ window.PCPhotosFactory = function(dep){
       ${ev.content ? `<div class="ph-caption">${enc(ev.content)}</div>` : ''}
       <div class="ph-acts">
         ${signedIn ? `<button type="button" class="btn btn-neon ph-save">${ic('plus')}Save to album</button>` : ''}
+        ${canShareImg() ? `<button type="button" class="btn btn-ghost ph-share">${ic('share')}Share</button>` : ''}
         <button type="button" class="btn btn-ghost ph-open">${ic('chat')}Open post</button>
         <button type="button" class="btn btn-ghost ph-close">Close</button>
       </div></div>`, root => {
@@ -343,7 +344,25 @@ window.PCPhotosFactory = function(dep){
       root.querySelector('.ph-open').onclick = () => { closeModal(); openThread(ev.id); };
       root.querySelector('.ph-close').onclick = () => closeModal();
       const sv = root.querySelector('.ph-save'); if(sv) sv.onclick = () => { closeModal(); saveToAlbum(ev); };
+      const sh = root.querySelector('.ph-share'); if(sh) sh.onclick = () => shareImage(imgs[at]);
     });
+  }
+  /* SHARE TO ANOTHER APP ("Photos make sure mobile has share to app feature"): the picture itself, through the same
+   * route as Preview's Share -- Android's share sheet in the APK, navigator.share in a browser that can share files.
+   * Drawn only where that exists. Fetched without this instance's session (it is somebody's media host). */
+  function canShareImg(){
+    try{ return !!(window.PCPreview && PCPreview._shareFile && PCPreview._canShare && PCPreview._canShare('photo.jpg', 'image/jpeg')); }catch(_){ return false; }
+  }
+  async function shareImage(url){
+    try{
+      const r = await fetch(url, { credentials: 'omit' });
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const ext = ({ 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif' })[blob.type] || 'jpg';
+      let base = ''; try{ base = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || ''); }catch(_){ }
+      const name = /\.[a-z0-9]{2,5}$/i.test(base) ? base : 'photo.' + ext;
+      await PCPreview._shareFile(blob, name);
+    }catch(e){ toast('could not share that picture: ' + ((e && e.message) || e)); }
   }
 
   /** Pick one of your albums (or make one) and add this picture to it. */
@@ -451,17 +470,19 @@ window.PCPhotosFactory = function(dep){
       if(a) return drawSyncedAlbum(el, a);
       sy.open = null;
     }
-    const refresh = `<button type="button" class="btn btn-ghost small ph-sync-refresh" title="Read the folders again">${ic('refresh')}<span>Refresh</span></button>`;
+    /* NO REFRESH BUTTON on a tab that reads the folders every time it is opened ("refresh icon not aligned with text.
+       maybe not needed?") -- only "Try again" where the read failed. */
+    const refresh = `<button type="button" class="btn btn-ghost small ph-sync-refresh">Try again</button>`;
     if(r.state === 'error'){
       el.innerHTML = `<div class="ph-empty">Your synced folders could not be read just now.<br><br>${refresh}</div>`;
     }else if(r.state === 'none' || (!r.albums.length && !r.failed.length)){
       el.innerHTML = `<div class="ph-empty">${r.state === 'none'
           ? 'No synced folders yet. Sync your phone’s camera folder (or any folder of pictures) and every folder of pictures in it shows up here as an album.'
           : 'None of your synced folders hold pictures yet.'}<br><br>
-        <button type="button" class="btn btn-neon ph-sync-setup">${ic('refresh')}<span>Set up Folder Sync</span></button> ${refresh}</div>`;
+        <button type="button" class="btn btn-neon ph-sync-setup">Set up Folder Sync</button></div>`;
     }else{
       el.innerHTML = `<div class="ph-sync">
-        <div class="ph-sync-head"><span class="muted">${r.albums.length} album${r.albums.length === 1 ? '' : 's'} from your synced folders${r.failed.length ? ` · could not read ${r.failed.map(enc).join(', ')}` : ''}</span><span class="ph-sp"></span>${refresh}</div>
+        <div class="ph-sync-head"><span class="muted">${r.albums.length} album${r.albums.length === 1 ? '' : 's'} from your synced folders${r.failed.length ? ` · could not read ${r.failed.map(enc).join(', ')}` : ''}</span></div>
         <div class="ph-sync-grid">${r.albums.map((a, i) => `<button type="button" class="ph-sync-card" data-i="${i}" title="${enc(a.key + (a.dir ? '/' + a.dir : ''))}">
             <span class="ph-tile">${a.cover ? '<img alt="">' : `<span class="ph-glyph">${ic('play')}</span>`}<span class="ph-n">${a.n}</span></span>
             <b>${enc(a.name)}</b><small>${enc(a.key + (a.dir ? ' / ' + a.dir : ''))}</small></button>`).join('')}</div></div>`;

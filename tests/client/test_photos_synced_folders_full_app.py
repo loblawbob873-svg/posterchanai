@@ -70,6 +70,7 @@ def test_picture_folders_become_albums_and_open_newest_first(w, h):
         got['albums'] = await b.js("[...document.querySelectorAll('.ph-sync-card')].map(c=>[c.querySelector('b').textContent,c.querySelector('.ph-n').textContent])")
         got['over'] = await b.js("document.documentElement.scrollWidth-innerWidth")
         got['tabs_fit'] = await b.js("(()=>{const t=document.querySelector('.ph-tabs');return t.scrollWidth<=t.clientWidth+1})()")
+        got['refresh'] = await b.js("!!document.querySelector('.ph-sync-refresh')")
         await b.js("document.querySelector('.ph-sync-card').click()")
         await b.until("!!document.querySelector('.ph-sync-back')")
         got['title'] = await b.js("document.querySelector('.ph-sync-head h3').textContent")
@@ -85,6 +86,7 @@ def test_picture_folders_become_albums_and_open_newest_first(w, h):
     asyncio.run(desktop.with_browser('online', '', check))
     assert got['albums'] == [['Camera', '131'], ['Screenshots', '1']], ("albums", got['albums'])
     assert got['over'] <= 1 and got['tabs_fit'], got
+    assert got['refresh'] is False, "the Synced tab still draws a Refresh button (\"maybe not needed?\")"
     assert got['title'] == 'Camera' and got['first'][0] == 'VID_0001.mp4' and got['first'][1] == 'IMG_0129.jpg', got
     assert got['video'] and got['shown'] == 120 and got['more'] == 131 and got['back'] == 2, got
 
@@ -205,3 +207,29 @@ def _run_page(tmp, page):
         except subprocess.TimeoutExpired:
             chrome.kill()
             chrome.wait()
+
+
+CACHE_PAGE = PAGE.replace(
+    "window.fetch = async url => {", "window.__fetches = 0; window.fetch = async url => { window.__fetches++;").replace(
+    "c.width = 40; c.height = 20;", "c.width = 2000; c.height = 1000;").replace(
+    "R.video = await syncedPhotoThumb(r.albums[0].items[0]);", "R.fetches = window.__fetches - 0;")
+
+
+@CHROME
+def test_a_thumbnail_is_kept_on_this_device_small_and_uncropped():
+    """"I hope that the thumbnails are cached on each device for Photos for faster loading": every visit downloaded and
+    decrypted the full picture again. The SAME browser profile opened twice (two sessions): the first makes a small
+    copy (long side 480, aspect kept) and keeps it; the second draws the tile without downloading anything."""
+    files_src = (REPO / 'static/js/client/files.js').read_text(encoding='utf-8')
+    harness = factory_harness_js(files_src, 'PCFilesFactory', expose=['syncedPhotoAlbums', 'syncedPhotoThumb'])
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copy(REPO / 'static/js/client/files.js', os.path.join(tmp, 'files.js'))
+        page = os.path.join(tmp, 'p.html')
+        Path(page).write_text(CACHE_PAGE.replace('/*HARNESS*/', harness), encoding='utf-8')
+        first = json.loads(_run_page(tmp, page))
+        os.remove(os.path.join(tmp, 'profile', 'DevToolsActivePort'))     # the same profile, a new browser
+        second = json.loads(_run_page(tmp, page))
+    assert 'error' not in first and 'error' not in second, (first, second)
+    assert first['size'] == [480, 240], ("the kept tile is not the picture made small, whole", first)
+    assert first['fetches'] >= 1, first
+    assert second['size'] == [480, 240] and second['fetches'] == 0, ("the second visit downloaded the picture again", second)

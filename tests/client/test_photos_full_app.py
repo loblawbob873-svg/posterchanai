@@ -82,11 +82,17 @@ def test_following_global_save_to_a_new_album_and_post_into_it():
                     Path(os.environ['PC_SHOTS'], 'photos-1440.png').write_bytes(
                         base64.b64decode((await b.call('Page.captureScreenshot', {'format': 'png'}))['data']))
 
-                # Save the friend's picture into a new album, from its viewer.
+                # Save the friend's picture into a new album, from its viewer. The share sheet is stood in (headless
+                # Chrome has none): what reaches it must be the picture's own bytes.
+                await b.js("window.__shared=[];PCPreview._canShare=()=>true;PCPreview._shareFile=async(bl,n)=>{__shared.push([n,bl.type,bl.size]);};true")
                 await click(b, ".ph-tile[data-id='%s']" % fpost['id'])
                 await R.wait(b, "!!document.querySelector('.ph-view .ph-big')", 15, 'the photo viewer')
                 got['caption'] = await b.js("(document.querySelector('.ph-caption')||{}).textContent||''")
                 got['author'] = await b.js("document.querySelector('.ph-author').textContent")
+                # "Photos make sure mobile has share to app feature"
+                await click(b, ".ph-share")
+                await R.wait(b, "__shared.length===1", 15, 'the picture handed to the share sheet')
+                got['shared'] = await b.js("__shared[0]")
                 await click(b, ".ph-save")
                 await click(b, ".ph-alb-new")
                 await R.wait(b, "!!document.querySelector('.alb-f-title')", 15, 'the new-album form')
@@ -128,6 +134,7 @@ def test_following_global_save_to_a_new_album_and_post_into_it():
     assert len(got['following']) == 1, ("Following showed someone you do not follow", got['following'])
     assert len(got['global']) == 2, got['global']
     assert got['caption'] == 'the harbour at dawn' and 'Friendly' in got['author'], got
+    assert got['shared'][1].startswith('image/') and got['shared'][2] > 0, ("Share did not hand over the picture", got['shared'])
     assert got['set1'], 'no album reached the relay'
     assert ['title', 'Harbour trip'] in got['set1']['tags'] and fid == got['following'], got['set1']
     assert got['count'].startswith('1 photo'), got['count']

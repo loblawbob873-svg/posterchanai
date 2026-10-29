@@ -443,6 +443,25 @@
    * It was one row, so on a phone the name was squeezed to nothing between five buttons ("you can't
    * see the file name when opened, the name and buttons are all together"). The close button is
    * therefore NOT inside .pv-acts any more -- it belongs to the title row. */
+  /* Which video codec an MP4/MOV declares, read from its sample descriptions (the `hvc1`/`hev1` boxes are HEVC). Only
+   * the first and last 4 MB are looked at: the index sits at one end. '' when it cannot tell. */
+  function videoCodec(blob) {
+    if (!blob || !blob.slice) return Promise.resolve('');
+    var look = function (b) { return b.arrayBuffer().then(function (buf) {
+      var u = new Uint8Array(buf), s = '';
+      for (var i = 0; i + 4 <= u.length; i++) {
+        if (u[i] === 0x68 && ((u[i+1] === 0x76 && u[i+2] === 0x63 && u[i+3] === 0x31) || (u[i+1] === 0x65 && u[i+2] === 0x76 && u[i+3] === 0x31))) return 'hevc';
+        if (u[i] === 0x61 && u[i+1] === 0x76 && u[i+2] === 0x63 && u[i+3] === 0x31) s = s || 'h264';
+      }
+      return s;
+    }); };
+    var M = 4 * 1024 * 1024, n = blob.size || 0;
+    return look(blob.slice(0, Math.min(n, M))).then(function (a) {
+      if (a === 'hevc' || n <= M) return a;
+      return look(blob.slice(Math.max(M, n - M), n)).then(function (b) { return b || a; });
+    }).catch(function () { return ''; });
+  }
+
   function bodyHTML(name, mime, size, kind) {
     var head = '<div class="pv-bar">'
       + '<span class="pv-title"><span class="pv-name" title="' + H(name) + '">' + H(name) + '</span>'
@@ -531,8 +550,29 @@
       av.onerror = function () {
         mediaDone();
         var b = q('.pv-body');
-        if (b) b.innerHTML = '<div class="empty">This browser cannot play that format.'
-          + '<br>Download it and open it in a real player.</div>';
+        if (!b) return;
+        /* SAY WHICH FORMAT, AND OFFER THE PLAYER THIS MACHINE HAS ("trying to open video file ... from photos synced
+         * says: This browser cannot play that format"). A phone camera records HEVC (H.265) more often than not, and
+         * neither Chromium nor Firefox on Linux decodes it. On PosterChanOS, VLC (installed) plays it -- handed the
+         * bytes through the shell, never a download the person has to go and find. */
+        var player = root.pcShell && typeof root.pcShell.openInPlayer === 'function';
+        b.innerHTML = '<div class="empty"><span class="pv-why">This browser cannot play that format.</span>'
+          + (player ? '<br><button class="btn btn-neon small pv-player">Play in VLC</button>'
+                    : '<br>Download it and open it in a real player.') + '</div>';
+        videoCodec(blob).then(function (c) {
+          var w = b.querySelector('.pv-why');
+          if (w && c === 'hevc') w.textContent = 'This video is HEVC (H.265), which this browser cannot play.';
+        });
+        var pb = b.querySelector('.pv-player');
+        if (pb) pb.onclick = function () {
+          pb.disabled = true; pb.textContent = 'Opening…';
+          (blob ? Promise.resolve(blob) : fetch(url).then(function (r) { return r.blob(); }))
+            .then(function (b2) { return b2.arrayBuffer(); })
+            .then(function (buf) { return root.pcShell.openInPlayer(buf, name); }).then(function (r) {
+            if (r !== 'opened') throw new Error(r || 'the player did not start');
+            pb.textContent = 'Opened in VLC';
+          }).catch(function (e) { pb.disabled = false; pb.textContent = 'Play in VLC'; toast('could not open it in VLC: ' + ((e && e.message) || e)); });
+        };
       };
       /* Explicit load matters in Android WebView and after a desktop document window is recycled:
        * assigning a blob URL alone can leave the old, empty media resource selected. */
@@ -784,5 +824,5 @@
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
                      loadPdfJs: loadPdfJs, isOpen: isOpen, close: close,
                      _openElsewhere: openElsewhere, _renderPdf: renderPdf,
-                     _printFile: printFile, _shareFile: shareFile };
+                     _printFile: printFile, _shareFile: shareFile, _canShare: canShare, _videoCodec: videoCodec };
 })(window);

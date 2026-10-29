@@ -1875,15 +1875,57 @@ window.PCFilesFactory = function(dep){
       _thumbs.delete(oldest);
     }
   }
+  /* THUMBNAILS ARE KEPT ON THIS DEVICE ("I hope that the thumbnails are cached on each device for Photos for faster
+   * loading"). They were object URLs for this session only: every visit to Photos -> Synced or a synced folder
+   * downloaded and decrypted the FULL picture again (up to _THUMB_MAX each) to draw a tile. Now the first view makes
+   * a small copy (_THUMB_SIDE on the long side, never cropped) and keeps it in IndexedDB, keyed by the account and the
+   * file's CONTENT address -- so an edited picture gets a new tile and two accounts never see each other's. The same
+   * trade as Music's covers (music.js PCMusicArt): a decrypted preview on the device that already shows it. A picture
+   * that will not decode as an image keeps the full file, as before. */
+  const _THUMB_SIDE = 480;
+  let _thumbDbP = null;
+  function _thumbDb(){
+    return _thumbDbP || (_thumbDbP = new Promise(res => {
+      try{ const r = indexedDB.open('pc-photo-thumbs', 1);
+        r.onupgradeneeded = () => { try{ r.result.createObjectStore('t'); }catch(_){ } };
+        r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null);
+      }catch(_){ res(null); }
+    }));
+  }
+  function _thumbIdb(mode, fn){
+    return _thumbDb().then(d => d ? new Promise(res => {
+      try{ const tx = d.transaction('t', mode), q = fn(tx.objectStore('t'));
+        if(mode === 'readonly'){ q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }
+        else { tx.oncomplete = () => res(true); tx.onerror = tx.onabort = () => res(false); }
+      }catch(_){ res(null); }
+    }) : null);
+  }
+  async function _thumbShrink(blob){
+    try{
+      const bmp = await createImageBitmap(blob), w = bmp.width, h = bmp.height;
+      if(!w || !h) return null;
+      const k = Math.min(1, _THUMB_SIDE / Math.max(w, h)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      try{ bmp.close && bmp.close(); }catch(_){ }
+      return await new Promise(r => c.toBlob(r, 'image/webp', 0.82));
+    }catch(_){ return null; }
+  }
   async function _thumbFor(sha, chunks, name){
     const key = sha || ('chunks:' + (chunks || []).join(','));
+    if(_thumbs.has(key)) return _thumbs.get(key);
+    const dbKey = ((_S.ME && _S.ME.pubkey) || 'anon').slice(0, 16) + ':' + key;
+    const kept = await _thumbIdb('readonly', st => st.get(dbKey));
+    if(kept && !_thumbs.has(key)){ const url = URL.createObjectURL(kept); _thumbRemember(key, url); return url; }
     if(_thumbs.has(key)) return _thumbs.get(key);
     while(_thumbBusy >= _THUMB_PAR) await new Promise(r=>setTimeout(r, 120));
     _thumbBusy++;
     try{
       const blob = await _syncFileBlob(chunks && chunks.length ? '' : sha,
                                        chunks && chunks.length ? chunks : null, name);
-      const url = URL.createObjectURL(blob);
+      const small = await _thumbShrink(blob);
+      if(small) _thumbIdb('readwrite', st => st.put(small, dbKey));
+      const url = URL.createObjectURL(small || blob);
       _thumbRemember(key, url);
       return url;
     } finally { _thumbBusy--; }

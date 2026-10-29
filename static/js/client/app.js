@@ -4780,6 +4780,7 @@
     // autofilling the previous user's passwords into every app on it.
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
     try{ window.pcShell?.setBrowserPairing?.(null); }catch(_){}   // PosterFox's Passwords add-on unpairs (vault.js _syncOS)
+    try{ indexedDB.deleteDatabase('pc-photo-thumbs'); }catch(_){}   // private pictures' tiles (files.js _thumbFor) leave with the account
     // The decrypted DM cache goes with it, for the same reason: a handed-down device must not leave
     // the previous user's messages readable to whoever opens this browser next. The KEY doc stays on
     // the relay — it is theirs, and signing back in rebuilds the cache from it.
@@ -5757,6 +5758,7 @@
     try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never cross identities
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
     try{ window.pcShell?.setBrowserPairing?.(null); }catch(_){}   // PosterFox's Passwords add-on unpairs (vault.js _syncOS)
+    try{ indexedDB.deleteDatabase('pc-photo-thumbs'); }catch(_){}   // private pictures' tiles (files.js _thumbFor) leave with the account
     try{ Relay.worker.call('clearKey', {}); }catch(_){}
     try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
     // The phone book belongs to the account being left, not to the device — see _forgetPhonebook.

@@ -291,6 +291,8 @@ if (isOurPage) {
     localRelay: () => { try { return ipcRenderer.sendSync('pc:localrelay:url') || ''; } catch (_) { return ''; } },
     /* PosterFox's Passwords add-on pairs from this (desktop/browserpairing.js): the code, or null at sign-out. */
     setBrowserPairing: (code) => ipcRenderer.invoke('pc:browser-pairing', code == null ? null : String(code)),
+    /* "Play in VLC" for a video this browser cannot decode (desktop/player.js). */
+    openInPlayer: (bytes, name) => ipcRenderer.invoke('pc:play-in-player', bytes, String(name || '')),
     /* Multi-monitor PosterChanOS has one renderer per output. Only the primary may run unattended
      * services such as folder sync; otherwise every extra monitor becomes another filesystem
      * writer with the same device identity. */
