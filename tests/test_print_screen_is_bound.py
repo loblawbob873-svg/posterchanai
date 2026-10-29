@@ -15,6 +15,7 @@ implementation of something that already has its own directory, filename, clipbo
 Ported from the Sway config to `wayfire.ini`, where a binding is a `binding_x`/`command_x` PAIR —
 and where `Ctrl+Shift+S` had been silently dropped in the move.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -71,5 +72,8 @@ class TheShellAnswersTheTicksTheConfigSends(unittest.TestCase):
             for word in command.split():
                 if word.startswith("pc:"):
                     with self.subTest(tick=word):
-                        self.assertTrue(word in self.src or word in shell,
-                                        f"{chord} sends {word} and nothing listens for it")
+                        # Super+1..9 / Super+Shift+1..9 are one handler for all nine (os.js), matched by this pattern.
+                        handled = word in self.src or word in shell or (
+                            re.fullmatch(r"pc:ws:(goto|carry):[1-9]", word)
+                            and "/^pc:ws:(goto|carry):[1-9]$/.test(p)" in self.src + shell)
+                        self.assertTrue(handled, f"{chord} sends {word} and nothing listens for it")
