@@ -371,7 +371,7 @@
   if(typeof document==='undefined'){root.PCConcordGit={core};return;}
 
   /* ───────────────────────────── data ───────────────────────────── */
-  const CACHE_PREFIX='pc.ccgit.v1.',CACHE_MAX_EVENTS=600,CACHE_MAX_BYTES=400000,REFRESH_MS=60000,INDEX_EVERY_MS=1800000;
+  const CACHE_PREFIX='pc.ccgit.v1.',CACHE_MAX_EVENTS=600,CACHE_MAX_BYTES=400000,REFRESH_MS=60000,INDEX_EVERY_MS=1800000,INDEX_RETRY_MS=600000;
   const repoState=new Map();   // coordinate -> {events:Map, ann, loadedAt, loading, relays:Set, first}
   let host=null;               // {repaint, notify, viewer, roomChannels} handed in by concord.js
   const P=()=>window.__PCConcordP?window.__PCConcordP():window.__PC;
@@ -429,7 +429,11 @@
        * otherwise at most every INDEX_EVERY_MS for a newer announcement. */
       const annF=[{kinds:[ANN],authors:[address.owner],'#d':[address.identifier],limit:4}];
       let relays=relaysFor(coord,hints);
-      const askIndex=!relays.length||Date.now()-(s.indexAt||0)>=INDEX_EVERY_MS;
+      /* A repository whose relays are still unknown asks again every INDEX_RETRY_MS -- not on every refresh. One the index
+       * has never heard of (deleted, never announced there) stayed unknown, so `!relays.length` asked on EVERY minutely
+       * refresh, forever: measured on poster.place 2026-10-29, index.ngit.dev dialled 10 times every 10 minutes, each a
+       * one-repository `REQ 30617` that came back empty. */
+      const askIndex=Date.now()-(s.indexAt||0)>=(relays.length?INDEX_EVERY_MS:INDEX_RETRY_MS);
       if(askIndex)s.indexAt=Date.now();
       const fromIndex=askIndex?query([DISCOVERY_RELAY],annF):Promise.resolve([]);
       if(relays.length)added+=absorb(coord,s,await query(relays,annF));

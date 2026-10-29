@@ -24,4 +24,12 @@ assert.ok(asked.filter(u=>u==='wss://relay.ngit.dev').length>=29,'the repository
 // After 30 minutes, once more for a newer announcement.
 now+=60_000;await G._refresh(coord,[]);
 assert.equal(index(),2,'after 30 minutes the index is asked for a newer announcement');
+// A repository NOBODY has an announcement for (deleted, never on the index): its relays stay unknown, and it used to
+// ask the index on every minutely refresh, forever (index.ngit.dev 10 dials / 10 min on poster.place, 2026-10-29).
+const lost='30617:'+'b'.repeat(64)+':gone';
+const before=index();
+for(let i=0;i<10;i++){await G._refresh(lost,[]);now+=60_000;}
+assert.equal(index()-before,1,'a repository the index does not know asked it on every refresh: '+(index()-before)+' in 10 minutes');
+now+=60_000;await G._refresh(lost,[]);
+assert.equal(index()-before,2,'after 10 minutes an unknown repository asks the index again');
 console.log('OK');
