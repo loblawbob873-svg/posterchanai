@@ -596,6 +596,7 @@ if (isOurPage) {
     status: () => ipcRenderer.invoke('pc:anticheat:status'),
     setup: () => ipcRenderer.invoke('pc:anticheat:setup'),
     undo: () => ipcRenderer.invoke('pc:anticheat:undo'),
+    travel: (on) => ipcRenderer.invoke('pc:anticheat:travel', on === true),
   });
 
   contextBridge.exposeInMainWorld('pcPower', {

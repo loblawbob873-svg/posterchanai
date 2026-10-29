@@ -251,3 +251,86 @@ def test_a_systemd_without_tpm_support_is_rebuilt_once_in_the_background(tmp_pat
     assert calls.count("systemd-run") == 1, "a second rebuild was started while the first runs"
     g = (ROOT / "os/gentoo.sh").read_text()
     assert 'SPECIAL_PACKAGE_USE+=("sys-apps/systemd tpm")' in g and 'elif [ "$1" = "anticheat-tpm" ]; then' in g
+
+
+# ---- TRAVEL MODE ("If you travel, you will want a password to unlock", 2026-10-29) -----------------------------------
+# Off the TPM alone is not enough: the key file sits on the UNENCRYPTED boot partition and inside the startup images.
+# So travel mode wipes the TPM slot, moves the key file into the encrypted root and rebuilds the images without it;
+# off puts it all back and re-seals. The stubs record every call and keep the real files.
+
+class TravelBox(TpmBox):
+    def __init__(self, tmp, dracut_rc=0, **kw):
+        super().__init__(tmp, enrolled=True, **kw)
+        mid = "m" * 32
+        self.esp = tmp / "esp"
+        (self.root / "etc/machine-id").write_text(mid + "\n")
+        (self.esp / "loader/entries").mkdir(parents=True)
+        (self.esp / mid / "6.18.54-gentoo-dist").mkdir(parents=True)
+        (self.esp / "loader/entries" / f"{mid}-6.18.54-gentoo-dist.conf").write_text(
+            "title Current\nversion 6.18.54-gentoo-dist\noptions rd.luks.key=/boot/keyfile.key\n")
+        self.initrd = self.esp / mid / "6.18.54-gentoo-dist/initrd"
+        self.initrd.write_text("with key")
+        self.conf = self.root / "etc/dracut.conf"
+        self.conf.write_text('add_dracutmodules+=" crypt systemd-cryptsetup dm rootfs-block "\n'
+                             'install_items+=" /boot/unlock.sh /boot/keyfile.key "\n')
+        L = f'echo "$(basename "$0") $*" >> "{self.calls}"'
+        # The image is rebuilt from the dracut.conf as it stands: the key is in it only while install_items names it.
+        _exe(self.bin / "dracut", f'{L}; [ {dracut_rc} = 0 ] || exit {dracut_rc}; out="${{@: -2:1}}"; '
+                                  f'if grep -q "^install_items.*keyfile" "{self.conf}"; then echo "with key" > "$out"; else echo "no key" > "$out"; fi')
+        _exe(self.bin / "mokutil", 'echo "SecureBoot enabled"')
+
+    def travel(self, how):
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(self.state), "PC_AC_ROOT": str(self.root),
+               "PC_GENTOO_SH": str(self.bin / "gentoo.sh"), "PC_AC_TPM": str(self.tpm), "PC_AC_KEYFILE": str(self.keyfile),
+               "PC_AC_ESP": str(self.esp)}
+        r = subprocess.run(["bash", str(HELPER), "travel", how], capture_output=True, text=True, timeout=60, env=env)
+        return r, self.calls.read_text() if self.calls.exists() else ""
+
+
+def test_travel_mode_takes_the_key_out_of_every_place_a_start_could_find_it(tmp_path):
+    box = TravelBox(tmp_path)
+    r, calls = box.travel("on")
+    assert r.returncode == 0, r.stderr
+    kept = box.root / "etc/posterchan/travel/keyfile.key"
+    assert kept.read_bytes() == b"k" * 64 and oct(kept.stat().st_mode & 0o777) == "0o400"
+    assert oct((box.root / "etc/posterchan/travel").stat().st_mode & 0o777) == "0o700"
+    assert not box.keyfile.exists(), "the key file is still on the unencrypted boot partition"
+    assert f"--unlock-key-file={kept} --wipe-slot=tpm2" in calls, "the TPM still opens the disk by itself"
+    assert box.initrd.read_text().strip() == "no key", "the startup image still carries the key"
+    assert "# travel mode: install_items" in box.conf.read_text()
+    assert (box.root / "etc/posterchan/travel/on").exists()
+    # ...and the boot service leaves it that way.
+    r, calls, st = box.tpm_run()
+    assert st == "travel" and calls.count("--tpm2-device=auto") == 0, calls
+
+
+def test_travel_mode_off_puts_the_key_back_and_seals_again_with_nothing_to_type(tmp_path):
+    box = TravelBox(tmp_path)
+    box.travel("on")
+    box.slots.write_text("")
+    r, calls = box.travel("off")
+    assert r.returncode == 0, r.stderr
+    assert box.keyfile.read_bytes() == b"k" * 64
+    assert box.initrd.read_text().strip() == "with key"
+    assert box.conf.read_text().count("\ninstall_items+=") == 1 and "travel mode" not in box.conf.read_text()
+    assert not (box.root / "etc/posterchan/travel/on").exists()
+    assert not (box.root / "etc/posterchan/travel/keyfile.key").exists(), "a second copy of the key was left behind"
+    assert "--tpm2-device=auto --tpm2-pcrs=7" in calls, "the TPM was not sealed again"
+
+
+def test_a_failed_image_rebuild_changes_nothing(tmp_path):
+    box = TravelBox(tmp_path, dracut_rc=1)
+    conf = box.conf.read_text()
+    r, calls = box.travel("on")
+    assert r.returncode != 0 and "nothing was changed" in r.stderr
+    assert box.keyfile.read_bytes() == b"k" * 64 and box.conf.read_text() == conf
+    assert not (box.root / "etc/posterchan/travel/on").exists()
+    assert "--wipe-slot" not in calls and box.slots.read_text() == "tpm2\n", "the TPM unlock was removed anyway"
+
+
+def test_a_tpm_slot_that_cannot_be_wiped_puts_the_images_back(tmp_path):
+    box = TravelBox(tmp_path, enroll_rc=1)
+    r, _ = box.travel("on")
+    assert r.returncode != 0 and "nothing was changed" in r.stderr
+    assert box.initrd.read_text().strip() == "with key" and box.keyfile.exists()
+    assert "travel mode" not in box.conf.read_text()

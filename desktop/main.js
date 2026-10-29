@@ -4084,6 +4084,7 @@ ipcMain.on('pc:anticheat:available', (e) => {
 ipcMain.handle('pc:anticheat:status', (e) => { fsGuard(e); return anticheat.status(); });
 ipcMain.handle('pc:anticheat:setup', (e) => { fsGuard(e); return anticheat.setup(); });
 ipcMain.handle('pc:anticheat:undo', (e) => { fsGuard(e); return anticheat.undo(); });
+ipcMain.handle('pc:anticheat:travel', (e, on) => { fsGuard(e); return anticheat.travel(on === true); });
 ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
 ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });
 ipcMain.handle('pc:power:keep-awake', (e, on) => { fsGuard(e); return power.setKeepAwake(!!on); });

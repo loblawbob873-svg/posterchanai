@@ -32,9 +32,11 @@ async function status() {
 }
 async function setup() { await run(['setup']); return status(); }
 async function undo() { await run(['undo']); return status(); }
+// Travel mode rebuilds every kernel's startup image (dracut, tens of seconds each), so it gets minutes, not seconds.
+async function travel(on) { await run(['travel', on ? 'on' : 'off'], 10 * 60 * 1000); return status(); }
 
 function available() {
   try { return process.platform === 'linux' && fs.existsSync(HELPER); } catch (_) { return false; }
 }
 
-module.exports = { available, status, setup, undo };
+module.exports = { available, status, setup, undo, travel };

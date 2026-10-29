@@ -7,6 +7,14 @@
 #   pc-anticheat run        the service's own step -- never called by hand
 #   pc-anticheat run-off    the undo's own step -- never called by hand
 #   pc-anticheat tpm        every boot (posterchan-anticheat-tpm.service): automatic TPM unlock under Secure Boot
+#   pc-anticheat travel on|off   TRAVEL MODE: ask for the disk password at every start
+#
+# TRAVEL MODE ("If you travel, you will want a password to unlock", 2026-10-29). Turning only the TPM unlock off would
+# protect nothing: the auto-unlock key file sits on the UNENCRYPTED boot partition and inside the startup images there.
+# So `travel on` takes it out of all three places -- the TPM slot is wiped, the key file is moved into the encrypted
+# root (/etc/posterchan/travel/, 0700/0400) and the startup images are rebuilt without it -- and every boot entry asks
+# for the password. `travel off` puts the key file back, rebuilds the images and re-seals the TPM; nothing to type,
+# since whoever turns it off is already signed in. The LUKS key slot the key file opens is never removed.
 #
 # THE DISK UNLOCKS BY ITSELF UNDER SECURE BOOT TOO ("tpm unlock should be automatic and part of the Secure Boot
 # System Settings", 2026-10-29). Gentoo's signed kernel image cannot carry this machine's key file, so with Secure Boot
@@ -33,6 +41,26 @@ UNIT=posterchan-anticheat.service
 TPMSTATE="$STATE_DIR/anticheat-tpm.json"
 KEYFILE="${PC_AC_KEYFILE:-/boot/keyfile.key}"
 TPMDEV="${PC_AC_TPM:-/sys/class/tpm/tpm0}"
+TRAVEL="${PC_AC_ROOT:-}/etc/posterchan/travel"
+DRACUT_CONF="${PC_AC_ROOT:-}/etc/dracut.conf"
+ESP_DIR="${PC_AC_ESP:-/boot}"
+
+rootdev() {   # the LUKS device the root file system is on
+	local src; src="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*//')"
+	cryptsetup status "${src##*/}" 2>/dev/null | awk '$1 == "device:" {print $2}'
+}
+rebuild_initrds() {   # every installed kernel's startup image, with the dracut.conf as it now stands
+	local mid e kver img n=0
+	mid="$(cat "${PC_AC_ROOT:-}/etc/machine-id" 2>/dev/null)"
+	for e in "$ESP_DIR"/loader/entries/"$mid"-*.conf; do
+		[ -f "$e" ] || continue
+		kver="$(awk '$1 == "version" {print $2}' "$e")"; img="$ESP_DIR/$mid/$kver/initrd"
+		[ -n "$kver" ] && [ -f "$img" ] || continue
+		dracut --force --quiet --add " crypt systemd-cryptsetup dm rootfs-block " "$img" "$kver" || return 1
+		n=$((n + 1))
+	done
+	[ "$n" -gt 0 ]
+}
 
 json() {   # json <state> [password] -- the one writer of the state file (python3 does the escaping)
 	mkdir -p "$STATE_DIR"
@@ -94,6 +122,7 @@ try:
     out["tpm"] = json.load(open(os.path.join(os.path.dirname(path), "anticheat-tpm.json"))).get("state", "")
 except (OSError, ValueError):
     out["tpm"] = ""
+out["travel"] = os.path.exists(os.path.join(os.path.dirname(marker), "travel", "on"))
 if not out["tpm"]:
     out["tpm"] = "absent" if not os.path.exists("/sys/class/tpm/tpm0") else "waiting"
 print(json.dumps(out))
@@ -131,6 +160,7 @@ run-off)
 	;;
 tpm)
 	[ -e "$MARKER" ] || exit 0
+	if [ -e "$TRAVEL/on" ]; then printf '{"state": "travel", "at": %s}\n' "$(date +%s)" >"$TPMSTATE"; exit 0; fi
 	tpmsay() { mkdir -p "$STATE_DIR"; printf '{"state": "%s", "at": %s}\n' "$1" "$(date +%s)" >"$TPMSTATE"; chmod 0644 "$TPMSTATE"; }
 	mokutil --sb-state 2>/dev/null | grep -qi "SecureBoot enabled" || { tpmsay waiting; exit 0; }
 	[ -e "$TPMDEV" ] || { tpmsay absent; exit 0; }
@@ -160,8 +190,40 @@ tpm)
 		tpmsay failed; exit 1
 	fi
 	;;
+travel)
+	case "${2:-}" in
+	on)
+		[ -e "$TRAVEL/on" ] && exit 0
+		dev="$(rootdev)"; [ -n "$dev" ] || { echo "travel mode: the root is not on a LUKS device" >&2; exit 1; }
+		[ -s "$KEYFILE" ] || { echo "travel mode: there is no key file at $KEYFILE to put away" >&2; exit 1; }
+		mkdir -p "$TRAVEL" && chmod 0700 "$TRAVEL" || exit 1
+		cp -a "$KEYFILE" "$TRAVEL/keyfile.key" && chmod 0400 "$TRAVEL/keyfile.key" && cmp -s "$KEYFILE" "$TRAVEL/keyfile.key" || exit 1
+		# The images first (the step that can fail on its own), so a failure leaves everything as it was.
+		sed -i 's|^\(install_items+=.*/boot/keyfile.key.*\)$|# travel mode: \1|' "$DRACUT_CONF"
+		undo_images() { sed -i 's|^# travel mode: ||' "$DRACUT_CONF"; rebuild_initrds; }
+		rebuild_initrds || { undo_images; echo "travel mode: the startup images could not be rebuilt -- nothing was changed" >&2; exit 1; }
+		if systemd-cryptenroll "$dev" 2>/dev/null | grep -q tpm2; then
+			systemd-cryptenroll "$dev" --unlock-key-file="$TRAVEL/keyfile.key" --wipe-slot=tpm2 \
+				|| { undo_images; echo "travel mode: the TPM key could not be removed -- nothing was changed" >&2; exit 1; }
+		fi
+		: >"$TRAVEL/on"
+		rm -f "$STATE_DIR/anticheat-tpm.pcr7" "$KEYFILE"
+		printf '{"state": "travel", "at": %s}\n' "$(date +%s)" >"$TPMSTATE"
+		;;
+	off)
+		[ -e "$TRAVEL/on" ] || exit 0
+		[ -s "$TRAVEL/keyfile.key" ] || { echo "travel mode: the kept key file is missing" >&2; exit 1; }
+		cp -a "$TRAVEL/keyfile.key" "$KEYFILE" && chmod 0400 "$KEYFILE" || exit 1
+		sed -i 's|^# travel mode: ||' "$DRACUT_CONF"
+		rebuild_initrds || { echo "travel mode: the startup images could not be rebuilt" >&2; exit 1; }
+		rm -f "$TRAVEL/on" "$TPMSTATE" "$TRAVEL/keyfile.key"
+		"$0" tpm || true      # re-seal now when Secure Boot is on; otherwise at the next Secure Boot start
+		;;
+	*) echo "usage: pc-anticheat travel on|off" >&2; exit 2 ;;
+	esac
+	;;
 *)
-	echo "usage: pc-anticheat status|setup|undo|tpm" >&2
+	echo "usage: pc-anticheat status|setup|undo|tpm|travel on|off" >&2
 	exit 2
 	;;
 esac

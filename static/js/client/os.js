@@ -4341,16 +4341,13 @@
     snap().then(s => { shape = s; if(!s) stop(); else window.addEventListener('resize', changed); });
   }
   let _startupRan=false;
-  /* Once per desktop session, on PosterChanOS only (real app windows). Each monitor's renderer opens the
-   * apps pinned to it; the main one also opens the unpinned -- two screens must not each open every app. */
+  /* Once per desktop session. Each monitor's renderer opens the apps pinned to it; the main one the rest. */
   async function runStartupApps(){
     if(_startupRan) return 0;
     // Only the desktop itself: never a popup page or an app window (they load this same client).
     try{ const q=new URLSearchParams(location.search); if(q.get('pcpopup') || q.get('pcwin')) return 0; }catch(_){}
     if(document.documentElement.classList.contains('pc-oswin')) return 0;
-    /* WHERE THEY CAN OPEN: real windows on PosterChanOS, desktop windows (or the app itself, outside desktop mode) in
-     * the PosterChan app on Windows, macOS and other Linux -- "autostart apps do not work" there (2026-10-29): this
-     * returned unless PosterChanOS's window manager was present, so the list saved and nothing ever opened. */
+    /* Real windows on PosterChanOS; desktop windows in the plain app (Windows/macOS/Linux; it used to open nothing). */
     const native = !!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled());
     // PosterChanOS waits for its window manager (a later call); only the plain app opens them in this page.
     if(!native){

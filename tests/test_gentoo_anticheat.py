@@ -361,3 +361,18 @@ def test_anticheat_off_on_a_machine_set_up_before_the_keeper_existed(tmp_path):
     rc, out, _ = m.run("anticheatOff")
     assert rc == 0, out
     assert f"options {OPTS}" in _entry(m), _entry(m)
+
+
+# ---- TRAVEL MODE (2026-10-29) ----------------------------------------------------------------------------------------
+# `pc-anticheat travel on` takes the key file out of the startup images so every start asks for the password. A kernel
+# installed meanwhile must still get its normal entry -- built WITHOUT the key, which is the point -- or travel mode would
+# leave the machine on an old kernel's entry, and a re-run of the setup must not call that state broken.
+
+def test_in_travel_mode_a_new_kernel_still_gets_its_normal_entry(tmp_path):
+    m = Machine(tmp_path, keyfile=True, initrd_has_key=False)
+    (m.r / "etc/posterchan/travel").mkdir(parents=True)
+    (m.r / "etc/posterchan/travel/on").write_text("")
+    rc, out, _ = m.run()
+    assert rc == 0, out
+    assert f"initrd /{MID}/{KREL}/initrd" in _entry(m)
+    assert "boot/keyfile.key" not in (m.r / "boot" / MID / KREL / "initrd").read_text()

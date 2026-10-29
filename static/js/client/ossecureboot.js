@@ -15,7 +15,17 @@
     absent: ['warn', 'No TPM was found: switch the TPM (security chip) on in the firmware settings and the disk unlocks by itself. Until then the disk password is asked at startup.'],
     nokey: ['warn', 'This disk has no key file to seal into the TPM, so the disk password is asked at startup.'],
     failed: ['warn', 'Setting up the TPM unlock did not work this time; it is tried again at the next start.'],
+    travel: ['', 'Travel mode is on: the disk password is asked at every start.'],
   };
+  /* TRAVEL MODE ("If you travel, you will want a password to unlock", 2026-10-29): pc-anticheat travel on|off. Not just
+   * the TPM: the key file leaves the boot partition and the startup images too, or a thief would not need the TPM. */
+  function travelBlock(on){
+    return `<div class="os-sb-travel" data-sb-travel="${on?'on':'off'}"><b>Travel mode</b>
+      <p class="muted">${on
+        ? 'Every start asks for the disk password. Turn it off to unlock by itself again — nothing to type, you are already signed in.'
+        : 'Ask for the disk password at every start, for when the computer leaves the house: the TPM unlock and the key file on the boot partition are both put away until you turn it off.'}</p>
+      <button class="btn" data-sb-travel-toggle>${on?'Turn travel mode off':'Turn travel mode on'}</button></div>`;
+  }
   function tpmLine(t){ const v = TPM[t] || TPM.waiting; return `<p class="os-sb-tpm ${v[0]}" data-sb-tpm="${t || 'waiting'}">${v[1]}</p>`; }
   function page(ac, err, iconSvg, enc){
     const head=`<header class="os-set-pagehead"><div>${iconSvg('i-shield')}</div><span><h2>Secure Boot</h2><p>Anti-cheat mode: a Gentoo-signed kernel, started by Secure Boot, for games whose anti-cheat requires it.</p></span></header>`;
@@ -48,7 +58,7 @@
     }else if(st==='enabled'){
       html=card(ac.secureBoot==='enabled'?'Secure Boot is on':'Set up — switch Secure Boot on',
         ac.secureBoot==='enabled'
-          ? `<p class="muted">This computer started through Secure Boot with the signed kernel. Run <code>pc-eac-check</code> in a terminal to see what an anti-cheat will check.</p>${tpmLine(ac.tpm)}`
+          ? `<p class="muted">This computer started through Secure Boot with the signed kernel. Run <code>pc-eac-check</code> in a terminal to see what an anti-cheat will check.</p>${tpmLine(ac.travel?'travel':ac.tpm)}${travelBlock(!!ac.travel)}`
           : `<p class="muted">The signed kernel is installed, but Secure Boot is still off in the firmware. Open the firmware settings, switch Secure Boot on, and start <b>PosterChanOS (anti-cheat)</b>.</p>`,
         `<button class="btn" data-sb-undo>Turn anti-cheat mode off</button>`);
     }else{
@@ -68,8 +78,18 @@
       const ok=await PC().uiConfirm('Turn anti-cheat mode off?\n\nThe computer goes back to its normal boot entry. Switch Secure Boot off in the firmware afterwards.',
         { ok:'Turn it off', cancel:'Keep it' });
       if(ok) await pcAnticheat.undo(); }, 'Working…');
+    const tb=host.querySelector('[data-sb-travel]');
+    if(tb && pcAnticheat.travel){
+      const on=tb.getAttribute('data-sb-travel')==='on';
+      act('[data-sb-travel-toggle]', async()=>{
+        if(!on && !await PC().uiConfirm('Turn travel mode on?\n\nFrom the next start the disk password is asked every time. Make sure you know it: without it, nothing on this disk can be opened.',
+          { ok:'Turn it on', cancel:'Cancel' })) return;
+        await pcAnticheat.travel(!on);
+        PC().toast(on?'Travel mode is off — the disk unlocks by itself again.':'Travel mode is on — the disk password is asked at every start.');
+      }, 'Rebuilding the startup images…');
+    }
   }
-  const CSS = '.os-sb-tpm{margin:8px 0 0;font-size:13px}.os-sb-tpm.ok{color:var(--green,#00ff88)}.os-sb-tpm.warn{color:var(--warn,#ffb020)}.os-sb .os-set-cardhead{margin-bottom:10px}.os-sb-costs,.os-sb-steps{margin:0 0 6px;padding-left:20px;color:var(--text);font-size:13px;line-height:1.55}.os-sb-costs li,.os-sb-steps li{margin:3px 0}.os-sb-code{margin:10px 0 14px;font:700 30px/1.2 ui-monospace,monospace;letter-spacing:.14em;color:var(--accent);overflow-wrap:anywhere}.os-sb-log{max-height:240px;overflow:auto;margin:8px 0 0;padding:10px;border-radius:10px;background:#0006;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere}.os-sb .os-set-actions{margin-top:14px}';
+  const CSS = '.os-sb-tpm{margin:8px 0 0;font-size:13px}.os-sb-tpm.ok{color:var(--green,#00ff88)}.os-sb-tpm.warn{color:var(--warn,#ffb020)}.os-sb .os-set-cardhead{margin-bottom:10px}.os-sb-costs,.os-sb-steps{margin:0 0 6px;padding-left:20px;color:var(--text);font-size:13px;line-height:1.55}.os-sb-costs li,.os-sb-steps li{margin:3px 0}.os-sb-code{margin:10px 0 14px;font:700 30px/1.2 ui-monospace,monospace;letter-spacing:.14em;color:var(--accent);overflow-wrap:anywhere}.os-sb-log{max-height:240px;overflow:auto;margin:8px 0 0;padding:10px;border-radius:10px;background:#0006;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere}.os-sb .os-set-actions{margin-top:14px}.os-sb-travel{margin:14px 0 0;padding:12px 0 0;border-top:1px solid var(--border,#ffffff1a)}.os-sb-travel p{margin:4px 0 10px;font-size:13px}';
   /* Mounted into its section by renderSystemSettings: reads the helper, paints, and looks again every 5 s while the
    * set-up runs as a service, until the page is left (`alive` false). */
   async function mount(slot, d){

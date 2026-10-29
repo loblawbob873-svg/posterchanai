@@ -5774,8 +5774,10 @@ img=""
 for c in "$R/usr/lib/modules/$kver/vmlinuz" "$R/boot/vmlinuz-$kver"; do [ -s "$c" ] && { img="$c"; break; }; done
 [ -n "$img" ] || { echo "posterchan: no kernel image for $kver; the self-unlocking entry was not updated" >&2; exit 0; }
 mkdir -p "$dir" "$R/boot/loader/entries" && cp -f "$img" "$dir/linux.new" && mv -f "$dir/linux.new" "$dir/linux" || exit 0
+# Travel mode (pc-anticheat travel on) took the key out on purpose: that image asks for the password, and is right.
+want_key=1; [ -e "$R/etc/posterchan/travel/on" ] && want_key=0
 if ! dracut --force --add " crypt systemd-cryptsetup dm rootfs-block " "$dir/initrd.new" "$kver" \
-   || ! lsinitrd "$dir/initrd.new" 2>/dev/null | grep -q 'boot/keyfile.key'; then
+   || { [ "$want_key" = 1 ] && ! lsinitrd "$dir/initrd.new" 2>/dev/null | grep -q 'boot/keyfile.key'; }; then
 	rm -f "$dir/initrd.new"
 	echo "posterchan: the keyfile initramfs for $kver did not build; the self-unlocking entry was not updated" >&2
 	exit 0
@@ -5889,7 +5891,8 @@ PLUGIN
 		local v e i ok=0
 		v="$(cat "$esp/EFI/posterchan/posterchanos.version" 2>/dev/null)"
 		e="$R/boot/loader/entries/$mid-$v.conf"; i="$R/boot/$mid/$v/initrd"
-		grep -qs 'rd.luks.key=' "$e" && lsinitrd "$i" 2>/dev/null | grep -q 'boot/keyfile.key' && ok=1
+		# (In travel mode the key is out of every image on purpose -- that entry asks for the password.)
+		grep -qs 'rd.luks.key=' "$e" && { [ -e "$R/etc/posterchan/travel/on" ] || lsinitrd "$i" 2>/dev/null | grep -q 'boot/keyfile.key'; } && ok=1
 		# ...and nothing in EFI/Linux competes with it for systemd-boot's default (see the plugin).
 		ls "$esp"/EFI/Linux/*-"$v".efi >/dev/null 2>&1 && ok=0
 		[ "$ok" = 1 ] || { echo "anticheat: the normal entry for $v would not unlock the disk by itself ($e)" >&2; return 1; }
