@@ -791,6 +791,12 @@ if (isOurPage) {
   });
 
   contextBridge.exposeInMainWorld('pcAutostart', {
+    /* Installed programs are kept in ~/.config/autostart, which only a Linux session reads (PosterChanOS's shell runs
+     * them itself). Windows and macOS never look there, so the page offers that list on Linux only. */
+    programs: process.platform === 'linux',
+    platform: process.platform,
+    // PosterChanOS's shell (startup apps open as real windows there, once its window manager answers) or the app.
+    shell: (() => { try { return ipcRenderer.sendSync('pc:is-shell') === true; } catch (_) { return false; } })(),
     list: () => ipcRenderer.invoke('pc:autostart:list'),
     add: (spec) => ipcRenderer.invoke('pc:autostart:add', spec && typeof spec === 'object'
       ? { name: String(spec.name || ''), exec: String(spec.exec || ''), terminal: !!spec.terminal } : {}),

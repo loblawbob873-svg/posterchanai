@@ -4348,8 +4348,27 @@
     // Only the desktop itself: never a popup page or an app window (they load this same client).
     try{ const q=new URLSearchParams(location.search); if(q.get('pcpopup') || q.get('pcwin')) return 0; }catch(_){}
     if(document.documentElement.classList.contains('pc-oswin')) return 0;
-    if(!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled())) return 0;
+    /* WHERE THEY CAN OPEN: real windows on PosterChanOS, desktop windows (or the app itself, outside desktop mode) in
+     * the PosterChan app on Windows, macOS and other Linux -- "autostart apps do not work" there (2026-10-29): this
+     * returned unless PosterChanOS's window manager was present, so the list saved and nothing ever opened. */
+    const native = !!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled());
+    // PosterChanOS waits for its window manager (a later call); only the plain app opens them in this page.
+    if(!native && !(window.pcShell && window.pcAutostart && pcAutostart.shell === false)) return 0;
     _startupRan=true;
+    if(!native){
+      const views=_startupViews().filter(v=>apps().some(a=>a.view===v && !a.off));
+      if(!views.length) return 0;
+      const { workspace } = _startupLayoutPrefs();
+      if(on){
+        const most = Math.max(0, ...views.map(v => _startupWsOf(workspace, v)));
+        if(most >= wsCount()){ _wsN = Math.min(WS_MAX, most + 1); _wsSave(); drawBar(); }
+        views.forEach((v,i)=>setTimeout(()=>{
+          try{ routeView(v); const ws=_startupWsOf(workspace, v), w=wins.find(x=>sameAppWindow(x.view, v));
+               if(ws && w) moveToWs(w, ws); }catch(_){}
+        }, 400 + i*500));
+      }else{ try{ PC().switchView(views[0]); }catch(_){} }
+      return views.length;
+    }
     const known=new Set(apps().filter(a=>!a.off).map(a=>a.view));
     const want=_startupViews().filter(v=>known.has(v));
     let me = await _startupWhere();
@@ -4707,11 +4726,12 @@
           <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
           ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section>${key==='network'?bridgeCardHtml():''}</section>`).join('')}
         ${window.pcAutostart?`<section data-settings-page="startup" ${_osSettingsPage==='startup'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-zap')}</div><span><h2>Startup apps</h2><p>Programs that start by themselves when you log in.</p></span></header>
+          ${window.pcAutostart.programs===false?`<div class="os-set-card"><div class="os-set-cardhead"><b>Other programs</b><span>${window.pcAutostart.platform==='darwin'?'On a Mac, programs that start at login are set in System Settings → General → Login Items.':'On Windows, programs that start at login are set in Task Manager → Startup apps.'}</span></div></div>`:`
           <div class="os-set-card" data-startup><div class="os-set-cardhead"><b>Start when I log in</b><span>Saved in ~/.config/autostart, the standard place — so a "start at login" box ticked inside an app shows up here too.</span></div>
             <div data-startup-list class="os-startup-list"><div class="empty">Loading…</div></div>
             <div class="os-set-actions os-startup-add"><select class="input" data-startup-app aria-label="An installed app"><option value="">Add an installed app…</option></select><button class="btn primary" data-startup-add-app>Add</button></div>
             <div class="os-set-actions os-startup-add"><input class="input" data-startup-name placeholder="Name (optional)" aria-label="Name"><input class="input" data-startup-exec placeholder="Command, e.g. syncthing --no-browser" aria-label="Command"><label class="os-startup-term"><input type="checkbox" data-startup-term> In a terminal</label><button class="btn" data-startup-add-cmd>Add command</button></div>
-            <div class="muted" data-startup-status></div></div>
+            <div class="muted" data-startup-status></div></div>`}
           <div class="os-set-card" data-startup-pc><div class="os-set-cardhead"><b>PosterChan apps</b><span>Opened in their own windows when you log in. Saved with your account, so every machine you sign into does the same. With more than one monitor, pick where each one opens — that choice, and the tiling below, belong to this computer only.</span></div>
             <div data-startup-pc-list class="os-startup-list"></div>
             <div data-startup-tiling hidden><div class="os-set-cardhead"><b>Tile startup apps</b><span>Once they have opened, arrange each monitor's startup apps. Set on this computer only — a laptop signed into the same account keeps its own.</span></div>
@@ -4930,6 +4950,7 @@
        * once per login. Every change re-reads the directory, so what is drawn is what is on disk. */
       const stp=host.querySelector('[data-startup]');
       if(stp && window.pcAutostart) _wireStartupApps(stp);
+      else{ const pcs=host.querySelector('[data-startup-pc]'); if(pcs) try{ _wireStartupPcApps(pcs.closest('section') || pcs); }catch(_){} }  // Windows/macOS: no programs list
       /* PRINTERS. Everything here goes through pcPrinters, which runs the CUPS command-line tools
        * under the NOPASSWD sudo grant this account already has — there is no password to ask for,
        * which is the whole point: CUPS's own web UI authenticates a Unix account through PAM, and a

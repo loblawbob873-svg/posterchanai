@@ -229,3 +229,44 @@ def test_a_startup_app_switched_off_stays_off_when_an_older_account_copy_arrives
     assert got['after_switch'] == ['notes'], got
     assert got['after_reload'] == ['notes'], ("an older account copy turned the app back on", got)
     assert ['notes'] in got['healed'], ("the newer list was not put back up to the account", got)
+
+
+WINDOWS_FIXTURE = r'''
+window.__startupSaves=[];
+window.pcShell=Object.assign(window.pcShell||{},{backgroundOwner:true});
+window.pcAutostart={programs:false,platform:'win32',shell:false,list:async()=>[],add:async()=>'',addApp:async()=>'',set:async()=>({}),remove:async()=>({}),run:async()=>({ok:true})};
+'''
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_on_the_windows_app_posterchan_startup_apps_open_and_the_programs_list_says_where_to_go():
+    """"windows app bug and may affect mac/lin: autostart apps do not work" (2026-10-29). Off PosterChanOS there is no
+    window manager, and runStartupApps returned at once -- the choice saved and nothing ever opened. And the installed-
+    programs list wrote ~/.config/autostart, which Windows never reads. The app as the Windows build presents it."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.body && document.body.classList.contains('os-on') && !!document.querySelector('#os-bar')")
+        await b.js("document.getElementById('osfr')?.remove();document.documentElement.classList.remove('osfr-on')")
+        got['native'] = await b.js("!!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled())")
+        await b.js("PCOS.openSystemSettings()")
+        await b.until("!!document.querySelector('.os-set-nav [data-page=\"startup\"]')")
+        await b.js("document.querySelector('.os-set-nav [data-page=\"startup\"]').click()")
+        page = "document.querySelector('[data-settings-page=\"startup\"]:not([hidden])')"
+        await b.until(f"!!{page} && {page}.querySelectorAll('[data-startup-view]').length>3")
+        got['programs'] = await b.js(f"!!{page}.querySelector('[data-startup-list]')")
+        got['note'] = await b.js(f"{page}.textContent")
+        for v in ('notes', 'messages'):
+            await b.js(f"(()=>{{const c={page}.querySelector('[data-startup-view=\"{v}\"]');c.checked=true;c.dispatchEvent(new Event('change'))}})()")
+        await b.js("document.querySelector('.os-set-close, .osw.focused .osw-x')?.click();true")
+        got['count'] = await b.js("PCOS.runStartupApps()")
+        await asyncio.sleep(2.5)
+        got['views'] = await b.js("PCOS.workspaces && [...document.querySelectorAll('#os-root .osw')].map(w=>(w.querySelector('.osw-title,.osw-t,header')||w).textContent.trim().toLowerCase())")
+
+    asyncio.run(desktop.with_browser('online', '', check, WINDOWS_FIXTURE))
+    assert got['native'] is False, "the fixture is not the Windows shape"
+    assert got['programs'] is False and 'Task Manager' in got['note'], ("a programs list Windows never reads", got)
+    assert got['count'] == 2, ("startup apps did nothing on the Windows app", got)
+    assert len(got['views']) >= 2 and any('notes' in v for v in got['views']) and any('messag' in v for v in got['views']), \
+        ("they did not open as windows", got['views'])
