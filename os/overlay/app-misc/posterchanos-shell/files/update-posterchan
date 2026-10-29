@@ -72,7 +72,7 @@ _pc_posterfox_adopt() {
 		'sync-uri = https://gentoo.poster.place/posterchan-binpkgs' 'verify-signature = true' \
 		>"$etc/binrepos.conf/posterchan.conf"
 	[ -d "$g" ] || { command -v getuto >/dev/null 2>&1 && getuto; }
-	[ -d "$g" ] || { echo "${YEL}PosterFox: no Portage keyring to verify its signed package -- keeping Firefox.${OFF}"; return 1; }
+	[ -d "$g" ] || { echo "${YEL}PosterFox: no Portage keyring to verify its signed package -- keeping the browser it has.${OFF}"; return 1; }
 	# --check-trustdb AS ROOT, after the lsign: Portage verifies as an unprivileged user that cannot rewrite the
 	# trustdb, so a stale one reads the freshly signed key as TRUST_UNDEFINED and refuses the package ("GnuPG
 	# verification failed" -- measured on a systemd stage3, 2026-10-29). A key that is known but not yet valid
@@ -95,32 +95,51 @@ POSTERCHAN_KEY
 		&& gpg --homedir "$g" --batch --yes --pinentry-mode loopback --passphrase-file "$g/pass" \
 			--quick-lsign-key "$POSTERCHAN_BINPKG_FPR" \
 		&& gpg --homedir "$g" --batch --check-trustdb \
-		|| { echo "${YEL}PosterFox: could not trust its package key -- keeping Firefox.${OFF}"; return 1; }
+		|| { echo "${YEL}PosterFox: could not trust its package key -- keeping the browser it has.${OFF}"; return 1; }
 }
 _pc_posterfox() {
+	local mode plan line
 	if [ -n "$(qlist -I www-client/posterfox 2>/dev/null)" ]; then
 		echo "${CYA}Checking PosterFox${OFF}"
-		emerge -u --usepkgonly --getbinpkg --quiet-build=n www-client/posterfox \
-			|| echo "${YEL}PosterFox: no newer binary for this machine yet -- keeping the one installed.${OFF}"
+		mode=-u
+	else
+		echo "${CYA}Installing PosterFox, PosterChanOS's browser${OFF}"
+		_pc_posterfox_adopt || return 0
+		mode=--noreplace
+	fi
+	# PLANNED FIRST, the same way for an install and an upgrade. PosterFox itself must come as its signed BINARY; a
+	# dependency this machine lacks may build (measured: nss and xdg-utils, minutes), but never a toolchain or another
+	# browser -- that is the "compile Firefox for three hours" this exists to prevent, arriving by the back door.
+	plan="$(emerge -p $mode --getbinpkg --usepkg www-client/posterfox 2>&1)"
+	# THE BINARY IS BUILT AGAINST A CURRENT GENTOO TREE, and this updater only ever synced the PosterChanOS overlay.
+	# The laptop (2026-10-29) had a tree from Oct 19, nss 3.131 the newest it knew, and the binary needs 3.132:
+	# "there are no ebuilds to satisfy >=dev-libs/nss-3.132" -> "no binary package for this machine". The tree is
+	# synced once, only then, and the plan made again; nothing else is upgraded by it.
+	if printf '%s\n' "$plan" | grep -q 'there are no ebuilds to satisfy'; then
+		echo "${CYA}Updating the Gentoo package list (PosterFox needs newer libraries than it knows)${OFF}"
+		emaint sync -r gentoo >/dev/null 2>&1 || echo "${YEL}Could not update the Gentoo package list.${OFF}"
+		plan="$(emerge -p $mode --getbinpkg --usepkg www-client/posterfox 2>&1)"
+	fi
+	line="$(printf '%s\n' "$plan" | grep -E '^\[[a-z]+ [^]]*\] www-client/posterfox-' | head -1)"
+	if [ -z "$line" ]; then
+		if [ "$mode" = -u ] && ! printf '%s\n' "$plan" | grep -qE '^(!!!|emerge: there are no)'; then
+			return 0                              # installed and current
+		fi
+		echo "${YEL}PosterFox: no usable package for this machine yet -- keeping the browser it has.${OFF}"
+		printf '%s\n' "$plan" | grep -E '^(!!!|emerge:)' | head -3
 		return 0
 	fi
-	echo "${CYA}Installing PosterFox, PosterChanOS's browser${OFF}"
-	_pc_posterfox_adopt || return 0
-	# PLANNED FIRST. PosterFox itself must come as its signed BINARY; a dependency this machine lacks may build (measured
-	# on a bare desktop/systemd stage3: nss and xdg-utils, minutes), but never a toolchain or another browser -- that
-	# is the "compile Firefox for three hours" this exists to prevent, arriving by the back door.
-	local plan
-	plan="$(emerge -p --getbinpkg --usepkg --noreplace www-client/posterfox 2>&1)"
-	if ! printf '%s\n' "$plan" | grep -q '^\[binary[^]]*\] www-client/posterfox-'; then
-		echo "${YEL}PosterFox has no binary package for this machine yet -- keeping Firefox; the next update tries again.${OFF}"
-		return 0
-	fi
+	case "$line" in
+		"[binary"*) ;;
+		*) echo "${YEL}PosterFox has no binary package for this machine yet -- keeping the browser it has; the next update tries again.${OFF}"
+		   return 0 ;;
+	esac
 	if printf '%s\n' "$plan" | grep -E '^\[ebuild' | grep -qE '\] (dev-lang/rust|llvm-core/|sys-devel/(clang|llvm|gcc)|www-client/|dev-qt/qtwebengine|net-libs/webkit-gtk)'; then
-		echo "${YEL}PosterFox would need a compiler toolchain built on this machine first -- keeping Firefox.${OFF}"
+		echo "${YEL}PosterFox would need a compiler toolchain built on this machine first -- keeping the browser it has.${OFF}"
 		return 0
 	fi
-	emerge --getbinpkg --usepkg --noreplace --quiet-build=n www-client/posterfox \
-		|| echo "${YEL}PosterFox did not install -- keeping Firefox; the next update tries again.${OFF}"
+	emerge $mode --getbinpkg --usepkg --quiet-build=n www-client/posterfox \
+		|| echo "${YEL}PosterFox did not install -- keeping the browser it has; the next update tries again.${OFF}"
 	return 0
 }
 

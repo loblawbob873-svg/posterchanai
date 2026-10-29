@@ -5875,7 +5875,7 @@ PLUGIN
 	fi
 	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
 	[ -n "$kver" ] || { echo "anticheat: sys-kernel/gentoo-kernel-bin is not installed" >&2; return 1; }
-	emerge -1 sys-kernel/installkernel "=sys-kernel/gentoo-kernel-bin-$kver" sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools || return 1
+	emerge -1 sys-kernel/installkernel "$(anticheatKernelAtom "$kver")" sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools || return 1
 	[ -s "$esp/EFI/posterchan/posterchanos.efi" ] || { echo "anticheat: the signed kernel image did not reach $esp/EFI/posterchan" >&2; return 1; }
 	if [ -n "$opts" ]; then
 		# The reinstall above ran the plugin: the entry for the signed kernel's version must unlock by itself.
@@ -5962,6 +5962,20 @@ keepAnticheatFirst() {
 	fi
 }
 
+# THE KERNEL REINSTALLED IS THE INSTALLED VERSION ONLY WHILE GENTOO STILL CARRIES ITS EBUILD. Gentoo drops old
+# gentoo-kernel-bin versions within weeks: the laptop (2026-10-29) ran 6.18.54, its synced tree held 6.18.57-59, and
+# "there are no ebuilds to satisfy =sys-kernel/gentoo-kernel-bin-6.18.54" failed Secure Boot from System Settings.
+# Then the newest of the SAME series (6.18.*) -- the branch the machine chose, never a jump to another one.
+anticheatKernelAtom() {
+	local kver="$1"
+	if command -v portageq >/dev/null 2>&1 \
+		&& [ -z "$(portageq best_visible / "=sys-kernel/gentoo-kernel-bin-$kver" 2>/dev/null)" ]; then
+		echo "=sys-kernel/gentoo-kernel-bin-${kver%.*}*"
+	else
+		echo "=sys-kernel/gentoo-kernel-bin-$kver"
+	fi
+}
+
 anticheatOff() {
 	local R="${PC_AC_ROOT:-}" label="PosterChanOS (anti-cheat)" kver
 	if [ -z "$R" ] && [ "$(id -u)" != 0 ]; then echo "anticheat-off: run as root" >&2; return 1; fi
@@ -5976,7 +5990,7 @@ anticheatOff() {
 	# token is the machine-id (a from-scratch install) that overwrote the self-unlocking entry and the next boot asked
 	# for the passphrase (measured, VM, 2026-10-27). The plugin runs after it (96 > 90) and writes the entry back.
 	anticheatKeyfilePlugin
-	emerge -1 sys-kernel/installkernel "=sys-kernel/gentoo-kernel-bin-$kver" || return 1
+	emerge -1 sys-kernel/installkernel "$(anticheatKernelAtom "$kver")" || return 1
 	rm -f "$R/etc/kernel/install.d/96-posterchan-keyfile-entry.install" "$R/etc/posterchan/keyfile-entry.options"
 	echo "anticheat-off: back to the normal boot entry. Secure Boot can stay on only if you keep shim; turn it off to use systemd-boot."
 }

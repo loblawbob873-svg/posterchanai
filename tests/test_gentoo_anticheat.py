@@ -47,7 +47,7 @@ class Machine:
     """A fake PosterChanOS install: UEFI, LUKS root on vda2 (unlocked as luks-x), ESP on vda1."""
 
     def __init__(self, tmp: Path, *, nvidia_gpu=False, nvidia_pkg=True, uefi=True, luks=True,
-                 mok_queues=True, enrolled=False, image=True, keyfile=False, initrd_has_key=True):
+                 mok_queues=True, enrolled=False, image=True, keyfile=False, initrd_has_key=True, tree_has_kver=True):
         self.r, self.bin, self.log = tmp / "root", tmp / "bin", tmp / "calls.log"
         self.bin.mkdir(parents=True); self.log.write_text("")
         r = self.r
@@ -114,9 +114,11 @@ class Machine:
              f'*) echo "Already in kernel trusted keyring. Skip";; esac;; '
              f'--list-new) [ -e "{self.state}" ] && echo "Subject: CN=Gentoo Linux kernel signing key";; esac; true')
         _exe(self.bin / "fake-gentoo-sh", f'{L}; true')
+        # The Gentoo tree: does it still carry the installed kernel's ebuild?
+        _exe(self.bin / "portageq", f'{L}; [ "$1" = best_visible ] && {"echo ${3#=}" if tree_has_kver else "true"}; true')
 
     def run(self, fn="anticheatSetup", **env):
-        script = _fn("anticheatKeyfilePlugin") + _fn("anticheatSetup") + _fn("anticheatOff") + f"\n{fn}\n"
+        script = _fn("anticheatKernelAtom") + _fn("anticheatKeyfilePlugin") + _fn("anticheatSetup") + _fn("anticheatOff") + f"\n{fn}\n"
         e = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", PC_AC_ROOT=str(self.r),
                  PC_GENTOO_SH=str(self.bin / "fake-gentoo-sh"), **env)
         p = subprocess.run(["bash", "-c", script], env=e, capture_output=True, text=True, timeout=60)
@@ -150,6 +152,19 @@ def test_a_ready_machine_is_converted(tmp_path):
     assert f"mokutil --import {r}/usr/src/linux/certs/signing_key.x509 --ignore-keyring" in calls
     assert "mokutil --list-new" in calls
     assert "Enroll MOK" in out
+
+
+def test_a_kernel_gentoo_has_dropped_is_replaced_by_its_series(tmp_path):
+    """The laptop, 2026-10-29: the installed kernel's ebuild was gone from the synced tree, and Secure Boot from System
+    Settings failed on "there are no ebuilds to satisfy =sys-kernel/gentoo-kernel-bin-6.18.54"."""
+    series = KVER.rsplit(".", 1)[0]
+    m = Machine(tmp_path, tree_has_kver=False)
+    rc, out, calls = m.run()
+    assert rc == 0, out
+    assert f"emerge -1 sys-kernel/installkernel =sys-kernel/gentoo-kernel-bin-{series}* sys-boot/shim" in calls, calls
+    assert f"=sys-kernel/gentoo-kernel-bin-{KVER} " not in calls
+    rc, out, calls = m.run("anticheatOff")
+    assert rc == 0 and f"emerge -1 sys-kernel/installkernel =sys-kernel/gentoo-kernel-bin-{series}*" in calls, out
 
 
 def test_a_mokutil_that_queues_nothing_is_a_failure_not_a_done(tmp_path):
