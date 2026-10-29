@@ -4156,6 +4156,9 @@
     try{ const v=window.ClientSettings && ClientSettings.get('startupApps', []); return Array.isArray(v) ? v.filter(x=>typeof x==='string') : []; }catch(_){ return []; }
   }
   const _TILE_NAMES = [['', "Don't tile"], ['grid', 'Grid'], ['side-by-side', 'Side by side'], ['stacked', 'Stacked']];
+  const SCREEN_TILE = '_screen';    // startupTiling key for the in-page desktop
+  const _nativeWins = () => !!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled());
+  const _tileLabel = m => m.name === SCREEN_TILE ? 'This screen' : _monitorLabel(m);
   function _monitorLabel(m){
     const kind = [m.make, m.model].filter(Boolean).join(' ').trim();
     return (kind ? kind + ' (' + m.name + ')' : m.name) + (m.primary ? ' · main' : '');
@@ -4185,9 +4188,11 @@
         return `<div class="os-startup-pc"><span class="os-startup-nm"><b>${enc(a.label)}</b></span>${sel}
           <label class="switch"><input type="checkbox" data-startup-view="${enc(a.view)}" ${on.has(a.view)?'checked':''} aria-label="Open ${enc(a.label)} when I log in"><span class="slider"></span></label></div>`; }).join('');
       if(tileHost){
-        tileHost.hidden = !monitors.length;
-        tileHost.querySelector('[data-startup-tiling-list]').innerHTML = monitors.map(m=>`<div class="os-startup-pc os-startup-tilerow"><span class="os-startup-nm"><b>${enc(_monitorLabel(m))}</b></span>
-          <select class="input os-startup-mon" data-startup-tile="${enc(m.name)}" aria-label="Tiling on ${enc(_monitorLabel(m))}">${_TILE_NAMES.map(([v,l])=>`<option value="${v}" ${(tiling[m.name]||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>`).join('');
+        // In-page windows (Windows/macOS app): no monitors to name, one row for the screen they share.
+        const rows = monitors.length ? monitors : _nativeWins() ? [] : [{ name: SCREEN_TILE }];
+        tileHost.hidden = !rows.length;
+        tileHost.querySelector('[data-startup-tiling-list]').innerHTML = rows.map(m=>`<div class="os-startup-pc os-startup-tilerow"><span class="os-startup-nm"><b>${enc(_tileLabel(m))}</b></span>
+          <select class="input os-startup-mon" data-startup-tile="${enc(m.name)}" aria-label="Tiling on ${enc(_tileLabel(m))}">${_TILE_NAMES.map(([v,l])=>`<option value="${v}" ${(tiling[m.name]||'')===v?'selected':''}>${l}</option>`).join('')}</select></div>`).join('');
       }
       host.querySelectorAll('[data-startup-view]').forEach(cb=>cb.onchange=()=>{
         const set=new Set(_startupViews());
@@ -4340,6 +4345,15 @@
     const poll = setInterval(() => { if(Date.now() > until) stop(); else if(size() !== laid && !timer) changed(); }, 2000);
     snap().then(s => { shape = s; if(!s) stop(); else window.addEventListener('resize', changed); });
   }
+  /* In-page twin of _tileStartup: once every startup app on workspace `ws` has its window (or 25s), arrange
+   * that workspace's windows. Once: a workspace left meanwhile is owed it again on return. */
+  async function _tileStartupInPage(views, layout, ws){
+    const open = () => views.every(v => wins.some(w => sameAppWindow(w.view, v) && w.el && w.el.isConnected && (w.ws | 0) === ws));
+    for(let t = Date.now(); !open() && Date.now() - t < 25000;) await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => requestAnimationFrame(() => r()));
+    if(_wsCur !== ws){ _wsTileOnArrive.set(ws, { layout, page: () => _tileStartupInPage(views, layout, ws) }); return false; }
+    return arrangeInPage(layout, true).ok;
+  }
   let _startupRan=false;
   /* Once per desktop session. Each monitor's renderer opens the apps pinned to it; the main one the rest. */
   async function runStartupApps(){
@@ -4348,7 +4362,7 @@
     try{ const q=new URLSearchParams(location.search); if(q.get('pcpopup') || q.get('pcwin')) return 0; }catch(_){}
     if(document.documentElement.classList.contains('pc-oswin')) return 0;
     /* Real windows on PosterChanOS; desktop windows in the plain app (Windows/macOS/Linux; it used to open nothing). */
-    const native = !!(window.PCOSWin && PCOSWin.enabled && PCOSWin.enabled());
+    const native = _nativeWins();
     // PosterChanOS waits for its window manager (a later call); only the plain app opens them in this page.
     if(!native){
       let shell = true;
@@ -4359,7 +4373,7 @@
     if(!native){
       const views=_startupViews().filter(v=>apps().some(a=>a.view===v && !a.off));
       if(!views.length) return 0;
-      const { workspace } = _startupLayoutPrefs();
+      const { workspace, tiling } = _startupLayoutPrefs();
       if(on){
         const most = Math.max(0, ...views.map(v => _startupWsOf(workspace, v)));
         if(most >= wsCount()){ _wsN = Math.min(WS_MAX, most + 1); _wsSave(); drawBar(); }
@@ -4367,6 +4381,15 @@
           try{ routeView(v); const ws=_startupWsOf(workspace, v), w=wins.find(x=>sameAppWindow(x.view, v));
                if(ws && w) moveToWs(w, ws); }catch(_){}
         }, 400 + i*500));
+        const layout = TILE_LAYOUTS.includes(tiling[SCREEN_TILE]) ? tiling[SCREEN_TILE] : '';
+        if(layout){
+          const byWs = new Map();
+          for(const v of views){ const ws = _startupWsOf(workspace, v); byWs.set(ws, [...(byWs.get(ws) || []), v]); }
+          for(const [ws, vs] of byWs){
+            const job = { layout, page: () => _tileStartupInPage(vs, layout, ws) };
+            if(ws === _wsCur) job.page(); else _wsTileOnArrive.set(ws, job);
+          }
+        }
       }else{ try{ PC().switchView(views[0]); }catch(_){} }
       return views.length;
     }
@@ -6616,12 +6639,13 @@
     t.textContent = 'Workspace ' + (_wsCur + 1);
     t.classList.remove('on'); void t.offsetWidth; t.classList.add('on');
   }
-  const _wsTileOnArrive = new Map();     // workspace -> { layout, views }: the startup tiling still owed (runStartupApps)
+  const _wsTileOnArrive = new Map();     // workspace -> { layout, views } (compositor) or { layout, page } (in-page): startup tiling still owed
   /* "workspace 2 did not grid at start": at login a workspace is often shown before its startup apps' windows have
    * opened, and tiling it 400 ms later laid the grid over nothing, once. Wait for them (as _tileStartup does for
    * workspace 1); leaving the workspace first keeps the debt for the next visit. */
   async function _tileWsOnArrive(i){
     const owed = _wsTileOnArrive.get(i); if(!owed || owed.busy) return;
+    if(owed.page){ _wsTileOnArrive.delete(i); owed.page(); return; }   // in-page windows: _tileStartupInPage waits, re-owes on leaving
     owed.busy = true;
     try{
       const has = rows => owed.views.every(v => (rows || []).some(r => _startupTitle(v).test(String(r && r.title || ''))));
@@ -7331,9 +7355,9 @@
   }
   /* Arrange every open window on this desktop, most recently used first (the front window gets the
      big tile). Minimised windows are left where they are. */
-  function arrangeInPage(layout){
+  function arrangeInPage(layout, here){
     if(!TILE_LAYOUTS.includes(layout)) return { ok: false, why: 'unknown layout' };
-    const list = wins.filter(w => !w.min && w.el && w.el.isConnected).sort((a, b) => _zOf(b) - _zOf(a));
+    const list = wins.filter(w => !w.min && w.el && w.el.isConnected && !(here && w.offws)).sort((a, b) => _zOf(b) - _zOf(a));
     if(!list.length){ try{ PC().toast('No windows to arrange'); }catch(_){ } return { ok: false, why: 'no windows' }; }
     list.forEach((w, i) => snapTo(w, `tile:${layout}:${i}:${list.length}`, { focus: false }));
     return { ok: true, layout, count: list.length };
