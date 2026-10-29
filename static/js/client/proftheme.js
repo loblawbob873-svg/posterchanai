@@ -319,7 +319,7 @@
       $('#pt-up').disabled = false; $('#pt-up').textContent = 'Upload';
     };
     const send = async (t, done) => {
-      try{ const r = await o.publish(KIND, '', t ? tags(t) : [['alt', 'Active profile theme'], ['title', 'No theme'], ['client', 'PosterChan']]);
+      try{ const r = await o.publish(16767, '', t ? tags(t) : [['alt', 'Active profile theme'], ['title', 'No theme'], ['client', 'PosterChan']]);
         // publish() answers { ev, ok, msg }: only an ACCEPTED theme closes the editor and repaints the page.
         if(!r || !r.ok || !r.ev){ if(r && r.msg) o.toast(r.msg); return; }
         o.closeModal(); o.toast(done); if(o.onSaved) o.onSaved(r.ev);

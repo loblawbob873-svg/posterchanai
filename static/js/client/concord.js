@@ -1328,9 +1328,7 @@
       correct();
     });
     observer.observe(content);
-    /* AND THE SCROLLER ITSELF: a pinned room left 14px under the fold whenever the message area got SHORTER with the
-     * content unchanged -- the "is typing" line, the reply bar, a growing composer ("slightly above latest message",
-     * the posterchan room, 2026-10-29). Only the list was observed, and it had not changed size. */
+    // And the scroller: a typing line or reply bar shortens it with the list unchanged (10-29).
     if(content!==scroller)observer.observe(scroller);
   }
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
@@ -4327,32 +4325,12 @@
     }else if(tag[0]==='r'){const relay=normalizeRelay(tag[1]);if(relay)relays.push(relay);}}
     return {groups:[...new Map(groups.map(g=>[g.relay+'\0'+g.id,g])).values()],relays:[...new Set(relays)]};
   }
-  /* WHERE A MEMBERSHIP LIST IS LOOKED FOR, AND HOW OFTEN — one rule, used by both protocols.
-   *
-   * THE CHURN AND THE CORRECTNESS ARE DIFFERENT QUESTIONS, AND ANSWERING THEM TOGETHER BROKE
-   * COMMUNITIES. Opening six external sockets in parallel with the pool read — on startup and then
-   * again on every 60/120s recovery tick — is what filled a console with failed
-   * jskitty/asia.vectorapp/Damus connections and made Concord slow to appear. The fix for that was
-   * to skip the external read whenever the cache or the user's own relay answered at all, and that
-   * is the same mistake this codebase keeps making in a different costume: "the local copy
-   * returned SOMETHING" is not "the local copy is COMPLETE". Measured on this deployment, one
-   * account holds a 13302 from 08-27 and a 33302 from 08-24 on its own relay and NO kind-10009 at
-   * all — so an Armada vault newer than 08-27, or any NIP-29 list, lives only on the relays that
-   * gate then refused to open. Reported as "my concord community also does not show anymore".
-   *
-   * So the external read is a UNION THAT HAPPENS ONCE, never a fallback a local hit cancels: the
-   * first pass of a session reaches every compatibility relay (including the two historically
-   * blocked ones, which is where these lists actually live) and every pass after it is local-only.
-   * The recovery TIMER therefore costs nothing, which was the whole complaint; a fresh browser
-   * still finds its rooms, which is the whole feature.
-   *
-   * THE MARK BEATS `legacyRecovery`, AND THAT IS NOT A DETAIL. Nothing here is person-triggered:
-   * the "recovery" pass is what render() runs on an ordinary launch that already has a room open,
-   * so letting it ignore the mark fires the union from INSIDE that room — and an active room may
-   * only ever touch the relays in its own bundle (concord_runtime.mjs pins exactly that, and it
-   * caught this). One bounded cross-relay recovery per session, whichever path asks for it first,
-   * which is what the recovery pass was documented to be. `legacyRecovery` now only decides how
-   * wide a single sweep reaches. */
+  /* WHERE A MEMBERSHIP LIST IS LOOKED FOR, AND HOW OFTEN -- one rule, both protocols. Six external sockets on every
+   * 60/120s recovery tick flooded the console; skipping them whenever a local copy answered lost communities (a
+   * local hit is not a COMPLETE copy: Armada vaults and NIP-29 lists live only on those relays -- "my concord
+   * community also does not show anymore"). So the external read is a union done ONCE per session, every later pass
+   * local-only. The once-mark beats `legacyRecovery`: render() runs recovery from inside an open room, which may only
+   * touch its own bundle's relays (concord_runtime.mjs); `legacyRecovery` only decides how wide one sweep reaches. */
   const _externalDone = new Set();
   let _externalViewer = '';
   function externalAllowed(pubkey, tag){
@@ -5250,34 +5228,12 @@
     }catch(_){instanceJoinSession='';}   // could not ask / could not read: silent, tried again next session
     finally{instanceJoinBusy=false;}
   }
-  /* EVERY ROOM IN ONE WRITE, BECAUSE 13302 IS REPLACEABLE AND EACH WRITE IS A READ-MODIFY-WRITE.
-   *
-   * Called once per room, this reads the prior document, adds one entry and publishes the WHOLE
-   * list back. Called in a loop it therefore races itself: the second call's read can be answered
-   * before the first call's publish is queryable, and the document it then writes is the old one
-   * plus its own entry -- silently dropping the entry before it.
-   *
-   * Measured, not reasoned about. The backfill ran over three rooms and the vault afterwards held
-   * the LAST TWO, written 18:20:09 and 18:20:17, with the first one missing entirely: "still don't
-   * see my concord community for posterchan on webui". This is the same replaceable-document hazard
-   * Budget serialises with `chain`, and awaiting each call is not enough -- the await orders the
-   * PUBLISHES, and it is the READS that overlap them.
-   *
-   * So the list is the unit of work. One read, every entry, one publish.
-   *
-   * ONLY A JOIN MAY OUTRANK A LEAVE (2026-10-22). Every call used to stamp `added_at` past the
-   * community's tombstone and wipe this device's "left" record -- the rule a deliberate RE-JOIN
-   * needs, applied to every caller. Most callers are not joins: the vault backfill, a rekey or a
-   * dissolution adopted, a staff grant, a refounding, a new private channel, and the instance
-   * community's automatic join all write a membership because a room is in THIS DEVICE's list,
-   * and that list can be older than the account's decision: a fresh device whose vault read has
-   * not finished, a device that kept a room another device left. Each of them put the left community back into the account's
-   * vault, newer than its tombstone, so every device -- a fresh one first -- showed it again.
-   * Measured live: a fresh sign-in re-joined the instance community this account had left 3
-   * minutes earlier (vault tombstone 21:49:01, entry re-added 21:51:40 by joinInstanceCommunity).
-   * So a write is an UPDATE unless the caller says `{join:true}`: an update never brings back a
-   * community the vault says was left -- it is reported in `opts.left` instead -- and only a join
-   * clears this device's ledger. A room the vault has never heard of is still added (backfill). */
+  /* EVERY ROOM IN ONE WRITE: 13302 is replaceable, each write a read-modify-write, and looped calls raced (a backfill
+   * of three rooms kept the last two). One read, every entry, one publish.
+   * ONLY A JOIN OUTRANKS A LEAVE (10-22): backfill, rekeys, grants and the instance auto-join wrote memberships from
+   * this DEVICE's possibly stale list and re-added communities the account had left (re-joined 3 min after leaving).
+   * A write is an update unless `{join:true}`: it never revives a left community (reported in `opts.left`); only a
+   * join clears this device's ledger. A room the vault never heard of is still added (backfill). */
   async function persistArmadaMemberships(p,rooms,opts={}){
     const join=!!(opts&&opts.join),left=opts&&Array.isArray(opts.left)?opts.left:null,skipped=new Set();
     const viewer=p.viewer?p.viewer():{};

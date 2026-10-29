@@ -1087,7 +1087,15 @@
    * itself -- a new tab that downloaded the decrypted file, or an <a download> -- so a picture in a note became a
    * file in Downloads. The Preview window is the one place that shows it and then offers Save / Share. Anything it
    * cannot show (an .odt, a zip) keeps the old route. */
-  async function openAttachment(getUrl, name, mime){
+  /* AN OFFICE DOCUMENT OPENS IN POSTERCHAN OFFICE, AND ITS EDITS GO BACK INTO THE NOTE ("notes on android not opening
+   * office docs in office", 2026-10-29). Everything that was not a picture/video/PDF went to the route below: on Android
+   * the system share sheet, never our Office. `saveBack(blob)` replaces the attachment in the note (see renderRes). */
+  async function openAttachment(getUrl, name, mime, saveBack){
+    if(!_previewable(name, mime) && typeof PC.officeOpen === 'function'){
+      const blob = await (await fetch(await getUrl())).blob();
+      const file = new File([blob], name || 'document', { type: mime || blob.type });
+      if(await PC.officeOpen(file, saveBack || (async () => {}))) return;
+    }
     if(_previewable(name, mime)){
       const P = window.PCPreview || (PC.loadModule ? await PC.loadModule('preview.js', 'PCPreview') : null);
       if(P && typeof P.open === 'function'){
@@ -1274,13 +1282,23 @@
       isImg(r)
         ? `<button class="nt-res-thumb" data-sha="${enc(r.sha)}" data-mime="${enc(r.mime||'')}" title="${enc(r.name||'')}">
              <img alt="${enc(r.name||'attachment')}" loading="lazy"><span class="muted small">${enc(r.name||r.sha.slice(0,8))}</span></button>`
-        : `<button class="nt-res-item" data-sha="${enc(r.sha)}" data-mime="${enc(r.mime||'')}">📎 ${enc(r.name||r.sha.slice(0,8))} <i class="muted small">${((r.size||0)/1024).toFixed(0)} KB</i></button>`
+        : `<button class="nt-res-item" data-sha="${enc(r.sha)}" data-mime="${enc(r.mime||'')}" data-name="${enc(r.name||'')}">📎 ${enc(r.name||r.sha.slice(0,8))} <i class="muted small">${((r.size||0)/1024).toFixed(0)} KB</i></button>`
     ).join('') + (rest > 0 ? `<button class="mini nt-res-more">Show ${rest} more</button>` : '');
     const more = $('.nt-res-more', box);
     if(more) more.onclick = () => renderRes(n, host, true);
+    /* An Office document edited from here comes back as a new encrypted file: the note's entry and every pcres: link
+     * to the old one now name it, and the note is saved -- the same thing attaching it did. */
+    const saveBackFor = (b) => async (updated) => {
+      const old = b.dataset.sha, r = (n.res || []).find(x => x.sha === old); if(!r) return;
+      const sha = await PC.uploadEncFile(new File([updated], r.name || 'document', { type: r.mime || updated.type }), 'Notes');
+      Object.assign(r, { sha, size: updated.size });
+      n.body = String(n.body || '').split('pcres:' + old).join('pcres:' + sha);
+      const bd = $('.nt-body', host); if(bd) bd.value = n.body;
+      await save(n, 'note'); renderRes(n, host); toast('saved into the note');
+    };
     const open = async (b) => {
       try{ await openAttachment(() => _withTimeout(PC.encFileUrl(b.dataset.sha, b.dataset.mime),
-                                                   180000, 'that file'), b.title || '', b.dataset.mime); }
+                                                   180000, 'that file'), b.title || b.dataset.name || '', b.dataset.mime, saveBackFor(b)); }
       catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment: ' + (e.message || 'error')
                                        : 'that attachment isn’t downloaded for offline use'); }
     };

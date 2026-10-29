@@ -15345,6 +15345,9 @@
     // Opening a decrypted file on Android: a WebView can neither view a PDF nor download a blob:,
     // so a sub-module must be able to hand one to the OS instead (notes.js attachments).
     isNativeApp: _isNativeApp, nativeOpenBlob,
+    // ...or to Office (false where there is none): notes.js.
+    officeOpen: (file, saveBack) => (CFG.office_enabled || (window.pcOfficeLocal && pcOfficeLocal.installed && pcOfficeLocal.installed()))
+      && _officeable(file.name, file.type) ? _officeSession(file, saveBack).then(() => true) : Promise.resolve(false),
     // NIP-10 reply tags + the cached profile, so a sub-module can reply to a post it was launched from
     // (meme.js: reply with the finished meme) using the SAME tagging as every other reply here — a
     // module rolling its own e/p tags is how a reply ends up detached from its thread.
