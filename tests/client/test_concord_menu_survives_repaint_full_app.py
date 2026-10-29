@@ -35,7 +35,14 @@ def test_the_open_menu_stays_open_through_repaints(width):
         await b.js("(()=>{const c=document.querySelector('[data-cc-channel]');if(c&&!document.querySelector('.cc-app.show-chat .cc-message'))c.click();})()")
         await b.until("document.querySelectorAll('.cc-message').length>=50")
         await asyncio.sleep(1.5)
-        await b.js("document.querySelector('.cc-message[data-message-id^=\"m050\"]').scrollIntoView({block:'center'})")
+        # Scrolled to it with the wheel, as a reader does (a scroll from script does not unpin a room).
+        box = await b.js("(()=>{const r=document.querySelector('.cc-messages').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+        for _ in range(60):
+            off = await b.js("(()=>{const r=document.querySelector('.cc-message[data-message-id^=\"m050\"]').getBoundingClientRect(),q=document.querySelector('.cc-messages').getBoundingClientRect();return Math.round((r.top+r.height/2)-(q.top+q.height/2))})()")
+            if abs(off) < 60:
+                break
+            await b.call('Input.dispatchMouseEvent', {'type': 'mouseWheel', 'x': box[0], 'y': box[1], 'deltaX': 0, 'deltaY': max(-400, min(400, off))})
+            await asyncio.sleep(.12)
         await asyncio.sleep(.3)
         row = await b.js("(()=>{const r=document.querySelector('.cc-message[data-message-id^=\"m050\"]').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
         await b.call("Input.dispatchMouseEvent", dict(type="mouseMoved", x=row[0], y=row[1]))

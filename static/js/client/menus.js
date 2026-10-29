@@ -229,6 +229,8 @@ window.PCMenusFactory = function(dep){
     // Search looks across EVERY pack (that's the point of a search box with thousands of emoji);
     // clearing it drops back to the tab you were on.
     if(q) q.oninput=()=>{
+      // The box keeps its size while searching, so it cannot move under the typing ("type roll, the picker moves").
+      if(!pop.style.height) pop.style.height=Math.round(pop.getBoundingClientRect().height)+'px';
       const s=q.value.trim().toLowerCase().replace(/:/g,'');
       if(!s){ _setTab(_tab, true); return; }
       $$('.ep-tab',pop).forEach(b=>b.classList.remove('on'));

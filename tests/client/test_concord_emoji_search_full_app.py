@@ -136,3 +136,48 @@ def test_every_built_in_emoji_has_a_search_name():
     assert table, 'menus.js has no names for the built-in emoji'
     named = set(re.findall(r"'([^']+)':'", table.group(1)))
     assert built_in and not [e for e in built_in if e not in named]
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('repaint', [False, True])
+@pytest.mark.parametrize('width', [1280, 390])
+def test_typing_after_the_room_repaints_keeps_the_picker_by_its_button(width, repaint):
+    """"in message box, click emoji, type roll, the picker moves to top-left of app" (the Windows app, 2026-10-29).
+    Every search keystroke re-places the picker against the button it was opened from -- and the room repaints its
+    composer (a message arrives, someone types), which REPLACES that button. A detached button measures 0x0 at the
+    origin, so the next keystroke threw the picker into the top-left corner."""
+    got = {}
+    phone = width < 600
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 850, 'deviceScaleFactor': 1, 'mobile': phone})
+        await desktop.login(b)
+        await b.js("window.__publishOK=true")
+        await b.js(ROOM)
+        await b.until("!!document.querySelector('#cc-input')")
+        await b.js("(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()")
+        await b.until("[...document.querySelectorAll('.cc-message')].some(m=>m.textContent.includes('hello from bob'))")
+        p = await center(b, '#cc-emoji')
+        await press(b, p['x'], p['y'])
+        await b.until("!!document.querySelector('.emoji-pop .ep-head:not([hidden]) .ep-q')")
+        p = await center(b, '.emoji-pop .ep-q')
+        await press(b, p['x'], p['y'])
+        await type_text(b, 'r')
+        await asyncio.sleep(.3)
+        RECT = "(()=>{const r=document.querySelector('.emoji-pop').getBoundingClientRect();return {left:Math.round(r.left),top:Math.round(r.top)};})()"
+        got['before'] = await b.js(RECT)
+        await b.js("window.__oldBtn=document.querySelector('#cc-emoji')")
+        if repaint:
+            # The composer redrawn under the open picker, as a build that rebuilds the room on every update does.
+            await b.js("(()=>{const o=document.querySelector('#cc-emoji');o.replaceWith(o.cloneNode(true));})()")
+        got['replaced'] = await b.js("!window.__oldBtn.isConnected")
+        await type_text(b, 'oll')
+        await asyncio.sleep(.4)
+        got['after'] = await b.js(RECT)
+        got['state'] = await b.js(STATE)
+    asyncio.run(desktop.with_browser('online', '', check, EXTRA))
+
+    assert got['state']['open'] and got['state']['query'] == 'roll', got
+    assert got['replaced'] == repaint, ("the composer's emoji button was (not) replaced -- this case proves nothing", got)
+    assert abs(got['after']['left'] - got['before']['left']) <= 4 and abs(got['after']['top'] - got['before']['top']) <= 4, \
+        ("typing after the room repainted moved the picker away from its button", got)

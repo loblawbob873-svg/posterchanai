@@ -9550,6 +9550,14 @@
       return;
     }
     const M=8, vw=window.innerWidth, vh=window.innerHeight;
+    /* A REPAINTED BUTTON IS NOT THE ORIGIN. A page that redraws (Concord's composer) replaces the button a picker
+     * hangs off; detached, it measures 0x0 at the top-left and the picker jumped there on the next keystroke
+     * ("type roll, the picker moves to top-left"). Find it again by id, else stay put. */
+    if(!opts.anchorRect && anchorBtn && !anchorBtn.isConnected){
+      const again=anchorBtn.id && document.getElementById(anchorBtn.id);
+      if(!again) return;
+      anchorBtn=again;
+    }
     const r=opts.anchorRect || (anchorBtn||document.body).getBoundingClientRect();
     const pw=pop.offsetWidth, ph=pop.offsetHeight;   // ph already respects the popover's CSS max-height
     // Horizontal: drop straight under the button (left edges aligned, like a normal dropdown). If
