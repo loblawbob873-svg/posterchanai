@@ -169,15 +169,20 @@ def test_push_enabled_in_the_app_reaches_it_closed_and_stops_when_turned_off(tmp
             await ph.cdp.call('ServiceWorker.deliverPushMessage', {'origin': node.origin, 'registrationId': reg_id,
                                                                     'data': got['raw']}, session=s['sessionId'])
             w = await ph.worker()
+            # 30 s like this test's other waits: push -> Chrome -> worker is three hops, and under the gate's parallel load
+            # the old 10 s ran out with nothing shown (2026-10-29; 3/3 green alone). If it ever comes back empty again,
+            # the message says whether the worker could see a window -- the one reason it would rightly show nothing.
             shown = None
-            for _ in range(100):
+            for _ in range(300):
                 shown = await w.js("self.registration.getNotifications().then(ns=>ns.map(n=>({title:n.title,body:n.body,"
                                    "tag:n.tag,eid:(n.data||{}).eid})))")
                 if shown:
                     break
                 await asyncio.sleep(.1)
+            windows = None if shown else await w.js("clients.matchAll({type:'window',includeUncontrolled:true}).then(c=>c.length)")
             assert shown == [{'title': 'PosterChan', 'body': 'Alice mentioned you', 'tag': 'nostr-' + ev['id'],
-                              'eid': ev['id']}], ('the notification shown by the worker', shown)
+                              'eid': ev['id']}], ('the notification shown by the worker', shown,
+                                                  'windows the worker could see', windows)
 
             # Turned OFF in the app: the server forgets the device and nothing more is sent to it.
             pg = await ph.open(init=STUB.replace('__SUB__', json.dumps(sub)))
