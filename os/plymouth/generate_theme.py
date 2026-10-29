@@ -27,7 +27,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 # PC_PLYMOUTH_OUT lets the test regenerate into a scratch directory and compare with the committed set.
 OUT = Path(os.environ.get("PC_PLYMOUTH_OUT") or ROOT / "os/plymouth/posterchanos")
-AVATAR_SRC = ROOT / "static/posterchan-relay.png"      # the client's own mark (app.js LOGO)
+AVATAR_SRC = ROOT / "branding/posterchan-small-1024.png"   # the app icon's round face badge (scripts/make_app_icon.py)
 ORBITRON = ROOT / "static/fonts/orbitron.woff2"
 INTER = ROOT / "static/fonts/inter.woff2"
 
@@ -103,21 +103,13 @@ def background():
 
 
 def avatar():
-    """The mascot's face in a neon ring."""
-    src = Image.open(AVATAR_SRC).convert("RGBA")
+    """The app icon's round face badge -- it carries its own neon rim -- with the splash's magenta arcs and glow."""
     size, pad = 300, 60
-    # The head and shoulders of the 256x384 portrait.
-    face = src.crop((8, 20, 248, 260)).resize((size, size), Image.LANCZOS)
-    backing = Image.new("RGBA", (size, size), BG2 + (255,))
-    face = Image.alpha_composite(backing, face)
-    mask = Image.new("L", (size * 4, size * 4), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, size * 4 - 1, size * 4 - 1), fill=255)
-    face.putalpha(mask.resize((size, size), Image.LANCZOS))
+    face = Image.open(AVATAR_SRC).convert("RGBA").resize((size, size), Image.LANCZOS)
     total = size + pad * 2
     out = Image.new("RGBA", (total, total), (0, 0, 0, 0))
     ring = Image.new("RGBA", (total, total), (0, 0, 0, 0))
     rd = ImageDraw.Draw(ring)
-    rd.ellipse((pad - 8, pad - 8, pad + size + 7, pad + size + 7), outline=NEON + (255,), width=5)
     rd.arc((pad - 22, pad - 22, pad + size + 21, pad + size + 21), 200, 320, fill=NEON2 + (230,), width=4)
     rd.arc((pad - 22, pad - 22, pad + size + 21, pad + size + 21), 20, 140, fill=NEON2 + (230,), width=4)
     out = Image.alpha_composite(out, glow(ring, 14, 1.6))

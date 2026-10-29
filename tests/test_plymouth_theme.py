@@ -99,7 +99,8 @@ def test_a_refused_passphrase_says_so():
 def test_the_avatar_is_the_clients_mark():
     assert (THEME / "avatar.png").is_file()
     assert 'load("avatar.png")' in SCRIPT
-    assert 'static/posterchan-relay.png' in GENERATOR.read_text(encoding="utf-8")
+    # The app icon's round face badge (2026-10-29, "switch the boot splash logo too"), as the app's windows show it.
+    assert 'branding/posterchan-small-1024.png' in GENERATOR.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not (ROOT / "venv-unified/bin/python").exists(), reason="app venv (Pillow with woff2) required")
