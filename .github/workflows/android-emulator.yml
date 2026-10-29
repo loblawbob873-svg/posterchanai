@@ -38,6 +38,7 @@ on:
       - 'scripts/client_shell.py'
       - 'mobile/**'
       - 'zapstore.yaml'
+      - 'static/icon-512.png'      # the app icon: Zapstore's listing icon and the desktop app's
       - 'scripts/zsp-signing-lineage.patch'
       - 'scripts/android_*.sh'
       - 'scripts/android_publish_gate.py'
@@ -54,6 +55,7 @@ on:
       - 'scripts/client_shell.py'
       - 'mobile/**'
       - 'zapstore.yaml'
+      - 'static/icon-512.png'      # the app icon: Zapstore's listing icon and the desktop app's
       - 'scripts/zsp-signing-lineage.patch'
       - 'scripts/android_*.sh'
       - 'scripts/android_publish_gate.py'

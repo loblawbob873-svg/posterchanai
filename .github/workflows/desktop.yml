@@ -29,6 +29,7 @@ on:
       # Same as android.yml: the catalogues live IN the bundle, so a language change ships only with
       # a rebuild.
       - 'static/i18n/**'
+      - 'static/icon-512.png'      # the app icon: Zapstore's listing icon and the desktop app's
       - 'templates/client.html'
       - 'scripts/client_shell.py'
       - '.github/workflows/desktop.yml'

@@ -71,3 +71,27 @@ def test_the_client_code_itself_is_covered_too(name):
     paths = _trigger_paths(WORKFLOWS[name])
     for rel in ("static/js/client/app.js", "templates/client.html", "static/i18n/en.json"):
         assert _covers(paths, rel), "%s no longer rebuilds for %s" % (name, rel)
+
+
+def _zapstore_icon():
+    m = re.search(r"^icon:\s*\./(\S+)", (ROOT / "zapstore.yaml").read_text(encoding="utf-8"), re.M)
+    assert m, "zapstore.yaml names no icon"
+    return m.group(1)
+
+
+def _desktop_icon():
+    script = __import__("json").loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))["scripts"]["icon"]
+    m = re.search(r"copyFileSync\('\.\./([^']+)'", script)
+    assert m, "desktop/package.json's icon script copies no file -- re-point this test"
+    return m.group(1)
+
+
+def test_a_new_app_icon_reaches_zapstore_and_the_desktop_app():
+    """"make sure to update the zapstore icon" (2026-10-29). The Zapstore listing's icon is the file zapstore.yaml
+    names, published by the APK build -- which did not run for that file, so an icon change reached the web and left
+    Zapstore (and the desktop app, which copies the same file at build time) on the old one until some unrelated
+    change rebuilt them."""
+    assert _covers(_trigger_paths(WORKFLOWS["android.yml"]), _zapstore_icon()), (
+        "android.yml does not rebuild (and so does not republish to Zapstore) when %s changes" % _zapstore_icon())
+    assert _covers(_trigger_paths(WORKFLOWS["desktop.yml"]), _desktop_icon()), (
+        "desktop.yml does not rebuild when the icon it copies in (%s) changes" % _desktop_icon())
