@@ -1,0 +1,13 @@
+# Secure Boot mode: the disk unlocks with the TPM (pc-anticheat tpm). Runs only on a machine set up for Secure Boot,
+# and only does work on a boot WITH Secure Boot on whose TPM seal is missing or stale -- otherwise it reads two values.
+[Unit]
+Description=PosterChanOS Secure Boot: unlock the disk with the TPM
+ConditionPathExists=/etc/posterchan/anticheat
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pc-anticheat tpm
+
+[Install]
+WantedBy=multi-user.target

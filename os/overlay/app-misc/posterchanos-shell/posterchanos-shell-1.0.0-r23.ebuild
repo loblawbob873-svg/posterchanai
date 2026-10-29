@@ -95,6 +95,7 @@ src_install() {
 	# Secure Boot ("anti-cheat") mode: pc-anticheat's service, run only while a request marker exists.
 	insinto /usr/lib/systemd/system
 	doins "${FILESDIR}/posterchan-anticheat.service"
+	doins "${FILESDIR}/posterchan-anticheat-tpm.service"
 	insinto /usr/lib/systemd/system/virt-secret-init-encryption.service.d
 	newins "${FILESDIR}/virt-secret-init-encryption-posterchanos.conf" 50-posterchanos.conf
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -195,6 +196,9 @@ pkg_postinst() {
 	# Remote Desktop control uses ydotool's per-user 0600 socket. Enable it globally so each signed-in
 	# identity gets its own daemon/socket; the desktop also starts it lazily for already-open sessions.
 	systemctl --global enable ydotool.service >/dev/null 2>&1 || true
+	# Secure Boot mode's automatic TPM unlock (pc-anticheat tpm). Enabled everywhere: it does nothing on a machine
+	# that is not set up for Secure Boot (ConditionPathExists), and an existing one gets it on its next update.
+	if [[ -z ${ROOT} ]]; then systemctl enable posterchan-anticheat-tpm.service >/dev/null 2>&1 || true; fi
 	# One repository endpoint on every PosterChanOS machine. The NAS maintains the local mirror and
 	# gentoo.poster.place serves it over HTTPS; clients consume Gentoo's signed webrsync snapshot.
 	# Keep this in pkg_postinst as well as gentoo.sh so a normal OS update repairs existing installs.

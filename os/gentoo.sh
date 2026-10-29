@@ -217,6 +217,11 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 # accelerated video decode in the client either). This does not configure anybody's OBS; it makes
 # the hardware encoder exist so it can be chosen.
 SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland vaapi")
+# systemd WITH ITS TPM SUPPORT, on every install: Secure Boot mode unlocks the disk with the TPM (pc-anticheat tpm), and
+# systemd-cryptenroll cannot seal a key without it ("TPM2 support is disabled", the laptop, 2026-10-29). Gentoo's
+# prebuilt systemd is built -tpm, so this one is compiled here; machines installed before it get the same rebuild
+# from pc-anticheat when they are first started with Secure Boot on.
+SPECIAL_PACKAGE_USE+=("sys-apps/systemd tpm")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
 # THE BROWSER IS NOT IN THESE SETS: it is PosterFox, installed from its own signed binary by installBrowser, which
@@ -5845,7 +5850,9 @@ anticheatSetup() {
 	echo "anticheat: the Gentoo-signed kernel image, shim and mokutil (about 600 MB)"
 	mkdir -p "$R/etc/portage/package.use"
 	printf '%s\n' "# gentoo.sh anticheat: Gentoo's signed unified kernel image; installkernel without dracut is what it requires." \
-		"sys-kernel/gentoo-kernel-bin generic-uki" "sys-kernel/installkernel -dracut -ukify uki" >"$R/etc/portage/package.use/zz-posterchan-anticheat"
+		"sys-kernel/gentoo-kernel-bin generic-uki" "sys-kernel/installkernel -dracut -ukify uki" \
+		"# The disk unlocks with the TPM under Secure Boot (pc-anticheat tpm): systemd-cryptenroll needs systemd's TPM support." \
+		"sys-apps/systemd tpm" >"$R/etc/portage/package.use/zz-posterchan-anticheat"
 	# The plugin goes in BEFORE the kernel is reinstalled, so the reinstall itself puts the image in place.
 	mkdir -p "$R/etc/kernel/install.d" "$esp/EFI/posterchan"
 	cat >"$R/etc/kernel/install.d/95-posterchan-anticheat.install" <<'PLUGIN'
@@ -5908,6 +5915,8 @@ PLUGIN
 	"${PC_GENTOO_SH:-/usr/bin/gentoo.sh}" sleep-policy 0 || true
 	grep -qs GenuineIntel "$R/proc/cpuinfo" && echo "anticheat: Intel CPU -- its IOMMU needs intel_iommu=on, which the signed image cannot take; pc-eac-check will say whether it is on"
 	mkdir -p "$R/etc/posterchan" && date -u +%FT%TZ >"$R/etc/posterchan/anticheat"
+	# The disk unlocks with the TPM once Secure Boot is on (pc-anticheat tpm, run at every start by this unit).
+	[ -n "$R" ] || systemctl enable posterchan-anticheat-tpm.service >/dev/null 2>&1 || true
 
 	cert="$R/usr/src/linux/certs/signing_key.x509"
 	if mokutil --test-key "$cert" 2>/dev/null | grep -q "already enrolled"; then
@@ -5974,6 +5983,21 @@ anticheatKernelAtom() {
 	else
 		echo "=sys-kernel/gentoo-kernel-bin-$kver"
 	fi
+}
+
+# TPM SUPPORT FOR AN EXISTING SECURE BOOT MACHINE. Gentoo's prebuilt systemd is built without USE=tpm, so
+# systemd-cryptenroll answers "TPM2 support is disabled" and the disk could never be sealed to the TPM -- measured on the
+# laptop, 2026-10-29. pc-anticheat tpm runs this once, in the background, when it meets that: the USE line (the same one
+# anticheatSetup writes for new set-ups) and systemd rebuilt with it. TPM libraries come as binaries where Gentoo has them.
+anticheatTpmSupport() {
+	local R="${PC_AC_ROOT:-}" f
+	f="$R/etc/portage/package.use/zz-posterchan-anticheat"
+	mkdir -p "$R/etc/portage/package.use"
+	grep -qs '^sys-apps/systemd tpm' "$f" || printf '%s\n' \
+		"# The disk unlocks with the TPM under Secure Boot (pc-anticheat tpm): systemd-cryptenroll needs systemd's TPM support." \
+		"sys-apps/systemd tpm" >>"$f"
+	emerge -1 --getbinpkg --usepkg --newuse --quiet-build=y sys-apps/systemd || return 1
+	systemd-cryptenroll --version | grep -q -- '+TPM2' 
 }
 
 anticheatOff() {
@@ -6422,6 +6446,8 @@ elif [ "$1" = "anticheat" ]; then
 	anticheatSetup
 elif [ "$1" = "anticheat-off" ]; then
 	anticheatOff
+elif [ "$1" = "anticheat-tpm" ]; then
+	anticheatTpmSupport
 elif [ "$1" = "sleep-policy" ]; then
 	# System Settings → Power → Hibernation: seconds from sleep to hibernate, 0 = never. See sleepPolicy.
 	sleepPolicy "$2"

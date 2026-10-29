@@ -6,6 +6,15 @@
 #   pc-anticheat undo       take it away again (`gentoo.sh anticheat-off`), in the background
 #   pc-anticheat run        the service's own step -- never called by hand
 #   pc-anticheat run-off    the undo's own step -- never called by hand
+#   pc-anticheat tpm        every boot (posterchan-anticheat-tpm.service): automatic TPM unlock under Secure Boot
+#
+# THE DISK UNLOCKS BY ITSELF UNDER SECURE BOOT TOO ("tpm unlock should be automatic and part of the Secure Boot
+# System Settings", 2026-10-29). Gentoo's signed kernel image cannot carry this machine's key file, so with Secure Boot
+# on it asked for the disk password. On a boot WITH Secure Boot on and a TPM present, `tpm` adds a TPM2 key slot sealed
+# to PCR 7 (the Secure Boot state), unlocked with the existing key file (/boot/keyfile.key) -- nothing to type, and the
+# key file and the normal boot entry stay exactly as they were. The PCR 7 value it was sealed against is kept; when it
+# changes (a key enrolled, firmware settings) that boot asks for the password once and this re-seals, wiping the old
+# TPM slot. Sealing while Secure Boot is OFF would seal the wrong value, so it waits for a Secure Boot boot.
 #
 # WHY A SERVICE AND A ONE-TIME PASSWORD. `gentoo.sh anticheat` downloads ~600 MB (shim, mokutil, the Gentoo-signed
 # kernel image) and queues Gentoo's key for MOK enrolment, which a person confirms at the next boot in MokManager with
@@ -21,6 +30,9 @@ REQUEST="${PC_AC_ROOT:-}/etc/posterchan/anticheat-requested"
 MARKER="${PC_AC_ROOT:-}/etc/posterchan/anticheat"
 GENTOO_SH="${PC_GENTOO_SH:-/usr/bin/gentoo.sh}"
 UNIT=posterchan-anticheat.service
+TPMSTATE="$STATE_DIR/anticheat-tpm.json"
+KEYFILE="${PC_AC_KEYFILE:-/boot/keyfile.key}"
+TPMDEV="${PC_AC_TPM:-/sys/class/tpm/tpm0}"
 
 json() {   # json <state> [password] -- the one writer of the state file (python3 does the escaping)
 	mkdir -p "$STATE_DIR"
@@ -78,6 +90,12 @@ if state == "enrol" and doc.get("password"):
     out["password"] = doc["password"]
 if state == "failed" and doc.get("log"):
     out["log"] = doc["log"]
+try:
+    out["tpm"] = json.load(open(os.path.join(os.path.dirname(path), "anticheat-tpm.json"))).get("state", "")
+except (OSError, ValueError):
+    out["tpm"] = ""
+if not out["tpm"]:
+    out["tpm"] = "absent" if not os.path.exists("/sys/class/tpm/tpm0") else "waiting"
 print(json.dumps(out))
 PY
 	;;
@@ -111,8 +129,39 @@ run-off)
 		exit 1
 	fi
 	;;
+tpm)
+	[ -e "$MARKER" ] || exit 0
+	tpmsay() { mkdir -p "$STATE_DIR"; printf '{"state": "%s", "at": %s}\n' "$1" "$(date +%s)" >"$TPMSTATE"; chmod 0644 "$TPMSTATE"; }
+	mokutil --sb-state 2>/dev/null | grep -qi "SecureBoot enabled" || { tpmsay waiting; exit 0; }
+	[ -e "$TPMDEV" ] || { tpmsay absent; exit 0; }
+	[ -s "$KEYFILE" ] || { tpmsay nokey; exit 0; }
+	# systemd without its TPM support (Gentoo's prebuilt one): rebuild it ONCE, in the background, then come back here.
+	# Read from the feature list: `--tpm2-device=list` HANGS on a build without TPM support (measured).
+	if ! systemd-cryptenroll --version 2>/dev/null | grep -q -- '+TPM2'; then
+		if [ ! -e "$STATE_DIR/anticheat-tpm.building" ]; then
+			: >"$STATE_DIR/anticheat-tpm.building"
+			systemd-run --quiet --no-block --unit=posterchan-anticheat-tpm-support --collect /bin/sh -c \
+				"'$GENTOO_SH' anticheat-tpm >'$STATE_DIR/anticheat-tpm.log' 2>&1; rm -f '$STATE_DIR/anticheat-tpm.building'; '$0' tpm"
+		fi
+		tpmsay building; exit 0
+	fi
+	src="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*//')"
+	dev="$(cryptsetup status "${src##*/}" 2>/dev/null | awk '$1 == "device:" {print $2}')"
+	[ -n "$dev" ] || { tpmsay failed; echo "pc-anticheat tpm: the root is not on a LUKS device ($src)" >&2; exit 1; }
+	pcr="$(cat "$TPMDEV/pcr-sha256/7" 2>/dev/null)"
+	if systemd-cryptenroll "$dev" 2>/dev/null | grep -q tpm2 && [ -n "$pcr" ] \
+		&& [ "$pcr" = "$(cat "$STATE_DIR/anticheat-tpm.pcr7" 2>/dev/null)" ]; then
+		tpmsay on; exit 0
+	fi
+	if systemd-cryptenroll "$dev" --unlock-key-file="$KEYFILE" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7; then
+		[ -n "$pcr" ] && printf '%s\n' "$pcr" >"$STATE_DIR/anticheat-tpm.pcr7"
+		tpmsay on
+	else
+		tpmsay failed; exit 1
+	fi
+	;;
 *)
-	echo "usage: pc-anticheat status|setup|undo" >&2
+	echo "usage: pc-anticheat status|setup|undo|tpm" >&2
 	exit 2
 	;;
 esac

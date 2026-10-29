@@ -9,6 +9,8 @@ anticheat-off in the background.
 import json
 import os
 import subprocess
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,3 +159,95 @@ def test_the_unit_path_the_hook_links_is_where_the_package_puts_it():
     i = eb.index('doins "${FILESDIR}/posterchan-anticheat.service"')
     assert "insinto /usr/lib/systemd/system" in eb[max(0, eb.rfind("insinto", 0, i) - 1):i], \
         "the installer links /usr/lib/systemd/system/posterchan-anticheat.service; the package must install it there"
+
+
+class TpmBox(Box):
+    """A machine set up for Secure Boot: a root on LUKS, a key file, and (maybe) a TPM whose PCR 7 is `pcr`."""
+
+    def __init__(self, tmp, sb="SecureBoot enabled", tpm=True, pcr="AA" * 32, enrolled=False, keyfile=True, enroll_rc=0,
+                 tpm_support=True):
+        super().__init__(tmp, sb=sb)
+        (self.root / "etc/posterchan/anticheat").write_text("2026-10-29")
+        self.tpm = tmp / "tpm0"
+        if tpm:
+            (self.tpm / "pcr-sha256").mkdir(parents=True)
+            (self.tpm / "pcr-sha256/7").write_text(pcr + "\n")
+        self.keyfile = tmp / "keyfile.key"
+        if keyfile:
+            self.keyfile.write_bytes(b"k" * 64)
+        self.slots = tmp / "slots"
+        self.slots.write_text("tpm2\n" if enrolled else "")
+        L = f'echo "$(basename "$0") $*" >> "{self.calls}"'
+        _exe(self.bin / "findmnt", 'echo /dev/mapper/root')
+        _exe(self.bin / "cryptsetup", f'{L}; [ "$1" = status ] && [ "$2" = root ] && echo "  device:  /dev/nvme0n1p2"; true')
+        _exe(self.bin / "systemd-cryptenroll",
+             f'{L}; [ "$1" = --version ] && {{ echo "systemd 261 (261.2) +PAM {"+TPM2" if tpm_support else "-TPM2"} +CRYPTSETUP"; exit 0; }}; '
+             f'if [ $# -eq 1 ]; then echo "SLOT TYPE"; echo "   0 password"; cat "{self.slots}" | sed "s/^/   1 /"; exit 0; fi; '
+             f'[ {enroll_rc} = 0 ] && echo tpm2 > "{self.slots}"; exit {enroll_rc}')
+
+    def tpm_run(self):
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(self.state), "PC_AC_ROOT": str(self.root),
+               "PC_GENTOO_SH": str(self.bin / "gentoo.sh"), "PC_AC_TPM": str(self.tpm), "PC_AC_KEYFILE": str(self.keyfile)}
+        r = subprocess.run(["bash", str(HELPER), "tpm"], capture_output=True, text=True, timeout=60, env=env)
+        calls = self.calls.read_text() if self.calls.exists() else ""
+        st = json.loads((self.state / "anticheat-tpm.json").read_text())["state"] if (self.state / "anticheat-tpm.json").exists() else None
+        return r, calls, st
+
+
+def test_the_first_secure_boot_start_seals_the_disk_key_into_the_tpm_with_nothing_to_type(tmp_path):
+    """"tpm unlock should be automatic" (2026-10-29): enrolled with the existing key file, sealed to PCR 7."""
+    r, calls, st = TpmBox(tmp_path).tpm_run()
+    assert r.returncode == 0, r.stderr
+    assert f"systemd-cryptenroll /dev/nvme0n1p2 --unlock-key-file={tmp_path}/keyfile.key --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7" in calls
+    assert st == "on"
+
+
+def test_a_current_seal_is_left_alone_and_a_stale_one_is_redone(tmp_path):
+    a = tmp_path / "a"; b = tmp_path / "b"; a.mkdir(); b.mkdir()
+    box = TpmBox(a)
+    box.tpm_run()
+    r, calls, st = box.tpm_run()                       # same PCR 7, slot present: nothing written
+    assert calls.count("--unlock-key-file") == 1 and st == "on", calls
+    (box.tpm / "pcr-sha256/7").write_text("BB" * 32 + "\n")   # a key enrolled / firmware changed
+    r, calls, st = box.tpm_run()
+    assert calls.count("--unlock-key-file") == 2 and st == "on", "a seal for the old Secure Boot state was kept"
+
+
+def test_secure_boot_off_never_seals_the_wrong_state(tmp_path):
+    r, calls, st = TpmBox(tmp_path, sb="SecureBoot disabled").tpm_run()
+    assert "cryptenroll" not in calls and st == "waiting"
+
+
+@pytest.mark.parametrize("kw,want", [({"tpm": False}, "absent"), ({"keyfile": False}, "nokey"), ({"enroll_rc": 1}, "failed")])
+def test_what_it_cannot_do_it_says(tmp_path, kw, want):
+    r, calls, st = TpmBox(tmp_path, **kw).tpm_run()
+    assert st == want, (st, calls)
+
+
+def test_a_machine_without_secure_boot_mode_is_untouched(tmp_path):
+    box = TpmBox(tmp_path)
+    (box.root / "etc/posterchan/anticheat").unlink()
+    r, calls, st = box.tpm_run()
+    assert r.returncode == 0 and calls == "" and st is None
+
+
+def test_the_status_and_the_unit_carry_it():
+    unit = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/posterchan-anticheat-tpm.service").read_text()
+    assert "ExecStart=/usr/local/bin/pc-anticheat tpm" in unit and "ConditionPathExists=/etc/posterchan/anticheat" in unit
+    from tests.overlay_paths import shell_ebuild
+    eb = shell_ebuild().read_text()
+    assert 'doins "${FILESDIR}/posterchan-anticheat-tpm.service"' in eb and "systemctl enable posterchan-anticheat-tpm.service" in eb
+    assert 'out["tpm"]' in HELPER.read_text()
+
+
+def test_a_systemd_without_tpm_support_is_rebuilt_once_in_the_background(tmp_path):
+    """Gentoo's prebuilt systemd answers "TPM2 support is disabled" (the laptop, 2026-10-29): the step starts ONE
+    background rebuild (gentoo.sh anticheat-tpm, which comes back to seal) and says so -- never a compile at boot."""
+    box = TpmBox(tmp_path, tpm_support=False)
+    r, calls, st = box.tpm_run()
+    assert st == "building" and calls.count("systemd-run") == 1 and "anticheat-tpm" in calls, calls
+    assert "--unlock-key-file" not in calls
+    r, calls, st = box.tpm_run()
+    assert calls.count("systemd-run") == 1, "a second rebuild was started while the first runs"
+    g = (ROOT / "os/gentoo.sh").read_text()
+    assert 'SPECIAL_PACKAGE_USE+=("sys-apps/systemd tpm")' in g and 'elif [ "$1" = "anticheat-tpm" ]; then' in g
