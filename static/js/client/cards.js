@@ -23,7 +23,7 @@ window.PCCardsFactory = function(dep){
   const {
     $, $$, BLOBF, Drafts, NT, QUOTE_ICON, REACT_ICON, REPLY_ICON, RT_ICON, ZAP_ICON, _DIM_GUESS,
     _adCache, _adQ, _advertises, _animOff, _celebrateOf, _filesSel, _filesSelBar, _ghosts,
-    _isMediaUrl, _isProofSig, _isTxid, _lbGroup, _noteNode, _notePaymentXmr, _notifCtxHtml,
+    _blossomBlobUrl, _isMediaUrl, _isProofSig, _isTxid, _lbGroup, _noteNode, _notePaymentXmr, _notifCtxHtml,
     _postEffectsOn, _repostAction, _repostDeleted, _tipNote, _webLink, articleCard, bchOf, compose,
     copyValue, decorateProfiles, doBlock, doDelete, doRepost, doTip, doXmrTip, doZap, enc, fmtSats,
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
@@ -597,7 +597,7 @@ window.PCCardsFactory = function(dep){
     // LEADS with media, that ordering is backwards: honour the order the author chose and put the row first.
     const _lead=(raw||'').trim().match(/^(https?:\/\/[^\s<]+)/);
     const _leadU=_lead && _lead[1].replace(/[)\].,!?]+$/,'');
-    const mediaFirst=!!(_lead && (_isMediaUrl(_leadU) || kinds.has(_leadU)));
+    const mediaFirst=!!(_lead && (_isMediaUrl(_leadU, ev) || kinds.has(_leadU)));
     // `flow` is the content IN THE ORDER IT WAS WRITTEN: the text between attachments, and the index of each
     // attachment where it stood. `text` (the words with the media taken out) is still what callers that only
     // want words read; `segs`, built from `flow`, is what a card draws — see _flowSegs.
@@ -611,7 +611,7 @@ window.PCCardsFactory = function(dep){
       if(said==='image'){ lift(_media(E, null, null, null, alts.get(u)), off, u); return tail; }
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ lift(_media(E, null, null, null, alts.get(u)), off, u); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ lift(_media(E,'video'), off, u); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ lift(_media(E, null, null, BLOBF, alts.get(u)), off, u); return tail; }
+      if(_blossomBlobUrl(u, ev)){ lift(_media(E, null, null, BLOBF, alts.get(u)), off, u); return tail; }   // app.js
       return url;  // non-media URL: leave for linkify
     });
     flow.push(src.slice(last));

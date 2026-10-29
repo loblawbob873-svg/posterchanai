@@ -88,9 +88,11 @@ const quotedDiv = () => '<div class="quoted">q</div>';
 const addrDiv = () => '<div class="quoted">a</div>';
 const emojiName = (pk, n) => n;
 const niceNip05 = () => '';
+const _audioImeta = () => null;
 """
     return "\n".join([stubs, m.group(0),
                       _fn(src, "_linkLabel", "function _linkLabel(u){"),
+                      _fn(src, "_blossomBlobUrl", "function _blossomBlobUrl(u, ev){"),
                       _fn(src, "linkify", "function linkify(txt, ev){")])
 
 
@@ -149,6 +151,24 @@ const out = {};
   const el = render('\\u0000L0\\u0000 https://example.com/x');
   out.forgedSlot = el.textContent.indexOf('example.com') >= 0;
 }
+// 6. A URL that merely ENDS in 64 hex characters is a page, not a Blossom blob (plebeian.market, 2026-10-29)
+{
+  const H = '9f2ef9a107f21683bfc3aa239d9f5208ff67cd99a3f21ac06269089857190a7f';
+  const product = 'https://plebeian.market/products/' + H;
+  const ev = { kind:1, tags:[['r', product], ['t','plebeian']] };
+  const el = document.createElement('div'); el.innerHTML = linkify('Check this out\\n\\n' + product, ev);
+  out.productImgs  = el.querySelectorAll('img').length;
+  out.productHref  = (el.querySelector('a') || {getAttribute:()=>''}).getAttribute('href');
+  const html = u => { const d = document.createElement('div'); d.innerHTML = linkify(u, { kind:1, tags:[] }); return d; };
+  out.rootBlob     = html('https://media.poster.place/' + H).querySelectorAll('img').length;
+  out.prefixedBlob = html('https://poster.place/blossom/' + H).querySelectorAll('img').length;
+  out.deepHash     = html('https://example.com/commits/' + H).querySelectorAll('img').length;
+  // An r-tagged URL the post ALSO describes as media (imeta) stays media.
+  const blob = 'https://media.poster.place/' + H;
+  const d = document.createElement('div');
+  d.innerHTML = linkify(blob, { kind:1, tags:[['r', blob], ['imeta', 'url ' + blob, 'm image/png']] });
+  out.declaredBlob = d.querySelectorAll('img').length;
+}
 document.getElementById('out').textContent = JSON.stringify(out);
 </script>"""
 
@@ -170,8 +190,10 @@ class LinkifyUrls(unittest.TestCase):
                  "--virtual-time-budget=15000", "--dump-dom", "file://" + path],
                 capture_output=True, text=True, timeout=180).stdout
             m = re.search(r'<pre id="out">(.*?)</pre>', res, re.S)
+            # A FAILURE, never a skip: Chrome ran, so a page that produced nothing means the extracted code threw --
+            # e.g. linkify calling a helper defined outside it (2026-10-29: six tests went quietly "skipped" that way).
             if not m or not m.group(1).strip():
-                raise unittest.SkipTest("page did not evaluate")
+                raise AssertionError("the harness page did not evaluate -- the extracted linkify threw")
             cls.r = json.loads(m.group(1))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -213,6 +235,19 @@ class LinkifyUrls(unittest.TestCase):
         """The URL slots use a NUL sentinel. If the input's own NULs survived, a note could address
         a slot that belongs to a link and move it — so they are stripped before anything runs."""
         self.assertTrue(self.r["forgedSlot"], "the real link must still be rendered")
+
+
+    def test_a_page_whose_address_ends_in_a_hash_is_a_link_not_an_image(self):
+        """poster.place 2026-10-29: a post linking https://plebeian.market/products/<64 hex> drew an <img> of the
+        product PAGE; it failed, and the fallback fetched the page from the browser (CORS error on sign-in). A Blossom
+        blob is the hash AS the path (or under a storage segment); a post's own `r` reference is a link."""
+        r = self.r
+        self.assertEqual(r["productImgs"], 0, "the product page was drawn as an image")
+        self.assertTrue(r["productHref"].startswith("https://plebeian.market/products/"), r)
+        self.assertEqual(r["deepHash"], 0, "a page path ending in a hash was drawn as an image")
+        self.assertEqual(r["rootBlob"], 1, "a real Blossom blob address stopped rendering as media")
+        self.assertEqual(r["prefixedBlob"], 1, "this node's /blossom/<sha> stopped rendering as media")
+        self.assertEqual(r["declaredBlob"], 1, "a blob the post declares in imeta was demoted to a link")
 
 
 if __name__ == "__main__":

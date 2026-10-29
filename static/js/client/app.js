@@ -215,7 +215,12 @@
       el.dataset.blobTried = '1';
       try{
         const url = (el.dataset.osrc || el.currentSrc || el.src).split('#')[0].replace(/[?&]_r=\d+/,'');
-        const r = await fetch(url, { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' });
+        /* THE SESSION GOES TO THIS INSTANCE ONLY. This sent the Bearer token and the cookies to whatever host the
+         * picture came from; a picture somebody posted is not a reason to hand them our credentials. */
+        let own = false;
+        try{ const o = new URL(url, location.href).origin; own = o === location.origin || o === new URL(_instanceBase() || location.origin).origin; }catch(_){}
+        const r = await fetch(url, own ? { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' }
+                                       : { credentials:'omit' });
         if(r.ok){ const b = await r.blob(); const bu = URL.createObjectURL(b);
           if((b.type||'').startsWith('video/')){   // extensionless blossom VIDEO rendered as <img> → swap to a real <video> with the blob
             const v=document.createElement('video'); v.src=bu; v.controls=true; v.playsInline=true; v.preload='none'; v.className=el.className; _carryDims(el, v); el.replaceWith(v); return;
@@ -8129,7 +8134,7 @@
     if(ev.kind!==1) return false;
     return (ev.content||'').replace(/[)\].,!?]+$/,'').match(/(https?:\/\/[^\s<]+)/g)?.some(u=>{
       u=u.replace(/[)\].,!?]+$/,'');
-      return /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
+      return /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || _blossomBlobUrl(u, ev);
     }) || false;
   }
 
@@ -9124,7 +9129,7 @@
     },
     $, $$, BLOBF, Drafts, NT, QUOTE_ICON, REACT_ICON, REPLY_ICON, RT_ICON, ZAP_ICON, _DIM_GUESS,
     _adCache, _adQ, _advertises, _animOff, _celebrateOf, _filesSel, _filesSelBar, _ghosts,
-    _isMediaUrl, _isProofSig, _isTxid, _lbGroup, _noteNode, _notePaymentXmr, _notifCtxHtml,
+    _blossomBlobUrl, _isMediaUrl, _isProofSig, _isTxid, _lbGroup, _noteNode, _notePaymentXmr, _notifCtxHtml,
     _postEffectsOn, _repostAction, _repostDeleted, _tipNote, _webLink, articleCard, bchOf, compose,
     copyValue, decorateProfiles, doBlock, doDelete, doRepost, doTip, doXmrTip, doZap, enc, fmtSats,
     isBchAddr, isReply, isSensitive, isXmrAddr, linkCardHtml, linkify, needProfile, niceNip05,
@@ -9229,8 +9234,8 @@
     const el=e.target; if(!el || el.tagName!=='VIDEO') return;
     _dimLearn(el, el.videoWidth, el.videoHeight);
   }, true);
-  const _isMediaUrl=(u)=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)
-    || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
+  const _isMediaUrl=(u, ev)=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)
+    || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || _blossomBlobUrl(u, ev);
   // scroll doesn't bubble → listen in the CAPTURE phase to catch it from any .mc-track on the page
   document.addEventListener('scroll', e=>{
     const t=e.target; if(t && t.classList && t.classList.contains('mc-track')) _mcSync(t);
@@ -14170,6 +14175,22 @@
     if(bare.length <= _LINK_LABEL_MAX) return u;   // untouched — the common case
     return bare.slice(0, _LINK_LABEL_MAX - 1) + '…';
   }
+  /* IS THIS URL A BLOSSOM BLOB? -- the one answer for every place that turns a URL into an <img>/<video> (linkify, the
+   * card's media row, the profile Media tab, the share/lightbox pickers). Four copies of `/\/[0-9a-f]{64}(\?|#|$)/`
+   * disagreed with nothing and were all wrong the same way.
+   * A Blossom blob address (BUD-01: https://server/<sha256>) has the hash AS the path, or directly under a storage
+   * segment (this node serves /blossom/<sha256>). Any other path that merely ENDS in 64 hex characters -- a market
+   * product, a git commit, an event viewer -- is a page: drawn as an <img> it failed, and __blobFallback then fetched
+   * the page from the browser ("blocked by CORS policy" for plebeian.market/products/<id>, poster.place 2026-10-29).
+   * And a URL the post itself names as a REFERENCE (an `r` tag) without describing it as media (imeta) is a link. */
+  function _blossomBlobUrl(u, ev){
+    let path = ''; try{ path = new URL(u).pathname; }catch(_){ return false; }
+    if(!/^\/(?:(?:blossom|media|blob|blobs|files?|uploads?)\/)?[0-9a-f]{64}$/i.test(path)) return false;
+    const tags = ev && Array.isArray(ev.tags) ? ev.tags : [];
+    const referenced = tags.some(t => t && t[0] === 'r' && t[1] === u);
+    const declared = tags.some(t => t && t[0] === 'imeta' && t.some(x => x === 'url ' + u));
+    return !(referenced && !declared);
+  }
   function linkify(txt, ev){
     const _aud = ev ? _audioImeta(ev) : null;
     // Older instance-application DMs used a hex key. Keep those messages openable too.
@@ -14226,7 +14247,7 @@
         tag=_trackCard(u, '', null, _aud && _aud.get(u));
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // fedi media. Try as an image; if it isn't one, swap to a plain link on error.
-      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
+      else if(_blossomBlobUrl(u, ev)) tag=_media(u, null, 'm', BLOBF);
       else tag=`<a href="${u}" target="_blank" rel="noopener" title="${u}">${_linkLabel(u)}</a>`;
       return _stash(tag)+tail;
     });

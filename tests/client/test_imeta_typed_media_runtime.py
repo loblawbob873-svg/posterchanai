@@ -53,6 +53,7 @@ def _run(content, tags):
       const S={{NO_IMAGES:false}}, BLOBF='', enc=x=>String(x);
       const MediaDims={{seed(){{}}}};
       const _media=(e,kind)=>kind==='video'?'<video src="'+e+'"></video>':'<img src="'+e+'">';
+      {_function('_blossomBlobUrl')}
       {_IS_MEDIA}
       {helpers}
       {_function('_flowSegs')}
