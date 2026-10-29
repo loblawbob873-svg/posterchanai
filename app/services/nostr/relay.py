@@ -150,6 +150,7 @@ _relay_pause_streak: dict = {}    # relay -> consecutive pause cycles (no succes
 
 
 def _relay_paused(relay: str) -> bool:
+    _sync_breaker()
     return time.time() < _relay_paused_until.get(relay, 0)
 
 
@@ -158,6 +159,17 @@ def _relay_paused(relay: str) -> bool:
 # (2026-10-18), re-learning what it had known a minute before. Pauses and their escalation streaks are written to a
 # small file when a pause starts or a paused relay recovers, and read back at import. Advisory state: a lost or
 # stale file only means re-learning, so any error reading or writing it is ignored.
+#
+# AND ACROSS PROCESSES. The app and each bot process import this module, and each kept its own breaker and WROTE THE
+# FILE WITH ONLY ITS OWN STATE: server1, 2026-10-29, three processes dialled asia.vectorapp.io (an HTTP 403 every
+# time) on three separate 3-strike ramps, each starting over at streak 1 when another had just paused it -- ~890 log
+# lines in 3 hours. A save now merges into what the file holds, and a process re-reads the file (when it changed,
+# looked at no more than every _BREAKER_SYNC_SEC) so a pause one of them learns holds the others off too.
+_BREAKER_SYNC_SEC = 5
+_breaker_seen = [0.0, None]         # [last look (monotonic), file mtime at that look]
+_breaker_cleared: set = set()       # relays this process saw recover since its last save: removed from the file
+
+
 def _breaker_path() -> str:
     p = os.environ.get("PC_RELAY_BREAKER_FILE")
     if p is not None:
@@ -168,12 +180,56 @@ def _breaker_path() -> str:
                         "data", "relay_breaker.json")
 
 
+def _read_breaker_file(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _merge_breaker(state: dict) -> None:
+    """Take another process's pauses: the later end and the higher streak win, never a shorter one."""
+    now = time.time()
+    for r, v in (state or {}).items():
+        try:
+            until, streak = float(v[0]), int(v[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if isinstance(r, str) and until > now and until > _relay_paused_until.get(r, 0):
+            _relay_paused_until[r] = until
+            _relay_pause_streak[r] = max(streak, _relay_pause_streak.get(r, 0))
+
+
+def _sync_breaker() -> None:
+    path = _breaker_path()
+    if not path:
+        return
+    mono = time.monotonic()
+    if mono - _breaker_seen[0] < _BREAKER_SYNC_SEC:
+        return
+    _breaker_seen[0] = mono
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        return
+    if mtime != _breaker_seen[1]:
+        _breaker_seen[1] = mtime
+        _merge_breaker(_read_breaker_file(path))
+
+
 def _save_breaker() -> None:
     path = _breaker_path()
     if not path:
         return
     now = time.time()
-    state = {r: [until, _relay_pause_streak.get(r, 0)] for r, until in _relay_paused_until.items() if until > now}
+    state = {r: v for r, v in _read_breaker_file(path).items()
+             if r not in _breaker_cleared and isinstance(v, list) and len(v) == 2 and float(v[0]) > now}
+    _breaker_cleared.clear()
+    for r, until in _relay_paused_until.items():
+        if until > now and until >= float(state.get(r, [0])[0]):
+            state[r] = [until, _relay_pause_streak.get(r, 0)]
     try:
         tmp = "%s.%d.tmp" % (path, os.getpid())
         with open(tmp, "w", encoding="utf-8") as f:
@@ -185,18 +241,8 @@ def _save_breaker() -> None:
 
 def _load_breaker() -> None:
     path = _breaker_path()
-    if not path:
-        return
-    try:
-        with open(path, encoding="utf-8") as f:
-            state = json.load(f)
-        now = time.time()
-        for r, (until, streak) in (state or {}).items():
-            if isinstance(r, str) and float(until) > now:
-                _relay_paused_until[r] = float(until)
-                _relay_pause_streak[r] = int(streak)
-    except (OSError, ValueError, TypeError):
-        pass
+    if path:
+        _merge_breaker(_read_breaker_file(path))
 
 
 def _note_relay_ok(relay: str) -> None:
@@ -206,6 +252,7 @@ def _note_relay_ok(relay: str) -> None:
     had = _relay_paused_until.pop(relay, None) is not None or had
     _relay_last_fail.pop(relay, None)
     if had:
+        _breaker_cleared.add(relay)
         _save_breaker()
 
 
@@ -218,6 +265,22 @@ def _is_429(e) -> bool:
     except Exception:
         pass
     return "429" in str(e)
+
+
+def _is_refused_status(e) -> bool:
+    """An HTTP 401/403 to the WebSocket handshake: the relay deliberately turned this node away (an IP or Tor block,
+    a paid relay). Not an outage, so the 3-strikes ramp only buys more refused dials before it pauses."""
+    try:
+        return getattr(getattr(e, "response", None), "status_code", None) in (401, 403)
+    except Exception:
+        return False
+
+
+def _note_relay_refused(relay: str) -> None:
+    """Trip the breaker at once, on the same escalating schedule as a relay that keeps failing."""
+    _relay_last_fail.pop(relay, None)
+    _relay_fail[relay] = _RELAY_FAIL_THRESHOLD - 1
+    _note_relay_fail(relay)
 
 
 def _note_relay_429(relay: str) -> None:
@@ -424,6 +487,8 @@ async def _open(relay: str, direct: bool, **kw):
             # debounced 3-strikes breaker. (Never circuit-break the local relay.)
             if _is_429(e):
                 _note_relay_429(relay)
+            elif _is_refused_status(e):
+                _note_relay_refused(relay)
             else:
                 _note_relay_fail(relay)   # both Tor + direct failed
         raise
