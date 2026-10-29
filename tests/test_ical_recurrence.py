@@ -228,7 +228,7 @@ if __name__ == "__main__":
 CAL_JS = ROOT / "static" / "js" / "client" / "calendar.js"
 
 
-def _build(stored_ics, form):
+def _build(stored_ics, form, shown_notes=False):
     """Run calendar.js's OWN rawSeries + buildIcs over a stored item and a form submission.
 
     calendar.js is an IIFE that needs window/__PC, so the two functions are lifted out of the source
@@ -243,7 +243,7 @@ def _build(stored_ics, form):
         return src[i:j]
 
     raw_fn = grab("    const MANAGED = [", "\n    /* The occurrences of every calendar")
-    build_fn = grab("    function buildIcs(ev){", "\n    /* Reading iCalendar is PCIcal's job")
+    build_fn = grab("    // RFC 5545 3.1: a content line", "\n    /* Reading iCalendar is PCIcal's job")
     helpers = """
       const pad = n => String(n).padStart(2, '0');
       const icsUtc = d => `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T`
@@ -259,6 +259,8 @@ def _build(stored_ics, form):
       {raw_fn}
       {build_fn}
       const raw = rawSeries({json.dumps(stored_ics)});
+      // parseItem's half: the notes the editor SHOWED, so buildIcs can tell an untouched description.
+      if({json.dumps(shown_notes)}) raw.notes = String((I.parseResource({{uid:'x', ics:{json.dumps(stored_ics)}}}).master||{{}}).notes||'').trim();
       const form = Object.assign({json.dumps(form)}, {{ raw }});
       console.log(JSON.stringify(buildIcs(form).ics));
     """)
@@ -348,3 +350,50 @@ console.log(JSON.stringify({ms: occ[0].end - occ[0].start, ms2: occ2[0].end - oc
 """)
     assert out["ms"] == 90 * 60 * 1000, out
     assert out["ms2"] == 2 * 86400 * 1000, out
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ThunderbirdFormattedNotesTests(unittest.TestCase):
+    """"Even formatted text (in notes/description) seems to work great, as long as I don't edit the event in PosterChan
+    later, because that seems to render the formatted text unreadable for Thunderbird" (a user, 2026-10-28).
+
+    Thunderbird keeps rich notes as DESCRIPTION;ALTREP="data:text/html,...":plain (and X-ALT-DESC). The parser split
+    that line at the first colon -- inside the quoted data URL -- so the editor's notes were a fragment of the URL, and
+    saving any change wrote that garbage back as the description."""
+    STORED = ("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Mozilla.org/NONSGML Mozilla Calendar V1.1//EN\r\n"
+              "BEGIN:VEVENT\r\nUID:band\r\nDTSTAMP:20261028T120000Z\r\n"
+              "DTSTART:20261029T150000Z\r\nDTEND:20261029T160000Z\r\nSUMMARY:Band practice\r\n"
+              "DESCRIPTION;ALTREP=\"data:text/html,%3Cp%3EBring%20the%20%3Cb%3Eamp%3C%2Fb%3E%3C%2Fp%3E%3Cul%3E%3Cli%3Ecables%3C%2Fli%3E%3C%2Fu\r\n"
+              " l%3E\":Bring the amp\\n- cables\r\n"
+              "X-ALT-DESC;FMTTYPE=text/html:<p>Bring the <b>amp</b></p><ul><li>cables</li></ul>\r\n"
+              "END:VEVENT\r\nEND:VCALENDAR\r\n")
+    BASE = {"uid": "band", "date": "2026-10-29", "allDay": False, "start": "09:00", "end": "10:00", "location": ""}
+
+    def _parse_notes(self, ics):
+        return _node(f"""
+          const res = I.parseResource({{uid:'band', ics:{json.dumps(ics)}}});
+          console.log(JSON.stringify((res.master||{{}}).notes));""")
+
+    def test_the_editor_shows_the_plain_notes_not_the_data_url(self):
+        self.assertEqual(self._parse_notes(self.STORED), "Bring the amp\n- cables")
+
+    def test_an_edit_elsewhere_keeps_the_formatting_byte_for_byte(self):
+        out = _build(self.STORED, dict(self.BASE, title="Band practice (moved)", notes="Bring the amp\n- cables"), shown_notes=True)
+        flat = out.replace("\r\n ", "")
+        self.assertIn('DESCRIPTION;ALTREP="data:text/html,%3Cp%3EBring%20the%20%3Cb%3Eamp%3C%2Fb%3E%3C%2Fp%3E%3Cul%3E%3Cli%3Ecables%3C%2Fli%3E%3C%2Ful%3E":Bring the amp\\n- cables', flat)
+        self.assertIn("X-ALT-DESC;FMTTYPE=text/html:<p>Bring the <b>amp</b></p><ul><li>cables</li></ul>", flat)
+        self.assertEqual(self._parse_notes(out), "Bring the amp\n- cables")
+        self.assertIn("SUMMARY:Band practice (moved)", flat)
+
+    def test_changed_notes_are_plain_text_and_the_stale_formatting_goes(self):
+        out = _build(self.STORED, dict(self.BASE, title="Band practice", notes="Bring the amp and the mic"), shown_notes=True)
+        flat = out.replace("\r\n ", "")
+        self.assertIn("DESCRIPTION:Bring the amp and the mic", flat)
+        self.assertNotIn("ALTREP", flat)
+        self.assertNotIn("X-ALT-DESC", flat)
+
+    def test_every_line_is_folded_to_75_octets(self):
+        out = _build(self.STORED, dict(self.BASE, title="Band practice " + "é" * 60, notes="Bring the amp\n- cables"), shown_notes=True)
+        long = [l for l in out.split("\r\n") if len(l.encode("utf-8")) > 75]
+        self.assertEqual(long, [], long)
+        self.assertIn("é" * 60, out.replace("\r\n ", ""))

@@ -112,6 +112,17 @@
     const icsText = s => String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;')
                                       .replace(/,/g,'\\,').replace(/\r?\n/g,'\\n');
 
+    // RFC 5545 3.1: a content line is at most 75 octets; longer ones continue on lines that start with a space.
+    // Folded by UTF-8 bytes, never inside a character.
+    function icsFold(line){
+      const enc8 = new TextEncoder(); let out = '', cur = '', n = 0, lim = 75;
+      for(const ch of String(line)){
+        const b = enc8.encode(ch).length;
+        if(n + b > lim){ out += cur + '\r\n '; cur = ''; n = 0; lim = 74; }
+        cur += ch; n += b;
+      }
+      return out + cur;
+    }
     function buildIcs(ev){
       const uid = ev.uid || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-pc');
       const now = icsUtc(new Date());
@@ -136,7 +147,13 @@
       }
       L.push('SUMMARY:' + icsText(ev.title || '(no title)'));
       if(ev.location) L.push('LOCATION:' + icsText(ev.location));
-      if(ev.notes) L.push('DESCRIPTION:' + icsText(ev.notes));
+      /* THE DESCRIPTION SOMEBODY ELSE FORMATTED STAYS FORMATTED. Thunderbird keeps rich notes beside the plain text
+       * (DESCRIPTION;ALTREP="data:text/html,..." and X-ALT-DESC). Notes left as they were go back exactly as they
+       * came; notes changed here are plain text, and the stale formatted copies go -- or Thunderbird would show the
+       * old formatted version instead of the edit. */
+      const was = raw.desc || [];
+      if(ev.notes && was.length && raw.notes !== undefined && ev.notes === raw.notes) L.push(...was);
+      else if(ev.notes) L.push('DESCRIPTION:' + icsText(ev.notes));
       // Everything this form does not manage — the repeat rule and its exceptions, VALARM
       // reminders, ATTENDEE/ORGANIZER, STATUS, CATEGORIES, URL, X- properties — verbatim. Dropping
       // the rule alone turned "fix a typo in the title of a weekly delivery" into "delete every
@@ -147,7 +164,7 @@
       // reachable from this form, so they travel through untouched.
       for(const o of (raw.overrides || [])) L.push(...o.split('\n'));
       L.push('END:VCALENDAR');
-      return { uid, ics: L.join('\r\n') + '\r\n' };
+      return { uid, ics: L.map(icsFold).join('\r\n') + '\r\n' };
     }
 
     /* Reading iCalendar is PCIcal's job (client/ical.js) — it is DOM-free so recurrence can be
@@ -176,7 +193,7 @@
         time: (m.start && !m.allDay) ? `${pad(m.start.getHours())}:${pad(m.start.getMinutes())}` : '',
         todo: String(rec.component || res.component || 'VEVENT').toUpperCase() === 'VTODO',
         repeats: !!(m.rrule && m.rrule.freq),
-        raw: rawSeries(rec.ics || ''),
+        raw: Object.assign(rawSeries(rec.ics || ''), { notes: String(m.notes || '').trim() }),
       };
     }
 
@@ -201,7 +218,7 @@
       const comps = all.filter(c => I.nameOf(c) !== 'VTIMEZONE');
       const overrides = comps.filter(c => /^RECURRENCE-ID[;:]/m.test(I.unfold(c)));
       const master = comps.find(c => overrides.indexOf(c) < 0);
-      const keep = [];
+      const keep = [], desc = [];
       let component = 'VEVENT';
       if(master){
         component = I.nameOf(master);
@@ -217,10 +234,11 @@
           }
           if(line === 'BEGIN:' + component || line === 'END:' + component) continue;
           const name = line.split(/[;:]/)[0].toUpperCase();
-          if(MANAGED.indexOf(name) < 0) keep.push(line);
+          if(name === 'DESCRIPTION' || name === 'X-ALT-DESC') desc.push(line);
+          else if(MANAGED.indexOf(name) < 0) keep.push(line);
         }
       }
-      return { keep, overrides, component,
+      return { keep, desc, overrides, component,
                timezones: all.filter(c => I.nameOf(c) === 'VTIMEZONE') };
     }
 

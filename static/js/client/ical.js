@@ -54,13 +54,26 @@
 
   /* Every line of a component as {name, params, value}. A property is NAME;PARAM=x:VALUE, and only
    * the part before the first colon holds parameters — a DESCRIPTION mentioning "TZID=" is prose. */
+  /* QUOTES HIDE COLONS AND SEMICOLONS (RFC 5545 3.1: a parameter value may be a quoted string). Thunderbird writes a
+   * formatted description as DESCRIPTION;ALTREP="data:text/html,...":plain text -- split at the first colon, the notes
+   * became a fragment of that data URL, and saving the event wrote it back as the description (2026-10-28). */
+  function _split(line, ch){
+    const out = []; let q = false, from = 0;
+    for(let k = 0; k < line.length; k++){
+      const c = line[k];
+      if(c === '"') q = !q;
+      else if(c === ch && !q){ out.push(line.slice(from, k)); from = k + 1; if(ch === ':') break; }
+    }
+    out.push(line.slice(from));
+    return out;
+  }
   function props(comp){
     const out = [];
     for(const line of unfold(comp).split('\n')){
-      const i = line.indexOf(':');
-      if(i < 0) continue;
-      const head = line.slice(0, i), value = line.slice(i + 1);
-      const bits = head.split(';');
+      const hv = _split(line, ':');
+      if(hv.length < 2) continue;
+      const head = hv[0], value = hv[1];
+      const bits = _split(head, ';');
       const params = {};
       for(const p of bits.slice(1)){
         const j = p.indexOf('=');
