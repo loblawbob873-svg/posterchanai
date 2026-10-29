@@ -1133,7 +1133,7 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
         shell hosting every PosterChan window, so the keypress took the whole session."""
         from tests.wayfire_config import bindings
         binds = bindings()
-        for chord in ("<super> KEY_Q", "<super> KEY_1", "<alt> KEY_F4"):
+        for chord in ("<super> KEY_Q", "<alt> KEY_F4"):   # Super+1 is workspace 1 now
             with self.subTest(chord=chord):
                 self.assertIn(chord, binds, f"{chord} is not bound")
                 self.assertTrue("pc-window-close" in binds[chord]

@@ -150,3 +150,40 @@ def test_a_native_app_on_another_workspace_is_stashed_like_a_minimised_one():
     body = src[src.index("async function nsync"):]
     body = body[:body.index("const plan = NAT().stashPlan")]
     assert body.count("minimised: !!(w.min || w.offws)") + body.count("minimised:!!(w.min || w.offws)") == 2, body[-900:]
+
+
+@CHROME
+def test_super_digit_goes_to_that_workspace_and_never_closes_a_window():
+    """"make the shortcuts keys super + 1 for workspace 1" and "super + 1 is making windows disappear": Super+1 was a
+    leftover CLOSE chord. Now Super+N goes to workspace N (made if it is not there yet) and Super+Shift+N takes the
+    window in front along. The compositor's binding table and the desktop's handling, both shipped."""
+    from tests.wayfire_config import bindings
+    binds = bindings()
+    for n in range(1, 10):
+        assert binds["<super> KEY_%d" % n].endswith("pc-wayfire-action pc:ws:goto:%d" % n), binds.get("<super> KEY_%d" % n)
+        assert binds["<super> <shift> KEY_%d" % n].endswith("pc-wayfire-action pc:ws:carry:%d" % n)
+    assert not any("KEY_%d" % n in c and "close" in cmd for n in range(1, 10) for c, cmd in binds.items())
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.until("document.body.classList.contains('os-on') && __wm.listeners.length > 0")
+        await _open(b, 'notes', 'Notes')
+        got['before'] = await b.js(VISIBLE)
+        await _tick(b, 'pc:ws:goto:3')
+        got['three'] = await b.js(CUR)
+        await _tick(b, 'pc:ws:goto:1')
+        got['one'] = await b.js(CUR)
+        got['back'] = await b.js(VISIBLE)
+        await _tick(b, 'pc:ws:carry:2')
+        got['carried'] = await b.js(CUR)
+        got['carried_visible'] = await b.js(VISIBLE)
+        await _tick(b, 'pc:ws:goto:1')
+        got['left_behind'] = await b.js(VISIBLE)
+
+    asyncio.run(desktop.with_browser('online', '', check, extra_init=COMPOSITOR))
+    assert got['before'] == ['Notes'] and got['back'] == ['Notes'], ("a window disappeared", got)
+    assert got['three']['current'] == 2 and got['three']['count'] >= 3, ("Super+3 did not make and open workspace 3", got)
+    assert got['one']['current'] == 0, got
+    assert got['carried']['current'] == 1 and got['carried_visible'] == ['Notes'], ("Super+Shift+2 did not take it along", got)
+    assert got['left_behind'] == [], ("the window was not moved to workspace 2", got)

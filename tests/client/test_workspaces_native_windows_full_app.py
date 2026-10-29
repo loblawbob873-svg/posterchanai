@@ -188,3 +188,38 @@ wm.arrange('grid',{x:10,y:10},{skip:new Set([3])}).then(r=>console.log(JSON.stri
     res = json.loads(out.stdout.strip().splitlines()[-1])
     assert 2 in res['shown'], ("arrange no longer shows a minimised window on this workspace", res, out.stderr[-500:])
     assert 3 not in res['shown'], ("arrange pulled a window from another workspace into the grid", res)
+
+
+def test_startup_tiling_reaches_the_apps_on_other_workspaces():
+    """"other workspaces are not getting that grid choice from System Settings": the monitor's startup tiling was only
+    applied to the apps on workspace 1. An app sent to workspace 3 is tiled with the same choice when 3 is first shown,
+    and only once."""
+    got = {}
+    extra = WM + r'''
+window.__arr=[];window.pcWM.arrange=async(l)=>{__arr.push(l);return true};
+window.pcShell=Object.assign(window.pcShell||{},{outputName:async()=>'DP-1',backgroundOwner:true});
+window.pcDisplays={status:async()=>[{name:'DP-1',active:true,primary:true,rect:{x:0,y:0}}]};
+'''
+
+    async def check(b):
+        await _ready(b)
+        await b.js("ClientSettings.set('startupApps',['messages']);ClientSettings.set('startupWorkspace',{messages:3});"
+                   "ClientSettings.set('startupTiling',{'DP-1':'grid'});true")
+        await b.js("PCOSWin.enabled=()=>true;PCOSWin.open=(v)=>{__map(44,'PosterChan Window — '+v);return {}};true")
+        got['count'] = await b.js("PCOS.runStartupApps()")
+        await b.until("__rows.some(r=>r.id===44) && __rows.find(r=>r.id===44).stashed===true")
+        await b.js("new Promise(r=>setTimeout(r,2500))")      # past the first-workspace tiling's own wait (1.6 s)
+        got['before'] = await b.js("__arr.slice()")
+        await b.js("PCOS.switchWorkspace(2);true")
+        await b.until("__arr.length > " + str(len(got["before"])))
+        got['after'] = await b.js("__arr.slice()")
+        await b.js("PCOS.switchWorkspace(0);true")
+        await b.js("PCOS.switchWorkspace(2);true")
+        await b.js("new Promise(r=>setTimeout(r,800))")
+        got['again'] = await b.js("__arr.slice()")
+
+    asyncio.run(desktop.with_browser('online', '', check, extra))
+    assert got['count'] == 1, got
+    assert got['before'] == [], ("with no startup app on workspace 1, workspace 1 was tiled anyway", got)
+    assert got['after'][len(got['before']):] == ['grid'], ("workspace 3's startup app was never tiled", got)
+    assert got['again'] == got['after'], ("tiled again on every visit -- the person's own arrangement would be undone", got)

@@ -4368,7 +4368,13 @@
       if(ws) _nwsPend.push({ view: v, ws, until: Date.now() + 60000 });
       try{ routeView(v); }catch(_){}
     }, 400 + i*700));
-    if(plan.layout) _tileStartup(plan.open.filter(v => !_startupWsOf(workspace, v)), plan.layout);
+    // Only when an app actually opens on the first workspace: with none, this arranged whatever was in front 1.6 s later.
+    const first = plan.open.filter(v => !_startupWsOf(workspace, v));
+    if(plan.layout && first.length) _tileStartup(first, plan.layout);
+    /* EVERY WORKSPACE GETS THE MONITOR'S TILING ("other workspaces are not getting that grid choice from System Settings").
+     * Arranging works on the windows in view, so the apps sent to workspace 2+ are tiled when that workspace is first
+     * shown (switchWs), once, with the same choice. */
+    if(plan.layout) for(const v of plan.open){ const ws = _startupWsOf(workspace, v); if(ws) _wsTileOnArrive.set(ws, plan.layout); }
     return plan.open.length;
   }
   // Fallback when the account's preferences never arrive (offline): use what this machine holds.
@@ -6590,11 +6596,17 @@
     t.textContent = 'Workspace ' + (_wsCur + 1);
     t.classList.remove('on'); void t.offsetWidth; t.classList.add('on');
   }
+  const _wsTileOnArrive = new Map();     // workspace -> the startup tiling still owed to its apps (runStartupApps)
   function switchWs(i){
     i = Math.max(0, Math.min(wsCount() - 1, i | 0));
     if(i === _wsCur) return;
     _wsCur = i;
     _wsApply();
+    if(_wsTileOnArrive.has(i)){
+      const layout = _wsTileOnArrive.get(i); _wsTileOnArrive.delete(i);
+      // After the workspace's windows are back in view: arrange skips the ones on other workspaces.
+      setTimeout(() => { try{ if(window.pcWM && pcWM.arrange) pcWM.arrange(layout); }catch(_){} }, 400);
+    }
     const top = wins.filter(w => !w.min && !w.offws).sort((a, b) => _zOf(b) - _zOf(a))[0];
     if(top) focusWin(top);
     _wsSay();
@@ -12989,6 +13001,15 @@
             else if(p === 'pc:ws:prev') switchWs(_wsCur - 1);
             else if(p === 'pc:ws:carry-next'){ _wsCarry(_wsCur + 1); switchWs(_wsCur + 1); }
             else if(p === 'pc:ws:carry-prev'){ _wsCarry(_wsCur - 1); switchWs(_wsCur - 1); }
+            /* Super+1..9 goes to that workspace and Super+Shift+1..9 takes the window in front along -- made if it is not
+             * there yet. Super+1 used to CLOSE the window in front (a leftover Sway chord), which is what "super + 1 is
+             * making windows disappear" was. */
+            else if(/^pc:ws:(goto|carry):[1-9]$/.test(p)){
+              const n = +p.slice(-1);
+              if(n > wsCount()){ _wsN = n; _wsSave(); drawBar(); }
+              if(p.startsWith('pc:ws:carry:')) _wsCarry(n - 1);
+              switchWs(n - 1);
+            }
             /* A compositor action as well as a pointer target: this keeps the taskbar flyout
              * automatable/accessibility-reachable and lets the two-output ownership gate prove that
              * exactly one notification surface opens on the focused monitor. */

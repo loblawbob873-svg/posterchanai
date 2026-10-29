@@ -148,7 +148,7 @@ def test_no_close_chord_asks_the_compositor_to_kill_outright():
                 f"{chord} asks the compositor to close whatever is focused: {command}")
 
 
-@pytest.mark.parametrize("chord", ["<super> KEY_Q", "<super> KEY_1", "<alt> KEY_F4"])
+@pytest.mark.parametrize("chord", ["<super> KEY_Q", "<alt> KEY_F4"])   # Super+1 is workspace 1 now
 def test_every_close_chord_runs_the_helper(chord):
     binds = bindings()
     assert chord in binds, f"{chord} is not bound at all"
@@ -157,10 +157,10 @@ def test_every_close_chord_runs_the_helper(chord):
         f"{chord} does not reach the close helper: {command}")
 
 
-def test_super_one_closes_the_single_focused_native_firefox_through_the_safe_helper():
+def test_super_q_closes_the_single_focused_native_firefox_through_the_safe_helper():
     """The binding does not broadcast to either monitor renderer: the helper reads the ONE focused
     view and closes that exact Firefox."""
-    assert "<super> KEY_1" in bindings()
+    assert "pc-window-close" in bindings()["<super> KEY_Q"]
     assert run_action(FIREFOX) == [("window-rules/close-view", {"id": 33})]
 
 
