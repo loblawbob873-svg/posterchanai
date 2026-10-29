@@ -1,18 +1,4 @@
-/* PREVIEW — look at a picture, a video or a PDF without leaving the app.
- *
- * Files could open a document in Office and a text file in Code, and for everything else offered
- * "open in a new tab", which on the encrypted drive means decrypting to a blob URL and handing it to
- * the browser — leaving the app, losing the folder you were in, and on the APK doing nothing useful
- * at all. A picture is the most common thing on anybody's drive and it had no viewer.
- *
- * PDFs use the vendored pdf.js renderer. Android WebView has no built-in PDF viewer, and relying on
- * an iframe there produced an apology instead of a preview. The library is loaded only when a PDF
- * is opened, and receives the already-decrypted bytes directly.
- *
- * NO SERVER. It is handed BYTES that the caller already has - the drive decrypts, a synced folder
- * assembles chunks, This Computer reads from disk - so it works on a standalone build with no
- * instance, and an encrypted file is never fetched over the network to be looked at.
- */
+/* PREVIEW — look at a picture, a video or a PDF without leaving the app. */
 (function (root) {
   'use strict';
 
@@ -143,14 +129,7 @@
     });
   }
 
-  /* PINCH TO ZOOM, OURS ("unable to zoom in PDF on mobile"). The APK's WebView has the browser's own
-   * pinch-zoom switched off, and the browser's zoom would scale the whole app (bars, buttons) anyway,
-   * so a PDF could never be read closer than fit-to-width. TOUCH events, not pointer events: a
-   * pointer stream is cancelled the moment the browser decides two fingers are a scroll, while touch
-   * events keep arriving -- and a two-finger move calls preventDefault so it zooms instead of
-   * scrolling. While the fingers are down the content is scaled with a transform (cheap, live); on
-   * release `set(zoom, focus)` re-lays it out at the new size and the point under the fingers stays
-   * under them. `active()` lets a tap handler ignore the first finger of a pinch. */
+  // PINCH TO ZOOM, OURS ("unable to zoom in PDF on mobile"). The APK's WebView has the browser's own
   function pinchZoom(el, opts) {
     var g = null;
     var two = function (t) {
@@ -201,12 +180,7 @@
     if (!box) return function () {};
     var stopped = false, task = null, pdf = null, rendered = 0, pages = [], zoom = 1, zoomRun = 0;
     var scroller = host.querySelector('.pv-pdf-body') || box;
-    /* ZOOM RE-DRAWS, it does not stretch: the CSS size changes at once (so the layout and the scroll
-     * position are right immediately), then each page is rendered again at the new size. Its backing
-     * pixels are capped per page by a budget shared across the document -- never below what fit-width
-     * already used -- so zooming a long PDF on a phone cannot multiply its memory, which is the same
-     * renderer that already gets killed for memory on the tablet. A newer zoom abandons the older
-     * re-draw part-way (`zoomRun`). */
+    /* ZOOM RE-DRAWS, it does not stretch: the CSS size changes at once (so the layout and the scroll */
     async function setZoom(z, focus) {
       z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z * 100) / 100));
       var from = zoom; zoom = z; var run = ++zoomRun;
@@ -439,12 +413,8 @@
     return 'web';
   }
 
-  /* THE BAR IS TWO ROWS ON A PHONE: the name with its size and the close button, then the actions.
-   * It was one row, so on a phone the name was squeezed to nothing between five buttons ("you can't
-   * see the file name when opened, the name and buttons are all together"). The close button is
-   * therefore NOT inside .pv-acts any more -- it belongs to the title row. */
-  /* Which video codec an MP4/MOV declares, read from its sample descriptions (the `hvc1`/`hev1` boxes are HEVC). Only
-   * the first and last 4 MB are looked at: the index sits at one end. '' when it cannot tell. */
+  // THE BAR IS TWO ROWS ON A PHONE: the name with its size and the close button, then the actions.
+  // 'hevc' / 'h264' / '' from an MP4's sample boxes, in its first or last 4 MB.
   function videoCodec(blob) {
     if (!blob || !blob.slice) return Promise.resolve('');
     var look = function (b) { return b.arrayBuffer().then(function (buf) {
@@ -543,18 +513,12 @@
       }, 12000) : 0;
       var mediaDone = function () { if (stalled) { clearTimeout(stalled); stalled = 0; } };
       av.onloadedmetadata = function () { mediaDone(); if (state) state.remove(); };
-      /* A CODEC THIS BROWSER CANNOT PLAY MUST SAY SO. A <video> handed a container it cannot decode
-       * (an .mkv or an .avi almost anywhere, HEVC in Firefox) fires `error` and then shows a black
-       * rectangle with dead controls, which reads as a broken player rather than an unsupported
-       * file - and on the drive that is a file somebody may have only one copy of. */
+      // A CODEC THIS BROWSER CANNOT PLAY MUST SAY SO. A <video> handed a container it cannot decode
       av.onerror = function () {
         mediaDone();
         var b = q('.pv-body');
         if (!b) return;
-        /* SAY WHICH FORMAT, AND OFFER THE PLAYER THIS MACHINE HAS ("trying to open video file ... from photos synced
-         * says: This browser cannot play that format"). A phone camera records HEVC (H.265) more often than not, and
-         * neither Chromium nor Firefox on Linux decodes it. On PosterChanOS, VLC (installed) plays it -- handed the
-         * bytes through the shell, never a download the person has to go and find. */
+        // Name HEVC (a phone's usual format); on PosterChanOS hand the bytes to VLC (desktop/player.js).
         var player = root.pcShell && typeof root.pcShell.openInPlayer === 'function';
         b.innerHTML = '<div class="empty"><span class="pv-why">This browser cannot play that format.</span>'
           + (player ? '<br><button class="btn btn-neon small pv-player">Play in VLC</button>'
@@ -649,26 +613,13 @@
     file = file || {};
     var name = file.name || 'file';
     var mime = file.mime || (file.blob && file.blob.type) || '';
-    /* A STREAMED SOURCE HAS NO BYTES HERE, AND THAT IS THE POINT.
-     *
-     * `file.url` is an address the player can RANGE-request -- on the desktop, a local file served
-     * by main.js's `__hostfile` handler. Media opened that way seeks, starts on the first frames
-     * instead of the last byte, and has no size ceiling; read into a Blob it did none of those, so
-     * a video on This Computer was a black box with controls that controlled nothing. Only media
-     * takes this path: a PDF or an image is small, already works, and an <iframe> at a custom
-     * scheme is a different set of problems. */
+    /* A STREAMED SOURCE HAS NO BYTES HERE, AND THAT IS THE POINT. */
     var streamed = String(file.url || '');
     if (streamed && !(isVideo(name, mime) || isAudio(name, mime))) streamed = '';
     var blob = streamed ? null : bytesOf(file.blob || file.bytes || file.src);
     if (!blob && !streamed) { toast('there are no bytes to show'); return false; }
     if (!handles(name, mime)) return false;
-    /* A STREAMED SOURCE HAS NO BLOB, SO IT HAS NO `blob.size` EITHER — and reading one threw a
-     * TypeError out of `open` before anything was drawn. That is EVERY local video and audio file
-     * opened from Files → This Computer (app.js sends `url:pcHost.fileUrl(path)` for exactly those
-     * types), i.e. the whole reason the streamed path exists: measured on the device, opening
-     * /tmp/pcvideo.mp4 answered `Cannot read properties of null (reading 'size')` and no window
-     * appeared. The size is only ever the header's label, and `fmtSize(0)` is the empty string, so
-     * an unknown length simply shows no size rather than inventing one. */
+    /* A STREAMED SOURCE HAS NO BLOB, SO IT HAS NO `blob.size` EITHER — and reading one threw a */
     var size = streamed ? Math.max(0, Number(file.size) || 0) : blob.size;
 
     var kind = kindOf(name, mime);
@@ -757,13 +708,7 @@
     return true;
   }
 
-  /* An address THIS renderer can open for itself, on the page's own protocol and host.
-   *
-   * A streamed preview is `app://posterchan/__hostfile/<path>` (main.js serves it through the same
-   * hostfs gate the read bridge uses), so the other monitor can simply open the same address —
-   * there are no bytes to move. Compared on protocol AND host rather than `origin`, because a
-   * non-special scheme like `app:` reports origin "null", and "null" === "null" would accept every
-   * foreign scheme somebody could put in a payload. */
+  /* An address THIS renderer can open for itself, on the page's own protocol and host. */
   function sameOriginAddress(value) {
     var here = root.location && root.location.href;
     if (!here) return false;
@@ -773,12 +718,7 @@
     } catch (_) { return false; }
   }
 
-  /* A REFUSAL HERE USED TO DELETE THE WINDOW. os.js hands a `doc:pv:` frame to this function and
-   * returns whatever happens; the source frame has already closed, so answering `false` left the
-   * moved preview on NEITHER monitor. Measured on the device: a local video opened from This
-   * Computer carries a `__hostfile` address, the old `/^blob:/` test refused it, and the window
-   * vanished. Every preview payload now yields a document — the file itself where the address can
-   * be reopened, and an explanation where it cannot. */
+  /* A REFUSAL HERE USED TO DELETE THE WINDOW. os.js hands a `doc:pv:` frame to this function and */
   function movedNote(name) {
     var note = new Blob(['This preview could not be moved to this monitor. Reopen the file from Files.'],
                         { type: 'text/plain' });

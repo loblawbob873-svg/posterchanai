@@ -347,9 +347,7 @@ window.PCPhotosFactory = function(dep){
       const sh = root.querySelector('.ph-share'); if(sh) sh.onclick = () => shareImage(imgs[at]);
     });
   }
-  /* SHARE TO ANOTHER APP ("Photos make sure mobile has share to app feature"): the picture itself, through the same
-   * route as Preview's Share -- Android's share sheet in the APK, navigator.share in a browser that can share files.
-   * Drawn only where that exists. Fetched without this instance's session (it is somebody's media host). */
+  // Share the picture through Preview's Share (APK share sheet / navigator.share); no session to a media host.
   function canShareImg(){
     try{ return !!(window.PCPreview && PCPreview._shareFile && PCPreview._canShare && PCPreview._canShare('photo.jpg', 'image/jpeg')); }catch(_){ return false; }
   }
@@ -470,8 +468,6 @@ window.PCPhotosFactory = function(dep){
       if(a) return drawSyncedAlbum(el, a);
       sy.open = null;
     }
-    /* NO REFRESH BUTTON on a tab that reads the folders every time it is opened ("refresh icon not aligned with text.
-       maybe not needed?") -- only "Try again" where the read failed. */
     const refresh = `<button type="button" class="btn btn-ghost small ph-sync-refresh">Try again</button>`;
     if(r.state === 'error'){
       el.innerHTML = `<div class="ph-empty">Your synced folders could not be read just now.<br><br>${refresh}</div>`;
