@@ -1,4 +1,4 @@
-"""Built-in Blossom media server endpoints (BUD-01/02/06).
+"""Built-in Blossom media server endpoints (BUD-01/02/04/06).
 
 Mounted at `/blossom`, so a client points at `https://<host>/blossom` and the spec's
 `GET <server>/<sha256>`, `PUT <server>/upload`, etc. resolve here. Front with TLS.
@@ -389,6 +389,62 @@ async def upload(request: Request, db: Session = Depends(get_db)):
         return _unavailable(e)
     except Exception as e:
         logger.error("[blossom] upload failed: %s", e, exc_info=True)
+        return _err(500, "storage error")
+    if blob is None:
+        return _err(500, "storage error")
+    return JSONResponse(
+        blossom_service.descriptor(blob, _base_url(request, db),
+                                   name=await blossom_service.name_for(db, sha256, pubkey)),
+        headers=_CORS)
+
+
+@router.put("/mirror")
+async def mirror(request: Request, db: Session = Depends(get_db)):
+    """BUD-04: copy a blob from another server, given its URL and an upload authorization whose `x` tag names it.
+
+    A client mirroring its uploads to this server got 405 here ~30 times a minute (server1, 2026-10-29) -- the
+    route did not exist, so `PUT /blossom/mirror` fell on `/{sha256}`, which takes no PUT. Same gate as an upload:
+    the signer is checked before anything is fetched, and the bytes must hash to the authorized `x`."""
+    if not blossom_service.is_enabled(db):
+        return _err(404, "Blossom server disabled")
+    auth = request.headers.get("authorization", "")
+    try:
+        pubkey = await asyncio.to_thread(blossom_service.verify_auth, auth, "upload", None)
+    except ValueError as e:
+        return _err(401, str(e))
+    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
+        return _err(403, "not authorized to upload (needs the can_blossom privilege)")
+    try:
+        url = (await request.json()).get("url")
+    except Exception:
+        url = None
+    if not url:
+        return _err(400, "body must be JSON with a url")
+    cfg = blossom_service._cfg(db)
+    try:
+        data, mime = await blossom_service.fetch_mirror_source(url, cfg["max_upload_mb"] * 1024 * 1024)
+    except ValueError as e:
+        return _err(413 if "size limit" in str(e) else 502 if "source" in str(e) else 400, str(e))
+    if not data:
+        return _err(502, "the source sent an empty blob")
+    sha256 = await asyncio.to_thread(blossom_service.compute_sha256, data)
+    try:
+        await asyncio.to_thread(blossom_service.verify_auth, auth, "upload", sha256)
+    except ValueError as e:
+        return _err(401, str(e))
+    try:
+        over, used, limit = blossom_service.quota_exceeded(db, pubkey, len(data))
+    except Unavailable as e:
+        return _unavailable(e)
+    if over:
+        return _err(413, f"storage quota reached ({used // (1024**3)} of {limit // (1024**3)} GB used)")
+    try:
+        await blossom_service.save_blob(db, pubkey, data, mime)
+        blob = await blossom_service.blob_index.aget(sha256)
+    except Unavailable as e:
+        return _unavailable(e)
+    except Exception as e:
+        logger.error("[blossom] mirror failed: %s", e, exc_info=True)
         return _err(500, "storage error")
     if blob is None:
         return _err(500, "storage error")

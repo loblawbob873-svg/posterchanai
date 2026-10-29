@@ -526,6 +526,47 @@ def verify_auth(authorization: str, action: str, sha256: str | None = None) -> s
 
 # --- hashing ----------------------------------------------------------------
 
+MIRROR_DEADLINE = 120          # a whole BUD-04 fetch; a source that trickles never trips httpx's per-read timeout
+
+
+async def fetch_mirror_source(url: str, max_bytes: int) -> "tuple[bytes, str]":
+    """BUD-04: the bytes at `url`, for PUT /mirror. Raises ValueError with a reason a client can show.
+
+    The SAME guard the web reader and the thumbnailer use: the URL and every redirect hop are judged
+    (`is_safe_url` + `redirect_guard.HOOKS`) and the connection goes to the address that was judged
+    (`PinnedTransport`, no DNS rebinding), so a mirror request can never make this node fetch from its own
+    network. Size is capped on the header AND the stream, and the whole fetch has a deadline."""
+    import httpx
+    from app.services.search_service import is_safe_url
+    from app.utils import redirect_guard
+    if not isinstance(url, str) or not url.lower().startswith(("https://", "http://")):
+        raise ValueError("url must be an http(s) address")
+    ok, why = is_safe_url(url)
+    if not ok:
+        raise ValueError("url not allowed: %s" % why)
+    try:
+        async with asyncio.timeout(MIRROR_DEADLINE):
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0), follow_redirects=True,
+                                         transport=redirect_guard.PinnedTransport(),
+                                         event_hooks=redirect_guard.HOOKS) as client:
+                async with client.stream("GET", url, headers={"User-Agent": "PosterChan Blossom mirror"}) as r:
+                    if r.status_code >= 400:
+                        raise ValueError("source answered HTTP %d" % r.status_code)
+                    if int(r.headers.get("content-length") or 0) > max_bytes:
+                        raise ValueError("blob exceeds the size limit")
+                    buf = bytearray()
+                    async for chunk in r.aiter_bytes(65536):
+                        buf += chunk
+                        if len(buf) > max_bytes:
+                            raise ValueError("blob exceeds the size limit")
+                    mime = (r.headers.get("content-type") or "").split(";")[0].strip()
+                    return bytes(buf), mime or "application/octet-stream"
+    except TimeoutError:
+        raise ValueError("source too slow")
+    except httpx.HTTPError as e:
+        raise ValueError("could not fetch the source (%s)" % type(e).__name__)
+
+
 def compute_sha256(data: bytes) -> str:
     """sha256 hex of a blob. CPU-bound on large bodies — call via asyncio.to_thread."""
     return hashlib.sha256(data).hexdigest()
