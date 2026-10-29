@@ -951,9 +951,25 @@ window.PCDiscoverFactory = function(dep){
    * repaint here MOVES them rather than rebuilding them. `nostr:false` is "Nostr search is switched
    * off": nothing is asked of any relay and the npub/nevent/NIP-05 jumps (Nostr lookups too) are
    * skipped. Every other caller passes nothing and gets exactly what it always did. */
+  /* Every repo announcement on the pool / the ngit index: the same read for any word, so one per 5 min
+   * (it was ~2,000 events from each, again on every search and every pause in typing). */
+  const _repoMemo={};
+  function _repoAll(src){
+    const m=_repoMemo[src]; if(m && Date.now()-m.at<300000) return m.p;
+    const p=(src==='pool' ? Relay.query([{ kinds:[30617], limit:2000 }])
+      : Relay.queryFrom ? Relay.queryFrom(['wss://index.ngit.dev'], [{ kinds:[30617], limit:2000 }], { timeout:6000, purpose:'repo search' }) : Promise.resolve([]))
+      .catch(()=>[]).then(r=>{ if(!(r&&r.length)) delete _repoMemo[src]; return r||[]; });
+    _repoMemo[src]={at:Date.now(), p};
+    return p;
+  }
+  /* ONLY THE NEWEST SEARCH PAINTS. Typing starts one per pause and Enter another; an older one
+   * that answered last (it held the ngit read) painted its results over the newer ones -- measured:
+   * 'kubernetes' showed 40 posts, then the 'kub' typed on the way said "No matching posts". */
+  let _sgen=0;
   async function runSearch(q, opts){
     opts=opts||{};
     const head=opts.head||null, tail=opts.tail||null;
+    const gen=++_sgen, live=()=>gen===_sgen && S.VIEW==='search';
     S.VIEW='search'; _clearNav(); $('#view-title').textContent='Search';
     const feed=_feedScrollable();
     const place=(html)=>{ feed.innerHTML=html; if(head) feed.prepend(head); if(tail) feed.append(tail); };
@@ -971,6 +987,7 @@ window.PCDiscoverFactory = function(dep){
     // 2. NIP-05 address (name@domain) -> resolve to a pubkey -> jump
     if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){
       const rp=await nip05Resolve(q.toLowerCase());
+      if(!live()) return;
       if(rp){ return renderProfileView(rp); }
       /* NOT A NOSTR ADDRESS? IT MAY BE A FEDIVERSE ONE. `alice@mastodon.social` fails NIP-05 (that
        * server has no nostr.json), and this node -- when its ActivityPub server is on -- can find the
@@ -978,6 +995,7 @@ window.PCDiscoverFactory = function(dep){
        * profile then opens like any other, and following it is an ActivityPub Follow. A node without
        * the feature answers 404 and the search simply carries on as before. */
       const fedi = await _fediLookup(q);
+      if(!live()) return;
       if(fedi){ return renderProfileView(fedi); }
     }
     // 3. posts via NIP-50 full-text (relay indexes note content); profiles by name/nip05 over the
@@ -993,17 +1011,16 @@ window.PCDiscoverFactory = function(dep){
      * showed results". Measured against this relay while fixing it: 39 matching notes, every time,
      * once a live socket exists. renderProfileView and flushEvents already wait like this. */
     try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
-    if(S.VIEW!=='search') return;
+    if(!live()) return;
     /* GIT REPOS GET THEIR OWN READ. They used to share one `limit:240` with articles, streams and
      * torrents — the newest 240 of four kinds — so on a busy relay almost no repository was ever in the
      * set being filtered and "search doesn't find git repos" (2026-10-21). Now: this device's held
      * announcements, the pool (newest 2000), NIP-50 where a relay indexes them, and the ngit index —
      * where ngit, gitworkshop and Armada announce — so a repo hosted anywhere can be found by name. */
-    const repoRead=Promise.all([
-      Relay.query([{ kinds:[30617], limit:2000 }]).catch(()=>[]),
-      Relay.query([{ kinds:[30617], search:q, limit:50 }]).catch(()=>[]),
-      (Relay.queryFrom ? Relay.queryFrom(['wss://index.ngit.dev'], [{ kinds:[30617], limit:2000 }], { timeout:6000, purpose:'repo search' }) : Promise.resolve([])).catch(()=>[]),
-    ]).then(r=>{ let held=[]; try{ held=Store.byKind(30617)||[]; }catch(_){} return [...held, ...r.flat()]; });
+    const repoRead=Promise.all([_repoAll('pool'), Relay.query([{ kinds:[30617], search:q, limit:50 }]).catch(()=>[])])
+      .then(r=>{ let held=[]; try{ held=Store.byKind(30617)||[]; }catch(_){} return [...held, ...r.flat()]; });
+    // The ngit index is not waited for (it took 1.6-6.5 s): its repos join the list when they land.
+    const ngitRead=_repoAll('ngit');
     let [postEvs, addrEvs, profEvs, repoEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
       Relay.query([{ kinds:[30023,30311,2003], limit:240 }]).catch(()=>[]),
@@ -1035,19 +1052,19 @@ window.PCDiscoverFactory = function(dep){
      * an endless retry loop: after three total attempts the honest manual Retry state remains. */
     for(let retry=0; postEvs && postEvs.complete === false && retry<2; retry++){
       await new Promise(r => setTimeout(r, 900 * (retry + 1)));
-      if(S.VIEW!=='search') return;
+      if(!live()) return;
       try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
-      if(S.VIEW!=='search') return;
+      if(!live()) return;
       try{
         const again = await Relay.query([{ kinds:[1], search:q, limit:40 }]);
         if(again && (again.complete !== false || again.length > postEvs.length)) postEvs = again;
       }catch(_){}
-      if(S.VIEW!=='search') return;
+      if(!live()) return;
     }
     postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     addrEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     (profEvs||[]).forEach(e=>{ Store.saveProfile(e); });
-    if(S.VIEW!=='search') return;
+    if(!live()) return;
     const arts =_dedupAddr(addrEvs.filter(e=>e.kind===30023 && _matchAddr(e,ql))).sort((a,b)=>artTime(b)-artTime(a)).slice(0,12);
     const strms=_dedupAddr(addrEvs.filter(e=>e.kind===30311 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const tors =addrEvs.filter(e=>e.kind===2003 && _matchAddr(e,ql)).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
@@ -1067,7 +1084,8 @@ window.PCDiscoverFactory = function(dep){
     if(arts.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-article"></use></svg>Articles</div>'+arts.map(articleCard).join(''); }
     if(strms.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stream"></use></svg>Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
     if(tors.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Torrents</div>'+tors.map(torrentCard).join(''); }
-    if(repos.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-git"></use></svg>Git Repos</div><div class="repo-grid">'+repos.map(repoCard).join('')+'</div>'; }
+    const repoHtml=list=>list.length?'<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-git"></use></svg>Git Repos</div><div class="repo-grid">'+list.map(repoCard).join('')+'</div>':'';
+    html+='<div class="search-repos">'+repoHtml(repos)+'</div>';
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
     /* AN UNANSWERED SEARCH IS NOT AN EMPTY ONE. `complete` is false when the relays never EOSE'd —
@@ -1086,9 +1104,23 @@ window.PCDiscoverFactory = function(dep){
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openStream(x); });
     $$('.tor-copy',feed).forEach(b=> b.onclick=()=> copyValue(b.dataset.magnet, 'magnet copied', 'Magnet link:'));
-    $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
-    $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
-    $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
+    const bindRepos=root=>{
+      $$('.repo-clone',root).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
+      $$('.repo-card a[href]',root).forEach(a=> a.onclick=ev=>ev.stopPropagation());
+      $$('.repo-card',root).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
+    };
+    bindRepos(feed);
+    ngitRead.then(more=>{
+      const have=new Set(repoList.map(e=>e.id)), add=(more||[]).filter(e=>e&&e.kind===30617&&!have.has(e.id)&&repoHit(e)&&_vfy(e));
+      const box=$('.search-repos',feed);
+      if(!live()||!add.length||!box) return;
+      add.forEach(e=>{ try{ Store.saveEvent(e); needProfile(e.pubkey); }catch(_){} });
+      // A reader who has scrolled keeps the post they are on where it is.
+      const ref=box.nextElementSibling, y0=ref?ref.getBoundingClientRect().top:0;
+      box.innerHTML=repoHtml(_dedupAddr([...repoList,...add]).sort((a,b)=>repoRank(a)-repoRank(b)||b.created_at-a.created_at).slice(0,24));
+      bindRepos(box);
+      if(ref&&feed.scrollTop>0) feed.scrollTop+=ref.getBoundingClientRect().top-y0;
+    });
     // pagination cursor for scroll-back through more search hits
     _search = { q, loading:false, done:posts.length<40, oldest: posts.length ? posts[posts.length-1].created_at : 0 };
   }

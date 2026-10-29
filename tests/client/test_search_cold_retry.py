@@ -13,4 +13,4 @@ def test_cold_search_has_two_bounded_retries_and_rechecks_the_socket():
     assert "900 * (retry + 1)" in block
     assert "await Relay.ready(4000)" in block
     assert block.count("Relay.query([{ kinds:[1], search:q, limit:40 }])") == 1
-    assert "VIEW!=='search'" in block
+    assert "if(!live()) return;" in block   # stops once the search is left or superseded

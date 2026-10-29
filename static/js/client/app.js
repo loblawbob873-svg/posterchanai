@@ -8449,7 +8449,12 @@
   function renderHashtag(){ return _lzRun(_discoverMod, _discoverLoad, 'renderHashtag', arguments); }
   function renderTorrents(){ return _lzRun(_discoverMod, _discoverLoad, 'renderTorrents', arguments, true); }
   function renderTrending(){ return _lzRun(_discoverMod, _discoverLoad, 'renderTrending', arguments, true); }
-  function runSearch(){ return _lzRun(_discoverMod, _discoverLoad, 'runSearch', arguments); }
+  /* Search sets VIEW itself, so it leaves a timeline the way switchView does: place remembered, cards
+   * kept. Without it Search -> Social rebuilt every card (~0.5 s on a phone, "clunky load"). */
+  function runSearch(){
+    if(_TL_TABS.indexOf(VIEW)>=0 && !(window.PCOS && PCOS.isOn())){ _rememberTlScroll(); VIEW='search'; try{ _keepTimelineCards($('#feed')); }catch(_){} }
+    return _lzRun(_discoverMod, _discoverLoad, 'runSearch', arguments);
+  }
   function articleCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey);
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
@@ -14014,7 +14019,8 @@
     ['#nav-search-input','#search-input'].forEach(sel=>{
       const inp=$(sel); if(!inp) return; let t=null;
       inp.addEventListener('input', ()=>{ clearTimeout(t); const q=inp.value.trim(); if(q.length<2) return; t=setTimeout(()=>runSearch(q),350); });
-      inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); if(q) runSearch(q); } });
+      // Enter IS the search the typing pause was about to start -- one search, not two.
+      inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ clearTimeout(t); const q=inp.value.trim(); if(q) runSearch(q); } });
     });
   }
   async function nip05Resolve(addr){
