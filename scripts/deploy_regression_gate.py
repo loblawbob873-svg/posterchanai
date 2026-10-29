@@ -391,10 +391,8 @@ def _run_required_sharded(groups, base, root, env, directory, report, timeout=No
     for index, (code, output, part) in enumerate(results):
         codes.append(code)
         if code not in (0, 1):
-            lines = output.strip().splitlines()
-            dump = [i for i, l in enumerate(lines) if 'Timeout (' in l or 'most recent call first' in l]
             out.append(f'[regressions] required group {index} did not complete (pytest exit {code}):\n'
-                       + '\n'.join((lines[dump[0]:dump[0] + 40] if dump else []) + lines[-15:]) + '\n')
+                       + _hang_excerpt(output) + '\n')
         else:
             out.append(output)
         try:
@@ -725,6 +723,20 @@ def discover_test_files(root):
                   if not any(part in ('data', 'node_modules', '__pycache__') for part in p.parts))
 
 
+def _hang_excerpt(output: str) -> str:
+    """What a shard that did not complete is reported with. The hang dump leads (the first thread's stack), then
+    EVERY FRAME IN tests/ from the whole dump -- the stuck test is on the MAIN thread, which faulthandler prints
+    LAST, below the helper threads: deploy 142 (2026-10-29) showed 40 lines of a DocTable loader and the pluggy
+    frames at the tail, and the test that hung was in between, named nowhere -- then the last lines."""
+    lines = output.strip().splitlines()
+    dump = [i for i, l in enumerate(lines) if 'Timeout (' in l or 'most recent call first' in l]
+    if not dump:
+        return '\n'.join(lines[-15:])
+    ours = [l for l in lines[dump[0]:] if 'File "' in l and ('/tests/' in l or l.lstrip().startswith('File "tests/'))]
+    return '\n'.join(lines[dump[0]:dump[0] + 40] + ['  -- test frames in the dump:'] + list(dict.fromkeys(ours))[-12:]
+                     + lines[-15:])
+
+
 def plan_shards(files, jobs, durations=None, root=ROOT):
     """Greedy balance: longest file first onto the least-loaded shard. Unknown files cost their size."""
     durations = durations or {}
@@ -911,10 +923,7 @@ def _run_shards(root, env, directory, files, shards, durations, captured, remote
         except (OSError, ET.ParseError):
             parsed = []
         if not parsed or code not in (0, 1):
-            lines = output.strip().splitlines()
-            dump = [i for i, l in enumerate(lines) if 'Timeout (' in l or 'most recent call first' in l]
-            # Lead with the hang dump when there is one: it names the test; the last lines only show dots.
-            tail = '\n'.join((lines[dump[0]:dump[0] + 40] if dump else []) + lines[-15:])
+            tail = _hang_excerpt(output)
             bad.append(f'shard {index} did not complete (pytest exit {code}):\n{tail}')
             continue
         cases += len(parsed)
