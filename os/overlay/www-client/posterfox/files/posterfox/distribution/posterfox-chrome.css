@@ -72,6 +72,14 @@
   }
   .titlebar-buttonbox .titlebar-button:hover { background: rgba(255, 255, 255, .10) !important; color: var(--pc-text) !important; fill: var(--pc-text) !important; }
   .titlebar-buttonbox .titlebar-close:hover { background: #e81123 !important; color: #fff !important; fill: #fff !important; }
+  /* ALL THREE BUTTONS, WHATEVER GTK SAYS. Firefox shows only the buttons GTK's decoration layout names, and on Wayland
+     that layout comes from GSettings (org.gnome.desktop.wm.preferences button-layout), whose default is `appmenu:close`:
+     measured on PosterChanOS's Wayfire, PosterFox drew a close button and nothing else. A PosterChan window has
+     minimise, maximise and close, in that order, on the right. Maximise and restore still swap with the window state. */
+  .titlebar-buttonbox .titlebar-min { display: flex !important; order: 1 !important; }
+  :root:not([sizemode="maximized"]) .titlebar-buttonbox .titlebar-max { display: flex !important; order: 2 !important; }
+  :root[sizemode="maximized"] .titlebar-buttonbox .titlebar-restore { display: flex !important; order: 2 !important; }
+  .titlebar-buttonbox .titlebar-close { display: flex !important; order: 3 !important; }
 
   /* ---- toolbar and address bar ---- */
   #nav-bar {

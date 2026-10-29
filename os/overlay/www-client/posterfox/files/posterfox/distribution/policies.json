@@ -74,6 +74,13 @@
       "SiteSettings": true,
       "OfflineApps": true,
       "Locked": false
+    },
+    "3rdparty": {
+      "Extensions": {
+        "jid1-MnnxcxisBPnSXQ@jetpack": {
+          "showIntroPage": false
+        }
+      }
     }
   }
 }
