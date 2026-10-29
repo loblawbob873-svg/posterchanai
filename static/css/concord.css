@@ -566,7 +566,7 @@ span.cc-attachment-wait.cc-sized{display:grid!important;place-items:center!impor
 .cc-head-more{display:none!important}
 /* INSIDE A ROOM THE HEADER IS 🔍 📞 ☰, at every width (Armada's room bar). Everything else is in the ☰ menu, which
    presses these same buttons -- hidden, never removed, so each action keeps one implementation. */
-:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header:has(#cc-call) :is(#cc-pins,#cc-threads-toggle,#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-copy-link,#cc-leave-shortcut,#cc-notify-head,#cc-direct-inbox,#ccg-head-issues,#cc-members){display:none!important}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header:has(#cc-call) :is(#cc-pins,#cc-threads-toggle,#cc-publish-listing,#cc-direct-send,#cc-manage-links,#cc-copy-link,#cc-leave-shortcut,#cc-notify-head,#cc-direct-inbox,#ccg-head-issues,#cc-members,#cc-ban-npub){display:none!important}
 :is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-conversation>header:has(#cc-call) .cc-head-more{display:grid!important;place-items:center;font-size:20px;line-height:1}
 /* Search results (concord.js openRoomSearch). */
 .cc-search-results{display:grid;gap:6px;margin-top:10px;max-height:60vh;overflow:auto}

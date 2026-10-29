@@ -100,3 +100,39 @@ def test_with_the_switches_off_a_profile_keeps_the_apps_look_and_stays_quiet():
 
     asyncio.run(desktop.with_browser('online', '', check, INIT))
     assert got['s'] == {'themed': '', 'bg': '', 'playing': False, 'chip': False}, got['s']
+
+
+@CHROME
+def test_close_publishes_nothing_and_upload_opens_the_picker_and_says_what_became_of_the_file():
+    """The editor's two other buttons, pressed: ✕ closes it with nothing sent; Upload opens the file picker, and a chosen
+    picture's uploaded address fills the background field, or the person is told why not -- and the button never stays
+    stuck on 'Uploading…'."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("window.__toasts=[];{const t=__PC.toast;__PC.toast=(m)=>{__toasts.push(String(m));};}")
+        await b.js("__PC.openProfile(__PC.me().pubkey)")
+        await b.until("!!document.querySelector('#theme-prof')")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('#pt-close')")
+        await b.js("document.querySelector('#pt-close').click()")
+        await b.until("!document.querySelector('.pt-ed')")
+        got['published'] = await b.js("window.__published.filter(e=>e.kind===16767).length")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('#pt-up')")
+        await b.js("""(()=>{window.__picker=0;const f=document.querySelector('#pt-file');const c=f.click.bind(f);f.click=()=>{__picker++;};
+          document.querySelector('#pt-up').click();
+          const d=new DataTransfer();d.items.add(new File([new Uint8Array([137,80,78,71])],'bg.png',{type:'image/png'}));
+          f.files=d.files;f.dispatchEvent(new Event('change',{bubbles:true}));})()""")
+        await b.until("document.querySelector('#pt-up').textContent==='Upload' && !document.querySelector('#pt-up').disabled")
+        got['picker'] = await b.js("__picker")
+        got['bg'] = await b.js("document.querySelector('#pt-bgurl').value")
+        got['toasts'] = await b.js("__toasts")
+
+    asyncio.run(desktop.with_browser('online', '', check, INIT))
+    assert got['published'] == 0, "closing the editor published a theme"
+    assert got['picker'] == 1, "Upload did not open the file picker"
+    # The uploaded picture's address fills the field (the harness's upload answers with its own fixture address).
+    assert got['bg'].endswith('/fixture.png') or any('did not upload' in t for t in got['toasts']), got
