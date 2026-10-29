@@ -10868,15 +10868,19 @@
   }
   /* The rows for one source, or null when this device cannot search it at all (no disk to walk in a
    * browser tab) — an unavailable source is left out, not shown as "no results". */
-  function _searchSource(key, q){
+  /* The rows for one source as DATA ({icon, title, sub, run}), or null when this device cannot search it at all
+   * (no disk to walk in a browser tab). The Search window draws them as buttons (_searchSource); the command bar
+   * (cmdbar.js) draws its own list from the very same rows -- one search, two faces. */
+  function _searchData(key, q){
     const ql = q.toLowerCase();
+    const row = (icon, title, sub, run) => ({ icon, title, sub, run });
     if(key === 'apps'){
       return () => {
         const rows = [];
         for(const a of launchApps()){
           if(rows.length >= 8) break;
           if(String(a.label || '').toLowerCase().includes(ql))
-            rows.push(_searchRow(iconSvg(a.icon), a.label, '', () => openLauncherApp(a.view)));
+            rows.push(row(iconSvg(a.icon), a.label, '', () => openLauncherApp(a.view)));
         }
         try{
           const nat = (window.PCOSShell && PCOSShell.available()) ? (_machineApps || []) : [];
@@ -10884,8 +10888,8 @@
             if(rows.length >= 12) break;
             if(String(a.name || '').toLowerCase().includes(ql)
                || String(a.comment || '').toLowerCase().includes(ql))
-              rows.push(_searchRow(appIcon(a), a.name, a.comment || 'Program on this computer',
-                                   () => launchMachineApp(a.id, a.name)));
+              rows.push(row(appIcon(a), a.name, a.comment || 'Program on this computer',
+                            () => launchMachineApp(a.id, a.name)));
           }
         }catch(_){ }
         return rows;
@@ -10894,7 +10898,7 @@
     if(key === 'notes'){
       if(!PC().notesSearch) return null;
       return async () => (await PC().notesSearch(q, 8)).map(n =>
-        _searchRow(iconSvg('i-note'), n.title, n.snippet, () => _openNoteResult(n.id)));
+        row(iconSvg('i-note'), n.title, n.snippet, () => _openNoteResult(n.id)));
     }
     if(key === 'files'){
       if(!PC().driveSearch) return null;
@@ -10904,17 +10908,22 @@
          * "nothing" to somebody with thousands of files. */
         try{ const F = PC().filesIdx && PC().filesIdx(); if(F && !F._pullDone && F.pull) await F.pull(); }catch(_){ }
         return (PC().driveSearch(q, 8) || []).map(h =>
-          _searchRow(iconSvg('i-drive'), h.name, h.folder || 'Your files',
-                     () => (PC().driveOpenFile ? PC().driveOpenFile(h.sha) : PC().driveReveal(h.sha))));
+          row(iconSvg('i-drive'), h.name, h.folder || 'Your files',
+              () => (PC().driveOpenFile ? PC().driveOpenFile(h.sha) : PC().driveReveal(h.sha))));
       };
     }
     if(key === 'local'){
       if(!(window.pcHost && typeof pcHost.search === 'function')) return null;
       return async () => ((await pcHost.search(q, { limit: 8 })) || []).map(h =>
-        _searchRow(iconSvg(h.dir ? 'i-folder' : 'i-note'), h.name, h.path,
-                   () => PC().hostOpen(h.path, h.name, '', !!h.dir)));
+        row(iconSvg(h.dir ? 'i-folder' : 'i-note'), h.name, h.path,
+            () => PC().hostOpen(h.path, h.name, '', !!h.dir)));
     }
     return null;
+  }
+  function _searchSource(key, q){
+    const src = _searchData(key, q);
+    if(!src) return null;
+    return async () => ((await src()) || []).map(r => _searchRow(r.icon, r.title, r.sub, r.run));
   }
   function _runDesktopSearch(q){
     const seq = ++_searchSeq;
@@ -10957,6 +10966,40 @@
       if(!PC().runSearch) throw new Error('search is unavailable here');
       PC().runSearch(q, { head, tail: tail.childNodes.length ? tail : null, nostr: nostrAt >= 0 });
     }catch(err){ osSay(err); }
+  }
+  /* THE COMMAND BAR: cmdbar.js draws it (loaded the first time it opens); these are its sources and actions. */
+  function _cmdActions(){
+    const A = (icon, title, keywords, run, sub) => ({ icon, title, keywords, run, sub });
+    const out = [
+      A('✏️', 'New post', ['compose', 'write', 'note'], () => PC().compose && PC().compose()),
+      A(iconSvg('i-note'), 'New note', ['notes', 'jot'], () => openLauncherApp('notes')),
+      A('📸', 'Take a screenshot', ['screen', 'capture', 'print'], () => shoot('screen')),
+      A('✂️', 'Screenshot an area', ['region', 'snip', 'capture'], () => shoot('region')),
+      A('▦', 'Arrange windows in a grid', ['tile', 'snap', 'layout'], () => arrangeInPage('grid')),
+      A('◫', 'Arrange windows side by side', ['tile', 'snap', 'split'], () => arrangeInPage('side-by-side')),
+      A('⛶', 'Full screen', ['fullscreen', 'f11'], () => toggleFull()),
+    ];
+    if(typeof openSystemSettings === 'function' && window.PCOSShell && PCOSShell.available())
+      out.push(A('🖥️', 'System settings', ['wifi', 'display', 'sound', 'bluetooth'], () => openSystemSettings()));
+    return out;
+  }
+  async function openCmdbar(fromCompositor){
+    if(fromCompositor){ try{ await _raiseShell(); }catch(_){ } }
+    const C = await PC().loadModule('cmdbar.js', 'PCCmdbar');
+    C.open({
+      plan: searchPlan().filter(k => k !== 'nostr'),
+      data: (key, q) => _searchData(key, q),
+      actions: _cmdActions(),
+      nostr: q => desktopSearch(q),
+      ai: q => {
+        openLauncherApp('ai');
+        // AI chat draws its box once it opens: the question is put IN it, never sent for you.
+        let n = 0; const t = setInterval(() => { const box = document.getElementById('ai-input');
+          if(box){ clearInterval(t); box.value = q; box.dispatchEvent(new Event('input', { bubbles:true })); try{ box.focus(); }catch(_){ } }
+          else if(++n > 40) clearInterval(t); }, 100);
+      },
+      say: osSay,
+    });
   }
   /** Search from the taskbar (or anything else on the desktop): one Search window, every source. */
   function desktopSearch(q){
@@ -12650,6 +12693,7 @@
               _bareSuper(true);
             }
             else if(p === 'pc:start:close') toggleStart(false);
+            else if(p === 'pc:cmdbar') openCmdbar(true).catch(osSay);
             /* A compositor action as well as a pointer target: this keeps the taskbar flyout
              * automatable/accessibility-reachable and lets the two-output ownership gate prove that
              * exactly one notification surface opens on the focused monitor. */
@@ -13307,6 +13351,10 @@
      * composer belongs to whatever is focused, not to the desktop. */
     const t = e.target;
     const typing = !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+    // The command bar: Ctrl+Space from anywhere, Ctrl+K when not typing (in a text box Ctrl+K belongs to the box).
+    if(e.ctrlKey && !e.altKey && !e.metaKey && (e.code === 'Space' || (!typing && (e.key === 'k' || e.key === 'K')))){
+      e.preventDefault(); e.stopPropagation(); openCmdbar(false).catch(osSay); return;
+    }
 
     /* Ctrl+Enter belongs to composers and message boxes. This capture handler runs before their
      * target handlers can call preventDefault(), and some editors report their inner surface as a
@@ -13992,7 +14040,7 @@
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
                   isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow, parkStats,
-                  openSystemSettings, osToast, pageWindowAI,
+                  openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false),
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

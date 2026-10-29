@@ -114,7 +114,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.173 -> 8.174 for what the page HOLDS in the same report (store/Concord counts, saved-data size): that
 #: tablet's 73 MB heap could not be attributed. 8.1732 MB measured.
 #: ...and 8.174 -> 8.175 for the Concord invite inbox staying live through the tunnel (dms.js). 8.1741 MB measured.
-BUDGET_MB = 8.175
+#: ...and 8.175 -> 8.178 for the COMMAND BAR's hooks in os.js (Ctrl+Space / Ctrl+K / Super+Space, its actions, and the
+#: search split into data rows it shares with the Search window). The bar itself (cmdbar.js + its CSS) loads on first
+#: open, never at boot. 8.1774 MB measured.
+BUDGET_MB = 8.178
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
