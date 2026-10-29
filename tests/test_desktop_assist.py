@@ -92,3 +92,41 @@ def test_the_router_knows_the_action():
     assert "desktop_steps" in svc.ACTIONS
     src = open("app/routers/chat_assist.py").read()
     assert "desktop_assist.desktop_steps" in src
+
+
+# ---- what this node's real model actually writes (scripts/audit_desktop_assistant.py, 2026-10-28: 3/15 before these
+# repairs, 15/15 twice after). The intent was right; the fields were loose.
+WINS2 = [{"title": "Social", "view": "global", "ws": 1, "focused": True}, {"title": "Terminal", "view": "terminal", "ws": 1}]
+APPS2 = APPS + [{"view": "terminal", "label": "Terminal"}]
+
+
+def _p(steps, instruction="", wins=WINS2):
+    return D.parse_steps(_plan(steps), D.clean_apps(APPS2), D.clean_windows(wins), 1, instruction)["steps"]
+
+
+def test_an_app_named_only_in_the_label_is_found():
+    assert _p([{"do": "open", "label": "Notes"}]) == [{"do": "open", "view": "notes", "label": "Notes"}]
+
+
+def test_a_window_named_by_its_title_is_found():
+    assert _p([{"do": "close", "label": "Close Terminal"}])[0]["win"] == 2
+
+
+def test_a_window_opened_by_an_earlier_step_is_found_by_name():
+    st = _p([{"do": "open", "view": "notes"}, {"do": "snap", "label": "Notes left", "zone": "left"}])
+    assert st[1]["win"] == 3
+
+
+def test_mute_and_percent_spelled_as_words():
+    assert _p([{"do": "volume", "app": "music", "level": "mute"}])[0]["mute"] is True
+    assert _p([{"do": "volume", "app": "Social", "level": "20%"}])[0] == {"do": "volume", "app": "global", "level": 20,
+                                                                          "label": "Volume Social"}
+
+
+def test_part_of_the_screen_is_a_region_even_when_the_model_says_screen():
+    assert _p([{"do": "screenshot", "mode": "screen"}], "take a screenshot of part of the screen")[0]["mode"] == "region"
+
+
+def test_an_ambiguous_name_is_dropped_not_guessed():
+    assert _p([{"do": "open", "label": "notes or settings"}]) == []
+    assert _p([{"do": "close", "label": "close everything"}]) == []

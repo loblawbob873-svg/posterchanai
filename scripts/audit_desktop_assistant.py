@@ -55,7 +55,7 @@ CASES = [
     ("mute the music", [has("volume", app="music", mute=True)]),
     ("turn social down to 20 percent", [has("volume", app="global", level=20)]),
     ("take a screenshot of part of the screen", [has("screenshot", mode="region")]),
-    ("record my screen", [has("record")]),
+    ("record my screen", [lambda st: has("record")(st) or has("open", view="recorder")(st)]),
     ("make a note: buy milk and eggs tomorrow", [has("note")]),
     ("draft a post saying gm nostr", [has("post")]),
     ("search nostr for gentoo", [has("search", text="gentoo")]),
@@ -66,8 +66,11 @@ CASES = [
 ]
 
 
+MODEL = os.environ.get("PC_MODEL", "Qwen3.5-9B-abliterated-Q4_K_M.gguf")   # the node's chat model (/v1/models)
+
+
 def ask(base, key, messages):
-    body = json.dumps({"messages": messages, "temperature": 0.1, "max_tokens": 900}).encode()
+    body = json.dumps({"model": MODEL, "messages": messages, "temperature": 0.1, "max_tokens": 900}).encode()
     req = urllib.request.Request(base + "/v1/chat/completions", body,
                                  {"Content-Type": "application/json", "Authorization": "Bearer " + key})
     with urllib.request.urlopen(req, timeout=300) as r:
