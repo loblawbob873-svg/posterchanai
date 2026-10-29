@@ -3036,6 +3036,10 @@ async function placePopupWindow(win, want){
         await wm().placeAndReveal(Number(row.id), Math.round(put.x), Math.round(put.y),
                                   Math.round(put.w), Math.round(put.h));
         if(win.isDestroyed() || _popupWin !== win) return;
+        /* ABOVE THE DANCER TOO: PosterChan's own window is kept always-on-top, a layer focus cannot raise
+         * an ordinary window into -- she stood on the tray's Wi-Fi list in her bottom-right corner (live
+         * USB, 2026-10-29). The popup joins that layer, then focus puts it in front within it. */
+        try{ if(typeof wm().alwaysOnTop==='function') await wm().alwaysOnTop(Number(row.id), true); }catch(_){ }
         // Positioning is not activation: Social or another toplevel can still cover the menu.
         try{ if(typeof wm().focus==='function') await wm().focus(Number(row.id)); }catch(_){ }
         if(win.isDestroyed() || _popupWin !== win) return;
