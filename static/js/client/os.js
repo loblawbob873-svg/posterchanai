@@ -11065,6 +11065,7 @@
       A(iconSvg('i-note'), 'New note', ['notes', 'jot'], () => openLauncherApp('notes')),
       A('📸', 'Take a screenshot', ['screen', 'capture', 'print'], () => shoot('screen')),
       A('✂️', 'Screenshot an area', ['region', 'snip', 'capture'], () => shoot('region')),
+      A('⏺️', 'Record the screen', ['recorder', 'video', 'capture', 'clip'], () => openLauncherApp('recorder')),
       A('▦', 'Arrange windows in a grid', ['tile', 'snap', 'layout'], () => arrangeInPage('grid')),
       A('◫', 'Arrange windows side by side', ['tile', 'snap', 'split'], () => arrangeInPage('side-by-side')),
       A('⛶', 'Full screen', ['fullscreen', 'f11'], () => toggleFull()),

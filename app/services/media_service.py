@@ -643,6 +643,31 @@ def clip_video(
     acceleration when available (NVENC / VAAPI), falling back to libx264 (CPU),
     exactly like compress_video. Raises on bad times or if every encoder fails.
     """
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if start is None or start < 0:
+        raise ValueError("start time is required")
+    if end is not None and end <= start:
+        raise ValueError("end time must be after the start time")
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_clip_")
+    in_suffix = _ext(source_filename) or ".mp4"
+    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(data)
+        clip_video_file(in_path, out_path, start, end, crf)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def clip_video_file(in_path: str, out_path: str, start: float, end: Optional[float] = None, crf: int = CLIP_CRF) -> None:
+    """clip_video on PATHS: the [start, end] span of `in_path` written as MP4 to `out_path`. For a caller that
+    already has the upload on disk (the Screen Recorder's trim) -- a recording read into memory costs its whole
+    size several times over. Same encoder ladder and cache as clip_video; raises if every encoder fails."""
     global _video_encoder_cache
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
@@ -652,38 +677,24 @@ def clip_video(
     if end is not None and end <= start:
         raise ValueError("end time must be after the start time")
     duration = None if end is None else (end - start)
-
-    tmp_dir = tempfile.mkdtemp(prefix="media_clip_")
-    in_suffix = _ext(source_filename) or ".mp4"
-    in_path = os.path.join(tmp_dir, f"input{in_suffix}")
-    out_path = os.path.join(tmp_dir, "output.mp4")
-    try:
-        with open(in_path, "wb") as f:
-            f.write(data)
-
-        candidates = _video_encoder_candidates(ffmpeg)
-        # Reuse the encoder that worked last time to skip re-probing dead GPUs.
-        if _video_encoder_cache and _video_encoder_cache in candidates:
-            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
-
-        last_err = ""
-        for encoder in candidates:
-            cmd = _clip_encode_cmd(ffmpeg, encoder, in_path, out_path, start, duration, crf)
-            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
-            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                if encoder != "libx264":
-                    logger.info(f"Video clipped with GPU encoder: {encoder}")
-                _video_encoder_cache = encoder
-                with open(out_path, "rb") as f:
-                    return f.read()
-            last_err = (result.stderr or "")[-300:]
-            logger.warning(f"Clip encoder {encoder} failed, trying next: {last_err}")
-            if os.path.exists(out_path):
-                os.unlink(out_path)
-
-        raise RuntimeError(f"video clip failed (tried {candidates}): {last_err}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+    candidates = _video_encoder_candidates(ffmpeg)
+    # Reuse the encoder that worked last time to skip re-probing dead GPUs.
+    if _video_encoder_cache and _video_encoder_cache in candidates:
+        candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+    last_err = ""
+    for encoder in candidates:
+        cmd = _clip_encode_cmd(ffmpeg, encoder, in_path, out_path, start, duration, crf)
+        result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            if encoder != "libx264":
+                logger.info(f"Video clipped with GPU encoder: {encoder}")
+            _video_encoder_cache = encoder
+            return
+        last_err = (result.stderr or "")[-300:]
+        logger.warning(f"Clip encoder {encoder} failed, trying next: {last_err}")
+        if os.path.exists(out_path):
+            os.unlink(out_path)
+    raise RuntimeError(f"video clip failed (tried {candidates}): {last_err}")
 
 
 def clip_attachment(

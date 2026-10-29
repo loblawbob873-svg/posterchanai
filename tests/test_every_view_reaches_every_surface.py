@@ -44,6 +44,9 @@ NOT_A_TILE = {
     # A personal analytics dashboard: dense charts over a long history, built for a wide window.
     # It is reachable from the phone's ☰ sheet, which is where a rarely-used desktop screen belongs.
     "analytics",
+    # Screen recording: Android's WebView has no getDisplayMedia, so on the phone the screen could only say
+    # "not available here". A tile that opens an apology is worse than no tile.
+    "recorder",
 }
 
 

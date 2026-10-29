@@ -15,6 +15,8 @@ class PublicWorkMiddleware:
         '/client/screenshot': 256 * 1024,
         '/client/stt': 32 * 1024 * 1024,
         '/client/media/compress-video': 513 * 1024 * 1024,
+        # The Screen Recorder's Trim: an ffmpeg encode for an anonymous caller, same ceiling as compress.
+        '/client/media/clip-video': 513 * 1024 * 1024,
         '/client/summarize': 128 * 1024,
         '/client/compose-from-url': 128 * 1024,
         '/client/hashtags': 128 * 1024,
@@ -29,6 +31,7 @@ class PublicWorkMiddleware:
     # speech-to-text and narrate out of the whole node.
     POOLS = {
         '/client/media/compress-video': 4,
+        '/client/media/clip-video': 2,
     }
     SHARED_CAP = 2
 

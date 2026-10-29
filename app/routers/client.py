@@ -1092,6 +1092,79 @@ async def client_compress_video(request: Request, file: UploadFile = File(...)):
             _shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@router.post("/media/clip-video")
+async def client_clip_video(file: UploadFile = File(...), start: float = Form(0.0), end: float | None = Form(None)):
+    """Trim a video to [start, end] and hand back an MP4 -- the Screen Recorder's "Trim" (client/recorder.js).
+
+    A browser records WebM (or MP4 on newer Chrome) and cannot cut one without re-encoding it in JavaScript, so
+    the span is cut here with the same encoder ladder as `clip` (GPU media engine first, never GPUResourceLock)
+    and the result is MP4, which every phone plays -- iOS does not play WebM. Same shape and limits as
+    /media/compress-video: anonymous same-origin helper, streamed to disk, its two encoder slots, stores nothing
+    (the browser saves or posts the result itself). `end` empty = to the end; start 0 + no end = just convert."""
+    import shutil as _shutil
+    import tempfile as _tempfile
+    from starlette.background import BackgroundTask
+    from app.services import media_service
+
+    try:
+        start = float(start or 0.0)
+        end = None if end is None else float(end)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad start/end"}, status_code=400)
+    if not (start >= 0 and (end is None or end > start)) or start != start:
+        return JSONResponse({"error": "the end must come after the start"}, status_code=400)
+    _ext = os.path.splitext(file.filename or "")[1][:8].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{2,7}", _ext or ""):
+        _ext = ".webm"
+    tmp_dir = _tempfile.mkdtemp(prefix="client_clip_")
+    in_path = os.path.join(tmp_dir, "input" + _ext)
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    keep_tmp = False
+    try:
+        size = 0
+        try:
+            with open(in_path, "wb") as fh:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _COMPRESS_VIDEO_MAX:
+                        return JSONResponse({"error": "that recording is too large to trim here "
+                                                      f"({_COMPRESS_VIDEO_MAX // (1024 * 1024)} MB max)"}, status_code=413)
+                    fh.write(chunk)
+        except Exception as e:
+            logger.warning(f"[client] clip-video upload failed: {e}")
+            return JSONResponse({"error": "bad upload"}, status_code=400)
+        if not size:
+            return JSONResponse({"error": "empty upload"}, status_code=400)
+        if not media_service.ffmpeg_available():
+            return JSONResponse({"error": "trimming is not available on this server"}, status_code=503)
+        _compress_busy[0] += 1
+        try:
+            await _COMPRESS_VIDEO_SEM.acquire()
+        except BaseException:
+            _compress_busy[0] -= 1
+            raise
+        try:
+            try:
+                await asyncio.to_thread(media_service.clip_video_file, in_path, out_path, start, end)
+            except Exception as e:
+                logger.warning(f"[client] clip-video failed: {e}")
+                return JSONResponse({"error": "the video could not be trimmed"}, status_code=422)
+        finally:
+            _COMPRESS_VIDEO_SEM.release()
+            _compress_busy[0] -= 1
+        logger.info("[client] clip-video: %d bytes, %.1f-%s s -> %d bytes", size, start,
+                    "end" if end is None else "%.1f" % end, os.path.getsize(out_path))
+        keep_tmp = True
+        return FileResponse(out_path, media_type="video/mp4", filename="clip.mp4",
+                            background=BackgroundTask(_shutil.rmtree, tmp_dir, ignore_errors=True))
+    finally:
+        if not keep_tmp:
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ---- voice cloning -----------------------------------------------------------------------------
 # Per-user gate with the same shape as /meme/generate-image, and for the same reason: a generation
 # holds this node's GPUResourceLock for its whole run (~10x realtime), so it stalls chat, image, music
