@@ -1,4 +1,4 @@
-# PosterFox 3: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 4: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -27,6 +27,8 @@ MOZ_ESR=
 
 # PosterFox pins (posterfox/pins.json)
 POSTERFOX_UBO="1.75.0"
+POSTERFOX_PB="2026.9.15"
+POSTERFOX_PB_AMO="5032646"
 
 MOZ_PV=${PV}
 MOZ_PV_SUFFIX=
@@ -71,6 +73,7 @@ DESCRIPTION="PosterFox: Firefox for PosterChanOS -- PosterChan look, uBlock Orig
 SRC_URI="${MOZ_SRC_BASE_URI}/source/${MOZ_P}.source.tar.xz -> ${MOZ_P_DISTFILES}.source.tar.xz
 	${PATCH_URIS[@]}
 	https://github.com/gorhill/uBlock/releases/download/${POSTERFOX_UBO}/uBlock0_${POSTERFOX_UBO}.firefox.signed.xpi -> posterfox-ublock0-${POSTERFOX_UBO}.xpi
+	https://addons.mozilla.org/firefox/downloads/file/${POSTERFOX_PB_AMO}/privacy_badger17-${POSTERFOX_PB}.xpi -> posterfox-privacybadger-${POSTERFOX_PB}.xpi
 	wasm-sandbox? (
 		amd64? ( https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VER/.*/}/wasi-sdk-${WASI_SDK_VER}-x86_64-linux.tar.gz )
 		arm64? ( https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VER/.*/}/wasi-sdk-${WASI_SDK_VER}-arm64-linux.tar.gz )
@@ -1329,6 +1332,7 @@ posterfox_distribution() {
 	# uBlock Origin is signed by addons.mozilla.org; policies.json force-installs it from here into every profile.
 	insinto "${MOZILLA_FIVE_HOME}/distribution/extensions"
 	newins "${DISTDIR}/posterfox-ublock0-${POSTERFOX_UBO}.xpi" uBlock0@raymondhill.net.xpi
+	newins "${DISTDIR}/posterfox-privacybadger-${POSTERFOX_PB}.xpi" jid1-MnnxcxisBPnSXQ@jetpack.xpi
 	# PosterChan's own add-ons live in the APPLICATION scope, unsigned (this build allows app,system), so they
 	# update with the browser and need no addons.mozilla.org round trip.
 	insinto "${MOZILLA_FIVE_HOME}/browser/extensions"

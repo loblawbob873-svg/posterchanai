@@ -27,11 +27,22 @@
         "installation_mode": "force_installed",
         "install_url": "file:///usr/lib64/posterfox/distribution/extensions/uBlock0@raymondhill.net.xpi",
         "private_browsing": true
+      },
+      "jid1-MnnxcxisBPnSXQ@jetpack": {
+        "installation_mode": "force_installed",
+        "install_url": "file:///usr/lib64/posterfox/distribution/extensions/jid1-MnnxcxisBPnSXQ@jetpack.xpi",
+        "private_browsing": true
       }
     },
     "Preferences": {
-      "browser.tabs.inTitlebar": { "Value": 1, "Status": "default" },
-      "extensions.activeThemeID": { "Value": "cyberpunk-theme@poster.place", "Status": "default" }
+      "browser.tabs.inTitlebar": {
+        "Value": 1,
+        "Status": "default"
+      },
+      "extensions.activeThemeID": {
+        "Value": "cyberpunk-theme@poster.place",
+        "Status": "default"
+      }
     }
   }
 }
