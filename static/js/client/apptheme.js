@@ -146,7 +146,7 @@
   function signedIn(){ try{ const p = window.__PC, me = p && p.me && p.me(); return (me && me.pubkey) || ''; }catch(_){ return ''; } }
   function set(patch, { save = true } = {}){
     if(!owner){ const pk = signedIn(); if(pk) owner = pk; }
-    const next = clean({ ...cur, ...(patch || {}), at: Date.now() });
+    const next = clean({ ...cur, ...(patch || {}), at: Math.max(Date.now(), cur.at + 1) });
     if(!next) return get();
     remember(next); if(save) sync(); return get();
   }
@@ -168,6 +168,8 @@
     const mine = load(KEY + owner);
     if(!mine || r.at > mine.at) remember(r);
     else if(mine.at > r.at) sync();
+    // Same `at` (unique per edit, set()): an older build's copy lost fields it did not know (menus, Vyram 10-29).
+    else if(JSON.stringify(r) !== JSON.stringify(mine)) remember({ ...r, sec: { ...mine.sec, ...r.sec } });
   }
   // switchView calls this; the section's colours apply by attribute, so nothing re-renders.
   function section(view){
