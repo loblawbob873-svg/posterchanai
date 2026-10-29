@@ -81,3 +81,38 @@ def test_no_sparkle_where_ai_is_not_allowed():
 
     asyncio.run(desktop.with_browser("online", "", check, EXTRA))
     assert got['n'] == 0
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width', [390, 1280])
+def test_concord_asks_for_ai_access_itself(width):
+    """"for concord on android, I don't see the summarize link like we do on desktop/OS" (2026-10-29). The button waits
+    on PCChatAssist.shown(), i.e. on the server having said this account may use AI -- and only Telegram and the DM
+    thread ever ASKED. On the desktop they are usually open; on a phone Concord is often the first screen, so the
+    question was never put and ✨ never appeared. Here the real check runs (nothing stubbed but the server's answer),
+    Concord is opened first, and the button must appear -- asking once, not once per message or repaint."""
+    got = {}
+    room = ROOM.replace("if(window.PCChatAssist){PCChatAssist.shown=()=>allowed;PCChatAssist.summarizeLinks=(t,m)=>{__sum.push([t,m]);};}",
+                        "if(window.PCChatAssist){PCChatAssist.summarizeLinks=(t,m)=>{__sum.push([t,m]);};}")
+    assert room != ROOM
+
+    async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 850, "deviceScaleFactor": 1, "mobile": width < 600})
+        await desktop.login(b)
+        await b.js("window.__publishOK=true")
+        # The server's answer to the access question, and a count of how often it is asked.
+        await b.js("""window.__asked=0;(()=>{const p=window.__PC;p.ensureAiSession=async()=>true;
+          p.authFetch=async(u,o)=>{ if(String(u).includes('/api/chat-assist')){ __asked++; return new Response(JSON.stringify({allowed:true}),{status:200,headers:{'Content-Type':'application/json'}}); }
+            return fetch(u,o); };})()""")
+        await b.js(room + "(true)")
+        await b.until("!!document.querySelector('#cc-input')")
+        await b.js("""(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()""")
+        await b.until("[...document.querySelectorAll('.cc-message')].some(m=>m.textContent.includes('just words'))")
+        await b.until("!!document.querySelector('.cc-message[data-message-id=\"msg-link\"] [data-cc-sum]')")
+        await asyncio.sleep(1)
+        got['asked'] = await b.js("__asked")
+        got['n'] = await b.js("document.querySelectorAll('[data-cc-sum]').length")
+
+    asyncio.run(desktop.with_browser('online', '', check, EXTRA))
+    assert got['n'] == 1, ("the link message has no ✨ Summarize (or the plain one has one)", got)
+    assert 1 <= got['asked'] <= 2, ("access was asked too often (once per repaint?)", got)

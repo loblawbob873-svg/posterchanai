@@ -2113,8 +2113,15 @@
    * Bound in bindMessages() with the other message buttons (it re-runs for patched rows too) (no document-wide click handler: one of those can
    * repaint Concord after another app owns the shared feed). */
   const sumText=new Map();
+  /* ASKED HERE TOO ("for concord on android, I don't see the summarize link"): only Telegram and the DM thread asked
+   * the node whether this account may use AI, so a phone that opened Concord first never showed ✨. Once per account;
+   * a yes repaints. */
+  let sumAsked='';
+  function askSparkle(A){ const who=(PC().me&&PC().me()||{}).pubkey||''; if(!A.probe||!who||sumAsked===who)return; sumAsked=who;
+    Promise.resolve(A.probe()).then(ok=>{ if(ok==null){ sumAsked=''; return; } if(ok&&A.shown()&&state.community!=null)backgroundRender(); }).catch(()=>{ sumAsked=''; }); }   // null = not answered: ask again later
   function linkSparkleHtml(p,m){
-    const A=window.PCChatAssist;if(!A||!A.shown||!A.shown()||!m||m.pending||m.failed)return '';
+    const A=window.PCChatAssist;if(!A||!A.shown||!m||m.pending||m.failed)return '';
+    if(!A.shown()){ askSparkle(A); return ''; }
     let text=String(m.text||'').slice(0,65536);
     for(const f of [...encryptedAttachments(m),...publicAttachments(m)])text=text.split(f.url).join('').trim();
     if(!A.hasLink(text))return '';
