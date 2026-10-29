@@ -2916,6 +2916,14 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
+    // PosterFox's AI sidebar (Firefox's chatbot panel, provider = this instance) opens /client?pcai=1&q=<prompt>.
+    // The prompt -- usually a page or a selection -- goes INTO AI chat for the person to read and send.
+    if(sp.get('pcai')==='1'){
+      _clean();
+      const q=String(sp.get('q')||'').slice(0, 8000);
+      if(!_aiShare({ text:q })) switchView('home');
+      return true;
+    }
     const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music','vms','concord']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
