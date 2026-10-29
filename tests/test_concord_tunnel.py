@@ -466,3 +466,24 @@ def test_a_relay_reached_lately_is_dialled_in_parallel(monkeypatch):
         return asyncio.get_running_loop().time() - t0
     took = asyncio.run(burst())
     assert took < 0.6, ("five dials to a known-good relay were serialized: %.2fs" % took)
+
+
+def test_a_relay_that_answered_lately_and_died_walks_the_rest_of_the_chain_once(monkeypatch):
+    """Measured on poster.place 2026-10-29, after the single-flight above shipped: asia.vectorapp.io -- reached by one
+    Tor exit now and then, so "known to answer" for GOOD_FOR -- still took bursts of 30-35 failed dials a minute
+    (16:50, 16:53, 16:57): five tunnels at once, each walking every Tor daemon and this node's address in parallel.
+    Its best hop may be tried by each (it is the one that worked); the rest of the chain is walked by one tunnel."""
+    import asyncio
+    seen = []
+    monkeypatch.setattr(tun, "connect", _slow_dialer(seen, set()))
+    tun.hop_result("wss://asia.vectorapp.io/nostr", TOR2, True)        # reached through Tor 2 a while ago
+
+    async def burst():
+        return await asyncio.gather(*[tun.open_upstream("wss://asia.vectorapp.io/nostr") for _ in range(5)])
+    got = asyncio.run(burst())
+    assert all(up is None for _, up in got), got
+    assert sorted(seen, key=str) == sorted([TOR2] * 5 + [TOR1, None], key=str), (
+        "the rest of the chain was walked by more than one tunnel", len(seen), seen)
+    later = len(seen)
+    asyncio.run(burst())
+    assert len(seen) == later, "inside its pause the dead relay was dialled again"

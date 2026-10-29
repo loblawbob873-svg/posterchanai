@@ -360,13 +360,22 @@
     return [...direct];
   }
   /* THIS NODE'S RELAY, when it may answer `filters` for a community on `relays` -- else ''. */
+  function streamReads(filters){return Array.isArray(filters)&&filters.length>0&&filters.every(f=>f&&Array.isArray(f.kinds)&&f.kinds.length&&f.kinds.every(k=>k===1059||k===21059)&&Array.isArray(f.authors)&&f.authors.length);}
   function homeServes(p,relays,filters){
-    const h=homeRelayUrl(p);if(!h||!Array.isArray(filters)||!filters.length)return '';
-    for(const f of filters)if(!f||!Array.isArray(f.kinds)||!f.kinds.length||!f.kinds.every(k=>k===1059||k===21059)||!Array.isArray(f.authors)||!f.authors.length)return '';
+    const h=homeRelayUrl(p);if(!h||!streamReads(filters))return '';
     if(relaysAreHome(p,relays))return h;
     const held=mirroredAuthors(accountPk());if(!held.size)return '';
     for(const f of filters)for(const a of f.authors)if(!held.has(a))return '';
     return h;
+  }
+  /* NOT IN THIS DEVICE'S RECORD IS NOT "NOT MIRRORED" (2026-10-29: four relays this node was synced with got ~30
+   * one-stream tunnels per 10 min each). A node that says `strict` is ASKED first (`pcms…`): it serves a stream any
+   * member registered and answers `unavailable:` otherwise, and only then are the community's relays read. */
+  const HOME_ASK='pcms',mirrorAsks=new Set();
+  function homeRoute(p,relays,filters){
+    const h=homeServes(p,relays,filters);if(h){const direct=homeDirect(filters);return {h,direct,prefix:direct?HOME_PARTIAL:''};}
+    const home=homeRelayUrl(p);
+    return home&&mirrorAsks.has(accountPk())&&streamReads(filters)?{h:home,direct:null,prefix:HOME_ASK}:{h:''};
   }
   /* A COLD DEVICE ASKS THIS NODE WHAT IT ALREADY MIRRORS (2026-10-22, Firefox over Tor: "no rooms are loading",
    * "we can't have it this shitty for users"). mirrorState lived only in the browser that registered each room, and a
@@ -385,6 +394,7 @@
       catch(_){ return false; }finally{ clearTimeout(t); }
       let j=null;try{j=r&&r.ok?await r.json():null;}catch(_){j=null;}
       if(!j||!j.groups||typeof j.groups!=='object'||accountPk()!==pk)return false;
+      if(j.strict===true)mirrorAsks.add(pk);
       const st=mirrorState(pk),now=Date.now();let added=0;
       for(const [group,g] of Object.entries(j.groups)){
         if(!/^[0-9a-f]{64}$/.test(group)||!g||!Array.isArray(g.authors)||!g.authors.length)continue;
@@ -553,14 +563,14 @@
   }
   function cordPlaneSubscribe(p,R,relays,filters,options,plane){
     /* (typeof: harnesses run this function sliced out of the file, without the mirror helpers.) */
-    const h=typeof homeServes==='function'?homeServes(p,relays,filters):'';
+    const route=typeof homeRoute==='function'?homeRoute(p,relays,filters):{h:''},h=route.h;
     if(!h||!R||!R.subscribeFrom)return cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);
     /* This node's relay first; the community's own relays only if it cannot carry the stream -- and, where it said
      * it cannot read some of them (homeDirect), those relays alongside it, never all of them. */
-    const direct=typeof homeDirect==='function'?homeDirect(filters):null;
+    const direct=route.direct;
     let fallback=null,beside=null,stopped=false;
     const fall=()=>{if(stopped||fallback)return;try{if(beside){beside();beside=null;}fallback=cordPlaneSubscribeDirect(p,R,relays,filters,options,plane);}catch(e){console.warn('Concord subscription fallback failed',String(e&&e.message||e));}};
-    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,...(direct?{subPrefix:HOME_PARTIAL}:{}),onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
+    const inner=R.subscribeFrom([h],filters,{...options,max:1,exact:true,...(route.prefix?{subPrefix:route.prefix}:{}),onClosed:(_u,why)=>{if(/^unavailable:/i.test(String(why||'')))fall();}});
     if(direct&&direct.length)try{beside=cordPlaneSubscribeDirect(p,R,direct,filters,options,plane);}catch(e){console.warn('Concord subscription to the relays this server cannot read failed',String(e&&e.message||e));}
     if(inner&&inner.ready&&inner.ready.then)inner.ready.then(ok=>{if(!ok)fall();});
     const stop=()=>{stopped=true;try{inner&&inner();}catch(_){}if(fallback)try{fallback();}catch(_){}if(beside)try{beside();}catch(_){}};
@@ -601,10 +611,10 @@
     /* THIS NODE'S RELAY FIRST (see homeServes). It answering -- EOSE, even an empty one -- is the answer;
      * a rate-limited skip is the old rate limit; anything else is "could not ask" and the read goes on
      * to the community's own relays below, unchanged. */
-    const h=home!==false&&p.relayQueryFrom&&typeof homeServes==='function'?homeServes(p,relays,filters):'';
+    const route=home!==false&&p.relayQueryFrom&&typeof homeRoute==='function'?homeRoute(p,relays,filters):{h:''},h=route.h;
     if(h){
-      const reach={},direct=typeof homeDirect==='function'?homeDirect(filters):null;let got=null;
-      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true,...(direct?{subPrefix:HOME_PARTIAL}:{})});}catch(_){got=null;}
+      const reach={},direct=route.direct;let got=null;
+      try{got=await p.relayQueryFrom([h],filters,{timeout,max:1,signal,purpose:purpose+' (this server)',minInterval,allowBlocked:true,failureCooldown:30000,exact:true,report:reach,urgent:true,...(route.prefix?{subPrefix:route.prefix}:{})});}catch(_){got=null;}
       const note=(bucket,u)=>{if(report)(report[bucket]||(report[bucket]=[])).push(u);};
       if((reach.ok||[]).includes(h)){note('asked',h);note('ok',h);
         /* The other half: the relays this node said it cannot read -- only those, through the tunnel. Not
@@ -8686,7 +8696,7 @@
     return close;
   }
   function memStats(){let m=0,c=0;for(const r of remoteMessages.values())m+=r.length;for(const r of roomControls.values())c+=(r||[]).length;return {rooms:remoteMessages.size,messages:m,controls:c};}   // Restarts & memory
-  window.PCConcord={memStats,shareInto,cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,withdrawListing,readListingDeletions,backStep,withdrawnListings:()=>[...withdrawnListings],dissolveCommunity,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,hasEveryoneMention,mayMentionEveryone,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,seedMirrorFromNode,mirrorStateFor:pk=>mirrorState(pk),homeServes:(p,relays,filters)=>homeServes(p,relays,filters),liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p),__testNoteControl:(loadKey,wrap)=>roomControls.set(loadKey,[...(roomControls.get(loadKey)||[]),wrap])};
+  window.PCConcord={memStats,shareInto,cordVia,mirrorAllJoined,refreshTunnel,cordDeps,cordRelay,communitySettingsOpen,closeCommunitySettings,legacyRooms,unclaimedLegacyRooms,claimLegacyRooms,adoptOwnedLegacyRooms,announceListing,withdrawListing,readListingDeletions,backStep,withdrawnListings:()=>[...withdrawnListings],dissolveCommunity,pollVoteChanged,render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,inviteParkOptions,noteInviteAnswered,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,cordReplyTags,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,hasEveryoneMention,mayMentionEveryone,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,checkMemberships,restoreMemberships,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks,mintPublicRoom,callBroker,seedMirrorFromNode,mirrorStateFor:pk=>mirrorState(pk),homeServes:(p,relays,filters)=>homeServes(p,relays,filters),homeRoute:(p,relays,filters)=>homeRoute(p,relays,filters),liveDiag:()=>({...liveDiag,stuck:[...liveDiag.stuck],busy:liveBusy,step:liveRun.step,runningForMs:liveBusy?Date.now()-liveRun.at:0,lastOkAgoMs:liveDiag.lastOk?Date.now()-liveDiag.lastOk:null}),__testRefreshActiveChannel:p=>refreshActiveChannel(p),__testNoteControl:(loadKey,wrap)=>roomControls.set(loadKey,[...(roomControls.get(loadKey)||[]),wrap])};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

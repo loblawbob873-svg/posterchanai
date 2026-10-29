@@ -58,7 +58,8 @@ async def mirror_state(user: User = Depends(_member)):
     except relay_reader.Unavailable:
         from fastapi.responses import JSONResponse
         return JSONResponse({"groups": {}, "error": "the relay could not be asked"}, status_code=503)
-    return {"groups": (got or {}).get("groups") or {}}
+    # `strict`: this node answers a `pcms…` REQ ("do you mirror this stream?") -- a client asks it before tunnelling.
+    return {"groups": (got or {}).get("groups") or {}, "strict": True}
 
 
 @router.get("/default-invite")

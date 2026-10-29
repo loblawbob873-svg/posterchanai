@@ -71,6 +71,7 @@ def test_the_endpoint_answers_only_the_caller(monkeypatch):
     user = SimpleNamespace(nostr_npub=nostr_service.npub_of(ME))
     out = asyncio.run(concord_tunnel.mirror_state(user))
     assert asked == [("concord-mirror-state", {"member": ME})] and set(out["groups"]) == {G1}
+    assert out.get("strict") is True, "the client asks (pcms) only a node that says it answers"
     assert asyncio.run(concord_tunnel.mirror_state(SimpleNamespace(nostr_npub=""))) == {"groups": {}}
 
 

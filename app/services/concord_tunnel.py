@@ -386,20 +386,30 @@ def _known_to_answer(host: str) -> bool:
     return bool(t and t > time.monotonic())
 
 
-async def _dial_chain(target: str):
-    """Every hop in order (egress_hops); the first that opens wins. (context manager, socket), or (None, None)."""
+async def _dial_hop(target: str, hop):
+    """One hop: (context manager, socket), or (None, None) when it did not open."""
+    cm = None
+    try:
+        cm = connect(target, hop)
+        up = await asyncio.wait_for(cm.__aenter__(), timeout=open_timeout(hop) + 1)
+        hop_result(target, hop, True)
+        dialled(target)
+        return cm, up
+    except Exception as e:
+        hop_result(target, hop, False)
+        logger.info("[concord-tunnel] could not reach %s %s: %s", _host(target),
+                    "through Tor " + hop.rsplit(":", 1)[-1] if hop else "directly", type(e).__name__)
+    return None, None
+
+
+async def _dial_chain(target: str, skip=()):
+    """Every hop in order (egress_hops) but `skip`; the first that opens wins. (context manager, socket), or (None, None)."""
     for hop in egress_hops(target):
-        cm = None
-        try:
-            cm = connect(target, hop)
-            up = await asyncio.wait_for(cm.__aenter__(), timeout=open_timeout(hop) + 1)
-            hop_result(target, hop, True)
-            dialled(target)
+        if hop in skip:
+            continue
+        cm, up = await _dial_hop(target, hop)
+        if up is not None:
             return cm, up
-        except Exception as e:
-            hop_result(target, hop, False)
-            logger.info("[concord-tunnel] could not reach %s %s: %s", _host(target),
-                        "through Tor " + hop.rsplit(":", 1)[-1] if hop else "directly", type(e).__name__)
     if not unreachable(target):
         all_hops_failed(target)
     return None, None
@@ -409,20 +419,33 @@ async def open_upstream(target: str):
     """The far relay's socket for a tunnel, or (None, None) when no hop reaches it (or it is inside its pause).
 
     A host nothing has reached lately is dialled by ONE tunnel at a time: the others wait for that attempt and then
-    either dial in parallel (it got through) or answer "unreachable" without dialling (it did not)."""
+    either dial in parallel (it got through) or answer "unreachable" without dialling (it did not).
+
+    A host reached lately gets its best hop in parallel -- but when that hop fails, the REST of the chain is single-
+    flight too. Measured 2026-10-29 after the single-flight above shipped: asia.vectorapp.io, reached by one Tor exit
+    now and then (so "known to answer" for half an hour), still took bursts of 30-35 failed dials a minute -- five
+    tunnels at once, each walking four Tor daemons and this node's address after their shared first hop failed."""
     host = _host(target)
     if unreachable(target):
         return None, None
-    if not _known_to_answer(host):
-        lock = _dialing.get(host)
-        if lock is None:
-            lock = _dialing[host] = asyncio.Lock()
-            if len(_dialing) > 4096:
-                for h in [h for h, lk in _dialing.items() if not lk.locked() and h != host]:
-                    _dialing.pop(h, None)
-        async with lock:
-            if unreachable(target):
-                return None, None
-            if not _known_to_answer(host):
-                return await _dial_chain(target)
+    tried = ()
+    if _known_to_answer(host):
+        first = egress_hops(target)[0]
+        cm, up = await _dial_hop(target, first)
+        if up is not None:
+            return cm, up
+        tried = (first,)
+        if _reached.get(host, 0) > time.monotonic():
+            _reached.pop(host, None)                 # its best hop stopped answering: it is not known any more
+    lock = _dialing.get(host)
+    if lock is None:
+        lock = _dialing[host] = asyncio.Lock()
+        if len(_dialing) > 4096:
+            for h in [h for h, lk in _dialing.items() if not lk.locked() and h != host]:
+                _dialing.pop(h, None)
+    async with lock:
+        if unreachable(target):
+            return None, None
+        if not _known_to_answer(host):
+            return await _dial_chain(target, skip=tried)
     return await _dial_chain(target)

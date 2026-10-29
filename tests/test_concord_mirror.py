@@ -1112,3 +1112,38 @@ def test_a_relay_that_refuses_the_mirror_is_not_redialled_for_hours():
             await node.close()
             await up.close()
     run(go())
+
+
+def test_a_reader_that_asks_is_served_what_any_member_registered_and_refused_the_rest():
+    """2026-10-29: four relays this node was SYNCED with (jskitty, ditto, dreamith, cyberguy) were each dialled ~30
+    times in 10 minutes by clients reading one stream at a time through the tunnel -- clients whose own registration
+    record did not name the stream (missing, stale, or refused), so they never asked this node. A `pcms` REQ asks:
+    a stream ANY member registered is served from this copy; one nobody registered is `unavailable:`, never an empty
+    EOSE that would read as "no messages". An ordinary REQ keeps its old answer."""
+    stream, member, stranger = key(), key(), key()
+    held = wrap(stream)
+
+    async def go():
+        up = await Upstream([held]).start()
+        node = await Node({pub(member)}).start()
+        try:
+            assert (await node.publish(registration(member, [up.url], [pub(stream)])))[2] is True
+            assert await until(lambda: any(e["id"] == held["id"] for e in node.store.events.values()))
+            assert await until(lambda: node.mirror.author_ready(pub(stream)))
+            got, last = await node.req([{"kinds": [1059], "authors": [pub(stream)]}], prefix="pcms")
+            assert last[0] == "EOSE" and [e["id"] for e in got] == [held["id"]], (last, got)
+            _got, last = await node.req([{"kinds": [1059], "authors": [pub(stranger)]}], prefix="pcms")
+            assert last[0] == "CLOSED" and last[2].startswith("unavailable:"), ("an unmirrored stream was answered", last)
+            _got, last = await node.req([{"kinds": [1059], "authors": [pub(stranger)]}])
+            assert last[0] == "EOSE", ("an ordinary read lost its old answer", last)
+        finally:
+            await node.close()
+            await up.close()
+    run(go())
+
+
+def test_a_node_without_a_mirror_never_answers_an_ask_from_its_store():
+    from pathlib import Path
+    assert cm.STRICT_SUB_PREFIX == "pcms"
+    src = (Path(__file__).resolve().parents[1] / "app/services/nostr_relay/server.py").read_text()
+    assert 'elif str(sub_id).startswith("pcms"):' in src

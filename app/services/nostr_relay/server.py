@@ -2612,10 +2612,15 @@ class RelayServer:
                 self.subs.add(conn, sub_id, filters, self._req_origin(conn, sub_id) + " " + self._req_shape(filters))
                 return
             # A REGISTERED Concord stream this node is not in step with: "could not ask", never EOSE.
-            _why = _m.req_refusal(filters, partial=str(sub_id).startswith(getattr(_m, "PARTIAL_SUB_PREFIX", "\0")))
+            _why = _m.req_refusal(filters, partial=str(sub_id).startswith(getattr(_m, "PARTIAL_SUB_PREFIX", "\0")),
+                                  strict=str(sub_id).startswith(getattr(_m, "STRICT_SUB_PREFIX", "\0")))
             if _why:
                 self._send(conn, ["CLOSED", sub_id, _why])
                 return
+        elif str(sub_id).startswith("pcms"):
+            # Asked "do you mirror this?" with no mirror running: no -- never an empty answer from the store.
+            self._send(conn, ["CLOSED", sub_id, "unavailable: this node does not mirror Concord communities"])
+            return
         try:
             events = await self.store.query(filters)
         except Exception as e:

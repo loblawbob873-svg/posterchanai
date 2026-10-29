@@ -103,6 +103,11 @@ KV_KEY = "concord_mirror_v1"
 # A REQ whose subscription id starts with this comes from a client that reads, itself, the relays the registration
 # reply listed after READ_DIRECTLY -- so this node serves it what it holds even where one of them refused us.
 PARTIAL_SUB_PREFIX = "pcmp"
+# ...and this one from a client that does not know whether this node mirrors the stream (its own registration record
+# is missing, stale or refused) and ASKS: served when ANY member's registration holds it, else `unavailable:` -- never
+# an empty answer for a stream nobody here reads. Without it such a client read every relay of the community itself,
+# per stream, every minute: 2026-10-29, ~30 tunnels per 10 min to each of four relays this node was synced with.
+STRICT_SUB_PREFIX = "pcms"
 READ_DIRECTLY = "read directly:"
 REGISTER_SETTLE_SECONDS = 2.5
 # FEDERATION OF COMMUNITIES HOSTED HERE (2026-10-21: "make sure posterchan room federates"). A community created on
@@ -594,6 +599,7 @@ class _Directory:
 
 class ConcordMirror:
     PARTIAL_SUB_PREFIX = PARTIAL_SUB_PREFIX
+    STRICT_SUB_PREFIX = STRICT_SUB_PREFIX
     def __init__(self, store, server=None, cfg: dict | None = None, *, url_ok=None, open_ws=None):
         self.store = store
         self.server = server
@@ -839,7 +845,7 @@ class ConcordMirror:
         return False
 
     # -- what the relay server asks -------------------------------------------------------------------
-    def req_refusal(self, filters, partial: bool = False) -> str:
+    def req_refusal(self, filters, partial: bool = False, strict: bool = False) -> str:
         """'' to serve this REQ from the store, else the CLOSED reason. Only REQs that ask for a
         REGISTERED stream are ever refused, and only while this node is not in step with it.
 
@@ -859,11 +865,13 @@ class ConcordMirror:
                 continue
             if named is None:
                 named = self.registered_authors()
-                if not named and not self.dropped:
+                if not named and not self.dropped and not strict:
                     return ""
             for a in authors:
                 if a in self.hosted_ever:
                     continue        # this relay IS the community's home: what it holds is the answer
+                if strict and a not in named:
+                    return "unavailable: this node does not mirror this stream — read the community's relays directly"
                 if a in named and not self.author_ready(a, partial):
                     return ("unavailable: this node is still catching up with this community's relays "
                             "(or cannot reach them) — read them directly")
