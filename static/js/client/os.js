@@ -4390,8 +4390,9 @@
     }, 400 + i*700));
     const first = plan.open.filter(v => !_startupWsOf(workspace, v));
     if(plan.layout && first.length) _tileStartup(first, plan.layout);
-    // Workspace 2+ apps get the monitor's tiling when their workspace is first shown (switchWs).
-    if(plan.layout) for(const v of plan.open){ const ws = _startupWsOf(workspace, v); if(ws) _wsTileOnArrive.set(ws, plan.layout); }
+    // Workspace 2+ apps get the monitor's tiling when their workspace is first shown (switchWs), once they have opened.
+    if(plan.layout) for(const v of plan.open){ const ws = _startupWsOf(workspace, v); if(!ws) continue;
+      const owed = _wsTileOnArrive.get(ws) || { layout: plan.layout, views: [] }; owed.views.push(v); _wsTileOnArrive.set(ws, owed); }
     return plan.open.length;
   }
   // Fallback when the account's preferences never arrive (offline): use what this machine holds.
@@ -6615,16 +6616,33 @@
     t.textContent = 'Workspace ' + (_wsCur + 1);
     t.classList.remove('on'); void t.offsetWidth; t.classList.add('on');
   }
-  const _wsTileOnArrive = new Map();     // workspace -> the startup tiling still owed to its apps (runStartupApps)
+  const _wsTileOnArrive = new Map();     // workspace -> { layout, views }: the startup tiling still owed (runStartupApps)
+  /* "workspace 2 did not grid at start": at login a workspace is often shown before its startup apps' windows have
+   * opened, and tiling it 400 ms later laid the grid over nothing, once. Wait for them (as _tileStartup does for
+   * workspace 1); leaving the workspace first keeps the debt for the next visit. */
+  async function _tileWsOnArrive(i){
+    const owed = _wsTileOnArrive.get(i); if(!owed || owed.busy) return;
+    owed.busy = true;
+    try{
+      const has = rows => owed.views.every(v => (rows || []).some(r => _startupTitle(v).test(String(r && r.title || ''))));
+      for(let k = 0; k < 25; k++){
+        await new Promise(r => setTimeout(r, k ? 1000 : 400));
+        if(_wsCur !== i) return;
+        let rows = null; try{ rows = window.pcWM && pcWM.windows ? await pcWM.windows() : null; }catch(_){ rows = null; }
+        if(!rows || has(rows)) break;
+      }
+      if(_wsCur !== i) return;
+      _wsTileOnArrive.delete(i);
+      await new Promise(r => setTimeout(r, 400));
+      try{ if(window.pcWM && pcWM.arrange) await pcWM.arrange(owed.layout); }catch(_){}
+    }finally{ owed.busy = false; }
+  }
   function switchWs(i){
     i = Math.max(0, Math.min(wsCount() - 1, i | 0));
     if(i === _wsCur) return;
     _wsCur = i;
     _wsApply();
-    if(_wsTileOnArrive.has(i)){
-      const layout = _wsTileOnArrive.get(i); _wsTileOnArrive.delete(i);
-      setTimeout(() => { try{ if(window.pcWM && pcWM.arrange) pcWM.arrange(layout); }catch(_){} }, 400);
-    }
+    if(_wsTileOnArrive.has(i)) _tileWsOnArrive(i);
     const top = wins.filter(w => !w.min && !w.offws).sort((a, b) => _zOf(b) - _zOf(a))[0];
     if(top) focusWin(top);
     _wsSay();
