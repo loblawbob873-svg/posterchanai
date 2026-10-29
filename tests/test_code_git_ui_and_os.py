@@ -63,7 +63,14 @@ def test_every_overlay_manifest_names_a_tarball_an_ebuild_actually_asks_for():
             # Matched on the VERSION, not on `${P}.tar.gz`: an ebuild may keep upstream's own
             # filename (steam-launcher fetches `steam_${PV}.tar.gz` with no `->` rename), and the
             # thing that actually goes stale on a bump is the version.
-            assert any(v in parts[1] for v in names), (
+            # Two more names a real ebuild fetches, each still tied to a version that goes stale on a bump: a
+            # Gentoo patchset named by the MAJOR version (firefox-159-patches-01), and a pinned helper download
+            # whose version is a variable the ebuild assigns (POSTERFOX_UBO="1.75.0", WASI_SDK_VER=34.0).
+            pinned = {m.group(1) for e in manifest.parent.glob("*.ebuild")
+                      for m in re.finditer(r'^(?:[A-Z_]+_VER(?:SION)?|POSTERFOX_[A-Z_]+)="?(\d[\w.]*)"?\s*$',
+                                           e.read_text(), re.M)}
+            majors = {v.split(".")[0] + "-" for v in names if "." in v}
+            assert any(v in parts[1] for v in names | pinned | majors), (
                 "%s lists %s, but no ebuild beside it asks for that version (%s)"
                 % (manifest, parts[1], sorted(names) or "no ebuilds"))
 

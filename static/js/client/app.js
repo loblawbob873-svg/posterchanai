@@ -3896,9 +3896,6 @@
   }
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
-    // The AI screen drawn while signed out ("Sign in with a Nostr account to use AI") is drawn ONCE: signing in left
-    // it telling a signed-in person to sign in, and a prompt parked for it (PosterFox's AI sidebar) never appeared.
-    if(!GUEST && VIEW==='ai'){ const f=$('#feed'); if(f && f.querySelector('.ai-gate')) setTimeout(()=>{ if(VIEW==='ai' && !GUEST) renderView(); }, 0); }
     try{ _adoptPreAccountData(); }catch(_){}
     // This account's read markers (pcai:seen): cached ones paint now, the relay's when it answers.
     // A background nicety -- nothing after this line may depend on it, so a throw stops here.
@@ -3916,6 +3913,9 @@
      * nothing here to sign with. Fire-and-forget: a dead relay must not hold up the app. */
     try{
       if(!GUEST && ME && ME.mode === 'local' && _ownsBackgroundWork()) Nip46Signer.resume().catch(()=>{});
+    // The AI screen drawn while signed out ("Sign in with a Nostr account to use AI") is drawn ONCE: signing in left
+    // it telling a signed-in person to sign in, and a prompt parked for it (PosterFox's AI sidebar) never appeared.
+    if(!GUEST && VIEW==='ai'){ const f=$('#feed'); if(f && f.querySelector('.ai-gate')) setTimeout(()=>{ if(VIEW==='ai' && !GUEST) renderView(); }, 0); }
     }catch(_){}
     try{ _signerBatteryCheck(); }catch(_){}
     /* ON POSTERCHANOS, SIGNING IN IS ALSO GETTING A UNIX ACCOUNT.

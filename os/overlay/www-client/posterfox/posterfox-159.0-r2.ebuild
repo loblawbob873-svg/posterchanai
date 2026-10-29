@@ -1,17 +1,17 @@
-# PosterFox 1: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 2: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=8
 
-FIREFOX_PATCHSET="firefox-158-patches-01.tar.xz"
+FIREFOX_PATCHSET="firefox-159-patches-01.tar.xz"
 
 LLVM_COMPAT=( 22 23 )
 
 # This will also filter rust versions that don't match LLVM_COMPAT in the non-clang path; this is fine.
 RUST_NEEDS_LLVM=1
-RUST_MIN_VER=1.90.0
+RUST_MIN_VER=1.91.0
 
 PYTHON_COMPAT=( python3_{12..14} )
 PYTHON_REQ_USE="ncurses,sqlite,ssl"
@@ -81,7 +81,7 @@ LICENSE="MPL-2.0 GPL-2 LGPL-2.1"
 KEYWORDS="~amd64 ~arm64 ~loong ~ppc64 ~riscv ~x86"
 
 IUSE="+clang dbus debug eme-free hardened hwaccel jack libproxy pgo pulseaudio selinux sndio"
-IUSE+=" +system-av1 +system-harfbuzz +system-icu +system-jpeg +system-libevent +system-libvpx"
+IUSE+=" system-av1 +system-harfbuzz +system-icu +system-jpeg +system-libevent +system-libvpx"
 IUSE+=" system-pipewire system-png +system-webp test wayland wifi +X"
 
 # Firefox-only IUSE
@@ -130,7 +130,7 @@ COMMON_DEPEND="${FF_ONLY_DEPEND}
 	>=app-accessibility/at-spi2-core-2.46.0:2
 	dev-libs/glib:2
 	dev-libs/libffi:=
-	>=dev-libs/nss-3.130
+	>=dev-libs/nss-3.132
 	>=dev-libs/nspr-4.39
 	media-libs/alsa-lib
 	media-libs/fontconfig
@@ -159,7 +159,7 @@ COMMON_DEPEND="${FF_ONLY_DEPEND}
 	sndio? ( >=media-sound/sndio-1.8.0-r1 )
 	system-av1? (
 		>=media-libs/dav1d-1.5.4:=
-		>=media-libs/libaom-3.12.1:=
+		>=media-libs/libaom-3.14.1:=
 	)
 	system-harfbuzz? (
 		>=media-libs/harfbuzz-2.8.1:0=
@@ -743,7 +743,6 @@ src_configure() {
 	local update_channel=release
 	[[ -n ${MOZ_ESR} ]] && update_channel=esr
 	mozconfig_add_options_ac '' --enable-update-channel=${update_channel}
-	mozconfig_add_options_ac 'PosterFox: keep firefox profiles' MOZ_APP_PROFILE=mozilla/firefox
 
 	# Whitelist to allow unkeyworded arches to build with "--disable-rust-simd" by default.
 	if use amd64 || use arm64 || use ppc64 || use loong || use riscv ; then
@@ -1140,7 +1139,7 @@ src_install() {
 
 	# Force hwaccel prefs if USE=hwaccel is enabled
 	if use hwaccel ; then
-		cat "${FILESDIR}"/gentoo-hwaccel-prefs.js-r4 \
+		cat "${FILESDIR}"/gentoo-hwaccel-prefs.js-r5 \
 		>>"${GENTOO_PREFS}" \
 		|| die "failed to add prefs to force hardware-accelerated rendering to all-gentoo.js"
 
@@ -1180,6 +1179,14 @@ src_install() {
 	# options stop working.
 	if ! false ; then
 		cat "${FILESDIR}"/gentoo-telemetry-prefs.js >>"${GENTOO_PREFS}" || die "failed to set telemetry prefs"
+
+		# When not building "official" copy of Firefox, ie when building with '-telemetry' use flag, these
+		# prefs are turned on causing verbose messaging in sysjournal. Guard these prefs behind 'telemetry'
+		# use flag so they get enabled for '+debug' builds correctly. # bgo#956677
+		cat >>"${GENTOO_PREFS}" <<-EOF || die "failed to set non-official debug prefs"
+		sticky_pref("browser.dom.window.dump.enabled", false);
+		sticky_pref("devtools.console.stdout.chrome", false);
+		EOF
 	fi
 
 	# Install icons
@@ -1308,6 +1315,9 @@ posterfox_branding() {
 	# Start from Mozilla's unofficial branding (every file the build expects is there), then lay ours over it.
 	cp -r "${S}/browser/branding/unofficial" "${b}" || die "copying the unofficial branding failed"
 	cp -r "${FILESDIR}/posterfox/branding/." "${b}/" || die "copying the PosterFox branding failed"
+	# Keep profiles where firefox(-bin) keeps them (~/.mozilla/firefox), so switching loses no passwords, history or
+	# bookmarks. MOZ_APP_PROFILE accepts only an IMPLIED value (a mozconfig setting is refused at configure).
+	echo 'imply_option("MOZ_APP_PROFILE", "mozilla/firefox")' >> "${S}/browser/moz.configure" || die
 }
 
 posterfox_distribution() {
