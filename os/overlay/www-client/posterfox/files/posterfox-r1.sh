@@ -113,7 +113,7 @@ fi
 export MOZ_ALLOW_DOWNGRADE=1
 
 # PosterFox: its own GTK settings first (window buttons like every PosterChan window)
-export XDG_CONFIG_DIRS="${MOZILLA_FIVE_HOME}/posterfox/xdg${XDG_CONFIG_DIRS:+:${XDG_CONFIG_DIRS}}"
+export XDG_CONFIG_DIRS="${MOZILLA_FIVE_HOME}/posterchan/xdg${XDG_CONFIG_DIRS:+:${XDG_CONFIG_DIRS}}"
 
 # Run the browser
 exec ${MOZ_PROGRAM} "${@}"

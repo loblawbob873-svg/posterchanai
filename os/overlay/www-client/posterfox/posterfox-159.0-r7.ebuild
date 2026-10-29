@@ -1,4 +1,4 @@
-# PosterFox 6: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 7: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -1347,8 +1347,8 @@ posterfox_distribution() {
 	doins "${FILESDIR}/posterfox/distribution/autoconfig.js"
 	insinto "${MOZILLA_FIVE_HOME}"
 	doins "${FILESDIR}/posterfox/distribution/posterfox.cfg"
-	insinto "${MOZILLA_FIVE_HOME}/posterfox"
+	insinto "${MOZILLA_FIVE_HOME}/posterchan"
 	doins "${FILESDIR}/posterfox/distribution/posterfox-chrome.css"
-	insinto "${MOZILLA_FIVE_HOME}/posterfox/xdg/gtk-3.0"
+	insinto "${MOZILLA_FIVE_HOME}/posterchan/xdg/gtk-3.0"
 	doins "${FILESDIR}/posterfox/distribution/xdg/gtk-3.0/settings.ini"
 }
