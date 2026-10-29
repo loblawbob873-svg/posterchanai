@@ -53,6 +53,9 @@ Assertions, each corresponding to a way this specific screen breaks on a phone:
                        the attachment strip crushed the note's own text. It is a wrapping flex row
                        whose automatic minimum size is its content, so thirty thumbnails claimed
                        fifteen rows and left the note 36px on a phone.
+  attachment-not-previewed
+                       a picture/PDF/video/audio attachment must open in our own Preview (Save / Share
+                       from there), not download itself.
   attachment-wont-open a PDF (or any non-image attachment) opened nowhere. window.open() after an
                        await is an unsolicited popup, and 'noopener' returns null so the failure is
                        invisible. The tab must be reserved during the click, with a download as the
@@ -167,6 +170,8 @@ window.__PC = {
   get VIEW(){ return 'notes'; },
 };
 </script>
+<!-- The real Preview: a picture attachment opens in it (notes.js openAttachment). -->
+<script src="/static/js/client/preview.js"></script>
 <script src="/static/js/client/joplin.js"></script>
 <script src="/static/js/client/notes.js"></script>
 <script>
@@ -184,7 +189,8 @@ window.__PC = {
     mk('pcai:notefolder:f1', {v:1, id:'f1', name:'Work', created:1, updated:1}),
     mk('pcai:note:n1', {v:1, id:'n1', title:'Quarterly plan', body:'line one\nline two', folder:'f1', tags:['work'], created:1, updated:1700000000, res:[]}),
     mk('pcai:note:n2', {v:1, id:'n2', title:'Groceries', body:'milk', folder:'', tags:[], created:1, updated:1699000000,
-                        res:[{sha:'ab'.repeat(32), name:'receipt.png', mime:'image/png', size:5242880}]}),
+                        res:[{sha:'ab'.repeat(32), name:'receipt.png', mime:'image/png', size:5242880},
+                             {sha:'cd'.repeat(32), name:'minutes.odt', mime:'application/vnd.oasis.opendocument.text', size:2048}]}),
     mk('pcai:note:n3', {v:1, id:'n3', title:'Screenshots', body:picBody, folder:'', tags:[], created:1, updated:1698000000,
                         res: shas.map((s,i) => ({sha:s, name:`shot${i}.png`, mime:'image/png', size:1024}))}),
   ];
@@ -400,14 +406,29 @@ OPEN_ATTACHMENT = r"""(async () => {
   const realClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function(){ if(this.download) downloaded = this.href; else realClick.call(this); };
 
-  const btn = document.querySelector('.nt-res-item') || document.querySelector('.nt-res-thumb');
+  // A file our Preview cannot show (an .odt) keeps the reserved-tab route...
+  const btn = document.querySelector('.nt-res-item');
   if(!btn){ window.open = realOpen; HTMLAnchorElement.prototype.click = realClick;
             return {error:'no attachment control rendered'}; }
   btn.click();
   await new Promise(r => setTimeout(r, 900));
+  const other = { reservedTab: openedWith === '', downloaded: !!downloaded };
+  // ...and a PICTURE opens in our own Preview, never as a download or a tab ("clicking on an attachment in notes
+  // downloads it. our own preview should show it then you can do what you want there").
+  openedWith = null; downloaded = null;
+  const thumb = document.querySelector('.nt-res-thumb');
+  if(!thumb){ window.open = realOpen; HTMLAnchorElement.prototype.click = realClick;
+              return {error:'no picture attachment rendered'}; }
+  thumb.click();
+  let previewed = false;
+  for(let i = 0; i < 40 && !previewed; i++){
+    await new Promise(r => setTimeout(r, 150));
+    previewed = !!(window.PCPreview && PCPreview.isOpen && PCPreview.isOpen());
+  }
+  const pic = { previewed, opened: openedWith !== null, downloaded: !!downloaded };
+  try{ if(previewed) PCPreview.close(); }catch(_){}
   window.open = realOpen; HTMLAnchorElement.prototype.click = realClick;
-  return { reservedTab: openedWith === '', downloaded: !!downloaded,
-           toasts: (window.__toasts||[]).slice(-2) };
+  return { ...other, pic, toasts: (window.__toasts||[]).slice(-2) };
 })()"""
 
 # A REFUSED save dialog must degrade honestly. showSaveFilePicker is the only way to write a library
@@ -758,6 +779,11 @@ async def drive(url):
                         if not oa["downloaded"]:
                             problems.append((label, "attachment-wont-open",
                                              "the popup was refused and nothing reached the user — "
+                                             f"toasts: {oa['toasts']}"))
+                        pic = oa.get("pic") or {}
+                        if not pic.get("previewed") or pic.get("opened") or pic.get("downloaded"):
+                            problems.append((label, "attachment-not-previewed",
+                                             f"a picture attachment did not open in our Preview ({pic}) — "
                                              f"toasts: {oa['toasts']}"))
 
                 # A refused save dialog must not try to hold the whole library in memory.

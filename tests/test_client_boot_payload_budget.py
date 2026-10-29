@@ -130,7 +130,11 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: workspace and volume functions, which only it can reach); its panel, deskassist.js, loads on first use. 8.1939 MB.
 #: ...and 8.195 -> 8.196 for the ✨ window buttons of Photos and the Screen Recorder (every window has its own) and
 #: redrawing AI chat after a sign-in. 8.1952 MB measured.
-BUDGET_MB = 8.196
+#: ...and 8.196 -> 8.205 for WORKSPACES covering PosterChanOS's compositor windows (os.js: minimise/restore per workspace,
+#: follow a raised window, carry a window along, the startup-app workspace) and the letterboxing rules that stop every
+#: shared picture from being cropped (client.css). Photos' Synced tab is in photos.js, which loads on first open.
+#: 8.2037 MB measured.
+BUDGET_MB = 8.205
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

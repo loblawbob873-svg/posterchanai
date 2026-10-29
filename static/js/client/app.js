@@ -14672,6 +14672,11 @@
     state: { get ME(){ return ME; }, get FOLLOWS(){ return FOLLOWS; }, get GUEST(){ return GUEST; } },
     $$, enc, toast, modal, closeModal, openLightbox, openThread, profOf, isMutedView, uploadBlob, imetaTagsFor, publish,
     openProfile: pk => renderProfileView(pk), albums: _albumsLoad,
+    // The Synced tab: synced folders read through Files' own manifest, thumbnails and Preview (files.js).
+    syncedAlbums: force => _lzRun(_filesMod, _filesLoad, 'syncedPhotoAlbums', [force]),
+    syncedThumb: item => _lzRun(_filesMod, _filesLoad, 'syncedPhotoThumb', [item]),
+    openSynced: item => _lzRun(_filesMod, _filesLoad, 'openSyncedPhoto', [item]),
+    standalone: _standalone, switchView,
   }; }
   // Screen Recorder (recorder.js): getDisplayMedia + MediaRecorder, trimmed by /client/media/clip-video.
   function _recorderDeps(){ return {

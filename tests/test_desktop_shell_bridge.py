@@ -111,7 +111,8 @@ class Bridge(unittest.TestCase):
         body = self._launcher()
         self.assertIn("firefoxBefore", body)
         self.assertIn("waitForNewWindow(firefoxBefore", body)
-        self.assertIn("/firefox/i.test(String(w.app||''))", body)
+        # PosterFox is matched as Firefox too (its app id is `posterfox`).
+        self.assertIn("/firefox|posterfox/i.test(String(w.app||''))", body)
 
     def test_telegram_uses_the_working_xwayland_renderer_only_for_telegram(self):
         """Qt's Wayland EGL failure must not turn Telegram black or disable GPU use globally."""

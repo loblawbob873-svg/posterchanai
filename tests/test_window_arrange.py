@@ -128,7 +128,8 @@ def test_the_bridge_arranges_only_the_application_windows_on_that_monitor(tmp_pa
 def test_the_keys_are_arranged_once_in_main_and_bound_in_wayfire():
     main = (ROOT / "desktop/main.js").read_text()
     tick = main[main.index("wm().on('tick', (ev) => {"):][:1600]
-    assert "ARRANGE_TICKS.includes(" in tick and "arrange(String(ev.payload).slice(11), 'focused')" in tick
+    # The skip set keeps windows on other workspaces out of the grid (os.js _nwsSync -> pcWM.offWorkspace).
+    assert "ARRANGE_TICKS.includes(" in tick and "arrange(String(ev.payload).slice(11), 'focused', { skip: offWorkspaceIds() })" in tick
     listed = main[main.index("const ARRANGE_TICKS = ["):].split("]", 1)[0]
     for layout in ("grid", "side-by-side", "stacked"):
         assert f"'pc:arrange:{layout}'" in listed, layout

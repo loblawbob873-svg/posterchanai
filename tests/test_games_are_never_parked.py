@@ -223,7 +223,7 @@ def test_new_firefox_window_is_expanded_once_not_left_as_a_square_preview():
     main = (ROOT / "desktop" / "main.js").read_text(encoding="utf-8")
     fn = main[main.index("async function reconcileNativeGameFullscreen(){"):]
     fn = fn[:fn.index("function scheduleNativeGameReconcile(){")]
-    assert "/firefox/i.test(identity)" in fn
+    assert "/firefox|posterfox/i.test(identity)" in fn   # PosterFox is a Firefox window here too
     assert "wm().snap(id,'max')" in fn
     assert "_nativeBrowserSized.has(id)" in fn
     assert "_nativeBrowserSized.add(id)" in fn

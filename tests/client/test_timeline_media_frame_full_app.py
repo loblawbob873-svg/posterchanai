@@ -101,3 +101,17 @@ def test_a_lone_picture_is_not_gigantic_in_a_desktop_window():
     for name, (w, h, *_rest) in singles.items():
         assert w <= 0.6 * col, (name, "a lone picture spans the whole desktop window", w, col)
         assert 0.55 * w - 2 <= h <= 1.26 * w + 2, (name, "outside 16:9..4:5", w, h)
+
+
+@pytest.mark.skipif(not Path("/opt/google/chrome/chrome").exists(), reason="Chrome required")
+@pytest.mark.parametrize("width", [390, 1280])
+def test_a_post_with_several_pictures_shows_each_one_whole(width):
+    """2026-10-28, "images in notes are still cropped? we should not be cropping anywhere": the lone picture was
+    fixed, but a post with 2+ pictures draws a two-at-a-time strip whose cells were object-fit:cover -- a portrait
+    phone screenshot lost most of its height. Each cell now letterboxes its picture whole."""
+    got = asyncio.run(_measure(width))
+    for name in ("two", "five"):
+        shown = [i for i in got[name]["imgs"] if i[2]]
+        assert shown, (name, "no decoded picture in the strip", got[name])
+        for (w, h, ratio, cls, trimmed) in shown:
+            assert trimmed == 0, (name, "a picture in the strip is trimmed", w, h, ratio, cls, trimmed)

@@ -477,7 +477,7 @@ class WayfireWM{
    * Only application windows move: the desktop's own surfaces and popups (titles "PosterChan Desktop"
    * / "PosterChan Popup"), minimised and fullscreen windows are left alone. Most recently used first,
    * so the window you were in lands top-left. Same title-bar allowance as snap(). */
-  async arrange(layout,where){const {tileRects,LAYOUTS}=require('./tile.js');if(!LAYOUTS.includes(String(layout)))return {ok:false,why:'unknown layout'};
+  async arrange(layout,where,opts){const skip=(opts&&opts.skip instanceof Set)?opts.skip:new Set();const {tileRects,LAYOUTS}=require('./tile.js');if(!LAYOUTS.includes(String(layout)))return {ok:false,why:'unknown layout'};
     const [outs,rows]=await Promise.all([this.outputs(),this.windows()]);if(!outs.length)return {ok:false,why:'no display'};
     const inside=(o,px,py)=>px>=o.rect.x&&px<o.rect.x+o.rect.width&&py>=o.rect.y&&py<o.rect.y+o.rect.height;
     let o=null;
@@ -489,7 +489,7 @@ class WayfireWM{
     const ours=r=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(r.app||'');
     /* A MINIMISED WINDOW IS ARRANGED TOO ("if a window is minimized, it won't grid"): it is one of the
      * windows on this monitor, and Grid is how somebody asks to see all of them. It is shown first. */
-    const apps=rows.filter(r=>!r.fullscreen&&r.rect.width>0&&r.rect.height>0
+    const apps=rows.filter(r=>!skip.has(Number(r.id))&&!r.fullscreen&&r.rect.width>0&&r.rect.height>0
         &&inside(o,r.rect.x+r.rect.width/2,r.rect.y+r.rect.height/2)
         &&!(ours(r)&&!/^PosterChan Window\b/.test(r.title))&&!/^PosterChan (Desktop|Popup)\b/.test(r.title))
       .sort((a,b)=>b.focusTime-a.focusTime);

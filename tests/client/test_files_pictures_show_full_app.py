@@ -91,7 +91,7 @@ def test_pictures_show_in_files_on_a_server_without_previews(width):
             await settled(secret, "t.thumb && t.bg.startsWith('url(\"blob:')",
                           'an encrypted drive picture still shows only a lock')
             t = await _tile(b, secret)
-            assert t['bgSize'] == 'cover' and t['bgRepeat'] == 'no-repeat', ('the picture is not fitted to its tile', t)
+            assert t['bgSize'] == 'contain' and t['bgRepeat'] == 'no-repeat', ('the picture is not fitted to its tile', t)
             # and the bytes behind it really are the picture (decrypted, typed as an image)
             ok = await b.js("""(async()=>{const c=document.querySelector('#bl-grid .file-card[data-sha="%s"] .file-icon');
               const u=/url\\("?([^")]+)"?\\)/.exec(c.style.backgroundImage)[1];

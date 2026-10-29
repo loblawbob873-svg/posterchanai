@@ -10,7 +10,7 @@ def test_mobile_files_use_compact_square_tiles():
     assert "repeat(auto-fill,minmax(92px,1fr))" in mobile
     assert ".files-grid:not(.details) .file-card>img" in mobile
     assert "aspect-ratio:1" in mobile
-    assert "object-fit:cover" in mobile
+    assert "object-fit:contain" in mobile   # whole pictures, never trimmed
 
 
 def test_mobile_details_view_remains_a_file_list():

@@ -57,9 +57,17 @@ Click a cell and the window goes exactly there.
 The taskbar now has workspace buttons: **1 2 3 +**.
 
 - Each window belongs to one workspace. Switching shows only that workspace's windows and taskbar buttons.
-- **Move to workspace** is on the window's title-bar menu, and **Ctrl+Alt+Left/Right** switch workspaces.
-  On PosterChanOS, **Super+Ctrl+Left/Right** do the same.
-- Opening an app that is already open on another workspace takes you to it.
+- **Move to workspace** is on the window's title-bar menu (on PosterChanOS, on its taskbar button's right-click menu).
+- **Ctrl+Alt+Left/Right** switch workspaces; add **Shift** and the window in front comes along.
+  On PosterChanOS the keys are **Super+Ctrl+Left/Right** and **Super+Ctrl+Shift+Left/Right**. (Super+Left/Right on
+  their own still snap a window to half the screen.)
+- On PosterChanOS this covers every window: PosterChan apps and installed programs such as PosterFox, Telegram or
+  Steam. A window you minimised yourself stays minimised when you come back to its workspace.
+- Opening an app that is already open on another workspace takes you to it. So does Alt+Tab to a window on
+  another workspace.
+- Arranging (Super+G) tiles only the workspace in front.
+- **System Settings → Startup apps** lets each app that opens at login choose its workspace. The desktop creates
+  the workspaces it needs and starts on the first one.
 - Removing a workspace keeps its windows: they join the workspace before it.
 - The number of workspaces is remembered on each device.
 
@@ -89,6 +97,15 @@ grid:
   tags, and the post can go straight into an album.
 
 On a phone the grid is three columns, edge to edge.
+
+**Synced** shows the pictures in your synced folders. If Folder Sync keeps your phone's camera folder in step with
+your computer, every folder of pictures in it is an album here: Camera, Screenshots, WhatsApp Images and so on.
+The newest pictures come first, and videos are marked. Tap one to open it in Preview, where you can save or share it.
+These pictures stay private: they are decrypted on your device, and nothing is posted. If you don't sync any folders
+yet, the tab has a **Set up Folder Sync** button.
+
+Pictures are never cropped any more. A post with several pictures, the Media tab on a profile, Photos, albums and
+file thumbnails all show each picture whole, letterboxed in its box.
 
 ## Screen Recorder
 
@@ -125,6 +142,9 @@ In **Settings → Social**, one button adds all of them to your own emoji list, 
 other clients offer them in their emoji pickers. Admins can find each set's address under **Admin → Emoji**.
 
 ## Fixes worth knowing about
+
+- **Notes:** clicking a picture, PDF, video or song attached to a note opens it in Preview, where you can save or
+  share it. It used to download straight away.
 
 - **Thunderbird calendars keep their formatting.** An event with formatted notes, made in Thunderbird and then
   edited in PosterChan, used to come back unreadable in Thunderbird. Now an edit that doesn't touch the notes keeps

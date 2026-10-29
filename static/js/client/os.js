@@ -4165,16 +4165,20 @@
     const tileHost=card.querySelector('[data-startup-tiling]');
     let monitors=[];                       // filled by pcDisplays when it answers; one monitor = no choices to offer
     // This device only (see _startupPlan): never saved with the account.
-    const setPref=(key, k, v)=>{ const cur=_startupLayoutPrefs()[key==='startupPlacement'?'placement':'tiling'];
+    const setPref=(key, k, v)=>{ const cur=_startupLayoutPrefs()[{startupPlacement:'placement', startupWorkspace:'workspace'}[key]||'tiling'];
       const next={ ...cur }; if(v) next[k]=v; else delete next[k];
       try{ ClientSettings.set(key, next); }catch(_){} };
     const draw=()=>{
       const on=new Set(_startupViews());
-      const { placement, tiling } = _startupLayoutPrefs();
+      const { placement, tiling, workspace } = _startupLayoutPrefs();
       const many = monitors.length > 1;
       host.innerHTML=apps().filter(a=>!a.off).map(a=>{
-        const sel = many && on.has(a.view) ? `<select class="input os-startup-mon" data-startup-monitor="${enc(a.view)}" aria-label="Monitor for ${enc(a.label)}">
-            <option value="">Main monitor</option>${monitors.map(m=>`<option value="${enc(m.name)}" ${placement[a.view]===m.name?'selected':''}>${enc(_monitorLabel(m))}</option>`).join('')}</select>` : '';
+        const sel = (many && on.has(a.view) ? `<select class="input os-startup-mon" data-startup-monitor="${enc(a.view)}" aria-label="Monitor for ${enc(a.label)}">
+            <option value="">Main monitor</option>${monitors.map(m=>`<option value="${enc(m.name)}" ${placement[a.view]===m.name?'selected':''}>${enc(_monitorLabel(m))}</option>`).join('')}</select>` : '')
+          /* Which workspace it opens on. Offered up to the most there can be: picking 3 on a one-workspace desktop
+             is how somebody sets up three, and login makes them. */
+          + (on.has(a.view) ? `<select class="input os-startup-mon os-startup-ws" data-startup-ws="${enc(a.view)}" aria-label="Workspace for ${enc(a.label)}">
+            ${Array.from({length: WS_MAX}, (_, i) => `<option value="${i ? i + 1 : ''}" ${(_startupWsOf(workspace, a.view) === i) ? 'selected' : ''}>Workspace ${i + 1}</option>`).join('')}</select>` : '');
         /* The row is NOT a <label>: a click inside a label activates its FIRST control, and with two monitors an
            app that is on draws its monitor picker before its switch -- so the switch could be turned on and never
            off ("I still can't uncheck enabled startup apps"). The switch is its own label. */
@@ -4199,6 +4203,9 @@
       });
       host.querySelectorAll('[data-startup-monitor]').forEach(s=>{
         s.onchange=()=>setPref('startupPlacement', s.dataset.startupMonitor, s.value);
+      });
+      host.querySelectorAll('[data-startup-ws]').forEach(s=>{
+        s.onchange=()=>setPref('startupWorkspace', s.dataset.startupWs, s.value ? Number(s.value) : 0);
       });
       if(tileHost) tileHost.querySelectorAll('[data-startup-tile]').forEach(s=>{
         s.onchange=()=>setPref('startupTiling', s.dataset.startupTile, s.value);
@@ -4237,7 +4244,13 @@
   }
   function _startupLayoutPrefs(){
     const obj = k => { try{ const v = window.ClientSettings && ClientSettings.get(k, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }catch(_){ return {}; } };
-    return { placement: obj('startupPlacement'), tiling: obj('startupTiling') };
+    return { placement: obj('startupPlacement'), tiling: obj('startupTiling'), workspace: obj('startupWorkspace') };
+  }
+  /* startupWorkspace { view: 1-based workspace }, this device only like the two above (a laptop with the same account
+   * keeps its own). Absent / out of range = the first. Answered 0-based. */
+  function _startupWsOf(map, view){
+    const n = Number(map && map[view]);
+    return Number.isInteger(n) && n >= 1 && n <= WS_MAX ? n - 1 : 0;
   }
   /* Which monitor THIS renderer is, and which monitors exist. Null when either cannot be asked (an older
    * desktop build, or no window manager): then everything opens on the main monitor, untiled, as before. */
@@ -4344,10 +4357,18 @@
       if(window.pcShell && pcShell.backgroundOwner === false) return 0;
       me = { output: '', owner: true, present: [] };
     }
-    const { placement, tiling } = _startupLayoutPrefs();
+    const { placement, tiling, workspace } = _startupLayoutPrefs();
     const plan = _startupPlan(want, placement, tiling, me);
-    plan.open.forEach((v,i)=>setTimeout(()=>{ try{ routeView(v); }catch(_){} }, 400 + i*700));
-    if(plan.layout) _tileStartup(plan.open, plan.layout);
+    /* Each window is told its workspace before it exists (_nwsAdopt hands it over when the window maps), and the
+     * desktop grows to as many workspaces as the apps ask for. The desktop stays on the first. */
+    const most = Math.max(0, ...plan.open.map(v => _startupWsOf(workspace, v)));
+    if(most >= wsCount()){ _wsN = Math.min(WS_MAX, most + 1); _wsSave(); drawBar(); }
+    plan.open.forEach((v,i)=>setTimeout(()=>{
+      const ws = _startupWsOf(workspace, v);
+      if(ws) _nwsPend.push({ view: v, ws, until: Date.now() + 60000 });
+      try{ routeView(v); }catch(_){}
+    }, 400 + i*700));
+    if(plan.layout) _tileStartup(plan.open.filter(v => !_startupWsOf(workspace, v)), plan.layout);
     return plan.open.length;
   }
   // Fallback when the account's preferences never arrive (offline): use what this machine holds.
@@ -6366,6 +6387,7 @@
     }
     /* Adopted apps already have an ordinary PosterChan task button through `wins`. */
     nativeTasks=rows.filter(r=>!nativeWins().some(w=>Number(w.native)===Number(r.id)));
+    _nwsAdopt(nativeTasks);
     /* WHAT TO ADOPT AND WHAT IS STILL ALIVE ARE DIFFERENT QUESTIONS, and answering both with
      * `taskbarRows` is how an app gets KILLED.
      *
@@ -6482,7 +6504,84 @@
       if(w.el) w.el.classList.toggle('osw-offws', off);
     }
     if(nativeWins().length) nsync();
+    _nwsSync();
     drawBar();
+  }
+  /* AN APP WINDOW ON POSTERCHANOS IS NOT IN `wins`, AND WORKSPACES USED TO STOP THERE. Every PosterChan window there
+   * is a compositor toplevel and every installed program (Firefox, Telegram) is one too -- both live in
+   * `nativeTasks`, and the loop above never saw them: switching workspace hid nothing, so on the one desktop that
+   * shows real application windows a workspace was an empty taskbar in front of every window you own.
+   * Each compositor window gets a workspace the first time this renderer sees it (the one in front, or the one a
+   * startup app was told to open on); switching minimises the windows that belong elsewhere and brings back exactly
+   * the ones it minimised -- a window somebody minimised themselves stays minimised. Something else raising a window
+   * (Alt+Tab, an app activating itself) takes the desktop to that window's workspace, the way opening a frame does.
+   * Per renderer, i.e. per monitor, like the in-page windows. Not persisted: compositor ids are numbers that a new
+   * session hands out again, and a stale map would minimise a stranger's window at login. */
+  const _nws = new Map();      // compositor id -> workspace
+  const _nwsHid = new Map();   // compositor id -> when this desktop minimised it for being on another workspace
+  let _nwsPend = [];           // {view, ws, until}: a startup app's window lands on its workspace when it maps
+  const _nwsWs = id => _nws.has(Number(id)) ? _nws.get(Number(id)) : _wsCur;
+  const _nwsHere = r => _nwsWs(r && r.id) === _wsCur;
+  function _nwsAdopt(rows){
+    const alive = new Set((rows || []).map(r => Number(r && r.id)));
+    for(const id of [..._nws.keys()]) if(!alive.has(id)) _nws.delete(id);
+    for(const id of [..._nwsHid.keys()]) if(!alive.has(id)) _nwsHid.delete(id);
+    const now = Date.now();
+    _nwsPend = _nwsPend.filter(p => p.until > now);
+    let follow = -1;
+    for(const r of (rows || [])){
+      const id = Number(r && r.id); if(!Number.isFinite(id)) continue;
+      if(!_nws.has(id)){
+        const i = r.own && r.view ? _nwsPend.findIndex(p => sameAppWindow(String(r.view), p.view)) : -1;
+        _nws.set(id, i >= 0 ? Math.min(_nwsPend.splice(i, 1)[0].ws, wsCount() - 1) : _wsCur);
+        continue;
+      }
+      if(_nws.get(id) === _wsCur || !r.focused || r.stashed) continue;
+      const at = _nwsHid.get(id);
+      if(at && now - at < 1500) continue;            // our own minimise has not reached the compositor's answer yet
+      _nwsHid.delete(id);
+      follow = _nws.get(id);
+    }
+    if(follow >= 0){ _wsCur = follow; _wsApply(); _wsSay(); return; }
+    _nwsSync();
+  }
+  function _nwsSync(){
+    if(!window.pcWM || !pcWM.hide) return;
+    const off = [];
+    for(const r of (nativeTasks || [])){
+      const id = Number(r && r.id); if(!Number.isFinite(id)) continue;
+      if(_nwsWs(id) !== _wsCur){
+        off.push(id);
+        if(!r.stashed && !_nwsHid.has(id)){
+          _nwsHid.set(id, Date.now());
+          Promise.resolve(pcWM.hide(id)).catch(() => _nwsHid.delete(id));
+        }
+      }else if(_nwsHid.has(id)){
+        _nwsHid.delete(id);
+        Promise.resolve(pcWM.show(id)).catch(() => {});
+      }
+    }
+    /* Arrange (Super+G, the taskbar's tiling) brings minimised windows back on purpose ("if a window is minimized,
+     * it won't grid") -- it must not bring back the ones that are on another workspace. */
+    try{ if(pcWM.offWorkspace) Promise.resolve(pcWM.offWorkspace(off)).catch(() => {}); }catch(_){}
+  }
+  function _nwsMove(r, i){
+    if(!r) return;
+    if(i >= wsCount()){ if(wsCount() >= WS_MAX) return; _wsN = wsCount() + 1; _wsSave(); i = _wsN - 1; }
+    _nws.set(Number(r.id), i); _wsApply();
+  }
+  function _nwsMenu(r){
+    const items = [], at = _nwsWs(r && r.id);
+    for(let i = 0; i < wsCount(); i++) if(i !== at) items.push({ label: 'Move to workspace ' + (i + 1), run: () => _nwsMove(r, i) });
+    if(wsCount() < WS_MAX) items.push({ label: 'Move to a new workspace', run: () => _nwsMove(r, wsCount()) });
+    return items;
+  }
+  /* The window in front goes along to workspace `to` (Ctrl+Alt+Shift+arrows, Super+Ctrl+Shift+arrows). */
+  function _wsCarry(to){
+    if(to < 0 || to >= wsCount()) return;
+    const n = (nativeTasks || []).find(r => r && r.focused && !r.stashed && _nwsHere(r));
+    if(n && !_shellHasKeyboard) _nwsMove(n, to);
+    else { const f = wins.find(w => w.el.classList.contains('focused') && !w.offws); if(f) moveToWs(f, to); }
   }
   function _wsSay(){
     if(!root) return;
@@ -6508,6 +6607,7 @@
     const n = wsCount(); if(n <= 1) return;
     const into = i > 0 ? i - 1 : 0;
     for(const w of wins){ const k = w.ws | 0; if(k === i) w.ws = into; else if(k > i) w.ws = k - 1; }
+    for(const [id, k] of [..._nws]){ if(k === i) _nws.set(id, into); else if(k > i) _nws.set(id, k - 1); }
     _wsN = n - 1; _wsSave();
     if(_wsCur >= i && _wsCur > 0) _wsCur--;
     _wsApply(); _wsSay();
@@ -11248,7 +11348,7 @@
          `<button class="os-task${_webTaskActive(w) ? ' on' : ''}"
                   data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
-         + nativeTasks.map(w =>
+         + nativeTasks.filter(_nwsHere).map(w =>
          /* NO PER-APP WINDOW CONTROLS ON THE TASKBAR. They were a stopgap: sway draws a title bar
             with no buttons and neither Firefox nor Telegram will negotiate CSD, so this was the only
             place controls could live. It is not what a taskbar is for, and a row of tiny glyphs
@@ -11409,6 +11509,7 @@
              the two agree about what minimised means and either one brings it back. */
           {label: w.stashed ? 'Restore' : 'Minimize',
            run:()=>Promise.resolve(w.stashed ? pcWM.show(w.id) : pcWM.hide(w.id)).catch(()=>{})},
+          ..._nwsMenu(w),
           {sep:true},
           {label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}
         ],b);
@@ -12886,6 +12987,8 @@
             else if(p === 'pc:cmdbar') openCmdbar(true).catch(osSay);
             else if(p === 'pc:ws:next') switchWs(_wsCur + 1);
             else if(p === 'pc:ws:prev') switchWs(_wsCur - 1);
+            else if(p === 'pc:ws:carry-next'){ _wsCarry(_wsCur + 1); switchWs(_wsCur + 1); }
+            else if(p === 'pc:ws:carry-prev'){ _wsCarry(_wsCur - 1); switchWs(_wsCur - 1); }
             /* A compositor action as well as a pointer target: this keeps the taskbar flyout
              * automatable/accessibility-reachable and lets the two-output ownership gate prove that
              * exactly one notification surface opens on the focused monitor. */
@@ -13547,7 +13650,7 @@
     if(e.ctrlKey && e.altKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')){
       e.preventDefault(); e.stopPropagation();
       const to = _wsCur + (e.key === 'ArrowLeft' ? -1 : 1);
-      if(e.shiftKey){ const f = wins.find(w => w.el.classList.contains('focused')); if(f && to >= 0 && to < wsCount()) moveToWs(f, to); }
+      if(e.shiftKey) _wsCarry(to);
       switchWs(to); return;
     }
     // The command bar: Ctrl+Space from anywhere, Ctrl+K when not typing (in a text box Ctrl+K belongs to the box).

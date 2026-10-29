@@ -1099,7 +1099,7 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
    width is the wrong shape for it. Without the opt-out it inherits --mh:220px from .notif-ctx above,
    reserves a 220px-tall box and then clamps to 74 — a shift, in the one place there wasn't one. */
 .rightbar .notif .notif-ctx img,
-.rightbar .notif .notif-ctx video{width:auto;max-height:74px;object-fit:cover}
+.rightbar .notif .notif-ctx video{width:auto;max-height:74px;object-fit:contain}
 .rightbar .notif .notif-ctx .qav{max-height:none;width:18px;height:18px}   /* the avatar is not "media" */
 /* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
    takes the margin-top:auto now, so the pair sits together at the foot of the column). */
@@ -1307,7 +1307,7 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
   .ai-compose .input{min-height:40px;padding:8px 12px;border-radius:20px}
 }
 /* Go-live cover preview — confirms the thumbnail Discover will show before you announce. */
-.gl-img-prev{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:12px;margin:6px 0 2px;border:1px solid var(--line)}
+.gl-img-prev{display:block;width:100%;max-height:150px;object-fit:contain;border-radius:12px;margin:6px 0 2px;border:1px solid var(--line)}
 .tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl-cmp-tools .btn{margin:0}
 
@@ -1456,7 +1456,7 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
 .zap-amt:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.3)}
 .pics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:6px;padding:8px 8px 90px}
 .pic-card{aspect-ratio:1/1;overflow:hidden;border-radius:10px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer}
-.pic-card img{width:100%;height:100%;object-fit:cover;display:block;transition:.15s}
+.pic-card img{width:100%;height:100%;object-fit:contain;display:block;transition:.15s}
 .pic-card:hover img{transform:scale(1.05)}
 .pic-card.cw{position:relative}
 .pic-card.cw img{filter:blur(22px)}
@@ -1649,7 +1649,7 @@ html.pc-oswin .main:not(.has-navbar)>.topbar::after{content:"";display:block;mar
   background:var(--panel2);transition:border-color .15s,box-shadow .15s}
 .ws-img:hover{border-color:var(--neon);box-shadow:0 4px 14px rgba(0,0,0,.28)}
 .ws-imga{display:block}
-.ws-img img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}
+.ws-img img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain}
 /* ⧉ = the page this picture is on, as opposed to the picture itself. Always visible on touch (there
    is no hover to reveal it) and a real thumb target. */
 .ws-imgpg{position:absolute;top:6px;inset-inline-end:6px;width:32px;height:32px;border-radius:8px;cursor:pointer;
@@ -2089,11 +2089,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .mc-item img,.mc-item video{--mh:340px;max-height:340px}
 }
 /* TWO AT A TIME ("show images 2 at a time and then you can scroll to the right to see the other 2", 2026-10-16).
-   Each picture fills its half of a fixed-height strip (cropped to fill; a tap opens the whole picture), the track
+   Each picture sits WHOLE in its half of a fixed-height strip, letterboxed like a video -- never trimmed ("images in
+   notes are still cropped? we should not be cropping anywhere", 2026-10-28; tests/client/test_no_cropped_pictures.py) -- the track
    pages by two, and the strip's height never depends on the bytes -- so nothing below it moves when they land. */
 .media-car .mc-track{gap:3px}
-.media-car .mc-item{flex:0 0 calc(50% - 1.5px);min-width:calc(50% - 1.5px);height:280px;scroll-snap-align:start;overflow:hidden}
-.media-car .mc-item img,.media-car .mc-item video{aspect-ratio:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;margin:0;border:0;border-radius:0}
+.media-car .mc-item{flex:0 0 calc(50% - 1.5px);min-width:calc(50% - 1.5px);height:280px;scroll-snap-align:start;overflow:hidden;background:#0d0a1a}
+.media-car .mc-item img,.media-car .mc-item video{aspect-ratio:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;margin:0;border:0;border-radius:0}
 .quoted .media-car .mc-item,.notif-ctx .media-car .mc-item{height:180px}
 @media(max-width:820px){ .media-car .mc-item{height:200px} .quoted .media-car .mc-item,.notif-ctx .media-car .mc-item{height:140px} }
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
@@ -2133,7 +2134,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    100% wide by the source image's pixel height, aspect-ratio:1/1 was ignored (it only applies when a
    dimension is auto), and a 720x960 phone photo rendered as a 298x691 tower. That is the "super long
    rectangles" in the profile Media tab. */
-.media-grid img,.media-grid video{width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
+.media-grid img,.media-grid video{width:100%;height:auto;aspect-ratio:1/1;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px;display:flex;align-items:center;gap:6px;min-width:0}
@@ -2652,7 +2653,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .draft-card{flex-direction:column;gap:10px}
 /* clamp the draft preview so a long post / embedded image doesn't fill the page (tap Edit for full) */
 .draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:17px;line-height:1.45;max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 74%,transparent);mask-image:linear-gradient(180deg,#000 74%,transparent)}
-.draft-body img,.draft-body video{max-height:130px;max-width:100%;width:auto;border-radius:8px;object-fit:cover}
+.draft-body img,.draft-body video{max-height:130px;max-width:100%;width:auto;border-radius:8px;object-fit:contain}
 .draft-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap}
 /* Keep Edit/Delete/Send together on one line: the buttons are a non-shrinking group, and the "saved …"
    meta shrinks with an ellipsis instead of shoving Send onto a second line on a narrow phone. */
@@ -2676,7 +2677,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .sched-card{border-inline-start:3px solid var(--neon)}
 .sched-card.sched-failed{border-inline-start-color:var(--danger,#ff5a7d)}
 .gif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:55vh;overflow:auto;margin-top:10px}
-.gif-item{width:100%;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}
+.gif-item{width:100%;height:110px;object-fit:contain;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}
 .gif-item:hover{border-color:var(--neon)}
 .emoji-pick{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .emoji-pick button{font-size:20px;background:transparent;border:1px solid var(--line);border-radius:9px;cursor:pointer;padding:4px 8px}
@@ -2752,7 +2753,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .dm-atts::-webkit-scrollbar{display:none}
 .dm-atts[hidden]{display:none}
 .dm-att{position:relative;flex:0 0 auto;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel2)}
-.dm-att img{display:block;width:60px;height:60px;object-fit:cover}
+.dm-att img{display:block;width:60px;height:60px;object-fit:contain}
 .dm-att.ds{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;color:var(--cyan);font-size:13px}
 .dm-att-x{position:absolute;top:2px;inset-inline-end:2px;width:20px;height:20px;border:none;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .dm-att.ds .dm-att-x{position:static;width:18px;height:18px;background:rgba(255,255,255,.15)}
@@ -2817,7 +2818,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    pointer on the whole card instead of the link's "this will open" affordance. */
 .files-grid.selmode .file-card a{cursor:pointer}
 /* THE SAME BOX a glyph gets — a photograph and a document are one cell tall. */
-.file-card img,.file-card video{width:100%;height:96px;object-fit:cover;display:block;border-radius:8px;background:#120c24}
+.file-card img,.file-card video{width:100%;height:96px;object-fit:contain;display:block;border-radius:8px;background:#120c24}
 /* THE NAME GETS ITS OWN LINE. Exactly the music-row bug (see .track below): one flex line held the
    filename and a row of flex:none icon buttons, so the NAME absorbed the entire squeeze. Measured on
    a synced folder at every width: a 150px tile, ~110px of buttons, and 10-25px left for the name —
@@ -2855,7 +2856,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    and its extension label are replaced rather than covered -- a 📎 behind a photo is what "0
    thumbnails" looked like from the other side. Nothing here runs on the web or in the APK: the
    attribute needs `pcHost.fileUrl`, which only the desktop shell has. */
-.file-icon[data-thumb-host]{background-size:cover;background-position:center;
+.file-icon[data-thumb-host]{background-size:contain;background-position:center;
   background-repeat:no-repeat;border-radius:8px}
 .file-icon[data-thumb-host] > *{display:none}
 .fx-file-ic{width:58px;height:58px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round;
@@ -3553,7 +3554,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .files-grid:not(.details) .file-card>.file-icon,
   .files-grid:not(.details) .file-card>a>.file-icon,
   .files-grid:not(.details) .file-card>a>img,
-  .files-grid:not(.details) .file-card>a>video{width:100%;height:auto;aspect-ratio:1;object-fit:cover}
+  .files-grid:not(.details) .file-card>a>video{width:100%;height:auto;aspect-ratio:1;object-fit:contain}
   .files-grid:not(.details) .file-card .meta{padding:6px 4px}
   .media-grid{gap:4px;padding:4px}   /* tighter phone gallery, still 3 across */
   .media-grid img,.media-grid video{border-radius:6px}
@@ -4313,7 +4314,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .ai-media img,.ai-media video{max-width:100%;border-radius:12px;border:1px solid var(--line);margin-top:6px}
 .ai-media audio{width:100%;margin-top:6px}
 .ai-imggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-top:8px}
-.ai-imggrid img{width:100%;height:120px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:zoom-in}
+.ai-imggrid img{width:100%;height:120px;object-fit:contain;border-radius:10px;border:1px solid var(--line);cursor:zoom-in}
 .ai-search{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .ai-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .ai-file{border:1px solid var(--line);border-radius:9px;padding:6px 12px;font-size:15px}
@@ -6064,7 +6065,7 @@ h3 > svg.ic.b-ic:first-child{vertical-align:-3px;margin-inline-end:8px}
 .bp-explorer>.files-grid{grid-auto-rows:max-content;overscroll-behavior:contain}
 .bp-explorer>.files-grid>.file-card{min-width:0;min-height:96px;align-self:start}
 .bp-explorer>.files-grid>.file-card>img,
-.bp-explorer>.files-grid>.file-card>video{display:block;width:100%;height:96px;min-height:96px;object-fit:cover}
+.bp-explorer>.files-grid>.file-card>video{display:block;width:100%;height:96px;min-height:96px;object-fit:contain}
 /* Several files at once (a post or reply's 📁 Files): picked cards are numbered in pick order, and
    the Attach bar stays at the bottom of the sheet, on screen on a phone. */
 .bp-multi-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--line);
@@ -7647,7 +7648,8 @@ span.nt-fcaret{cursor:inherit}   /* the leaf SPACER, not a control: a pointer ov
    be — the server can't read the picture — so these are decrypted in the client and shown at size. */
 .nt-res-thumb{display:flex;flex-direction:column;gap:4px;width:96px;padding:4px;border-radius:9px;
   border:1px solid var(--line);background:none;color:inherit;cursor:pointer}
-.nt-res-thumb img{width:100%;height:64px;object-fit:cover;border-radius:6px;background:rgba(128,128,128,.15)}
+/* WHOLE, never trimmed ("we should not be cropping anywhere"): a tall receipt or a wide screenshot shows its edges. */
+.nt-res-thumb img{width:100%;height:64px;object-fit:contain;border-radius:6px;background:rgba(128,128,128,.15)}
 .nt-res-thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
 .nt-res-thumb:hover{border-color:var(--neon)}
 /* A picture that hasn't been decrypted YET. It needs a real box for two reasons: an <img> with no
@@ -10155,15 +10157,15 @@ body.popout .stream-main{ min-height:0; }
  * bitmap becomes the background and the glyph/extension label is hidden. Doing it this way means
  * a card is the same size before and after the picture arrives, so a folder does not reflow line
  * by line as thumbnails land. */
-.file-icon[data-thumb], .file-icon[data-encthumb]{ background-size:cover; background-position:center; }
+.file-icon[data-thumb], .file-icon[data-encthumb]{ background-size:contain; background-position:center; background-repeat:no-repeat; }
 /* An encrypted DRIVE tile's picture. `.files-grid:not(.details) .file-card.enc .file-icon{background:none}`
  * above is a shorthand, so it resets background-size to auto: without this the decrypted photo drew at its
  * natural size, tiled, its top-left corner standing in for the picture. */
-.files-grid .file-card.enc .file-icon[data-encthumb].has-thumb{ background-size:cover; background-position:center; background-repeat:no-repeat; }
+.files-grid .file-card.enc .file-icon[data-encthumb].has-thumb{ background-size:contain; background-position:center; background-repeat:no-repeat; }
 .file-icon.has-thumb > *{ visibility:hidden; }
 .file-icon.has-thumb{ color:transparent; }
-.fx-ic.has-thumb{width:34px;height:34px;border-radius:6px;background-size:cover;
-  background-position:center;color:transparent}
+.fx-ic.has-thumb{width:34px;height:34px;border-radius:6px;background-size:contain;
+  background-position:center;background-repeat:no-repeat;color:transparent}
 
 /* The popout is ONE VIEW, so it must not take the app's desktop shrink.
  *
@@ -11461,6 +11463,7 @@ html.pc-oswin .pv-sheet{top:38px}
 .os-startup-pc .switch{cursor:pointer}
 .os-startup-pc .os-startup-nm{flex:1;min-width:0}
 .os-startup-mon{width:auto;max-width:55%;min-width:0;flex:0 1 auto;text-overflow:ellipsis}
+.os-startup-pc{flex-wrap:wrap}.os-startup-ws{flex:0 0 auto;max-width:none}
 .os-startup-tilerow{cursor:default}
 [data-startup-tiling]{margin-top:12px}
 @media (max-width:520px){.os-startup-pc{flex-wrap:wrap}.os-startup-mon{max-width:100%;flex:1 1 100%;order:3}}
@@ -12080,7 +12083,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
   color:inherit;text-align:left;cursor:pointer;font:inherit}
 .alb-cover{display:block;aspect-ratio:1;width:100%;border-radius:12px;overflow:hidden;background:var(--panel2);
   border:1px solid var(--line)}
-.alb-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.alb-cover img{width:100%;height:100%;object-fit:contain;display:block}
 .alb-cover-empty{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:34px;opacity:.6}
 .alb-card:hover .alb-cover,.alb-card:focus-visible .alb-cover{border-color:var(--neon)}
 .alb-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
@@ -12092,7 +12095,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .alb-desc{margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}
 .alb-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:4px}
 .alb-photo{position:relative;aspect-ratio:1;overflow:hidden;border-radius:6px;background:var(--panel2)}
-.alb-photo img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.alb-photo img{width:100%;height:100%;object-fit:contain;display:block;cursor:zoom-in}
 .alb-missing{display:flex;align-items:center;justify-content:center;border:1px dashed var(--line)}
 .alb-photo-menu{position:absolute;top:4px;right:4px;width:32px;height:32px;border-radius:50%;border:0;
   background:rgba(0,0,0,.4);color:#fff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}

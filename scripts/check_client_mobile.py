@@ -81,7 +81,7 @@ AUDIT = r"""(async () => {
     const m = ar.match(/^([\d.]+)\s*\/\s*([\d.]+)$/);
     if (!m) return;
     let want = parseFloat(m[1]) / parseFloat(m[2]);
-    // A LONE picture in a timeline card is cropped (object-fit:cover) into a frame clamped between 16:9 and 4:5 on
+    // A LONE picture in a timeline card is letterboxed (object-fit:contain) into a frame clamped between 16:9 and 4:5 on
     // purpose ("media preview sizes are not consistent", tests/client/test_timeline_media_frame_full_app.py), so a
     // 1:2 portrait is EXPECTED to show 4:5. Only that frame is exempted -- the profile gallery's "super long
     // rectangles" were object-fit:cover too, so excusing cover everywhere would hide the bug this check exists for.

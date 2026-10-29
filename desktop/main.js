@@ -2114,7 +2114,7 @@ async function reconcileNativeGameFullscreen(){
     /* A browser opened from Web Search is a normal Firefox window, not an Electron preview. The
      * old 1400x900 map rule made it look like the same uncloseable square child we removed. Give a
      * newly observed browser the usable output area once; later user resizing is never overridden. */
-    if(/firefox/i.test(identity)&&!_nativeBrowserSized.has(id)){
+    if(/firefox|posterfox/i.test(identity)&&!_nativeBrowserSized.has(id)){
       _nativeBrowserSized.add(id);
       wm().snap(id,'max').catch(()=>_nativeBrowserSized.delete(id));
     }
@@ -2372,7 +2372,7 @@ async function wireShellRecovery(){
         /* Super+G and friends: arranged HERE, once, on the monitor holding the focused window --
            forwarding to every shell surface would have each monitor arrange on the same key. */
         else if(ARRANGE_TICKS.includes(String(ev.payload||''))){
-          const w = wm(); if(w && typeof w.arrange === 'function') w.arrange(String(ev.payload).slice(11), 'focused').catch(()=>{});
+          const w = wm(); if(w && typeof w.arrange === 'function') w.arrange(String(ev.payload).slice(11), 'focused', { skip: offWorkspaceIds() }).catch(()=>{});
         }
         else forwardShellTick(ev).catch(()=>{});
         return;
@@ -3143,12 +3143,24 @@ ipcMain.handle('pc:shell:output', (e) => {
   const scope = _shellScopes.get(e.sender.id);
   return String((scope && scope.output) || '');
 });
+/* WINDOWS ON ANOTHER WORKSPACE, per shell renderer (os.js _nwsSync). Arrange shows a minimised window before it
+ * tiles it, and the windows a workspace switch put away are minimised -- so without this, Super+G on workspace 1
+ * pulled workspace 2's windows into the grid. Keyed by the renderer that said so: each monitor has its own. */
+const _offWorkspace = new Map();
+function offWorkspaceIds(){ const all = new Set(); for(const s of _offWorkspace.values()) for(const id of s) all.add(id); return all; }
+ipcMain.handle('pc:wm:offws', (e, ids) => {
+  fsGuard(e);
+  const id = e.sender.id;
+  if(!_offWorkspace.has(id)) e.sender.once('destroyed', () => _offWorkspace.delete(id));
+  _offWorkspace.set(id, new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isFinite).slice(0, 500)));
+  return true;
+});
 ipcMain.handle('pc:wm:arrange', async (e, layout) => {
   fsGuard(e);
   const w = wm(); if(!w || typeof w.arrange !== 'function') return { ok:false, why:'this window manager cannot arrange' };
   const scope = _shellScopes.get(e.sender.id), r = scope && scope.rect;
   const where = r ? { x:(Number(r.x)||0)+(Number(r.width)||0)/2, y:(Number(r.y)||0)+(Number(r.height)||0)/2 } : 'focused';
-  return w.arrange(String(layout||''), where);
+  return w.arrange(String(layout||''), where, { skip: offWorkspaceIds() });
 });
 ipcMain.handle('pc:wm:move', (e, id, x, y) => {
   fsGuard(e); return wm().move(Number(id), Number(x), Number(y));
@@ -3661,20 +3673,22 @@ async function launchCommand(argv, opts) {
   /* Firefox must be a native Wayland client. An inherited/stale GDK_BACKEND=x11 put it through
    * XWayland with a 3822px client geometry inside a 1278px compositor box; pointer confinement then
    * hit an invisible wall partway across the monitor—the same symptom games exposed. */
+  /* PosterFox (PosterChanOS's own Firefox build) is Firefox here in every respect that matters below: one
+   * profile owned by a running process, Wayland-native, and new windows that belong to the old PID. */
   let firefoxRunning=false;
-  if (/^(firefox|firefox-bin)$/i.test(path.basename(list[0]))) {
+  if (/^(firefox|firefox-bin|posterfox)$/i.test(path.basename(list[0]))) {
     /* A running Firefox owns its profile and remote endpoint. Starting a command for that X11
      * instance with a contradictory forced-Wayland environment produces a headless process and
      * "failed to open display" instead of a new window. Reuse it as-is; native Wayland becomes the
      * default the next time Firefox is fully exited and starts as the first process. */
     try{
       firefoxRunning=fs.readdirSync('/proc').some(pid=>/^\d+$/.test(pid) && (()=>{
-        try{return /(?:^|\/)(?:firefox|firefox-bin)(?:\0|$)/.test(fs.readFileSync('/proc/'+pid+'/cmdline','utf8'));}
+        try{return /(?:^|\/)(?:firefox|firefox-bin|posterfox)(?:\0|$)/.test(fs.readFileSync('/proc/'+pid+'/cmdline','utf8'));}
         catch(_){return false;}
       })());
     }catch(_){}
   }
-  if (/^(firefox|firefox-bin)$/i.test(path.basename(list[0])) && !firefoxRunning) {
+  if (/^(firefox|firefox-bin|posterfox)$/i.test(path.basename(list[0])) && !firefoxRunning) {
     launchOpts = Object.assign({}, launchOpts, { env: Object.assign({}, launchOpts.env || {}, {
       GDK_BACKEND: 'wayland', MOZ_ENABLE_WAYLAND: '1',
       WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-1',
@@ -3685,7 +3699,7 @@ async function launchCommand(argv, opts) {
    * can never see it. Snapshot exact con_ids before launch and accept only a new Firefox surface. */
   let firefoxBefore=[];
   if(firefoxRunning){
-    try{firefoxBefore=(await wm().windows()).filter(w=>/firefox/i.test(String(w.app||''))).map(w=>w.id);}
+    try{firefoxBefore=(await wm().windows()).filter(w=>/firefox|posterfox/i.test(String(w.app||''))).map(w=>w.id);}
     catch(_){firefoxBefore=[];}
   }
   const started = wm().launch(list, launchOpts);
@@ -3705,7 +3719,7 @@ async function launchCommand(argv, opts) {
    * nothing, and then a null that says no more than a timeout would. */
   const waitMs=(opts && opts.waitMs) || 15000;
   const appeared=firefoxRunning
-    ? wm().waitForNewWindow(firefoxBefore,waitMs,w=>/firefox/i.test(String(w.app||'')))
+    ? wm().waitForNewWindow(firefoxBefore,waitMs,w=>/firefox|posterfox/i.test(String(w.app||'')))
     : wm().waitForWindow(started.pid,waitMs);
   const settled = await Promise.race([
     appeared.then((w) => ({ window: w })),

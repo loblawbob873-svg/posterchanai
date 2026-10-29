@@ -197,7 +197,7 @@ window.PCFilesFactory = function(dep){
       const full=server+'/'+b.sha256, thumb=thumbUrl(full), t=(b.type||'').toLowerCase(), sz=_fmtBytes(b.size||0);
       const isImg=t.startsWith('image/'), isVid=t.startsWith('video/');
       let inner;
-      if(isImg||isVid) inner=`<img alt="" src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
+      if(isImg||isVid) inner=`<img alt="" src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:contain" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
       else inner=`<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:24px">📄</div>`;
       return `<a href="${enc(full)}" target="_blank" rel="noopener" title="${enc(t)} · ${sz}" style="position:relative;aspect-ratio:1;display:block;border-radius:8px;overflow:hidden;background:var(--panel,#16161c);border:1px solid var(--border,#333)">${inner}<span style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:1px 4px">${sz}</span></a>`;
     }).join('');
@@ -1909,6 +1909,64 @@ window.PCFilesFactory = function(dep){
       }
     }, { rootMargin: '200px' });
     $$('[data-thumb]', grid).forEach(el=>_thumbObs.observe(el));
+  }
+
+  /* SYNCED FOLDERS AS PHOTO ALBUMS (photos.js "Synced" tab: "maybe photos app should show the albums in the File
+   * Manager Synced Folder, like if user syncs photos back and forth from phone"). Read through the SAME manifest,
+   * thumbnail cache and Preview path this file manager uses, so the two screens can never disagree about what a
+   * folder holds. An album is a DIRECTORY that directly holds pictures or videos (a phone's DCIM/Camera,
+   * Screenshots, WhatsApp/Media/...), never the trash. Pure grouping is `_photoAlbumsOf`, kept DOM-free. */
+  const _PHOTO_RE = /\.(jpe?g|jfif|png|gif|webp|avif|bmp|heic|heif)$/i, _CLIP_RE = /\.(mp4|m4v|mov|webm|3gp|mkv)$/i;
+  function _photoAlbumsOf(key, paths){
+    const by = new Map();
+    for(const p in paths || {}){
+      const e = paths[p];
+      if(!e || e.deletedAt) continue;
+      if(('/' + p + '/').indexOf('/.pc-trash/') >= 0) continue;
+      const cut = p.lastIndexOf('/'), name = cut < 0 ? p : p.slice(cut + 1);
+      const video = _CLIP_RE.test(name);
+      if(!video && !_PHOTO_RE.test(name)) continue;
+      const dir = cut < 0 ? '' : p.slice(0, cut);
+      const item = { key, path: p, name, dir, sha: e.sha || '', chunks: Array.isArray(e.chunks) ? e.chunks : [],
+                     size: +e.size || 0, mtime: +e.mtime || 0, video };
+      const a = by.get(dir) || { key, dir, name: dir ? dir.slice(dir.lastIndexOf('/') + 1) : key, items: [] };
+      a.items.push(item); by.set(dir, a);
+    }
+    const out = [];
+    for(const a of by.values()){
+      a.items.sort((x, y) => (y.mtime - x.mtime) || (x.path < y.path ? -1 : 1));
+      a.n = a.items.length; a.newest = a.items[0].mtime;
+      a.cover = a.items.find(i => !i.video) || null;
+      out.push(a);
+    }
+    return out.sort((x, y) => (y.newest - x.newest) || (x.dir < y.dir ? -1 : 1));
+  }
+  /* {albums, failed, state}: state is 'ok', 'none' (this account syncs no folders), 'error' (the folder list could not be
+   * asked -- never shown as "no albums") or 'standalone' (no instance, so no synced folders exist here). A folder whose
+   * manifest could not be read is named in `failed`, and the rest still show. */
+  async function syncedPhotoAlbums(force){
+    if(_standalone()) return { albums: [], failed: [], state: 'standalone' };
+    await _ensureSyncPairs();
+    if(_syncPairs === 'error' || !Array.isArray(_syncPairs)) return { albums: [], failed: [], state: 'error' };
+    if(!_syncPairs.length) return { albums: [], failed: [], state: 'none' };
+    const albums = [], failed = [];
+    for(const f of _syncPairs){
+      try{ albums.push(..._photoAlbumsOf(f.key, await _syncManifest(f.key, !!force))); }
+      catch(_){ failed.push(f.key); }
+    }
+    albums.sort((x, y) => (y.newest - x.newest) || (x.key + x.dir < y.key + y.dir ? -1 : 1));
+    return { albums, failed, state: 'ok' };
+  }
+  /** A thumbnail URL for one synced picture, decrypted here (null for a video or one too big to preview cheaply). */
+  async function syncedPhotoThumb(item){
+    if(!item || item.video || (item.size && item.size > _THUMB_MAX)) return null;
+    return _thumbFor(item.chunks && item.chunks.length ? '' : item.sha, item.chunks, item.name);
+  }
+  /** Opens one synced picture or clip in the Preview window (Save / Share from there), exactly as Files does. */
+  function openSyncedPhoto(item){
+    if(!item) return;
+    return openPreviewFile({ sha: item.sha, chunks: (item.chunks || []).join(','), name: item.name, path: item.path },
+                           { sync: true });
   }
 
   /* THUMBNAILS FOR ENCRYPTED DRIVE PICTURES. Josephus, 2026-10-13: "files with no thumbnails, no idea what
@@ -4744,6 +4802,7 @@ window.PCFilesFactory = function(dep){
     _openHostFile, _openWithSheet, _syncBlobBytes, _walkEntries, encFileUrl, openCodeFile,
     openOfficeFile, openPreviewFile, openSyncCodeFile, openSyncOfficeFile, pickSyncedFile, renderBlossom,
     renderOfficeHome, runFileWindow, saveBlobDoc, uploadEncFile,
+    syncedPhotoAlbums, syncedPhotoThumb, openSyncedPhoto, _photoAlbumsOf,
     saveCopyTo: _officeSaveCopy,   // "save this file somewhere": name + a folder in Files, a synced folder or this computer
   };
 };

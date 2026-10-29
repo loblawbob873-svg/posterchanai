@@ -1077,7 +1077,24 @@
    *
    * So: take the tab synchronously, then point it at the blob. If the browser refused the tab, fall
    * back to a download, which needs no popup and no gesture. */
-  async function openAttachment(getUrl, name){
+  /* WHAT OUR OWN PREVIEW SHOWS: pictures, video, audio and PDFs (preview.js `handles`). Same test as Files'
+   * _previewable, kept here because the preview module is loaded lazily and cannot be asked before it exists. */
+  const _PREVIEWS = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|ico|svg|heic|heif|mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac|pdf)$/i;
+  const _previewable = (name, mime) => _PREVIEWS.test(name || '') || /^(image|video|audio)\//i.test(mime || '')
+    || /^application\/pdf/i.test(mime || '');
+  /* AN ATTACHMENT OPENS IN OUR PREVIEW, NOT IN A DOWNLOAD ("clicking on an attachment in notes downloads it. our own
+   * preview should show it then you can do what you want there"). The browser route below decided what happened by
+   * itself -- a new tab that downloaded the decrypted file, or an <a download> -- so a picture in a note became a
+   * file in Downloads. The Preview window is the one place that shows it and then offers Save / Share. Anything it
+   * cannot show (an .odt, a zip) keeps the old route. */
+  async function openAttachment(getUrl, name, mime){
+    if(_previewable(name, mime)){
+      const P = window.PCPreview || (PC.loadModule ? await PC.loadModule('preview.js', 'PCPreview') : null);
+      if(P && typeof P.open === 'function'){
+        const blob = await (await fetch(await getUrl())).blob();
+        if(P.open({ name: name || 'attachment', mime: mime || blob.type || '', blob }) !== false) return;
+      }
+    }
     /* ANDROID FIRST. In the APK neither browser route exists: the WebView has no PDF viewer, so
      * window.open(blob:) shows nothing, and MainActivity registers no DownloadListener, so an
      * <a download> is ignored outright. A tapped attachment therefore did nothing at all — the same
@@ -1180,7 +1197,7 @@
         img.src = u;
         // A thumbnail lives INSIDE a button that already opens the file: adding a second handler
         // here would open it twice, once on the image and once on the click that bubbles up.
-        if(opts.click !== false) img.onclick = () => { openAttachment(async () => u, img.alt || '')
+        if(opts.click !== false) img.onclick = () => { openAttachment(async () => u, img.alt || '', mime)
                                                         .catch(() => toast('couldn’t open that image')); };
       }catch(e){
         if(!img.isConnected) return;
@@ -1211,6 +1228,7 @@
   async function hydrateRes(root, n){
     _imgSweep();
     const byShaMime = new Map((n.res||[]).map(r => [r.sha, r.mime]));
+    const byShaName = new Map((n.res||[]).map(r => [r.sha, r.name]));
     // A LINK resolves on click, never on open. Downloading and decrypting a 40 MB PDF to render the
     // word it is written on is the same mistake, in miniature, that the images used to make.
     for(const a of Array.from(root.querySelectorAll('a[href^="pcres:"]'))){
@@ -1224,7 +1242,8 @@
       const open = async (ev) => {
         ev.preventDefault();
         try{ await openAttachment(() => _withTimeout(PC.encFileUrl(sha, byShaMime.get(sha)),
-                                                    180000, 'that file'), a.textContent || ''); }
+                                                    180000, 'that file'), byShaName.get(sha) || a.textContent || '',
+                                   byShaMime.get(sha)); }
         catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment: ' + (e.message || 'error')
                                          : 'that attachment isn’t downloaded for offline use'); }
       };
@@ -1261,7 +1280,7 @@
     if(more) more.onclick = () => renderRes(n, host, true);
     const open = async (b) => {
       try{ await openAttachment(() => _withTimeout(PC.encFileUrl(b.dataset.sha, b.dataset.mime),
-                                                   180000, 'that file'), b.title || ''); }
+                                                   180000, 'that file'), b.title || '', b.dataset.mime); }
       catch(e){ toast(navigator.onLine ? 'couldn’t open that attachment: ' + (e.message || 'error')
                                        : 'that attachment isn’t downloaded for offline use'); }
     };

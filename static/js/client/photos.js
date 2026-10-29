@@ -17,16 +17,21 @@ window.PCPhotosFactory = function(dep){
   const S = dep.state;   // live app.js bindings: ME, FOLLOWS, GUEST, VIEW
   const {
     $$, enc, toast, modal, closeModal, openLightbox, openThread, openProfile, profOf, isMutedView,
-    uploadBlob, imetaTagsFor, publish, albums,
+    uploadBlob, imetaTagsFor, publish, albums, syncedAlbums, syncedThumb, openSynced, standalone, switchView,
   } = dep;
   const PIC = 20, PAGE = 60, AUTHORS_PER_FILTER = 300;
-  const TABS = [['following', 'Following'], ['global', 'Global'], ['albums', 'Albums']];
+  /* SYNCED: the folders Folder Sync keeps (a phone's camera roll, say), each directory of pictures an album --
+   * "maybe photos app should show the albums in the File Manager Synced Folder, like if user syncs photos back and
+   * forth from phone". Private: these never touch a relay as posts; the pictures are decrypted on this device. */
+  const TABS = [['following', 'Following'], ['global', 'Global'], ['albums', 'Albums'], ['synced', 'Synced']];
 
   const st = {
     tab: 'following',
     feeds: { following: newFeed(), global: newFeed() },
-    scroll: { following: 0, global: 0, albums: 0 },
+    scroll: { following: 0, global: 0, albums: 0, synced: 0 },
+    sync: { res: null, loading: false, open: null, shown: 0 },
   };
+  const SYNC_PAGE = 120;
   function newFeed(){ return { byId: new Map(), oldest: 0, done: false, loading: false, unreachable: false, who: '' }; }
 
   // ----------------------------------------------------------------------------------------- pure halves
@@ -137,7 +142,7 @@ window.PCPhotosFactory = function(dep){
 .ph-post{display:inline-flex;align-items:center;gap:6px}
 .ph-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .ph-tile{position:relative;aspect-ratio:1/1;padding:0;border:1px solid var(--border,rgba(255,255,255,.1));border-radius:10px;overflow:hidden;background:rgba(127,127,127,.12);cursor:pointer;display:block;width:100%}
-.ph-tile img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.ph-tile img{width:100%;height:100%;object-fit:contain;display:block;transition:transform .25s ease}
 .ph-tile:hover,.ph-tile:focus-visible{border-color:var(--neon,#0ff);box-shadow:0 0 0 1px var(--neon,#0ff),0 0 16px color-mix(in srgb,var(--neon,#0ff) 45%,transparent);outline:none}
 .ph-tile:hover img{transform:scale(1.04)}
 .ph-by{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:6px;padding:18px 8px 6px;background:linear-gradient(transparent,rgba(0,0,0,.75));color:#fff;font:500 12px/1.2 Inter,system-ui,sans-serif;text-align:left;opacity:0;transition:opacity .2s}
@@ -153,7 +158,7 @@ window.PCPhotosFactory = function(dep){
 .ph-view-strip{display:flex;gap:6px;overflow-x:auto}
 .ph-view-strip button{flex:none;width:56px;height:56px;padding:0;border:1px solid var(--border,rgba(255,255,255,.15));border-radius:6px;overflow:hidden;background:none;cursor:pointer}
 .ph-view-strip button.on{border-color:var(--neon,#0ff);box-shadow:0 0 8px var(--neon,#0ff)}
-.ph-view-strip img{width:100%;height:100%;object-fit:cover}
+.ph-view-strip img{width:100%;height:100%;object-fit:contain}
 .ph-author{display:flex;align-items:center;gap:8px;background:none;border:0;color:inherit;padding:0;cursor:pointer;font:600 14px Inter,system-ui,sans-serif;text-align:left}
 .ph-author img{width:32px;height:32px;border-radius:50%;object-fit:cover}
 .ph-caption{white-space:pre-wrap;word-break:break-word;line-height:1.45}
@@ -163,7 +168,7 @@ window.PCPhotosFactory = function(dep){
 .ph-pick button{justify-content:flex-start;text-align:left}
 .ph-compose{display:flex;flex-direction:column;gap:10px;min-width:min(86vw,480px)}
 .ph-prev{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px}
-.ph-prev img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.15))}
+.ph-prev img{width:100%;aspect-ratio:1/1;object-fit:contain;border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.15))}
 .ph-compose textarea{min-height:80px;resize:vertical}
 .ph-compose-btns{display:flex;justify-content:flex-end;gap:8px}
 @media(max-width:640px){
@@ -175,7 +180,24 @@ window.PCPhotosFactory = function(dep){
   .ph-tile{border-radius:0;border:0}
   .ph-by{display:none}
   .ph-alb{padding:0 10px}
-}`;
+  .ph-tab{padding:9px 6px;font-size:13px}
+  .ph-sync-head{padding:0 10px}
+  .ph-sync-grid{padding:0 10px}
+}
+.ph-sync-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+.ph-sync-head h3{margin:0;font-size:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ph-sync-head .muted{font-size:12px}
+.ph-sync-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.ph-sync-card{appearance:none;display:flex;flex-direction:column;gap:6px;padding:0;border:0;background:none;color:inherit;text-align:left;cursor:pointer;min-width:0}
+.ph-sync-card .ph-tile{pointer-events:none}
+.ph-sync-card:hover .ph-tile,.ph-sync-card:focus-visible .ph-tile{border-color:var(--neon,#0ff);box-shadow:0 0 0 1px var(--neon,#0ff),0 0 16px color-mix(in srgb,var(--neon,#0ff) 45%,transparent)}
+.ph-sync-card:focus-visible{outline:none}
+.ph-sync-card b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ph-sync-card small{color:var(--muted,#9aa);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ph-glyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted,#9aa)}
+.ph-glyph .ic{width:34px;height:34px}
+.ph-play{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.65);color:#fff;border-radius:999px;padding:2px 8px;font:600 11px/1.4 Inter,system-ui,sans-serif;border:1px solid var(--neon,#0ff)}
+.ph-tile img:not([src]){visibility:hidden}`;
     document.head.appendChild(s);
   }
 
@@ -188,9 +210,10 @@ window.PCPhotosFactory = function(dep){
     injectCss();
     const signedIn = !!(S.ME && S.ME.pubkey) && !S.GUEST;
     if(!signedIn && st.tab !== 'global') st.tab = 'global';
+    if(st.tab === 'synced' && noSync()) st.tab = 'albums';
     feed.innerHTML = `<div class="ph-wrap">
       <div class="ph-head">
-        <div class="ph-tabs" role="tablist">${TABS.filter(([k]) => signedIn || k === 'global').map(([k, label]) =>
+        <div class="ph-tabs" role="tablist">${TABS.filter(([k]) => (signedIn || k === 'global') && !(k === 'synced' && noSync())).map(([k, label]) =>
           `<button type="button" role="tab" class="ph-tab${st.tab === k ? ' on' : ''}" data-tab="${k}" aria-selected="${st.tab === k}">${label}</button>`).join('')}</div>
         <span class="ph-sp"></span>
         ${signedIn ? `<button type="button" class="btn btn-neon ph-post" aria-label="Post a photo" title="Post a photo">${ic('camera')}<span>Post a photo</span></button>
@@ -224,6 +247,7 @@ window.PCPhotosFactory = function(dep){
       catch(e){ if(el.isConnected) el.innerHTML = `<div class="ph-empty">Could not open albums — ${enc(String((e && e.message) || e).slice(0, 120))}</div>`; }
       return;
     }
+    if(tab === 'synced'){ showSynced(false); return; }
     const feed = st.feeds[tab];
     const who = authorsFor(tab), sig = who ? who.length + ':' + (S.ME && S.ME.pubkey) : 'g';
     if(feed.who !== sig){ st.feeds[tab] = newFeed(); st.feeds[tab].who = sig; }
@@ -252,7 +276,7 @@ window.PCPhotosFactory = function(dep){
   }
 
   function paint(){
-    const el = body(); if(!el || st.tab === 'albums') return;
+    const el = body(); if(!el || st.tab === 'albums' || st.tab === 'synced') return;
     const f = st.feeds[st.tab];
     const list = [...f.byId.values()].sort(order);
     if(!list.length){
@@ -400,6 +424,86 @@ window.PCPhotosFactory = function(dep){
         }catch(err){ go.disabled = false; stl.textContent = ''; toast(err.message || String(err)); }
       };
     });
+  }
+
+  // ------------------------------------------------------------------------------------------------ Synced
+  /* No instance (the bundled apps without a server) has no synced folders to read; the tab is not offered there. */
+  function noSync(){ try{ return !!(standalone && standalone()) || typeof syncedAlbums !== 'function'; }catch(_){ return true; } }
+  const albumKey = a => a.key + '\u0000' + a.dir;
+  async function showSynced(force){
+    const el = body(); if(!el) return;
+    const sy = st.sync;
+    // What this visit already read paints at once (#feed is blanked on every entry); a re-read runs behind it.
+    if(sy.res) drawSynced(); else el.innerHTML = '<div class="ph-sync"><div class="spinner"></div><div class="muted small" style="text-align:center">Reading your synced folders…</div></div>';
+    if(sy.loading) return;
+    if(sy.res && !force) return;
+    sy.loading = true;
+    try{ sy.res = await syncedAlbums(!!force); }
+    catch(e){ sy.res = { albums: [], failed: [], state: 'error', why: String((e && e.message) || e) }; }
+    finally{ sy.loading = false; }
+    if(st.tab === 'synced') drawSynced();
+  }
+  function drawSynced(){
+    const el = body(); if(!el || st.tab !== 'synced') return;
+    const sy = st.sync, r = sy.res || { albums: [], failed: [], state: 'error' };
+    if(sy.open){
+      const a = r.albums.find(x => albumKey(x) === sy.open);
+      if(a) return drawSyncedAlbum(el, a);
+      sy.open = null;
+    }
+    const refresh = `<button type="button" class="btn btn-ghost small ph-sync-refresh" title="Read the folders again">${ic('refresh')}<span>Refresh</span></button>`;
+    if(r.state === 'error'){
+      el.innerHTML = `<div class="ph-empty">Your synced folders could not be read just now.<br><br>${refresh}</div>`;
+    }else if(r.state === 'none' || (!r.albums.length && !r.failed.length)){
+      el.innerHTML = `<div class="ph-empty">${r.state === 'none'
+          ? 'No synced folders yet. Sync your phone’s camera folder (or any folder of pictures) and every folder of pictures in it shows up here as an album.'
+          : 'None of your synced folders hold pictures yet.'}<br><br>
+        <button type="button" class="btn btn-neon ph-sync-setup">${ic('refresh')}<span>Set up Folder Sync</span></button> ${refresh}</div>`;
+    }else{
+      el.innerHTML = `<div class="ph-sync">
+        <div class="ph-sync-head"><span class="muted">${r.albums.length} album${r.albums.length === 1 ? '' : 's'} from your synced folders${r.failed.length ? ` · could not read ${r.failed.map(enc).join(', ')}` : ''}</span><span class="ph-sp"></span>${refresh}</div>
+        <div class="ph-sync-grid">${r.albums.map((a, i) => `<button type="button" class="ph-sync-card" data-i="${i}" title="${enc(a.key + (a.dir ? '/' + a.dir : ''))}">
+            <span class="ph-tile">${a.cover ? '<img alt="">' : `<span class="ph-glyph">${ic('play')}</span>`}<span class="ph-n">${a.n}</span></span>
+            <b>${enc(a.name)}</b><small>${enc(a.key + (a.dir ? ' / ' + a.dir : ''))}</small></button>`).join('')}</div></div>`;
+      $$('.ph-sync-card', el).forEach(b => {
+        const a = r.albums[+b.dataset.i];
+        b.onclick = () => { st.scroll.synced = scrollTop(); sy.open = albumKey(a); sy.shown = SYNC_PAGE; drawSynced(); try{ scroller().scrollTop = 0; }catch(_){} };
+        const img = b.querySelector('img'); if(img && a.cover) lazyThumb(img, a.cover);
+      });
+    }
+    const set = el.querySelector('.ph-sync-setup'); if(set) set.onclick = () => { try{ switchView('sync'); }catch(_){} };
+    const rf = el.querySelector('.ph-sync-refresh'); if(rf) rf.onclick = () => { sy.res = null; showSynced(true); };
+  }
+  function drawSyncedAlbum(el, a){
+    const sy = st.sync, items = a.items.slice(0, sy.shown || SYNC_PAGE);
+    el.innerHTML = `<div class="ph-sync">
+      <div class="ph-sync-head"><button type="button" class="btn btn-ghost small ph-sync-back">← Albums</button>
+        <h3 title="${enc(a.key + (a.dir ? '/' + a.dir : ''))}">${enc(a.name)}</h3><span class="muted">${a.n} item${a.n === 1 ? '' : 's'}</span></div>
+      <div class="ph-grid">${items.map((it, i) => `<button type="button" class="ph-tile" data-i="${i}" title="${enc(it.name)}" aria-label="${enc(it.name)}">
+          ${it.video ? `<span class="ph-glyph">${ic('play')}</span><span class="ph-play">video</span>` : '<img alt="">'}</button>`).join('')}</div>
+      ${a.items.length > items.length ? `<div class="ph-more"><button type="button" class="btn btn-ghost ph-sync-more">Show ${Math.min(SYNC_PAGE, a.items.length - items.length)} more</button></div>` : ''}</div>`;
+    el.querySelector('.ph-sync-back').onclick = () => { sy.open = null; drawSynced(); restoreScroll(); };
+    const more = el.querySelector('.ph-sync-more');
+    if(more) more.onclick = () => { const y = scrollTop(); sy.shown = (sy.shown || SYNC_PAGE) + SYNC_PAGE; drawSyncedAlbum(el, a); try{ scroller().scrollTop = y; }catch(_){} };
+    $$('.ph-tile[data-i]', el).forEach(b => {
+      const it = items[+b.dataset.i];
+      b.onclick = () => { try{ Promise.resolve(openSynced(it)).catch(e => toast('could not open that: ' + ((e && e.message) || e))); }catch(e){ toast('could not open that'); } };
+      const img = b.querySelector('img'); if(img) lazyThumb(img, it);
+    });
+  }
+  /* Decrypted only when scrolled near: a camera roll is thousands of pictures, and Files' thumbnail cache runs a few at
+   * a time and keeps the most recent ones. A picture that cannot be previewed keeps a picture glyph, never a blank. */
+  let _thumbObs = null;
+  function lazyThumb(img, item){
+    const load = () => Promise.resolve(syncedThumb(item)).then(u => {
+      if(!img.isConnected) return;
+      if(u) img.src = u; else img.insertAdjacentHTML('afterend', `<span class="ph-glyph">${ic('image')}</span>`);
+    }).catch(() => { if(img.isConnected) img.insertAdjacentHTML('afterend', `<span class="ph-glyph">${ic('image')}</span>`); });
+    if(typeof IntersectionObserver === 'undefined'){ load(); return; }
+    if(!_thumbObs) _thumbObs = new IntersectionObserver(es => es.forEach(e => {
+      if(!e.isIntersecting) return; _thumbObs.unobserve(e.target); const f = e.target._phLoad; e.target._phLoad = null; if(f) f();
+    }), { rootMargin: '300px' });
+    img._phLoad = load; _thumbObs.observe(img);
   }
 
   return { render, openPhoto, saveToAlbum, imagesOf, hashtags, postTags };

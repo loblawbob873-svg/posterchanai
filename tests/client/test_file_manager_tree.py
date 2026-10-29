@@ -248,5 +248,5 @@ def test_large_file_picker_results_cannot_squash_thumbnails_into_lines():
     assert ".bp-explorer>.files-grid{grid-auto-rows:max-content" in CSS
     assert ".bp-explorer>.files-grid>.file-card{min-width:0;min-height:96px" in CSS
     assert ".bp-explorer>.files-grid>.file-card>img," in CSS
-    assert "height:96px;min-height:96px;object-fit:cover" in CSS
+    assert "height:96px;min-height:96px;object-fit:contain" in CSS
     assert "overscroll-behavior:contain" in CSS
