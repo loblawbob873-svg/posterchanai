@@ -102,9 +102,11 @@ def test_one_process_saving_never_erases_anothers_pauses(tmp_path):
 
 def test_the_escalation_continues_where_another_process_left_it(tmp_path):
     path = tmp_path / "breaker.json"
-    path.write_text(json.dumps({DEAD: [time.time() + 1, 3]}))      # paused by another process, about to expire
-    out = _in_process(path, "import time\ntime.sleep(1.2)\nr._note_relay_refused(%r)\nprint(r._relay_pause_streak[%r])"
-                      % (DEAD, DEAD))
+    path.write_text(json.dumps({DEAD: [time.time() + 600, 3]}))    # paused by another process at streak 3
+    # The pause then runs out (set to 0 here rather than slept through: under a loaded gate the interpreter's own
+    # start took longer than a 1-second pause) and the relay refuses again: the next rung, not the first.
+    out = _in_process(path, "r._relay_paused_until[%r] = 0\nr._note_relay_refused(%r)\nprint(r._relay_pause_streak[%r])"
+                      % (DEAD, DEAD, DEAD))
     assert out == "4", ("the pause started over at the bottom of the ladder", out)
 
 
