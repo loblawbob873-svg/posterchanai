@@ -3148,6 +3148,12 @@ ipcMain.handle('pc:shell:output', (e) => {
  * pulled workspace 2's windows into the grid. Keyed by the renderer that said so: each monitor has its own. */
 const _offWorkspace = new Map();
 function offWorkspaceIds(){ const all = new Set(); for(const s of _offWorkspace.values()) for(const id of s) all.add(id); return all; }
+// PosterFox's Passwords add-on: this account's pairing, written to Firefox's managed storage (desktop/browserpairing.js).
+ipcMain.handle('pc:browser-pairing', (e, code) => {
+  if (!SHELL_MODE || !fromOurPage(e)) return 'refused';
+  try { return require('./browserpairing').set(require('os').homedir(), code || null); }
+  catch (err) { return 'error: ' + (err && err.message || err); }
+});
 ipcMain.handle('pc:wm:offws', (e, ids) => {
   fsGuard(e);
   const id = e.sender.id;

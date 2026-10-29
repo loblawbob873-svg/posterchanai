@@ -1347,7 +1347,7 @@ function _preview(ev){
 
 // ---------------------------------------------------------------- pairing
 
-async function pair(code){
+async function pair(code, source){
   let payload;
   try{ payload = JSON.parse(new TextDecoder().decode(V.fromB64(code.trim()))); }
   catch(_){ throw new Error('that pairing code is not readable — copy it again from the app'); }
@@ -1373,13 +1373,46 @@ async function pair(code){
           /* WHERE ATTACHMENTS LIVE, which is not always the instance: a user with their own Blossom
            * server reads `pcres:` blobs from THAT host. Uploading to the instance instead writes a
            * note whose picture 404s on the only screen it is ever opened from — and says "saved". */
-          media: String(payload.media || '').replace(/\/+$/, '') };
+          media: String(payload.media || '').replace(/\/+$/, ''),
+          /* WHO PAIRED IT. 'os' = PosterChanOS handed this browser its own account's pairing (osPair, below);
+           * anything else is a code a person pasted, which osPair never replaces. */
+          source: source === 'os' ? 'os' : 'user', codeHash: await _codeHash(code) };
   key = V.fromB64(cfg.key);
   initBookmarks();
   items = new Map();
   await B.storage.local.set({ cfg, items: [] });
   connect();
   return { ok:true, mode: cfg.mode };
+}
+
+async function _codeHash(code){
+  try{
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(code).trim()));
+    return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }catch(_){ return ''; }
+}
+
+/* PAIRED BY POSTERCHANOS, WITH NOTHING TO TYPE ("we need to make sure that the passwords extension automatically
+ * connects to posterchanOS without any config", 2026-10-29).
+ *
+ * On PosterChanOS the signed-in desktop writes this account's pairing into Firefox's per-user managed storage for this
+ * add-on (~/.mozilla/managed-storage/passwords@poster.place.json, readable by this user only) and removes it at sign
+ * out. Read here at start and every minute:
+ *   - a pairing there and none here, or one this function made for another account or key -> pair from it;
+ *   - none there and the current pairing was made by this function -> unpair (the person signed out);
+ *   - a pairing a person pasted is never replaced or removed by this.
+ * Any other browser has no managed storage for this add-on; get() throws or returns nothing and nothing changes. */
+async function osPair(){
+  let code = '';
+  try{ code = String(((await B.storage.managed.get('pairing')) || {}).pairing || '').trim(); }catch(_){ code = ''; }
+  if(cfg && cfg.source !== 'os') return { ok:true, changed:false };
+  if(!code){
+    if(cfg && cfg.source === 'os'){ await unpair(); return { ok:true, changed:true }; }
+    return { ok:true, changed:false };
+  }
+  if(cfg && cfg.codeHash && cfg.codeHash === await _codeHash(code)) return { ok:true, changed:false };
+  try{ await pair(code, 'os'); return { ok:true, changed:true }; }
+  catch(e){ try{ console.warn('[posterchan] PosterChanOS pairing refused:', (e && e.message) || e); }catch(_){ } return { ok:false }; }
 }
 
 async function unpair(){
@@ -1623,6 +1656,7 @@ const ready = (async () => {
     loadCfg(),
     new Promise(r => setTimeout(r, 8000)),      // a slow load must not become an infinite one
   ]); }catch(e){ try{ console.warn('[posterchan] config load failed:', (e && e.message) || e); }catch(_){ } }
+  try{ await Promise.race([osPair(), new Promise(r => setTimeout(r, 4000))]); }catch(_){ }
   try{ await relayIdentityReady; }catch(_){ }
   try{ if(cfg) connect(); }catch(e){ try{ console.warn('[posterchan] relay connect failed:',
                                                        (e && e.message) || e); }catch(_){ } }
@@ -1653,7 +1687,9 @@ try {
   if (B.alarms && B.alarms.create) {
     B.alarms.create('pcvault-sync', { periodInMinutes: 1 });
     B.alarms.onAlarm.addListener((a) => {
-      if (!a || a.name !== 'pcvault-sync' || !cfg) return;
+      if (!a || a.name !== 'pcvault-sync') return;
+      osPair().catch(() => {});                    // PosterChanOS: a sign-in, sign-out or account switch
+      if (!cfg) return;
       connect();                                   // reopen the socket the sleep closed; re-subscribe
       if (BM && BM.engine && BM.engine.enabled()) BM.engine.union().catch(() => {});
     });

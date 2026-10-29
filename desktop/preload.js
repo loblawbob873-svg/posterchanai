@@ -289,6 +289,8 @@ if (isOurPage) {
      * listening, else ''. Asked at the moment the client's Store starts, not at preload time -- the service
      * may come up a moment after the window. Store treats '' (or a dead socket) as "use IndexedDB". */
     localRelay: () => { try { return ipcRenderer.sendSync('pc:localrelay:url') || ''; } catch (_) { return ''; } },
+    /* PosterFox's Passwords add-on pairs from this (desktop/browserpairing.js): the code, or null at sign-out. */
+    setBrowserPairing: (code) => ipcRenderer.invoke('pc:browser-pairing', code == null ? null : String(code)),
     /* Multi-monitor PosterChanOS has one renderer per output. Only the primary may run unattended
      * services such as folder sync; otherwise every extra monitor becomes another filesystem
      * writer with the same device identity. */

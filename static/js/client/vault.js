@@ -114,10 +114,12 @@
         _retired = true;
         try{ localStorage.removeItem(_lsRaw()); }catch(_){ }
         _key = null; _lib = null;
+        _clearOS();
         return _clearAndroid();
       },
       // Android: push the decrypted set into the autofill service's own store. No-op elsewhere.
       syncAndroid: () => _syncAndroid(),
+      syncOS: () => _syncOS(),
       syncBackground,
       // The phone folder drawer is an overlay, so hardware Back has to close it before it walks the
       // view stack — the same hook Notes needed, for the same reason.
@@ -201,7 +203,8 @@
         // storage. Turning this off and leaving that behind would make the setting's own
         // description untrue.
         _clearAndroid();
-      } else if(_key){ localStorage.setItem(_lsRaw(), V().toB64(_key)); _syncAndroid(); }
+        _clearOS();
+      } else if(_key){ localStorage.setItem(_lsRaw(), V().toB64(_key)); _syncAndroid(); _syncOS(); }
     }catch(_){ }
   }
 
@@ -1496,6 +1499,82 @@
    *               NIP-07/NIP-46/Amber login has nothing to hand over, and pretending otherwise
    *               would produce a pairing that silently can't save.
    */
+  /* The pairing a browser add-on is handed: by "Pair a device" (shown as a code) and, on PosterChanOS, by _syncOS.
+   * null when `full` was asked of a signer that cannot delegate a session. Needs the vault key (ensureKey). */
+  function _pairPayload(mode){
+    /* Every relay this device talks to, not just the configured one. The app already
+     * publishes to all of them (Relay._send broadcasts to the pool), so the same vault is on
+     * each — but the extension only ever knew about one, which made that one a single point of
+     * failure for reading a password. `relay` stays for a device paired by an older build. */
+    const relays = [...new Set([
+      ...((Relay().urls && Relay().urls()) || []),
+      (PC.CFG && PC.CFG.relay_url) || '',
+    ].filter(Boolean))];
+    /* …and the INSTANCE, which is new in v1 pairings and additive.
+     *
+     * The extension has never made an HTTP request — it is relay-only by design, and that is
+     * the right default. But a page screenshot cannot live in a note (NIP-44 refuses plaintext
+     * over 65535 bytes), so it has to go to the encrypted drive, and the extension cannot reach
+     * a drive it has no address for. A relay URL is not one: `wss://relay.example` says nothing
+     * about where the app is served from, and guessing is how you upload someone's screenshot
+     * to a host they never chose.
+     *
+     * An older extension ignores the field; a newer one paired by an older app simply has no
+     * screenshot feature and says so, rather than failing at upload time. */
+    const payload = { v:1, t:'pcvault', pubkey: ME().pubkey, key: V().toB64(_key),
+                      relay: relays[0] || '', relays, mode,
+                      api: (PC.apiBase && PC.apiBase()) || '',
+                      // …and WHERE ATTACHMENTS LIVE, which is not always the instance. A user
+                      // with their own Blossom server reads `pcres:` blobs from THAT host, so an
+                      // extension uploading to the instance would write a note whose picture
+                      // 404s on the only screen it is ever opened from.
+                      media: (PC.mediaServer && PC.mediaServer()) || '' };
+    if(mode === 'full'){
+      /* The live signer is authoritative. A resumed NIP-46 transport may have repaired its
+       * ephemeral app key in memory while an older Session record still has no `sk`; using
+       * that stale record emitted a code that SAID full and could not sign. */
+      const s = (PC.signerSession && PC.signerSession()) || null;
+      const sk = (s && s.mode === 'local' && s.sk) || '';
+      if(sk) payload.sk = sk;
+      else if(s && s.mode === 'nip46' && s.sk && s.remotePk){
+        /* This is the APP'S ephemeral NIP-46 key, never the account nsec. The extension uses
+         * it to ask the same PosterChan Signer directly, including after this window closes. */
+        payload.nip46 = { sk:s.sk, remotePk:s.remotePk, userPk:s.userPk || ME().pubkey,
+                          relay:s.relay || '', relays:Array.isArray(s.relays)?s.relays:[],
+                          enc:s.enc === 'nip44' ? 'nip44' : 'nip04' };
+      } else return null;
+    }
+    return payload;
+  }
+
+  /* POSTERCHANOS PAIRS POSTERFOX'S PASSWORDS ADD-ON BY ITSELF ("we need to make sure that the passwords extension
+   * automatically connects to posterchanOS without any config", 2026-10-29). The desktop shell writes the pairing into
+   * Firefox's managed storage for the add-on (desktop/browserpairing.js), and the add-on pairs from it. FULL when the
+   * signer can delegate (the same home already holds this key), read-only otherwise. Only while the vault may stay
+   * unlocked on this device -- the same rule as Android autofill -- and never creates a vault: one that does not exist
+   * yet is paired the next time this runs after it does. Cleared at sign-out and when "stay unlocked" is turned off. */
+  let _osLast = null;
+  async function _syncOS(){
+    const sh = window.pcShell;
+    if(!sh || !sh.setBrowserPairing) return false;
+    try{
+      if(_retired || !ME()?.pubkey || !stayUnlocked()) return _clearOS();
+      try{ await ensureKey(false); }catch(_){ return false; }
+      if(!_key || !_sameOwner()) return false;
+      const payload = _pairPayload('full') || _pairPayload('ro');
+      const code = V().toB64(new TextEncoder().encode(JSON.stringify(payload)));
+      if(code === _osLast) return true;
+      const r = await sh.setBrowserPairing(code);
+      if(r === 'written' || r === 'unchanged'){ _osLast = code; return true; }
+      return false;
+    }catch(_){ return false; }
+  }
+  function _clearOS(){
+    _osLast = null;
+    try{ const sh = window.pcShell; if(sh && sh.setBrowserPairing) return sh.setBrowserPairing(null); }catch(_){ }
+    return false;
+  }
+
   function openPair(){
     const canFull = ME() && (ME().mode === 'local' || ME().mode === 'nip46');
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-link"></use></svg>Pair a device</h3>
@@ -1527,48 +1606,8 @@
         out.innerHTML = '<div class="muted small">preparing…</div>';
         try{
           await ensureKey();
-          /* Every relay this device talks to, not just the configured one. The app already
-           * publishes to all of them (Relay._send broadcasts to the pool), so the same vault is on
-           * each — but the extension only ever knew about one, which made that one a single point of
-           * failure for reading a password. `relay` stays for a device paired by an older build. */
-          const relays = [...new Set([
-            ...((Relay().urls && Relay().urls()) || []),
-            (PC.CFG && PC.CFG.relay_url) || '',
-          ].filter(Boolean))];
-          /* …and the INSTANCE, which is new in v1 pairings and additive.
-           *
-           * The extension has never made an HTTP request — it is relay-only by design, and that is
-           * the right default. But a page screenshot cannot live in a note (NIP-44 refuses plaintext
-           * over 65535 bytes), so it has to go to the encrypted drive, and the extension cannot reach
-           * a drive it has no address for. A relay URL is not one: `wss://relay.example` says nothing
-           * about where the app is served from, and guessing is how you upload someone's screenshot
-           * to a host they never chose.
-           *
-           * An older extension ignores the field; a newer one paired by an older app simply has no
-           * screenshot feature and says so, rather than failing at upload time. */
-          const payload = { v:1, t:'pcvault', pubkey: ME().pubkey, key: V().toB64(_key),
-                            relay: relays[0] || '', relays, mode,
-                            api: (PC.apiBase && PC.apiBase()) || '',
-                            // …and WHERE ATTACHMENTS LIVE, which is not always the instance. A user
-                            // with their own Blossom server reads `pcres:` blobs from THAT host, so an
-                            // extension uploading to the instance would write a note whose picture
-                            // 404s on the only screen it is ever opened from.
-                            media: (PC.mediaServer && PC.mediaServer()) || '' };
-          if(mode === 'full'){
-            /* The live signer is authoritative. A resumed NIP-46 transport may have repaired its
-             * ephemeral app key in memory while an older Session record still has no `sk`; using
-             * that stale record emitted a code that SAID full and could not sign. */
-            const s = (PC.signerSession && PC.signerSession()) || null;
-            const sk = (s && s.mode === 'local' && s.sk) || '';
-            if(sk) payload.sk = sk;
-            else if(s && s.mode === 'nip46' && s.sk && s.remotePk){
-              /* This is the APP'S ephemeral NIP-46 key, never the account nsec. The extension uses
-               * it to ask the same PosterChan Signer directly, including after this window closes. */
-              payload.nip46 = { sk:s.sk, remotePk:s.remotePk, userPk:s.userPk || ME().pubkey,
-                                relay:s.relay || '', relays:Array.isArray(s.relays)?s.relays:[],
-                                enc:s.enc === 'nip44' ? 'nip44' : 'nip04' };
-            } else { out.innerHTML = '<div class="nt-warn small">this signer cannot delegate a browser session — pair read-only instead</div>'; return; }
-          }
+          const payload = _pairPayload(mode);
+          if(!payload){ out.innerHTML = '<div class="nt-warn small">this signer cannot delegate a browser session — pair read-only instead</div>'; return; }
           const code = V().toB64(new TextEncoder().encode(JSON.stringify(payload)));
           out.innerHTML = `<div class="pv-pair-code"><textarea class="input" id="pv-code" rows="4" readonly>${enc(code)}</textarea></div>
             <div class="pv-pair-copy"><button class="btn btn-neon small" id="pv-code-copy">Copy code</button></div>

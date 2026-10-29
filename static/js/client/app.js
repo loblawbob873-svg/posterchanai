@@ -4779,6 +4779,7 @@
     // survives a logout unless it is asked to go. A handed-down phone would otherwise keep
     // autofilling the previous user's passwords into every app on it.
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+    try{ window.pcShell?.setBrowserPairing?.(null); }catch(_){}   // PosterFox's Passwords add-on unpairs (vault.js _syncOS)
     // The decrypted DM cache goes with it, for the same reason: a handed-down device must not leave
     // the previous user's messages readable to whoever opens this browser next. The KEY doc stays on
     // the relay — it is theirs, and signing back in rebuilds the cache from it.
@@ -5159,8 +5160,17 @@
     }).then(vault => { if(!vault) delete _lateLoad['vault.js']; }).catch(()=>{});
   }
 
+  /* PosterChanOS: PosterFox's Passwords add-on is paired by the desktop (vault.js _syncOS), on the same signal. */
+  function _syncBrowserPairing(){
+    if(GUEST || !ME?.pubkey || !window.pcShell?.setBrowserPairing) return;
+    _withModule('vault.js', 'PCVault', vault => {
+      if(vault.syncOS) vault.syncOS().catch(()=>{});
+    }).then(vault => { if(!vault) delete _lateLoad['vault.js']; }).catch(()=>{});
+  }
+
   function _flushPrivateQueues(){
     _syncAutofillBackground();
+    _syncBrowserPairing();
     for(const m of ['PCNotes', 'PCVault']){
       try{ const M = window[m]; if(M && M.flush) M.flush(); }catch(_){}
     }
@@ -5746,6 +5756,7 @@
     try{ Session.save(a.sess); }catch(_){}
     try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never cross identities
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}
+    try{ window.pcShell?.setBrowserPairing?.(null); }catch(_){}   // PosterFox's Passwords add-on unpairs (vault.js _syncOS)
     try{ Relay.worker.call('clearKey', {}); }catch(_){}
     try{ fetch('/api/auth/logout', { method:'POST' }); }catch(_){}
     // The phone book belongs to the account being left, not to the device — see _forgetPhonebook.
