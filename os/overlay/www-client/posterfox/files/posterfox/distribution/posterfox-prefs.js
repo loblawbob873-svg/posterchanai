@@ -12,6 +12,27 @@ pref("extensions.activeThemeID", "cyberpunk-theme@poster.place");
 pref("browser.ml.chat.enabled", true);
 pref("browser.ml.chat.sidebar", true);
 pref("browser.ml.chat.shortcuts", true);
+// MOZILLA'S OTHER AI FEATURES ARE OFF ("Disable mozilla password manager and AI features, we have our own", 2026-10-29):
+// the local inference engine and what runs on it (link previews, smart tab groups, page assist). The sidebar above
+// stays -- its provider is PosterChan's AI.
+pref("browser.ml.enable", false);
+pref("browser.ml.linkPreview.enabled", false);
+pref("browser.ml.pageAssist.enabled", false);
+pref("browser.tabs.groups.smart.enabled", false);
+pref("extensions.ml.enabled", false);
+
+// FIREFOX'S PASSWORD MANAGER IS OFF: PosterChan Passwords (built in) saves, fills and generates them. Firefox no longer
+// offers to save or fill; logins an old Firefox profile already holds stay readable in about:logins, to move over.
+pref("signon.rememberSignons", false);
+pref("signon.autofillForms", false);
+pref("signon.generation.enabled", false);
+pref("signon.management.page.breach-alerts.enabled", false);
+pref("signon.firefoxRelay.feature", "disabled");
+
+// STRICT TRACKING PROTECTION, and Firefox's own DNS over HTTPS off (DNS goes to the resolver PosterChanOS configures;
+// Tor tabs resolve through Tor regardless). Both are policies.json (EnableTrackingProtection Category=strict,
+// DNSOverHTTPS Enabled=false), not locked; the category is repeated here so it reads "strict" before the policy runs.
+pref("browser.contentblocking.category", "strict");
 
 // Quiet by default: no sponsored anything, no "what's new" pages, no default-browser nagging.
 // THE NEW TAB'S SHORTCUTS ARE POSTERCHAN'S ("remove the wikipedia, youtube, reddit and add-ons links on new tab page and

@@ -111,6 +111,18 @@
           }
         }
       }
+    },
+    "EnableTrackingProtection": {
+      "Value": true,
+      "Locked": false,
+      "Cryptomining": true,
+      "Fingerprinting": true,
+      "EmailTracking": true,
+      "Category": "strict"
+    },
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": false
     }
   }
 }
