@@ -1834,7 +1834,7 @@ async def git_repo_page(owner: str, repo: str, request: Request):
                 # The identifier as it was ASKED FOR, not as it was found: og:url must be the URL
                 # the reader is on, or a crawler canonicalises the card onto a different address.
                 meta = git_share.og_meta(card, "%s/r/%s/%s" % (base, owner, repo),
-                                         fallback_image=base + "/static/posterchan-relay.png")
+                                         fallback_image=base + "/static/icon-512.png")
     except Exception as e:
         # A logger fetched HERE, never a module-level `logger` — main.py has none, so the guard meant
         # to keep a preview failure harmless would itself have raised NameError and 500'd the page.
@@ -1871,7 +1871,7 @@ async def _profile_page(name: str, request: Request, path_prefix: str):
                         else str(request.base_url).rstrip("/"))
                 handle = name.split("@")[0] if "@" in name else name
                 meta = profile_share.og_meta(card, handle, base + path_prefix + name,
-                                             fallback_image=base + "/static/posterchan-relay.png")
+                                             fallback_image=base + "/static/icon-512.png")
     except Exception as e:
         logging.getLogger(__name__).warning("[profile] preview failed for %r: %s", name, e)
     return await render_client_shell(request, None, meta=meta)

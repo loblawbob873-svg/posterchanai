@@ -1201,10 +1201,10 @@ class RelayServer:
 
     def nip11_doc(self, host: str = "") -> bytes:
         c = self.cfg
-        # Relay icon/avatar (shown by clients like Yakihonne): configured URL, else the
-        # PosterChan avatar served from this host's /static.
+        # Relay icon/avatar (shown by clients like Yakihonne): configured URL, else the round
+        # PosterChan badge (the app icon) served from this host's /static.
         icon = c.get("icon") or (
-            f"https://{host}/static/posterchan-relay.png" if host else "")
+            f"https://{host}/static/icon-512.png" if host else "")
         doc = {
             "name": c.get("name") or "PosterChanAI Relay",
             "description": c.get("description") or "Web-of-trust relay",
