@@ -39,18 +39,20 @@ done
   echo "session-switch sudo rule has an unsafe mode" >&2; exit 1;
 }
 
-for command in wayfire foot firefox-bin virsh qemu-system-x86_64; do
+for command in wayfire foot virsh qemu-system-x86_64; do
   command -v "$command" >/dev/null || { echo "first-run core command is missing: $command" >&2; exit 1; }
 done
-# A package-owned wrapper can survive while the ISO excludes its /opt/firefox payload.
-# Exercise the loader without opening a browser/profile; command -v cannot detect this.
+# THE BROWSER: PosterFox, or Gentoo's firefox-bin where gentoo.sh's installBrowser had no PosterFox binary to use.
+# A package-owned wrapper can survive while the payload behind it does not, so the loader is exercised without opening
+# a browser/profile; command -v cannot detect that.
 check_firefox_payload(){
-  local version
-  if ! version="$(timeout 10 firefox-bin --version 2>&1)"; then
+  local version browser
+  browser="$(command -v posterfox || command -v firefox-bin)" || { echo "first-run core command is missing: posterfox" >&2; return 1; }
+  if ! version="$(timeout 10 "$browser" --version 2>&1)"; then
     printf 'Installed Firefox cannot execute its payload: %s\n' "$version" >&2
     return 1
   fi
-  if ! [[ "$version" =~ Mozilla[[:space:]]Firefox[[:space:]][0-9] ]]; then
+  if ! [[ "$version" =~ Mozilla[[:space:]](Firefox|PosterFox)[[:space:]][0-9] ]]; then
     printf 'Installed Firefox returned no browser version: %s\n' "$version" >&2
     return 1
   fi

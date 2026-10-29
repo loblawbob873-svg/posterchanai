@@ -28,5 +28,17 @@ What lives in *this* repository:
 - `os/firefox-theme/`: the cyberpunk theme. PosterFox builds it unsigned into its application scope; firefox-bin
   uses the copy signed by addons.mozilla.org.
 
-PosterChanOS machines install `firefox-bin` until the first signed PosterFox binary is published and checked; see
-"Not done yet" in MAINTAINING.md.
+## On PosterChanOS
+
+- **New installs get PosterFox.** `gentoo.sh` installs it on its own step, `installBrowser`, with
+  `emerge --getbinpkgonly www-client/posterfox`, from the signed binhost at
+  `https://gentoo.poster.place/posterchan-binpkgs`. It never compiles Firefox. If there is no binary that fits the
+  machine, the install uses Gentoo's prebuilt `firefox-bin` instead and says so; `gentoo.sh browser` tries again later.
+- **Every package is verified.** The binhost entry has `verify-signature = true`. The signing key is pinned inside
+  `gentoo.sh` (`POSTERCHAN_BINPKG_FPR`) and trusted in Portage's own keyring. A package signed by any other key is
+  refused.
+- **Links open in PosterFox.** `/etc/xdg/mimeapps.list` (from `app-misc/posterchanos-shell`) makes `posterfox.desktop`
+  the handler for http, https and HTML.
+- **Updates.** `update-posterchan` updates PosterFox from its binary only, on every run.
+- **Machines installed earlier** keep `firefox-bin`. To switch one: `gentoo.sh repo` (adds the binhost and the key),
+  then `gentoo.sh browser`.

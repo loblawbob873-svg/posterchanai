@@ -24,12 +24,12 @@ def test_clean_image_keeps_firefox_but_excludes_private_opt_siblings(tmp_path):
 
 def test_final_image_rejects_missing_firefox_binary_or_library():
     source = SOURCE.read_text()
-    marker = 'for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do'
-    assert marker in source, 'Final squashfs gate never verifies the Firefox payload'
+    marker = 'for F in usr/bin/posterfox usr/lib64/posterfox/posterfox usr/lib64/posterfox/libxul.so; do'
+    assert marker in source, 'Final squashfs gate never verifies the PosterFox payload'
     start = source.index(marker)
     block = source[start:source.index('\n\t\tdone', start)+len('\n\t\tdone')]
     assert source.index('LS="$(unsquashfs -l') < start < source.index('if [[ -n "$MISSING" ]]', start)
-    paths = ('usr/bin/firefox-bin', 'opt/firefox/firefox-bin', 'opt/firefox/libxul.so')
+    paths = ('usr/bin/posterfox', 'usr/lib64/posterfox/posterfox', 'usr/lib64/posterfox/libxul.so')
     for absent in (None, *paths):
         listing = '\n'.join('squashfs-root/' + p for p in paths if p != absent)
         result = subprocess.run(['bash', '-c', 'MISSING="";\n' + block + '\nprintf "%s" "$MISSING"'],

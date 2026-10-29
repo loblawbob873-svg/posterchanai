@@ -30,9 +30,9 @@ def test_gate_covers_update_first_run_and_security_critical_modes():
     assert "for command in wayfire foot" in source
     assert "exec sway" not in source
     assert 'getent passwd "$autologin_user"' in source
-    # PosterChanOS installs Gentoo's prebuilt www-client/firefox-bin package.  It intentionally
-    # exposes /usr/bin/firefox-bin rather than relying on a distribution-specific `firefox` alias.
-    assert "firefox-bin" in source
+    # PosterChanOS installs PosterFox (/usr/bin/posterfox), or Gentoo's firefox-bin when installBrowser had no
+    # PosterFox binary to use -- either one satisfies the gate, and neither as a `firefox` alias.
+    assert "command -v posterfox || command -v firefox-bin" in source
 
 
 def test_firefox_gate_executes_payload_not_just_the_surviving_wrapper(tmp_path):
@@ -40,8 +40,9 @@ def test_firefox_gate_executes_payload_not_just_the_surviving_wrapper(tmp_path):
     source = GATE.read_text()
     start = source.index('check_firefox_payload(){')
     function = source[start:source.index('\n}\n', start)+3]
-    wrapper = tmp_path / 'firefox-bin'
+    wrapper = tmp_path / 'posterfox'
     for body, ok in (
+        ('echo "Mozilla PosterFox 159.0"', True),
         ('echo "Mozilla Firefox 142.0"', True),
         ('echo "/opt/firefox/firefox-bin: No such file or directory" >&2; exit 127', False),
         ('echo "error while loading shared libraries: libxul.so" >&2; exit 127', False),

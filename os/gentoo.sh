@@ -219,7 +219,8 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland vaapi")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
-BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
+# THE BROWSER IS NOT IN THESE SETS: it is PosterFox, installed from its own signed binary by installBrowser, which
+# can never fall back to compiling Firefox (hours) the way a package inside the -uDN set would.
 # ── PosterChanOS ────────────────────────────────────────────────────────────────────────────────
 # The shell is the PosterChan desktop itself, so there is no second desktop environment to install.
 # A browser and a Steam game have to appear on that desktop, and those two rule out every embedding
@@ -295,7 +296,6 @@ media-video/ffmpeg dev-python/pillow app-misc/posterchan-office \
 net-print/cups \
 x11-misc/xdg-utils x11-apps/xrdb gnome-base/gsettings-desktop-schemas \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
-www-client/firefox-bin \
 games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
@@ -438,6 +438,8 @@ MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cu
 # this used to name =gui-wm/gamescope-3.16.25-r1, and once Gentoo dropped that ebuild the exception matched nothing,
 # so a from-scratch install could not emerge gamescope at all ("masked by: ~amd64 keyword", 2026-10-27).
 MASKED_PACKAGES+=("<gui-wm/gamescope-3.17")
+# PosterFox is keyworded ~amd64 in the PosterChanOS overlay, like every package there.
+MASKED_PACKAGES+=(www-client/posterfox)
 
 fixSound() {
 	/usr/bin/systemctl --user disable --now pulseaudio.socket pulseaudio.service
@@ -531,6 +533,15 @@ gentooRepo() {
 	echo "priority = 9999" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "sync-type = webrsync" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+	# POSTERCHANOS'S OWN BINARY PACKAGES (PosterFox): signed on the release machine with the key trustPosterchanBinhost
+	# pins, and refused unless that signature verifies. Above Gentoo's priority, so its build of PosterFox is the one used.
+	{
+		echo "[posterchan]"
+		echo "priority = 10000"
+		echo "sync-uri = https://gentoo.poster.place/posterchan-binpkgs"
+		echo "verify-signature = true"
+	} >$TARGET/etc/portage/binrepos.conf/posterchan.conf
+	if [ -d "$TARGET/etc/portage/gnupg" ]; then trustPosterchanBinhost; fi
 
 	# THE STAGE3 SHIPS ITS OWN BINHOST, AND IT IS NOT OURS. catalyst writes
 	# /etc/portage/binrepos.conf/gentoo.conf into every stage3 -- "[gentoo], priority = 1, sync-uri =
@@ -1145,6 +1156,35 @@ configurePortage() {
 	echo -e "\033[1;33mConfiguring Binary Package GPG keys\033[0m"
 	echo
 	chroot $TARGET /usr/bin/getuto
+	trustPosterchanBinhost
+}
+
+# THE KEY POSTERCHANOS BINARY PACKAGES ARE SIGNED WITH, PINNED HERE. Imported into Portage's own keyring (getuto's
+# /etc/portage/gnupg) and locally signed with getuto's key, which is what makes Portage trust it for
+# `verify-signature = true`. Pinned in this file rather than downloaded beside the packages: a key fetched from the
+# server it vouches for vouches for nothing. Idempotent (also run by `gentoo.sh repo`). The secret half lives only on
+# the release machine (posterfox/tools/binhost-setup.sh).
+POSTERCHAN_BINPKG_FPR="7B690AA70C09AD1AD7748CF5B6F8DA9DDF2EF936"
+trustPosterchanBinhost() {
+	local g="$TARGET/etc/portage/gnupg"
+	[ -d "$g" ] || { echo -e "\033[1;31m  ✗ no Portage keyring (getuto) -- PosterFox binaries cannot be verified\033[0m"; return 1; }
+	cat >"$g/posterchanos-binpkgs.asc" <<'POSTERCHAN_KEY'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEauK9bRYJKwYBBAHaRw8BAQdAZ0D2o4q7e0eAjBCcnnGJ8Lux+zs62Cwt6512
+MqZarZa0M1Bvc3RlckNoYW5PUyBiaW5hcnkgcGFja2FnZXMgPGJpbnBrZ3NAcG9z
+dGVyLnBsYWNlPoi1BBMWCgBdFiEEe2kKpwwJrRrXdIz1tvjand8u+TYFAmrivW0b
+FIAAAAAABAAObWFudTIsMi41KzEuMTIsMiwyAhsDBQkJZgGABQsJCAcCAiICBhUK
+CQgLAgQWAgMBAh4HAheAAAoJELb42p3fLvk2CDMBANb44Z17SvXrOuyLrZ1mQuUn
+Exg33Yv4Rx4Zo/I9paSpAQCh5lVzxOOl3ba8PSKnaE7QG3za8Zk/YiLjGfvI3NrV
+Ag==
+=uBjZ
+-----END PGP PUBLIC KEY BLOCK-----
+POSTERCHAN_KEY
+	chroot "$TARGET" gpg --homedir /etc/portage/gnupg --batch --quiet --import /etc/portage/gnupg/posterchanos-binpkgs.asc \
+		&& chroot "$TARGET" gpg --homedir /etc/portage/gnupg --batch --yes --pinentry-mode loopback \
+			--passphrase-file /etc/portage/gnupg/pass --quick-lsign-key "$POSTERCHAN_BINPKG_FPR" \
+		|| { echo -e "\033[1;31m  ✗ could not trust the PosterChanOS package key -- PosterFox will not install\033[0m"; return 1; }
 }
 
 buildGentoo() {
@@ -1228,6 +1268,10 @@ buildGentoo() {
 	# refuses a no-multilib profile with a sentence rather than half-installing it, and
 	# `gentoo.sh steam` re-runs it whenever the owner wants. So the verdict is SAID -- never silent,
 	# which is the failure this file keeps having to relearn -- and kept out of the exit status.
+	# The browser, from its signed binary (installBrowser). A failure here is said, and the machine is finished anyway.
+	if ! chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh browser; then
+		echo -e "\033[1;31mNo browser installed -- re-run it with: gentoo.sh browser\033[0m"
+	fi
 	if ! chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh steam; then
 		echo -e "\033[1;31mSteam did not install — everything else did. Re-run it with: gentoo.sh steam\033[0m"
 	fi
@@ -1515,6 +1559,19 @@ POSTERCHAN_PROFILE
 	_pc_stage done "PosterChanOS is installed"
 	echo
 	echo
+}
+
+# THE BROWSER: PosterFox, from its signed binary ONLY (--getbinpkgonly can never compile), as its own step so the big
+# package set cannot pull it into a source build. With no matching binary -- the binhost unreachable, a USE mismatch on a
+# customised machine -- the machine still gets a browser: Gentoo's prebuilt firefox-bin, and it says so.
+# `gentoo.sh browser` runs it again.
+installBrowser() {
+	if /usr/bin/emerge --getbinpkgonly --noreplace www-client/posterfox; then
+		return 0
+	fi
+	echo -e "\033[1;33mPosterFox has no binary package for this machine yet -- installing Firefox instead.\033[0m"
+	echo -e "\033[1;33mRun gentoo.sh browser later to switch to PosterFox.\033[0m"
+	/usr/bin/emerge --noreplace www-client/firefox-bin
 }
 
 installPackages() {
@@ -2496,7 +2553,7 @@ PROFILE
 	# webkit-gtk is one of the longest builds in the tree, and the way you find out you need it is
 	# that an install which looked nearly finished sits on one package all night. A mask turns that
 	# into an error at dependency-resolution time, with the name of whatever asked for it. The
-	# browser here is firefox-BIN, which is prebuilt and pulls none of this.
+	# browser here is PosterFox, installed from its prebuilt binary package, which pulls none of this.
 	mkdir -p ${TARGET}/etc/portage/package.mask
 	# A BARE atom masks EVERY version and slot of a package, which is what is wanted here — and it
 	# is also why `net-libs/webkit-gtk-6` was wrong. There is no such package: the GTK4/soup3 webkit
@@ -4973,9 +5030,9 @@ DESKTOP
 			|| MISSING="$MISSING /opt/posterchan"
 		echo "$LS" | grep -qx "squashfs-root/usr/local/bin/posterchan" \
 			|| MISSING="$MISSING /usr/local/bin/posterchan"
-		# The launcher and Portage records can survive a missing /opt/firefox tree. Check the
+		# The launcher and Portage records can survive a missing browser tree. Check the
 		# packed output itself, not the builder's disk, before this image can be published.
-		for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do
+		for F in usr/bin/posterfox usr/lib64/posterfox/posterfox usr/lib64/posterfox/libxul.so; do
 			printf '%s\n' "$LS" | grep -qx "squashfs-root/$F" || MISSING="$MISSING /$F"
 		done
 		# STEAM IS A LAUNCHER PLUS A 32-BIT RUNTIME, AND THE LAUNCHER ALONE IS WORTHLESS.
@@ -6358,6 +6415,8 @@ elif [ "$1" = "bootloader" ]; then
 	bootloader
 elif [ "$1" = "steam" ]; then
 	installSteam
+elif [ "$1" = "browser" ]; then
+	installBrowser
 elif [ "$1" = "install-packages" ]; then
 	installPackages
 elif [ "$1" = "posterchan-shell" ]; then
