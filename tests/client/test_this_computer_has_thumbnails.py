@@ -53,7 +53,9 @@ class TestTheGlyphGetsOutOfTheWay(unittest.TestCase):
     def test_the_stylesheet_paints_the_thumbnail(self):
         m = re.search(r"\.file-icon\[data-thumb-host\]\{([^}]*)\}", CSS)
         self.assertIsNotNone(m, "nothing draws the thumbnail the tile asked for")
-        self.assertIn("background-size:cover", m.group(1))
+        # The whole picture, never trimmed ("we should not be cropping anywhere", 2026-10-28).
+        self.assertIn("background-size:contain", m.group(1))
+        self.assertIn("background-repeat:no-repeat", m.group(1))
 
     def test_the_glyph_is_replaced_not_covered(self):
         """A paperclip behind a photo is what '0 thumbnails' looked like from the other side."""

@@ -58,7 +58,8 @@ def test_an_unhosted_window_still_gets_a_taskbar_button():
     """The thing that makes this safe. Without it the change would simply lose every native app."""
     assert "nativeTasks=rows.filter(r=>!nativeWins().some(" in OS_JS, (
         "nativeTasks no longer collects the windows the desktop does not host")
-    bar = OS_JS[OS_JS.index("+ nativeTasks.map(w =>"):]
+    # Only the workspace in front draws its windows (os.js _nwsHere); every one of them still gets a button.
+    bar = OS_JS[OS_JS.index("+ nativeTasks.filter(_nwsHere).map(w =>"):]
     bar = bar[:bar.index("</div>")]
     # The inline _ [] X buttons were REMOVED at the owner's request ("i do not want to see _ [] X
     # on every taskbar app ... rightclick on a taskbar open app will suffice"). What must survive is
