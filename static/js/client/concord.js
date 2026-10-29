@@ -1328,6 +1328,10 @@
       correct();
     });
     observer.observe(content);
+    /* AND THE SCROLLER ITSELF: a pinned room left 14px under the fold whenever the message area got SHORTER with the
+     * content unchanged -- the "is typing" line, the reply bar, a growing composer ("slightly above latest message",
+     * the posterchan room, 2026-10-29). Only the list was observed, and it had not changed size. */
+    if(content!==scroller)observer.observe(scroller);
   }
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
