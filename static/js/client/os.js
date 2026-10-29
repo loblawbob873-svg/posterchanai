@@ -95,7 +95,8 @@
    * Levels are per device (localStorage): which app is loud is a fact about these speakers. */
   const AV_KEY = 'pc_app_volume', _avEls = new Set();
   let _avLv = {}; try{ _avLv = JSON.parse(localStorage.getItem(AV_KEY) || '{}') || {}; }catch(_){}
-  const _avDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  // Guarded: os.js also runs in node harnesses (no DOM), where there is no media element to hook.
+  const _avDesc = typeof HTMLMediaElement === 'undefined' ? null : Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
   function _avApp(el){
     if(el.dataset && el.dataset.pcApp) return el.dataset.pcApp;
     const w = el.closest && el.closest('.osw'), win = w && wins.find(x => x.el === w);
@@ -103,6 +104,7 @@
   }
   const _avLevel = app => { const r = _avLv[app]; return !r ? 1 : (r.m ? 0 : Math.max(0, Math.min(1, +r.v))); };
   function _avApply(el){
+    if(!_avDesc) return;
     if(el.__pcBase == null) el.__pcBase = _avDesc.get.call(el);
     _avEls.add(el);
     try{ _avDesc.set.call(el, Math.max(0, Math.min(1, el.__pcBase * _avLevel(_avApp(el))))); }catch(_){}
@@ -110,7 +112,7 @@
   if(_avDesc && _avDesc.set) Object.defineProperty(HTMLMediaElement.prototype, 'volume', { configurable: true, enumerable: true,
     get(){ return this.__pcBase == null ? _avDesc.get.call(this) : this.__pcBase; },
     set(v){ this.__pcBase = Math.max(0, Math.min(1, +v)); _avApply(this); } });
-  document.addEventListener('play', e => { if(e.target instanceof HTMLMediaElement) _avApply(e.target); }, true);
+  if(_avDesc) document.addEventListener('play', e => { if(e.target instanceof HTMLMediaElement) _avApply(e.target); }, true);
   /** The mixer's view: one row per app that has made sound this session or has a window open, live. */
   function appVolumes(){
     for(const el of _avEls) if(!el.isConnected && el.paused && !(el.dataset && el.dataset.pcApp)) _avEls.delete(el);
