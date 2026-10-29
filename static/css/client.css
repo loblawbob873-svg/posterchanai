@@ -8974,21 +8974,14 @@ body.native:not(.desktop).term-view .tty-bar{padding-top:env(safe-area-inset-top
 .os-ghost{position:absolute;display:none;z-index:1;border-radius:12px;pointer-events:none;
   border:2px solid var(--neon);background:rgba(var(--accent-rgb),.14);
   box-shadow:0 0 30px rgba(var(--accent-rgb),.28) inset;transition:inset-inline-start .09s,top .09s,width .09s,height .09s}
-.os-layouts{position:absolute;z-index:99999;display:grid;grid-template-columns:repeat(4,38px);
-  gap:6px;padding:8px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
-  box-shadow:0 14px 34px rgba(0,0,0,.5)}
-.os-lay{width:38px;height:30px;border-radius:6px;border:1px solid var(--line);background:var(--panel);
-  cursor:pointer;padding:4px;display:block;position:relative}
-.os-lay:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.12)}
-/* Each button is a tiny picture of the zone: the filled block IS the half/quarter it snaps to. */
-.os-lay i{position:absolute;display:block;background:var(--neon);border-radius:2px;opacity:.85}
-.os-lay-left i {inset-inline-start:3px;top:3px;bottom:3px;width:14px}
-.os-lay-right i{inset-inline-end:3px;top:3px;bottom:3px;width:14px}
-.os-lay-max i  {inset:3px}
-.os-lay-tl i{inset-inline-start:3px;top:3px;width:14px;height:10px}
-.os-lay-tr i{inset-inline-end:3px;top:3px;width:14px;height:10px}
-.os-lay-bl i{inset-inline-start:3px;bottom:3px;width:14px;height:10px}
-.os-lay-br i{inset-inline-end:3px;bottom:3px;width:14px;height:10px}
+.os-layouts{position:absolute;z-index:99999;display:grid;grid-template-columns:repeat(4,64px);
+  gap:8px;padding:10px;border-radius:12px;background:var(--panel2);border:1px solid rgba(var(--accent-rgb),.45);
+  box-shadow:var(--glow),0 14px 34px rgba(0,0,0,.5)}
+/* A card is a little screen; each cell is a zone of it and lights up under the pointer. */
+.os-snapcard{display:grid;gap:3px;width:64px;height:44px;padding:3px;border-radius:7px;border:1px solid var(--line);background:var(--panel)}
+.os-snapcell{display:block;min-width:0;min-height:0;padding:0;border-radius:3px;border:1px solid rgba(var(--accent-rgb),.45);
+  background:rgba(var(--accent-rgb),.12);cursor:pointer}
+.os-snapcell:hover,.os-snapcell:focus-visible{background:var(--neon);border-color:var(--neon);box-shadow:0 0 8px rgba(var(--accent-rgb),.8);outline:0}
 
 /* Taskbar search — Win11 puts one next to Start. This one searches Nostr (the start menu already
    filters apps), so it is deliberately wide enough to type a name or an npub into. */

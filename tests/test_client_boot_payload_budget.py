@@ -117,7 +117,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.175 -> 8.178 for the COMMAND BAR's hooks in os.js (Ctrl+Space / Ctrl+K / Super+Space, its actions, and the
 #: search split into data rows it shares with the Search window). The bar itself (cmdbar.js + its CSS) loads on first
 #: open, never at boot. 8.1774 MB measured.
-BUDGET_MB = 8.178
+#: ...and 8.178 -> 8.180 for the Snap Layouts CARDS (thirds, two-thirds + a third, half + quarters) and their zones.
+#: 8.1792 MB measured.
+BUDGET_MB = 8.180
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

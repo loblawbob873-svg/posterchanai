@@ -6986,7 +6986,15 @@
              tl:   { x: 0,       y: 0,       w: hw, h: hh },
              tr:   { x: vw - hw, y: 0,       w: hw, h: hh },
              bl:   { x: 0,       y: vh - hh, w: hw, h: hh },
-             br:   { x: vw - hw, y: vh - hh, w: hw, h: hh } };
+             br:   { x: vw - hw, y: vh - hh, w: hw, h: hh },
+             // Thirds and two-thirds, for the Snap Layouts cards (three columns on a wide monitor).
+             l3:   { x: 0, y: 0, w: Math.round(vw / 3), h: vh },
+             m3:   { x: Math.round(vw / 3), y: 0, w: Math.round(vw * 2 / 3) - Math.round(vw / 3), h: vh },
+             r3:   { x: Math.round(vw * 2 / 3), y: 0, w: vw - Math.round(vw * 2 / 3), h: vh },
+             l23:  { x: 0, y: 0, w: Math.round(vw * 2 / 3), h: vh },
+             r13:  { x: Math.round(vw * 2 / 3), y: 0, w: vw - Math.round(vw * 2 / 3), h: vh },
+             l13:  { x: 0, y: 0, w: Math.round(vw / 3), h: vh },
+             r23:  { x: Math.round(vw / 3), y: 0, w: vw - Math.round(vw / 3), h: vh } };
   }
 
   /* Pointer hit-testing must use the SAME rendered work area as zones().  The taskbar participates
@@ -7146,9 +7154,20 @@
     focusWin(w);
   }
 
-  // The Snap Layouts flyout: hover (or tap) Maximise to place the window without dragging at all.
-  const LAYOUTS = [['left','Left half'], ['right','Right half'], ['max','Full screen'],
-                   ['tl','Top left'], ['tr','Top right'], ['bl','Bottom left'], ['br','Bottom right']];
+  /* THE SNAP LAYOUTS FLYOUT, the way Windows 11 draws it: hover (or tap) Maximise and pick a CELL of a layout card --
+   * every card is a small picture of the screen, and the cell clicked is where the window goes. [zone, col, row, cols, rows]. */
+  const LAYOUT_CARDS = [
+    ['Halves', '1fr 1fr', '1fr', [['left', 1, 1], ['right', 2, 1]]],
+    ['Two thirds and a third', '2fr 1fr', '1fr', [['l23', 1, 1], ['r13', 2, 1]]],
+    ['A third and two thirds', '1fr 2fr', '1fr', [['l13', 1, 1], ['r23', 2, 1]]],
+    ['Thirds', '1fr 1fr 1fr', '1fr', [['l3', 1, 1], ['m3', 2, 1], ['r3', 3, 1]]],
+    ['Half and quarters', '1fr 1fr', '1fr 1fr', [['left', 1, 1, 1, 2], ['tr', 2, 1], ['br', 2, 2]]],
+    ['Quarters', '1fr 1fr', '1fr 1fr', [['tl', 1, 1], ['tr', 2, 1], ['bl', 1, 2], ['br', 2, 2]]],
+    ['Full screen', '1fr', '1fr', [['max', 1, 1]]],
+  ];
+  const ZONE_NAMES = { left:'Left half', right:'Right half', max:'Full screen', tl:'Top left', tr:'Top right', bl:'Bottom left',
+                       br:'Bottom right', l3:'Left third', m3:'Middle third', r3:'Right third', l23:'Left two thirds',
+                       r13:'Right third', l13:'Left third', r23:'Right two thirds' };
 
   function hideLayouts(){
     clearTimeout(layoutT);
@@ -7162,13 +7181,19 @@
     layoutFor = w;
     const m = document.createElement('div');
     m.className = 'os-layouts';
-    m.innerHTML = LAYOUTS.map(([z, t]) =>
-      `<button class="os-lay os-lay-${z}" data-z="${z}" title="${t}" aria-label="${t}"><i></i></button>`).join('');
+    m.setAttribute('role', 'menu');
+    m.innerHTML = LAYOUT_CARDS.map(([title, cols, rows, cells]) =>
+      `<div class="os-snapcard" role="group" aria-label="${title}" style="grid-template-columns:${cols};grid-template-rows:${rows}">`
+      + cells.map(([z, c, r, cs, rs]) => `<button class="os-snapcell" data-z="${z}" role="menuitem" title="${ZONE_NAMES[z]}" `
+        + `aria-label="${ZONE_NAMES[z]}" style="grid-column:${c} / span ${cs || 1};grid-row:${r} / span ${rs || 1}"></button>`).join('')
+      + `</div>`).join('');
     desk.appendChild(m);
-    const r = btn.getBoundingClientRect(), dr = desk.getBoundingClientRect();
-    m.style.left = Math.max(8, Math.min(dr.width - 200, r.left - dr.left - 78)) + 'px';
-    m.style.top = (r.bottom - dr.top + 6) + 'px';
-    $$('.os-lay', m).forEach(b => b.onclick = (e) => {
+    // Rects are SCREEN pixels, style.left is the zoomed desk's own (body zoom on the desktop): divide by zf().
+    const r = btn.getBoundingClientRect(), dr = desk.getBoundingClientRect(), z = zf() || 1;
+    const mw = m.getBoundingClientRect().width;
+    m.style.left = Math.max(8, Math.min(dr.width - mw - 8, r.left - dr.left - mw / 2 + r.width / 2)) / z + 'px';
+    m.style.top = (r.bottom - dr.top + 6) / z + 'px';
+    $$('.os-snapcell', m).forEach(b => b.onclick = (e) => {
       e.stopPropagation();
       snapTo(w, b.dataset.z);
       hideLayouts();
