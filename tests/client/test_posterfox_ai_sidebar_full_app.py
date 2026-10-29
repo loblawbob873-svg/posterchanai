@@ -43,3 +43,20 @@ def test_the_sidebar_prompt_lands_in_ai_chat_unsent():
     assert got['value'] == PROMPT, got
     assert 'pcai' not in got['search'], ("the parameters stayed in the address, a reload would ask again", got)
     assert got['sent'] == 0, "the prompt was sent without the person pressing send"
+
+
+@CHROME
+def test_signed_out_in_the_narrow_sidebar_the_prompt_waits_for_sign_in():
+    """The sidebar is a narrow panel (single-column layout) and its first use is usually signed out: the prompt must
+    still be in AI chat after signing in, not lost to the sign-in screen."""
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', {'width': 420, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False})
+        await asyncio.sleep(1.5)                       # the guest page has read ?pcai=1&q=... by now
+        await desktop.login(b)
+        await b.until("!!document.getElementById('ai-input') && document.getElementById('ai-input').value.length>0")
+        got['value'] = await b.js("document.getElementById('ai-input').value")
+
+    asyncio.run(desktop.with_browser('online', '?pcai=1&q=' + urllib.parse.quote(PROMPT), check))
+    assert got['value'] == PROMPT, got
