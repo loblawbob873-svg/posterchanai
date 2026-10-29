@@ -123,7 +123,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: the compositor ticks -- boot code, since every window and the taskbar read it. 8.1845 MB measured.
 #: ...and 8.185 -> 8.188 for the Thunderbird-safe calendar parser (quote-aware ical.js, a boot module) and the PHOTOS
 #: entry points (nav item, route, deps -- photos.js and its CSS load on first open). 8.1871 MB measured.
-BUDGET_MB = 8.188
+#: ...and 8.188 -> 8.192 for the Screen Recorder's entry points and PER-APP VOLUME's boot hook (os.js: every media
+#: element plays at its window's level -- it must be in place before anything plays; the mixer panel itself,
+#: appmixer.js, loads on first open). 8.1915 MB measured.
+BUDGET_MB = 8.192
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

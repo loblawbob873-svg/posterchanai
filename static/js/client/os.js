@@ -88,6 +88,52 @@
     return true;
   }
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
+  /* PER-APP VOLUME (2026-10-28): every <audio>/<video> plays at ITS APP'S level times its own. The app's own slider
+   * keeps working -- `volume` reads back what the app set, the element plays at that x the mixer's level -- so no
+   * app knows the mixer exists. The app is the window the element sits in (an element moves with its window when
+   * the window is parked), else `data-pc-app` (the music player's detached <audio> says "music"), else "other".
+   * Levels are per device (localStorage): which app is loud is a fact about these speakers. */
+  const AV_KEY = 'pc_app_volume', _avEls = new Set();
+  let _avLv = {}; try{ _avLv = JSON.parse(localStorage.getItem(AV_KEY) || '{}') || {}; }catch(_){}
+  const _avDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  function _avApp(el){
+    if(el.dataset && el.dataset.pcApp) return el.dataset.pcApp;
+    const w = el.closest && el.closest('.osw'), win = w && wins.find(x => x.el === w);
+    return win ? win.view : 'other';
+  }
+  const _avLevel = app => { const r = _avLv[app]; return !r ? 1 : (r.m ? 0 : Math.max(0, Math.min(1, +r.v))); };
+  function _avApply(el){
+    if(el.__pcBase == null) el.__pcBase = _avDesc.get.call(el);
+    _avEls.add(el);
+    try{ _avDesc.set.call(el, Math.max(0, Math.min(1, el.__pcBase * _avLevel(_avApp(el))))); }catch(_){}
+  }
+  if(_avDesc && _avDesc.set) Object.defineProperty(HTMLMediaElement.prototype, 'volume', { configurable: true, enumerable: true,
+    get(){ return this.__pcBase == null ? _avDesc.get.call(this) : this.__pcBase; },
+    set(v){ this.__pcBase = Math.max(0, Math.min(1, +v)); _avApply(this); } });
+  document.addEventListener('play', e => { if(e.target instanceof HTMLMediaElement) _avApply(e.target); }, true);
+  /** The mixer's view: one row per app that has made sound this session or has a window open, live. */
+  function appVolumes(){
+    for(const el of _avEls) if(!el.isConnected && el.paused && !(el.dataset && el.dataset.pcApp)) _avEls.delete(el);
+    const rows = new Map();
+    const add = (app, label, icon) => { if(!rows.has(app)) rows.set(app, { app, label, icon, playing: false, v: _avLv[app] ? +_avLv[app].v : 1, m: !!(_avLv[app] && _avLv[app].m) }); return rows.get(app); };
+    for(const w of wins) add(w.view, w.title || w.view, w.icon || '');
+    for(const el of _avEls){
+      const app = _avApp(el);
+      const r = add(app, app === 'music' ? 'Music' : app === 'other' ? 'Other sounds' : app, app === 'music' ? '#i-music' : '#i-volume');
+      if(!el.paused && !el.muted) r.playing = true;
+    }
+    return [...rows.values()];
+  }
+  function setAppVolume(app, v, m){
+    const cur = _avLv[app] || { v: 1, m: false };
+    _avLv[app] = { v: v == null ? cur.v : Math.max(0, Math.min(1, +v)), m: m == null ? cur.m : !!m };
+    try{ localStorage.setItem(AV_KEY, JSON.stringify(_avLv)); }catch(_){}
+    for(const el of _avEls) _avApply(el);
+  }
+  async function openMixer(anchor){
+    const M = await PC().loadModule('appmixer.js', 'PCAppMixer');
+    M.open(anchor, { rows: appVolumes, set: setAppVolume });
+  }
   let seq = 0, zTop = 10, on = false, startOpen = false;
   const INNER_SCROLLERS = { 'ai-msgs':'#ai-msgs', 'dm-msgs':'#dm-msgs', 'sms-msgs':'#sms-msgs',
                             'cc-messages':'.cc-messages', 'tg-msgs':'.tg-msgs' };   // see restoreScroll
@@ -11069,6 +11115,7 @@
       A('▦', 'Arrange windows in a grid', ['tile', 'snap', 'layout'], () => arrangeInPage('grid')),
       A('◫', 'Arrange windows side by side', ['tile', 'snap', 'split'], () => arrangeInPage('side-by-side')),
       A('⛶', 'Full screen', ['fullscreen', 'f11'], () => toggleFull()),
+      A('🔊', 'Volume mixer', ['sound', 'audio', 'mute', 'loud'], () => openMixer(null)),
     ];
     if(typeof openSystemSettings === 'function' && window.PCOSShell && PCOSShell.available())
       out.push(A('🖥️', 'System settings', ['wifi', 'display', 'sound', 'bluetooth'], () => openSystemSettings()));
@@ -11175,6 +11222,7 @@
          ${(window.pcWM && typeof pcWM.arrange === 'function' && _popupWindows()) || !_popupWindows()
            ? `<button class="os-arrange" id="os-arrange" title="Arrange windows (Super+G)" aria-label="Arrange windows"><svg class="ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>` : ''}
          <div class="os-sys" id="os-shell"></div>
+         ${window.PCOSShell && PCOSShell.available() ? '' : `<button class="os-vol" id="os-vol" title="Volume mixer" aria-label="Volume mixer"><svg class="ic" aria-hidden="true"><use href="#i-volume"></use></svg></button>`}
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
                  title="${enc(NET_LABEL[netNow.level] + ' — ' + netSummary(netNow))}"
                  aria-label="${enc('Nostr connection: ' + netSummary(netNow))}">
@@ -11245,6 +11293,7 @@
      * has and people have learned it. A count sitting on a clock is not a notification indicator —
      * it reads as part of the time, there is nothing to tell you it can be pressed, and every other
      * desktop puts a bell there. The badge moved with it, so the clock is a clock again. */
+    { const vb = $('#os-vol', bar); if(vb) vb.onclick = (e) => { e.stopPropagation(); openMixer(vb); }; }
     { const bb = $('#os-bell', bar); if(bb) bb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
@@ -14147,7 +14196,7 @@
                   mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
                   wantsDesktop,
                   isOn: () => on, runStartupApps, openDoc, focusDoc, closeDoc, frontSnapshot, frontRestore, askDesktop, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow, parkStats,
-                  openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false),
+                  openSystemSettings, osToast, pageWindowAI, cmdbar: () => openCmdbar(false), appVolumes, setAppVolume, openMixer,
                   workspaces: () => ({ count: wsCount(), current: _wsCur }), switchWorkspace: i => switchWs(i), addWorkspace: () => addWs(),
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

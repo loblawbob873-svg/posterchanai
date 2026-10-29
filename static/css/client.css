@@ -12496,10 +12496,10 @@ html.pc-golive-win #modal-root>.modal-bg:first-child:not(.modal-sub) .gl-actions
 /* Log out's question and the account switcher, each a window of its own on PosterChanOS. */
 .os-popup-body.os-popup-ask,.os-popup-body.os-popup-accounts{background:var(--bg,#07080d)}
 /* Arrange: the taskbar button and its picker window. */
-.os-arrange{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin-inline-end:4px;border:0;border-radius:8px;
+.os-arrange,.os-vol{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin-inline-end:4px;border:0;border-radius:8px;
   background:transparent;color:var(--text);cursor:pointer}
-.os-arrange:hover,.os-arrange:focus-visible{outline:none;background:rgba(var(--accent-rgb),.16);color:var(--accent)}
-.os-arrange .ic{width:20px;height:20px}
+.os-arrange:hover,.os-arrange:focus-visible,.os-vol:hover,.os-vol:focus-visible{outline:none;background:rgba(var(--accent-rgb),.16);color:var(--accent)}
+.os-arrange .ic,.os-vol .ic{width:20px;height:20px}
 .os-popup-body.os-popup-arrange{background:var(--bg,#07080d)}
 .os-popup-arrange #os-popup-host{position:fixed;inset:0;display:flex}
 .os-arrange-pop{flex:1;display:flex;flex-direction:column;gap:12px;padding:14px;box-sizing:border-box;border:1px solid rgba(var(--accent-rgb),.9);border-radius:10px;

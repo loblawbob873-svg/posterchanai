@@ -37,6 +37,7 @@ window.PCMusicPlayerFactory = function(dep){
       // position (it would mis-overlap the sidebar + block its clicks). Same fix as the popovers.
       const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.documentElement.appendChild(d); this.el=d;
       if(!S._audioEl) S._audioEl=new Audio();
+      S._audioEl.dataset.pcApp='music';   // the desktop's per-app volume: this detached element is "Music"
       this._wrapPlay(S._audioEl);
       this._loadEQ();
       S._audioEl.ontimeupdate=()=>this._tick();
