@@ -6971,9 +6971,10 @@
       +'<span aria-hidden="true">\u2039</span><span>'+(forum?'All posts':'#'+p.enc(name))+'</span></button>'
       +'<div class="cc-thread-what"><b>'+p.enc(forum?(title||'Post'):'Thread')+'</b>'+(!forum&&who?'<small>started by '+p.enc(who)+'</small>':'')+'</div></div>';
   }
+  function forumOpen(current){ const S=window.PCCordSpaces,ch=currentChannelOf(current); return !!(S&&state.community!=null&&!state.thread&&ch&&S.channelView(ch)==='forum'); }
   function forumFeedHtml(p,messages,current){
     const S=window.PCCordSpaces,ch=currentChannelOf(current);
-    if(!S||state.community==null||state.thread||!ch||S.channelView(ch)!=='forum')return '';
+    if(!forumOpen(current))return '';
     const index=threadInfo(messages||[]).index,posts=S.forumPosts(messages||[],id=>index.get(id)||[]);
     return S.feedHtml(p,posts,{channel:ch.name,canPost:!ch.readOnly&&!(current.cord&&current.cord.bundle&&current.cord.bundle.dissolved)});
   }
@@ -7239,7 +7240,8 @@
      * rows kept, the scroller, its position and a running fling untouched). */
     const _paneAt=_key.indexOf('<div class="cc-messages">'+_pane+'</div>'),
       _shell=_paneAt<0?'':_key.slice(0,_paneAt+25)+_key.slice(_paneAt+25+_pane.length);
-    if(_shell&&_shell===_ccLastShell&&autoOpen<0&&!resumeRequested&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed){
+    // A forum's pane carries controls only the full render binds (New post): never patched in place.
+    if(_shell&&_shell===_ccLastShell&&autoOpen<0&&!resumeRequested&&!forumOpen(current)&&_ccLastRoot&&_ccLastRoot.isConnected&&_ccLastRoot.parentNode===feed){
       const ob=feed.querySelector('.cc-messages');
       if(ob&&ob.dataset&&ob.dataset.ccScrollKey===scrollKey()&&patchMessageList(_pane)){_ccLastHtml=_key;paintUnreadBadge();return;}
     }

@@ -149,8 +149,11 @@ def test_only_the_reader_can_unpin_a_room():
         got['moved'] = await b.js(AT)
         # ...and then the room grows, as pictures settle.
         await b.js("(()=>{const r=[...document.querySelectorAll('.cc-message')].pop(),d=document.createElement('div');d.style.height='300px';r.appendChild(d);})()")
-        await asyncio.sleep(0.6)
-        got['grown'] = await b.js(AT)
+        for _ in range(30):           # settled within 3 s (a loaded gate is slow to run the correction), never left
+            await asyncio.sleep(0.1)
+            got['grown'] = await b.js(AT)
+            if got['grown']['fromBottom'] <= 2:
+                break
         # A real wheel, up: the reader leaves the bottom, and the room stays where they put it.
         for _ in range(4):
             await b.call('Input.dispatchMouseEvent', {'type': 'mouseWheel', 'x': 700, 'y': 400, 'deltaX': 0, 'deltaY': -300})
