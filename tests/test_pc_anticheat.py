@@ -357,3 +357,19 @@ def test_a_tpm_slot_that_cannot_be_wiped_puts_the_images_back(tmp_path):
     assert r.returncode != 0 and "nothing was changed" in r.stderr
     assert box.initrd.read_text().strip() == "with key" and box.keyfile.exists()
     assert "travel mode" not in box.conf.read_text()
+
+
+def test_turning_secure_boot_mode_off_takes_the_tpm_slot_with_it(tmp_path):
+    """The laptop, 2026-10-29: back to the plain key-file unlock, with the PCR 7 seal left behind for nothing."""
+    box = TravelBox(tmp_path)
+    (box.state / "anticheat-tpm.json").write_text('{"state": "on"}')
+    env = {"PATH": f"{box.bin}:/usr/bin:/bin", "PC_AC_STATE_DIR": str(box.state), "PC_AC_ROOT": str(box.root),
+           "PC_GENTOO_SH": str(box.bin / "gentoo.sh"), "PC_AC_TPM": str(box.tpm), "PC_AC_KEYFILE": str(box.keyfile),
+           "PC_AC_ESP": str(box.esp)}
+    _exe(box.bin / "gentoo.sh", "true")
+    r = subprocess.run(["bash", str(HELPER), "run-off"], capture_output=True, text=True, timeout=60, env=env)
+    assert r.returncode == 0, r.stderr
+    calls = box.calls.read_text()
+    assert f"--unlock-key-file={box.keyfile} --wipe-slot=tpm2" in calls, calls
+    assert not (box.state / "anticheat-tpm.json").exists()
+    assert box.keyfile.exists(), "the key file that unlocks the disk must stay"

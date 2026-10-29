@@ -158,6 +158,12 @@ run)
 run-off)
 	if "$GENTOO_SH" anticheat-off >"$LOG" 2>&1; then
 		rm -f "$REQUEST"
+		# The TPM unlock belongs to Secure Boot mode: off, its key slot goes too (the key file still opens the disk).
+		dev="$(rootdev)"
+		if [ -n "$dev" ] && [ -s "$KEYFILE" ] && systemd-cryptenroll "$dev" 2>/dev/null | grep -q tpm2; then
+			systemd-cryptenroll "$dev" --unlock-key-file="$KEYFILE" --wipe-slot=tpm2 >>"$LOG" 2>&1 || true
+		fi
+		rm -f "$TPMSTATE" "$STATE_DIR/anticheat-tpm.pcr7"
 		json off
 	else
 		json failed
