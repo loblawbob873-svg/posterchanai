@@ -23,6 +23,14 @@
    * banner, the avatar and quoted posts). Extra `c` roles in the same kind 16767 -- other clients ignore a role they
    * do not know, so the three above still travel to Ditto and Armada and these stay PosterChan's -- plus
    * ["border", "none"|"show"]. Each maps to one CSS variable, read only by the rules in CSS below. */
+  /* BORDERS ARE A STYLE AND A LIST OF ELEMENTS (Vyram, 2026-10-30: "Borders setting is suppose to change the borders as in
+   * from a solid line to -------- dashes lines, triangles, circles, & squares. Borders of each element should be
+   * selectable to hide or show." -- and "The banner does not need a border around it"). Carried in the same tag, so
+   * Ditto/Armada still read show|none: ["border", "show"|"none", <style>, "<el>,<el>"]. A theme from before this (just
+   * ["border","show"]) keeps what it always meant: solid, on the banner, the avatar and quoted posts. */
+  const BSTYLES = ['solid', 'dashed', 'dotted', 'double', 'squares', 'triangles'];
+  const BELS = { banner: 'banner', avatar: 'avatar', buttons: 'buttons', notes: 'posts', quoted: 'quoted posts', tabs: 'tabs' };
+  const BOLD = ['banner', 'avatar', 'quoted'];
   const PARTS = { name: 'the name', about: 'the bio', meta: 'addresses and dates', buttons: 'buttons',
                   stats: 'posts / following / followers', tabs: 'tabs', icons: 'post icons', border: 'borders' };
 
@@ -43,7 +51,12 @@
       if(!Array.isArray(tag)) continue;
       if(tag[0] === 'c' && HEX.test(String(tag[1] || '')) && ROLES.includes(tag[2])) t.colors[tag[2]] = String(tag[1]).toLowerCase();
       else if(tag[0] === 'c' && HEX.test(String(tag[1] || '')) && PARTS[tag[2]]) (t.parts = t.parts || {})[tag[2]] = String(tag[1]).toLowerCase();
-      else if(tag[0] === 'border' && (tag[1] === 'none' || tag[1] === 'show')) t.border = tag[1];
+      else if(tag[0] === 'border' && (tag[1] === 'none' || tag[1] === 'show')){
+        t.border = tag[1];
+        t.bstyle = BSTYLES.includes(tag[2]) ? tag[2] : 'solid';
+        const els = String(tag[3] || '').split(',').map(x => x.trim()).filter(x => BELS[x]);
+        t.bon = tag[3] === undefined ? BOLD.slice() : els;
+      }
       else if(tag[0] === 'f' && (tag[3] === 'body' || tag[3] === 'title')){
         const name = family(tag[1]), url = fontUrl(tag[2]);
         if(name) t.fonts[tag[3]] = { name, url };
@@ -71,6 +84,26 @@
     return '#' + ((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1);
   }
 
+  /* A pattern border, drawn here from a validated #rrggbb (never text from the event): a 24px tile whose 8px edges repeat
+   * as squares or triangles pointing outward, used as border-image with an 8-px slice. */
+  function borderImage(kind, colour){
+    const c = HEX.test(colour || '') ? colour : '#888888';
+    const shapes = [];
+    for(let y = 0; y < 3; y++) for(let x = 0; x < 3; x++){
+      if(x === 1 && y === 1) continue;
+      const X = x * 8, Y = y * 8;
+      if(kind === 'squares') shapes.push(`<rect x='${X + 1}' y='${Y + 1}' width='6' height='6'/>`);
+      else{
+        // pointing away from the middle: up on the top row, down on the bottom, outward at the sides
+        const pts = y === 0 ? [[X+1,Y+7],[X+4,Y+1],[X+7,Y+7]] : y === 2 ? [[X+1,Y+1],[X+4,Y+7],[X+7,Y+1]]
+          : x === 0 ? [[X+7,Y+1],[X+1,Y+4],[X+7,Y+7]] : [[X+1,Y+1],[X+7,Y+4],[X+1,Y+7]];
+        shapes.push(`<polygon points='${pts.map(p => p.join(',')).join(' ')}'/>`);
+      }
+    }
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='${c}'>${shapes.join('')}</svg>`;
+    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+  }
+
   /* The app's own colour variables, re-derived from the theme's three colours -- set on the profile's container,
    * they restyle everything inside it (cards, lines, muted text, buttons) and nothing outside it. */
   function vars(t){
@@ -89,7 +122,12 @@
     const parts = {};
     for(const k in (t.parts || {})) parts['--pt-' + k] = k === 'border' ? t.parts[k] : readable(t.parts[k]);
     if(t.border === 'none') parts['--pt-bw'] = '0px';
-    else if(t.border === 'show' || (t.parts && t.parts.border)) parts['--pt-bw'] = '2px';
+    else if(t.border === 'show' || (t.parts && t.parts.border)){
+      const st = BSTYLES.includes(t.bstyle) ? t.bstyle : 'solid';
+      parts['--pt-bw'] = (st === 'squares' || st === 'triangles') ? '8px' : (st === 'double' ? '4px' : '2px');
+      parts['--pt-bs'] = (st === 'squares' || st === 'triangles') ? 'solid' : st;
+      if(st === 'squares' || st === 'triangles') parts['--pt-bimg'] = borderImage(st, (t.parts && t.parts.border) || primary);
+    }
     return Object.assign(parts, {
       '--bg': bg, '--bg2': mix(bg, text, 0.04), '--panel': mix(bg, text, 0.07), '--panel2': mix(bg, text, 0.11),
       '--line': mix(bg, text, 0.2), '--text': text, '--muted': mix(text, bg, 0.35),
@@ -104,7 +142,11 @@
     const out = [];
     for(const r of ROLES) if(t.colors && HEX.test(t.colors[r] || '')) out.push(['c', t.colors[r].toLowerCase(), r]);
     for(const r in PARTS) if(t.parts && HEX.test(t.parts[r] || '')) out.push(['c', t.parts[r].toLowerCase(), r]);
-    if(t.border === 'none' || t.border === 'show') out.push(['border', t.border]);
+    if(t.border === 'none') out.push(['border', 'none']);
+    else if(t.border === 'show'){
+      const els = (Array.isArray(t.bon) ? t.bon : BOLD).filter(x => BELS[x]);
+      out.push(['border', 'show', BSTYLES.includes(t.bstyle) ? t.bstyle : 'solid', els.join(',')]);
+    }
     for(const r of ['body', 'title']){ const f = t.fonts && t.fonts[r]; if(f && family(f.name) && fontUrl(f.url)) out.push(['f', family(f.name), fontUrl(f.url), r]); }
     if(t.bg && https(t.bg.url)){
       const b = ['bg', 'url ' + https(t.bg.url), 'mode ' + (['cover', 'tile', 'contain'].includes(t.bg.mode) ? t.bg.mode : 'cover')];
@@ -116,6 +158,13 @@
   }
 
   // ---- the page (everything below touches the DOM) ----------------------------------------------------------------
+  // Each element's border only where the theme lists it (data-pb-<el> on #feed); squares/triangles are a border-image.
+  const BSEL = { banner: '.prof .banner', avatar: '.prof .pav', buttons: '.prof .prof-actions .btn', notes: '#prof-list .note',
+                 quoted: '#prof-list .quoted', tabs: '.prof-tabs .prof-tab' };
+  const BORDER_CSS = Object.keys(BSEL).map(k => `#feed[data-pb-${k}] ${BSEL[k]}`).join(',')
+    + '{border-style:var(--pt-bs,solid);border-color:var(--pt-border,var(--line));border-width:var(--pt-bw)}'
+    + Object.keys(BSEL).map(k => `#feed[data-pb-${k}][data-pbimg] ${BSEL[k]}`).join(',')
+    + '{border-image:var(--pt-bimg) 8 round}';
   const CSS = '#feed[data-ptheme]{background-color:var(--pt-bg);color:var(--text);font-family:var(--pt-body,inherit);'
     + 'background-image:var(--pt-img,none);background-size:var(--pt-size,cover);background-repeat:var(--pt-repeat,no-repeat);background-position:center top}'
     + '@media (hover:hover){#feed[data-ptheme]{background-attachment:fixed}}'
@@ -124,13 +173,14 @@
     + '#feed[data-ptheme] .prof .pbody h2,#feed[data-ptheme] #prof-list .name{color:var(--pt-name,var(--text))}'
     + '#feed[data-ptheme] .prof .about{color:var(--pt-about,var(--text))}'
     + '#feed[data-ptheme] .prof .prof-nip05s,#feed[data-ptheme] .prof .npubrow,#feed[data-ptheme] .prof .ln-addr,#feed[data-ptheme] .prof .prof-joined{color:var(--pt-meta,var(--muted))}'
-    + '#feed[data-ptheme] .prof .prof-actions .btn{color:var(--pt-buttons,var(--accent));border-color:var(--pt-buttons,var(--line))}'
+    + '#feed[data-ptheme] .prof .prof-actions .btn{color:var(--pt-buttons,var(--accent));border-color:var(--pt-buttons,var(--line));'
+    // Edit is btn-cyan (a gradient): every action button is the same surface on a themed profile ("Whats up with the edit button?")
+    + 'background:var(--panel2);background-image:none}'
     + '#feed[data-ptheme] .prof .follow-stats,#feed[data-ptheme] .prof .statbtn{color:var(--pt-stats,var(--muted))}'
     + '#feed[data-ptheme] .prof-tabs .prof-tab{color:var(--pt-tabs,var(--muted))}'
     + '#feed[data-ptheme] #prof-list .acts .act{color:var(--pt-icons,var(--muted))}'
-    + '#feed[data-pborder] .prof .banner,#feed[data-pborder] .prof .pav,#feed[data-pborder] #prof-list .quoted{border-style:solid;'
-    + 'border-color:var(--pt-border,var(--line));border-width:var(--pt-bw)}'
-    + '.pt-song{position:sticky;top:6px;z-index:5;display:flex;align-items:center;gap:8px;width:max-content;max-width:100%;margin:6px auto;padding:6px 12px;'
+    + BORDER_CSS
+    + '.pt-song{position:static;display:flex;align-items:center;gap:8px;width:max-content;max-width:100%;margin:6px auto;padding:6px 12px;'
     + 'border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--text);font-size:13px}'
     + '.pt-song button{all:unset;cursor:pointer;padding:2px 8px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-weight:600}'
     + '.pt-song span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}';
@@ -184,13 +234,19 @@
   }
   function style(host, t){
     for(const k of live.keys) host.style.removeProperty(k);
-    delete host.dataset.ptheme; delete host.dataset.pborder;
+    delete host.dataset.ptheme; delete host.dataset.pborder; delete host.dataset.pbimg;
+    for(const k in BELS) host.removeAttribute('data-pb-' + k);
     const keys = live.keys = [];
     if(t){
       css();
       const v = vars(t);
       for(const k in v){ host.style.setProperty(k, v[k]); keys.push(k); }
-      if(v['--pt-bw']) host.dataset.pborder = '1';   // borders only when the theme says so
+      if(v['--pt-bw']){
+        host.dataset.pborder = '1';   // borders only when the theme says so, and only on the elements it lists
+        const on = t.border === 'show' ? (Array.isArray(t.bon) ? t.bon : BOLD) : (t.border === 'none' ? [] : BOLD);
+        for(const k of on) if(BELS[k]) host.setAttribute('data-pb-' + k, '1');
+        if(v['--pt-bimg']) host.dataset.pbimg = '1';
+      }
       if(t.bg){
         host.style.setProperty('--pt-img', 'url("' + t.bg.url + '")');
         host.style.setProperty('--pt-size', t.bg.mode === 'tile' ? 'auto' : t.bg.mode);
@@ -234,6 +290,9 @@
   // ---- the editor (your own profile: the Theme button) -----------------------------------------------------------
   const FONTS = ['Inter', 'Silkscreen', 'Comfortaa', 'Press Start 2P', 'Pacifico', 'Lobster', 'Bangers', 'VT323', 'Orbitron',
                  'Comic Neue', 'Permanent Marker', 'Creepster', 'Special Elite', 'Righteous'];
+  // "colours" for English (GB) and the rest of the Commonwealth, "colors" for English (US) ("Maybe if your language is set
+  // to English(GB), we English(US) colors", 2026-10-30). The browser's own language decides.
+  const COLOR = (() => { try{ return /^en-US\b/i.test((navigator.languages && navigator.languages[0]) || navigator.language || '') ? 'color' : 'colour'; }catch(_){ return 'colour'; } })();
   const fontFile = n => 'https://cdn.jsdelivr.net/fontsource/fonts/' + n.toLowerCase().replace(/ /g, '-') + '@latest/latin-400-normal.woff2';
   /* THEMES TO START FROM ("maybe add more profile themes that people can choose", 2026-10-29). A whole look each --
    * colours, the text font, a display font for the name and headings (so a decorative face never has to carry the
@@ -284,6 +343,8 @@
     + '.pt-ed input[type=color]{width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}'
     + '.pt-ed .pt-swatch{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:2px solid;border-radius:999px;font:inherit;font-size:12px;cursor:pointer}'
     + '.pt-ed .pt-swatch i{width:10px;height:10px;border-radius:50%;flex:0 0 10px}.pt-ed .pt-swatch.on{outline:2px solid var(--accent);outline-offset:2px}'
+    + '.pt-ed .pt-pick{display:flex;align-items:center;gap:6px}.pt-ed .pt-hex{width:88px;font-family:monospace;padding:4px 6px}'
+    + '.pt-ed .pt-bels{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0}.pt-ed .pt-bels[hidden]{display:none}'
     + '.pt-ed .pt-presets{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;max-height:132px;overflow:auto}.pt-ed .pt-off input[type=color]{opacity:.35}'
     + '.pt-prev{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--bg);color:var(--text);'
     + 'background-image:var(--pt-img,none);background-size:var(--pt-size,cover);background-repeat:var(--pt-repeat,no-repeat);font-family:var(--pt-body,inherit)}'
@@ -298,19 +359,21 @@
     const enc = o.enc;
     const cur = parse(o.current) || { colors: {}, fonts: {}, bg: null, parts: {}, border: '' };
     const st = { colors: Object.assign({ background: '#10131d', text: '#e5f0f5', primary: '#ff4fd8' }, cur.colors),
-                 parts: Object.assign({}, cur.parts || {}), border: cur.border || '', font: (cur.fonts.body && cur.fonts.body.name) || '',
+                 parts: Object.assign({}, cur.parts || {}), border: cur.border || '',
+                 bstyle: cur.bstyle || 'solid', bon: Array.isArray(cur.bon) ? cur.bon.slice() : BOLD.slice(), font: (cur.fonts.body && cur.fonts.body.name) || '',
                  titleFont: (cur.fonts.title && cur.fonts.title.name !== (cur.fonts.body && cur.fonts.body.name) && cur.fonts.title.name) || '',
                  bg: cur.bg ? Object.assign({}, cur.bg) : null };
     const row = (key, label, val, on) => `<div class="pt-row${on ? '' : ' pt-off'}" data-k="${key}"><span>${enc(label)}</span>`
-      + `<input type="color" aria-label="${enc(label)}" value="${enc(val)}">` + (on === null ? '<span></span>'
-      : `<button type="button" class="btn btn-ghost small pt-clear" title="Use the page's colour">${on ? 'Reset' : 'Set'}</button>`) + '</div>';
+      + `<span class="pt-pick"><input type="color" aria-label="${enc(label)}" value="${enc(val)}"><input class="input pt-hex" aria-label="${enc(label)} (hex)" value="${enc(val)}" maxlength="7" spellcheck="false" autocomplete="off"></span>` + (on === null ? '<span></span>'
+      : `<button type="button" class="btn btn-ghost small pt-clear" title="Use the page's ${COLOR}">${on ? 'Reset' : 'Set'}</button>`) + '</div>';
     o.modal(`<div class="pt-ed"><h3 class="cmp-hd">Profile theme<button class="modal-x" id="pt-close" aria-label="Close">&#215;</button></h3>
-      <p class="muted small">Your page's colours, font, background and borders -- like MySpace. Colours, font and background also show on Ditto and Armada; the rest is PosterChan's.</p>
+      <p class="muted small">Your page's ${COLOR}s, font, background and borders -- like MySpace. ${COLOR[0].toUpperCase()+COLOR.slice(1)}s, font and background also show on Ditto and Armada; the rest is PosterChan's.</p>
       <div class="pt-presets" role="list" aria-label="Themes">${Object.keys(PRESETS).map(n => { const c = PRESETS[n].colors;
         return `<button type="button" class="pt-swatch" role="listitem" data-preset="${enc(n)}" style="background:${c.background};color:${c.text};border-color:${c.primary}"><i style="background:${c.primary}"></i>${enc(n)}</button>`; }).join('')}</div>
       ${row('background', 'Background', st.colors.background, null)}${row('text', 'Text', st.colors.text, null)}${row('primary', 'Accent', st.colors.primary, null)}
-      <details><summary>More colours</summary>${Object.keys(PARTS).map(k => row('p:' + k, PARTS[k][0].toUpperCase() + PARTS[k].slice(1), st.parts[k] || '#888888', !!st.parts[k])).join('')}
-        <label class="fld">Borders<select class="input" id="pt-border"><option value="">As the app draws them</option><option value="show">Show, in the border colour</option><option value="none">None</option></select></label></details>
+      <details><summary>More ${COLOR}s</summary>${Object.keys(PARTS).map(k => row('p:' + k, PARTS[k][0].toUpperCase() + PARTS[k].slice(1), st.parts[k] || '#888888', !!st.parts[k])).join('')}
+        <label class="fld">Borders<select class="input" id="pt-border"><option value="">As the app draws them</option><option value="none">None</option>${BSTYLES.map(b => `<option value="${b}">${{solid:'Solid line',dashed:'Dashes - - -',dotted:'Circles \u25cf\u25cf\u25cf',double:'Double line',squares:'Squares \u25a0\u25a0\u25a0',triangles:'Triangles \u25b2\u25b6\u25bc\u25c0'}[b]}</option>`).join('')}</select></label>
+        <div class="pt-bels" id="pt-bels">${Object.keys(BELS).map(k => `<label><input type="checkbox" data-bel="${k}"> ${enc(BELS[k][0].toUpperCase() + BELS[k].slice(1))}</label>`).join('')}</div></details>
       <label class="fld">Font<select class="input" id="pt-font"><option value="">The app's font</option>${FONTS.map(f => `<option${f === st.font ? ' selected' : ''}>${enc(f)}</option>`).join('')}</select></label>
       <div class="fld"><span>Background picture</span><div class="row"><button type="button" class="btn btn-ghost small" id="pt-up">Upload</button>
         <input class="input" id="pt-bgurl" placeholder="https://…" value="${enc(st.bg ? st.bg.url : '')}">
@@ -322,13 +385,17 @@
     if(!document.getElementById('pc-pted-css')){ const c = document.createElement('style'); c.id = 'pc-pted-css'; c.textContent = ED_CSS; document.head.appendChild(c); }
     const box = document.querySelector('.pt-ed'); if(!box) return;
     const $ = sel => box.querySelector(sel);
-    $('#pt-border').value = st.border; if(st.bg) $('#pt-mode').value = st.bg.mode;
+    const bsel = () => st.border === 'show' ? st.bstyle : st.border;     // '' | none | a style
+    const syncBorders = () => { $('#pt-border').value = bsel();
+      const els = $('#pt-bels'); els.hidden = st.border !== 'show';
+      els.querySelectorAll('[data-bel]').forEach(c => { c.checked = st.bon.includes(c.dataset.bel); }); };
+    syncBorders(); if(st.bg) $('#pt-mode').value = st.bg.mode;
     const theme = () => {
       const url = https($('#pt-bgurl').value.trim());
       const fonts = {};
       if(st.font) fonts.body = { name: st.font, url: fontFile(st.font) };
       if(st.titleFont || st.font) fonts.title = { name: st.titleFont || st.font, url: fontFile(st.titleFont || st.font) };
-      return { colors: st.colors, parts: st.parts, border: st.border, title: st.preset || 'Profile theme', fonts,
+      return { colors: st.colors, parts: st.parts, border: st.border, bstyle: st.bstyle, bon: st.bon, title: st.preset || 'Profile theme', fonts,
                bg: url ? { url, mode: $('#pt-mode').value, m: (st.bg && st.bg.url === url && st.bg.m) || '' } : null };
     };
     const preview = () => {
@@ -341,7 +408,11 @@
       face(st.font, '--pt-body'); face(st.titleFont || st.font, '--pt-title');
     };
     box.querySelectorAll('.pt-row').forEach(r => {
-      const k = r.dataset.k, inp = r.querySelector('input'), clr = r.querySelector('.pt-clear');
+      const k = r.dataset.k, inp = r.querySelector('input[type=color]'), hex = r.querySelector('.pt-hex'), clr = r.querySelector('.pt-clear');
+      // The typed #hex and the picker are one value: a valid code moves the picker, the picker rewrites the code.
+      if(hex){ hex.addEventListener('input', () => { const v = hex.value.trim(), h = v[0] === '#' ? v : '#' + v;
+          if(HEX.test(h)){ inp.value = h.toLowerCase(); inp.dispatchEvent(new Event('input')); hex.classList.remove('bad'); } else hex.classList.add('bad'); });
+        inp.addEventListener('input', () => { if(document.activeElement !== hex) hex.value = inp.value; }); }
       inp.addEventListener('input', () => { if(k.startsWith('p:')){ st.parts[k.slice(2)] = inp.value; r.classList.remove('pt-off'); if(clr) clr.textContent = 'Reset'; } else st.colors[k] = inp.value; preview(); });
       if(clr) clr.onclick = () => { const p = k.slice(2);
         if(st.parts[p]){ delete st.parts[p]; r.classList.add('pt-off'); clr.textContent = 'Set'; } else { st.parts[p] = inp.value; r.classList.remove('pt-off'); clr.textContent = 'Reset'; }
@@ -353,13 +424,18 @@
       const p = PRESETS[b.dataset.preset]; if(!p) return;
       st.colors = Object.assign({}, p.colors); st.parts = Object.assign({}, p.parts || {}); st.border = p.border || '';
       st.font = p.font || ''; st.titleFont = p.title || ''; st.preset = b.dataset.preset;
-      for(const k of ['background', 'text', 'primary']){ const i = box.querySelector(`.pt-row[data-k="${k}"] input`); if(i) i.value = st.colors[k]; }
+      for(const k of ['background', 'text', 'primary']){ const r = box.querySelector(`.pt-row[data-k="${k}"]`); if(!r) continue;
+        r.querySelector('input[type=color]').value = st.colors[k]; const hx = r.querySelector('.pt-hex'); if(hx) hx.value = st.colors[k]; }
       box.querySelectorAll('.pt-row[data-k^="p:"]').forEach(r => { const k = r.dataset.k.slice(2), on = !!st.parts[k], clr = r.querySelector('.pt-clear');
-        r.querySelector('input').value = st.parts[k] || '#888888'; r.classList.toggle('pt-off', !on); if(clr) clr.textContent = on ? 'Reset' : 'Set'; });
-      $('#pt-border').value = st.border; $('#pt-font').value = st.font;
+        { const v = st.parts[k] || '#888888'; r.querySelector('input[type=color]').value = v; const hx = r.querySelector('.pt-hex'); if(hx) hx.value = v; } r.classList.toggle('pt-off', !on); if(clr) clr.textContent = on ? 'Reset' : 'Set'; });
+      st.bstyle = p.bstyle || 'solid'; st.bon = (p.bon || BOLD).slice(); syncBorders(); $('#pt-font').value = st.font;
       box.querySelectorAll('[data-preset]').forEach(x => x.classList.toggle('on', x === b));
       preview(); });
-    $('#pt-border').onchange = () => { st.border = $('#pt-border').value; preview(); };
+    $('#pt-border').onchange = () => { const v = $('#pt-border').value;
+      if(BSTYLES.includes(v)){ st.border = 'show'; st.bstyle = v; } else st.border = v;
+      syncBorders(); preview(); };
+    box.querySelectorAll('[data-bel]').forEach(c => c.onchange = () => {
+      st.bon = Object.keys(BELS).filter(k => box.querySelector(`[data-bel="${k}"]`).checked); preview(); });
     $('#pt-font').onchange = () => { st.font = $('#pt-font').value; st.titleFont = ''; preview(); };
     $('#pt-bgurl').oninput = preview; $('#pt-mode').onchange = preview;
     $('#pt-up').onclick = () => $('#pt-file').click();

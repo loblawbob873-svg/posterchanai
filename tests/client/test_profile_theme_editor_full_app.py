@@ -113,13 +113,13 @@ def test_a_theme_to_start_from_is_the_whole_look_and_is_what_gets_saved():
     assert len(sw) >= 20, ("more themes to choose from", len(sw))
     assert len({x['bg'] for x in sw}) >= 15, ("each theme is drawn in its own colours", sw)
     ui = got['ui']
-    assert ui == {'font': 'Special Elite', 'border': 'show', 'bg': '#0d0b0b', 'name': '#e0312f', 'nameOn': True,
+    assert ui == {'font': 'Special Elite', 'border': 'solid', 'bg': '#0d0b0b', 'name': '#e0312f', 'nameOn': True,
                   'tabsOn': False, 'on': ['Haunted']}, ui
     tags = got['ev']['tags']
     assert tags[:3] == [['c', '#0d0b0b', 'background'], ['c', '#ddd5c7', 'text'], ['c', '#b3121f', 'primary']], tags
     fonts = {t[3]: t[1] for t in tags if t[0] == 'f'}
     assert fonts == {'body': 'Special Elite', 'title': 'Creepster'}, tags
-    assert ['c', '#e0312f', 'name'] in tags and ['border', 'show'] in tags and ['title', 'Haunted'] in tags, tags
+    assert ['c', '#e0312f', 'name'] in tags and any(t[:3] == ['border', 'show', 'solid'] for t in tags) and ['title', 'Haunted'] in tags, tags
 
 @CHROME
 def test_with_the_switches_off_a_profile_keeps_the_apps_look_and_stays_quiet():
@@ -176,3 +176,91 @@ def test_close_publishes_nothing_and_upload_opens_the_picker_and_says_what_becam
     assert got['picker'] == 1, "Upload did not open the file picker"
     # The uploaded picture's address fills the field (the harness's upload answers with its own fixture address).
     assert got['bg'].endswith('/fixture.png') or any('did not upload' in t for t in got['toasts']), got
+
+
+@CHROME
+def test_vyrams_theme_follow_ups_border_styles_per_element_hex_codes_and_the_edit_button():
+    """Vyram, 'Themes' (2026-10-30): borders are a STYLE (dashes, triangles, circles, squares) shown or hidden per
+    element; "The banner does not need a border around it"; "Colors need #codeinput next to them"; "Whats up with the
+    edit button?" (it kept its gradient while Pay and Theme took the theme's colour)."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.openProfile(__PC.me().pubkey)")
+        await b.until("!!document.querySelector('#theme-prof')")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('.pt-ed [data-preset]')")
+        got['ui'] = await b.js("""(async()=>{const ed=document.querySelector('.pt-ed'), q=s=>ed.querySelector(s);
+          q('[data-preset="Paper"]').click();
+          const row=q('.pt-row[data-k="background"]'), hex=row.querySelector('.pt-hex'), pick=row.querySelector('input[type=color]');
+          hex.value='#12345a'; hex.dispatchEvent(new Event('input',{bubbles:true}));
+          const picked=pick.value;
+          ed.querySelector('details').open=true;
+          const bd=q('#pt-border'); bd.value='triangles'; bd.dispatchEvent(new Event('change',{bubbles:true}));
+          const elsShown=!q('#pt-bels').hidden;
+          const box=k=>q('[data-bel="'+k+'"]');
+          box('banner').checked=false; box('banner').dispatchEvent(new Event('change',{bubbles:true}));
+          box('buttons').checked=true; box('buttons').dispatchEvent(new Event('change',{bubbles:true}));
+          const hexCount=ed.querySelectorAll('.pt-row .pt-hex').length, rows=ed.querySelectorAll('.pt-row').length;
+          q('#pt-save').click();
+          return {picked, elsShown, hexCount, rows};})()""")
+        await b.until("window.__published.some(e=>e.kind===16767)")
+        await b.until("!document.querySelector('.pt-ed')")
+        await b.until("document.querySelector('#feed').hasAttribute('data-pb-avatar')")
+        got['ev'] = await b.js("window.__published.filter(e=>e.kind===16767).pop()")
+        got['page'] = await b.js("""(()=>{const cs=s=>getComputedStyle(document.querySelector(s));
+          return {banner:cs('.prof .banner').borderTopWidth, avatarImg:cs('.prof .pav').borderImageSource,
+                  edit:cs('#edit-prof').backgroundImage+'|'+cs('#edit-prof').backgroundColor,
+                  pay:cs('#prof-pay').backgroundImage+'|'+cs('#prof-pay').backgroundColor};})()""")
+
+    asyncio.run(desktop.with_browser('online', '', check, INIT))
+    ui, tags, page = got['ui'], got['ev']['tags'], got['page']
+    assert ui['picked'] == '#12345a', ("a typed #hex did not move the colour picker", ui)
+    assert ui['hexCount'] == ui['rows'], ("every colour needs its #hex field", ui)
+    assert ui['elsShown'], ("choosing a border style must offer the per-element switches", ui)
+    assert ['c', '#12345a', 'background'] in tags, tags
+    border = [t for t in tags if t[0] == 'border']
+    assert border and border[0][:3] == ['border', 'show', 'triangles'], border
+    els = border[0][3].split(',')
+    assert 'banner' not in els and 'buttons' in els and 'avatar' in els, border
+    assert page['banner'] in ('0px', ''), ("the banner still has a border", page)
+    assert 'svg' in page['avatarImg'], ("triangles are a pattern border on the avatar", page)
+    assert page['edit'] == page['pay'], ("the Edit button does not follow the theme like Pay", page)
+
+
+@CHROME
+def test_the_song_bar_stays_in_the_header():
+    """'Why is this at the top & scrolling down with you?' -- the profile's song bar was position:sticky."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__other(); __PC.openProfile(window.__OTHER)")
+        await b.until("!!document.querySelector('.pt-song')")
+        got['pos'] = await b.js("getComputedStyle(document.querySelector('.pt-song')).position")
+
+    asyncio.run(desktop.with_browser('online', '', check, INIT))
+    assert got['pos'] == 'static', got
+
+
+@CHROME
+@pytest.mark.parametrize("lang,word", [("en-US", "colors"), ("en-GB", "colours")])
+def test_colour_or_color_follows_the_browsers_english(lang, word):
+    """'Maybe if your language is set to English(GB), we English(US) colors' (2026-10-30)."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.openProfile(__PC.me().pubkey)")
+        await b.until("!!document.querySelector('#theme-prof')")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('.pt-ed summary')")
+        got['summary'] = await b.js("document.querySelector('.pt-ed summary').textContent")
+
+    lang_init = "Object.defineProperty(navigator,'languages',{get:()=>[%r]});Object.defineProperty(navigator,'language',{get:()=>%r});" % (lang, lang)
+    asyncio.run(desktop.with_browser('online', '', check, lang_init + INIT))
+    assert word in got['summary'].lower(), got

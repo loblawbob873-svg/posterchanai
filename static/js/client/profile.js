@@ -41,6 +41,10 @@ window.PCProfileFactory = function(dep){
     return evs.reduce((m,e)=>Math.min(m, e.created_at), Infinity);
   }
   const _inWindow=e=>!_prof.oldest || e.created_at>=_prof.oldest;
+  // Profile search: the words of a query, and whether a post holds every one (the relay's own rule).
+  const _findWords=q=>(String(q||'').toLowerCase().match(/[\p{L}\p{N}_]+/gu)||[]);
+  const _findMatch=(e,words)=>{ const low=String(e.content||'').toLowerCase(); return words.every(w=>low.includes(w)); };
+  let _findGen=0;
   /* A tab that came out SHORT pages on by itself. With the floor, the Posts tab of somebody who mostly
    * replies can hold three posts after the first page where the cache used to pad it -- and a list too
    * short to scroll can never reach the scroll-back trigger. A few automatic pages, then it waits. */
@@ -50,7 +54,7 @@ window.PCProfileFactory = function(dep){
     // Decided AFTER the current turn: a fill made by loadOlderProfile runs while that load still has
     // `loading` set, and checking then stopped the top-up after a single page (measured: 2 pages, 7 posts).
     setTimeout(()=>{
-      if(_prof.done || _prof.loading || !_prof.oldest || _topUpN>=5 || S.VIEW!=='profile') return;
+      if(_prof.done || _prof.loading || !_prof.oldest || _topUpN>=5 || S.VIEW!=='profile' || _prof.tab==='search') return;
       const el=$('#prof-list'); if(!el || el.querySelectorAll('.note, article').length>=15) return;
       _topUpN++; loadOlderProfile();
     }, 0);
@@ -444,7 +448,8 @@ window.PCProfileFactory = function(dep){
         <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="albums">Albums</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="albums">Albums</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button><button class="prof-tab prof-find-tab" data-tab="search" title="Search posts" aria-label="Search this profile’s posts"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button></div>
+      <div class="prof-find" id="prof-find" hidden><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg><input type="search" id="prof-find-q" placeholder="Search ${enc(p.display_name||p.name||'their')}’s posts" aria-label="Search this profile’s posts" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="mini icon-btn" id="prof-find-x" title="Close search" aria-label="Close search">✕</button></div>
       <div id="prof-list"></div>`;
     _bindProfileBack(feed,pk);
     _nostrFirstSeen(pk).then(ts=>{
@@ -471,6 +476,26 @@ window.PCProfileFactory = function(dep){
       // Albums (NIP-51 picture sets) draw themselves: albums.js fills this once the tab is opened. A
       // constant placeholder, so a background refresh of the profile (same HTML → skipped) never wipes it.
       if(tab==='albums') return '<div id="prof-albums" class="alb-root"></div>';
+      /* SEARCH THIS PERSON'S POSTS ("on X you go to someone's profile, hit the magnifying glass and search key
+       * words -- all posts with that word show up", 2026-10-30). Every word must be in the post, the rule the
+       * relay's NIP-50 index applies (server.py), so a relay that ignores `search` and answers with everything
+       * this author wrote adds nothing that does not match. What this device already holds shows at once. */
+      if(tab==='search'){
+        const words=_findWords(_prof.q);
+        if(!words.length) return '<div class="empty">Type a word to find every post of theirs that has it.</div>';
+        const seen=new Set(), hits=[];
+        for(const e of [...(_prof.hits||[]), ...Store.query([{authors:[pk],kinds:[1,1111]}])]){
+          if(!e || seen.has(e.id) || e.pubkey!==pk || !_findMatch(e, words)) continue;
+          seen.add(e.id); hits.push(e);
+        }
+        hits.sort((a,b)=>b.created_at-a.created_at);
+        const q=enc(_prof.q.trim());
+        const sum=!_prof.qDone ? `Searching for “${q}”…`
+          : `${hits.length} post${hits.length===1?'':'s'} with “${q}”${_prof.qPartial?' — not every relay answered, there may be more':''}`;
+        return `<div class="prof-find-sum muted small" role="status">${sum}</div>`
+          + (hits.length ? hits.slice(0,200).map(e=>isReply(e)?feedNoteHtml(e):noteHtml(e)).join('')
+             : (_prof.qDone ? '<div class="empty">None of their posts has that.</div>' : '<div class="spinner"></div>'));
+      }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/40, so it silently drops every 30311
@@ -522,7 +547,7 @@ window.PCProfileFactory = function(dep){
     // Pagination cursor = the floor of what the relay returned (see _floorOf). A cache-first paint has not
     // asked yet: no floor, everything cached shows, and the refresh below sets it.
     _topUpN=0;
-    _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
+    _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[], q:'', hits:[], qDone:false, qPartial:false,
               oldest: _fetched ? _floorOf(_fetched, _PROF_PAGE) : 0 };
     if(_fetched && _fetched.length < _PROF_PAGE && _fetched.complete !== false) _prof.done=true;
     fillList('notes');
@@ -578,8 +603,35 @@ window.PCProfileFactory = function(dep){
           const x=root.querySelector('#prof-qr-close'); if(x) x.onclick=()=>{ try{ closeModal(); }catch(_){ } };
         });
       }; });
+    _bind('profile search', () => {
+      const inp=$('#prof-find-q',feed), x=$('#prof-find-x',feed); if(!inp) return;
+      let t=null;
+      const go=async()=>{
+        clearTimeout(t);
+        const q=inp.value||''; if(q===_prof.q && _prof.qDone) return;
+        const gen=++_findGen; _prof.q=q; _prof.hits=[]; _prof.qDone=false; _prof.qPartial=false;
+        _lastFill=null; fillList('search'); hydrate(feed);
+        if(!_findWords(q).length){ _prof.qDone=true; return; }
+        try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
+        let got=[]; try{ got=await Relay.query([{ authors:[pk], kinds:[1,1111], search:q.trim(), limit:200 }]); }catch(_){ got=[]; }
+        if(gen!==_findGen || _prof.pk!==pk || S.VIEW!=='profile') return;
+        const words=_findWords(q);
+        _prof.hits=(got||[]).filter(e=>e && e.pubkey===pk && _findMatch(e, words));
+        for(const e of _prof.hits){ try{ Store.saveEvent(e); }catch(_){} }
+        _prof.qDone=true; _prof.qPartial=!!(got && got.complete===false);
+        if(_prof.tab==='search'){ fillList('search'); hydrate(feed); }
+      };
+      inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(go, 350); });
+      inp.addEventListener('keydown', ev=>{
+        if(ev.key==='Enter'){ ev.preventDefault(); go(); }
+        else if(ev.key==='Escape'){ ev.preventDefault(); const n=$$('.prof-tab',feed).find(b=>b.dataset.tab==='notes'); if(n) n.click(); }
+      });
+      if(x) x.onclick=()=>{ inp.value=''; _prof.q=''; const n=$$('.prof-tab',feed).find(b=>b.dataset.tab==='notes'); if(n) n.click(); };
+    });
     try{
-    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; _topUpN=0; fillList(tab); hydrate(feed);
+    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; _topUpN=0;
+      { const bar=$('#prof-find',feed); if(bar){ bar.hidden = tab!=='search'; if(tab==='search'){ const i=$('#prof-find-q',feed); if(i) i.focus(); } } }
+      fillList(tab); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();
       if(tab==='albums'){ try{ await mountAlbums($('#prof-albums', feed), pk); }catch(e){ const el=$('#prof-albums', feed); if(el) el.innerHTML=`<div class="empty">Couldn’t open albums — ${enc(String((e&&e.message)||e).slice(0,120))}</div>`; } }
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
