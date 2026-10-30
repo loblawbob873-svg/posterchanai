@@ -26,6 +26,8 @@ window.PCMailFactory = function(dep){
    * cache's device key, never in the clear, per account — and answered from here when the instance cannot
    * be reached. Only reads: sending, moving and deleting still need the server and still say so. */
   const MailCache = deviceCache('pc-mail-v1');
+  // a read or the sign-in that has not answered by now is "unreachable" (api()); the override is for the test, which cannot wait 20 s
+  const MAIL_PATIENCE_MS = () => Number(window.__pcMailPatienceMs) || 20000;
   const _unreachable = e => !!(e && (e.name === 'TypeError' || e.offline || /^http 5\d\d$/.test(e.message || '')));
 
 
@@ -476,8 +478,15 @@ window.PCMailFactory = function(dep){
        * offline, the fetch fails in milliseconds and lands in the same device fallback. */
       let j;
       try{
-        await ensureAiSession();
-        const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
+        /* A NODE THAT DOES NOT ANSWER IS UNREACHABLE, NOT A SPINNER FOR EVER (2026-10-29, the Windows app opened during a
+         * deploy: "Telegram and Email ... stuck in a loading state for many minutes"). Telegram got this limit on 10-21;
+         * Mail had none, and nginx holds an /api/ request up to an hour when it reached a process that was shutting
+         * down. The sign-in and every READ answer within the limit or count as unreachable (the device copy, or the
+         * error with Retry); a write is never cut off -- a send that is slow may still be sending. */
+        const limit=(what,ms,p)=>{ let t=0; return Promise.race([p,new Promise((_,no)=>{ t=setTimeout(()=>{ const e=new Error(what); e.offline=true; no(e); },ms); })]).finally(()=>clearTimeout(t)); };
+        await limit('Your sign-in did not answer (the app session for Email)', MAIL_PATIENCE_MS(), ensureAiSession());
+        const req=fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{})}});
+        const r=read && !/^\/(search|sync)/.test(path) ? await limit('The mail server did not answer', MAIL_PATIENCE_MS(), req) : await req;
         /* A 4xx says WHY ("your account isn't a member here"); a bare "http 401" told nobody anything. 5xx keeps
          * its "http 5xx" text, which _unreachable reads as "use the device copy". */
         if(!r.ok){
@@ -504,6 +513,12 @@ window.PCMailFactory = function(dep){
           <p class="muted">${enc((authError&&authError.message)||'could not establish your app session')}</p>
           <button class="btn btn-ghost" id="mail-auth-retry">Retry</button></div>`;
         const retry=$('#mail-auth-retry',root); if(retry) retry.onclick=()=>this.render(root);
+        /* A node that did not ANSWER (restarting, a deploy) is asked again by itself while Mail is on screen, as
+         * Telegram does; a refusal ("not a member here") is not -- asking again would only say it again. */
+        if(authError && !authError.refused && (authError.offline || /HTTP 5\d\d/i.test(authError.message||''))){
+          clearTimeout(this._authRetryT);
+          this._authRetryT=setTimeout(()=>{ if(root.isConnected && this.root===root && S.VIEW==='mail' && $('#mail-auth-retry',root)) this.render(root); }, 10000);
+        }
         return;
       }
       if(!this.accounts.length){
