@@ -6107,7 +6107,7 @@
   function isMutedAuthor(pk){ return MUTED.has(pk) || _autoMuteHas(pk); }
   function _applyAutoMuteToView(){
     if(VIEW==='home' || VIEW==='global') _drawTimeline(true);
-    if(VIEW==='messages') _renderDmPeerRows();
+    if(VIEW==='messages' || _dmListParked()) _renderDmPeerRows();
     if(VIEW==='notifications') renderNotifications();
     // Change visibility in place: never rebuild a playing timeline or an open DM draft.
     $$('article.note[data-pk],article.note[data-rtpk],.dm-peer[data-peer]').forEach(node=>{
@@ -12522,7 +12522,7 @@
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
     _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor, DmKey,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
-    notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
+    notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages, _dmListRepaint, _dmListParked,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
   }; }
   function _dmsMod(){ return _lzGet('dms.js', 'PCDmsFactory', _dmsDeps); }
@@ -12584,6 +12584,17 @@
   }
 
   // Reconcile only inbox rows; keep the open thread, composer, search and scroll alive.
+  /* A DESKTOP MESSAGES WINDOW THAT IS NOT IN FRONT STILL GETS ITS LIST (2026-10-30, the Windows app: "messages shows 0
+   * messages ... restarting the app solves it"). Startup apps open 500 ms apart, so the history Messages asked for lands
+   * after another window took the front, and every list repaint was `if(VIEW==='messages')` -- a race against the relay.
+   * Parked, only its own rows are redrawn (#dm-list exists only in the Messages window) and nothing is marked read. */
+  function _dmListParked(){ return VIEW!=='messages' && !!(window.PCOS && PCOS.isOn && PCOS.isOn()) && !!$('#dm-list'); }
+  function _dmListRepaint(){
+    if(VIEW==='messages') return renderMessages();
+    if(!_dmListParked()) return;
+    _renderDmPeerRows();
+    const e=!dmActive && _dmLoaded && $('#dm-thread > .empty'); if(e) e.textContent='Select a conversation, or start one.';
+  }
   function _renderDmPeerRows(list=$('#dm-list')){
     if(!list || !$('#dm-rows',list)) return {peers:[],hidePrev:true};
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
@@ -12661,7 +12672,7 @@
     // lazily decrypt ONLY the last message of each peer for the preview (not every message). When
     // previews are hidden, skip decryption entirely (privacy + a CPU saving on every list render).
     const need=hidePrev ? [] : peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
-    if(need.length) Promise.all(need.map(pk=>decryptMsg(pk, dmPeers.get(pk).slice(-1)[0]))).then(()=>{ if(VIEW==='messages' && !dmActive) renderMessages(); });
+    if(need.length) Promise.all(need.map(pk=>decryptMsg(pk, dmPeers.get(pk).slice(-1)[0]))).then(()=>{ if(!dmActive) _dmListRepaint(); });
     // Preserve an OPEN conversation across re-renders: re-apply `has-active` to the rebuilt list (it's
     // what shows the thread as a full-screen overlay on mobile) — without this, any renderMessages()
     // (incoming DM, refresh) drops the class and bounces the user back to the conversation list.
@@ -12812,7 +12823,7 @@
     _dmDayLabel, _dmFull, _dmShown, _restoreDmScroll, applyEmojis, attachEmojiAutocomplete,
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
-    niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
+    niceNip05, openMenuPopover, profOf, renderMessages, _dmListRepaint, _dmListParked, renderProfileView, sendDm, toast, toggleMute,
     uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute, DmKey,
   }; }
   function _dmThreadMod(){ return _lzGet('dmthread.js', 'PCDmThreadFactory', _dmThreadDeps); }
@@ -12831,9 +12842,9 @@
   let _dmListRefreshTimer=null;
   function _scheduleDmRefresh(){
     const m=_dmThreadMod(); if(m) return m._scheduleDmRefresh.apply(null, arguments);
-    if(_dmListRefreshTimer || VIEW!=='messages' || dmActive) return;
+    if(_dmListRefreshTimer || dmActive || !(VIEW==='messages' || _dmListParked())) return;
     _dmListRefreshTimer=setTimeout(()=>{ _dmListRefreshTimer=null;
-      if(VIEW==='messages' && !dmActive) renderMessages(); }, 350);   // same debounce as the module's
+      if(!dmActive) _dmListRepaint(); }, 350);   // same debounce as the module's
   }
   function renderDmThread(){ return _lzRun(_dmThreadMod, _dmThreadLoad, 'renderDmThread', arguments); }
 

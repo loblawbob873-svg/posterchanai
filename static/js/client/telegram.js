@@ -173,10 +173,10 @@
     noteReadOut(id, r.read_out || 0);
     if(!fresh.length) return;
     st.msgs.set(id, [...held, ...fresh].sort((a, b) => a.id - b.id));
-    if(inView() && st.open === id) paintMessages(true);
+    if(onPage() && st.open === id) paintMessages(true);
   }
   async function catchUpAll(){
-    try{ const d = (await api('/api/tgc/dialogs?limit=200')).dialogs; if(Array.isArray(d)){ st.dialogs = d; ledgerReconcile(d); if(inView()) paintDialogs(); } }catch(_){}
+    try{ const d = (await api('/api/tgc/dialogs?limit=200')).dialogs; if(Array.isArray(d)){ st.dialogs = d; ledgerReconcile(d); if(onPage()) paintDialogs(); } }catch(_){}
     if(st.open != null && st.msgs.has(st.open)) await catchUp(st.open);
     // Other held chats are stale too: drop them, so opening one fetches it fresh.
     for(const k of [...st.msgs.keys()]) if(k !== st.open) st.msgs.delete(k);
@@ -186,7 +186,7 @@
   function onEvent(ev){
     if(ev.type === 'call'){ try{ if(window.PCTgCall) window.PCTgCall.onEvent(ev); }catch(_){} return; }
     if(ev.type === 'state'){ const was = st.status && st.status.state; st.status = Object.assign({}, st.status || {}, ev);
-      if(was !== ev.state && inView()) render(); return; }
+      if(was !== ev.state && onPage()) render(); return; }
     if(ev.type === 'message'){
       const m = ev.message, list = st.msgs.get(m.chat_id);
       if(list && !list.some(x => x.id === m.id)) list.push(m);
@@ -198,24 +198,24 @@
                                 last:{ id:m.id, text:m.text, date:m.date, out:m.out } });
       const looking = inView() && st.open === m.chat_id && document.hasFocus && document.hasFocus();
       if(!m.out && !looking) notify(m, ev.chat);
-      if(inView()){ paintDialogs(); if(st.open === m.chat_id){ paintMessages(true); markRead(); } }
+      if(onPage()){ paintDialogs(); if(st.open === m.chat_id){ paintMessages(true); if(inView()) markRead(); } }
       return;
     }
     if(ev.type === 'edited'){ const list = st.msgs.get(ev.message.chat_id), i = list ? list.findIndex(x => x.id === ev.message.id) : -1;
-      if(i >= 0){ list[i] = ev.message; if(inView() && st.open === ev.message.chat_id) paintMessages(false); } return; }
+      if(i >= 0){ list[i] = ev.message; if(onPage() && st.open === ev.message.chat_id) paintMessages(false); } return; }
     if(ev.type === 'reactions'){ const list = st.msgs.get(ev.chat_id), m = list && list.find(x => x.id === ev.id);
-      if(m){ m.reactions = ev.reactions || []; if(inView() && st.open === ev.chat_id) paintMessages(false); } return; }
+      if(m){ m.reactions = ev.reactions || []; if(onPage() && st.open === ev.chat_id) paintMessages(false); } return; }
     if(ev.type === 'read'){
       const d = st.dialogs.find(x => x.id === ev.chat_id);
       if(ev.outbox){ noteReadOut(ev.chat_id, ev.max_id || 0); }
       // Read on another device (the phone): Telegram says how many are STILL unread — take its number.
       else if(d && typeof ev.unread === 'number'){ d.unread = st.open === ev.chat_id && inView() ? 0 : ev.unread; }
       if(!ev.outbox && ev.unread === 0) ledgerClear(ev.chat_id);   // read there: no longer new here
-      if(inView()){ paintDialogs(); if(ev.outbox && st.open === ev.chat_id) paintMessages(false); }
+      if(onPage()){ paintDialogs(); if(ev.outbox && st.open === ev.chat_id) paintMessages(false); }
       return;
     }
     if(ev.type === 'deleted'){ for(const [cid, list] of st.msgs){ const n = list.filter(x => !ev.ids.includes(x.id));
-      if(n.length !== list.length){ st.msgs.set(cid, n); if(inView() && st.open === cid) paintMessages(false); } } }
+      if(n.length !== list.length){ st.msgs.set(cid, n); if(onPage() && st.open === cid) paintMessages(false); } } }
   }
   function preview(m){
     return m.text || (m.media ? ({photo:'📷 Photo', video:'🎬 Video', voice:'🎤 Voice message', video_note:'⏺ Video message',
@@ -278,6 +278,11 @@
     try{ if(P.switchView) P.switchView('tg'); }catch(_){}
   }
   const inView = () => { try{ return PC().VIEW === 'tg' && root && root.isConnected; }catch(_){ return false; } };
+  /* ON THE PAGE is not IN FRONT (2026-10-30, the Windows app: "telegram still not good at autostarting ... stuck in a
+   * connecting loop ... restarting the app solves it"). A desktop window behind another is still on screen with VIEW
+   * naming the front app, and startup apps open 500 ms apart -- every paint gated on inView() lost a race against the
+   * node and left CONNECTING… for good. Painting asks onPage(); "is somebody looking" (notify, unread) stays inView(). */
+  const onPage = () => !!(root && root.isConnected);
   /* ✓ SENT, ✓✓ READ — the two states Telegram itself shows. A message is only here once Telegram
    * accepted it (send() adds it from the server's answer), so one tick is true the moment it draws;
    * two need Telegram to have said the other side read up to it. Unknown stays one tick. */
@@ -301,13 +306,14 @@
   let retryT = 0, retryMs = 5000;
   function scheduleRetry(){
     clearTimeout(retryT);
-    retryT = setTimeout(() => { if(inView() && !document.hidden) render(); else scheduleRetry(); }, retryMs);
+    retryT = setTimeout(() => { if(onPage() && !document.hidden) render(); else scheduleRetry(); }, retryMs);
     retryMs = Math.min(retryMs * 2, 60000);
   }
   function retryNote(){ return `<p class="tg-muted small">Trying again automatically…</p>`; }
-  try{ window.addEventListener('online', () => { if(inView() && (st.offline || !st.status)){ retryMs = 5000; render(); } }); }catch(_){}
+  try{ window.addEventListener('online', () => { if(onPage() && (st.offline || !st.status)){ retryMs = 5000; render(); } }); }catch(_){}
   async function render(){
-    const feed = document.getElementById('feed'); if(!feed) return;
+    // Its own window when that is on the page behind another; #feed belongs to the window in front.
+    const feed = (onPage() && !inView() && root.parentElement) || document.getElementById('feed'); if(!feed) return;
     clearTimeout(retryT);
     try{ const t = document.getElementById('view-title'); if(t) t.textContent = 'Telegram'; }catch(_){}
     if(isPhone()){
@@ -335,7 +341,7 @@
       scheduleRetry();
       return;
     }
-    if(!inView()) return;
+    if(!onPage()) return;
     if(!st.status.configured) return renderSetup();
     if(st.status.state !== 'ready') return renderLogin();
     // Kept on this device: nothing to connect to, and media tickets cannot be had.
@@ -423,7 +429,7 @@
     ledgerReconcile(st.dialogs);
     // A window opened for one chat by a notification (app.js _captureTgWindowLanding).
     if(window.__PC_TG_OPEN_CHAT != null){ st.open = window.__PC_TG_OPEN_CHAT; delete window.__PC_TG_OPEN_CHAT; }
-    if(!inView()) return;
+    if(!onPage()) return;
     paintOffline();
     paintDialogs();
     if(st.open) openChat(st.open); else paintChat();
@@ -470,7 +476,7 @@
       let results = [], error = '';
       try{ results = (await api('/api/tgc/search?q=' + encodeURIComponent(q))).results || []; }catch(e){ error = e.message; }
       if(st.filter.trim() !== q) return;
-      st.found = { q, busy:false, results, error }; if(inView()) paintDialogs();
+      st.found = { q, busy:false, results, error }; if(onPage()) paintDialogs();
     }, 350);
   }
   function paintFound(box){

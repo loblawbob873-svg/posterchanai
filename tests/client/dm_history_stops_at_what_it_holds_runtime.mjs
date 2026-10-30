@@ -44,6 +44,8 @@ async function run(cached){
       },
     },
   };
+  // app.js _dmListRepaint: the list in front repaints as renderMessages (a parked desktop window is not modelled here)
+  c._dmListRepaint = () => { if (c.VIEW === 'messages') c.renderMessages(); };
   c.window = c;
   vm.createContext(installStateGlobals(c) && c);
   vm.runInContext(ensureDMs + '\nglobalThis.__run = ensureDMs;', c);

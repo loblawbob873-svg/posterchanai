@@ -17,7 +17,7 @@ window.PCDmThreadFactory = function(dep){
     _dmDayLabel, _dmFull, _dmShown, _restoreDmScroll, applyEmojis, attachEmojiAutocomplete,
     copyValue, decorateEncAtts, decryptMsg, dmAttachFiles, dmAttachMenu, dmEncOn, dmPeers, dmPickGif,
     dmPickMedia, emojiName, enc, ensureDmInboxList, ingestDM, isMutedAuthor, linkify, needProfile,
-    niceNip05, openMenuPopover, profOf, renderMessages, renderProfileView, sendDm, toast, toggleMute,
+    niceNip05, openMenuPopover, profOf, renderMessages, _dmListRepaint, _dmListParked, renderProfileView, sendDm, toast, toggleMute,
     uploadBlob, uploadSharedEnc, wireImgAttach, openOsNotificationRoute, DmKey,
   } = dep;
   // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
@@ -123,10 +123,11 @@ window.PCDmThreadFactory = function(dep){
    * thread stale ("the preview in the message list updated before the convo is", 2026-10-29). */
   const _dmParkedThread=()=>!!(S.dmActive && window.PCOS && PCOS.isOn && PCOS.isOn() && document.getElementById('dm-thread'));
   function _scheduleDmRefresh(){
-    if(_dmRefreshTimer || (S.VIEW!=='messages' && !_dmParkedThread())) return;
+    if(_dmRefreshTimer || (S.VIEW!=='messages' && !_dmParkedThread() && !_dmListParked())) return;
     _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null;
       if(S.VIEW!=='messages'){
         if(_dmParkedThread()){ const sig=_threadSig(S.dmActive); if(sig!==_dmThreadSig){ _dmThreadSig=sig; renderDmThread(S.dmActive); } }
+        else if(!S.dmActive) _dmListRepaint();   // its list, parked (app.js _dmListRepaint)
         return;
       }
       if(S.dmActive){

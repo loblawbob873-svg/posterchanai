@@ -14,7 +14,7 @@ window.PCDmsFactory = function(dep){
     $, $$, DISCOVERY_RELAYS, bumpNotif, Nip46, _blossomDenied, _capPlugin, _notePublishedWraps,
     _scheduleDmRefresh, _shaFromUrl, _withModule, _wrapTried, defaultRelays, dmEncOn, dmPeers, dmSeenFor, DmKey,
     emojiName, enc, isMutedAuthor, mediaServer, needProfile, normalizeRelay, notifToast,
-    notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages,
+    notificationAllowed, osNotify, profOf, publish, refToPk, renderDmThread, renderMessages, _dmListRepaint,
     requestBlossomAccess, switchView, toast, uploadBlob, uploadSharedEnc, userRelays,
   } = dep;
 
@@ -227,7 +227,7 @@ window.PCDmsFactory = function(dep){
     _queueDmHistory([]);
     Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
     if(modern) _queueDmHistory(Store.byKind(1059));   // unwrap cached gift wraps (async)
-    if(S.VIEW==='messages') renderMessages();
+    _dmListRepaint();   // in front, or a desktop window behind another (app.js)
     /* THE HISTORY READ MUST WAIT FOR A SOCKET THAT CAN ANSWER — `await Relay.ready()`.
      *
      * A REQ written to a CONNECTING socket is silently dropped (relay.js `_send`), and this view is
@@ -316,7 +316,7 @@ window.PCDmsFactory = function(dep){
     // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
     // Messages view was opened, so DMs received while away still alert — not just live ones.
     recountDmUnread();
-    if(S.VIEW==='messages') renderMessages();
+    _dmListRepaint();   // in front, or a desktop window behind another (app.js)
   }
   // Unwrap a NIP-17 gift wrap (kind 1059) → its inner kind-14 chat rumor (already plaintext). `live`
   // bumps the unread badge for incoming (non-self) messages. (`_wrapTried` and the `_dmDone`/`_dmTotal`
