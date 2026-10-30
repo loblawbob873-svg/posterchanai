@@ -1893,6 +1893,26 @@ async def nostr_entity_page(entity: str, request: Request):
     """Serve the Nostr client for /<npub|nprofile|note|nevent|naddr>."""
     if not _NOSTR_ENTITY_RE.match(entity):
         raise StarletteHTTPException(status_code=404)
+    # A shared ARTICLE (naddr of a kind 30023) gets a real link preview, as a repo's /r/ page does; everything else,
+    # and any article that cannot be read here, is served exactly as before (app/services/article_share.py).
+    if entity.lower().startswith("naddr1"):
+        meta = None
+        try:
+            from app.services import article_share, settings_store
+            ref = article_share.decode_naddr(entity)
+            if ref:
+                port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+                card = await article_share.article_card(port, ref)
+                if card:
+                    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+                    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+                    base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/"))
+                    meta = article_share.og_meta(card, "%s/%s" % (base, entity), fallback_image=base + "/static/icon-512.png")
+        except Exception as e:
+            logging.getLogger(__name__).warning("[article] preview failed for %s: %s", entity[:24], e)
+        if meta:
+            from app.routers.client import render_client_shell
+            return await render_client_shell(request, None, meta=meta)
     from app.routers.client import client_app
     return await client_app(request)
 
