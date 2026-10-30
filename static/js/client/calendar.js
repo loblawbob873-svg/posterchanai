@@ -317,7 +317,7 @@
       _n52evs = Object.values(best);
       _n52at = Date.now();
       S.rev++;
-      if(inView()) paint();
+      paint();   // in front, or its own window behind another (paint decides)
     }
     /** The layer's occurrences inside the 42-day window, in the shape the grid already draws. */
     function _n52occ(start, end){
@@ -752,21 +752,25 @@
       return `<div class="ws-err">${enc(S.error || 'could not load your calendars')}</div>`;
     }
 
+    let _wrap = null;   // the .cal-wrap this screen last drew -- how a parked desktop window is found again
     function paint(){
       /* NEVER DRAW INTO A VIEW WE NO LONGER OWN — see the same guard in contacts.js. This one has
        * two live triggers: `widgetTick` calls load() a few seconds after app start, from whatever
        * screen the user is actually on, and a load started here finishes after they have navigated
        * away. Both used to replace #feed with a calendar. */
-      if(!inView()) return;
-      const feed = $('#feed'); if(!feed) return;
-      if(S.loading && !S.ready){ feed.innerHTML = '<div class="cal-wrap"><div class="spinner"></div></div>'; return; }
+      /* ...BUT A DESKTOP WINDOW BEHIND ANOTHER IS STILL OURS (2026-10-30, the Windows app: Calendar opened at login sat on
+       * a spinner for good -- its load finished after the next window took the front, and this returned). On the page but
+       * not in front: draw into its own window (the parent of the .cal-wrap it last drew); #feed is the front window's. */
+      const feed = inView() ? $('#feed') : (_wrap && _wrap.isConnected ? _wrap.parentElement : null); if(!feed) return;
+      if(S.loading && !S.ready){ feed.innerHTML = '<div class="cal-wrap"><div class="spinner"></div></div>'; _wrap = feed.querySelector('.cal-wrap'); return; }
       /* AN ERROR ONLY REPLACES THE CALENDAR WHEN THERE IS NO CALENDAR TO SHOW. With calendars in
        * hand (this session's, or the saved copy) the grid is drawn and the error is a line above it:
        * "showing your saved calendar" in a red box that hid the calendar was a message about a
        * picture nobody could see. */
-      if(S.enabled === false || (S.error && !S.cals.length)){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; return; }
+      if(S.enabled === false || (S.error && !S.cals.length)){ feed.innerHTML = `<div class="cal-wrap">${offScreen()}</div>`; _wrap = feed.querySelector('.cal-wrap'); return; }
       const note = S.error ? `<div class="cal-stale muted small" role="status">${enc(S.error)}</div>` : '';
       feed.innerHTML = `<div class="cal-wrap">${head()}${note}${emptyHint()}${grid()}${dayPanel()}</div>`;
+      _wrap = feed.querySelector('.cal-wrap');
       wire(feed);
       const s = scroller();
       if(s) requestAnimationFrame(()=>{ try{ s.scrollTop = S.scroll || 0; }catch(_){} });

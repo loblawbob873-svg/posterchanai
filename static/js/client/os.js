@@ -1611,9 +1611,20 @@
     w.hibernated = true;
     return true;
   }
+  /* NEVER A WINDOW SOMEBODY CAN SEE (2026-10-30, the Windows app: "DM screen just went black after a while", "telegram
+   * was the other window that went black"). On a desktop the windows behind the front one are still ON SCREEN, and a
+   * hibernated slot is empty -- a black window until it is clicked. The cap only takes windows that are minimised or on
+   * another workspace -- except on a low-memory TOUCH device / the Android app, where one WebView holds the whole desk and
+   * the renderer being killed is worse (the OOM this cap exists for), and Android's emergency trim (keep 0). */
+  // A TOUCH device short of memory (a tablet's WebView or browser) may hibernate what is on screen; a computer driven by a
+  // mouse never does, whatever memory it reports -- a Windows laptop with 4 GB is not a 2 GB tablet.
+  const _HIBERNATE_VISIBLE = (() => { try{
+    if(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) return true;
+    return _LOW_MEM && !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  }catch(_){ return false; } })();
   function capParked(keep){
     const k = keep == null ? PARK_KEEP : keep;
-    const parked = wins.filter(x => x.parked && x.slot).sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0));
+    const parked = wins.filter(x => x.parked && x.slot && (k === 0 || _HIBERNATE_VISIBLE || x.min || x.offws)).sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0));
     let n = 0;
     parked.slice(k).forEach(x => { if(hibernate(x)) n++; });
     return n;

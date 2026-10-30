@@ -13,7 +13,7 @@ window.PCProfileFactory = function(dep){
     $, $$, FOLLOWERS, FilesIdx, NT, STREAM_RELAYS, _FEED_MAX_CARDS, _bindPaymentTargetEditor,
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
     _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
-    _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
+    _syncRightbar, articleCard, bchDirect, bchOf, doEthTip, ethOf, cleanupInlineStream, clearSentinel, closeModal,
     copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
@@ -166,6 +166,11 @@ window.PCProfileFactory = function(dep){
           '<svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>'
           + enc(bch.slice(0,14)) + '…' + enc(bch.slice(-6)));
         b.onclick = () => doBchTip(pk); put(b);
+      }
+      const eth = ethOf(p);
+      if(eth && !feed.querySelector('#prof-eth')){
+        const b = mk('button','ln-addr eth','prof-eth','tip Ethereum (ETH)', 'Ξ ' + enc(eth.slice(0,8)) + '…' + enc(eth.slice(-6)));
+        b.onclick = () => doEthTip(pk); put(b);
       }
       const ln=lightning || p.lud16 || p.lud06;
       if(ln && !feed.querySelector('#prof-ln')){
@@ -437,6 +442,7 @@ window.PCProfileFactory = function(dep){
           <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
           ${isBchAddr(bchOf(p))?`<button class="btn btn-ghost small" id="bchtip-prof" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>Tip</button>`:''}
+          ${ethOf(p)?`<button class="btn btn-ghost small" id="ethtip-prof" title="tip Ethereum (ETH)">Ξ Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`}</div></div>
       <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         <div class="prof-nip05s" id="prof-nip05s" data-pk="${enc(pk)}">${_nip05LinesHtml(p.nip05, _hereAddrs.get(pk))}</div>
@@ -444,6 +450,7 @@ window.PCProfileFactory = function(dep){
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
+        ${ethOf(p)?`<button class="ln-addr eth" id="prof-eth" title="tip Ethereum (ETH)">Ξ ${enc(ethOf(p).slice(0,8))}…${enc(ethOf(p).slice(-6))}</button>`:''}
         <div class="prof-joined" id="prof-joined" hidden title="Based on available relay history. Your actual join date may be earlier. This date is calculated automatically and cannot be changed in profile settings."><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Earliest activity found</span><b></b></div>
         <div class="about">${emojiHtml(pk, linkify(p.about||''))}</div>
         <div id="prof-music">${_profileMusicHtml(p)}</div>
@@ -677,6 +684,8 @@ window.PCProfileFactory = function(dep){
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
     { const bb=$('#prof-bch'); if(bb) bb.onclick=()=>doBchTip(pk); }
     { const bt=$('#bchtip-prof'); if(bt) bt.onclick=()=>doBchTip(pk); }
+    { const eb=$('#prof-eth'); if(eb) eb.onclick=()=>doEthTip(pk); }
+    { const et=$('#ethtip-prof'); if(et) et.onclick=()=>doEthTip(pk); }
     // Posts has no list of its own — the Notes tab IS that list, so send them there rather than leaving a
     // dead-looking button next to two clickable stats.
     { const pb=$('#show-posts'); if(pb) pb.onclick=()=>{ const t=$$('.prof-tab',feed).find(x=>x.dataset.tab==='notes'); if(t) t.click(); }; }
@@ -1208,6 +1217,7 @@ window.PCProfileFactory = function(dep){
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
       <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchDirect(p))}"></label>
+      <label class="fld">Ξ Ethereum address<input class="input" id="pf-eth" placeholder="0x… (others can tip you in ETH)" value="${enc(ethOf(p))}" autocomplete="off" spellcheck="false"></label>
       <details id="pf-payment-details"><summary>Payment targets</summary><div id="pf-payment-editor"></div></details>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
@@ -1291,6 +1301,8 @@ window.PCProfileFactory = function(dep){
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
         const _bch=$('#pf-bch',root).value.trim().replace(/^bitcoincash:/i,'');
         if(_bch && !isBchAddr(_bch)){ toast('that doesn\'t look like a Bitcoin Cash address'); $('#pf-bch',root).focus(); return; }
+        const _eth=(($('#pf-eth',root)||{}).value||'').trim().replace(/^ethereum:/i,'');
+        if(_eth && !/^0x[0-9a-fA-F]{40}$/.test(_eth)){ toast('that doesn\'t look like an Ethereum address (0x and 40 hex characters)'); $('#pf-eth',root).focus(); return; }
         { const _n5=$('#pf-nip05',root).value.trim();   // an npub here was drawn as the profile's 63-character handle
           if(_n5 && !niceNip05(_n5)){ toast('a NIP-05 looks like name@domain (your npub is not one) — leave it empty if you have none'); $('#pf-nip05',root).focus(); return; } }
         { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts — per-device only (NOT synced: it's an address-linking privacy choice)
@@ -1350,6 +1362,19 @@ window.PCProfileFactory = function(dep){
         } else if(_bchWas){
           delete meta.bch; delete meta.bitcoincash_address; delete meta.bch_address; delete meta.bitcoincash;
         }
+        /* Ethereum: `ethereum` (what ethOf reads first) and the cryptocurrency_addresses map other clients read; like
+         * Monero and BCH, aliases are only folded in when the address CHANGED, and clearing reaches every alias. */
+        { const _ethWas = ethOf(p);
+          const _map = () => Object.assign({}, (meta.cryptocurrency_addresses && typeof meta.cryptocurrency_addresses==='object') ? meta.cryptocurrency_addresses : {});
+          if(_eth && _eth !== _ethWas){
+            meta.ethereum=_eth; delete meta.eth; delete meta.ethereum_address; delete meta.eth_address;
+            const m=_map(); for(const k of ['eth','ETH','Ethereum']) delete m[k]; m.ethereum=_eth; meta.cryptocurrency_addresses=m;
+          } else if(!_eth && _ethWas){
+            delete meta.ethereum; delete meta.eth; delete meta.ethereum_address; delete meta.eth_address;
+            const m=_map(); for(const k of ['ethereum','eth','ETH','Ethereum']) delete m[k];
+            if(Object.keys(m).length) meta.cryptocurrency_addresses=m; else delete meta.cryptocurrency_addresses;
+            if(Array.isArray(meta.fields)) meta.fields=meta.fields.filter(f=>!(Array.isArray(f) && /\beth(ereum)?\b/i.test(String(f[0]||''))));
+          } }
         closeModal(); { const r=await publish(0, JSON.stringify(meta), _kind0Tags(S.ME && S.ME.pubkey));   // failure toast by publish()
           if(r && r.ok){ Store.saveProfile({pubkey:S.ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(S.ME.pubkey); } } };
     });

@@ -3181,6 +3181,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .ln-addr.xmr{color:#f60} .ln-addr.xmr:hover{border-color:#f60;box-shadow:0 0 12px rgba(255,102,0,.35)}
 /* Bitcoin Cash tips — BCH green (#0ac18e). Profile address pill + tip-modal preset chips. */
 .ln-addr.bch{color:#0ac18e} .ln-addr.bch:hover{border-color:#0ac18e;box-shadow:0 0 12px rgba(10,193,142,.35)}
+.ln-addr.eth{color:#8a9ef5} .ln-addr.eth:hover{border-color:#8a9ef5;box-shadow:0 0 12px rgba(98,126,234,.35)}
 .bch-preset:active{background:rgba(10,193,142,.16)}
 /* Monero tip note badge — shows the amount prominently; when a proof is attached, a one-tap button
    copies a check_tx_proof command so anyone can verify the payment in their own wallet. */

@@ -7798,6 +7798,7 @@
     const v = ClientSettings.get('startView','social');
     if(GUEST || !v || v==='social' || !/^[a-z0-9_-]{1,32}$/.test(v)) return _startTimeline();
     if(v==='home' || v==='global') return _startTimeline();   // timeline tabs go through the tab pref + hidden-tab rules
+    if(v==='profile') return 'profile';                        // your own profile (not a sidebar row; never for a guest, above)
     try{
       const btn=document.querySelector(`.nav-item[data-view="${v}"]`);
       if(btn && !btn.classList.contains('hidden')) return v;
@@ -8972,6 +8973,14 @@
     if(target.type==='monero')return doXmrTip(noteId,pk,target.address);
     if(target.type==='bitcoincash')return doBchTip(pk,target.address);
     return _paymentTargetSheet(pk,target);
+  }
+  // Ξ ETH tip: the generic pay sheet (address, QR, `ethereum:` wallet link) for the profile's own address -- the same
+  // hand-off-only rule as ethOf: nothing here touches a wallet ("add support for ethereum zaps in users profile", 10-30).
+  async function doEthTip(pk){
+    try{ await _ensurePaymentTargets(); }catch(_){}
+    const a=ethOf(profOf(pk)||{}), t=a && window.PCPaymentTargets && PCPaymentTargets.target('ethereum', a);
+    if(!t) return toast('no Ethereum address on this profile');
+    _paymentTargetSheet(pk, t);
   }
   async function showPaymentTargets(pk){
     const viewer=ME&&ME.pubkey;
@@ -12867,7 +12876,7 @@
     _dedupAddr, _feedScrollable, _hidePill, _isDeletedStream, _kind0Tags, _loadPaymentTargets,
     _navTopHtml, _navUrl, _protectedProfileFollows, _rememberTlScroll, _shaFromUrl, _startTimeline,
     _syncRightbar, articleCard, bchDirect, bchOf, cleanupInlineStream, clearSentinel, closeModal,
-    copyValue, decorateProfiles, decorateVerified, doBchTip, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
+    copyValue, decorateProfiles, decorateVerified, doBchTip, doEthTip, ethOf, doBlock, doXmrTip, doZap, emojiHtml, emojiName,
     enc, ensureMyFollowers, feedNoteHtml, followMany, hasMedia, hydrate, invalidateCounts,
     isBchAddr, isMutedAuthor, isReply, isXmrAddr, linkify, loadSentinel, mediaParts, modal, mountAlbums,
     needProfile, niceNip05, noteHtml, openDMWith, openMenuPopover, openStream, profOf, publish,

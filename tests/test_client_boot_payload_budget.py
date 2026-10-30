@@ -141,7 +141,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: list -- the Windows app showed CONNECTING and 'No conversations yet' until restarted), the window-effects renderer
 #: note, and BUD-10's one-line placeholder + loader (the resolver, bud10.js, loads only for a post holding a blossom: URI).
 #: 8.2091 MB measured.
-BUDGET_MB = 8.210
+#: ...and 8.210 -> 8.213 for windows on screen that are never hibernated on a computer (os.js -- the Windows app's black
+#: DM/Telegram windows), Calendar drawing into its own parked window, ETH tips (app.js doEthTip) and 'My profile' as the
+#: start screen. 8.2124 MB measured.
+BUDGET_MB = 8.213
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

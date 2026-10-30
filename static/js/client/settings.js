@@ -801,8 +801,12 @@ window.PCSettingsFactory = function(dep){
               const seen=new Set(['home','global','settings']);
               const rows=$$('.nav-item[data-view]').filter(b=>!b.classList.contains('hidden')&&!seen.has(b.dataset.view)&&seen.add(b.dataset.view))
                 .map(b=>[b.dataset.view,_navLabel(b)]).filter(r=>r[1]);
-              return `<option value="social"${rows.some(r=>r[0]===cur)?'':' selected'}>Social — the timeline (default)</option>`
-                + rows.map(([v,l])=>`<option value="${v}"${cur===v?' selected':''}>${enc(l)}</option>`).join('');
+              // Your own profile is not a sidebar row, so it is offered by name ("show your profile under 'Screen the app
+              // opens on'", 2026-10-30).
+              const mine=cur==='profile';
+              return `<option value="social"${(mine||rows.some(r=>r[0]===cur))?'':' selected'}>Social — the timeline (default)</option>`
+                + `<option value="profile"${mine?' selected':''}>My profile</option>`
+                + rows.filter(r=>r[0]!=='profile').map(([v,l])=>`<option value="${v}"${cur===v?' selected':''}>${enc(l)}</option>`).join('');
             })()}</select>
           </label>
           <div class="muted small">Where the app starts. <b>Social</b> is the timeline (picked below); anything else — Notes, Messages, Calendar… — opens that screen first instead. Syncs across your devices; a device that doesn't have the chosen screen falls back to the timeline.</div>
