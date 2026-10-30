@@ -1,4 +1,4 @@
-# PosterFox 13: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 14: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
