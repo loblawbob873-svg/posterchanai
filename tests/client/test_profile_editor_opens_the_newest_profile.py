@@ -46,7 +46,7 @@ def _run(relay_mode):
     const enc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
     const niceNip05=n=>{{if(!n)return null;n=String(n).trim();if(!/^[a-z0-9._+-]+@([a-z0-9-]+\.)+[a-z]{{2,}}$/i.test(n))return null;return n.startsWith('_@')?('@'+n.slice(2)):n;}};
     const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-    const xmrOf=()=>'',bchDirect=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
+    const xmrOf=()=>'',bchDirect=()=>'',ethOf=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
     const toast=s=>toasts.push(s),uploadBlob=async()=>'',renderMe=()=>{{}},renderProfileView=()=>{{}};
     async function publish(kind,content,tags){{published={{kind,content,tags}};return {{ok:true}}}}
     function closeModal(){{const n=document.querySelector('.modal-bg');if(n)n.remove()}}

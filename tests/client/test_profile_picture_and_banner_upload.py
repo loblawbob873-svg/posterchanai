@@ -40,7 +40,7 @@ def _run(fail_banner=False):
     const enc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
     const niceNip05=()=>null;
     const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-    const xmrOf=()=>'',bchDirect=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
+    const xmrOf=()=>'',bchDirect=()=>'',ethOf=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
     let published=null; const toasts=[], held={{}};
     const toast=s=>toasts.push(s),renderMe=()=>{{}},renderProfileView=()=>{{}};
     // Blossom, held open per file name until the test lets it answer.
