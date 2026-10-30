@@ -138,6 +138,8 @@ def test_geoip_is_written_or_the_country_picker_is_decoration(tmp_path):
 def test_country_brings_exitnodes_and_strictnodes_together(tmp_path):
     rc, st = _torrc(tmp_path, "de")
     assert "ExitNodes {de}" in rc, rc
+    # both ends in the chosen country ("Tor should use US entrance and exit nodes by default", 2026-10-29)
+    assert "EntryNodes {de}" in rc, rc
     assert "StrictNodes 1" in rc, (
         "StrictNodes missing alongside ExitNodes — the country becomes a preference tor may silently "
         "ignore, not the guarantee Settings promises:\n" + rc)
@@ -147,7 +149,7 @@ def test_country_brings_exitnodes_and_strictnodes_together(tmp_path):
 
 def test_no_country_means_no_strictnodes(tmp_path):
     rc, st = _torrc(tmp_path, "")
-    assert "ExitNodes" not in rc, rc
+    assert "ExitNodes" not in rc and "EntryNodes" not in rc, rc
     assert "StrictNodes" not in rc, (
         "StrictNodes written with no ExitNodes — meaningless on its own, and it constrains circuit "
         "building the user never asked to constrain:\n" + rc)

@@ -201,7 +201,10 @@ function writeTorrc() {
   if (geo.geoip) lines.push(`GeoIPFile ${geo.geoip}`);
   if (geo.geoip6) lines.push(`GeoIPv6File ${geo.geoip6}`);
   if (state.country) {
-    // StrictNodes belongs with ExitNodes and nowhere else — see note 2.
+    // The country is BOTH ends ("Tor should use US entrance and exit nodes by default", 2026-10-29) -- the same pair the
+    // system tor's torrc carries (gentoo.sh torService), so the desktop's own Tor and PosterFox's agree. StrictNodes
+    // belongs with these and nowhere else — see note 2.
+    lines.push(`EntryNodes {${state.country}}`);
     lines.push(`ExitNodes {${state.country}}`);
     lines.push('StrictNodes 1');
   }

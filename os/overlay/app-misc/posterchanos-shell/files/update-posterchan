@@ -150,6 +150,37 @@ _pc_posterfox() {
 	return 0
 }
 
+# TOR, FOR POSTERFOX'S TOR TABS AND .ONION SITES. gentoo.sh installs net-vpn/tor and runs it on SOCKS 9050 (torService);
+# PosterFox sends a Tor tab and every .onion address there. A machine installed before that never got it -- this script
+# updates PosterChan's own packages, not the installer's list -- so on the laptop (2026-10-29) an onion site answered
+# "the proxy server is refusing connections". Installed once if missing; the installer's torrc is written only when the
+# present one names no SocksPort of its own (somebody's hand-made config is theirs); the service is enabled and started.
+_pc_torrc="${PC_TORRC:-/etc/tor/torrc}"
+_pc_tor() {
+	if [ -z "$(qlist -I net-vpn/tor 2>/dev/null)" ]; then
+		echo "${CYA}Installing Tor (PosterFox's Tor tabs and .onion sites use it)${OFF}"
+		emerge --noreplace --getbinpkg --usepkg --quiet-build=n net-vpn/tor \
+			|| { echo "${YEL}Tor did not install -- Tor tabs stay unavailable; the next update tries again.${OFF}"; return 0; }
+	fi
+	if ! grep -qE '^[[:space:]]*SocksPort[[:space:]]' "$_pc_torrc" 2>/dev/null; then
+		mkdir -p "$(dirname "$_pc_torrc")"
+		cat >"$_pc_torrc" <<-'TORRC'
+			# PosterChanOS. Managed by gentoo.sh -- edits here are replaced on reinstall.
+			SocksPort 9050
+			# Country-restricted entry and exit. GeoIPFile is what makes {us} mean anything; without it
+			# tor bootstraps to 100% and ignores both lines.
+			GeoIPFile /usr/share/tor/geoip
+			GeoIPv6File /usr/share/tor/geoip6
+			EntryNodes {us}
+			ExitNodes {us}
+			StrictNodes 1
+		TORRC
+		chmod 0644 "$_pc_torrc"
+	fi
+	systemctl enable --now tor >/dev/null 2>&1 || echo "${YEL}Could not start Tor -- Tor tabs stay unavailable until it runs.${OFF}"
+	return 0
+}
+
 # THE LIVE MEDIUM'S INSTALLER LAUNCHER DOES NOT BELONG ON AN INSTALLED MACHINE. Every install copied
 # it off the image (gentoo.sh now strips it at install time); on a machine that is not a live boot
 # and where no package owns it, it is that leftover — a menu entry that opens a terminal and does
@@ -300,6 +331,7 @@ if [ -n "$have_pkgs" ]; then
 		fi
 	fi
 	_pc_posterfox
+	_pc_tor
 	PKGS="$(_pc_update_set)"
 	echo "${CYA}Updating${OFF} $PKGS"
 	if ! emerge -u --quiet-build=n $PKGS; then
