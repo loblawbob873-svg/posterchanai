@@ -176,6 +176,9 @@
     + '#feed[data-ptheme] .prof .prof-actions .btn{color:var(--pt-buttons,var(--accent));border-color:var(--pt-buttons,var(--line));'
     // Edit is btn-cyan (a gradient): every action button is the same surface on a themed profile ("Whats up with the edit button?")
     + 'background:var(--panel2);background-image:none}'
+    // ...and no outline at all when the theme's border list leaves buttons out (Vyram: "post buttons are not removing the
+    // border"); the width stays so nothing shifts, BORDER_CSS below draws it again when buttons are ticked.
+    + '#feed[data-ptheme][data-pborder]:not([data-pb-buttons]) .prof .prof-actions .btn{border-color:transparent}'
     + '#feed[data-ptheme] .prof .follow-stats,#feed[data-ptheme] .prof .statbtn{color:var(--pt-stats,var(--muted))}'
     + '#feed[data-ptheme] .prof-tabs .prof-tab{color:var(--pt-tabs,var(--muted))}'
     + '#feed[data-ptheme] #prof-list .acts .act{color:var(--pt-icons,var(--muted))}'
@@ -371,9 +374,9 @@
       <div class="pt-presets" role="list" aria-label="Themes">${Object.keys(PRESETS).map(n => { const c = PRESETS[n].colors;
         return `<button type="button" class="pt-swatch" role="listitem" data-preset="${enc(n)}" style="background:${c.background};color:${c.text};border-color:${c.primary}"><i style="background:${c.primary}"></i>${enc(n)}</button>`; }).join('')}</div>
       ${row('background', 'Background', st.colors.background, null)}${row('text', 'Text', st.colors.text, null)}${row('primary', 'Accent', st.colors.primary, null)}
-      <details><summary>More ${COLOR}s</summary>${Object.keys(PARTS).map(k => row('p:' + k, PARTS[k][0].toUpperCase() + PARTS[k].slice(1), st.parts[k] || '#888888', !!st.parts[k])).join('')}
-        <label class="fld">Borders<select class="input" id="pt-border"><option value="">As the app draws them</option><option value="none">None</option>${BSTYLES.map(b => `<option value="${b}">${{solid:'Solid line',dashed:'Dashes - - -',dotted:'Circles \u25cf\u25cf\u25cf',double:'Double line',squares:'Squares \u25a0\u25a0\u25a0',triangles:'Triangles \u25b2\u25b6\u25bc\u25c0'}[b]}</option>`).join('')}</select></label>
-        <div class="pt-bels" id="pt-bels">${Object.keys(BELS).map(k => `<label><input type="checkbox" data-bel="${k}"> ${enc(BELS[k][0].toUpperCase() + BELS[k].slice(1))}</label>`).join('')}</div></details>
+      <details><summary>More ${COLOR}s</summary>${Object.keys(PARTS).map(k => row('p:' + k, PARTS[k][0].toUpperCase() + PARTS[k].slice(1), st.parts[k] || '#888888', !!st.parts[k])).join('')}</details>
+        <label class="fld pt-borders">Borders<select class="input" id="pt-border"><option value="">As the app draws them</option><option value="none">None</option>${BSTYLES.map(b => `<option value="${b}">${{solid:'Solid line',dashed:'Dashes - - -',dotted:'Circles \u25cf\u25cf\u25cf',double:'Double line',squares:'Squares \u25a0\u25a0\u25a0',triangles:'Triangles \u25b2\u25b6\u25bc\u25c0'}[b]}</option>`).join('')}</select></label>
+        <div class="pt-bels" id="pt-bels">${Object.keys(BELS).map(k => `<label><input type="checkbox" data-bel="${k}"> ${enc(BELS[k][0].toUpperCase() + BELS[k].slice(1))}</label>`).join('')}</div>
       <label class="fld">Font<select class="input" id="pt-font"><option value="">The app's font</option>${FONTS.map(f => `<option${f === st.font ? ' selected' : ''}>${enc(f)}</option>`).join('')}</select></label>
       <div class="fld"><span>Background picture</span><div class="row"><button type="button" class="btn btn-ghost small" id="pt-up">Upload</button>
         <input class="input" id="pt-bgurl" placeholder="https://…" value="${enc(st.bg ? st.bg.url : '')}">

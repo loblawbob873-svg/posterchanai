@@ -230,6 +230,48 @@ def test_vyrams_theme_follow_ups_border_styles_per_element_hex_codes_and_the_edi
     assert page['edit'] == page['pay'], ("the Edit button does not follow the theme like Pay", page)
 
 
+
+@CHROME
+def test_borders_sit_below_more_colours_and_unticked_buttons_lose_their_outline():
+    """Vyram, 'Themes' (2026-10-30, 16:00): "Border setting are in the more colors dropdown that should be below it. Also
+    post buttons are not removing the border it's reverting to how it was before the setting was added." -- with buttons
+    left out of the border list, Pay/Theme/⚙/☰ still drew the app's 1px outline in the theme's button colour."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.openProfile(__PC.me().pubkey)")
+        await b.until("!!document.querySelector('#theme-prof')")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('.pt-ed [data-preset]')")
+        got['ui'] = await b.js("""(()=>{const ed=document.querySelector('.pt-ed'), q=s=>ed.querySelector(s);
+          q('[data-preset="Paper"]').click();
+          const bd=q('#pt-border'), det=ed.querySelector('details');
+          const where={inMore:!!bd.closest('details'), afterMore:!!(det.compareDocumentPosition(bd)&Node.DOCUMENT_POSITION_FOLLOWING),
+                       shownWithMoreClosed:(det.open=false, bd.getClientRects().length>0)};
+          bd.value='solid'; bd.dispatchEvent(new Event('change',{bubbles:true}));
+          const box=k=>q('[data-bel="'+k+'"]');
+          box('buttons').checked=false; box('buttons').dispatchEvent(new Event('change',{bubbles:true}));
+          box('avatar').checked=true; box('avatar').dispatchEvent(new Event('change',{bubbles:true}));
+          q('#pt-save').click();
+          return where;})()""")
+        await b.until("window.__published.some(e=>e.kind===16767)")
+        await b.until("!document.querySelector('.pt-ed')")
+        await b.until("document.querySelector('#feed').hasAttribute('data-pb-avatar')")
+        got['page'] = await b.js("""(()=>{const cs=s=>getComputedStyle(document.querySelector(s));
+          const bc=s=>cs(s).borderTopColor;
+          return {pay:bc('#prof-pay'), theme:bc('#theme-prof'), edit:bc('#edit-prof'),
+                  avatar:cs('.prof .pav').borderTopWidth+'|'+cs('.prof .pav').borderTopStyle};})()""")
+
+    asyncio.run(desktop.with_browser('online', '', check, INIT))
+    ui, page = got['ui'], got['page']
+    assert not ui['inMore'] and ui['afterMore'] and ui['shownWithMoreClosed'], ("Borders must sit below More colours, not in it", ui)
+    clear = ('rgba(0, 0, 0, 0)', 'transparent')
+    assert page['pay'] in clear and page['theme'] in clear and page['edit'] in clear, ("unticked buttons kept an outline", page)
+    assert page['avatar'] != '0px|none' and not page['avatar'].startswith('0px'), ("the avatar was ticked and lost its border", page)
+
+
 @CHROME
 def test_the_song_bar_stays_in_the_header():
     """'Why is this at the top & scrolling down with you?' -- the profile's song bar was position:sticky."""
