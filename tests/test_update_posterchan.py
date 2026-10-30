@@ -313,7 +313,8 @@ def test_the_server_code_is_updated_where_it_is_installed_and_never_installed_by
     pkgs = src[src.index('PKGS="'):].split("\n", 1)[0]
     out = {}
     for case, installed in (("server", "app-misc/posterchan-server-1.0.1"), ("none", ""),
-                            ("relay", "app-misc/posterchan-relay-1.0.20261013071043")):
+                            ("relay", "app-misc/posterchan-relay-1.0.20261013071043"),
+                            ("pvim", "app-editors/pvim-1.0.20261030224310")):
         stub = tmp_path / case
         stub.mkdir()
         # Answers only for the atom actually installed, the way qlist -I does.
@@ -327,5 +328,7 @@ def test_the_server_code_is_updated_where_it_is_installed_and_never_installed_by
     assert "app-misc/posterchan-server" not in out["none"], "an update INSTALLED the server"
     assert "app-misc/posterchan-relay" in out["relay"], "an installed local relay is never upgraded (emerge -u is not --deep)"
     assert "app-misc/posterchan-relay" not in out["none"], "an update INSTALLED the local relay"
+    assert "app-editors/pvim" in out["pvim"], "an installed pvim is never upgraded: editor fixes would never ship"
+    assert "app-editors/pvim" not in out["none"], "an update INSTALLED pvim on a machine that does not have it"
     assert {"app-misc/posterchan-desktop", "app-misc/posterchanos-shell"} <= set(out["none"])
     assert 'PKGS="$(_pc_update_set)"' in src

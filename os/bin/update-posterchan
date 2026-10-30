@@ -318,6 +318,9 @@ _pc_update_set() {
 	# never upgrades an installed dependency: every machine kept the relay it was first installed with while the
 	# overlay moved on (found 2026-10-14 -- three machines on three different relay builds, none current).
 	[ -n "$(qlist -I app-misc/posterchan-relay 2>/dev/null)" ] && set="$set app-misc/posterchan-relay"
+	# AND THE EDITOR. pvim is ours (os/bin/pvim), so its fixes ship with an update like the relay's: without this an
+	# installed machine kept the pvim it was installed with for ever.
+	[ -n "$(qlist -I app-editors/pvim 2>/dev/null)" ] && set="$set app-editors/pvim"
 	echo "$set"
 }
 
