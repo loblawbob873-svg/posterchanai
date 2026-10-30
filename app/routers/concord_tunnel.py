@@ -105,10 +105,17 @@ async def concord_relay(websocket: WebSocket):
         return
     ok, why = concord_tunnel.check_target(target)
     proxy = concord_tunnel.proxy_url() if ok else ""
+    # A REFUSAL ABOUT THE RELAY IS ANSWERED ON AN OPEN SOCKET. Closed before accept(), it is a failed handshake, and every
+    # browser prints that in red: a community that lists a relay whose name no longer resolves (relay.0xchat.com,
+    # 2026-10-29) put "WebSocket connection to wss://poster.place/ws/concord-relay?... failed" in every member's console
+    # and failed the post-deploy sign-in check twice. Accepted and then closed with the same code, the client sees the
+    # same closed tunnel (it reads no code) and the console stays clean. A forged ticket is still refused at the door.
     if not ok or not proxy:
+        await websocket.accept()
         await websocket.close(code=4403, reason=(why or "no proxy")[:100])
         return
     if not concord_tunnel.acquire(pk):
+        await websocket.accept()
         await websocket.close(code=4429, reason="too many relay connections")
         return
     try:

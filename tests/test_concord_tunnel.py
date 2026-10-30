@@ -487,3 +487,22 @@ def test_a_relay_that_answered_lately_and_died_walks_the_rest_of_the_chain_once(
     later = len(seen)
     asyncio.run(burst())
     assert len(seen) == later, "inside its pause the dead relay was dialled again"
+
+
+@pytest.mark.parametrize("why", ["unresolvable", "share"])
+def test_a_refused_relay_is_answered_on_an_open_socket_not_a_failed_handshake(client, monkeypatch, why):
+    """A failed handshake is a red console line in every member's browser: a community listing a relay whose name no
+    longer resolves (relay.0xchat.com, 2026-10-29) failed the post-deploy sign-in check twice. The refusal now comes as a
+    close on an accepted socket -- same code, nothing dialled -- and only a forged ticket is turned away at the door."""
+    if why == "unresolvable":
+        monkeypatch.setattr(tun, "check_target", lambda url: (False, "could not resolve host"))
+        code = 4403
+    else:
+        monkeypatch.setattr(tun, "_open", {PK: tun.PER_MEMBER})
+        monkeypatch.setattr(tun, "_total", tun.PER_MEMBER)
+        code = 4429
+    with client.websocket_connect(f"/ws/concord-relay?u=wss://relay.0xchat.com&t={tun.issue(PK)}") as ws:   # handshake succeeds
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_text()
+    assert closed.value.code == code, closed.value.code
+    assert client.seen == [], "a refused relay was dialled"
