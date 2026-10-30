@@ -1445,7 +1445,7 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
                          // The confirm a bulk delete is waiting on, so the popup can offer it on OPEN —
                          // no more keeping the popup open to finish a delete.
                          bmPending: (BM && BM.engine && BM.engine.pending) ? BM.engine.pending() : 0 });
-        /* Bookmark sync, off until asked for. A read-only pairing can RECEIVE bookmarks and cannot
+        /* Bookmark sync, ON until switched off (bookmarks.js init). A read-only pairing can RECEIVE bookmarks and cannot
          * publish its own (no signing key) — the same line the vault draws, stated in the popup
          * rather than discovered when nothing leaves this browser. */
         case 'bm-enable': {

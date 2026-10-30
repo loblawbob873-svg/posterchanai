@@ -346,7 +346,12 @@
   async function init(handles) {
     api = handles;
     var got = await api.B.storage.local.get(['bmMap', 'bmOn', 'bmItems', 'bmPending']);
-    map = got.bmMap || {}; on = !!got.bmOn;
+    /* ON BY DEFAULT (2026-10-30, "sync bookmarks should be checked"): a browser that has never been asked
+     * starts syncing as soon as it has the bookmarks API -- the first sync is a UNION, which deletes
+     * nothing in either direction, so defaulting it on can only ever ADD bookmarks. A stored choice,
+     * either way, is kept: somebody who switched it off stays off. */
+    map = got.bmMap || {};
+    on = (got.bmOn === undefined || got.bmOn === null) ? !!(api.B && api.B.bookmarks) : !!got.bmOn;
     items = got.bmItems || {};
     pendingRemovals = got.bmPending || 0;      // a bulk-delete confirm survives a popup close / SW restart
     loaded = true;

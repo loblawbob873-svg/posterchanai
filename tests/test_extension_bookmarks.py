@@ -602,3 +602,25 @@ def test_a_wholesale_disappearance_asks_before_deleting_everywhere():
     assert got["tombstonesBeforeConfirm"] == 0, "it deleted everywhere without asking"
     assert got["tombstonesAfterConfirm"] == 10, "confirming did not go through"
     assert got["removed"] == 10
+
+
+def test_sync_is_on_by_default_and_a_choice_to_switch_it_off_is_kept():
+    """'sync bookmarks should be checked on posterchan passwords also' (2026-10-30). A fresh install (nothing stored)
+    syncs; the first pass is a union, so it publishes this browser's bookmarks and deletes nothing. A stored 'off' stays
+    off, and a browser without the bookmarks API (Firefox for Android) never claims to sync."""
+    got = run("""
+      (async () => {
+        const res = {};
+        for (const [name, stored, hasApi] of [['fresh', {}, true], ['off', {bmOn:false}, true], ['android', {}, false]]) {
+          delete require.cache[require.resolve(%s)]; require(%s);
+          const E = globalThis.PCBookmarks.engine;
+          const B = { storage:{local:{get:async()=>stored,set:async()=>{}}} };
+          if (hasApi) B.bookmarks = { onCreated:{addListener(){}},onChanged:{addListener(){}},onMoved:{addListener(){}},
+                                      onRemoved:{addListener(){}}, getTree: async()=>[{id:'root',children:[]}] };
+          await E.init({ B, open: async(ct)=>JSON.parse(ct), publish: async()=>true, isFull:()=>true, why:()=>'' });
+          res[name] = E.enabled();
+        }
+        out(res);
+      })();
+    """ % (json.dumps(BM), json.dumps(BM)))
+    assert got == {"fresh": True, "off": False, "android": False}, got
