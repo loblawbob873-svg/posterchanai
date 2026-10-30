@@ -80,8 +80,10 @@ def test_with_the_switch_on_back_alternates_chat_and_channel_list_and_never_leav
         await b.js("(()=>{const app=document.querySelector('.cc-app');if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}})()")
         await b.until("!!document.querySelector('.cc-app.show-chat')")
         got["presses"] = [await _back(b) for _ in range(4)]
-        await b.js("location.reload()")
-        await b.until("!!window.ClientSettings")
+        # The OLD page answers `!!window.ClientSettings` until the reload actually starts, and the read after it then
+        # ran mid-navigation ("ReferenceError: ClientSettings", deploy 166's gate): wait for the NEW page.
+        await b.js("window.__beforeReload=1; location.reload()")
+        await b.until("!window.__beforeReload && !!window.ClientSettings")
         got["after_reload"] = await b.js("ClientSettings.get('concordBackStaysIn',false)")
 
     asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
