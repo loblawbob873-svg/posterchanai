@@ -986,9 +986,12 @@
     count(filters, timeout=4000){
       return new Promise((res)=>{
         const id = 'cnt' + Math.random().toString(36).slice(2,9);
-        let best = 0, done = false, settle = null;
-        const finish = () => { if (done) return; done = true; clearTimeout(settle); this._countWaiters.delete(id); res(best); };
+        // NULL WHEN NO RELAY ANSWERED: "could not count" is not "nobody follows them" (2026-10-30, iPhone: Safari drops
+        // the socket in the background and a COUNT written into it got 0, which the profile showed as the number).
+        let best = 0, answered = false, done = false, settle = null;
+        const finish = () => { if (done) return; done = true; clearTimeout(settle); this._countWaiters.delete(id); res(answered ? best : null); };
         this._countWaiters.set(id, n => {
+          answered = true;
           if (n > best) best = n;
           if (!settle) settle = setTimeout(finish, 300);   // got a reply → resolve ~now (300ms grace for other relays), not after the full timeout
         });

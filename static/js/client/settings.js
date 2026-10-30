@@ -1174,9 +1174,15 @@ window.PCSettingsFactory = function(dep){
         S._vimPane='feed';
         toast(vk.checked ? 'vim keys on — hjkl to move, gg / G for top and bottom' : 'vim keys off');
       }; }
-    for(const [id, key] of [['set-prof-themes','pc_prof_themes'],['set-prof-autoplay','pc_prof_autoplay']]){
-      const el=$('#'+id); if(el) el.onchange=()=>{ try{ localStorage.setItem(key, el.checked?'1':'0'); }catch(_){} };
-    }
+    // Profile themes / profile music autoplay: this device at once, and the ACCOUNT's client prefs, so turning the
+    // music off once turns it off on every device ("add user settings to disable profile music auto-play", 10-30).
+    { const el=$('#set-prof-themes'); if(el) el.onchange=()=>{ try{ localStorage.setItem('pc_prof_themes', el.checked?'1':'0'); }catch(_){}
+        ClientSettings.set('profThemes', el.checked); _prefTouched.add('profThemes'); saveClientPrefsNostr({ profThemes: el.checked });
+        toast(el.checked ? 'profile themes on' : 'profile themes off'); }; }
+    { const el=$('#set-prof-autoplay'); if(el) el.onchange=()=>{ try{ localStorage.setItem('pc_prof_autoplay', el.checked?'1':'0'); }catch(_){}
+        ClientSettings.set('profAutoplay', el.checked); _prefTouched.add('profAutoplay'); saveClientPrefsNostr({ profAutoplay: el.checked });
+        if(!el.checked){ try{ document.querySelectorAll('.prof-track audio').forEach(a=>a.pause()); }catch(_){} }
+        toast(el.checked ? 'profile songs play when a profile opens' : 'profile songs will not play by themselves'); }; }
     { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
         S.NO_IMAGES = ni.checked; ClientSettings.set('noImages', S.NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: S.NO_IMAGES });
         toast(S.NO_IMAGES?'data saver on — tap to load images':'images load automatically');

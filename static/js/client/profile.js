@@ -203,7 +203,9 @@ window.PCProfileFactory = function(dep){
    * 16767, Ditto's and Armada's) and its song starting on open -- proftheme.js, fetched the first time a profile has
    * either. Cache first, then the relays; a newer theme repaints without restarting the song. The viewer's two
    * switches are this device's (Settings -> Appearance), on unless turned off. */
-  const _ptOn = k => { try{ return localStorage.getItem(k) !== '0'; }catch(_){ return true; } };
+  const _ptOn = k => { const a = ({pc_prof_themes:'profThemes', pc_prof_autoplay:'profAutoplay'})[k];   // the account's choice first
+    try{ const v = a && window.ClientSettings && ClientSettings.get(a, null); if(typeof v === 'boolean') return v; }catch(_){}
+    try{ return localStorage.getItem(k) !== '0'; }catch(_){ return true; } };
   let _ptLoading = null;
   function _ptModule(){
     if(window.PCProfileTheme) return Promise.resolve(window.PCProfileTheme);
@@ -749,17 +751,24 @@ window.PCProfileFactory = function(dep){
       // socket, so a single fire can land followers but 0 following (or 0/0). Patch each stat the moment ITS
       // read arrives, and retry (up to 3x) until BOTH are in — a genuinely-empty field just exhausts the
       // retries and shows 0. This does NOT touch the notes/paint path above.
-      let k3=[], followerCount=0, postCount=0, pinList=[];
+      let k3=[], followerCount=0, postCount=0, pinList=[], countedF=false, countedP=false, k3Answered=false;
+      // A COUNT or REQ written to a socket that is not open is dropped (relay.js _send) -- on an iPhone, any tab that
+      // was in the background -- and the stats then read as 0 ("the followers glitches a lot and doesn't show the
+      // correct number", 2026-10-30). Wait for one that can answer, as renderProfileView does for the notes.
+      try{ if(Relay.ready) await Relay.ready(); }catch(_){}
       for(let attempt=0; attempt<3; attempt++){
         const [ak3, acount, apins, aposts] = await Promise.all([
           Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
-          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
+          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>null),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
           Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
           // Post tally, also via COUNT — the Notes tab only ever holds a page of events, so counting what's
           // rendered would show "40" for everyone. kind 1 only: reposts/articles/streams have their own tabs.
-          Relay.count([{authors:[pk],kinds:[1]}]).catch(()=>0),
+          Relay.count([{authors:[pk],kinds:[1]}]).catch(()=>null),
         ]);
         if(S.VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
+        if(acount!==null) countedF=true;
+        if(aposts!==null) countedP=true;
+        if(ak3 && (ak3.length || ak3.complete!==false)) k3Answered=true;
         if(acount>followerCount){ followerCount=acount; const fr=$('#show-followers b'); if(fr) fr.textContent=followerCount; }
         if(aposts>postCount){ postCount=aposts; const pr=$('#show-posts b'); if(pr) pr.textContent=postCount; }
         if(ak3.length){
@@ -775,14 +784,15 @@ window.PCProfileFactory = function(dep){
           const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
         }
         if(apins.length) pinList=apins;
-        if(followerCount && k3.length) break;
+        if(countedF && k3Answered) break;
         await new Promise(r=>setTimeout(r, 800*(attempt+1)));
       }
       // Write the FINAL values unconditionally — a genuinely-empty field (0 followers, or no contact list)
       // never triggered the in-loop patch, so without this it would keep the "·" placeholder instead of "0".
-      { const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
-        const ff=$('#show-following b'); if(ff) ff.textContent=(_prof.following||[]).length;
-        const pr=$('#show-posts b'); if(pr) pr.textContent=Number(postCount)||0; }
+      // ...but a number nobody answered stays unknown ("–"), never a 0 that reads as a fact.
+      { const fr=$('#show-followers b'); if(fr) fr.textContent=countedF ? (Number(followerCount)||0) : '–';
+        const ff=$('#show-following b'); if(ff) ff.textContent=k3Answered ? (_prof.following||[]).length : '–';
+        const pr=$('#show-posts b'); if(pr) pr.textContent=countedP ? (Number(postCount)||0) : '–'; }
       const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
       if(pinIds.length){
         const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));

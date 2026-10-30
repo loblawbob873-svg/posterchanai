@@ -19,7 +19,7 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
     /* `get` answers from THIS device's decrypted cache: a hit costs no signer call. */
     DmCache:{pullShared:pull,pushShared:async()=>{},get:async id=>cached.has(id)?{kind:14}:null},Store:{byKind:()=>[],saveEvent:()=>false},
     ingestDM:()=>false,ingestWrap:ingest|| (async(ev,live)=>{received.push({ev,live});tried.add(ev.id);}),
-    bumpDm(){},_dmNotify(){},_scheduleDmRefresh(){},renderMessages(){},recountDmUnread(){}
+    bumpDm(){},_dmNotify(){},_scheduleDmRefresh(){},renderMessages(){},_dmListRepaint(){},recountDmUnread(){}
   });
   installStateGlobals(ctx);   // app.js's live lets read as S.<name> inside dms.js
   vm.runInContext(shipped+';globalThis.api={ensureDMs,_queueDmHistory};',ctx);

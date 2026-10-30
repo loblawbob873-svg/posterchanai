@@ -2160,7 +2160,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .react-ico,.zap-ico{flex:none}
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
 .act.rt .rt-ico{transition:filter .12s;width:22px;height:22px}   /* flat: no drop-shadow glow on hover/active */
-.quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4)}
+.quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4);white-space:normal}   /* inside a post's pre-wrap text its markup's line breaks drew as gaps (Vyram, a profile) */
 /* ---- webxdc mini apps ------------------------------------------------------------------------
    A CARTRIDGE, not an auto-running frame: an app is code somebody else wrote, and it starts when the
    reader presses Play. Everything here is theme tokens — a card in the timeline has to sit on nine

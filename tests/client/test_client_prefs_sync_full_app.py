@@ -357,7 +357,7 @@ async def read_fails_once_more(b, before):
 SWITCHES = {"set-vim": "vimKeys", "set-no-images": "noImages", "set-hide-replies": "hideReplies",
             "set-read-aloud": "readAloudHold", "set-new-posts-pill": "newPostsPill",
             "set-auto-new-posts": "autoNewPosts", "set-clean-links": "cleanLinks", "set-post-effects": "postEffects",
-            "set-right-panel": "rightPanel"}
+            "set-right-panel": "rightPanel", "set-prof-themes": "profThemes", "set-prof-autoplay": "profAutoplay"}
 SELECTS = {"set-start-timeline": "startTimeline", "set-start-view": "startView", "set-media-cache": "mediaCacheGB",
            "set-music-offline": "musicOfflineGB", "set-desktop-buddy-who": "desktopBuddy",
            "set-search-bar": "searchBar"}
@@ -368,7 +368,7 @@ READ = {k: f"ClientSettings.get({json.dumps(k)})" for k in (
     "postEffects", "startTimeline", "startView", "mediaCacheGB", "musicOfflineGB", "desktopBuddy", "navHidden",
     "navOrder", "tlHidden", "mobileNav", "navGroupOf", "navUserGroups", "startupApps", "startupAppsAt",
     "zapPresets", "xmrPresets", "bchPresets", "experience", "experienceRev", "searchBar", "searchBarAt",
-    "musicCoverLookup")}
+    "musicCoverLookup", "profThemes", "profAutoplay")}
 READ.update({
     "xmrTip": "ClientSettings.get('xmrLastAmt')",
     "bchTip": "ClientSettings.get('bchLastAmt')",

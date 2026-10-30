@@ -542,6 +542,10 @@ window.PCBlossomFactory = function(dep){
       // So does Settings -> Appearance (apptheme.js): this account's look, then the synced copy if newer.
       if(window.PCLook){ window.PCLook.forOwner(owner); if(pr.appLook && typeof pr.appLook==='object') window.PCLook.adopt(pr.appLook, owner); }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
+      if(!_prefTouched.has('profThemes') && typeof pr.profThemes==='boolean'){
+        ClientSettings.set('profThemes', pr.profThemes); try{ localStorage.setItem('pc_prof_themes', pr.profThemes?'1':'0'); }catch(_){} }
+      if(!_prefTouched.has('profAutoplay') && typeof pr.profAutoplay==='boolean'){
+        ClientSettings.set('profAutoplay', pr.profAutoplay); try{ localStorage.setItem('pc_prof_autoplay', pr.profAutoplay?'1':'0'); }catch(_){} }
       if(!_prefTouched.has('cleanLinks') && typeof pr.cleanLinks==='boolean') ClientSettings.set('cleanLinks', pr.cleanLinks);   // 🧹 link-tracker removal follows across devices
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));

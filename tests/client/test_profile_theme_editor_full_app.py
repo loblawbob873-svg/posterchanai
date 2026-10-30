@@ -264,3 +264,4 @@ def test_colour_or_color_follows_the_browsers_english(lang, word):
     lang_init = "Object.defineProperty(navigator,'languages',{get:()=>[%r]});Object.defineProperty(navigator,'language',{get:()=>%r});" % (lang, lang)
     asyncio.run(desktop.with_browser('online', '', check, lang_init + INIT))
     assert word in got['summary'].lower(), got
+
