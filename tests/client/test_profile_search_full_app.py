@@ -90,6 +90,10 @@ def test_the_magnifier_finds_every_post_with_the_words(nip50, width):
         got['fits'] = await b.js("(()=>{const r=document.querySelector('#prof-find').getBoundingClientRect();"
                                  "return r.left>=0 && r.right<=innerWidth+1 && r.height>20})()")
         await b.call('Input.insertText', {'text': 'banana'})
+        # "remove that box that appears when you start typing ... makes the UI look bad": while typing, the pill alone
+        # shows focus -- the input inside it draws no border, outline or glow of its own
+        got['inner'] = await b.js(r"""(()=>{const s=getComputedStyle(document.querySelector('#prof-find-q'));
+          return {outline:s.outlineStyle==='none'||parseFloat(s.outlineWidth)===0, border:parseFloat(s.borderTopWidth)===0, shadow:s.boxShadow==='none'};})()""")
         await _key(b, 'Enter', 'Enter', 13)
         await b.until("/posts? with/.test((document.querySelector('.prof-find-sum')||{}).textContent||'')")
         await asyncio.sleep(.5)
@@ -104,6 +108,7 @@ def test_the_magnifier_finds_every_post_with_the_words(nip50, width):
 
     asyncio.run(desktop.with_browser('online', '', check, CLASSIC))
     assert got['fits'], ('the search box does not fit the screen', got)
+    assert got['inner'] == {'outline': True, 'border': True, 'shadow': True}, ('a box is drawn inside the search field while typing', got['inner'])
     assert 'banana' in got['searches'], ('the relay was never asked', got)
     assert len(got['shown']) == 3 and all('banana' in t.lower() for t in got['shown']), \
         ('the results are not exactly the three posts with the word', got['shown'])

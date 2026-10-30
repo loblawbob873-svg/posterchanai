@@ -2653,7 +2653,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof-find{display:flex;align-items:center;gap:8px;margin:10px 12px 4px;padding:6px 6px 6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel2)}
 .prof-find[hidden]{display:none}
 .prof-find>.ic{width:16px;height:16px;color:var(--muted);flex:none}
-.prof-find input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:16px;padding:6px 0}
+.prof-find input,.prof-find input:focus,.prof-find input:focus-visible{flex:1;min-width:0;background:transparent;border:0;outline:0;box-shadow:none;color:var(--text);font:inherit;font-size:16px;padding:6px 0}
+.prof-find:focus-within{border-color:var(--neon)}
+.prof-find-x{flex:none;display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer}
+.prof-find-x:hover{color:var(--text);background:var(--panel)}.prof-find-x .ic{width:16px;height:16px}
 .prof-find-sum{padding:8px 16px}
 /* drafts */
 .draft-card{flex-direction:column;gap:10px}
