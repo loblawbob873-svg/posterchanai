@@ -167,3 +167,23 @@ assert.deepEqual(plain(C.suggestLabels(items,coord)).slice(0,2),['bug','enhancem
 // ── row previews never leak markup ──────────────────────────────────────────────────────────────
 assert.equal(C.previewText('# Title\n\n**bold** [link](https://x) ![img](https://x/a.png) ```code```'),'Title bold link');
 console.log('OK');
+
+// ── a mentioned person is a NAME, and is told ─────────────────────────────────────────────────────
+// "all your comments to vyram look like: nostr:npub15nzy… Faster again" (2026-10-29): md() printed the key raw.
+{
+  const doc={addEventListener(){},removeEventListener(){},querySelector(){return null},querySelectorAll(){return []}};  // md() lives past the no-DOM early return
+  const c2=vm.createContext({console,URL,TextEncoder,TextDecoder,setTimeout,clearTimeout,NostrTools:NT,document:doc,localStorage:{getItem(){return null},setItem(){}}});c2.window=c2;
+  c2.__PCConcordP=()=>({profOf:pk=>pk===alice.pk?{name:'alice'}:null});
+  vm.runInContext(fs.readFileSync('static/js/client/concord-git.js','utf8'),c2);
+  const G=c2.PCConcordGit,np=nip19.npubEncode(alice.pk),nprof=nip19.nprofileEncode({pubkey:bob.pk});
+  const html=G._md('nostr:'+np+' Faster again, also '+nprof+' and `'+np+'` and npub1notakey',[]);
+  assert.ok(html.includes(`<button type="button" class="ccg-mention" data-ccg-profile="${alice.pk}">@alice</button> Faster again`),html);
+  assert.ok(html.includes(`data-ccg-profile="${bob.pk}"`),'an nprofile is a person too: '+html);
+  assert.ok(html.includes('<code>'+np+'</code>'),'a key inside `code` stays text: '+html);
+  assert.ok(html.includes('npub1notakey'),'an undecodable key stays text');
+  const nb=nip19.npubEncode(bob.pk);
+  const tags=plain(G.core.commentTemplate(T,'thanks nostr:'+nb+' and nostr:'+nb+' and nostr:'+nip19.npubEncode(T.author),'',[])).tags;
+  assert.deepEqual(tags.filter(t=>t[0]==='p').map(t=>t[1]),[T.author,bob.pk],'a mention p-tags the person once; the author stays tagged once');
+  const it=plain(G.core.issueTemplate(repo,'T','cc nostr:'+np,'',[],[])).tags;
+  assert.ok(it.some(t=>t[0]==='p'&&t[1]===alice.pk),'a new issue p-tags who it mentions');
+}

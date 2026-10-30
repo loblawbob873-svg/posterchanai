@@ -14896,6 +14896,7 @@
     // front of the applications for it exactly as for any other sheet (os.js _sheetChanged).
     modal, closeModal,
     attachUserAutocomplete,
+    attachMentionAutocomplete,   // concord-git.js: @name in a comment inserts nostr:npub, as the social composer does
     cordDirectContext, cordDirectModule, cordInviteLinksModule, sendCordDirectInvite,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.

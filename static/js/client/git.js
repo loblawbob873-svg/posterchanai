@@ -1853,6 +1853,7 @@ window.PCGitFactory = function(dep){
       </div>`;
       const ta=host.querySelector('.issue-comment');
       if(!ta) return;
+      attachMentionAutocomplete(ta);     // @name finds the person, as in the social composer and New issue
       const label={ 1631:['Resolve','Comment & resolve'], 1632:['Close '+noun,'Comment & close'], 1630:['Reopen '+noun,'Comment & reopen'] };
       const relabel=()=>{ const has=!!ta.value.trim();
         host.querySelector('[data-is="comment"]').disabled=!has;
@@ -1867,7 +1868,9 @@ window.PCGitFactory = function(dep){
         const again=()=>{ busy=false; buttons.forEach(x=>x.disabled=false); relabel(); };
         try{
           if(text){
-            const r=await publish(replyKindFor(issue), text, replyTags(issue, issue.id, issue.pubkey));
+            const tags=replyTags(issue, issue.id, issue.pubkey);
+            mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });   // a mention notifies who it names
+            const r=await publish(replyKindFor(issue), text, tags);
             if(!(r && r.ok)){ toast('Your comment was not posted — nothing was changed'); again(); return; }
             ta.value='';
           }
@@ -1929,8 +1932,32 @@ window.PCGitFactory = function(dep){
    * from its imeta `m` first (Blossom URLs often carry no extension), then the extension. Only
    * http(s) links that mdToHtml itself produced are touched, and only the href it already vetted is
    * reused, so nothing new can be injected. */
+  /* A `nostr:npub…` / `nostr:nprofile…` IN AN ISSUE OR COMMENT IS A PERSON, drawn as the same `.mention` the
+   * timeline draws (the #feed click opens the profile; decorateProfiles names it when the kind-0 lands). mdToHtml
+   * knows no Nostr entities, so every reply that tagged its reader read as a 63-character key ("all your comments
+   * to vyram look like: nostr:npub15nzy… Faster again"). Only TEXT outside <a>/<code>/<pre> is touched, and the
+   * key is decoded before anything is drawn, so a malformed one stays the text it was. */
+  const _GI_ENT=/(^|[^\w/.])((?:nostr:)?(?:npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|nprofile1[023456789acdefghjklmnpqrstuvwxyz]{20,}))/gi;
+  function _giMentions(html){
+    let skip=0;
+    return String(html||'').split(/(<[^>]+>)/).map(part=>{
+      const t=/^<(\/?)(a|code|pre)\b/i.exec(part);
+      if(t){ skip=Math.max(0, skip+(t[1]?-1:1)); return part; }
+      if(skip || part[0]==='<' || !/np(ub|rofile)1/i.test(part)) return part;
+      return part.replace(_GI_ENT,(m,pre,ent)=>{
+        try{
+          const d=NT().nip19.decode(ent.replace(/^nostr:/i,''));
+          const pk=d.type==='npub'?d.data:(d.type==='nprofile'?d.data.pubkey:'');
+          if(!/^[0-9a-f]{64}$/.test(pk)) return m;
+          needProfile(pk);
+          const p=profOf(pk)||{}, np=NT().nip19.npubEncode(pk), nm=p.display_name||p.name||'';
+          return pre+`<a href="#" class="mention" data-np="${np}"${nm?'':` data-mpk="${pk}"`}>@${enc(nm||np.slice(0,10)+'…'+np.slice(-5))}</a>`;
+        }catch(_){ return m; }
+      });
+    }).join('');
+  }
   function _giBody(ev){
-    const html=mdToHtml(ev.content||''); if(!html) return html;
+    const html=_giMentions(mdToHtml(ev.content||'')); if(!html) return html;
     const types=new Map();
     for(const t of (ev.tags||[])){ if(t[0]!=='imeta') continue;
       const url=(t.find(v=>/^url /.test(v))||'').slice(4).trim(), m=(t.find(v=>/^m /.test(v))||'').slice(2).trim();

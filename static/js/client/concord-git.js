@@ -136,14 +136,20 @@
 
   /* ── templates: Armada's, tag for tag (gitActivity.ts buildGit*Template + the `client` tag) ── */
   function issueTemplate(repo,subject,body,relayHint,media,labels,client){
-    const to=unique([repo.address.owner,...(repo.maintainers||[])]).filter(isId);
+    const to=unique([repo.address.owner,...(repo.maintainers||[]),...mentionedKeys(body)]).filter(isId);
     return {kind:ISSUE,content:String(body||''),tags:[['a',repo.address.coordinate,relayHint||''],['subject',subject],['alt','git repository issue: '+subject],
       ...to.map(pk=>['p',pk]),...normalizeLabels(labels).map(l=>['t',l]),...(media||[]).map(t=>[...t]),['client',client||'PosterChan']]};
   }
+  /* @name in a comment or a new issue finds the person and inserts `nostr:npub…` -- the SOCIAL composer's picker
+     (app.js attachMentionAutocomplete). This used the recipient-field picker, which replaces the whole line with a
+     bare key. Each person named is p-tagged so they are told. */
+  function mentionPicker(ta){try{const f=window.__PC&&window.__PC.attachMentionAutocomplete;if(f)f(ta);}catch(_){}}
+  function mentionedKeys(text){const out=[];String(text||'').replace(/(?:nostr:)?(npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|nprofile1[023456789acdefghjklmnpqrstuvwxyz]{20,})/gi,(m,ent)=>{
+    try{const d=window.NostrTools.nip19.decode(ent),pk=d.type==='npub'?d.data:d.type==='nprofile'?d.data.pubkey:'';if(isId(pk)&&!out.includes(pk))out.push(pk);}catch(_){}return m;});return out;}
   function commentTemplate(ticket,content,relayHint,media,client){
     const h=relayHint||'';
     return {kind:COMMENT,content:String(content||''),tags:[['E',ticket.id,h,ticket.author],['K',String(ticket.kind)],['P',ticket.author],
-      ['e',ticket.id,h,ticket.author],['k',String(ticket.kind)],['p',ticket.author],...(media||[]).map(t=>[...t]),['client',client||'PosterChan']]};
+      ['e',ticket.id,h,ticket.author],['k',String(ticket.kind)],['p',ticket.author],...mentionedKeys(content).filter(pk=>pk!==ticket.author).map(pk=>['p',pk]),...(media||[]).map(t=>[...t]),['client',client||'PosterChan']]};
   }
   function statusTemplate(ticket,repo,kind,relayHint,client){
     const to=unique([ticket.author,repo.address.owner,...(repo.maintainers||[])]).filter(isId),h=relayHint||'';
@@ -561,7 +567,12 @@
       .replace(/`([^`]+)`/g,'<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g,'$1<i>$2</i>')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`)
-      .replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g,(_,pre,u)=>media(u)==='img'?`${pre}<img class="ccg-img" src="${u}" alt="" loading="lazy">`:media(u)==='video'?`${pre}<video class="ccg-img" src="${u}" controls preload="metadata" playsinline></video>`:`${pre}<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+      .replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g,(_,pre,u)=>media(u)==='img'?`${pre}<img class="ccg-img" src="${u}" alt="" loading="lazy">`:media(u)==='video'?`${pre}<video class="ccg-img" src="${u}" controls preload="metadata" playsinline></video>`:`${pre}<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
+      /* A `nostr:npub…`/`nprofile…` is the person, as a profile button (the panel binds [data-ccg-profile]); left raw,
+         every comment that tagged its reader opened with a 63-character key. Undecodable stays text. */
+      .replace(/(^|[\s(])((?:nostr:)?(?:npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|nprofile1[023456789acdefghjklmnpqrstuvwxyz]{20,}))/gi,(m,pre,ent)=>{
+        try{const d=window.NostrTools.nip19.decode(ent.replace(/^nostr:/i,'')),pk=d.type==='npub'?d.data:d.type==='nprofile'?d.data.pubkey:'';
+          if(!isId(pk))return m;return `${pre}<button type="button" class="ccg-mention" data-ccg-profile="${enc(pk)}">@${enc(nameOf(pk))}</button>`;}catch(_){return m;}});
     const out=[];let list=null;
     for(const line of text.split('\n')){
       const h=line.match(/^(#{1,6})\s+(.*)$/),li=line.match(/^\s*([-*]|\d+\.)\s+(.*)$/),q=line.match(/^>\s?(.*)$/),cb=line.match(/^\u0000(\d+)\u0000$/);
@@ -686,7 +697,7 @@
       p.toast(r.ok?'status updated':r.queued?'Not confirmed yet — it will be re-sent':'status was not changed: '+r.msg);renderPanel();if(host&&host.repaint)host.repaint();});
     const ta=el.querySelector('#ccg-reply');
     if(ta){
-      if(p.attachUserAutocomplete)try{p.attachUserAutocomplete(ta);}catch(_){}
+      mentionPicker(ta);
       ta.onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}};
       el.querySelector('[data-ccg-attach]').onclick=()=>el.querySelector('#ccg-file').click();
       el.querySelector('#ccg-file').onchange=async e=>{await attachFiles(e.target.files,ta,note);e.target.value='';};
@@ -876,7 +887,7 @@
         if(inp)inp.onkeydown=e=>{if(e.key==='Enter'||e.key===','){e.preventDefault();if(inp.value.trim()){labels=normalizeLabels([...labels,inp.value]);paintLabels();box.querySelector('#ccg-ni-label')&&box.querySelector('#ccg-ni-label').focus();}}};
       };
       paintLabels();if(sel)sel.onchange=paintLabels;
-      if(p.attachUserAutocomplete)try{p.attachUserAutocomplete(body);}catch(_){}
+      mentionPicker(body);
       rootEl.querySelector('#ccg-ni-cancel').onclick=()=>p.closeModal();
       rootEl.querySelector('#ccg-ni-attach').onclick=()=>rootEl.querySelector('#ccg-ni-file').click();
       rootEl.querySelector('#ccg-ni-file').onchange=async e=>{await attachFiles(e.target.files,body,note);e.target.value='';};

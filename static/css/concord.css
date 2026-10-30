@@ -670,6 +670,8 @@ svg.ic.cc-starred{fill:currentColor}
 .ccg-who{display:inline-flex;align-items:center;gap:5px;padding:0;border:0;background:none;color:var(--cct-strong);cursor:pointer;font:inherit;max-width:100%}
 .ccg-who img{width:18px;height:18px;border-radius:50%;object-fit:cover;flex:0 0 18px}
 .ccg-who b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
+.ccg-mention{display:inline;padding:0;border:0;background:none;color:var(--cct-accent,var(--accent));font:inherit;font-weight:600;cursor:pointer}
+.ccg-mention:hover{text-decoration:underline}
 .ccg-repo{padding:1px 6px;border-radius:calc(6px*var(--cct-round));background:rgba(var(--cct-tint-rgb),.07);color:var(--cct-fg-2,var(--cct-muted));font-size:11px;font-family:ui-monospace,monospace}
 .ccg-subject{display:block;margin:3px 0 0;padding:0;border:0;background:none;color:var(--cct-accent);font:600 14px/1.35 inherit;text-align:start;cursor:pointer;overflow-wrap:anywhere}
 .ccg-subject.ccg-inline{display:inline;margin:0;font-size:13px}
