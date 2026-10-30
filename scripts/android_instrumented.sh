@@ -93,11 +93,13 @@ while :; do
     echo "::error::Could not clear prior instrumentation reports; fresh execution cannot be verified"
     exit 1
   }
-  # The performance probe is a MEASUREMENT run by name on nas (emulator_tests_on_nas.sh -c ...), not a
-  # check: in the whole suite it hit its 90 s limit, and as a skipped case it fails the evidence rule
-  # below (a skip is not verified behaviour). So it is left OUT of this run, never skipped in it.
+  # The probes are MEASUREMENTS run by name on nas (emulator_tests_on_nas.sh -c ...), not checks: in the
+  # whole suite the performance one hit its 90 s limit, and a probe that skips itself fails the evidence rule
+  # below (a skip is not verified behaviour). So they are left OUT of this run, never skipped in it -- every
+  # class that skips unless it is named goes in this list (tests/test_android_music_plugin_main_thread.py finds
+  # them; the Concord scroll probe was missing and blocked the 10-29 APK).
   ./gradlew :app:connectedDebugAndroidTest --console=plain \
-    -Pandroid.testInstrumentationRunnerArguments.notClass=place.poster.app.AppPerformanceProbeDeviceTest \
+    -Pandroid.testInstrumentationRunnerArguments.notClass=place.poster.app.AppPerformanceProbeDeviceTest,place.poster.app.ConcordScrollPaintDeviceTest \
     2>&1 | tee /tmp/pc-instrumented.log
   rc=${PIPESTATUS[0]}
   # The HTML/XML report is the only place per-test failures are legible; publish it either way.

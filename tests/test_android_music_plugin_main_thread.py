@@ -54,9 +54,22 @@ def test_run_on_main_runs_on_the_main_looper_and_publish_tolerates_a_released_se
     assert "if (session == null) return;" in publish, "a call queued before onDestroy must not touch a released session"
 
 
+ANDROID_TEST = ROOT / "mobile/android/app/src/androidTest/java/place/poster/app"
+
+
 def test_ci_leaves_the_performance_probe_out_of_the_device_run_rather_than_skipping_it():
     script = (ROOT / "scripts/android_instrumented.sh").read_text()
     gradle = re.search(r"\./gradlew :app:connectedDebugAndroidTest(?:[^\n]*\\\n)*[^\n]*", script).group(0)
     assert "notClass=place.poster.app.AppPerformanceProbeDeviceTest" in gradle, gradle
+    # EVERY probe that skips itself unless its class is named, found from the sources: the Concord scroll probe was
+    # added without joining the list, skipped four cases in CI, and the evidence rule blocked the APK (2026-10-29)
+    excluded = set(re.search(r"notClass=(\S+)", gradle).group(1).split(","))
+    probes = {
+        "place.poster.app." + str(f.relative_to(ANDROID_TEST)).replace("/", ".")[:-5]
+        for f in ANDROID_TEST.rglob("*.java")
+        if re.search(r"Assume\.assumeTrue\([^;]*only when its class is named", f.read_text())
+    }
+    assert len(probes) >= 2, probes
+    assert probes <= excluded, ("a by-name probe skips in the CI run and fails its evidence rule", probes - excluded)
     # and the run still refuses skipped cases -- the rule that caught it stays
     assert "'skipped'" in script
