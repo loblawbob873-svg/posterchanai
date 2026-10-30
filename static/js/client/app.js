@@ -9234,6 +9234,7 @@
   // video, so fall back. Extension-typed images (.jpg/.png) get NO onerror (matches the pre-data-saver
   // default; adding blobFallback there degraded broken links to a raw-URL/video for everyone).
   const BLOBF = 'this.onerror=null;window.__blobFallback(this);';
+  window.__bud10 = el => _lzLoad('bud10.js', 'PCBud10Factory', () => ({})).then(m => m.resolve(el)).catch(() => {});   // BUD-10 (cards.js)
   // The size hint an <img>/<video> carries so CSS can reserve its box: the aspect RATIO and the natural
   // WIDTH, as inline custom properties. client.css turns those into
   //   width: min(100%, natural, cap x ratio)

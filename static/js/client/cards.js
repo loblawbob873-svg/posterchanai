@@ -603,8 +603,9 @@ window.PCCardsFactory = function(dep){
     // want words read; `segs`, built from `flow`, is what a card draws — see _flowSegs.
     const src=raw||'', flow=[]; let last=0;
     const lift=(html, off, u)=>{ media.push(html); flow.push(src.slice(last, off), media.length-1); last=off+u.length; };
-    const text=src.replace(/(https?:\/\/[^\s<]+)/g,(url, _g, off)=>{
+    const text=src.replace(/(https?:\/\/[^\s<]+|blossom:[0-9a-fA-F]{64}[^\s<]*)/g,(url, _g, off)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
+      if(/^blossom:/i.test(u)){ lift(`<img class="bud10" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-bud10="${E}" alt="${enc(alts.get(u)||'Attached image')}" loading="lazy" onload="window.__bud10&&__bud10(this)">`, off, u); return tail; }   // BUD-10: bud10.js
       const said=kinds.get(u);
       if(said==='audio') return url;   // linkify draws it as a track, from this same imeta
       if(said==='video'){ lift(_media(E,'video'), off, u); return tail; }

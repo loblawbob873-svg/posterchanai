@@ -137,7 +137,11 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.205 -> 8.207 for `settle` in relay.js queryFrom/publishTo (answer on the FIRST relay that answers, not the
 #: slowest) and its use by Concord's settings save -- a silent relay held a banner Save 15 s (Vyram); comments cut to
 #: one line each first. 8.2062 MB measured.
-BUDGET_MB = 8.207
+#: ...and 8.207 -> 8.210 for startup apps that fill in behind another window (telegram.js onPage, the parked Messages
+#: list -- the Windows app showed CONNECTING and 'No conversations yet' until restarted), the window-effects renderer
+#: note, and BUD-10's one-line placeholder + loader (the resolver, bud10.js, loads only for a post holding a blossom: URI).
+#: 8.2091 MB measured.
+BUDGET_MB = 8.210
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
