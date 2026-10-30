@@ -1005,7 +1005,9 @@ alignKernelEntryToken() {
 	case "$token" in
 		"$machine_id") return 0 ;;
 		""|gentoo) ;;
-		*) return 0 ;;
+		# ANOTHER MACHINE'S ID IS NOT A CHOICE ANYBODY MADE: an install copied off the image carries the build VM's token,
+		# so every kernel update went to /boot/<that id> while the loader default names this machine's (the TV, 10-30).
+		*) [[ "$token" =~ ^[0-9a-f]{32}$ ]] || return 0 ;;
 	esac
 	mkdir -p /etc/kernel || return $?
 	token_tmp=$(mktemp "${token_path}.XXXXXX") || return $?
@@ -3787,6 +3789,17 @@ pc_kernel_can_unlock() {
 	return 1
 }
 
+# Where a kernel version's image is on this machine: any entry-token directory under /boot (kernel-install), the
+# conventional /boot/vmlinuz-<v>, or the module tree's own copy. First found; nothing = no image to boot it with.
+pc_kernel_image() {
+	local v="$1" f
+	[ -n "$v" ] || return 1
+	for f in /boot/*/"$v"/linux "/boot/vmlinuz-$v" "/usr/lib/modules/$v/vmlinuz"; do
+		[ -f "$f" ] && { printf '%s\n' "$f"; return 0; }
+	done
+	return 1
+}
+
 pc_best_kernel_version() {
 	for _pck_c in $(ls /usr/lib/modules 2>/dev/null | sort -Vr); do
 		if pc_kernel_can_unlock "$_pck_c"; then printf '%s\n' "$_pck_c"; return 0; fi
@@ -6266,6 +6279,24 @@ bootloader() {
 		# 6.18.43-gentoo-dist-bin to 6.18.43-gentoo-dist, so the entry named files that did not exist.
 		KERNEL_VERSION="$(find "/boot/$MACHINE_ID" -mindepth 1 -maxdepth 1 -type d \
 			-printf '%f\n' 2>/dev/null | sort -V | tail -1)"
+		# ...BUT A NEWER KERNEL MAY BE INSTALLED UNDER ANOTHER ENTRY TOKEN, AND IT IS THE ONE TO BOOT (2026-10-30, the TV:
+		# reinstalling the bootloader for the new splash put it back on 6.18.43 from its install, while kernel-install
+		# had been writing 6.18.48 ... 6.18.57 under /boot/<the build VM's machine-id> for six weeks. The old kernel held
+		# the old NVIDIA module, the userspace was newer, and the desktop fell back to software rendering.) The newest
+		# installed kernel that can unlock the disk wins when its image is anywhere on /boot; the initramfs is rebuilt
+		# for it below either way.
+		_pck_newest="$(pc_best_kernel_version || true)"
+		if [ -n "$_pck_newest" ] && [ "$_pck_newest" != "$KERNEL_VERSION" ] \
+			&& [ "$(printf '%s\n%s\n' "${KERNEL_VERSION:-0}" "$_pck_newest" | sort -V | tail -1)" = "$_pck_newest" ]; then
+			_pck_img="$(pc_kernel_image "$_pck_newest" || true)"
+			if [ -n "$_pck_img" ]; then
+				echo -e "\033[1;33mBooting the newest installed kernel, $_pck_newest (was ${KERNEL_VERSION:-none}).\033[0m"
+				KERNEL_VERSION="$_pck_newest"
+				mkdir -p "/boot/$MACHINE_ID/$KERNEL_VERSION"
+				[ "$_pck_img" = "/boot/$MACHINE_ID/$KERNEL_VERSION/linux" ] \
+					|| cp -f "$_pck_img" "/boot/$MACHINE_ID/$KERNEL_VERSION/linux" || return 1
+			fi
+		fi
 		# ...AND IF THAT ONE CANNOT UNLOCK AN ENCRYPTED ROOT, IT IS NOT THE ONE TO BOOT.
 		#
 		# The directory under /boot/<machine-id> is written by kernel-install and is simply the

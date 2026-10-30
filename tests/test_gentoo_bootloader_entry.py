@@ -35,6 +35,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SH = os.path.join(ROOT, "os", "gentoo.sh")
 KVER = "6.12.31-gentoo-dist"
 MID = "0123456789abcdef0123456789abcdef"
+OLD_KVER = "6.12.20-gentoo-dist"
+VM_TOKEN = "6ed1a9cb0331488fb15f91fb73891620"   # the ISO build VM's machine-id, inherited by an install
 
 STUBS = {
     "bootctl": ('#!/bin/sh\n'
@@ -83,13 +85,15 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
                            body.index("plymouth-set-default-theme"))
         self.assertGreater(body.rindex("ln -sfn posterchanos/posterchanos.plymouth"),
                            body.index("plymouth-set-default-theme"))
-    def _run(self, *, kernel=True, modules=True, bootctl_rc=0, no_mapper=False, no_root=False, old_entry=False, check_rc=None):
+    def _run(self, *, kernel=True, modules=True, bootctl_rc=0, no_mapper=False, no_root=False, old_entry=False, check_rc=None, tv=False):
         src = open(SH, encoding="utf-8").read()
         body = (_fn(src, "partitionDetection") + "\n\n" +
                 _fn(src, "_pc_record_plymouth_theme") + "\n\n" +
                 _fn(src, "_pc_select_plymouth_theme") + "\n\n" +
                 _fn(src, "alignKernelEntryToken") + "\n\n" +
                 _fn(src, "pc_prune_kernels") + "\n\n" +
+                ((_fn(src, "pc_kernel_can_unlock") + "\n\n" + _fn(src, "pc_best_kernel_version") + "\n\n" +
+                  (_fn(src, "pc_kernel_image") + "\n\n" if "pc_kernel_image() {" in src else "")) if tv else "") +
                 _fn(src, "bootloader"))
         for a, b in (("/boot", "$R/boot"), ("/etc/disk", "$R/etc/disk"),
                      ("/etc/machine-id", "$R/etc/machine-id"), ("/etc/crypttab", "$R/etc/crypttab"),
@@ -116,6 +120,17 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         open(os.path.join(target, "etc", "machine-id"), "w").write(MID + "\n")
         open(os.path.join(target, "etc", "disk"), "w").write("/dev/nvme0n1\nroot\nswapfile\n")
         open(os.path.join(target, "swap", "swap"), "w").write("")
+        if tv:   # the install's kernel under this machine's id, newer ones under the build VM's token (see the test)
+            for ver, tok in ((OLD_KVER, MID), (KVER, VM_TOKEN)):
+                os.makedirs(os.path.join(target, "boot", tok, ver), exist_ok=True)
+                open(os.path.join(target, "boot", tok, ver, "linux"), "w").write("kernel " + ver)
+                md = os.path.join(target, "usr/lib/modules", ver, "kernel/drivers/md")
+                os.makedirs(md, exist_ok=True)
+                open(os.path.join(md, "dm-crypt.ko"), "w").write("")
+            os.makedirs(os.path.join(target, "etc/kernel"), exist_ok=True)
+            open(os.path.join(target, "etc/kernel/entry-token"), "w").write(VM_TOKEN + "\n")
+            os.makedirs(os.path.join(target, "boot/loader"), exist_ok=True)
+            open(os.path.join(target, "boot/loader/loader.conf"), "w").write("default " + MID + "-*\ntimeout 1\n")
         if old_entry:
             os.makedirs(os.path.join(target, "boot/loader/entries"), exist_ok=True)
             open(os.path.join(target, "boot/loader/entries", "old.conf"), "w").write("title Working\n")
@@ -183,6 +198,21 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
             self.assertEqual(f.read(), MID + "\n", out)
         with open(os.path.join(target, "boot/loader/loader.conf")) as f:
             self.assertIn("default " + MID + "-*", f.read())
+
+    # THE TV, 2026-10-30: "i reinstalled bootloader to see new posterchan logo splash" -- and the desktop went to software
+    # rendering. kernel-install had put every kernel for six weeks under /boot/<the build VM's machine-id> (the install
+    # inherited that entry token), so bootloader() saw only the install's own kernel, booted it, and its NVIDIA module no
+    # longer matched the userspace.
+    def test_a_reinstall_boots_the_newest_kernel_even_under_another_entry_token(self):
+        target, out = self._run(tv=True)
+        names = [os.path.basename(e) for e in self._entries(target)]
+        self.assertEqual(names, [f"{MID}-{KVER}.conf"], out[-1500:])
+        body = open(self._entries(target)[0], encoding="utf-8").read()
+        self.assertIn(f"linux /{MID}/{KVER}/linux", body)
+        with open(os.path.join(target, "boot", MID, KVER, "linux")) as f:
+            self.assertEqual(f.read(), "kernel " + KVER, "the newer kernel's image was not put where the entry points")
+        with open(os.path.join(target, "etc/kernel/entry-token")) as f:
+            self.assertEqual(f.read(), MID + "\n", "future kernels would still go to the build VM's directory")
 
     def test_an_entry_is_written_at_all(self):
         """The whole bug: `>` cannot create a directory, and nothing made

@@ -37,7 +37,11 @@
     const row = (title, sub, ctl) => `<section class="os-setting-row os-set-control"><div><b>${title}</b><span>${sub}</span></div>${ctl}</section>`;
     const presets = PRESETS.filter(([, p]) => fits(st, p))
       .map(([name, p]) => `<button class="btn${same(c, p) ? ' on' : ''}" data-wfx-preset="${enc(name)}">${enc(name)}</button>`).join('');
+    // A renderer without GL (Vulkan on NVIDIA, which keeps that screen from flickering) cannot draw Burn, Spin, Explode or
+    // wobbly windows -- the compositor says so -- so they are not offered, and this says why.
+    const r = (st.offered || {}).renderer, limited = r && r !== 'gles2';
     return head
+      + (limited ? `<p class="wfx-note muted" data-wfx-limited>This screen is drawn with ${r === 'vulkan' ? 'Vulkan, which keeps an NVIDIA display from flickering' : 'software rendering'}. Burn, Spin, Explode, Vortex, Helix, Blinds, Melt and wobbly windows need the GL renderer, so they are not offered here.</p>` : '')
       + `<section class="os-set-card"><div class="os-set-cardhead"><b>Looks</b><span>Start from one of these, then change any part below.</span></div><div class="wfx-presets">${presets}</div></section>`
       + (offers(st, 'wobbly') === true ? row('Wobbly windows', 'A window bends and springs back as you drag it.',
           `<label class="os-set-switch"><input data-wfx="wobbly" type="checkbox" ${c.wobbly?'checked':''} aria-label="Wobbly windows"><span>${c.wobbly?'On':'Off'}</span></label>`)

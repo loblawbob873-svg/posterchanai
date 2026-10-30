@@ -76,10 +76,10 @@ def metadata(tmp_path, extra=True, wobbly=True):
     return d
 
 
-def run(tmp_path, *args, socket_path=None, meta=None):
+def run(tmp_path, *args, socket_path=None, meta=None, renderer="gles2"):
     env = {**os.environ, "PC_WINDOW_EFFECTS_CONF": str(tmp_path / "home/window-effects.json"),
            "PC_WAYFIRE_METADATA": str(meta or metadata(tmp_path)), "XDG_RUNTIME_DIR": str(tmp_path / "run"),
-           "WAYFIRE_SOCKET": str(socket_path or "")}
+           "WAYFIRE_SOCKET": str(socket_path or ""), "PC_WAYFIRE_RENDERER": renderer}
     (tmp_path / "run").mkdir(exist_ok=True)
     r = subprocess.run([sys.executable, str(HELPER), *args], capture_output=True, text=True, env=env, timeout=20)
     return r
@@ -170,3 +170,26 @@ def test_fire_colour_and_rainbow_reach_the_compositor_and_nothing_else_does(tmp_
     sent = wf.sets()[-1]
     assert sent["animate/fire_color"] == "#b22303ff", ("a value that is not a colour must fall back to the default", sent)
     assert sent["animate/random_fire_color"] is True, sent
+
+
+def test_on_vulkan_only_what_wayfire_can_draw_is_offered_or_applied(tmp_path):
+    """'window effects dont work' on the TV (2026-10-30): an NVIDIA machine runs Wayfire on Vulkan, where Wayfire itself
+    disables fire/spin/squeezimize and refuses extra-animations and wobbly -- every open logged `Unknown animation type`
+    and nothing moved. Offered there: only what draws; a stored Burn/Explode/wobbly choice applies as something that does."""
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home/window-effects.json").write_text(json.dumps(
+        {"open": "fire", "close": "shatter", "minimize": "squeezimize", "wobbly": True}))
+    wf = FakeWayfire(tmp_path / "wf.sock")
+    out = json.loads(run(tmp_path, "status", socket_path=wf.path, renderer="vulkan").stdout)
+    for k in ("open", "close", "minimize"):
+        assert not set(out["offered"][k]) & {"fire", "spin", "squeezimize", "shatter", "vortex", "helix", "blinds", "melt"}, out
+    assert out["offered"]["wobbly"] is False and out["offered"]["renderer"] == "vulkan", out
+    assert {"fade", "zoom"} <= set(out["offered"]["open"]), out
+    assert run(tmp_path, "apply", socket_path=wf.path, renderer="vulkan").returncode == 0
+    sent = wf.sets()[-1]
+    drawn = {sent["animate/open_animation"], sent["animate/close_animation"], sent["animate/minimize_animation"]}
+    assert drawn <= {"none", "fade", "zoom", "zap"}, ("a choice Vulkan cannot draw reached the compositor", sent)
+    assert "wobbly" not in sent.get("core/plugins", RUNNING).split() and "extra-animations" not in sent.get("core/plugins", RUNNING).split(), sent
+    # the same machine on GL keeps every effect
+    gl = json.loads(run(tmp_path, "status", socket_path=wf.path).stdout)
+    assert "fire" in gl["offered"]["open"] and "shatter" in gl["offered"]["close"] and gl["offered"]["wobbly"] is True, gl

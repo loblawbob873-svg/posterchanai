@@ -65,10 +65,40 @@ def have(plugin):
     return os.path.exists(os.path.join(METADATA, plugin + ".xml"))
 
 
+# ONLY WAYFIRE'S GL RENDERER DRAWS THE FANCY ONES (2026-10-30, the TV: "window effects dont work"). On an NVIDIA machine
+# pc-compositor-session runs Wayfire on Vulkan (GLES2 flickers there, see the session), and Wayfire says at start:
+# animate "disabling fire, spin and squeezimize", extra-animations "not supported on non-gles2", wobbly "requires GLES2".
+# Offered anyway, every open/close logged `Unknown animation type` and nothing moved. Read from the running compositor's
+# own environment (WLR_RENDERER, set by the session); not set = gles2, wlroots' default.
+GL_ONLY = {"fire", "spin", "squeezimize"}
+
+
+def renderer():
+    forced = os.environ.get("PC_WAYFIRE_RENDERER")
+    if forced:
+        return forced
+    for d in glob.glob("/proc/[0-9]*"):
+        try:
+            if os.stat(d).st_uid != os.getuid():
+                continue
+            with open(d + "/comm") as f:
+                if f.read().strip() != "wayfire":
+                    continue
+            with open(d + "/environ", "rb") as f:
+                env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
+            return (env.get(b"WLR_RENDERER") or b"gles2").decode() or "gles2"
+        except (OSError, ValueError):
+            continue
+    return "gles2"
+
+
 def offered():
-    extra = EXTRA if have("extra-animations") else []
-    return {"open": ["none"] + BASE + extra, "close": ["none"] + BASE + extra, "minimize": ["none"] + MINIMIZE,
-            "speed": list(SPEED), "wobbliness": list(WOBBLE), "wobbly": have("wobbly")}
+    gl = renderer() == "gles2"
+    extra = EXTRA if gl and have("extra-animations") else []
+    base = BASE if gl else [x for x in BASE if x not in GL_ONLY]
+    mini = MINIMIZE if gl else [x for x in MINIMIZE if x not in GL_ONLY]
+    return {"open": ["none"] + base + extra, "close": ["none"] + base + extra, "minimize": ["none"] + mini,
+            "speed": list(SPEED), "wobbliness": list(WOBBLE), "wobbly": gl and have("wobbly"), "renderer": renderer()}
 
 
 def clean(raw):
@@ -78,6 +108,8 @@ def clean(raw):
     for k in ("open", "close", "minimize", "speed", "wobbliness"):
         if raw.get(k) in o[k]:
             out[k] = raw[k]
+        elif out[k] not in o[k]:          # a default this renderer cannot draw (squeezimize on Vulkan)
+            out[k] = "zoom" if "zoom" in o[k] else o[k][0]
     out["wobbly"] = bool(raw.get("wobbly") is True and o["wobbly"])
     if isinstance(raw.get("fire_color"), str) and COLOR.match(raw["fire_color"]):
         out["fire_color"] = raw["fire_color"].lower()
