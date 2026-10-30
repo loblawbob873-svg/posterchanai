@@ -91,3 +91,39 @@ def test_tor_enters_and_exits_in_the_us_by_default_and_never_fights_the_desktops
     assert "path.join(app.getPath('userData'), 'tor')" in tor_js, "the desktop's tor keeps its own data directory"
     main = (ROOT / "desktop/main.js").read_text()
     assert "SHELL_MODE ? { enabled: false, country: 'us' }" in main, "PosterChanOS's built-in tor defaults to the US"
+
+
+def _reexec_script(tmp, new_differs, already=False):
+    """The real fingerprint + re-run code, as an 'old' updater; a 'new' one sits on PATH as update-posterchan."""
+    s = UPD.read_text()
+    head = s[s.index('_pc_self="$(command -v'):s.index("\n", s.index('_pc_self_sum=')) + 1]
+    blk = s[s.index('\tif [ -z "${PC_UPDATE_REEXEC:-}" ]'):s.index('\tafter="$(qlist')]
+    old = tmp / "old-updater"
+    old.write_text("#!/bin/bash\nCYA=; OFF=\nhave_pkgs='desktop-1 shell-1'\n" + head + blk + "echo OLD-FINISHED\n")
+    old.chmod(0o755)
+    bindir = tmp / "bin"
+    bindir.mkdir()
+    new = bindir / "update-posterchan"
+    new.write_text(old.read_text() if not new_differs else
+                   '#!/bin/bash\necho "NEW RAN reexec=$PC_UPDATE_REEXEC before=$PC_UPDATE_BEFORE"\n')
+    new.chmod(0o755)
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", **({"PC_UPDATE_REEXEC": "1"} if already else {})}
+    return subprocess.run([str(old)], capture_output=True, text=True, timeout=20, env=env).stdout
+
+
+def test_an_update_that_brings_a_newer_updater_runs_its_new_steps_now(tmp_path):
+    """The laptop needed TWO updates to get Tor (2026-10-30): the shell package installs update-posterchan itself, and
+    the run that installed the Tor step was the old script. A newer copy on disk is run once, reporting against what the
+    first run started from; an identical copy is not; a re-run never re-runs again."""
+    out = _reexec_script(tmp_path, new_differs=True)
+    assert "NEW RAN reexec=1 before=desktop-1 shell-1" in out and "OLD-FINISHED" not in out, out
+
+
+def test_no_newer_updater_means_no_second_run(tmp_path):
+    out = _reexec_script(tmp_path, new_differs=False)
+    assert "OLD-FINISHED" in out and "running it once more" not in out, out
+
+
+def test_a_re_run_never_runs_again(tmp_path):
+    out = _reexec_script(tmp_path, new_differs=True, already=True)
+    assert "OLD-FINISHED" in out and "NEW RAN" not in out, out

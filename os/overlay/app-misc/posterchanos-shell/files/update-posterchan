@@ -15,6 +15,12 @@ set -u
 
 RED=$'\033[1;31m'; YEL=$'\033[1;33m'; GRN=$'\033[1;32m'; CYA=$'\033[1;36m'; OFF=$'\033[0m'
 PKGS="app-misc/posterchan-desktop app-misc/posterchanos-shell"
+# WHAT THIS RUN IS. posterchanos-shell installs this very script, so an update that brings a NEW step (Tor for PosterFox,
+# 2026-10-30) ran the OLD script to the end and the new step waited for the next update -- the laptop needed two runs to
+# get Tor. The running script's fingerprint is taken here; after the package update, a different copy on disk is run
+# once more (PC_UPDATE_REEXEC stops a loop) so its new steps happen now.
+_pc_self="$(command -v update-posterchan 2>/dev/null || echo "$0")"
+_pc_self_sum="$(sha256sum "$0" 2>/dev/null | cut -c1-64)"
 
 # ROOT, BY RE-EXEC RATHER THAN BY REFUSING. Being told "run this with sudo" is a worse answer than
 # being asked for a password, and this is the command somebody types when they want the update, not
@@ -315,7 +321,8 @@ _pc_update_set() {
 	echo "$set"
 }
 
-have_pkgs="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell app-misc/posterchan-server 2>/dev/null | sort)"
+# A re-run (below) reports against what the FIRST run started from, or a real update would read "Already up to date".
+have_pkgs="${PC_UPDATE_BEFORE:-$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell app-misc/posterchan-server 2>/dev/null | sort)}"
 
 if [ -n "$have_pkgs" ]; then
 	echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
@@ -338,6 +345,11 @@ if [ -n "$have_pkgs" ]; then
 		echo
 		echo "${RED}The update failed. Nothing was replaced — the running desktop is untouched.${OFF}"
 		exit 1
+	fi
+	if [ -z "${PC_UPDATE_REEXEC:-}" ] && [ -x "$_pc_self" ] && [ -n "$_pc_self_sum" ] \
+		&& [ "$(sha256sum "$_pc_self" 2>/dev/null | cut -c1-64)" != "$_pc_self_sum" ]; then
+		echo "${CYA}This update brought a newer update-posterchan -- running it once more for its new steps${OFF}"
+		PC_UPDATE_REEXEC=1 PC_UPDATE_BEFORE="$have_pkgs" exec "$_pc_self" "$@"
 	fi
 	after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell app-misc/posterchan-server 2>/dev/null | sort)"
 	echo
