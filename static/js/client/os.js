@@ -4672,6 +4672,9 @@
     let clock={}, zones=[], clockError='';
     let sb=null;
     if(_osSettingsPage==='secureboot'){ sb=await _loadPage('ossecureboot.js','PCSecureBoot','the Secure Boot page').catch(()=>null); if(!alive()) return; }
+    // Window effects (wobbly / explode / burn ...) is its own module too: winfx.js, PosterChanOS only.
+    let wfx=null; const wfxHere=!!(window.pcWindowEffects&&pcWindowEffects.available());
+    if(_osSettingsPage==='effects'&&wfxHere){ wfx=await _loadPage('winfx.js','PCWindowEffects','the Window effects page').catch(()=>null); if(!alive()) return; }
     if(_osSettingsPage==='datetime'){
       if(!window.pcDateTime) clockError='Date and time controls are unavailable on this device.';
       else{
@@ -4707,6 +4710,7 @@
         <div class="os-set-title">${iconSvg('i-gear')}<b>System Settings</b></div>
         <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('i-monitor')} Displays</button>
         <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('i-palette')} Appearance</button>
+        ${wfxHere?`<button data-page="effects" class="${_osSettingsPage==='effects'?'on':''}">${iconSvg('i-wand')} Window effects</button>`:''}
         <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('i-volume')} Sound</button>
         ${window.pcPrinters?`<button data-page="printers" class="${_osSettingsPage==='printers'?'on':''}">${iconSvg('i-note')} Printers</button>`:''}
         ${window.pcAutostart?`<button data-page="startup" class="${_osSettingsPage==='startup'?'on':''}">${iconSvg('i-zap')} Startup apps</button>`:''}
@@ -4724,6 +4728,7 @@
       </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
         <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
+${wfxHere?`<option value="page:effects" ${_osSettingsPage==='effects'?'selected':''}>Window effects</option>`:''}
         <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}${window.pcAutostart?`<option value="page:startup" ${_osSettingsPage==='startup'?'selected':''}>Startup apps</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
         <option value="page:search" ${_osSettingsPage==='search'?'selected':''}>Search</option>
@@ -4743,7 +4748,7 @@
         ${pointerConfine.available?`<section class="os-setting-row os-set-control"><div><b>Keep the mouse in a fullscreen game</b><span>While a fullscreen window is in front, the pointer stays on its monitor instead of sliding onto the next one. Switch away from the window, or turn this off, to release it.</span></div><label class="os-set-switch"><input data-pointer-confine type="checkbox" ${pointerConfine.on?'checked':''} aria-label="Keep the mouse in a fullscreen game"><span>${pointerConfine.on?'On':'Off'}</span></label></section>`:''}</section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
-        <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Automatic uses low power on touch devices. Modern adds shadows, transparency and visual transitions.</span></div><select data-window-effects aria-label="Window effects"><option value="auto" ${desktopEffectsMode()==='auto'?'selected':''}>Automatic</option><option value="full" ${desktopEffectsMode()==='full'?'selected':''}>Modern</option><option value="off" ${desktopEffectsMode()==='off'?'selected':''}>Low power / off</option></select></section></section>
+        <section class="os-setting-row os-set-control"><div><b>Shadows &amp; transparency</b><span>Automatic uses low power on touch devices. Modern adds shadows, transparency and visual transitions.${window.pcWindowEffects&&pcWindowEffects.available()?' Wobbly windows and open/close effects are in Window effects.':''}</span></div><select data-window-effects aria-label="Shadows and transparency"><option value="auto" ${desktopEffectsMode()==='auto'?'selected':''}>Automatic</option><option value="full" ${desktopEffectsMode()==='full'?'selected':''}>Modern</option><option value="off" ${desktopEffectsMode()==='off'?'selected':''}>Low power / off</option></select></section></section>
         ${[['sound','i-volume','Sound','Output, input, and application volume.','Open sound controls'],
            ['network','i-wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
            ['bluetooth','i-bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
@@ -4802,6 +4807,7 @@
           <div class="os-set-card" data-pcserver-ai><div class="os-set-cardhead"><b>AI features</b><span>Installed into the server with PosterChan's own installer, in the background. Large downloads — each says how large before it starts.</span></div>
           <div class="os-printer-list" data-srv-features></div>
           <pre class="os-liveusb-status os-server-log" data-srv-job hidden></pre></div>`:`<div class="empty">The PosterChan server is not available on this device.</div>`}</section>
+        <section data-settings-page="effects" data-wfx-host ${_osSettingsPage==='effects'?'':'hidden'}>${wfx||!wfxHere?'':'<div class="empty" data-wfx-error>The Window effects page could not be loaded.</div>'}</section>
         <section data-settings-page="secureboot" data-sb-host ${_osSettingsPage==='secureboot'?'':'hidden'}>${sb?'':'<div class="empty" data-sb-error>The Secure Boot page could not be loaded.</div>'}</section>
         <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
           <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
@@ -5111,6 +5117,7 @@
         if(window.pcShell&&pcShell.retry)pcShell.retry();else location.reload();
       };
       _bindSearchPrefs(host.querySelector('[data-search-prefs]'));
+      if(wfx&&_osSettingsPage==='effects') wfx.mount(host.querySelector('[data-wfx-host]'),{iconSvg,enc,PC,read:_settingsRead,alive:()=>alive()&&_osSettingsPage==='effects'});
       if(sb&&_osSettingsPage==='secureboot') sb.mount(host.querySelector('[data-sb-host]'),{iconSvg,enc,PC,read:_settingsRead,alive:()=>alive()&&_osSettingsPage==='secureboot'});
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{

@@ -4089,6 +4089,13 @@ ipcMain.handle('pc:anticheat:status', (e) => { fsGuard(e); return anticheat.stat
 ipcMain.handle('pc:anticheat:setup', (e) => { fsGuard(e); return anticheat.setup(); });
 ipcMain.handle('pc:anticheat:undo', (e) => { fsGuard(e); return anticheat.undo(); });
 ipcMain.handle('pc:anticheat:travel', (e, on) => { fsGuard(e); return anticheat.travel(on === true); });
+/* System Settings -> Window effects (desktop/windoweffects.js -> pc-window-effects). Asked lazily like pcAnticheat. */
+const windowEffects = require('./windoweffects.js');
+ipcMain.on('pc:wfx:available', (e) => {
+  try{ e.returnValue = !!(fromOurPage(e) && windowEffects.available()); }catch(_){ e.returnValue = false; }
+});
+ipcMain.handle('pc:wfx:status', (e) => { fsGuard(e); return windowEffects.status(); });
+ipcMain.handle('pc:wfx:set', (e, choice) => { fsGuard(e); return windowEffects.set(choice && typeof choice === 'object' ? choice : {}); });
 ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
 ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });
 ipcMain.handle('pc:power:keep-awake', (e, on) => { fsGuard(e); return power.setKeepAwake(!!on); });

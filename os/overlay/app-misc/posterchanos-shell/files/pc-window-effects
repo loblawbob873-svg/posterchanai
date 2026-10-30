@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Window effects on PosterChanOS -- wobbly windows, and how a window opens, closes and minimizes.
+
+    pc-window-effects status          the choices on offer, what is set, what the compositor is doing (JSON)
+    pc-window-effects set '<json>'    store the person's choice and apply it now (JSON answer, as status)
+    pc-window-effects apply           push the stored choice into the running compositor ([autostart])
+
+Asked for 2026-10-29 (then "add more effects like the cube and fire colors"): "we need the window effects on posterchan os, wobbly windows, exploding windows, etc. its
+own settings menu". Wayfire already has them -- `animate` (zoom, fade, fire, zap, spin, squeezimize), the
+`extra-animations` of wayfire-plugins-extra (shatter = the exploding window, vortex, helix, blinds, melt) and
+`wobbly` -- so this chooses among them; it draws nothing itself.
+
+pc-pointer-confine's shape exactly: /etc/wayfire.ini is portage's, so the person's answer lives in their home
+directory (~/.config/posterchanos/window-effects.json) and goes into the RUNNING compositor through
+`wayfire/set-config-options` -- live, no restart -- and once more from [autostart] at sign-in.
+
+MEASURED on the laptop (wayfire 0.10.1, wayfire-plugins-extra 0.10.0) before this was written:
+  * adding `wobbly extra-animations` to core/plugins over IPC maps both libraries into the running wayfire (its
+    /proc/<pid>/maps), and the list survives other helpers' set-config-options calls;
+  * a closing foot window under `fade` / `fire` / `shatter` changes colour over the frames grim captures (fire
+    shifts to red, shatter breaks it into shards), and under an `enabled_for` that excludes it, it is gone in one;
+  * `!( ... )` works in `enabled_for`.
+
+THE DESKTOP ITSELF IS NEVER ANIMATED. The shell ("PosterChan Desktop"), the buddy and the toast window are
+toplevels of the desktop app's own app_id; a zoom or a shatter on the shell surface is the whole desktop
+exploding. PosterChan's app windows share that app_id and ARE animated: they are titled "PosterChan Window -- ...".
+"""
+import glob
+import json
+import re
+import os
+import socket
+import struct
+import sys
+
+CONF = os.environ.get("PC_WINDOW_EFFECTS_CONF") or os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "posterchanos", "window-effects.json")
+METADATA = os.environ.get("PC_WAYFIRE_METADATA") or "/usr/share/wayfire/metadata"
+
+BASE = ["fade", "zoom", "fire", "zap", "spin"]             # animate's own
+EXTRA = ["shatter", "vortex", "helix", "blinds", "melt"]   # wayfire-plugins-extra's extra-animations
+MINIMIZE = ["squeezimize", "fade", "zoom", "zap", "spin"]
+SPEED = {"slow": 1.75, "normal": 1.0, "fast": 0.5}
+# friction (higher = settles sooner), spring_k (lower = floppier). The middle one is wobbly's own default.
+WOBBLE = {"low": (5.0, 10.0), "medium": (3.0, 8.0), "high": (1.5, 5.0)}
+# Each effect's own duration option and its default; `speed` scales these.
+DURATIONS = {
+    "fade": ("animate/fade_duration", 400, ""), "zoom": ("animate/zoom_duration", 500, " circle"),
+    "fire": ("animate/fire_duration", 300, " linear"), "zap": ("animate/zap_duration", 250, " linear"),
+    "spin": ("animate/spin_duration", 250, " linear"), "squeezimize": ("animate/squeezimize_duration", 150, " linear"),
+    "shatter": ("extra-animations/shatter_duration", 1000, " linear"), "vortex": ("extra-animations/vortex_duration", 1000, " linear"),
+    "helix": ("extra-animations/helix_duration", 700, " linear"), "blinds": ("extra-animations/blinds_duration", 700, " linear"),
+    "melt": ("extra-animations/melt_duration", 1000, " linear"),
+}
+DEFAULTS = {"open": "zoom", "close": "zoom", "minimize": "squeezimize", "speed": "normal", "wobbly": False, "wobbliness": "medium",
+            "fire_color": "#b22303", "fire_rainbow": False}
+COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")   # the page's <input type=color> value; alpha is always opaque
+SHELL_IDS = ("place.poster.desktop", "posterchan-desktop", "PosterChan")
+TOPLEVEL = '(type equals "toplevel" | (type equals "x-or" & focusable equals true))'
+ENABLED_FOR = TOPLEVEL + " & !((" + " | ".join('app_id is "%s"' % a for a in SHELL_IDS) + ') & !(title contains "PosterChan Window"))'
+OURS = ("wobbly", "extra-animations")
+
+
+def have(plugin):
+    return os.path.exists(os.path.join(METADATA, plugin + ".xml"))
+
+
+def offered():
+    extra = EXTRA if have("extra-animations") else []
+    return {"open": ["none"] + BASE + extra, "close": ["none"] + BASE + extra, "minimize": ["none"] + MINIMIZE,
+            "speed": list(SPEED), "wobbliness": list(WOBBLE), "wobbly": have("wobbly")}
+
+
+def clean(raw):
+    """A stored or asked-for choice, every field checked against what this machine offers; anything else is the default."""
+    o, out = offered(), dict(DEFAULTS)
+    raw = raw if isinstance(raw, dict) else {}
+    for k in ("open", "close", "minimize", "speed", "wobbliness"):
+        if raw.get(k) in o[k]:
+            out[k] = raw[k]
+    out["wobbly"] = bool(raw.get("wobbly") is True and o["wobbly"])
+    if isinstance(raw.get("fire_color"), str) and COLOR.match(raw["fire_color"]):
+        out["fire_color"] = raw["fire_color"].lower()
+    out["fire_rainbow"] = raw.get("fire_rainbow") is True
+    return out
+
+
+def read_pref():
+    try:
+        with open(CONF) as f:
+            return clean(json.load(f))
+    except (OSError, ValueError):
+        return dict(DEFAULTS)
+
+
+def write_pref(p):
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    tmp = CONF + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(p, f, indent=1)
+    os.replace(tmp, CONF)
+
+
+def sock():
+    path = os.environ.get("WAYFIRE_SOCKET") or ""
+    if not path:
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+        found = sorted(glob.glob(os.path.join(runtime, "wayfire-wayland-*.socket")), key=lambda p: os.stat(p).st_mtime, reverse=True)
+        path = found[0] if found else ""
+    return path
+
+
+def call(method, data):
+    path = sock()
+    if not path:
+        raise OSError("no compositor")
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(3.0)
+    s.connect(path)
+    body = json.dumps({"method": method, "data": data}).encode()
+    s.sendall(struct.pack("<I", len(body)) + body)
+
+    def take(n):
+        buf = b""
+        while len(buf) < n:
+            part = s.recv(n - len(buf))
+            if not part:
+                raise OSError("compositor closed the socket")
+            buf += part
+        return buf
+    n = struct.unpack("<I", take(4))[0]
+    out = json.loads(take(n))
+    s.close()
+    return out
+
+
+def options(p):
+    """The compositor options for a choice. Pure (no IPC), so the test can read it."""
+    scale = SPEED[p["speed"]]
+    opts = {"animate/open_animation": p["open"], "animate/close_animation": p["close"],
+            "animate/minimize_animation": p["minimize"], "animate/enabled_for": ENABLED_FOR}
+    for name in {p["open"], p["close"], p["minimize"]}:
+        if name in DURATIONS:
+            key, ms, curve = DURATIONS[name]
+            opts[key] = "%dms%s" % (max(60, round(ms * scale)), curve)
+    # Burn's flames: the person's colour, or every particle its own (Wayfire's random_fire_color). Always sent, so a
+    # colour changed while Burn is not chosen is already right the moment it is.
+    opts["animate/fire_color"] = p["fire_color"] + "ff"
+    opts["animate/random_fire_color"] = bool(p["fire_rainbow"])
+    if p["wobbly"]:
+        friction, spring = WOBBLE[p["wobbliness"]]
+        opts["wobbly/friction"], opts["wobbly/spring_k"] = friction, spring
+    return opts
+
+
+def plugins_for(current, p):
+    """The running plugin list with ours added or taken out -- every other plugin left exactly where it is."""
+    names = [x for x in str(current or "").split() if x not in OURS]
+    want = set(x for x in (p["open"], p["close"], p["minimize"]) if x in EXTRA)
+    if want and have("extra-animations"):
+        names.append("extra-animations")
+    if p["wobbly"]:
+        names.append("wobbly")
+    return " ".join(names)
+
+
+def apply(p):
+    got = call("wayfire/get-config-option", {"option": "core/plugins"})
+    if got.get("result") != "ok":
+        raise OSError("the compositor did not say which plugins it runs")
+    opts = options(p)
+    want = plugins_for(got.get("value"), p)
+    if want != got.get("value"):
+        opts["core/plugins"] = want     # only when it changes: setting it reloads the plugin list
+    out = call("wayfire/set-config-options", opts)
+    if out.get("result") != "ok":
+        raise OSError("the compositor refused the effects: %s" % out.get("error", out))
+
+
+def live():
+    """What the running compositor is actually doing -- not what the file asks for."""
+    try:
+        get = lambda o: call("wayfire/get-config-option", {"option": o}).get("value")
+        plugins = str(get("core/plugins") or "").split()
+        return {"open": get("animate/open_animation"), "close": get("animate/close_animation"),
+                "minimize": get("animate/minimize_animation"), "wobbly": "wobbly" in plugins}
+    except (OSError, ValueError):
+        return None
+
+
+def status(error=""):
+    out = {"available": bool(sock()), "offered": offered(), "chosen": read_pref(), "running": live()}
+    if error:
+        out["error"] = error
+    return out
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "status":
+        print(json.dumps(status()))
+        return 0
+    if cmd == "apply":
+        try:
+            apply(read_pref())
+        except (OSError, ValueError) as e:
+            print("pc-window-effects: %s" % e, file=sys.stderr)
+            return 1
+        return 0
+    if cmd == "set":
+        try:
+            p = clean(json.loads(argv[2] if len(argv) > 2 else "{}"))
+        except ValueError:
+            print(json.dumps(status("that is not a choice of effects")))
+            return 2
+        write_pref(p)
+        err = ""
+        try:
+            apply(p)
+        except (OSError, ValueError) as e:
+            err = "Saved; it applies at the next sign-in (%s)." % e
+        print(json.dumps(status(err)))
+        return 0
+    print("usage: pc-window-effects status|apply|set '<json>'", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

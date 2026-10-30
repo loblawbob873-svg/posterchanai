@@ -1,4 +1,4 @@
-# New in PosterChan: a command bar with an assistant, snap layouts, workspaces, Photos, a screen recorder and emoji packs for Nostr
+# New in PosterChan: a command bar with an assistant, snap layouts, workspaces, window effects, Photos, a screen recorder and emoji packs for Nostr
 
 This release is mostly about the **desktop**. That means the windowed PosterChan desktop you get in the web app on a
 wide screen, in the Windows/macOS/Linux desktop app, and as the whole desktop on PosterChanOS. It adds the things a
@@ -70,6 +70,30 @@ The taskbar now has workspace buttons: **1 2 3 +**.
   the workspaces it needs and starts on the first one.
 - Removing a workspace keeps its windows: they join the workspace before it.
 - The number of workspaces is remembered on each device.
+
+## Window effects (PosterChanOS)
+
+Wobbly windows are back. So are windows that explode when you close them.
+
+**System Settings → Window effects** has its own page:
+
+- **Wobbly windows**: a window bends and springs back as you drag it. Pick how much: *a little*, *medium* or *jelly*.
+- **Opening** and **closing** a window each get an effect: **Explode** (the window shatters into pieces), **Burn**,
+  **Vortex**, **Melt**, **Helix**, **Blinds**, **Zap**, **Spin**, **Fade**, **Zoom**, or none.
+- **Minimizing** has its own: squeeze into the taskbar, fade, zoom, zap or spin.
+- **Fire colour**: Burn's flames take any colour you choose, or **Rainbow fire** gives every flame its own.
+- **Speed**: slow, normal or fast.
+- One-press looks to start from: **Classic**, **Wobbly**, **Explosive** (burn in, explode out, jelly wobble),
+  **Inferno** (rainbow fire both ways), **Calm** and **Off**.
+
+Every change applies at once: open or close any window to see it. The effects cover PosterChan's own app windows and
+every installed program (PosterFox, Steam, games). The desktop itself never wobbles or explodes. Nothing changes
+until you choose something: a new install opens and closes windows exactly as before. Your choice is kept on the
+computer and comes back at every sign-in.
+
+The effects are Wayfire's own (the compositor PosterChanOS runs on), so they are drawn by the graphics card and cost
+nothing while no window is moving. The web app and the Windows/macOS app keep their own lighter animations; the
+**Shadows & transparency** setting under Appearance is still where those are turned down.
 
 ## A volume mixer per app
 

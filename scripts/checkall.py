@@ -383,6 +383,8 @@ CHECKS = {
     "check_os_startup_tiling":         dict(group="ui", secs=120),
     "check_os_installer":              dict(group="ui", secs=300,
                                             why="live-USB installer: icon, wizard, typed erase, progress"),
+    "check_os_window_effects":         dict(group="ui", secs=120,
+                                            why="System Settings → Window effects: wobbly, explode, presets, one change at a time"),
     "check_ci_gates":                  dict(group="meta", secs=120),
     # Leaving a community, on the screen a phone actually opens on, and then on the NEXT
     # device — "I left Soapbox many times" was the vault tombstone being unmatchable by the

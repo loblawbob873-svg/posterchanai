@@ -598,6 +598,19 @@ if (isOurPage) {
     undo: () => ipcRenderer.invoke('pc:anticheat:undo'),
     travel: (on) => ipcRenderer.invoke('pc:anticheat:travel', on === true),
   });
+  /* System Settings -> Window effects: wobbly windows and the open/close/minimize effect (pc-window-effects). Only
+   * where the helper is installed (PosterChanOS) does `available()` say yes; asked lazily, as pcAnticheat is. */
+  let _wfxHere = null;
+  contextBridge.exposeInMainWorld('pcWindowEffects', {
+    available: () => {
+      if (_wfxHere === null) {
+        try { _wfxHere = ipcRenderer.sendSync('pc:wfx:available') === true; } catch (_) { _wfxHere = false; }
+      }
+      return _wfxHere;
+    },
+    status: () => ipcRenderer.invoke('pc:wfx:status'),
+    set: (choice) => ipcRenderer.invoke('pc:wfx:set', choice && typeof choice === 'object' ? Object.assign({}, choice) : {}),
+  });
 
   contextBridge.exposeInMainWorld('pcPower', {
     status: () => ipcRenderer.invoke('pc:power:status'),
