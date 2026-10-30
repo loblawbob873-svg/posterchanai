@@ -880,3 +880,4 @@ body.os-on .ccg-projects{z-index:320}body.os-on.ccg-projects-open::before{z-inde
 .cc-topic-open{display:none!important}
 @media(max-width:820px){:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-topic-open{display:inline-grid!important;place-items:center!important}}
 .cc-topic-full{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;margin:8px 0 0}
+:is(body.concord-view,.osw-slot[data-body-view~="concord-view"]) .cc-membership-loading{margin:0 0 12px;color:var(--muted);font-size:14px;text-align:center}

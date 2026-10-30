@@ -2715,7 +2715,11 @@
       for(let attempt=0;;attempt++){
         const seed=reader.inspectControl(bundle,[]);
         // settle: the first relay to ANSWER is the read; a silent one held Save 10 s here + 5 s publishing (Vyram).
-        const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,urgent:true,settle:SAVE_SETTLE_MS,plane:cordPlaneContext(p,bundle,[],room)});
+        /* Bound to the MEMBERSHIP only, not to the control set as it stood: this read is what catches up with moved
+         * controls, and a background refresh landing while it waited made every later answer "not current" -- ignored,
+         * then timed out empty: "could not read this community's current settings" on an active community (Vyram). */
+        const readPlane=cordPlaneContext(p,bundle,[],room);readPlane.current=readPlane.membershipCurrent;
+        const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,urgent:true,settle:SAVE_SETTLE_MS,plane:readPlane});
         if(!Array.isArray(fresh)||!fresh.length)throw new Error('could not read this community’s current settings from its relays — nothing was changed, try again');
         const byId=new Map();for(const w of [...(roomControls.get(loadKey)||[]),...fresh])if(w&&w.id)byId.set(w.id,w);
         wraps=[...byId.values()];
@@ -3676,7 +3680,7 @@
     readDoc.loading=(async()=>{
       const got=await fetchReadDoc(p,owner);
       if(readDoc.owner!==owner)return readDoc;              // the account changed while we were reading
-      if(got){ mergeMarks(readDoc.marks,got.marks); const inv=mergeInvites(readDoc.invites,got.invites); mergeStars(readDoc.stars,got.stars); readDoc.answered=true; pruneReadMentions(); if(inv)void refreshInviteCount();
+      if(got){ mergeMarks(readDoc.marks,got.marks); mergeInvites(readDoc.invites,got.invites); mergeStars(readDoc.stars,got.stars); readDoc.answered=true; pruneReadMentions(); void refreshInviteCount();
         if(adoptLocalStars())readDoc.dirty=true;
         if(readDoc.dirty)saveReadDoc(p); }
       return readDoc;
@@ -3986,6 +3990,11 @@
   async function refreshInviteCount(){
     if(inviteCountBusy)return;inviteCountBusy=true;
     try{const p=PC();if(!p||!p.cordDirectContext||!p.cordDirectModule)return;const context=p.cordDirectContext();if(!context||!context.pubkey)return;
+      /* NOT BEFORE BOTH ANSWERS ARE IN. "Answered" is read from the synced document and "already joined" from the
+       * membership vault; counted before either arrived, every invite this account ever answered read as pending --
+       * "26 invitations and no communities" for the first minute of a slow start (2026-10-30). */
+      if(!(readDoc.answered&&readDoc.owner===context.pubkey&&(membershipReadFor===context.pubkey||saved().length))){
+        void loadReadDoc(p); if(pendingInviteCount){pendingInviteCount=0;backgroundRender();} return; }
       const api=await p.cordDirectModule();
       /* Parked before this device knew better: answered elsewhere, or for a community already joined. */
       for(const w of api.pending(context)||[]){ const cid=api.communityOf?api.communityOf(w.id,context):'';
@@ -3995,6 +4004,11 @@
     catch(_){}finally{inviteCountBusy=false;}
   }
   try{window.addEventListener('pc-concord-direct-invites',()=>{void refreshInviteCount();});}catch(_){}
+  /* Said while the vault has not answered and nothing is held: an empty "Find your community" read as "you have none". */
+  function membershipLoadingHtml(p){
+    const pk=p&&p.viewer&&p.viewer().pubkey;
+    return pk&&membershipReadFor!==pk&&!saved().length?'<p class="cc-membership-loading" role="status">Loading your communities…</p>':'';
+  }
   function inviteCardHtml(p){
     const n=pendingInviteCount;if(!n)return '';
     return `<button type="button" class="cc-invite-card" data-cc-review-invites><span aria-hidden="true">✉</span><span><b>${n===1?'You have an invitation':'You have '+n+' invitations'}</b><small>Review before joining — no community is contacted until you accept</small></span><strong>Review</strong></button>`;
@@ -4908,7 +4922,7 @@
        * source — cache, own relay and, on the first pass, the compatibility relays — agreed this
        * account has published no vault, which is a real answer. Anything else leaves owned-invite
        * recovery held, and holding it only costs a community the invite link can restore. */
-      if(viewer.pubkey&&(recovered||vaultEmpty)){membershipReadFor=viewer.pubkey;flushOwnedInvites(p);}
+      if(viewer.pubkey&&(recovered||vaultEmpty)){membershipReadFor=viewer.pubkey;flushOwnedInvites(p);void refreshInviteCount();backgroundRender();}
       membershipBusy=false;
       // Native desktop starts with an empty origin and relays may not be connected on first paint.
       // Retry a failed/empty recovery instead of permanently hiding the user's Armada rooms.
@@ -7031,7 +7045,7 @@
        repository's issues, comments, status changes and CI between its messages. */
     const _gitChannel=current&&state.community!=null&&window.PCConcordGit?channelsOf(current).find(c=>c.name===(state.channel||'general')):null,
       _gitHere=!!(_gitChannel&&PCConcordGit.channelHasGit(_gitChannel));
-    return `${state.community==null?`<div class="cc-discover">${inviteCardHtml(p)}<div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?`<input class="input cc-public-q" id="cc-public-q" type="search" placeholder="Search communities by name or description" aria-label="Search public communities" autocomplete="off" spellcheck="false" value="${p.enc(discoveryQuery)}"><p class="cc-public-nomatch muted small" hidden>No community matches that.</p>`:''}${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?threadBarHtml(p,current,messages):''}<div class="cc-message-list"><!--cc-list-->${_gitHere&&!state.thread?PCConcordGit.channelIntroHtml(current,_gitChannel):''}${(()=>{
+    return `${state.community==null?`<div class="cc-discover">${inviteCardHtml(p)}${membershipLoadingHtml(p)}<div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button><button class="btn btn-ghost" id="cc-check-memberships">Check my communities</button></div>${(()=>{const n=unclaimedLegacyRooms(accountPk()).length;return n?`<p class="muted small cc-legacy-hint">${n} ${n===1?'community':'communities'} saved on this device before accounts were kept apart ${n===1?'is':'are'} not linked to this account. Check my communities to add yours.</p>`:'';})()}${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?`<input class="input cc-public-q" id="cc-public-q" type="search" placeholder="Search communities by name or description" aria-label="Search public communities" autocomplete="off" spellcheck="false" value="${p.enc(discoveryQuery)}"><p class="cc-public-nomatch muted small" hidden>No community matches that.</p>`:''}${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':discoveryUnreachable?'<div class="cc-public-empty cc-public-unreachable" role="status"><b>Couldn’t reach the community directory</b><span>'+p.enc(discoveryUnreachable)+'. Your communities are not affected.</span><button class="btn btn-ghost" id="cc-discover-retry">Retry</button></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:((messages.length||_gitHere)?`${state.thread?threadBarHtml(p,current,messages):''}<div class="cc-message-list"><!--cc-list-->${_gitHere&&!state.thread?PCConcordGit.channelIntroHtml(current,_gitChannel):''}${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
            *
            * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
@@ -7919,6 +7933,8 @@
     };
     bindRefoundingControl(p,$);
     bindBannerSettings(p,$);
+    // An old refusal is about the old edits: the first change clears it (Vyram's video showed one beside a new banner).
+    { const dlg=$('#cc-settings-dialog'); if(dlg&&!dlg.__pcErrClear){ dlg.__pcErrClear=true; const clear=()=>{ if(!settingsError)return; settingsError=''; const err=document.querySelector('#cc-settings-error'); if(err){err.textContent='';err.hidden=true;} }; dlg.addEventListener('input',clear); dlg.addEventListener('change',clear); } }
     const themeBtn=$('#cc-theme'); if(themeBtn)themeBtn.onclick=()=>ccTheme.openPicker(p);
     const notifyHead=$('#cc-notify-head'); if(notifyHead)notifyHead.onclick=()=>{ const n=$('#cc-notify'); if(n)n.click(); };   // the phone's copy of the bell
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{

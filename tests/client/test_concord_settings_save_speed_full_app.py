@@ -29,8 +29,10 @@ def bundled_assets():
     yield from desktop.bundle.__wrapped__()
 
 
-# Two fixture relays behind the real WebSocket door: fast.invalid answers a REQ (stored events + EOSE) and an EVENT
-# (OK) within 5 ms; slow.invalid opens and then never says anything. Every frame is logged with its time.
+# Fixture relays behind the real WebSocket door: fast.invalid answers a REQ (stored events + EOSE) and an EVENT
+# (OK) within 5 ms; slow.invalid opens and then never says anything; empty.invalid answers every REQ at once with
+# NOTHING (a relay that does not hold this community); late.invalid holds everything but answers a REQ after 1.5 s.
+# Every frame is logged with its time.
 RELAYS = r'''(()=>{
   const Prev=window.WebSocket;window.__wsLog=[];window.__wsStore=window.__wsStore||[];window.__t0=performance.now();
   const log=(...a)=>__wsLog.push([Math.round(performance.now()-window.__t0),...a]);
@@ -41,14 +43,15 @@ RELAYS = r'''(()=>{
     static CONNECTING=0;static OPEN=1;static CLOSING=2;static CLOSED=3;
     constructor(url){
       const s=String(url),m=s.match(/[?&]u=([^&]+)/),real=m?decodeURIComponent(m[1]):s;
-      if(!/(fast|slow)\.invalid/.test(real))return new Prev(url);
-      super();this.url=s;this.kind=/slow/.test(real)?'slow':'fast';this.readyState=0;
+      if(!/(fast|slow|empty|late)\.invalid/.test(real))return new Prev(url);
+      super();this.url=s;this.kind=(real.match(/(fast|slow|empty|late)\.invalid/)||[])[1];this.readyState=0;
       setTimeout(()=>{this.readyState=1;this._fire('open');},5);
     }
     _fire(t,data){const e=t==='message'?new MessageEvent('message',{data:JSON.stringify(data)}):new Event(t);try{this['on'+t]&&this['on'+t](e);}catch(_){}this.dispatchEvent(e);}
     send(raw){const m=JSON.parse(raw);log(this.kind,m[0],m[0]==='EVENT'?m[1].id:m[1]);
       if(this.kind==='slow')return;
-      if(m[0]==='REQ'){const id=m[1],fl=m.slice(2);setTimeout(()=>{for(const ev of __wsStore.filter(ev=>fl.some(f=>match(f,ev))))this._fire('message',['EVENT',id,ev]);this._fire('message',['EOSE',id]);},5);}
+      if(m[0]==='REQ'){const id=m[1],fl=m.slice(2),held=this.kind==='empty'?[]:__wsStore.filter(ev=>fl.some(f=>match(f,ev)));
+        setTimeout(()=>{for(const ev of held)this._fire('message',['EVENT',id,ev]);this._fire('message',['EOSE',id]);},this.kind==='late'?1500:5);}
       if(m[0]==='EVENT'){const ev=m[1];if(!__wsStore.some(x=>x.id===ev.id))__wsStore.push(ev);setTimeout(()=>this._fire('message',['OK',ev.id,true,'']),5);}
     }
     close(){if(this.readyState===3)return;this.readyState=3;this._fire('close');}
@@ -121,3 +124,50 @@ def test_a_silent_relay_does_not_hold_the_save():
     assert ms < 4000, ('Save waited for the relay that never answers: %d ms' % ms, got)
     sent = {r[1] for r in got['log'] if r[2] == 'EVENT'}
     assert {'fast', 'slow'} <= sent, ('the edition must still be offered to every listed relay', got)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_relay_that_answers_empty_first_does_not_fail_the_save():
+    """Vyram's video, 2026-10-29: "Not saved: could not read this community's current settings from its relays".
+    The 1 s grace started at the FIRST end-of-results, even one that carried nothing, so a relay without the community
+    answering at once cut off the relay that held it, and the save read nothing and refused."""
+    got = asyncio.run(_save_banner(['wss://empty.invalid', 'wss://late.invalid']))
+    assert not [t for t in got['toasts'] if 'could not' in t[1]], ('the save refused after an empty answer', got['toasts'])
+    ms = _saved(got)
+    print('save reported done after %d ms' % ms)
+    assert ms < 4000, ('saving took %d ms' % ms, got)
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+def test_a_refusal_clears_when_the_settings_are_changed():
+    """The same video: the red "Not saved: ..." from an earlier attempt stayed under a NEW banner, reading as if the
+    new one had failed too. A refusal is about the edits it refused; the first change clears it."""
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=390, height=900, deviceScaleFactor=1, mobile=True))
+        await desktop.login(b)
+        await b.js("__PC.switchMessagesTab('concord')")
+        await b.until('!!window.PosterCordReader && !!window.PosterCord && !!window.PCConcord')
+        await b.js(RELAYS)
+        await b.js(BLOBS)
+        await b.js("window.__toasts=[];__PC.toast=m=>__toasts.push([performance.now(),String(m)]);")
+        minted = await b.js(MINT.replace('NAME', json.dumps('Refused'))
+                            .replace("relays:['wss://cord.invalid']", "relays:['wss://empty.invalid']")
+                            .replace('__relaySeed(made.events);', '__wsStore.push(...made.events);'))
+        await b.js(OPEN_ROOM + '(' + json.dumps(minted['room']) + ')')
+        await b.until("!!document.querySelector('#cc-edit-icon')")
+        await click(b, '#cc-edit-icon')
+        await b.until("!document.querySelector('#cc-settings-dialog').classList.contains('hidden')")
+        await click(b, '#cc-settings-save')
+        await b.until("!document.querySelector('#cc-settings-error').hidden")
+        got['refused'] = await b.js("document.querySelector('#cc-settings-error').textContent")
+        await b.js("(()=>{const i=document.querySelector('#cc-settings-dialog input[type=text], #cc-settings-dialog input:not([type])');"
+                   "i.focus();return true})()")
+        await b.call('Input.insertText', {'text': 'x'})
+        await asyncio.sleep(.3)
+        got['after'] = await b.js("({hidden:document.querySelector('#cc-settings-error').hidden,text:document.querySelector('#cc-settings-error').textContent})")
+    extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),osMode:false}));"
+    asyncio.run(desktop.with_browser('online', '', check, extra))
+    assert got['refused'].startswith('Not saved'), got
+    assert got['after']['hidden'] and not got['after']['text'], ('the old refusal stayed after an edit', got)

@@ -1093,7 +1093,7 @@ html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
 .rightbar .notif .notif-ctx .quoted{padding:1px 0 1px 10px;border:0;border-inline-start:2px solid var(--line);
   border-radius:0;background:transparent;box-shadow:none}
 .rightbar .notif .notif-ctx .hd .handle,
-.rightbar .notif .notif-ctx .hd .time{display:none}   /* the name + a 2-line snippet is the whole job here */
+.rightbar .notif .notif-ctx .hd .time,.rightbar .notif .notif-ctx .qsub{display:none}   /* the name + a 2-line snippet is the whole job here */
 /* width:auto OPTS OUT of the --arn/--nw reservation (see the layout-stable media block): this is a
    deliberately cover-CROPPED 74px thumbnail, not a scaled copy of the post's media, so a ratio-derived
    width is the wrong shape for it. Without the opt-out it inherits --mh:220px from .notif-ctx above,
@@ -1934,7 +1934,6 @@ body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilena
 body.embed .main{margin:0 !important;width:100% !important;height:auto !important;overflow:visible !important}
 body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important;overflow:visible !important}
 .act.actq .q-ico{width:22px;height:22px}
-.act.actc .ic{width:22px;height:22px}   /* Share to Communities: the same size as its neighbours' icons */   /* quote: no idle colour — uniform --muted like every .act / .nav-item */
 .act .rp-ico{width:20px;height:20px}
 /* No visible scrollbar on the timeline: a 14px magenta bar down the side of the feed read as chrome
    from a different app. Scrolling itself is untouched — only the painted track/thumb is gone
@@ -2376,10 +2375,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .link-card .lc-site{color:var(--cyan);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
 .link-card .lc-title{font-weight:700;font-size:15px;margin:2px 0;line-height:1.45}
 .link-card .lc-desc{color:var(--muted);font-size:15px;line-height:1.45}
-.quoted .hd{font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* ONE SHAPE FOR EVERY QUOTE: avatar + name, then the address + time on a row of their own (Vyram, 15880b08). Wrapping
+   decided the shape by name length -- a long name dropped address+time below it, a short one left the time alone on a
+   whole row. The address has the second row to itself, so it is spelled in full wherever it fits. */
+.quoted .hd{font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
+.quoted .hd .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quoted .qsub{display:flex;align-items:baseline;gap:8px;min-width:0;margin-top:2px}
+.quoted .qsub .handle{flex:1 1 auto;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quoted .qsub .time{flex:none;margin-inline-start:auto;white-space:nowrap}
 .quoted .qav{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:none;border:1px solid var(--line)}
 .quoted .hd .name{font-weight:700;color:var(--text)}
-.quoted .hd .handle,.quoted .hd .time{color:var(--muted);font-size:13px}
+.quoted .qsub .handle,.quoted .qsub .time{color:var(--muted);font-size:13px}
 .quoted .txt{font-size:17px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;overflow:clip;overflow-clip-margin:.5em}   /* was missing both: newlines collapsed and a long npub/URL blew out the card; overflow:clip = zalgo guard (see .note .txt) */
 .quoted .txt img:not(.emoji-inline):not(.qav),.quoted .txt video{--mh:280px;max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}

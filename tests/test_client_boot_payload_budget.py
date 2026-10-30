@@ -146,7 +146,10 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: start screen. 8.2124 MB measured.
 #: ...and 8.213 -> 8.215 for the profile's Posts / Media groups and their sliding segmented control (profile.js is a
 #: boot module: All / Posts / Replies and All / Photos / Videos / Albums replace two tabs). 8.2139 MB measured.
-BUDGET_MB = 8.215
+#: ...and 8.215 -> 8.217 for Communities saying "Loading your communities…" and not counting answered invitations
+#: before the answers arrive, the settings save that survives a background refresh (concord.js), and the quoted
+#: card's two-row header (cards.js); the row's Share to Communities button went, its ⋯ item stays. 8.2163 MB measured.
+BUDGET_MB = 8.217
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

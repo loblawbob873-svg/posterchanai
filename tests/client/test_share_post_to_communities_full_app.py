@@ -4,9 +4,10 @@ Asked 2026-10-26: "Add 'Share to Communities' button to social posts with a vide
 community/channel of your choosing. make sure UI good on mobile/OS/Web". Measured on a real post card, every press a
 real mouse event at the control's centre after proving nothing covers it (music_art_fixture.press):
 
-  * a post with an image or a video carries the button in its action row (and a ⋯ menu item); a text post has neither;
-  * the action row -- now seven buttons on a media post -- still fits the narrowest phone, every button inside the card;
-  * pressing it opens the channel picker OVER the post (no jump to Communities first); choosing a channel opens it,
+  * it is the post's ⋯ menu item, on every post (a text post shares its link). Not a button in the action row as well:
+    "why do we have a community button on each social post and a hamburger menu for the same thing?" (2026-10-30), so
+    the row is back to six and has no Share to Communities button;
+  * choosing it opens the channel picker OVER the post (no jump to Communities first); choosing a channel opens it,
     and its message box holds the post's image AND video as attachments (URL + imeta with the right type), the Blossom
     hash URL typed by asking the server -- nothing is uploaded again and nothing is sent until Send.
 """
@@ -55,6 +56,13 @@ async def _ready(b, w, h, os_mode=False):
     await b.js(SEED)
 
 
+async def _share(b, which):
+    """⋯ on the post, then Share to Communities -- real presses."""
+    await A.press(b, "article.note[data-id='%s'] .acts [data-a='menu']" % await b.js("window.%s" % which))
+    await b.until("!!document.querySelector('.menu-pop [data-m=\"sharecomm\"]')")
+    await A.press(b, ".menu-pop [data-m='sharecomm']")
+
+
 async def _open(b, which):
     await b.js("__PC.openThread(window.%s); 1" % which)
     await b.until("!!document.querySelector('article.note[data-id=\"'+window.%s+'\"] .acts')" % which)
@@ -65,11 +73,11 @@ ROW = r"""(()=>{const art=document.querySelector('article.note[data-id="'+window
   const ar=art.getBoundingClientRect(), r=acts.getBoundingClientRect();
   const btns=[...acts.querySelectorAll(':scope > button')].filter(b=>b.checkVisibility());
   const tops=btns.map(b=>b.getBoundingClientRect().top), ws=btns.map(b=>b.getBoundingClientRect().width);
-  const mine=acts.querySelector('[data-a="sharecomm"]'), mw=mine?mine.getBoundingClientRect().width:0;
+  const mine=acts.querySelector('[data-a="sharecomm"]');
   return {n:btns.length, inside:btns.every(b=>{const x=b.getBoundingClientRect();return x.left>=ar.left-0.5&&x.right<=ar.right+0.5}),
     // one line: icons of different glyphs sit a few px apart in their boxes; a WRAPPED row is a whole row lower
     oneLine:Math.max(...tops)-Math.min(...tops)<=6, sideways:document.documentElement.scrollWidth>innerWidth+1,
-    asWide:mw>=Math.min(...ws.filter((_,i)=>btns[i]!==mine))-1, widths:ws.map(Math.round)}})()"""
+    inRow:!!mine, widths:ws.map(Math.round)}})()"""
 
 
 @CHROME
@@ -81,10 +89,13 @@ def test_a_posts_image_and_video_go_to_the_chosen_channel(w, h):
         await _ready(b, w, h)
         await b.js("__PC.switchView('home'); 1")
         await _open(b, "__text")
-        got["text_btn"] = await b.js("!!document.querySelector('article.note[data-id=\"'+window.__text+'\"] [data-a=\"sharecomm\"]')")
+        await _share(b, "__text")
+        await b.until("!!document.querySelector('[data-cc-share-channel]')")
+        got["text_btn"] = True
+        await b.js("__PC.closeModal(); 1")
         await _open(b, "__media")
         got["row"] = await b.js(ROW)
-        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__media"))
+        await _share(b, "__media")
         await b.until("!!document.querySelector('[data-cc-share-channel]')")
         got["view_at_picker"] = await b.js("__PC.isView('concord')")
         got["fits"] = await b.js("[...document.querySelectorAll('.cc-share-channel')].every(e=>{const r=e.getBoundingClientRect();return r.height>=%d&&r.right<=innerWidth+1&&r.left>=0})" % (44 if w <= 820 else 24))
@@ -99,9 +110,8 @@ def test_a_posts_image_and_video_go_to_the_chosen_channel(w, h):
     asyncio.run(desktop.with_browser("online", "", check, CLASSIC))
     shape = (w, h)
     assert got["text_btn"] is True, (shape, "a text post must offer Share to Communities too (it shares its link)")
-    assert got["row"]["n"] == 7 and got["row"]["inside"] and got["row"]["oneLine"] and not got["row"]["sideways"], \
+    assert got["row"]["n"] == 6 and not got["row"]["inRow"] and got["row"]["inside"] and got["row"]["oneLine"] and not got["row"]["sideways"], \
         (shape, "the action row does not fit", got["row"])
-    assert got["row"]["asWide"], (shape, "the Share to Communities button is smaller than its neighbours", got["row"]["widths"])
     assert got["view_at_picker"] is False, (shape, "the picker should open over the post, not after a jump to Communities")
     assert got["fits"], (shape, "the channel choices are not finger-sized and on screen")
     assert got["composer"].split() == [IMG, VID], (shape, "the composer does not hold the post's image and video", got["composer"])
@@ -144,7 +154,7 @@ def test_an_untyped_blossom_address_is_asked_once_and_attached_as_what_it_is():
         await b.js(UNTYPED)
         await b.js("__PC.switchView('home'); 1")
         await _open(b, "__untyped")
-        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__untyped"))
+        await _share(b, "__untyped")
         await b.until("!!document.querySelector('[data-cc-share-channel]')")
         await A.press(b, "[data-cc-share-channel='general']")
         await b.until("!!document.querySelector('#cc-input') && document.querySelector('#cc-input').value.includes('cdcd')")
@@ -164,7 +174,7 @@ def test_on_the_posterchanos_desktop_the_picker_opens_and_the_channel_window_get
         await _ready(b, 1280, 860, os_mode=True)
         await b.js("__PC.switchView('home'); 1")
         await _open(b, "__media")
-        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__media"))
+        await _share(b, "__media")
         await b.until("!!document.querySelector('[data-cc-share-channel]')")
         await A.press(b, "[data-cc-share-channel='general']")
         await b.until("[...document.querySelectorAll('#cc-input')].some(i=>i.value.includes('clip.mp4'))")
@@ -207,7 +217,7 @@ def test_the_first_share_of_a_session_lands_in_the_chosen_channel(channel):
         await b.js(COLD)
         await b.js("__PC.switchView('home'); 1")
         await _open(b, "__gif")
-        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__gif"))
+        await _share(b, "__gif")
         await b.until("!!document.querySelector('[data-cc-share-channel]')")
         await A.press(b, "[data-cc-share-channel='%s']" % channel)
         await b.until("!!document.querySelector('#cc-input')")
@@ -234,7 +244,7 @@ def test_a_post_with_no_media_shares_its_link(w, h):
         await _ready(b, w, h)
         await b.js("__PC.switchView('home'); 1")
         await _open(b, "__text")
-        await A.press(b, "article.note[data-id='%s'] [data-a='sharecomm']" % await b.js("window.__text"))
+        await _share(b, "__text")
         await b.until("!!document.querySelector('[data-cc-share-channel]')")
         got["prompt"] = await b.js("document.querySelector('.modal p').textContent")
         await A.press(b, "[data-cc-share-channel='general']")

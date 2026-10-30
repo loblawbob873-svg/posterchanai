@@ -1432,7 +1432,8 @@
     /* `via` (queryFrom/publishTo/subscribeFrom/publishAuthed): a function from a relay url to the url actually
      * DIALED -- Concord passes this node's tunnel (/ws/concord-relay) so a client talks only to its instance.
      * Everything else (targets, cooldowns, reports, AUTH's relay tag) keeps the REAL relay url. */
-    // `settle`: after the FIRST EOSE the rest get `settle` ms, then end `late` (events kept, no cooldown).
+    // `settle`: after the first EOSE that CARRIED events the rest get `settle` ms, then end `late` (events kept, no cooldown).
+    // An empty EOSE is not that answer: a relay without the community answered first and the save read nothing (Vyram).
     queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null, urgent=false, via=null, subPrefix='', settle=0 } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
@@ -1476,7 +1477,7 @@
         const fin = (outcome='failure') => { if (done) return;if(authScope&&!authScope.current())outcome='abort'; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (signal) signal.removeEventListener('abort', abort);
           Relay._queryFromStops.delete(stop);if(owns)Relay._queryFromActive.delete(slot(u));lates.delete(late);
-          if(outcome==='success'&&settle>0&&!settleTm)settleTm=setTimeout(()=>{for(const f of [...lates])f();},settle);
+          if(outcome==='success'&&got.length&&settle>0&&!settleTm)settleTm=setTimeout(()=>{for(const f of [...lates])f();},settle);
           if(outcome==='late')note('late',u);
           if(outcome==='refused'){ note('refused',u); outcome='failure'; }
           if(outcome==='failure'){

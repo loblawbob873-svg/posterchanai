@@ -869,7 +869,6 @@ window.PCCardsFactory = function(dep){
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}${_rtAct.pending?' rt-unconfirmed':''}" data-a="repost" title="${_rtAct.label}" aria-label="${_rtAct.label}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
-          ${(typeof postMediaOf==='function') ? '<button class="act actc" data-a="sharecomm" title="Share to Communities" aria-label="Share to Communities"><svg class="ic b-ic" aria-hidden="true"><use href="#i-users"></use></svg></button>' : ''}
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'add another reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
           <button class="act actm ${S.BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
@@ -975,7 +974,8 @@ window.PCCardsFactory = function(dep){
     const cw=S.BLUR_NSFW && (!!cwTag || isSensitive(o));
     const cwReason=cwTag ? String(cwTag[1]||'').trim() : (cw?'NSFW':'');
     return `<div class="quoted" data-open="${o.id}">
-      <div class="hd"><img alt="" class="qav" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(av, 24):String(av||'')))}" data-osrc="${enc(av)}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      <div class="hd"><img alt="" class="qav" src="${enc((typeof PCThumb!=='undefined'?PCThumb.src(av, 24):String(av||'')))}" data-osrc="${enc(av)}" onerror="if(!(window.PCThumb&&PCThumb.err(this)))this.src='${S.LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span></div>
+      <div class="qsub"><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
       ${mediaFlowHtml(mp, o)}
       ${cw?`</div></div>`:''}</div>`; }
@@ -1494,7 +1494,6 @@ window.PCCardsFactory = function(dep){
       if(a==='react') return pickEmoji(id,pk,btn);
       if(a==='repost') return doRepost(id,pk,btn);
       if(a==='quote') return compose({quote:id});
-      if(a==='sharecomm') return sharePostToCommunities(id);
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='tip') return doTip(id,pk,art.dataset.xmr,art.dataset.xmrNote==='1');
