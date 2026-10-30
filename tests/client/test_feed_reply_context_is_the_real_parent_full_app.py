@@ -126,8 +126,8 @@ def test_the_label_above_a_reply_names_the_post_it_answers():
         # replies there, and the NIP-22 comment is seeded the same way, as a relay would have.
         await b.js("__mk().feed.forEach(e=>Store.saveEvent(e));true")
         await b.js("__PC.openProfile(__mk().carol)")
-        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
-        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click()")
+        await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
+        await b.js("document.querySelector('.prof-chip[data-view=\"replies\"]').click()")
         await b.until("[...document.querySelectorAll('#feed .reply-pair')].filter(p=>/LAST REPLY in/.test(p.textContent)).length>=%d" % len(CASES))
         got["profile"] = await _settle(b, list(CASES))
 

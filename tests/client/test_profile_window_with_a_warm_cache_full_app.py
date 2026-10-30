@@ -58,9 +58,9 @@ def test_a_profile_window_with_a_warm_cache_shows_the_relays_history_not_the_cac
         # profile window again now that a session exists -- the way the desktop opens one.
         await b.call("Page.navigate", {"url": (await b.js("location.origin")) + "/index.html?pcwin=doc:prof:" + PK})
         await asyncio.sleep(1.5)
-        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+        await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
         await asyncio.sleep(3)
-        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click();true")
+        await b.js("document.querySelector('.prof-chip[data-view=\"replies\"]').click();true")
         await asyncio.sleep(1.5)
         got["replies"] = await b.js(GAPS)
         got["asked"] = await b.js("window.__asked||[]")

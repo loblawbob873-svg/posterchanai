@@ -63,9 +63,9 @@ def test_the_replies_tab_has_no_hole_and_scroll_back_continues_from_what_was_fet
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
         await b.js(STUB)
         await b.js("__PC.openProfile('%s');true" % PK)
-        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+        await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
         await asyncio.sleep(.8)
-        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click();true")
+        await b.js("document.querySelector('.prof-chip[data-view=\"replies\"]').click();true")
         await asyncio.sleep(.6)
         got["first"] = await b.js(GAPS)
         # Scroll to the bottom: the scroll-back trigger.
@@ -91,7 +91,7 @@ async def _open(b):
     await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
     await b.js(STUB)
     await b.js("__PC.openProfile('%s');true" % PK)
-    await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+    await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
     await asyncio.sleep(.8)
 
 
@@ -104,9 +104,9 @@ def test_reopening_a_cached_profile_has_no_hole_once_it_refreshes():
         await b.js("__PC.switchView('global');true")
         await asyncio.sleep(.5)
         await b.js("__PC.openProfile('%s');true" % PK)          # the cache-first path this time
-        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+        await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
         await asyncio.sleep(1.5)                                  # the refresh behind the cached paint
-        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click();true")
+        await b.js("document.querySelector('.prof-chip[data-view=\"replies\"]').click();true")
         await asyncio.sleep(.6)
         got["gaps"] = await b.js(GAPS)
 
@@ -164,9 +164,9 @@ def test_replies_made_as_nip22_comments_are_on_the_replies_tab():
         await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
         await b.js(STUB_1111)
         await b.js("__PC.openProfile('%s');true" % PK)
-        await b.until("!!document.querySelector('.prof-tab[data-tab=\"replies\"]')")
+        await b.until("!!document.querySelector('.prof-chip[data-view=\"replies\"]')")
         await asyncio.sleep(.8)
-        await b.js("document.querySelector('.prof-tab[data-tab=\"replies\"]').click();true")
+        await b.js("document.querySelector('.prof-chip[data-view=\"replies\"]').click();true")
         await asyncio.sleep(.8)
         got["replies"] = await b.js(GAPS)
         got["asked"] = await b.js("__asked")

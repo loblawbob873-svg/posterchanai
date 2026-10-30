@@ -456,7 +456,8 @@ window.PCProfileFactory = function(dep){
         <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="albums">Albums</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button><button class="prof-tab prof-find-tab" data-tab="search" title="Search posts" aria-label="Search this profile’s posts"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Posts</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button><button class="prof-tab prof-find-tab" data-tab="search" title="Search posts" aria-label="Search this profile’s posts"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button></div>
+      <div class="prof-sub" id="prof-sub" role="group" aria-label="Show"></div>
       <div class="prof-find" id="prof-find" hidden><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg><input type="text" inputmode="search" id="prof-find-q" placeholder="Search ${enc(p.display_name||p.name||'their')}’s posts" aria-label="Search this profile’s posts" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="prof-find-x" id="prof-find-x" aria-label="Close search"><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
       <div id="prof-list"></div>`;
     _bindProfileBack(feed,pk);
@@ -476,6 +477,21 @@ window.PCProfileFactory = function(dep){
       const lim=_prof.limit;
       if(tab==='replies'){ const r=Store.query([{authors:[pk],kinds:[1,1111]}]).filter(e=>isReply(e) && _inWindow(e)).slice(0,lim);
         return r.length ? r.map(feedNoteHtml).join('') : '<div class="empty">No replies yet.</div>'; }   // feedNoteHtml wraps a reply in the same reply-pair+context markup
+      // ALL: posts and replies together, newest first ("combine Notes and Replies", 2026-10-30).
+      if(tab==='all'){
+        const seen=new Set(), evs=[];
+        for(const e of [...Store.feed(e=>e.pubkey===pk && !pinnedIds.has(e.id) && _inWindow(e)), ...Store.query([{authors:[pk],kinds:[1,1111]}]).filter(e=>isReply(e) && _inWindow(e))])
+          if(!seen.has(e.id)){ seen.add(e.id); evs.push(e); }
+        evs.sort((a,b)=>b.created_at-a.created_at);
+        const top=evs.slice(0,lim);
+        return pinnedHtml + (top.length ? top.map(e=>isReply(e)?feedNoteHtml(e):noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
+      }
+      // PHOTOS / VIDEOS: the Media grid, one kind only.
+      if(tab==='photos' || tab==='videos'){
+        const m=Store.feed(e=>e.pubkey===pk && hasMedia(e) && _inWindow(e)).slice(0,lim);
+        const items=m.flatMap(e=>mediaParts(e.content).items).filter(h=>tab==='videos' ? /<video\b/i.test(h) : !/<video\b/i.test(h));
+        return items.length ? `<div class="media-grid">${items.join('')}</div>` : `<div class="empty">No ${tab} yet.</div>`;
+      }
       if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e) && _inWindow(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
         // gallery only — take each post's bare media tags (not the row/carousel wrapper) and grid them
@@ -539,11 +555,7 @@ window.PCProfileFactory = function(dep){
        * anywhere else would be dropped by the next innerHTML. Drives the real tab so the button and
        * the tab row cannot disagree about which one is active. */
       const _sr = el.querySelector('.prof-see-replies');
-      if(_sr) _sr.onclick = () => {
-        const t = $$('.prof-tab', feed).find(x => x.dataset.tab === 'replies');
-        if(t) t.click();
-        else { _prof.tab = 'replies'; fillList('replies'); hydrate(feed); }
-      };
+      if(_sr) _sr.onclick = () => openView('replies');
     };
     // Wire the Streams tab's cards to open the stream/VOD (author-name clicks still go to the profile).
     const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
@@ -608,35 +620,38 @@ window.PCProfileFactory = function(dep){
           const x=root.querySelector('#prof-qr-close'); if(x) x.onclick=()=>{ try{ closeModal(); }catch(_){ } };
         });
       }; });
-    _bind('profile search', () => {
-      const inp=$('#prof-find-q',feed), x=$('#prof-find-x',feed); if(!inp) return;
-      let t=null;
-      const go=async()=>{
-        clearTimeout(t);
-        const q=inp.value||''; if(q===_prof.q && _prof.qDone) return;
-        const gen=++_findGen; _prof.q=q; _prof.hits=[]; _prof.qDone=false; _prof.qPartial=false;
-        _lastFill=null; fillList('search'); hydrate(feed);
-        if(!_findWords(q).length){ _prof.qDone=true; return; }
-        try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
-        let got=[]; try{ got=await Relay.query([{ authors:[pk], kinds:[1,1111], search:q.trim(), limit:200 }]); }catch(_){ got=[]; }
-        if(gen!==_findGen || _prof.pk!==pk || S.VIEW!=='profile') return;
-        const words=_findWords(q);
-        _prof.hits=(got||[]).filter(e=>e && e.pubkey===pk && _findMatch(e, words));
-        for(const e of _prof.hits){ try{ Store.saveEvent(e); }catch(_){} }
-        _prof.qDone=true; _prof.qPartial=!!(got && got.complete===false);
-        if(_prof.tab==='search'){ fillList('search'); hydrate(feed); }
-      };
-      inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(go, 350); });
-      inp.addEventListener('keydown', ev=>{
-        if(ev.key==='Enter'){ ev.preventDefault(); go(); }
-        else if(ev.key==='Escape'){ ev.preventDefault(); const n=$$('.prof-tab',feed).find(b=>b.dataset.tab==='notes'); if(n) n.click(); }
-      });
-      if(x) x.onclick=()=>{ inp.value=''; _prof.q=''; const n=$$('.prof-tab',feed).find(b=>b.dataset.tab==='notes'); if(n) n.click(); };
-    });
-    try{
-    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; _topUpN=0;
+    /* THE TABS ARE GROUPS, THE CHIPS PICK THE LIST ("user profiles are getting congested. Can we combine Notes and
+     * Replies? For Media, a good UI way to choose Videos or Pictures only", 2026-10-30): Posts = All / Posts / Replies,
+     * Media = All / Photos / Videos / Albums, so the row is Posts, Media, Articles, Streams and the search -- it fits a
+     * phone without scrolling. A view key is what listFor draws; the group is the tab it lives under. */
+    const _GROUP = { all:'notes', notes:'notes', replies:'notes', media:'media', photos:'media', videos:'media', albums:'media' };
+    const _SUBS = { notes:[['all','All'],['notes','Posts'],['replies','Replies']],
+                    media:[['media','All'],['photos','Photos'],['videos','Videos'],['albums','Albums']] };
+    // A segmented control with a thumb that SLIDES between choices: the row is rebuilt only when the group changes,
+    // so a pick inside one group just moves --i and the CSS transition carries the thumb across.
+    const _paintSub = (view) => {
+      const box = $('#prof-sub', feed); if(!box) return;
+      const group = _GROUP[view], subs = _SUBS[group];
+      box.hidden = !subs;
+      if(!subs){ box.innerHTML = ''; box.dataset.group = ''; return; }
+      if(box.dataset.group !== group){
+        box.dataset.group = group;
+        box.style.setProperty('--n', subs.length);
+        box.innerHTML = '<span class="prof-seg-thumb" aria-hidden="true"></span>' + subs.map(([v, label]) => `<button class="prof-chip" data-view="${v}">${label}</button>`).join('');
+        box.querySelectorAll('[data-view]').forEach(c => c.onclick = () => openView(c.dataset.view));
+      }
+      const i = Math.max(0, subs.findIndex(([v]) => v === view));
+      box.style.setProperty('--i', i);
+      box.querySelectorAll('[data-view]').forEach(c => { const on = c.dataset.view === view; c.classList.toggle('on', on); c.setAttribute('aria-pressed', String(on)); });
+    };
+    async function openView(view){
+      const tab = view, group = _GROUP[view] || view;
+      $$('.prof-tab', feed).forEach(x => x.classList.toggle('active', x.dataset.tab === group));
+      if(group === 'notes') _prof.subNotes = view; else if(group === 'media') _prof.subMedia = view;
+      _prof.tab = view; _topUpN = 0;
+      _paintSub(view);
       { const bar=$('#prof-find',feed); if(bar){ bar.hidden = tab!=='search'; if(tab==='search'){ const i=$('#prof-find-q',feed); if(i) i.focus(); } } }
-      fillList(tab); hydrate(feed);
+      fillList(view); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();
       if(tab==='albums'){ try{ await mountAlbums($('#prof-albums', feed), pk); }catch(e){ const el=$('#prof-albums', feed); if(el) el.innerHTML=`<div class="empty">Couldn’t open albums — ${enc(String((e&&e.message)||e).slice(0,120))}</div>`; } }
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
@@ -660,7 +675,7 @@ window.PCProfileFactory = function(dep){
        * from the oldest post in the local cache, which is exactly how the 11-day hole was made: the
        * cache holds weeks-old posts from the timeline, so the pages it fetched sat behind a stretch
        * nobody had asked for. The top-up pages from what was actually fetched (see _topUp). */
-      if(tab==='replies' && !_prof.repliesLoaded){ _prof.repliesLoaded=true; _topUpN=0; _topUp(); }
+      if((tab==='replies' || tab==='all') && !_prof.repliesLoaded){ _prof.repliesLoaded=true; _topUpN=0; _topUp(); }
       // Streams (kind-30311) live + ended — lazy-fetch once (our relay + the wider stream network).
       if(tab==='streams' && !_prof.streamsLoaded){ _prof.streamsLoaded=true;
         try{ const s=await Relay.query([{authors:[pk],kinds:[30311],limit:60}]); for(const e of (s||[])) Store.saveEvent(e); }catch(_){}
@@ -669,7 +684,36 @@ window.PCProfileFactory = function(dep){
             const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; }
             for(const e of ext) Store.saveEvent(e); } }catch(_){}
         if(S.VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
+    }
+    _bind('the Posts / Media chips', () => _paintSub(_prof.tab));
+    _bind('profile search', () => {
+      const inp=$('#prof-find-q',feed), x=$('#prof-find-x',feed); if(!inp) return;
+      let t=null;
+      const go=async()=>{
+        clearTimeout(t);
+        const q=inp.value||''; if(q===_prof.q && _prof.qDone) return;
+        const gen=++_findGen; _prof.q=q; _prof.hits=[]; _prof.qDone=false; _prof.qPartial=false;
+        _lastFill=null; fillList('search'); hydrate(feed);
+        if(!_findWords(q).length){ _prof.qDone=true; return; }
+        try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
+        let got=[]; try{ got=await Relay.query([{ authors:[pk], kinds:[1,1111], search:q.trim(), limit:200 }]); }catch(_){ got=[]; }
+        if(gen!==_findGen || _prof.pk!==pk || S.VIEW!=='profile') return;
+        const words=_findWords(q);
+        _prof.hits=(got||[]).filter(e=>e && e.pubkey===pk && _findMatch(e, words));
+        for(const e of _prof.hits){ try{ Store.saveEvent(e); }catch(_){} }
+        _prof.qDone=true; _prof.qPartial=!!(got && got.complete===false);
+        if(_prof.tab==='search'){ fillList('search'); hydrate(feed); }
+      };
+      inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(go, 350); });
+      inp.addEventListener('keydown', ev=>{
+        if(ev.key==='Enter'){ ev.preventDefault(); go(); }
+        else if(ev.key==='Escape'){ ev.preventDefault(); openView(_prof.subNotes || 'notes'); }
+      });
+      if(x) x.onclick=()=>{ inp.value=''; _prof.q=''; openView(_prof.subNotes || 'notes'); };
     });
+    try{
+    $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ const g=t.dataset.tab;
+      openView(g==='notes' ? (_prof.subNotes || 'notes') : g==='media' ? (_prof.subMedia || 'media') : g); });
     /* A REPLY-HEAVY AUTHOR'S Posts tab used to be filled by its own backfill here, paging back from the
      * oldest CACHED post -- the same cursor that opened the 11-day hole. The top-up (_topUp, called after
      * every fill) now pages from what was actually fetched until the tab has a screenful, which covers
@@ -809,7 +853,7 @@ window.PCProfileFactory = function(dep){
         if(pinned.length && S.VIEW==='profile' && _prof.pk===pk){
           pinnedIds = new Set(pinned.map(e=>e.id));   // set BEFORE fillList below, or the first paint duplicates
           pinnedHtml='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pin"></use></svg>Pinned</div>'+pinned.map(e=>noteHtml(e)).join('');
-          if(_prof.tab==='notes'){ fillList('notes'); hydrate(feed); }
+          if(_prof.tab==='notes' || _prof.tab==='all'){ fillList(_prof.tab); hydrate(feed); }
         }
       }
     })();
