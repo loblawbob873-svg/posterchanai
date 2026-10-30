@@ -31,7 +31,9 @@ class ViewTests(unittest.TestCase):
         bare fetch turns a real mailbox into the dishonest 'No mail accounts' empty state."""
         start = APP.index("    async api(path, opts={})")
         body = APP[start:APP.index("    async render(root)", start)]
-        self.assertIn("await ensureAiSession()", body)
+        # Awaited, directly or inside the time limit that keeps a node that never answers from being a spinner for
+        # ever (test_mail_never_waits_for_ever_full_app) -- the rule is "signed in before asking", not the spelling.
+        self.assertRegex(body, r"await (?:limit\([^;]*?)?ensureAiSession\(\)")
         self.assertIn("credentials:'include'", body)
         self.assertIn("'Authorization':'Bearer '+S._aiToken", body)
 
