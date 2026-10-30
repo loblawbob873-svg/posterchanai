@@ -22,6 +22,13 @@ The QEMU process is named `pcprobe-installer-<pid>` and touches nothing but its 
 the OVMF variables and the ISO opened read-only. Not a check_* script on purpose: it needs root (the
 installed disk is made audible over qemu-nbd, as the install gate does) and takes tens of minutes.
 
+UPGRADE FROM A NEWER USB (--upgrade [--from-iso OLDER.iso]): "we should make sure our gui installer can update the os
+from a newer iso usb" (2026-10-30). The OLDER image installs first (the release gate's own typed install), two people
+sign in and one writes ~/Documents/keep.txt, and a marker is left OUTSIDE /home. Then the NEWER image boots live and
+the wizard's Upgrade path runs through the same bridge (`start({mode:'resume'})`, the disk's existing password, no
+erase). The disk must boot afterwards with the user's file still theirs AND the marker gone -- a file outside /home
+that survives means the old system is still what boots.
+
 Exit 0 installed through the bridge AND the installed disk booted · 1 did not · 2 could not run.
 """
 from __future__ import annotations
@@ -50,16 +57,18 @@ _spec.loader.exec_module(gate)
 DRIVER = r"""
 'use strict';
 const m = require('./installer.js');
-const [disk, password] = process.argv.slice(2);
+const [disk, password, mode = 'fresh'] = process.argv.slice(2);
 const say = (k, v) => console.log('DRV ' + k + ' ' + JSON.stringify(v));
 (async () => {
   const info = m.info(); say('info', info);
   if (!info.available) { say('result', { ok: false, why: 'not available' }); process.exit(3); }
   const disks = await m.disks();
-  say('disks', disks.map(d => ({ name: d.name, selectable: d.selectable, why: d.why, size: d.size })));
+  say('disks', disks.map(d => ({ name: d.name, selectable: d.selectable, why: d.why, size: d.size, installed: !!d.posterchanLayout })));
   const d = disks.find(x => x.name === disk);
   if (!d || !d.selectable) { say('result', { ok: false, why: 'target not offered' }); process.exit(4); }
-  const st0 = await m.start({ disk: d.name, size: d.size, rootName: 'gentoo', password, mode: 'fresh' });
+  // The wizard offers Upgrade only for a disk it recognises as an earlier PosterChanOS (osinstall.js upgradeable()).
+  if (mode === 'resume' && !d.posterchanLayout) { say('result', { ok: false, why: 'the installed PosterChanOS was not recognised' }); process.exit(6); }
+  const st0 = await m.start({ disk: d.name, size: d.size, rootName: 'gentoo', password, mode });
   say('started', { running: st0.running, disk: st0.disk });
   let last = '';
   for (;;) {
@@ -104,19 +113,8 @@ def qemu_args(disk, iso, sock, code, vars_copy, memory, cpus, usb):
                    "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"]
 
 
-def run(args):
-    code, vars_src = gate.ovmf()
-    if not code:
-        print("SKIP  no OVMF firmware on this host")
-        return 2
-    evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pcprobe-installer-"))
-    evidence.mkdir(parents=True, exist_ok=True)
-    disk = evidence / "installed.qcow2"
-    disk.unlink(missing_ok=True)
-    subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(disk), args.size], check=True)
-    vars_copy = evidence / "OVMF_VARS.fd"
-    shutil.copyfile(vars_src, vars_copy)
-
+def gui_install(args, iso, disk, vars_copy, evidence, code, td, mode="fresh"):
+    """Boot `iso` live and run the wizard's bridge calls against `disk`. 0 = installed and powered off."""
     Serve.files = {"drive.js": DRIVER.encode()}
     if args.inject:
         Serve.files.update({
@@ -128,91 +126,161 @@ def run(args):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
 
-    with tempfile.TemporaryDirectory(prefix="pcprobe-sock-") as td:
-        sock = Path(td, "console.sock")
-        log = open(evidence / "install-console.log", "w", encoding="utf-8")
-        proc = subprocess.Popen(qemu_args(disk, args.iso, sock, code, vars_copy, args.memory, args.cpus, args.usb),
-                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    sock = Path(td, "console.sock")
+    log = open(evidence / ("upgrade-console.log" if mode == "resume" else "install-console.log"), "w", encoding="utf-8")
+    proc = subprocess.Popen(qemu_args(disk, iso, sock, code, vars_copy, args.memory, args.cpus, args.usb),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(100):
+            if sock.exists() or proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        if proc.poll() is not None:
+            print("FAIL  qemu exited: " + (proc.stderr.read() or "")[-400:])
+            return 1
+        con = gate.Serial(sock, log)
+        at = con.expect(r"live@[-a-z0-9]+", args.boot_wait)
+        if at is None:
+            print("FAIL  the live image never reached a shell on the serial console")
+            return 1
+        print("OK  live session reached")
+        con.send("stty cols 400; export TERM=dumb; mkdir -p /tmp/pcinst && cd /tmp/pcinst; echo CD-$?")
+        if con.expect(r"CD-0", 30) is None:
+            return 1
+        # The desktop's own Electron, as node — the process the bridge really runs in.
+        con.send("E=$(for c in /opt/posterchan/posterchan-desktop /opt/posterchan/posterchan "
+                 "/opt/posterchan/*/posterchan-desktop; do [ -x \"$c\" ] && { echo $c; break; }; done); "
+                 "A=$(ls -d /opt/posterchan/resources/app.asar 2>/dev/null); echo ELECTRON=[$E] ASAR=[$A]")
+        m = con.expect(r"ELECTRON=\[[^\]\n]*\] ASAR", 30)
+        electron = re.findall(r"ELECTRON=\[([^\]\n]*)\]", con.buf)[-1] if m else ""
+        if not electron:
+            print("FAIL  no Electron binary under /opt/posterchan in this image")
+            return 1
+        print(f"OK  the bridge runs in the image's own Electron: {electron}")
+        names = ["drive.js"] + (["installer.js", "liveusb-runner.js", "gentoo.sh"] if args.inject else [])
+        con.send("rc=0; for f in " + " ".join(names) + f"; do wget -q -O $f http://10.0.2.2:{port}/$f || rc=1; done; echo GET-$rc")
+        if con.expect(r"GET-0", 120) is None:
+            print("FAIL  could not fetch the files from the host")
+            return 1
+        if args.inject:
+            con.send("sudo -n install -m 0755 /tmp/pcinst/gentoo.sh /usr/bin/gentoo.sh && echo INJ-$?")
+            if con.expect(r"INJ-0", 30) is None:
+                print("FAIL  could not place the checkout's gentoo.sh")
+                return 1
+        else:
+            con.send("A=/opt/posterchan/resources/app.asar; E2=$(dirname $E); "
+                     "ELECTRON_RUN_AS_NODE=1 $E -e \"const a=require('path').join('$A');"
+                     "for(const f of ['installer.js','liveusb-runner.js'])require('fs').writeFileSync(f,require('fs').readFileSync(a+'/'+f))\" "
+                     "&& echo ASAR-$?")
+            if con.expect(r"ASAR-0", 60) is None:
+                print("FAIL  this image carries no desktop/installer.js — use --inject")
+                return 1
+        print("OK  installer files in place; driving the bridge (info → disks → start → status)")
+        con.send(f"ELECTRON_RUN_AS_NODE=1 $E /tmp/pcinst/drive.js {args.target} '{args.password}' {mode} 2>&1; echo DRIVE-EXIT-$?")
+        end = con.expect(r"DRIVE-EXIT-(\d+)", args.timeout)
+        if end is None:
+            print(f"FAIL  the install did not finish within {args.timeout}s; transcript {evidence}/install-console.log")
+            return 1
+        for line in re.findall(r"DRV (info|disks|started|progress|result) (.*)", con.buf):
+            print("   ", line[0], line[1][:300])
+        rc = re.findall(r"DRIVE-EXIT-(\d+)", con.buf)[-1]
+        if rc != "0":
+            print(f"FAIL  the bridge reported a failed install (exit {rc}); transcript {evidence}/install-console.log")
+            return 1
+        if '"secretLeft":true' in con.buf:
+            print("FAIL  the password file outlived the install")
+            return 1
+        con.send("sudo efibootmgr 2>&1 | grep -cE '^Boot[0-9A-Fa-f]+\\*?[[:space:]]+PosterChanOS([[:space:]]|$)' | sed 's/^/NVRAM-COUNT=/'")
+        if con.expect(r"NVRAM-COUNT=\d+", 60) is None or re.findall(r"NVRAM-COUNT=(\d+)", con.buf)[-1] == "0":
+            print("FAIL  no PosterChanOS EFI boot entry after the install")
+            return 1
+        print("OK  %s through the bridge; EFI boot entry registered" % ("upgraded" if mode == "resume" else "installed"))
+        con.send("sudo poweroff")
         try:
-            for _ in range(100):
-                if sock.exists() or proc.poll() is not None:
-                    break
-                time.sleep(0.1)
-            if proc.poll() is not None:
-                print("FAIL  qemu exited: " + (proc.stderr.read() or "")[-400:])
-                return 1
-            con = gate.Serial(sock, log)
-            at = con.expect(r"live@[-a-z0-9]+", args.boot_wait)
-            if at is None:
-                print("FAIL  the live image never reached a shell on the serial console")
-                return 1
-            print("OK  live session reached")
-            con.send("stty cols 400; export TERM=dumb; mkdir -p /tmp/pcinst && cd /tmp/pcinst; echo CD-$?")
-            if con.expect(r"CD-0", 30) is None:
-                return 1
-            # The desktop's own Electron, as node — the process the bridge really runs in.
-            con.send("E=$(for c in /opt/posterchan/posterchan-desktop /opt/posterchan/posterchan "
-                     "/opt/posterchan/*/posterchan-desktop; do [ -x \"$c\" ] && { echo $c; break; }; done); "
-                     "A=$(ls -d /opt/posterchan/resources/app.asar 2>/dev/null); echo ELECTRON=[$E] ASAR=[$A]")
-            m = con.expect(r"ELECTRON=\[[^\]\n]*\] ASAR", 30)
-            electron = re.findall(r"ELECTRON=\[([^\]\n]*)\]", con.buf)[-1] if m else ""
-            if not electron:
-                print("FAIL  no Electron binary under /opt/posterchan in this image")
-                return 1
-            print(f"OK  the bridge runs in the image's own Electron: {electron}")
-            names = ["drive.js"] + (["installer.js", "liveusb-runner.js", "gentoo.sh"] if args.inject else [])
-            con.send("rc=0; for f in " + " ".join(names) + f"; do wget -q -O $f http://10.0.2.2:{port}/$f || rc=1; done; echo GET-$rc")
-            if con.expect(r"GET-0", 120) is None:
-                print("FAIL  could not fetch the files from the host")
-                return 1
-            if args.inject:
-                con.send("sudo -n install -m 0755 /tmp/pcinst/gentoo.sh /usr/bin/gentoo.sh && echo INJ-$?")
-                if con.expect(r"INJ-0", 30) is None:
-                    print("FAIL  could not place the checkout's gentoo.sh")
-                    return 1
-            else:
-                con.send("A=/opt/posterchan/resources/app.asar; E2=$(dirname $E); "
-                         "ELECTRON_RUN_AS_NODE=1 $E -e \"const a=require('path').join('$A');"
-                         "for(const f of ['installer.js','liveusb-runner.js'])require('fs').writeFileSync(f,require('fs').readFileSync(a+'/'+f))\" "
-                         "&& echo ASAR-$?")
-                if con.expect(r"ASAR-0", 60) is None:
-                    print("FAIL  this image carries no desktop/installer.js — use --inject")
-                    return 1
-            print("OK  installer files in place; driving the bridge (info → disks → start → status)")
-            con.send(f"ELECTRON_RUN_AS_NODE=1 $E /tmp/pcinst/drive.js {args.target} '{args.password}' 2>&1; echo DRIVE-EXIT-$?")
-            end = con.expect(r"DRIVE-EXIT-(\d+)", args.timeout)
-            if end is None:
-                print(f"FAIL  the install did not finish within {args.timeout}s; transcript {evidence}/install-console.log")
-                return 1
-            for line in re.findall(r"DRV (info|disks|started|progress|result) (.*)", con.buf):
-                print("   ", line[0], line[1][:300])
-            rc = re.findall(r"DRIVE-EXIT-(\d+)", con.buf)[-1]
-            if rc != "0":
-                print(f"FAIL  the bridge reported a failed install (exit {rc}); transcript {evidence}/install-console.log")
-                return 1
-            if '"secretLeft":true' in con.buf:
-                print("FAIL  the password file outlived the install")
-                return 1
-            con.send("sudo efibootmgr 2>&1 | grep -cE '^Boot[0-9A-Fa-f]+\\*?[[:space:]]+PosterChanOS([[:space:]]|$)' | sed 's/^/NVRAM-COUNT=/'")
-            if con.expect(r"NVRAM-COUNT=\d+", 60) is None or re.findall(r"NVRAM-COUNT=(\d+)", con.buf)[-1] == "0":
-                print("FAIL  no PosterChanOS EFI boot entry after the install")
-                return 1
-            print("OK  installed through the bridge; EFI boot entry registered")
-            con.send("sudo poweroff")
+            proc.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+    finally:
+        log.close()
+        srv.shutdown()
+        if proc.poll() is None:
+            proc.terminate()
             try:
-                proc.wait(timeout=120)
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
-                proc.terminate()
-        finally:
-            log.close()
-            srv.shutdown()
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-        rc = gate.boot_installed(disk, td, vars_copy, evidence, args.boot_timeout, args.memory, args.cpus)
+                proc.kill()
+    return 0
+
+
+MARKER = "/usr/local/share/pcprobe-old-system"
+
+
+def _before(state, evidence):
+    inner = gate._before_upgrade(state, evidence)
+
+    def stage(con):
+        rc = inner(con)
+        if rc:
+            return rc
+        ask = gate._asker(con)
+        if ask(f"mkdir -p {MARKER.rsplit('/', 1)[0]} && echo old > {MARKER} && sync; echo MARK-$?", r"MARK-(\d+)", 30) != "0":
+            print("FAIL  could not leave the old-system marker")
+            return 1
+        print(f"OK  marker left outside /home ({MARKER}) -- the upgrade must replace it")
+        return 0
+    return stage
+
+
+def _after(state, evidence):
+    inner = gate._after_upgrade(state, evidence)
+
+    def stage(con):
+        ask = gate._asker(con)
+        if not gate._wait_root(ask, evidence):
+            return 1
+        left = ask(f"echo MARKER=$(test -e {MARKER} && echo kept || echo gone)", r"MARKER=(\w+)", 30)
+        if left != "gone":
+            print(f"FAIL  the old system is still what boots: {MARKER} survived the upgrade")
+            return 1
+        print("OK  the system was replaced (the old-system marker is gone)")
+        return inner(con)
+    return stage
+
+
+def run(args):
+    code, vars_src = gate.ovmf()
+    if not code:
+        print("SKIP  no OVMF firmware on this host")
+        return 2
+    evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pcprobe-installer-"))
+    evidence.mkdir(parents=True, exist_ok=True)
+    disk = evidence / "installed.qcow2"
+    disk.unlink(missing_ok=True)
+    subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(disk), args.size], check=True)
+    vars_copy = evidence / "gui-OVMF_VARS.fd"
+    shutil.copyfile(vars_src, vars_copy)
+    if args.upgrade:
+        old_iso = args.from_iso or args.iso
+        if args.from_iso and not Path(args.from_iso).is_file():
+            print(f"SKIP  --from-iso {args.from_iso} is not a file")
+            return 2
+        state = {}
+        with tempfile.TemporaryDirectory(prefix="pcprobe-sock-") as td:
+            rc = gate.install(old_iso, disk, td, evidence, args.timeout, args.memory, args.cpus, args.usb)
+            if rc:
+                return rc
+            print(f"OK  installed from {Path(old_iso).name}" + (" (the OLDER image)" if args.from_iso else ""))
+            rc = gate.boot_installed(disk, td, Path(evidence, "OVMF_VARS.fd"), evidence, args.boot_timeout,
+                                     args.memory, args.cpus, stage=_before(state, evidence))
+            if rc:
+                return rc
+        shutil.copyfile(Path(evidence, "OVMF_VARS.fd"), vars_copy)     # the machine's own NVRAM, as on real hardware
+    with tempfile.TemporaryDirectory(prefix="pcprobe-sock-") as td:
+        rc = gui_install(args, args.iso, disk, vars_copy, evidence, code, td, mode="resume" if args.upgrade else "fresh")
+        if rc:
+            return rc
+        rc = gate.boot_installed(disk, td, vars_copy, evidence, args.boot_timeout, args.memory, args.cpus,
+                                 stage=_after(state, evidence) if args.upgrade else None)
     if not args.keep_disk:
         disk.unlink(missing_ok=True)
     return rc
@@ -233,6 +301,10 @@ def main():
     ap.add_argument("--usb", action="store_true")
     ap.add_argument("--keep-disk", action="store_true")
     ap.add_argument("--no-inject", dest="inject", action="store_false")
+    ap.add_argument("--upgrade", action="store_true",
+                    help="install the older image first, then UPGRADE it through the wizard's bridge from this ISO")
+    ap.add_argument("--from-iso", default=os.environ.get("PC_LIVECD_FROM_ISO", ""),
+                    help="with --upgrade: the OLDER image the machine was first installed from")
     args = ap.parse_args()
     if not Path(args.iso).is_file():
         print("SKIP  no such ISO")
