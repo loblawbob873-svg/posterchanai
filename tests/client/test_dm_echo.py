@@ -47,13 +47,13 @@ def test_the_answer_from_ingest_is_actually_used():
     send = send[:send.index("dmInboxRelays(member)")]
     assert "const echoed = await ingestWrap(toSelf, false)" in send, (
         "sendDm ignores whether its own copy was ingested again")
-    assert "if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id)" in send
+    assert "if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id, at)" in send, "the echo carries the wrap id and the send's own time (_dmSendAt)"
 
 
 def test_the_echo_carries_the_wrap_id_so_the_relay_copy_is_a_duplicate():
     """A different id would show the message twice the moment the relay echoes it back — which is
     the other half of this failure and easy to introduce while fixing the first."""
-    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id){"):]
+    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id, at){"):]
     fn = fn[:fn.index("\n  }") + 4]
     assert "arr.find(m => m.id === id)" in fn, "the echo can be added twice"
     assert "mine:true" in fn and "nip17:true" in fn
@@ -62,13 +62,13 @@ def test_the_echo_carries_the_wrap_id_so_the_relay_copy_is_a_duplicate():
 def test_the_echo_is_ordered_with_the_rest_of_the_thread():
     """Bubbles are grouped and day-separated by time; an entry appended out of order breaks the
     grouping and can render under yesterday's separator."""
-    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id){"):]
+    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id, at){"):]
     fn = fn[:fn.index("\n  }") + 4]
     assert "arr.sort(" in fn
 
 
 def test_it_refuses_without_the_two_things_it_needs():
     """A missing peer or a wrap with no id would push an entry nothing can match or address."""
-    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id){"):]
+    fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id, at){"):]
     fn = fn[:fn.index("\n  }") + 4]
     assert "if(!pk || !id) return false;" in fn

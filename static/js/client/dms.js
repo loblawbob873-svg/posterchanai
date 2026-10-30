@@ -1009,23 +1009,35 @@ window.PCDmsFactory = function(dep){
   /* THE LOCAL ECHO, for when the wrap could not be ingested. Deliberately minimal: it is the same
    * shape `ingestWrap` pushes, keyed on the SAME outer id, so the relay's copy of our own message
    * de-duplicates against it (`arr.find(m=>m.id===ev.id)`) instead of appearing twice. */
-  function _dmEcho(pk, text, id){
+  function _dmEcho(pk, text, id, at){
     if(!pk || !id) return false;
     if(!dmPeers.has(pk)) dmPeers.set(pk, []);
     const arr = dmPeers.get(pk);
     if(arr.find(m => m.id === id)) return false;
-    arr.push({ id, mine:true, text:String(text||''), t:Math.floor(Date.now()/1000), nip17:true, atts:[] });
+    arr.push({ id, mine:true, text:String(text||''), t:Number.isFinite(at) ? at : Math.floor(Date.now()/1000), nip17:true, atts:[] });
     arr.sort((a,b)=>(a.t||0)-(b.t||0));
     try{ _scheduleDmRefresh(); }catch(_){ }
     return true;
   }
 
+  /* A REPLY GOES BELOW WHAT IT ANSWERS ("my replies are not going in correct order ... its going above new messages that
+   * came in while I was typing", 2026-10-29). A thread sorts by each message's own time, and each side stamps its own
+   * message with its own clock: a computer a minute behind dated a reply sent NOW before the messages that arrived while
+   * it was being typed -- above them here, and in every other client. So a message is never dated before the newest one
+   * already in its conversation (that one + 1 s). Bounded: a peer whose clock is more than an hour ahead is the broken
+   * one, and our message keeps the real time. */
+  function _dmSendAt(pk){
+    const now = Math.floor(Date.now()/1000);
+    let newest = 0; for(const m of (dmPeers.get(pk) || [])) if((m.t||0) > newest) newest = m.t || 0;
+    return (newest >= now && newest - now < 3600) ? newest + 1 : now;
+  }
   async function sendDm(pk, text){
     const members = DmKey.peers(pk);
+    const at = _dmSendAt(pk);
     if(members.length > 1 && !(S.signer && S.signer.nip17wrap))
       throw new Error('group messages need NIP-17, which this signer cannot make');
     if(S.signer && S.signer.nip17wrap){
-      const { toPeer, toPeers, toSelf } = await S.signer.nip17wrap(pk, text);
+      const { toPeer, toPeers, toSelf } = await S.signer.nip17wrap(pk, text, at);
       const peerWraps = (toPeers && toPeers.length) ? toPeers : [toPeer];
       /* TELL THE NATIVE LAYER WE PUBLISHED THESE, before either is on a relay.
        *
@@ -1065,7 +1077,7 @@ window.PCDmsFactory = function(dep){
        * with the SAME outer id, so the copy that arrives from the relay is recognised as a duplicate
        * rather than shown twice. */
       const echoed = await ingestWrap(toSelf, false);   // show our own message right away
-      if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id);
+      if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id, at);
       _keepDmOpen(pk);
       const rs=[]; for(const w of peerWraps) rs.push(await Relay.publish(w));
       const r1=rs[0], r2=await Relay.publish(toSelf);

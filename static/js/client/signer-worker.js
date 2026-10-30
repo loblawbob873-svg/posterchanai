@@ -104,7 +104,8 @@ self.onmessage = async (e) => {
         // page built for this message — the worker has no access to the emoji map.
         // args.peers: every recipient of a group DM (one p tag each); a 1:1 is args.peer alone.
         const peers = Array.isArray(args.peers) && args.peers.length ? args.peers : [args.peer];
-        const rumor = { kind: 14, created_at: Math.floor(Date.now()/1000),
+        // args.at: the time the page chose (never before the conversation's newest message -- dms.js _dmSendAt)
+        const rumor = { kind: 14, created_at: Number.isFinite(args.at) ? Math.floor(args.at) : Math.floor(Date.now()/1000),
                         tags: args.tags || peers.map(p => ['p', p]), content: args.text };
         // a gift wrap for each recipient AND one to ourselves so we keep a copy of what we sent
         const toPeers = peers.map(p => NT.nip59.wrapEvent(rumor, SK, p));

@@ -38,7 +38,12 @@ const context={
   setTimeout, Promise,
 };
 installStateGlobals(context);   // sendDm lives in dms.js, where app.js's live lets read as S.<name>
-vm.runInNewContext(source.slice(start,end)+'\nthis.run=sendDm;',context,{filename:'app-sendDm.js'});
+// sendDm dates the message with _dmSendAt (never before the conversation's newest message): the shipped one, over an
+// empty conversation.
+const atStart = source.indexOf('function _dmSendAt(pk){'); if(atStart < 0) throw new Error('_dmSendAt declaration missing');
+const atEnd = source.indexOf('\n  }\n', atStart) + 4;
+context.dmPeers = new Map(); context.Date = Date; context.Math = Math;
+vm.runInNewContext(source.slice(atStart,atEnd)+'\n'+source.slice(start,end)+'\nthis.run=sendDm;',context,{filename:'app-sendDm.js'});
 await context.run('a'.repeat(64),'stay here');
 await Promise.resolve();
 if(calls.saved!==1 || calls.ingested!==1 || calls.published.join(',')!=='peer,self')

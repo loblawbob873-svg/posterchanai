@@ -1708,9 +1708,10 @@
 
   // `peer`: a pubkey, a group key "a,b,c" or a list -- one rumor, wrapped to each recipient and to us.
   function _dmRecipients(peer){ return (Array.isArray(peer) ? peer : String(peer || '').split(',')).filter(Boolean); }
-  async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text){
+  async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text, at){
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(text||'')) { try{ await InstEmoji.load(); }catch(_){ } }
-    const now = Math.floor(Date.now()/1000);
+    // `at`: the time sendDm chose -- never before the newest message already in the conversation (dms.js _dmSendAt).
+    const now = Number.isFinite(at) ? Math.floor(at) : Math.floor(Date.now()/1000);
     const rcpt = _dmRecipients(peer);
     const randPast = () => now - Math.floor(Math.random()*2*86400);   // NIP-59 timing privacy
     async function wrapFor(recipient){
@@ -1776,7 +1777,7 @@
     // External signers build NIP-17 through these methods too; otherwise their closures bypass the
     // very abstraction core callers and submodules share. Local mode keeps its worker's atomic wrap.
     if(s.mode!=='local'&&s.nip44enc&&s.nip44dec){
-      s.nip17wrap=(peer,text)=>_nip17wrapVia(s.pubkey,(p,pt)=>s.nip44enc(p,pt),tpl=>s.signEvent(tpl),peer,text);
+      s.nip17wrap=(peer,text,at)=>_nip17wrapVia(s.pubkey,(p,pt)=>s.nip44enc(p,pt),tpl=>s.signEvent(tpl),peer,text,at);
       s.nip17unwrap=wrap=>_nip17unwrapVia((p,ct)=>s.nip44dec(p,ct),wrap);
     }
     return s;
@@ -1788,8 +1789,8 @@
         signEvent: (tpl) => Nip55.signEvent(tpl),
         nip04enc: (peer, txt) => Nip55.nip04enc(peer, txt),
         nip04dec: (peer, ct) => Nip55.nip04dec(peer, ct),
-        nip17wrap: (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>Nip55.nip44enc(r,pt),
-                                                 (tpl)=>Nip55.signEvent(tpl), peer, text),
+        nip17wrap: (peer, text, at) => _nip17wrapVia(pubkey, (r,pt)=>Nip55.nip44enc(r,pt),
+                                                 (tpl)=>Nip55.signEvent(tpl), peer, text, at),
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip55.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip55.nip44dec(peer, ct),
         nip44enc: (peer, text) => Nip55.nip44enc(peer, text),
@@ -1827,8 +1828,8 @@
           }
           return X.call(null, () => window.nostr.nip44.encrypt(r, text));
         };
-        s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, enc,
-                                                    (tpl)=>s.signEvent(tpl), peer, text);
+        s.nip17wrap = (peer, text, at) => _nip17wrapVia(pubkey, enc,
+                                                    (tpl)=>s.signEvent(tpl), peer, text, at);
         s.nip17unwrap = (wrap) => _nip17unwrapVia(dec, wrap);
         s.nip44dec = dec;
         s.nip44enc = enc;
@@ -1841,8 +1842,8 @@
         signEvent: (tpl) => Nip46.signEvent(tpl),
         nip04enc: (peer, txt) => Nip46.nip04enc(peer, txt),
         nip04dec: (peer, ct) => Nip46.nip04dec(peer, ct),
-        nip17wrap: (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>Nip46.nip44enc(r,pt),
-                                                 (tpl)=>Nip46.signEvent(tpl), peer, text),
+        nip17wrap: (peer, text, at) => _nip17wrapVia(pubkey, (r,pt)=>Nip46.nip44enc(r,pt),
+                                                 (tpl)=>Nip46.signEvent(tpl), peer, text, at),
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip46.nip44dec(peer, ct),
         nip44enc: (peer, text) => Nip46.nip44enc(peer, text),
@@ -1858,8 +1859,8 @@
       cordRekeyEncrypt: (peer, bytes) => Relay.worker.call('cordRekeyEncrypt', { peer, bytes, owner: pubkey }).then(r=>r.ct),
       nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
-      nip17wrap: (peer, text) => { const peers = _dmRecipients(peer);
-        return Relay.worker.call('nip17wrap', { peer: peers[0], peers, text, tags: InstEmoji.tagsFor(text, peers.map(r => ['p', r])) }); },
+      nip17wrap: (peer, text, at) => { const peers = _dmRecipients(peer);
+        return Relay.worker.call('nip17wrap', { peer: peers[0], peers, text, at, tags: InstEmoji.tagsFor(text, peers.map(r => ['p', r])) }); },
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
     });
   }
@@ -7350,7 +7351,14 @@
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
-    if(VIEW==='messages' && v!=='messages') dmActive=null;
+    /* …BUT NOT ON THE DESKTOP, where Messages is a WINDOW that stays open while another one is in front. There every
+     * window that repaints itself (Notifications reacting to the very DM that arrived, Telegram, Mail…) comes through
+     * here with VIEW still 'messages', and this line forgot the conversation the Messages window was showing: the
+     * thread stopped updating (arrivals refresh only "the open conversation") while the list preview moved on, and the
+     * next redraw -- your own Send, or a later refresh -- painted "Select a conversation". Reported on the Windows app
+     * as "I send message and the convo goes away", "DM chat is not updating", "updated on its own finally and closed
+     * the convo" (2026-10-29). tests/client/test_dm_send_beside_other_windows_full_app.py. */
+    if(VIEW==='messages' && v!=='messages' && !(window.PCOS && PCOS.isOn && PCOS.isOn())) dmActive=null;
     // The mobile viewer owns consent only while its screen is open. Desktop windows route above.
     if(VIEW==='__remote' && v!=='__remote'){
       const host=$('#feed');

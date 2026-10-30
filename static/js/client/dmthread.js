@@ -117,9 +117,18 @@ window.PCDmThreadFactory = function(dep){
     e.preventDefault(); e.stopPropagation();
     const r=String(b.dataset.ccRoute||''); if(/^concord:[A-Za-z0-9%._~:\-]{3,600}$/.test(r)) openOsNotificationRoute(r);
   }, true);
+  /* A DESKTOP MESSAGES WINDOW THAT IS NOT IN FRONT STILL SHOWS ITS CONVERSATION -- and a DM that arrives for it is drawn
+   * there, in its own #dm-thread (renderDmThread writes into nothing else), never by rebuilding #feed, which belongs to
+   * the window in front. Before, an arrival while another window was focused updated the list's preview and left the
+   * thread stale ("the preview in the message list updated before the convo is", 2026-10-29). */
+  const _dmParkedThread=()=>!!(S.dmActive && window.PCOS && PCOS.isOn && PCOS.isOn() && document.getElementById('dm-thread'));
   function _scheduleDmRefresh(){
-    if(_dmRefreshTimer || S.VIEW!=='messages') return;
-    _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null; if(S.VIEW!=='messages') return;
+    if(_dmRefreshTimer || (S.VIEW!=='messages' && !_dmParkedThread())) return;
+    _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null;
+      if(S.VIEW!=='messages'){
+        if(_dmParkedThread()){ const sig=_threadSig(S.dmActive); if(sig!==_dmThreadSig){ _dmThreadSig=sig; renderDmThread(S.dmActive); } }
+        return;
+      }
       if(S.dmActive){
         // Skip the rebuild if the VISIBLE window is unchanged — the NIP-17 replay streams OLDER history
         // in, which doesn't touch the newest message we show, so re-rendering would just flicker.
