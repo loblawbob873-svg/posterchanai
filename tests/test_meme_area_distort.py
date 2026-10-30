@@ -108,3 +108,52 @@ class TestAreaDistort(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_have("ffmpeg"), "needs ffmpeg")
+class TestSoftAreaResizesTheNoseNotTheCheek(unittest.TestCase):
+    """'I was trying a simple test of resizing a nose and it looked like it was more of the outer area than the nose area'
+    (2026-10-30). A hard rectangle scaled up carries the cheek round the nose with it and shows a seam; a new area has a
+    soft oval edge (`f`), so the middle grows and the corners stay. Measured on a 1.4x nose: hard changed 8.3% of the skin
+    round the grown nose, soft 0%."""
+
+    def _nose(self, f):
+        import numpy as np, tempfile
+        from PIL import Image, ImageDraw
+        W = H = 400
+        yy, xx = np.mgrid[0:H, 0:W]
+        skin = np.stack([200 + 30 * np.sin(xx / 23.0), 150 + 20 * np.cos(yy / 17.0), 120 + 15 * np.sin((xx + yy) / 31.0)], -1)
+        im = Image.fromarray(skin.clip(0, 255).astype(np.uint8))
+        ImageDraw.Draw(im).ellipse([170, 160, 230, 250], fill=(150, 90, 70))
+        tmp = tempfile.mkdtemp(prefix="pctest-nose-"); self.addCleanup(shutil.rmtree, tmp, True)
+        im.save(tmp + "/pic.png")
+        r, cx, cy, s = [0.375, 0.35, 0.25, 0.325], 0.5, 0.5125, 1.4
+        q = []
+        for x, y in [(r[0], r[1]), (r[0] + r[2], r[1]), (r[0], r[1] + r[3]), (r[0] + r[2], r[1] + r[3])]:
+            q += [cx + (x - cx) * s, cy + (y - cy) * s]
+        area = {"r": r, "q": q}
+        if f:
+            area["f"] = f
+        layer = {"type": "image", "src": "u1", "x": 0, "y": 0, "w": W, "h": H, "start": 0, "dur": 1, "fit": "cover", "warpArea": area}
+        data, _ = M.render({"w": W, "h": H, "fps": 10, "duration": 1, "bg": "#000000", "fmt": "png", "layers": [layer]}, {"u1": tmp + "/pic.png"})
+        return np.asarray(Image.open(io.BytesIO(data)).convert("RGB")).astype(int), np.asarray(im).astype(int)
+
+    @staticmethod
+    def _cheek_changed(out, src):
+        """Share of the moved rectangle, outside the grown nose, whose skin changed visibly (>25 levels)."""
+        import numpy as np
+        yy, xx = np.mgrid[0:400, 0:400]
+        box = (xx >= 115) & (xx < 285) & (yy >= 114) & (yy < 297)
+        nose = ((xx - 200) / (30 * 1.4 * 1.15)) ** 2 + ((yy - 205) / (45 * 1.4 * 1.15)) ** 2 <= 1
+        diff = np.abs(out - src).max(-1)
+        return float((diff[box & ~nose] > 25).mean())
+
+    def test_a_soft_area_grows_the_nose_and_leaves_the_cheek(self):
+        out, src = self._nose(0.35)
+        dark = lambda a: ((a[..., 0] < 175) & (a[..., 1] < 115)).sum()
+        self.assertGreater(dark(out), dark(src) * 1.7, "the nose did not grow")
+        self.assertLess(self._cheek_changed(out, src), 0.005, "the skin round the nose moved with it")
+
+    def test_an_area_made_before_the_soft_edge_still_renders_hard(self):
+        out, src = self._nose(0)
+        self.assertGreater(self._cheek_changed(out, src), 0.03, "an old (hard) area no longer renders as it did")

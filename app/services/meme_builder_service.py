@@ -132,7 +132,15 @@ def _warp_area(raw):
     ident = [rx, ry, rx + rw, ry, rx, ry + rh, rx + rw, ry + rh]
     if all(abs(a - b) < 0.002 for a, b in zip(qv, ident)):
         return None
-    return (rx, ry, rw, rh), qv
+    # SOFT EDGE ("I was trying a simple test of resizing a nose and it looked like it was more of the outer area than
+    # the nose area", 2026-10-30). `f`: the share of the area, from its edge in, over which the moved copy fades out
+    # in an oval -- so the middle (the nose) moves fully and the corners (the cheek around it) stay as they were,
+    # with no seam. Missing = 0, the hard rectangle every area made before had.
+    try:
+        feather = min(0.5, max(0.0, float(raw.get("f") or 0)))
+    except (TypeError, ValueError):
+        feather = 0.0
+    return (rx, ry, rw, rh), qv, feather
 
 
 def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
@@ -939,13 +947,17 @@ def render(edit: dict, sources: dict, out_file: str | None = None) -> tuple:
             area = _warp_area(layer.get("warpArea"))
             src = f"[mM{n}]" if mask_idx is not None else f"[{idx}:v]"
             if area and not _warp_folded(area[1], lw, lh, AREA_FOLD):
-                (rx, ry, rw, rh), aq = area
+                (rx, ry, rw, rh), aq, feather = area
                 cx, cy = int(round(rx * lw)), int(round(ry * lh))
                 cw, ch = max(2, min(lw - cx, int(round(rw * lw)))), max(2, min(lh - cy, int(round(rh * lh))))
                 apts = [(1 + aq[i] * lw, 1 + aq[i + 1] * lh) for i in range(0, 8, 2)]
                 chains.append(src + (",".join(chain) or "null") + f"[ap{n}]")
                 chains.append(f"[ap{n}]split[aA{n}][aB{n}]")
-                chains.append(f"[aB{n}]crop={cw}:{ch}:{cx}:{cy},scale={lw}:{lh},pad={lw + 2}:{lh + 2}:1:1:color=black@0,"
+                # The soft edge: alpha = clip((1 - d) / f, 0, 1), d the distance from the centre in the area's own oval
+                # (1 on its edge) -- the editor's canvas mask draws the same ramp (meme.js _paintArea).
+                soft = (f",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                        f"a='alpha(X,Y)*clip((1-hypot((X+0.5)/W*2-1,(Y+0.5)/H*2-1))/{feather:.3f},0,1)'") if feather > 0 else ""
+                chains.append(f"[aB{n}]crop={cw}:{ch}:{cx}:{cy},scale={lw}:{lh}{soft},pad={lw + 2}:{lh + 2}:1:1:color=black@0,"
                               + "perspective=" + ":".join(f"x{k}={apts[k][0]:.2f}:y{k}={apts[k][1]:.2f}" for k in range(4))
                               + f":sense=destination:interpolation=linear[aW{n}]")
                 chains.append(f"[aA{n}][aW{n}]overlay=x=-1:y=-1:format=auto,format=rgba[aO{n}]")

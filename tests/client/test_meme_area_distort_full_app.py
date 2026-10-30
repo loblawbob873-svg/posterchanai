@@ -79,17 +79,32 @@ async def _area(b, touch):
     await _drag(b, inp, x0, y0, x0 + tx - cx0, y0 + ty - cy0)
     got["cornered"] = await b.js(LAYER + ".warpArea||null")
     got["stage_tf"] = await b.js("(document.querySelector('.mb-acv')||{}).style?.transform||''")
-    got["stage_px"] = await _screen_px(b, *P(.3, .3))
+    # The SOFT EDGE (2026-10-30, "resizing a nose ... looked like it was more of the outer area"): the area's own canvas
+    # is opaque in the middle and clear at its corners, so the picture shows through where the rectangle's corners are.
+    cq = (await b.js(LAYER + ".warpArea"))["q"]
+    mx_, my_ = sum(cq[0::2]) / 4, sum(cq[1::2]) / 4
+    got["stage_mid"] = await _screen_px(b, *P(mx_, my_))
+    # 15% of the way from the pulled corner towards the middle: inside the moved rectangle, outside the soft oval
+    got["stage_corner"] = await _screen_px(b, *P(cq[0] + (mx_ - cq[0]) * .15, cq[1] + (my_ - cq[1]) * .15))
     # Clear of the area AND of every corner handle (each sits outside its corner; on a phone they are 40% of the photo).
     got["stage_far"] = await _screen_px(b, *P(.5, .06))
     # Move it all: the centre handle dragged 10% right.
     mx, my = await inp.center('.mb-am')
     await _drag(b, inp, mx, my, mx + r[2] * .1, my)
     got["moved"] = await b.js(LAYER + ".warpArea||null")
+    # DONE: keep it and leave distorting ("after you distort, no way to apply and exit that feature", 2026-10-30).
+    await inp.tap('#mb-warp-done')
+    await b.until("!document.querySelector('.mb-ah') && !document.querySelector('.mb-apick') && !document.getElementById('mb-warp-whole')")
+    got["done_kept"] = await b.js(LAYER + ".warpArea||null")
+    got["done_undo"] = await b.js("!!document.getElementById('mb-area-reset')")
+    got["done_label"] = await b.js("(document.getElementById('mb-warp')||{}).getAttribute?.('aria-pressed')")
+    await inp.tap('#mb-warp')                             # and back in, where the rest of this test carries on
+    await b.until("document.querySelectorAll('.mb-ah').length===4")
     box = await b.js("(()=>{const l=" + LAYER + ";return [l.x,l.y,l.w,l.h]})()")
     png = await _export(b, inp, media)
     B = lambda fx, fy: (int(box[0] + fx * box[2]), int(box[1] + fy * box[3]))
-    got["out_pulled"], _ = _px(png, *B(.4, .3))       # inside the moved quad, outside the original square
+    mq = got["moved"]["q"]
+    got["out_pulled"], _ = _px(png, *B(sum(mq[0::2]) / 4, sum(mq[1::2]) / 4))   # the middle of the moved area
     got["out_far"], _ = _px(png, *B(.1, .85))         # nowhere near the area
     got["out_orig"], _ = _px(png, *B(.45, .45))       # the original square, under the moved copy
     # After the export: back to the layer's controls, then the mode switch and the two area buttons, each pressed.
@@ -126,13 +141,17 @@ def _check(got):
     assert abs(c[0] - .15) < .04 and abs(c[1] - .15) < .04, ("the corner did not go where it was dragged", got)
     assert got["cornered"]["q"][2:] == p["q"][2:], ("dragging one corner moved the others", got)
     assert "matrix3d" in got["stage_tf"], ("the stage does not draw the moved area", got)
-    assert _near(got["stage_px"], RED, tol=60), ("the stage does not show the area where its corner went", got)
+    assert p.get("f") == 0.35, ("a new area is not made with the soft edge", got)
+    assert _near(got["stage_mid"], RED, tol=60), ("the stage does not draw the moved area's middle", got)
+    assert _near(got["stage_corner"], GREEN, tol=60), ("the moved area's corner is not soft -- the rectangle shows", got)
     assert _near(got["stage_far"], GREEN, tol=60), ("the stage changed the photo away from the area", got)
     mv, cq = got["moved"]["q"], got["cornered"]["q"]
     assert all(abs((mv[i] - cq[i]) - (.1 if i % 2 == 0 else 0)) < .03 for i in range(8)), ("the centre handle did not move the area", got)
     assert _near(got["out_pulled"], RED, tol=50), ("the export does not move the area", got)
     assert _near(got["out_far"], GREEN, tol=50), ("the export changed the photo away from the area", got)
     assert _near(got["out_orig"], RED, tol=50), got
+    assert got["done_kept"] == got["moved"], ("Done did not keep the distorted area", got)
+    assert got["done_undo"] and got["done_label"] == "false", ("Done did not leave distorting", got)
     assert got["whole_keeps_area"] == got["moved"], ("switching to Whole picture lost the area", got)
     assert got["after_new"] is None, ("New area kept the old one", got)
     assert got["repicked"] and all(abs(a - b) < .04 for a, b in zip(got["repicked"]["r"], [.1, .1, .2, .2])), got

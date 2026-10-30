@@ -463,6 +463,7 @@
         e.preventDefault(); togglePlay(); return;
       }
       if(k === 'Escape'){
+        if(_warpOn){ e.preventDefault(); _warpOn = false; render(); return; }   // = Done: keep the distortion, leave the mode
         if(_dw.on){ e.preventDefault(); setDrawing(false); return; }
         if(sel){ e.preventDefault(); sel = null; render(); } return; }
       if(k === 'Delete' || k === 'Backspace'){
@@ -1714,13 +1715,18 @@
    * picture) painted from the layer's own <img>/<video>, carried onto `q` by a matrix3d. */
   let _warpMode = 'whole';
   const _AREA_MIN = 0.03, _AREA_FOLD = 0.0005;      // the renderer's AREA_MIN / AREA_FOLD
+  /* SOFT EDGE ("resizing a nose ... looked like it was more of the outer area than the nose area", 2026-10-30): a moved
+   * area fades out over this share of itself, in an oval, so the middle moves and the corners stay -- measured on a
+   * 1.4x nose: the hard rectangle changed 8.3% of the skin round it with a visible seam, the soft one 0% and none.
+   * The renderer applies the same ramp (meme_builder_service, `f`). Areas made before carry no `f`: hard, as they were. */
+  const _AREA_SOFT = 0.35;
   function _areaOk(a){
     if(!a || typeof a !== 'object' || !Array.isArray(a.r) || a.r.length !== 4 || !Array.isArray(a.q) || a.q.length !== 8) return null;
     if(![...a.r, ...a.q].every(v => Number.isFinite(+v))) return null;
     const x = clamp(+a.r[0], 0, 1), y = clamp(+a.r[1], 0, 1);
     const r = [x, y, clamp(+a.r[2], 0, 1 - x), clamp(+a.r[3], 0, 1 - y)];
     if(r[2] < _AREA_MIN || r[3] < _AREA_MIN) return null;
-    return { r, q: a.q.map(v => clamp(+v, 0, 1)) };
+    return { r, q: a.q.map(v => clamp(+v, 0, 1)), f: clamp(+a.f || 0, 0, 0.5) };
   }
   const _areaIdent = r => [r[0], r[1], r[0]+r[2], r[1], r[0], r[1]+r[3], r[0]+r[2], r[1]+r[3]];
   // What the renderer is sent: an area that was picked but never moved is no edit at all.
@@ -1753,6 +1759,15 @@
     const c = cv.getContext('2d'); if(!c) return;
     c.clearRect(0, 0, cw, ch);
     try{ c.drawImage(media, ((W - dw) / 2 - rx * W) * dpr, ((H - dh) / 2 - ry * H) * dpr, dw * dpr, dh * dpr); }catch(_){ }
+    // The soft edge: keep alpha = clip((1 - d) / f, 0, 1), d the distance from the centre in the area's own oval -- a
+    // radial gradient from radius 1-f (opaque) to 1 (clear), stretched to the canvas: the renderer's exact ramp.
+    if(a.f > 0){
+      c.save(); c.globalCompositeOperation = 'destination-in';
+      c.translate(cw / 2, ch / 2); c.scale(cw / 2, ch / 2);
+      const g = c.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(Math.max(0, 1 - a.f), 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(-1, -1, 2, 2); c.restore();
+    }
   }
   /* An area corner's handle sits OUTSIDE its corner, pointing away from the area. On a phone the stage is small (a photo
    * layer ~110px wide), so a face-sized area is ~20px across and four 44px handles centred on its corners lie on top of
@@ -1976,7 +1991,7 @@
              <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
            </div>
            ${(l.type==='image'||l.type==='video') && !isDraw ? `<div class="mb-frow"><button class="btn btn-cyan small${_warpOn?' on':''}" id="mb-warp" aria-pressed="${_warpOn}" title="Drag the picture's four corners to skew it or give it perspective -- or pick an area of it and move that"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Distort</button>${_warpOk(l.warp)?`<button class="btn btn-cyan small" id="mb-warp-reset" title="Put the corners back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undistort</button>`:''}</div>`
-             + (_warpOn ? `<div class="mb-frow mb-warpmode" role="radiogroup" aria-label="What to distort"><button class="btn btn-cyan small${_warpMode!=='area'?' on':''}" id="mb-warp-whole" role="radio" aria-checked="${_warpMode!=='area'}">Whole picture</button><button class="btn btn-cyan small${_warpMode==='area'?' on':''}" id="mb-warp-area" role="radio" aria-checked="${_warpMode==='area'}">An area</button></div>` : '')
+             + (_warpOn ? `<div class="mb-frow mb-warpmode" role="radiogroup" aria-label="What to distort"><button class="btn btn-cyan small${_warpMode!=='area'?' on':''}" id="mb-warp-whole" role="radio" aria-checked="${_warpMode!=='area'}">Whole picture</button><button class="btn btn-cyan small${_warpMode==='area'?' on':''}" id="mb-warp-area" role="radio" aria-checked="${_warpMode==='area'}">An area</button><button class="btn btn-neon small" id="mb-warp-done" title="Keep the distortion and stop distorting (Esc)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>Done</button></div>` : '')
              + (_warpOn && _warpMode==='area' && _areaOk(l.warpArea) ? `<div class="mb-frow"><button class="btn btn-cyan small" id="mb-area-new" title="Pick a different part of the picture">New area</button><button class="btn btn-cyan small" id="mb-area-reset" title="Put the area back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo area</button></div>` : '')
              + (!_warpOn && _areaMoved(l) ? `<div class="mb-frow"><button class="btn btn-cyan small" id="mb-area-reset" title="Put the distorted area back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Undo area</button></div>` : '') : ''}
            <button class="btn btn-cyan small full" id="mb-resize" title="Set this layer's exact size in pixels or percent"><svg class="ic b-ic" aria-hidden="true"><use href="#i-resize"></use></svg>Resize…</button>
@@ -2406,7 +2421,8 @@
       x = c01(x); y = c01(y);
       const [x0, y0] = ctx.start.map(c01), r = [Math.min(x0, x), Math.min(y0, y), Math.abs(x - x0), Math.abs(y - y0)];
       if(r[2] < _AREA_MIN || r[3] < _AREA_MIN){ unsnapIfUnchanged(); render(); toast('drag across the part of the picture to distort'); return; }
-      ctx.l.warpArea = { r: r.map(v=>+v.toFixed(4)), q: _areaIdent(r).map(v=>+v.toFixed(4)) };
+      // f: a soft oval edge, so resizing a nose resizes the nose -- not the hard rectangle of cheek round it (_AREA_SOFT).
+      ctx.l.warpArea = { r: r.map(v=>+v.toFixed(4)), q: _areaIdent(r).map(v=>+v.toFixed(4)), f: _AREA_SOFT };
       save(); render();
     }));
     // One corner.
@@ -2415,14 +2431,14 @@
       const k = +hd.dataset.ac, q = a.q.slice();
       q[k*2] = +clamp(a0.q[k*2] + x - ctx.start[0], 0, 1).toFixed(4); q[k*2+1] = +clamp(a0.q[k*2+1] + y - ctx.start[1], 0, 1).toFixed(4);
       if(!_warpConvex(q, rect.width, rect.height, _AREA_FOLD)) return;    // stops at the last drawable place
-      ctx.l.warpArea = { r: a.r, q }; repaintArea(ctx);
+      ctx.l.warpArea = { r: a.r, q, f: a.f }; repaintArea(ctx);
     }, ()=>save()));
     // All four: the whole area moves, and stops at the edge of the picture.
     root.querySelectorAll('.mb-am').forEach(hd=>drag(hd, (ctx, [x, y])=>{
       const a0 = ctx.a0; if(!a0) return;
       const xs = a0.q.filter((_, i)=>i%2===0), ys = a0.q.filter((_, i)=>i%2===1);
       const dx = clamp(x - ctx.start[0], -Math.min(...xs), 1 - Math.max(...xs)), dy = clamp(y - ctx.start[1], -Math.min(...ys), 1 - Math.max(...ys));
-      ctx.l.warpArea = { r: a0.r, q: a0.q.map((v, i)=>+(v + (i%2 ? dy : dx)).toFixed(4)) }; repaintArea(ctx);
+      ctx.l.warpArea = { r: a0.r, q: a0.q.map((v, i)=>+(v + (i%2 ? dy : dx)).toFixed(4)), f: a0.f }; repaintArea(ctx);
     }, ()=>save()));
     // A picture that loads after the stage was drawn: paint its area then.
     root.querySelectorAll('.mb-acv').forEach(cv=>{
@@ -5202,6 +5218,9 @@
       const fw=it.querySelector('.mb-fx');
       if(fw){ fw.style.transform=(+l.rotate||0)?`rotate(${+l.rotate||0}deg)`:''; fw.style.transformOrigin='center'; } };
     on('mb-warp','click',()=>{ _warpOn = !_warpOn; render(); });
+    // DONE keeps what was distorted and leaves the mode ("after you distort, no way to apply and exit", 2026-10-30) --
+    // the Distort button was the only way out and nothing said so.
+    on('mb-warp-done','click',()=>{ _warpOn = false; render(); });
     on('mb-warp-reset','click',()=>{ snap(); delete l.warp; save(); render(); });
     on('mb-warp-whole','click',()=>{ _warpMode = 'whole'; render(); });
     on('mb-warp-area','click',()=>{ _warpMode = 'area'; render(); });
