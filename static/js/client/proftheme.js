@@ -235,16 +235,56 @@
   const FONTS = ['Inter', 'Silkscreen', 'Comfortaa', 'Press Start 2P', 'Pacifico', 'Lobster', 'Bangers', 'VT323', 'Orbitron',
                  'Comic Neue', 'Permanent Marker', 'Creepster', 'Special Elite', 'Righteous'];
   const fontFile = n => 'https://cdn.jsdelivr.net/fontsource/fonts/' + n.toLowerCase().replace(/ /g, '-') + '@latest/latin-400-normal.woff2';
+  /* THEMES TO START FROM ("maybe add more profile themes that people can choose", 2026-10-29). A whole look each --
+   * colours, the text font, a display font for the name and headings (so a decorative face never has to carry the
+   * bio), per-part colours and borders -- and nothing else: the background picture stays the person's own. Every
+   * font is one of FONTS; every text colour reads on its background (tests/client/test_profile_theme_rules.py runs
+   * each one through vars() and requires its text to survive unchanged). */
   const PRESETS = {
-    'Neon night': { background: '#0b0716', text: '#efe9ff', primary: '#ff4fd8' },
-    'Megumin': { background: '#1c253f', text: '#f6f0ea', primary: '#c03838' },
-    'Paper': { background: '#f6f1e7', text: '#2b2118', primary: '#b4472f' },
-    'Toxic': { background: '#0c120a', text: '#e8ffe0', primary: '#5dff3b' },
-    'Bubblegum': { background: '#ffebf5', text: '#21121a', primary: '#f53d99' },
+    'Neon night': { colors: { background: '#0b0716', text: '#efe9ff', primary: '#ff4fd8' }, title: 'Orbitron', parts: { name: '#ff4fd8', tabs: '#3ce8ff' } },
+    'Megumin': { colors: { background: '#1c253f', text: '#f6f0ea', primary: '#c03838' }, title: 'Bangers', parts: { name: '#ff6b6b' } },
+    'Paper': { colors: { background: '#f6f1e7', text: '#2b2118', primary: '#b4472f' }, font: 'Special Elite' },
+    'Toxic': { colors: { background: '#0c120a', text: '#e8ffe0', primary: '#5dff3b' }, title: 'Creepster', parts: { name: '#5dff3b' } },
+    'Bubblegum': { colors: { background: '#ffebf5', text: '#21121a', primary: '#f53d99' }, font: 'Comfortaa', title: 'Pacifico', parts: { name: '#c2187a' } },
+    'MySpace 2006': { colors: { background: '#e5ecf9', text: '#1d2a44', primary: '#ff6600' }, title: 'Righteous', border: 'show',
+      parts: { name: '#1f3f80', tabs: '#1f3f80', border: '#6699cc', buttons: '#cc5200' } },
+    'GeoCities': { colors: { background: '#000080', text: '#ffff66', primary: '#00ffff' }, font: 'Comic Neue', border: 'show',
+      parts: { name: '#ff66ff', border: '#ff00ff', stats: '#66ff66' } },
+    'Terminal': { colors: { background: '#050805', text: '#39ff7a', primary: '#39ff7a' }, font: 'VT323', border: 'show',
+      parts: { border: '#1f8f45', meta: '#7dffa8' } },
+    'Arcade': { colors: { background: '#120458', text: '#ffffff', primary: '#ffe600' }, title: 'Press Start 2P',
+      parts: { name: '#ff2bd6', stats: '#ffe600', tabs: '#00f0ff' } },
+    'Pixel': { colors: { background: '#2d2a32', text: '#f2efe9', primary: '#ffb000' }, font: 'Silkscreen', parts: { name: '#ffb000' } },
+    'Vaporwave': { colors: { background: '#2b1055', text: '#ffe6ff', primary: '#ff71ce' }, title: 'Righteous',
+      parts: { name: '#01cdfe', tabs: '#05ffa1', meta: '#b967ff' } },
+    'Synthwave': { colors: { background: '#1a1033', text: '#f9f1ff', primary: '#ff8c00' }, title: 'Orbitron',
+      parts: { name: '#ff2a6d', meta: '#05d9e8', icons: '#ff8c00' } },
+    'Haunted': { colors: { background: '#0d0b0b', text: '#ddd5c7', primary: '#b3121f' }, font: 'Special Elite', title: 'Creepster', border: 'show',
+      parts: { name: '#e0312f', border: '#4a0d12' } },
+    'Graffiti': { colors: { background: '#1b1b1b', text: '#f5f5f5', primary: '#ffd400' }, title: 'Permanent Marker',
+      parts: { name: '#ff3864', tabs: '#2de2e6' } },
+    'Comic book': { colors: { background: '#fffbe6', text: '#111111', primary: '#e63946' }, title: 'Bangers', border: 'show',
+      parts: { name: '#1d4ed8', border: '#111111' } },
+    'Diner': { colors: { background: '#fff4e6', text: '#3d1f00', primary: '#d62828' }, title: 'Lobster', parts: { name: '#d62828', tabs: '#1d6f8c' } },
+    'Ocean': { colors: { background: '#04293a', text: '#e0f7ff', primary: '#00b4d8' }, font: 'Comfortaa', parts: { name: '#90e0ef' } },
+    'Forest': { colors: { background: '#0f1f14', text: '#e6f2e1', primary: '#7bc96f' }, font: 'Comfortaa', parts: { name: '#b5e48c' } },
+    'Sunset': { colors: { background: '#2d1b2e', text: '#ffe9d6', primary: '#ff7b54' }, title: 'Pacifico', parts: { name: '#ffb26b' } },
+    'Midnight': { colors: { background: '#0b132b', text: '#e0e1dd', primary: '#5bc0be' }, parts: { name: '#9fd8d6' } },
+    'Monochrome': { colors: { background: '#ffffff', text: '#000000', primary: '#000000' }, border: 'show', parts: { border: '#000000' } },
   };
+  // A preset as a theme object (the shape openEditor's theme() builds), for the editor and the test.
+  function presetTheme(name){
+    const p = PRESETS[name]; if(!p) return null;
+    const font = n => n ? { name: n, url: fontFile(n) } : null;
+    const fonts = {}; if(p.font || p.title){ fonts.body = font(p.font || ''); fonts.title = font(p.title || p.font || ''); }
+    if(fonts.body === null) delete fonts.body;
+    return { colors: Object.assign({}, p.colors), parts: Object.assign({}, p.parts || {}), border: p.border || '', fonts, bg: null, title: name };
+  }
   const ED_CSS = '.pt-ed .pt-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;margin:6px 0}'
     + '.pt-ed input[type=color]{width:44px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;background:none}'
-    + '.pt-ed .pt-presets{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.pt-ed .pt-off input[type=color]{opacity:.35}'
+    + '.pt-ed .pt-swatch{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:2px solid;border-radius:999px;font:inherit;font-size:12px;cursor:pointer}'
+    + '.pt-ed .pt-swatch i{width:10px;height:10px;border-radius:50%;flex:0 0 10px}.pt-ed .pt-swatch.on{outline:2px solid var(--accent);outline-offset:2px}'
+    + '.pt-ed .pt-presets{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;max-height:132px;overflow:auto}.pt-ed .pt-off input[type=color]{opacity:.35}'
     + '.pt-prev{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--bg);color:var(--text);'
     + 'background-image:var(--pt-img,none);background-size:var(--pt-size,cover);background-repeat:var(--pt-repeat,no-repeat);font-family:var(--pt-body,inherit)}'
     + '.pt-prev .pv-band{height:52px;border-bottom:var(--pt-bw,0) solid var(--pt-border,transparent);background:color-mix(in srgb,var(--accent) 35%,transparent)}'
@@ -259,13 +299,15 @@
     const cur = parse(o.current) || { colors: {}, fonts: {}, bg: null, parts: {}, border: '' };
     const st = { colors: Object.assign({ background: '#10131d', text: '#e5f0f5', primary: '#ff4fd8' }, cur.colors),
                  parts: Object.assign({}, cur.parts || {}), border: cur.border || '', font: (cur.fonts.body && cur.fonts.body.name) || '',
+                 titleFont: (cur.fonts.title && cur.fonts.title.name !== (cur.fonts.body && cur.fonts.body.name) && cur.fonts.title.name) || '',
                  bg: cur.bg ? Object.assign({}, cur.bg) : null };
     const row = (key, label, val, on) => `<div class="pt-row${on ? '' : ' pt-off'}" data-k="${key}"><span>${enc(label)}</span>`
       + `<input type="color" aria-label="${enc(label)}" value="${enc(val)}">` + (on === null ? '<span></span>'
       : `<button type="button" class="btn btn-ghost small pt-clear" title="Use the page's colour">${on ? 'Reset' : 'Set'}</button>`) + '</div>';
     o.modal(`<div class="pt-ed"><h3 class="cmp-hd">Profile theme<button class="modal-x" id="pt-close" aria-label="Close">&#215;</button></h3>
       <p class="muted small">Your page's colours, font, background and borders -- like MySpace. Colours, font and background also show on Ditto and Armada; the rest is PosterChan's.</p>
-      <div class="pt-presets">${Object.keys(PRESETS).map(n => `<button type="button" class="btn btn-ghost small" data-preset="${enc(n)}">${enc(n)}</button>`).join('')}</div>
+      <div class="pt-presets" role="list" aria-label="Themes">${Object.keys(PRESETS).map(n => { const c = PRESETS[n].colors;
+        return `<button type="button" class="pt-swatch" role="listitem" data-preset="${enc(n)}" style="background:${c.background};color:${c.text};border-color:${c.primary}"><i style="background:${c.primary}"></i>${enc(n)}</button>`; }).join('')}</div>
       ${row('background', 'Background', st.colors.background, null)}${row('text', 'Text', st.colors.text, null)}${row('primary', 'Accent', st.colors.primary, null)}
       <details><summary>More colours</summary>${Object.keys(PARTS).map(k => row('p:' + k, PARTS[k][0].toUpperCase() + PARTS[k].slice(1), st.parts[k] || '#888888', !!st.parts[k])).join('')}
         <label class="fld">Borders<select class="input" id="pt-border"><option value="">As the app draws them</option><option value="show">Show, in the border colour</option><option value="none">None</option></select></label></details>
@@ -283,8 +325,10 @@
     $('#pt-border').value = st.border; if(st.bg) $('#pt-mode').value = st.bg.mode;
     const theme = () => {
       const url = https($('#pt-bgurl').value.trim());
-      return { colors: st.colors, parts: st.parts, border: st.border, title: 'Profile theme',
-               fonts: st.font ? { body: { name: st.font, url: fontFile(st.font) }, title: { name: st.font, url: fontFile(st.font) } } : {},
+      const fonts = {};
+      if(st.font) fonts.body = { name: st.font, url: fontFile(st.font) };
+      if(st.titleFont || st.font) fonts.title = { name: st.titleFont || st.font, url: fontFile(st.titleFont || st.font) };
+      return { colors: st.colors, parts: st.parts, border: st.border, title: st.preset || 'Profile theme', fonts,
                bg: url ? { url, mode: $('#pt-mode').value, m: (st.bg && st.bg.url === url && st.bg.m) || '' } : null };
     };
     const preview = () => {
@@ -292,8 +336,9 @@
       pv.removeAttribute('style');
       for(const k in v) pv.style.setProperty(k, v[k]);
       if(t && t.bg){ pv.style.setProperty('--pt-img', 'url("' + t.bg.url + '")'); pv.style.setProperty('--pt-size', t.bg.mode === 'tile' ? 'auto' : t.bg.mode); pv.style.setProperty('--pt-repeat', t.bg.mode === 'tile' ? 'repeat' : 'no-repeat'); }
-      if(st.font && typeof FontFace === 'function'){ const fam = 'pt-ed-' + st.font.replace(/\s+/g, '-');
-        new FontFace(fam, 'url("' + fontFile(st.font) + '")').load().then(f => { document.fonts.add(f); pv.style.setProperty('--pt-body', '"' + fam + '"'); pv.style.setProperty('--pt-title', '"' + fam + '"'); }, () => {}); }
+      const face = (name, prop) => { if(!name || typeof FontFace !== 'function') return; const fam = 'pt-ed-' + name.replace(/\s+/g, '-');
+        new FontFace(fam, 'url("' + fontFile(name) + '")').load().then(f => { document.fonts.add(f); pv.style.setProperty(prop, '"' + fam + '"'); }, () => {}); };
+      face(st.font, '--pt-body'); face(st.titleFont || st.font, '--pt-title');
     };
     box.querySelectorAll('.pt-row').forEach(r => {
       const k = r.dataset.k, inp = r.querySelector('input'), clr = r.querySelector('.pt-clear');
@@ -302,12 +347,20 @@
         if(st.parts[p]){ delete st.parts[p]; r.classList.add('pt-off'); clr.textContent = 'Set'; } else { st.parts[p] = inp.value; r.classList.remove('pt-off'); clr.textContent = 'Reset'; }
         preview(); };
     });
+    /* A theme is the whole look: colours, fonts, part colours and borders replace what is set; the background picture
+     * is the person's and stays. Every control is brought into step so "Save" saves what the preview shows. */
     box.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
-      Object.assign(st.colors, PRESETS[b.dataset.preset]);
+      const p = PRESETS[b.dataset.preset]; if(!p) return;
+      st.colors = Object.assign({}, p.colors); st.parts = Object.assign({}, p.parts || {}); st.border = p.border || '';
+      st.font = p.font || ''; st.titleFont = p.title || ''; st.preset = b.dataset.preset;
       for(const k of ['background', 'text', 'primary']){ const i = box.querySelector(`.pt-row[data-k="${k}"] input`); if(i) i.value = st.colors[k]; }
+      box.querySelectorAll('.pt-row[data-k^="p:"]').forEach(r => { const k = r.dataset.k.slice(2), on = !!st.parts[k], clr = r.querySelector('.pt-clear');
+        r.querySelector('input').value = st.parts[k] || '#888888'; r.classList.toggle('pt-off', !on); if(clr) clr.textContent = on ? 'Reset' : 'Set'; });
+      $('#pt-border').value = st.border; $('#pt-font').value = st.font;
+      box.querySelectorAll('[data-preset]').forEach(x => x.classList.toggle('on', x === b));
       preview(); });
     $('#pt-border').onchange = () => { st.border = $('#pt-border').value; preview(); };
-    $('#pt-font').onchange = () => { st.font = $('#pt-font').value; preview(); };
+    $('#pt-font').onchange = () => { st.font = $('#pt-font').value; st.titleFont = ''; preview(); };
     $('#pt-bgurl').oninput = preview; $('#pt-mode').onchange = preview;
     $('#pt-up').onclick = () => $('#pt-file').click();
     $('#pt-file').onchange = async e => {
@@ -332,5 +385,5 @@
     preview();
   }
 
-  root.PCProfileTheme = { KIND, PARTS, FONTS, parse, vars, tags, contrast, apply, leave, openEditor, current: () => live };
+  root.PCProfileTheme = { KIND, PARTS, FONTS, PRESETS, presetTheme, parse, vars, tags, contrast, apply, leave, openEditor, current: () => live };
 })(typeof window !== 'undefined' ? window : globalThis);

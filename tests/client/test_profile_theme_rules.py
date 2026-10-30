@@ -85,3 +85,25 @@ def test_vyrams_parts_round_trip_and_other_clients_keep_the_base_three():
 
 def test_another_kind_is_not_a_theme():
     assert run("T.parse({kind:0, tags:%s})" % json.dumps(BASE)) is None
+
+
+def test_every_theme_to_start_from_is_whole_readable_and_travels():
+    """'maybe add more profile themes that people can choose' (2026-10-29): each preset is a whole look -- colours, a
+    text font and/or a title font from FONTS, part colours, borders -- and must (1) survive the trip through the
+    kind-16767 tags exactly as Ditto/Armada would read it, and (2) need no rescue: its text is readable on its own
+    background, so vars() keeps the colour the theme chose instead of swapping in black or white."""
+    got = run("""(() => { const out = {};
+      for (const n of Object.keys(T.PRESETS)) { const t = T.presetTheme(n), back = T.parse({kind:16767, tags:T.tags(t)});
+        out[n] = { t, back, text: T.vars(back)['--text'], fonts: T.FONTS }; }
+      return out; })()""")
+    assert len(got) >= 20, ("more themes to choose from", len(got))
+    for name, g in got.items():
+        t, back = g["t"], g["back"]
+        assert back["colors"] == t["colors"], (name, back["colors"])
+        assert back.get("parts", {}) == t["parts"], (name, back.get("parts"))
+        assert (back.get("border") or "") == t["border"], name
+        for role, f in t["fonts"].items():
+            assert f["name"] in g["fonts"], (name, "a font outside FONTS", f["name"])
+            assert back["fonts"][role]["name"] == f["name"] and back["fonts"][role]["url"] == f["url"], (name, role)
+        assert g["text"] == t["colors"]["text"], (name, "its text is unreadable on its background and got replaced")
+    assert len({n.lower() for n in got}) == len(got)

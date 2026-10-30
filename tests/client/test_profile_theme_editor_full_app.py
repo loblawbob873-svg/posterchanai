@@ -81,6 +81,46 @@ def test_the_theme_button_publishes_a_ditto_theme_with_vyrams_parts_and_the_page
     assert page['preview'] == 'rgb(246, 241, 231)', ("the editor's preview did not show the preset", page)
 
 
+
+@CHROME
+def test_a_theme_to_start_from_is_the_whole_look_and_is_what_gets_saved():
+    """'maybe add more profile themes that people can choose' (2026-10-29): twenty-odd themes, each drawn in its own
+    colours, and picking one brings EVERY control into step -- colours, the text font, the title font, the part colours
+    and the borders -- so Save publishes exactly what the preview shows."""
+    got = {}
+
+    async def check(b):
+        await desktop.login(b)
+        await b.js("try{ if(window.PCOS && PCOS.isOn()) PCOS.exit(); }catch(_){}")
+        await b.js("__PC.openProfile(__PC.me().pubkey)")
+        await b.until("!!document.querySelector('#theme-prof')")
+        await b.js("document.querySelector('#theme-prof').click()")
+        await b.until("!!document.querySelector('.pt-ed [data-preset]')")
+        got['swatches'] = await b.js("""[...document.querySelectorAll('.pt-ed [data-preset]')].map(x=>({n:x.dataset.preset,
+          bg:getComputedStyle(x).backgroundColor}))""")
+        await b.js("document.querySelector('.pt-ed [data-preset=\"Haunted\"]').click()")
+        got['ui'] = await b.js("""(()=>{const ed=document.querySelector('.pt-ed'), r=k=>ed.querySelector('.pt-row[data-k="'+k+'"]');
+          return {font:ed.querySelector('#pt-font').value, border:ed.querySelector('#pt-border').value,
+                  bg:r('background').querySelector('input').value, name:r('p:name').querySelector('input').value,
+                  nameOn:!r('p:name').classList.contains('pt-off'), tabsOn:!r('p:tabs').classList.contains('pt-off'),
+                  on:[...ed.querySelectorAll('[data-preset].on')].map(x=>x.dataset.preset)};})()""")
+        await b.js("document.querySelector('.pt-ed #pt-save').click()")
+        await b.until("window.__published.some(e=>e.kind===16767)")
+        got['ev'] = await b.js("window.__published.filter(e=>e.kind===16767).pop()")
+
+    asyncio.run(desktop.with_browser('online', '', check, INIT))
+    sw = got['swatches']
+    assert len(sw) >= 20, ("more themes to choose from", len(sw))
+    assert len({x['bg'] for x in sw}) >= 15, ("each theme is drawn in its own colours", sw)
+    ui = got['ui']
+    assert ui == {'font': 'Special Elite', 'border': 'show', 'bg': '#0d0b0b', 'name': '#e0312f', 'nameOn': True,
+                  'tabsOn': False, 'on': ['Haunted']}, ui
+    tags = got['ev']['tags']
+    assert tags[:3] == [['c', '#0d0b0b', 'background'], ['c', '#ddd5c7', 'text'], ['c', '#b3121f', 'primary']], tags
+    fonts = {t[3]: t[1] for t in tags if t[0] == 'f'}
+    assert fonts == {'body': 'Special Elite', 'title': 'Creepster'}, tags
+    assert ['c', '#e0312f', 'name'] in tags and ['border', 'show'] in tags and ['title', 'Haunted'] in tags, tags
+
 @CHROME
 def test_with_the_switches_off_a_profile_keeps_the_apps_look_and_stays_quiet():
     got = {}
