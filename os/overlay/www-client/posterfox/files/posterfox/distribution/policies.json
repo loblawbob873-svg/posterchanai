@@ -27,17 +27,20 @@
       "uBlock0@raymondhill.net": {
         "installation_mode": "force_installed",
         "install_url": "file:///usr/lib64/posterfox/distribution/extensions/uBlock0@raymondhill.net.xpi",
-        "private_browsing": true
+        "private_browsing": true,
+        "default_area": "navbar"
       },
       "jid1-MnnxcxisBPnSXQ@jetpack": {
         "installation_mode": "force_installed",
         "install_url": "file:///usr/lib64/posterfox/distribution/extensions/jid1-MnnxcxisBPnSXQ@jetpack.xpi",
-        "private_browsing": true
+        "private_browsing": true,
+        "default_area": "navbar"
       },
       "passwords@poster.place": {
         "installation_mode": "force_installed",
         "install_url": "file:///usr/lib64/posterfox/distribution/extensions/passwords@poster.place.xpi",
-        "private_browsing": true
+        "private_browsing": true,
+        "default_area": "navbar"
       }
     },
     "Preferences": {

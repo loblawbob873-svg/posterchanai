@@ -1,4 +1,4 @@
-# PosterFox 12: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
+# PosterFox 13: generated from www-client/firefox by posterfox/tools/make-ebuild.py.
 # Edit the generator, not this file.
 # Copyright 1999-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
@@ -29,8 +29,8 @@ MOZ_ESR=
 POSTERFOX_UBO="1.75.0"
 POSTERFOX_PB="2026.9.15"
 POSTERFOX_PB_AMO="5032646"
-POSTERFOX_PCP="1.4.13"
-POSTERFOX_PCP_AMO="5085730"
+POSTERFOX_PCP="1.4.14"
+POSTERFOX_PCP_AMO="5183334"
 
 MOZ_PV=${PV}
 MOZ_PV_SUFFIX=
