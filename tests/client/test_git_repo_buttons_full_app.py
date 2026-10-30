@@ -211,3 +211,43 @@ def test_a_source_file_is_coloured_though_the_highlighter_is_not_on_the_page_at_
         assert got["tokens"] >= 3, ("the repo's source opened uncoloured -- the highlighter was never fetched", got)
         assert not await b.js("__errors.slice()")
     asyncio.run(desktop.with_browser("online", "", check, PY_REPO))
+
+
+LONG = ("r12: Strict tracking protection, Firefox's DNS over HTTPS off, Firefox's password manager and Mozilla's AI "
+        "features off by default, with the release check verifying each at its exact value against the built browser")
+NAMES = ['branding', 'extensions', 'tools', 'docs', 'tests', 'README.md']
+TREE = (GIT.replace("entries:[{name:'README.md', path:'README.md', type:'blob', size:6}]",
+                    "entries:" + repr([{'name': n, 'path': n, 'type': 'blob' if '.' in n else 'tree', 'size': 9,
+                                        'commit': {'subject': LONG, 'author': 'me', 'at': 1700000000}} for n in NAMES]
+                                       + [{'name': 'a-file-name-long-enough-that-it-has-to-be-cut-somewhere-sensible.txt',
+                                           'path': 'a-file-name-long-enough-that-it-has-to-be-cut-somewhere-sensible.txt',
+                                           'type': 'blob', 'size': 9, 'commit': {'subject': LONG, 'author': 'me', 'at': 1700000000}}])
+                    .replace("True", "true")))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('width', [1280, 900, 390])
+def test_folder_names_are_not_squeezed_to_one_letter_by_a_long_commit_message(width):
+    """"git -> posterfox -> Files -> why are dirs only showing 1 character followed by..." (2026-10-29). The name and
+    the last commit's message share a row and both could shrink, in proportion to their natural width -- so a long
+    message (every commit in PosterFox's history) took nearly all of it and a folder name was cut to 'b…'."""
+    got = {}
+
+    async def check(b):
+        await b.call('Emulation.setDeviceMetricsOverride', dict(width=width, height=900, deviceScaleFactor=1, mobile=width < 600))
+        await desktop.login(b)
+        await b.js(SETUP)
+        await b.until("!!document.querySelector('.rv-tab[data-tab=\"files\"]')")
+        await b.js("document.querySelector('.rv-tab[data-tab=\"files\"]').click(); 1")
+        await b.until("document.querySelectorAll('.fb-row').length >= 7")
+        got['rows'] = await b.js("""[...document.querySelectorAll('.fb-row')].map(r=>{const n=r.querySelector('.fb-name'),row=r.getBoundingClientRect();
+          return {name:n.textContent, full:n.scrollWidth<=n.clientWidth+1, w:Math.round(n.getBoundingClientRect().width), row:Math.round(row.width)};})""")
+
+    asyncio.run(desktop.with_browser('online', '', check, TREE))
+    short = [r for r in got['rows'] if r['name'] in NAMES]
+    assert len(short) == len(NAMES), got
+    assert all(r['full'] for r in short), ("a short name is cut off by its row's commit message", short)
+    long = [r for r in got['rows'] if r['name'] not in NAMES][0]
+    assert long['w'] < long['row'] and not long['full'], ("a long name is not cut inside its row", long)
+    if width >= 600:     # beside a commit message the name stops at 42% of the row; a phone hides the message column
+        assert long['w'] <= 0.45 * long['row'], ("a long name crowds out the commit message", long)

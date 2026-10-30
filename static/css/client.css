@@ -3797,11 +3797,13 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .fb-row:last-child{border-bottom:none}
 .fb-row:hover{background:rgba(var(--accent2-rgb),.07)}
 .fb-ico{flex:none}
-.fb-name{flex:0 1 auto;min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
+/* The name keeps its width (up to 42%) and the commit message takes what is left: both shrinking in proportion to their
+   natural widths, a long message squeezed a folder name to one letter ("dirs only showing 1 character", 10-29). */
+.fb-name{flex:0 0 auto;min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
 .fb-size{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 /* Forge-style file row: name · last commit message · when · size. The message takes the slack so
    the date and size stay right-aligned in a column, like GitHub/Gitea. */
-.fb-cmsg{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.fb-cmsg{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:var(--muted);font-size:12px}
 .fb-row:hover .fb-cmsg{color:var(--text)}
 .fb-cwhen{flex:none;width:62px;text-align:end;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
