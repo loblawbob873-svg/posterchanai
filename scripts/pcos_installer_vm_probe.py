@@ -24,10 +24,10 @@ installed disk is made audible over qemu-nbd, as the install gate does) and take
 
 UPGRADE FROM A NEWER USB (--upgrade [--from-iso OLDER.iso]): "we should make sure our gui installer can update the os
 from a newer iso usb" (2026-10-30). The OLDER image installs first (the release gate's own typed install), two people
-sign in and one writes ~/Documents/keep.txt, and a marker is left OUTSIDE /home. Then the NEWER image boots live and
+sign in and one writes ~/Documents/keep.txt, and the desktop app's version is noted. Then the NEWER image boots live and
 the wizard's Upgrade path runs through the same bridge (`start({mode:'resume'})`, the disk's existing password, no
-erase). The disk must boot afterwards with the user's file still theirs AND the marker gone -- a file outside /home
-that survives means the old system is still what boots.
+erase). The disk must boot afterwards with the user's file still theirs, the desktop app at the NEW version, and every
+package recorded once (an upgrade copies over the old tree; a second record of an old version is what it used to leave).
 
 Exit 0 installed through the bridge AND the installed disk booted · 1 did not · 2 could not run.
 """
@@ -212,7 +212,13 @@ def gui_install(args, iso, disk, vars_copy, evidence, code, td, mode="fresh"):
     return 0
 
 
-MARKER = "/usr/local/share/pcprobe-old-system"
+# WHAT AN UPGRADE PROMISES ABOUT THE SYSTEM: the new image's packages, each recorded ONCE. Files the image does not carry
+# survive on purpose (Wi-Fi, keys, what the owner installed), so a marker file proves nothing; the package database does.
+DUPES = ("python3 -c \"" r"import glob,os,re,collections;"
+         r"v=re.compile(r'-[0-9]+(\\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$');"
+         r"c=collections.Counter((d.split('/')[-2],v.sub('',d.split('/')[-1]),open(d+'/SLOT').read().split('/')[0].strip())"
+         r" for d in glob.glob('/var/db/pkg/*/*') if os.path.exists(d+'/SLOT'));"
+         r"print('DUPES=['+','.join(sorted(a+'/'+b for (a,b,s),n in c.items() if n>1))+']')" "\"")
 
 
 def _before(state, evidence):
@@ -223,26 +229,31 @@ def _before(state, evidence):
         if rc:
             return rc
         ask = gate._asker(con)
-        if ask(f"mkdir -p {MARKER.rsplit('/', 1)[0]} && echo old > {MARKER} && sync; echo MARK-$?", r"MARK-(\d+)", 30) != "0":
-            print("FAIL  could not leave the old-system marker")
-            return 1
-        print(f"OK  marker left outside /home ({MARKER}) -- the upgrade must replace it")
+        state["desktop"] = ask("echo DESK=[$(qlist -Iv app-misc/posterchan-desktop | tr '\\n' ' ')]", r"DESK=\[([^\]]*)\]", 30)
+        print(f"OK  before the upgrade: {state['desktop'].strip()}")
         return 0
     return stage
 
 
-def _after(state, evidence):
+def _after(state, evidence, same_image):
     inner = gate._after_upgrade(state, evidence)
 
     def stage(con):
         ask = gate._asker(con)
         if not gate._wait_root(ask, evidence):
             return 1
-        left = ask(f"echo MARKER=$(test -e {MARKER} && echo kept || echo gone)", r"MARKER=(\w+)", 30)
-        if left != "gone":
-            print(f"FAIL  the old system is still what boots: {MARKER} survived the upgrade")
+        desk = (ask("echo DESK=[$(qlist -Iv app-misc/posterchan-desktop | tr '\\n' ' ')]", r"DESK=\[([^\]]*)\]", 30) or "").split()
+        dupes = ask(DUPES, r"DUPES=\[([^\]]*)\]", 60)
+        if dupes is None:
+            print("FAIL  could not read the package database after the upgrade")
             return 1
-        print("OK  the system was replaced (the old-system marker is gone)")
+        if dupes:
+            print(f"FAIL  the upgrade left two records for one package: {dupes}")
+            return 1
+        if len(desk) != 1 or (not same_image and desk[0] in (state.get("desktop") or "").split()):
+            print(f"FAIL  the system was not replaced: the desktop app is {desk} (it was {state.get('desktop')})")
+            return 1
+        print(f"OK  the system was replaced: {desk[0]}, every package recorded once")
         return inner(con)
     return stage
 
@@ -284,7 +295,7 @@ def run(args):
         if rc:
             return rc
         rc = gate.boot_installed(disk, td, vars_copy, evidence, args.boot_timeout, args.memory, args.cpus,
-                                 stage=_after(state, evidence) if args.upgrade else None)
+                                 stage=_after(state, evidence, not args.from_iso) if args.upgrade else None)
     if not args.keep_disk:
         disk.unlink(missing_ok=True)
     return rc

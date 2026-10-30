@@ -1893,6 +1893,35 @@ _pc_stage() {
 	echo "::pc-install:: $*"
 }
 
+# ONE RECORD PER PACKAGE AFTER AN UPGRADE.
+#
+# An upgrade copies the new system OVER the old one, deliberately without --delete: what the image does not carry --
+# Wi-Fi and Bluetooth pairings, host keys, /etc/posterchan's unlock setup, a program the owner emerged -- is kept. But
+# Portage's record of what is installed lives in the same tree, so a package whose version moved kept BOTH records
+# (measured 2026-10-30: the desktop, server, relay, shell session and PosterFox move every release). Portage then reads
+# the old one as installed: qlist names two versions and every update "upgrades" what is already there.
+#
+# So for each package the image carries, a record of ANOTHER version in the SAME slot is removed -- records only, the
+# files were just replaced. Different slots (two Pythons) and packages the image does not carry are left alone.
+pc_dedupe_pkgdb() {
+	local src="$1" dst="$2" d cat pf pn slot o opf opn
+	[ -d "$src/var/db/pkg" ] && [ -d "$dst/var/db/pkg" ] || return 0
+	local ver='-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$'
+	for d in "$src"/var/db/pkg/*/*/; do
+		d="${d%/}"; pf="${d##*/}"; cat="${d%/*}"; cat="${cat##*/}"
+		pn="$(printf '%s' "$pf" | sed -E "s/$ver//")"
+		slot="$(cat "$d/SLOT" 2>/dev/null)"; slot="${slot%%/*}"
+		for o in "$dst/var/db/pkg/$cat/$pn"-[0-9]*; do
+			[ -d "$o" ] || continue
+			opf="${o##*/}"; [ "$opf" = "$pf" ] && continue
+			opn="$(printf '%s' "$opf" | sed -E "s/$ver//")"; [ "$opn" = "$pn" ] || continue
+			local oslot; oslot="$(cat "$o/SLOT" 2>/dev/null)"; oslot="${oslot%%/*}"
+			[ "$oslot" = "$slot" ] || continue
+			sudo rm -rf -- "$o" && echo "  package record kept once: $cat/$opf -> $pf"
+		done
+	done
+}
+
 liveISOinstall() {
 	clear
 	_pc_stage medium "Finding the live medium"
@@ -2101,6 +2130,7 @@ liveISOinstall() {
 		read -p "Press enter key to Continue"
 		return 1
 	fi
+	pc_dedupe_pkgdb "$ROOTSRC" "$TARGET"
 
 	# ---------------------------------------------------------------- the kernel
 	#
