@@ -59,6 +59,7 @@ window.PCGitFactory = function(dep){
   // Falls back to 'all' when you're signed out or own none, otherwise the default view is empty.
   // Sticky for the session (not persisted), so switching to 'all' survives leaving and re-entering.
   let _repoScope='mine';
+  const REPO_PAGE = 60;            // repo cards drawn per screenful in the repo list (renderRepos paint)
   let _repoScopeChosen = false;   // a scope the person picked stays picked, even when it is empty
   /* ⭐ STARS — a NIP-51 bookmark set (kind 30003, d:'git-repos') of 30617 `a` coordinates, the
    * idiomatic Nostr list any list-aware client can read. Replaceable, so the two standing rules for
@@ -370,12 +371,23 @@ window.PCGitFactory = function(dep){
     // renderers would let a scope switch quietly drop the active search (or vice versa).
     // EVERY space-separated term must match, so "posterchan ai" narrows rather than widens.
     // Re-rendering the grid (instead of hiding cards) keeps the empty state honest.
+    /* A SCREENFUL AT A TIME. "All repos" is every announcement the relays hold -- 1,600 and more -- and the switch
+     * drew a card for each (its owner's avatar, a profile request) and bound each: measured 520-650 ms on a desktop
+     * before the first frame, seconds on a phone, and the same again to tear them down on the way back ("a long
+     * delay before it switches ... it hangs when trying to switch back", 2026-10-29). The first REPO_PAGE draw at
+     * once and the next page follows when the end of the list scrolls into view. Search and the counts still cover
+     * the whole list; a new scope or search starts again from the top. */
+    let shown=REPO_PAGE, moreObs=null, lastKey='';
     paint=()=>{
       if(!live()) return;
       const base=scoped();
       const terms=((q&&q.value)||'').toLowerCase().split(/\s+/).filter(Boolean);
       const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
-      $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
+      const key=_repoScope+'\u0001'+terms.join(' ');
+      if(key!==lastKey){ lastKey=key; shown=REPO_PAGE; }
+      if(moreObs){ moreObs.disconnect(); moreObs=null; }
+      const page=hits.slice(0, shown), rest=hits.length-page.length;
+      $('#repo-results',feed).innerHTML = hits.length ? grid(page)+(rest>0?`<div class="repo-more muted small" role="status">${rest} more \u2014 loading as you scroll</div>`:'')
         : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
            : !settled ? '<div class="spinner"></div>'
            : _repoScope==='mine' ? `<div class="empty">None of your repos have loaded${repos.length?' yet':''}. ${_gitHostBase()?'Create one ↑, or ':''}try “All repos”.</div>`
@@ -385,6 +397,11 @@ window.PCGitFactory = function(dep){
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
       { const rt=$('#repo-retry'); if(rt) rt.onclick=()=>renderRepos(); }
+      const more=$('#repo-results .repo-more',feed);
+      if(more && typeof IntersectionObserver==='function'){
+        moreObs=new IntersectionObserver(ents=>{ if(ents.some(x=>x.isIntersecting) && live()){ shown+=REPO_PAGE; paint(); } }, { rootMargin:'600px 0px' });
+        moreObs.observe(more);
+      } else if(more){ more.innerHTML=`<button class="btn small">Show ${Math.min(REPO_PAGE, hits.length-shown)} more</button>`; more.querySelector('button').onclick=()=>{ shown+=REPO_PAGE; paint(); }; }
     };
     paint();
     $$('.repo-sc',feed).forEach(b=> b.onclick=()=>{
