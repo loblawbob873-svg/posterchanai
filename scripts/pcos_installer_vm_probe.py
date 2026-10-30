@@ -274,7 +274,11 @@ def run(args):
                                      args.memory, args.cpus, stage=_before(state, evidence))
             if rc:
                 return rc
-        shutil.copyfile(Path(evidence, "OVMF_VARS.fd"), vars_copy)     # the machine's own NVRAM, as on real hardware
+        # FRESH firmware variables for the USB boot, as the CLI upgrade gate does: the installed machine's own NVRAM
+        # lists PosterChanOS first, so the firmware booted the INSTALLED disk and the live USB never came up (measured,
+        # first run). A person picks the USB in the boot menu; fresh variables are that choice. The upgrade writes its
+        # boot entry into these, and the installed disk is then booted from them.
+        shutil.copyfile(vars_src, vars_copy)
     with tempfile.TemporaryDirectory(prefix="pcprobe-sock-") as td:
         rc = gui_install(args, args.iso, disk, vars_copy, evidence, code, td, mode="resume" if args.upgrade else "fresh")
         if rc:
