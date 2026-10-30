@@ -205,6 +205,13 @@ RELAY_DIR="$TMP/app-misc/posterchan-relay"
 RELAY_EBUILD=$(find "$RELAY_DIR" -maxdepth 1 -name 'posterchan-relay-*.ebuild' -print -quit)
 mv "$RELAY_EBUILD" "$RELAY_DIR/posterchan-relay-1.0.$(date -u +%Y%m%d%H%M%S).ebuild"
 
+# pvim, the system editor, has ONE source too (os/bin/pvim), and a timestamp version for the same reason: a changed
+# editor under an unchanged version never reaches an installed machine.
+install -m 0755 "$(dirname "$SRC")/bin/pvim" "$TMP/app-editors/pvim/files/pvim"
+PVIM_DIR="$TMP/app-editors/pvim"
+PVIM_EBUILD=$(find "$PVIM_DIR" -maxdepth 1 -name 'pvim-*.ebuild' -print -quit)
+mv "$PVIM_EBUILD" "$PVIM_DIR/pvim-1.0.$(date -u +%Y%m%d%H%M%S).ebuild"
+
 # A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
 # ever, which is why installed machines said “Already up to date” while keeping an old launcher.
 # Timestamp versions are monotonic and make each published session (helpers + gentoo.sh) upgradable.

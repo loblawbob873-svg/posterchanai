@@ -1,5 +1,6 @@
 acct-group
 acct-user
+app-editors
 app-misc
 dev-vcs
 games-util
@@ -7,4 +8,5 @@ gui-apps
 gui-libs
 gui-wm
 net-p2p
+virtual
 www-client

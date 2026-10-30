@@ -1,0 +1,2859 @@
+#!/usr/bin/env python3
+# pvim — PosterChanOS's text editor: vim's keys, neon on black.
+#
+# The system's only editor (virtual/editor names it alone), so it is what `git commit`, `crontab -e`, `visudo`,
+# `sudoedit` and every EDITOR= hands a file to. That decides the rules below more than any feature does:
+#   * A SAVE WRITES THE FILE IN PLACE. Same inode, owner, mode and hard links -- crontab and visudo check the temp
+#     file they handed over, and a rename-into-place would leave them reading a stale one.
+#   * BYTES ROUND-TRIP. Read as UTF-8 with surrogateescape, so a Latin-1 config or a stray binary byte is written
+#     back exactly as it came; CRLF files stay CRLF; a file with no final newline keeps having none.
+#   * NOTHING IS LOST ON QUIT. :q refuses over unsaved changes; :q! is the only way past.
+# The editing engine (Editor) knows nothing about curses: tests feed it keys and read the buffer back
+# (tests/test_pvim.py). The Screen is the only part that touches the terminal.
+import curses
+import locale
+import os
+import re
+import signal
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+VERSION = '1.0.0'
+
+# ── keys ─────────────────────────────────────────────────────────────────────────────────────────────────────
+_SPECIAL = {
+    '\x1b': '<Esc>', '\r': '<CR>', '\n': '<CR>', '\t': '<Tab>', '\x7f': '<BS>', '\x08': '<BS>',
+}
+_CURSES_KEYS = {}
+
+
+def _init_curses_keys():
+    for name, tok in (('KEY_UP', '<Up>'), ('KEY_DOWN', '<Down>'), ('KEY_LEFT', '<Left>'), ('KEY_RIGHT', '<Right>'),
+                      ('KEY_HOME', '<Home>'), ('KEY_END', '<End>'), ('KEY_PPAGE', '<PageUp>'),
+                      ('KEY_NPAGE', '<PageDown>'), ('KEY_BACKSPACE', '<BS>'), ('KEY_DC', '<Del>'),
+                      ('KEY_IC', '<Insert>'), ('KEY_ENTER', '<CR>'), ('KEY_RESIZE', '<Resize>'),
+                      ('KEY_BTAB', '<S-Tab>')):
+        code = getattr(curses, name, None)
+        if code is not None:
+            _CURSES_KEYS[code] = tok
+
+
+def keyname(ch):
+    """A curses key (str or int) -> the token the engine reads ('a', '<Esc>', '<C-r>', '<Up>')."""
+    if isinstance(ch, int):
+        return _CURSES_KEYS.get(ch, '')
+    if ch in _SPECIAL:
+        return _SPECIAL[ch]
+    if len(ch) == 1 and ord(ch) < 32:
+        return '<C-%s>' % chr(ord(ch) + 96)
+    return ch
+
+
+def parse_keys(s):
+    """'dw<Esc>:wq<CR>' -> ['d', 'w', '<Esc>', ':', 'w', 'q', '<CR>'] (tests and :normal)."""
+    out, i = [], 0
+    while i < len(s):
+        if s[i] == '<':
+            j = s.find('>', i)
+            if j > i + 1 and re.fullmatch(r'<(?:[A-Za-z]+|C-.|S-Tab)>', s[i:j + 1]):
+                out.append(s[i:j + 1])
+                i = j + 1
+                continue
+        out.append(s[i])
+        i += 1
+    return out
+
+
+# ── text helpers ─────────────────────────────────────────────────────────────────────────────────────────────
+def char_width(c):
+    if c == '\t':
+        return 1   # tabs are expanded by the caller, who knows the column
+    o = ord(c)
+    if o < 32 or o == 127:
+        return 2   # drawn as ^X
+    if 0xDC80 <= o <= 0xDCFF:
+        return 4   # an undecodable byte, drawn as <xx>
+    if unicodedata.combining(c):
+        return 0
+    return 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1
+
+
+def display_cols(line, ts):
+    """Display column where each char of `line` starts, plus one past the end."""
+    cols, x = [], 0
+    for c in line:
+        cols.append(x)
+        x += (ts - x % ts) if c == '\t' else char_width(c)
+    cols.append(x)
+    return cols
+
+
+def char_class(c, big=False):
+    if c.isspace():
+        return 0
+    if big:
+        return 1
+    return 1 if (c.isalnum() or c == '_') else 2
+
+
+def leading_ws(line):
+    return line[:len(line) - len(line.lstrip(' \t'))]
+
+
+_PAIRS = {'(': ')', '[': ']', '{': '}', '<': '>'}
+_CLOSERS = {v: k for k, v in _PAIRS.items()}
+
+
+def vim_regex(pat, ignorecase=False, smartcase=True):
+    """Vim's 'magic' regex -> a compiled Python one. Unknown escapes pass through."""
+    out, i = [], 0
+    while i < len(pat):
+        c = pat[i]
+        if c == '\\' and i + 1 < len(pat):
+            n = pat[i + 1]
+            i += 2
+            if n in '<>':
+                out.append(r'\b')
+            elif n in '()|+?=':
+                out.append('?' if n == '=' else n)
+            elif n == '{':
+                j = pat.find('}', i)
+                if j < 0:
+                    out.append(r'\{')
+                else:
+                    body = pat[i:j].lstrip('-') or ','
+                    out.append('{' + body + '}' if body != ',' else '*')
+                    i = j + 1
+            elif n == 'n':
+                out.append(r'\n')
+            elif n == 't':
+                out.append(r'\t')
+            elif n in 'sSdDwWbB.*[]^$\\/~':
+                out.append('\\' + n if n not in 'bB' else ('\\' + n))
+            elif n.isdigit():
+                out.append('\\' + n)
+            else:
+                out.append(re.escape(n))
+            continue
+        if c in '(){}|+?':
+            out.append('\\' + c)
+        elif c == '~':
+            out.append('~')
+        else:
+            out.append(c)
+        i += 1
+    flags = 0
+    if ignorecase and not (smartcase and any(ch.isupper() for ch in pat)):
+        flags |= re.IGNORECASE
+    return re.compile(''.join(out), flags)
+
+
+def vim_replacement(rep):
+    """:s replacement -> a function of the match (& = whole, \\1.. = groups, \\r = newline, \\u \\U \\l \\L \\e)."""
+    parts, i = [], 0
+    while i < len(rep):
+        c = rep[i]
+        if c == '\\' and i + 1 < len(rep):
+            n = rep[i + 1]
+            i += 2
+            if n.isdigit():
+                parts.append(('g', int(n)))
+            elif n in 'rn':
+                parts.append(('s', '\n'))
+            elif n == 't':
+                parts.append(('s', '\t'))
+            elif n == '&':
+                parts.append(('s', '&'))
+            elif n in 'uUlLeE':
+                parts.append(('case', n))
+            else:
+                parts.append(('s', n))
+            continue
+        parts.append(('g', 0) if c == '&' else ('s', c))
+        i += 1
+
+    def apply(m):
+        out, one, mode = [], None, None
+        for kind, v in parts:
+            if kind == 'case':
+                if v in 'ul':
+                    one = v
+                else:
+                    mode = None if v in 'eE' else v
+                continue
+            s = (m.group(v) or '') if kind == 'g' else v
+            if mode == 'U':
+                s = s.upper()
+            elif mode == 'L':
+                s = s.lower()
+            if one and s:
+                s = (s[0].upper() if one == 'u' else s[0].lower()) + s[1:]
+                one = None
+            out.append(s)
+        return ''.join(out)
+    return apply
+
+
+# ── syntax ───────────────────────────────────────────────────────────────────────────────────────────────────
+_KW = {
+    'python': 'False None True and as assert async await break class continue def del elif else except finally for '
+              'from global if import in is lambda nonlocal not or pass raise return try while with yield match case '
+              'self print',
+    'sh': 'if then else elif fi for while until do done case esac in function return local export readonly '
+          'declare set unset shift exit source alias trap eval exec break continue select time inherit EAPI '
+          'DEPEND RDEPEND BDEPEND IUSE SLOT KEYWORDS LICENSE SRC_URI',
+    'js': 'break case catch class const continue debugger default delete do else export extends finally for '
+          'function if import in instanceof let new of return super switch this throw try typeof var void while '
+          'with yield async await null undefined true false static get set from as',
+    'c': 'auto break case char const continue default do double else enum extern float for goto if inline int long '
+         'register restrict return short signed sizeof static struct switch typedef union unsigned void volatile '
+         'while bool true false NULL class namespace template typename public private protected virtual new delete '
+         'nullptr using include define ifdef ifndef endif pragma',
+    'rust': 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match '
+            'mod move mut pub ref return self Self static struct super trait true type unsafe use where while',
+    'go': 'break case chan const continue default defer else fallthrough for func go goto if import interface map '
+          'package range return select struct switch type var nil true false',
+}
+_FT_BY_EXT = {
+    'py': 'python', 'pyw': 'python', 'sh': 'sh', 'bash': 'sh', 'zsh': 'sh', 'ebuild': 'sh', 'eclass': 'sh',
+    'js': 'js', 'mjs': 'js', 'cjs': 'js', 'ts': 'js', 'tsx': 'js', 'jsx': 'js', 'json': 'json',
+    'c': 'c', 'h': 'c', 'cc': 'c', 'cpp': 'c', 'hpp': 'c', 'cxx': 'c', 'rs': 'rust', 'go': 'go',
+    'css': 'css', 'html': 'html', 'htm': 'html', 'xml': 'html', 'svg': 'html', 'md': 'markdown',
+    'conf': 'conf', 'cfg': 'conf', 'ini': 'conf', 'toml': 'conf', 'yaml': 'conf', 'yml': 'conf',
+    'service': 'conf', 'desktop': 'conf', 'diff': 'diff', 'patch': 'diff', 'mk': 'make',
+}
+_TOKEN_RX = {}
+
+
+def filetype_of(path, first_line=''):
+    base = os.path.basename(path or '')
+    if base in ('COMMIT_EDITMSG', 'MERGE_MSG', 'TAG_EDITMSG', 'git-rebase-todo'):
+        return 'gitcommit'
+    if base in ('Makefile', 'GNUmakefile', 'makefile'):
+        return 'make'
+    if base in ('make.conf', 'package.use', 'package.accept_keywords', 'package.mask', 'fstab', 'hosts',
+                'sudoers') or base.startswith(('sudoers', '.bashrc', '.profile', '.bash_')) or '/etc/' in (path or ''):
+        ft = _FT_BY_EXT.get(base.rsplit('.', 1)[-1]) if '.' in base else None
+        return ft or ('sh' if base.startswith(('.bash', '.profile')) else 'conf')
+    if '.' in base:
+        ft = _FT_BY_EXT.get(base.rsplit('.', 1)[-1].lower())
+        if ft:
+            return ft
+    if first_line.startswith('#!'):
+        if 'python' in first_line:
+            return 'python'
+        if re.search(r'\b(ba|z|da|k)?sh\b', first_line):
+            return 'sh'
+        if 'node' in first_line:
+            return 'js'
+    return ''
+
+
+def _token_rx(ft):
+    if ft in _TOKEN_RX:
+        return _TOKEN_RX[ft]
+    comment = {'python': r'#.*', 'sh': r'(?:(?<=\s)|^)#.*', 'conf': r'^\s*[#;].*', 'make': r'#.*',
+               'js': r'//.*|/\*.*?(?:\*/|$)', 'json': r'//.*', 'c': r'//.*|/\*.*?(?:\*/|$)', 'rust': r'//.*',
+               'go': r'//.*', 'css': r'/\*.*?(?:\*/|$)', 'html': r'<!--.*?(?:-->|$)'}.get(ft)
+    parts = []
+    if comment:
+        parts.append('(?P<comment>%s)' % comment)
+    if ft in ('python', 'sh', 'js', 'json', 'c', 'rust', 'go', 'conf', 'css', 'make', 'html'):
+        parts.append(r'''(?P<string>"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?''' + (r'|`(?:\\.|[^`\\])*`?' if ft == 'js' else '') + ')')
+    if ft == 'html':
+        parts.append(r'(?P<keyword></?[A-Za-z][\w:-]*|/?>)')
+    if ft == 'conf':
+        parts.append(r'(?P<keyword>^\s*\[[^\]]*\])|(?P<func>^\s*[\w.-]+(?=\s*[=:]))')
+    if ft in ('sh', 'make'):
+        parts.append(r'(?P<func>\$\{[^}]*\}|\$\w+|\$\(|\$[@#?*!$0-9])')
+    if ft == 'python':
+        parts.append(r'(?P<func>@[\w.]+)')
+    if ft in _KW:
+        parts.append(r'(?P<keyword>\b(?:%s)\b)' % '|'.join(re.escape(w) for w in _KW[ft].split()))
+    if ft in ('python', 'sh', 'js', 'json', 'c', 'rust', 'go', 'conf', 'css'):
+        parts.append(r'(?P<number>\b(?:0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b)')
+    if ft in ('python', 'js', 'c', 'rust', 'go'):
+        parts.append(r'(?P<func>\b[A-Za-z_]\w*(?=\())')
+    if ft == 'markdown':
+        parts = [r'(?P<keyword>^#{1,6}\s.*)', r'(?P<string>`[^`]*`?)', r'(?P<func>\*\*[^*]+\*\*|\[[^\]]*\]\([^)]*\))',
+                 r'(?P<comment>^\s*>.*)']
+    if ft == 'diff':
+        parts = [r'(?P<add>^\+.*)', r'(?P<del>^-.*)', r'(?P<keyword>^@@.*)', r'(?P<comment>^(?:diff|index) .*)']
+    if ft == 'gitcommit':
+        parts = [r'(?P<comment>^#.*)']
+    # one rule may repeat a group (two kinds of `func`): number the repeats, highlight() strips the digits
+    seen = {}
+
+    def _uniq(m):
+        n = seen.get(m.group(1), 0)
+        seen[m.group(1)] = n + 1
+        return '(?P<%s%s>' % (m.group(1), n or '')
+    rx = re.compile(re.sub(r'\(\?P<([a-z]+)>', _uniq, '|'.join(parts))) if parts else None
+    _TOKEN_RX[ft] = rx
+    return rx
+
+
+def highlight(line, ft):
+    """[(start, end, group)] for one line."""
+    rx = _token_rx(ft)
+    if not rx:
+        return []
+    out = []
+    for m in rx.finditer(line):
+        if m.start() == m.end():
+            continue
+        out.append((m.start(), m.end(), m.lastgroup.rstrip('0123456789')))
+    return out
+
+
+# ── buffer I/O ───────────────────────────────────────────────────────────────────────────────────────────────
+class FileInfo:
+    def __init__(self):
+        self.crlf = False
+        self.eol = True
+        self.exists = False
+        self.readonly = False
+        self.was_empty = True   # a 0-byte (or new) file stays 0 bytes while the buffer is still one empty line
+
+
+def read_file(path):
+    info = FileInfo()
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+    except FileNotFoundError:
+        return [''], info
+    info.exists = True
+    info.readonly = not os.access(path, os.W_OK)
+    info.was_empty = not data
+    text = data.decode('utf-8', 'surrogateescape')
+    if '\r\n' in text and text.count('\r\n') == text.count('\n'):
+        info.crlf = True
+        text = text.replace('\r\n', '\n')
+    if text == '':
+        info.eol = True
+        return [''], info
+    info.eol = text.endswith('\n')
+    if info.eol:
+        text = text[:-1]
+    return text.split('\n'), info
+
+
+def write_file(path, lines, info):
+    """Write IN PLACE: same inode, owner, mode, hard links. Returns bytes written."""
+    nl = '\r\n' if info.crlf else '\n'
+    text = nl.join(lines)
+    if info.eol and not (lines == [''] and info.was_empty):
+        text += nl
+    data = text.encode('utf-8', 'surrogateescape')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o666)
+    try:
+        os.ftruncate(fd, 0)
+        view, done = memoryview(data), 0
+        while done < len(data):
+            done += os.write(fd, view[done:])
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+    info.exists = True
+    info.was_empty = not data
+    return len(data)
+
+
+# ── the engine ───────────────────────────────────────────────────────────────────────────────────────────────
+class Quit(Exception):
+    pass
+
+
+class Editor:
+    NORMAL, INSERT, REPLACE, VISUAL, VLINE, CMDLINE = 'NORMAL', 'INSERT', 'REPLACE', 'VISUAL', 'V-LINE', 'COMMAND'
+
+    def __init__(self, path=None, rows=24, cols=80, clipboard=True):
+        self.opts = {'number': True, 'relativenumber': False, 'tabstop': 8, 'shiftwidth': 4, 'expandtab': False,
+                     'autoindent': True, 'ignorecase': True, 'smartcase': True, 'hlsearch': True, 'incsearch': True,
+                     'list': False, 'scrolloff': 3, 'syntax': True}
+        self.rows, self.cols = rows, cols
+        self.use_clipboard = clipboard
+        self.msg, self.msg_err = '', False
+        self.mode = self.NORMAL
+        self.regs = {}
+        self.pending = []
+        self.dot = None            # keys of the last change, replayed by `.`
+        self.rec = None            # keys being recorded for `.`
+        self.cmd_hist, self.search_hist = [], []
+        self.search = None         # (pattern, forward)
+        self.hl_off = False
+        self.last_f = None         # (cmd, char) for ; and ,
+        self.marks = {}
+        self.top = 0
+        self.left = 0
+        self.vstart = (0, 0)
+        self.cmdline = ''
+        self.cmd_kind = ':'
+        self.cmd_cur = 0
+        self.hist_i = None
+        self.insert_count = 1
+        self.insert_keys = []
+        self.intro = False
+        self.help_text = None
+        self._await_reg = False
+        self._o_kind = None
+        self._keep_top = False
+        self.prev_mode = self.NORMAL
+        self.dot_count = 0
+        self.last_sub = None
+        self.search_origin = (0, 0, 0)
+        self.load(path)
+
+    # -- file ---------------------------------------------------------------------------------------------------
+    def load(self, path):
+        self.path = path
+        if path:
+            self.lines, self.info = read_file(path)
+        else:
+            self.lines, self.info = [''], FileInfo()
+        self.intro = not path
+        self.ft = filetype_of(path, self.lines[0] if self.lines else '')
+        self.row = self.col = 0
+        self.want = 0
+        self.top = self.left = 0
+        self.undo_stack, self.redo_stack = [], []
+        self.saved_tick = self.tick = 0
+        self._depth = 0
+        if path:
+            n = len(self.lines)
+            if not self.info.exists:
+                self.say('"%s" [New]' % path)
+            else:
+                flags = (' [readonly]' if self.info.readonly else '') + (' [dos]' if self.info.crlf else '') + \
+                        ('' if self.info.eol else ' [noeol]')
+                self.say('"%s"%s %dL' % (path, flags, n))
+
+    @property
+    def modified(self):
+        return self.tick != self.saved_tick
+
+    def say(self, m, err=False):
+        self.msg, self.msg_err = m, err
+
+    # -- undo -----------------------------------------------------------------------------------------------------
+    def begin_change(self):
+        """Snapshot before the first edit of one command (an insert session, a :g, a :normal is one command)."""
+        self._depth += 1
+        if self._depth > 1:
+            return
+        self.undo_stack.append((list(self.lines), self.row, self.col, self.tick))
+        if len(self.undo_stack) > 1000:
+            del self.undo_stack[0]
+        self.redo_stack.clear()
+
+    def end_change(self):
+        if self._depth <= 0:
+            return
+        self._depth -= 1
+        if self._depth:
+            return
+        prev = self.undo_stack[-1][0]
+        if prev == self.lines:          # nothing actually changed: not an undo step
+            self.undo_stack.pop()
+        else:
+            self.tick += 1
+
+    def undo(self, count=1):
+        done = 0
+        for _ in range(count):
+            if not self.undo_stack:
+                break
+            lines, r, c, tick = self.undo_stack.pop()
+            self.redo_stack.append((list(self.lines), self.row, self.col, self.tick))
+            self.lines, self.row, self.col, self.tick = lines, r, c, tick
+            done += 1
+        if not done:
+            self.say('Already at oldest change')
+        else:
+            self.clamp()
+            self.say('%d change%s undone' % (done, '' if done == 1 else 's'))
+
+    def redo(self, count=1):
+        done = 0
+        for _ in range(count):
+            if not self.redo_stack:
+                break
+            lines, r, c, tick = self.redo_stack.pop()
+            self.undo_stack.append((list(self.lines), self.row, self.col, self.tick))
+            self.lines, self.row, self.col, self.tick = lines, r, c, tick
+            done += 1
+        if not done:
+            self.say('Already at newest change')
+        else:
+            self.clamp()
+
+    # -- cursor -----------------------------------------------------------------------------------------------------
+    @property
+    def line(self):
+        return self.lines[self.row]
+
+    def max_col(self, row=None, insert=None):
+        n = len(self.lines[self.row if row is None else row])
+        ins = self.mode in (self.INSERT, self.REPLACE) or self.mode in (self.VISUAL, self.VLINE) if insert is None else insert
+        return n if ins else max(0, n - 1)
+
+    def clamp(self):
+        self.row = max(0, min(self.row, len(self.lines) - 1))
+        self.col = max(0, min(self.col, self.max_col()))
+
+    def set_col(self, c):
+        self.col = c
+        self.clamp()
+        self.want = self.disp_col()
+
+    def disp_col(self, row=None, col=None):
+        row = self.row if row is None else row
+        col = self.col if col is None else col
+        cols = display_cols(self.lines[row], self.opts['tabstop'])
+        return cols[min(col, len(cols) - 1)]
+
+    def col_for_disp(self, row, want):
+        cols = display_cols(self.lines[row], self.opts['tabstop'])
+        best = 0
+        for i in range(len(cols) - 1):
+            if cols[i] <= want:
+                best = i
+            else:
+                break
+        if want >= cols[-1]:
+            best = len(cols) - 1
+        return best
+
+    def goto_row(self, r, keep_want=True):
+        self.row = max(0, min(r, len(self.lines) - 1))
+        self.col = self.col_for_disp(self.row, self.want) if keep_want else 0
+        self.clamp()
+
+    # -- registers -------------------------------------------------------------------------------------------------
+    def set_reg(self, name, text, linewise, yank=False):
+        if name == '_':
+            return
+        val = (text, linewise)
+        if name in ('+', '*'):
+            self.clip_set(text + ('\n' if linewise else ''))
+        elif name and name.isalpha() and name.isupper():
+            old = self.regs.get(name.lower(), ('', linewise))
+            sep = '\n' if (old[1] or linewise) and old[0] else ''
+            self.regs[name.lower()] = (old[0] + sep + text, old[1] or linewise)
+        elif name and name != '"':
+            self.regs[name] = val
+        self.regs['"'] = val
+        if yank and not name:
+            self.regs['0'] = val
+
+    def get_reg(self, name):
+        if name in ('+', '*'):
+            text = self.clip_get()
+            if text is None:
+                return self.regs.get('"')
+            return (text[:-1], True) if text.endswith('\n') else (text, False)
+        return self.regs.get(name or '"')
+
+    def clip_set(self, text):
+        if not self.use_clipboard:
+            self.regs['+'] = (text, False)
+            return
+        for cmd in (['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '-ib']):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, input=text.encode('utf-8', 'surrogateescape'), timeout=3,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                    return
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        self.regs['+'] = (text, False)
+
+    def clip_get(self):
+        if not self.use_clipboard:
+            v = self.regs.get('+')
+            return v[0] if v else None
+        for cmd in (['wl-paste', '-n'], ['xclip', '-selection', 'clipboard', '-o'], ['xsel', '-ob']):
+            if shutil.which(cmd[0]):
+                try:
+                    r = subprocess.run(cmd, capture_output=True, timeout=3)
+                    if r.returncode == 0:
+                        return r.stdout.decode('utf-8', 'surrogateescape')
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        v = self.regs.get('+')
+        return v[0] if v else None
+
+    # -- text ranges ------------------------------------------------------------------------------------------------
+    def get_text(self, r1, c1, r2, c2, linewise):
+        if linewise:
+            return '\n'.join(self.lines[r1:r2 + 1])
+        if r1 == r2:
+            return self.lines[r1][c1:c2]
+        parts = [self.lines[r1][c1:]] + self.lines[r1 + 1:r2] + [self.lines[r2][:c2]]
+        return '\n'.join(parts)
+
+    def delete_range(self, r1, c1, r2, c2, linewise):
+        if linewise:
+            del self.lines[r1:r2 + 1]
+            if not self.lines:
+                self.lines = ['']
+            self.row = min(r1, len(self.lines) - 1)
+            self.col = len(leading_ws(self.lines[self.row]))
+        else:
+            self.lines[r1:r2 + 1] = [self.lines[r1][:c1] + self.lines[r2][c2:]]
+            self.row, self.col = r1, c1
+
+    def insert_text(self, r, c, text):
+        """Insert at (r, c); returns the position just after."""
+        parts = text.split('\n')
+        line = self.lines[r]
+        head, tail = line[:c], line[c:]
+        if len(parts) == 1:
+            self.lines[r] = head + text + tail
+            return r, c + len(text)
+        new = [head + parts[0]] + parts[1:-1] + [parts[-1] + tail]
+        self.lines[r:r + 1] = new
+        return r + len(parts) - 1, len(parts[-1])
+
+    # -- motions ----------------------------------------------------------------------------------------------------
+    def _char_at(self, r, c):
+        line = self.lines[r]
+        return line[c] if c < len(line) else '\n'
+
+    def _next(self, r, c):
+        if c < len(self.lines[r]) - 1:
+            return r, c + 1
+        if r < len(self.lines) - 1:
+            return r + 1, 0
+        return None
+
+    def _prev(self, r, c):
+        if c > 0:
+            return r, c - 1
+        if r > 0:
+            return r - 1, max(0, len(self.lines[r - 1]) - 1)
+        return None
+
+    def _cls(self, r, c, big):
+        line = self.lines[r]
+        if not line:
+            return -1           # an empty line is a word of its own
+        if c >= len(line):
+            return 0
+        return char_class(line[c], big)
+
+    def word_fwd(self, r, c, big, for_change=False):
+        start_cls = self._cls(r, c, big)
+        if start_cls > 0:
+            while True:
+                n = self._next(r, c)
+                if n is None:
+                    return r, len(self.lines[r])
+                if n[0] != r:
+                    r, c = n
+                    break
+                r, c = n
+                if self._cls(r, c, big) != start_cls:
+                    break
+        elif start_cls == -1:
+            n = self._next(r, c)
+            if n is None:
+                return r, c
+            r, c = n
+        while True:
+            k = self._cls(r, c, big)
+            if k != 0:
+                return r, c
+            n = self._next(r, c)
+            if n is None:
+                return r, len(self.lines[r])
+            r, c = n
+
+    def word_end(self, r, c, big):
+        n = self._next(r, c)
+        if n is None:
+            return r, c
+        r, c = n
+        while self._cls(r, c, big) <= 0:
+            n = self._next(r, c)
+            if n is None:
+                return r, c
+            r, c = n
+        k = self._cls(r, c, big)
+        while True:
+            n = self._next(r, c)
+            if n is None or n[0] != r or self._cls(n[0], n[1], big) != k:
+                return r, c
+            r, c = n
+
+    def word_back(self, r, c, big):
+        p = self._prev(r, c)
+        if p is None:
+            return 0, 0
+        r, c = p
+        while self._cls(r, c, big) == 0:
+            p = self._prev(r, c)
+            if p is None:
+                return 0, 0
+            r, c = p
+        if self._cls(r, c, big) == -1:
+            return r, 0
+        k = self._cls(r, c, big)
+        while c > 0 and self._cls(r, c - 1, big) == k:
+            c -= 1
+        return r, c
+
+    def para(self, r, forward):
+        step = 1 if forward else -1
+        n = len(self.lines)
+        while 0 <= r + step < n and self.lines[r].strip() == '':
+            r += step
+        while 0 <= r + step < n and self.lines[r].strip() != '':
+            r += step
+        return r
+
+    def match_pair(self, r, c):
+        line = self.lines[r]
+        i = c
+        while i < len(line) and line[i] not in '()[]{}':
+            i += 1
+        if i >= len(line):
+            return None
+        ch = line[i]
+        if ch in _PAIRS:
+            want, step = _PAIRS[ch], 1
+        else:
+            want, step = _CLOSERS[ch], -1
+        depth = 0
+        rr, cc = r, i
+        while True:
+            x = self._char_at(rr, cc)
+            if x == ch:
+                depth += 1
+            elif x == want:
+                depth -= 1
+                if depth == 0:
+                    return rr, cc
+            if step > 0:
+                n = self._next(rr, cc)
+                if n is None:
+                    return None
+                rr, cc = n
+            else:
+                if cc > 0:
+                    cc -= 1
+                elif rr > 0:
+                    rr -= 1
+                    cc = max(0, len(self.lines[rr]) - 1)
+                    if not self.lines[rr]:
+                        continue
+                else:
+                    return None
+
+    def find_char(self, cmd, ch, count):
+        line = self.line
+        c = self.col
+        for _ in range(count):
+            if cmd in 'ft':
+                j = line.find(ch, c + 1 + (1 if cmd == 't' and c + 1 < len(line) and line[c + 1] == ch else 0))
+            else:
+                j = line.rfind(ch, 0, max(0, c - (1 if cmd == 'T' and c > 0 and line[c - 1] == ch else 0)))
+            if j < 0:
+                return None
+            c = j
+        if cmd == 't':
+            c -= 1
+        elif cmd == 'T':
+            c += 1
+        return c
+
+    def search_from(self, pat, forward, r, c, count=1, wrap=True):
+        try:
+            rx = vim_regex(pat, self.opts['ignorecase'], self.opts['smartcase'])
+        except re.error as e:
+            self.say('E486: bad pattern: %s' % e, True)
+            return None
+        n = len(self.lines)
+        pos = (r, c)
+        for _ in range(count):
+            found = None
+            r0, c0 = pos
+            if forward:
+                m = None
+                for m in rx.finditer(self.lines[r0]):
+                    if m.start() > c0:
+                        break
+                    m = None
+                if m is not None:
+                    found = (r0, m.start())
+                else:
+                    for k in range(1, n + 1):
+                        rr = r0 + k
+                        if rr >= n:
+                            if not wrap:
+                                break
+                            rr -= n
+                            if k == n - r0:
+                                self.say('search hit BOTTOM, continuing at TOP', True)
+                        mm = rx.search(self.lines[rr])
+                        if mm:
+                            if rr == r0 and mm.start() > c0:
+                                found = (rr, mm.start())
+                                break
+                            if rr != r0 or k == n:
+                                found = (rr, mm.start())
+                                break
+            else:
+                hits = [m.start() for m in rx.finditer(self.lines[r0]) if m.start() < c0]
+                if hits:
+                    found = (r0, hits[-1])
+                else:
+                    for k in range(1, n + 1):
+                        rr = r0 - k
+                        if rr < 0:
+                            if not wrap:
+                                break
+                            rr += n
+                            if k == r0 + 1:
+                                self.say('search hit TOP, continuing at BOTTOM', True)
+                        hits = [m.start() for m in rx.finditer(self.lines[rr])]
+                        if hits:
+                            found = (rr, hits[-1])
+                            break
+            if not found:
+                self.say('E486: Pattern not found: %s' % pat, True)
+                return None
+            pos = found
+        return pos
+
+    def motion(self, key, count, op=None):
+        """-> (row, col, linewise, inclusive) or None, for a complete motion `key` (already-resolved keys)."""
+        r, c, n = self.row, self.col, len(self.lines)
+        cnt = count or 1
+        if key in ('h', '<Left>', '<BS>', '<C-h>'):
+            return r, max(0, c - cnt), False, False
+        if key in ('l', '<Right>', ' '):
+            lim = len(self.line) if op else self.max_col()
+            return r, min(lim, c + cnt), False, False
+        if key in ('j', '<Down>', '<C-n>', '<C-j>'):
+            return min(n - 1, r + cnt), None, True, True
+        if key in ('k', '<Up>', '<C-p>'):
+            return max(0, r - cnt), None, True, True
+        if key in ('+', '<CR>', '_'):
+            rr = min(n - 1, r + (cnt - 1 if key == '_' else cnt))
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key == '-':
+            rr = max(0, r - cnt)
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key in ('0', '<Home>'):
+            return r, 0, False, False
+        if key == '^':
+            return r, len(leading_ws(self.line)), False, False
+        if key in ('$', '<End>'):
+            rr = min(n - 1, r + cnt - 1)
+            return rr, max(0, len(self.lines[rr]) - (0 if op else 1)), False, True
+        if key == 'G':
+            rr = (count - 1) if count else n - 1
+            rr = max(0, min(rr, n - 1))
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key == 'gg':
+            rr = max(0, min((count or 1) - 1, n - 1))
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key in ('w', 'W'):
+            rr, cc = r, c
+            for i in range(cnt):
+                nr, nc = self.word_fwd(rr, cc, key == 'W')
+                if op and nr > rr and i == cnt - 1 and self.lines[rr]:
+                    # `dw` on the last word of a line stops at the line's end, not at the next line.
+                    nr, nc = rr, len(self.lines[rr])
+                rr, cc = nr, nc
+            return rr, cc, False, False
+        if key in ('e', 'E'):
+            rr, cc = r, c
+            for _ in range(cnt):
+                rr, cc = self.word_end(rr, cc, key == 'E')
+            return rr, cc, False, True
+        if key in ('b', 'B'):
+            rr, cc = r, c
+            for _ in range(cnt):
+                rr, cc = self.word_back(rr, cc, key == 'B')
+            return rr, cc, False, False
+        if key == '}':
+            rr = r
+            for _ in range(cnt):
+                rr = self.para(rr, True)
+            return rr, (len(self.lines[rr]) if rr == n - 1 and self.lines[rr].strip() else 0), False, False
+        if key == '{':
+            rr = r
+            for _ in range(cnt):
+                rr = self.para(rr, False)
+            return rr, 0, False, False
+        if key == '%':
+            if count:
+                rr = max(0, min(n - 1, (count * n + 99) // 100 - 1))
+                return rr, len(leading_ws(self.lines[rr])), True, True
+            m = self.match_pair(r, c)
+            return (m[0], m[1], False, True) if m else None
+        if key == 'H':
+            rr = min(n - 1, self.top + cnt - 1)
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key == 'L':
+            rr = max(0, min(n - 1, self.top + self.text_rows() - cnt))
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if key == 'M':
+            rr = min(n - 1, self.top + min(self.text_rows(), n - self.top) // 2)
+            return rr, len(leading_ws(self.lines[rr])), True, True
+        if len(key) == 2 and key[0] in 'fFtT':
+            cc = self.find_char(key[0], key[1], cnt)
+            if cc is None:
+                return None
+            self.last_f = (key[0], key[1])
+            return r, cc, False, key[0] in 'ft'
+        if key in (';', ','):
+            if not self.last_f:
+                return None
+            cmd, ch = self.last_f
+            if key == ',':
+                cmd = cmd.swapcase()
+            cc = self.find_char(cmd, ch, cnt)
+            if cc is None:
+                return None
+            return r, cc, False, cmd in 'ft'
+        if key in ('n', 'N'):
+            if not self.search:
+                self.say('E35: No previous regular expression', True)
+                return None
+            pat, fwd = self.search
+            if key == 'N':
+                fwd = not fwd
+            p = self.search_from(pat, fwd, r, c, cnt)
+            if p and not self.msg_err:
+                self.say(('/' if self.search[1] else '?') + pat)
+            self.hl_off = False
+            return (p[0], p[1], False, False) if p else None
+        if key in ('*', '#'):
+            word = self.word_under()
+            if not word:
+                self.say('E348: No string under cursor', True)
+                return None
+            pat = '\\<' + re.sub(r'([.*\[\]^$\\~/])', r'\\\1', word) + '\\>'
+            self.search = (pat, key == '*')
+            self.search_hist.append(pat)
+            self.hl_off = False
+            p = self.search_from(pat, key == '*', r, c, cnt)
+            return (p[0], p[1], False, False) if p else None
+        if key.startswith("'") or key.startswith('`'):
+            m = self.marks.get(key[1:])
+            if not m:
+                self.say('E20: Mark not set', True)
+                return None
+            mr = min(m[0], n - 1)
+            if key[0] == "'":
+                return mr, len(leading_ws(self.lines[mr])), True, True
+            return mr, min(m[1], len(self.lines[mr])), False, False
+        return None
+
+    def word_under(self):
+        line, c = self.line, self.col
+        if not line:
+            return ''
+        c = min(c, len(line) - 1)
+        while c < len(line) and char_class(line[c]) != 1:
+            c += 1
+        if c >= len(line):
+            return ''
+        s = e = c
+        while s > 0 and char_class(line[s - 1]) == 1:
+            s -= 1
+        while e < len(line) and char_class(line[e]) == 1:
+            e += 1
+        return line[s:e]
+
+    def text_object(self, kind, what, count):
+        """iw aw iW aW i" a" i' a' i` a` i( a( ib ab i{ a{ iB aB i[ a[ i< a< it? -> charwise (r1,c1,r2,c2) or None."""
+        r, c = self.row, self.col
+        line = self.line
+        if what in 'wW':
+            big = what == 'W'
+            if not line:
+                return (r, 0, r, 0)
+            c = min(c, len(line) - 1)
+            k = char_class(line[c], big)
+            s = e = c
+            while s > 0 and char_class(line[s - 1], big) == k:
+                s -= 1
+            while e < len(line) and char_class(line[e], big) == k:
+                e += 1
+            if kind == 'a':
+                if e < len(line) and line[e].isspace():
+                    while e < len(line) and line[e].isspace():
+                        e += 1
+                else:
+                    while s > 0 and line[s - 1].isspace():
+                        s -= 1
+            return (r, s, r, e)
+        if what in '"\'`':
+            q = what
+            idx = [i for i, ch in enumerate(line) if ch == q and (i == 0 or line[i - 1] != '\\')]
+            pair = None
+            for a, b in zip(idx[::2], idx[1::2]):
+                if a <= c <= b:
+                    pair = (a, b)
+                    break
+            if pair is None:
+                for a, b in zip(idx[::2], idx[1::2]):
+                    if a > c:
+                        pair = (a, b)
+                        break
+            if pair is None:
+                return None
+            a, b = pair
+            if kind == 'i':
+                return (r, a + 1, r, b)
+            e = b + 1
+            while e < len(line) and line[e].isspace():
+                e += 1
+            return (r, a, r, e)
+        opener = {'(': '(', ')': '(', 'b': '(', '{': '{', '}': '{', 'B': '{', '[': '[', ']': '[', '<': '<', '>': '<'}.get(what)
+        if not opener:
+            return None
+        closer = _PAIRS[opener]
+        # walk back to the unmatched opener, then forward to its closer
+        depth, rr, cc = 0, r, c
+        start = None
+        if self._char_at(rr, cc) == opener:
+            start = (rr, cc)
+        else:
+            while True:
+                x = self._char_at(rr, cc)
+                if x == closer and (rr, cc) != (r, c):
+                    depth += 1
+                elif x == opener:
+                    if depth == 0:
+                        start = (rr, cc)
+                        break
+                    depth -= 1
+                if cc > 0:
+                    cc -= 1
+                elif rr > 0:
+                    rr -= 1
+                    cc = max(0, len(self.lines[rr]) - 1)
+                else:
+                    break
+        if not start:
+            return None
+        end = self.match_pair(*start)
+        if not end:
+            return None
+        (r1, c1), (r2, c2) = start, end
+        if kind == 'a':
+            return (r1, c1, r2, c2 + 1)
+        # inner: after the opener up to the closer; a block whose brackets sit on their own lines is linewise-ish
+        if c1 + 1 >= len(self.lines[r1]) and r2 > r1 and not self.lines[r2][:c2].strip():
+            return (r1 + 1, 0, r2 - 1, len(self.lines[r2 - 1])) if r2 - 1 >= r1 + 1 else (r1, c1 + 1, r2, c2)
+        return (r1, c1 + 1, r2, c2)
+
+    # -- operators --------------------------------------------------------------------------------------------------
+    def apply_op(self, op, r1, c1, r2, c2, linewise, reg):
+        """Range is [start, end) for charwise, rows inclusive for linewise; start <= end."""
+        if op == 'y':
+            self.set_reg(reg, self.get_text(r1, c1, r2, c2, linewise), linewise, yank=True)
+            if linewise:
+                self.row = r1          # `yk` moves up to the first line; `yj` and `yy` stay put
+            else:
+                self.row, self.col = r1, c1
+            nl = r2 - r1 + 1
+            if linewise and nl > 2:
+                self.say('%d lines yanked' % nl)
+            self.clamp()
+            return
+        if op in ('d', 'c'):
+            self.begin_change()
+            text = self.get_text(r1, c1, r2, c2, linewise)
+            self.set_reg(reg, text, linewise)
+            if op == 'c' and linewise:
+                indent = leading_ws(self.lines[r1]) if self.opts['autoindent'] else ''
+                self.lines[r1:r2 + 1] = [indent]
+                self.row, self.col = r1, len(indent)
+            else:
+                self.delete_range(r1, c1, r2, c2, linewise)
+            if op == 'c':
+                self.start_insert(keep_group=True)
+            else:
+                self.end_change()
+                self.clamp()
+                if linewise and r2 - r1 + 1 > 2:
+                    self.say('%d fewer lines' % (r2 - r1 + 1))
+            return
+        self.begin_change()
+        if op in ('>', '<'):
+            sw = self.opts['shiftwidth']
+            unit = ' ' * sw if self.opts['expandtab'] else None
+            for i in range(r1, r2 + 1):
+                ln = self.lines[i]
+                if op == '>':
+                    if ln.strip():
+                        if unit is None:
+                            ind = leading_ws(ln)
+                            width = display_cols(ind, self.opts['tabstop'])[-1] + sw
+                            self.lines[i] = self.make_indent(width) + ln[len(ind):]
+                        else:
+                            self.lines[i] = unit + ln
+                else:
+                    ind = leading_ws(ln)
+                    width = max(0, display_cols(ind, self.opts['tabstop'])[-1] - sw)
+                    self.lines[i] = self.make_indent(width) + ln[len(ind):]
+            self.row, self.col = r1, len(leading_ws(self.lines[r1]))
+        elif op in ('gu', 'gU', 'g~', '~'):
+            fn = {'gu': str.lower, 'gU': str.upper}.get(op, str.swapcase)
+            if linewise:
+                for i in range(r1, r2 + 1):
+                    self.lines[i] = fn(self.lines[i])
+                self.row, self.col = r1, 0 if op != '~' else self.col
+            else:
+                for i in range(r1, r2 + 1):
+                    a = c1 if i == r1 else 0
+                    b = c2 if i == r2 else len(self.lines[i])
+                    self.lines[i] = self.lines[i][:a] + fn(self.lines[i][a:b]) + self.lines[i][b:]
+                self.row, self.col = r1, c1
+        elif op == 'J':
+            self.join_lines(r1, max(2, r2 - r1 + 1))
+        self.end_change()
+        self.clamp()
+
+    def make_indent(self, width):
+        if self.opts['expandtab']:
+            return ' ' * width
+        ts = self.opts['tabstop']
+        return '\t' * (width // ts) + ' ' * (width % ts)
+
+    def join_lines(self, r, count, spaces=True):
+        n = min(count - 1, len(self.lines) - 1 - r)
+        if n <= 0:
+            return False
+        for _ in range(n):
+            a, b = self.lines[r], self.lines[r + 1]
+            if spaces:
+                b2 = b.lstrip(' \t')
+                if not a or a.endswith((' ', '\t')) or not b2 or b2.startswith(')'):
+                    sep = ''
+                else:
+                    sep = ' '
+                self.lines[r] = a + sep + b2
+                self.col = len(a) if sep else max(0, len(a) - (0 if b2 else 1))
+            else:
+                self.col = len(a)
+                self.lines[r] = a + b
+            del self.lines[r + 1]
+        self.row = r
+        return True
+
+    def put(self, reg, after, count):
+        v = self.get_reg(reg)
+        if not v:
+            self.say('E353: Nothing in register %s' % (reg or '"'), True)
+            return
+        text, linewise = v
+        self.begin_change()
+        if linewise:
+            block = (text.split('\n')) * count
+            at = self.row + 1 if after else self.row
+            self.lines[at:at] = block
+            self.row, self.col = at, len(leading_ws(self.lines[at]))
+        else:
+            c = min(self.col + 1, len(self.line)) if (after and self.line) else self.col
+            r2, c2 = self.insert_text(self.row, c, text * count)
+            if '\n' in text:
+                self.row, self.col = self.row, c
+            else:
+                self.row, self.col = r2, max(0, c2 - 1)
+        self.end_change()
+        self.clamp()
+
+    # -- insert -----------------------------------------------------------------------------------------------------
+    def start_insert(self, keep_group=False, replace=False):
+        if not keep_group:
+            self.begin_change()
+        self.mode = self.REPLACE if replace else self.INSERT
+        self.insert_keys = []
+        self.replaced = []
+
+    def insert_key(self, k):
+        if k in ('<Esc>', '<C-c>', '<C-[>'):
+            keys = self.insert_keys
+            for _ in range(self.insert_count - 1):
+                if getattr(self, '_o_kind', None):     # 3oabc<Esc>: three new lines, not abcabcabc on one
+                    indent = leading_ws(self.line) if self.opts['autoindent'] else ''
+                    self.lines.insert(self.row + 1, indent)
+                    self.row, self.col = self.row + 1, len(indent)
+                for kk in keys:
+                    self._insert_one(kk)
+            self._o_kind = None
+            self.insert_count = 1
+            self.mode = self.NORMAL
+            self.end_change()
+            if self.col > 0:
+                self.col -= 1
+            self.clamp()
+            self.want = self.disp_col()
+            self.marks['^'] = (self.row, self.col)
+            return
+        self.insert_keys.append(k)
+        self._insert_one(k)
+        self.want = self.disp_col()
+
+    def _insert_one(self, k):
+        line = self.line
+        if k == '<CR>':
+            indent = leading_ws(line) if self.opts['autoindent'] else ''
+            head, tail = line[:self.col], line[self.col:]
+            if not head.strip():
+                indent = indent[:len(head)] if self.opts['autoindent'] else ''
+            self.lines[self.row] = head.rstrip(' \t') if head.strip() else head
+            self.lines.insert(self.row + 1, indent + tail.lstrip(' \t') if self.opts['autoindent'] else tail)
+            self.row += 1
+            self.col = len(indent) if self.opts['autoindent'] else 0
+        elif k in ('<BS>', '<C-h>'):
+            if self.mode == self.REPLACE and self.replaced:
+                r, c, old = self.replaced.pop()
+                if (r, c) == (self.row, self.col - 1):
+                    self.lines[r] = line[:c] + (old or '') + line[c + 1:] if old is not None else line[:c] + line[c + 1:]
+                    self.col = c
+                    return
+            if self.col > 0:
+                self.lines[self.row] = line[:self.col - 1] + line[self.col:]
+                self.col -= 1
+            elif self.row > 0:
+                prev = self.lines[self.row - 1]
+                self.lines[self.row - 1] = prev + line
+                del self.lines[self.row]
+                self.row -= 1
+                self.col = len(prev)
+        elif k == '<Del>':
+            if self.col < len(line):
+                self.lines[self.row] = line[:self.col] + line[self.col + 1:]
+            elif self.row < len(self.lines) - 1:
+                self.lines[self.row] = line + self.lines[self.row + 1]
+                del self.lines[self.row + 1]
+        elif k == '<C-w>':
+            c = self.col
+            while c > 0 and line[c - 1].isspace():
+                c -= 1
+            if c > 0:
+                k0 = char_class(line[c - 1])
+                while c > 0 and char_class(line[c - 1]) == k0:
+                    c -= 1
+            if c == self.col and self.col == 0 and self.row > 0:
+                return self._insert_one('<BS>')
+            self.lines[self.row] = line[:c] + line[self.col:]
+            self.col = c
+        elif k == '<C-u>':
+            ind = len(leading_ws(line))
+            c = ind if self.col > ind else 0
+            self.lines[self.row] = line[:c] + line[self.col:]
+            self.col = c
+        elif k == '<Tab>':
+            if self.opts['expandtab']:
+                w = self.opts['shiftwidth']
+                d = display_cols(line[:self.col], self.opts['tabstop'])[-1]
+                self._type(' ' * (w - d % w))
+            else:
+                self._type('\t')
+        elif k in ('<Left>', '<Right>', '<Up>', '<Down>', '<Home>', '<End>', '<PageUp>', '<PageDown>'):
+            if k == '<Left>':
+                self.col = max(0, self.col - 1)
+            elif k == '<Right>':
+                self.col = min(len(line), self.col + 1)
+            elif k == '<Home>':
+                self.col = 0
+            elif k == '<End>':
+                self.col = len(line)
+            elif k in ('<Up>', '<Down>', '<PageUp>', '<PageDown>'):
+                step = {'<Up>': -1, '<Down>': 1, '<PageUp>': -self.text_rows(), '<PageDown>': self.text_rows()}[k]
+                self.row = max(0, min(len(self.lines) - 1, self.row + step))
+                self.col = self.col_for_disp(self.row, self.want)
+                self.clamp()
+                return
+        elif k == '<C-r>':
+            self._await_reg = True
+        elif k.startswith('<PASTE>'):
+            self._type(k[len('<PASTE>'):], raw=True)
+        elif k == '<C-v>':
+            pass
+        elif len(k) == 1 or (len(k) > 1 and not k.startswith('<')):
+            self._type(k)
+
+    def _type(self, s, raw=False):
+        if '\n' in s or '\r' in s:
+            s = s.replace('\r\n', '\n').replace('\r', '\n')
+        if self.mode == self.REPLACE and '\n' not in s:
+            for ch in s:
+                line = self.line
+                old = line[self.col] if self.col < len(line) else None
+                self.replaced.append((self.row, self.col, old))
+                self.lines[self.row] = line[:self.col] + ch + line[self.col + 1:]
+                self.col += 1
+            return
+        self.row, self.col = self.insert_text(self.row, self.col, s)
+
+    # -- views ------------------------------------------------------------------------------------------------------
+    def text_rows(self):
+        return max(1, self.rows - 2)
+
+    def scroll_into_view(self):
+        h = self.text_rows()
+        so = min(self.opts['scrolloff'], (h - 1) // 2)
+        if self.row < self.top + so:
+            self.top = max(0, self.row - so)
+        elif self.row >= self.top + h - so:
+            self.top = self.row - h + so + 1
+        self.top = max(0, min(self.top, max(0, len(self.lines) - 1)))
+        width = self.cols - self.gutter()
+        x = self.disp_col()
+        if x < self.left:
+            self.left = max(0, x - 8)
+        elif x >= self.left + width - 1:
+            self.left = x - width + 8
+
+    def gutter(self):
+        if not (self.opts['number'] or self.opts['relativenumber']):
+            return 0
+        return max(4, len(str(len(self.lines))) + 2)
+
+    # -- key dispatch -----------------------------------------------------------------------------------------------
+    def feed(self, k):
+        """One key token. Raises Quit when the editor should exit."""
+        if k == '<Resize>':
+            return
+        if self.intro and k not in (':', '<Esc>'):
+            self.intro = False
+        if self.mode in (self.INSERT, self.REPLACE):
+            if self.rec is not None:
+                self.rec.append(k)
+            if getattr(self, '_await_reg', False):
+                self._await_reg = False
+                v = self.get_reg(k if k != '<C-w>' else '"')
+                if v:
+                    self._type(v[0] + ('\n' if v[1] else ''))
+                    self.insert_keys.append('<PASTE>' + v[0] + ('\n' if v[1] else ''))
+                return
+            self.insert_key(k)
+            if self.mode == self.NORMAL and self.rec is not None:
+                self.dot = (self.rec, self.dot_count)
+                self.rec = None
+            return
+        if self.mode == self.CMDLINE:
+            return self.cmd_key(k)
+        if k == '<Esc>' and not self.pending and self.mode in (self.VISUAL, self.VLINE):
+            self.mode = self.NORMAL
+            self.clamp()
+            return
+        self.pending.append(k)
+        try:
+            res = self.normal_cmd(self.pending)
+        except Quit:
+            self.pending = []
+            raise
+        if res != 'more':
+            self.pending = []
+
+    def run_keys(self, keys):
+        for k in (parse_keys(keys) if isinstance(keys, str) else keys):
+            self.feed(k)
+
+    # -- normal mode ------------------------------------------------------------------------------------------------
+    def normal_cmd(self, keys):
+        """Parse and run one normal/visual command. 'more' = wait for keys; anything else = done."""
+        i = 0
+        reg = None
+        if keys[i:i + 1] == ['"']:
+            if len(keys) < 2:
+                return 'more'
+            reg = keys[1]
+            i = 2
+        cnt_s = ''
+        while i < len(keys) and (keys[i].isdigit() and len(keys[i]) == 1) and (cnt_s or keys[i] != '0'):
+            cnt_s += keys[i]
+            i += 1
+        if i >= len(keys):
+            return 'more'
+        count = int(cnt_s) if cnt_s else 0
+        rest = keys[i:]
+        k = rest[0]
+        visual = self.mode in (self.VISUAL, self.VLINE)
+
+        def need(n):
+            return len(rest) < n
+
+        # two-key prefixes
+        if k in ('g', 'z', 'Z') or (k in ('f', 'F', 't', 'T', 'r', 'm', "'", '`') and not visual) \
+                or (visual and k in ('f', 'F', 't', 'T', 'r', "'", '`', 'i', 'a')):
+            if need(2):
+                return 'more'
+            k = k + rest[1]
+            rest = [k] + rest[2:]
+        if visual:
+            return self.visual_cmd(k, rest, count, reg)
+
+        cnt = count or 1
+        # motions
+        mkey = k
+        if mkey in self.MOTION_KEYS or (len(mkey) == 2 and mkey[0] in 'fFtT\'`') or mkey == 'gg':
+            m = self.motion(mkey, count)
+            if m:
+                if mkey in ('G', 'gg', 'n', 'N', '*', '#', '%', '{', '}', 'H', 'L', 'M') or mkey[0] in "'`":
+                    self.marks["'"] = (self.row, self.col)
+                self.row = m[0]
+                if m[1] is None:
+                    self.goto_row(m[0])
+                else:
+                    self.col = m[1]
+                    self.clamp()
+                    if mkey in ('$', '<End>'):
+                        self.want = 10 ** 9
+                    else:
+                        self.want = self.disp_col()
+            return 'done'
+        # operators
+        if k in ('d', 'c', 'y', '>', '<', 'g~', 'gu', 'gU', 'gJ') and k != 'gJ':
+            return self.operator(k, rest, count, reg, keys)
+        changes = set('xXDCsSpPJRoOaAiI~u.') | {'<C-r>', '<Del>', 'gJ', 'gp', 'gP', 'gI', '<Insert>', '<C-a>', '<C-x>'} | \
+            ({k} if len(k) == 2 and k[0] == 'r' else set())
+        rec_start = k in changes and k not in ('u', '<C-r>', '.')
+        if rec_start:
+            # the recorded keys exclude the count, which `.` supplies (its own, or this one)
+            self.dot_count = count
+            self.rec = (['"', reg] if reg else []) + list(keys[(2 if reg else 0) + len(cnt_s):])
+        done_now = self.simple(k, count, cnt, reg)
+        if rec_start and self.mode not in (self.INSERT, self.REPLACE):
+            if done_now is not False:
+                self.dot = (self.rec, self.dot_count)
+            self.rec = None
+        return 'done'
+
+    MOTION_KEYS = {'h', 'j', 'k', 'l', '<Left>', '<Right>', '<Up>', '<Down>', '<BS>', ' ', '<C-h>', '<C-n>', '<C-p>',
+                   '<C-j>', '+', '-', '<CR>', '_', '0', '<Home>', '^', '$', '<End>', 'G', 'w', 'W', 'b', 'B', 'e', 'E',
+                   '{', '}', '%', 'H', 'M', 'L', ';', ',', 'n', 'N', '*', '#'}
+
+    def operator(self, op, rest, count, reg, keys):
+        # rest[0] is the operator (possibly 2 chars as a single token); need a motion after it
+        tail = rest[1:]
+        if not tail:
+            return 'more'
+        j = 0
+        cnt2 = ''
+        while j < len(tail) and len(tail[j]) == 1 and tail[j].isdigit() and (cnt2 or tail[j] != '0'):
+            cnt2 += tail[j]
+            j += 1
+        if j >= len(tail):
+            return 'more'
+        m = tail[j]
+        total = (count or 1) * (int(cnt2) if cnt2 else 1)
+        has_count = bool(count or cnt2)
+        if m in ('g', 'i', 'a', 'f', 'F', 't', 'T', "'", '`'):
+            if j + 1 >= len(tail):
+                return 'more'
+            m = m + tail[j + 1]
+        same = (op == m) or (op in ('g~', 'gu', 'gU') and m in (op[-1], '~', 'u', 'U') and len(m) == 1) \
+            or (op in ('gu', 'gU') and m in ('gu', 'gU', 'g~')) or (op == 'g~' and m == 'g~')
+        is_change = op not in ('y',)
+        if is_change:
+            self.rec = list(keys[(2 if reg else 0):])
+            self.dot_count = 0
+        r, c = self.row, self.col
+        if same:
+            r2 = min(len(self.lines) - 1, r + total - 1)
+            if op == 'y':
+                self.apply_op('y', r, 0, r2, len(self.lines[r2]), True, reg)
+                self.row, self.col = r, c
+                self.clamp()
+            else:
+                self.apply_op(op, r, 0, r2, len(self.lines[r2]), True, reg)
+        elif m[0] in 'ia' and len(m) == 2 and m[1] in 'wW"\'`()bB{}[]<>':
+            obj = self.text_object(m[0], m[1], total)
+            if not obj:
+                self.rec = None
+                return 'done'
+            r1, c1, r2, c2 = obj
+            self.apply_op(op, r1, c1, r2, c2, False, reg)
+        else:
+            if op == 'c' and m in ('w', 'W') and self.line and c < len(self.line) and not self.line[c].isspace():
+                # `cw` on a word changes to its end (vim's documented special case)
+                big, rr, cc = m == 'W', r, c
+                for i in range(total):
+                    at_word_end = not (cc + 1 < len(self.lines[rr]) and self._cls(rr, cc + 1, big) == self._cls(rr, cc, big))
+                    if i == 0 and at_word_end:
+                        continue
+                    rr, cc = self.word_end(rr, cc, big)
+                mo = (rr, cc, False, True)
+            else:
+                mo = self.motion(m, total if has_count else 0, op=op)
+            if not mo:
+                self.rec = None
+                return 'done'
+            tr, tc, linewise, inclusive = mo
+            if linewise or tc is None:
+                a, b = sorted((r, tr))
+                self.apply_op(op, a, 0, b, len(self.lines[b]), True, reg)
+            else:
+                (r1, c1), (r2, c2) = sorted(((r, c), (tr, tc)))
+                if inclusive:
+                    c2 += 1
+                c2 = min(c2, len(self.lines[r2]))
+                if (r1, c1) == (r2, c2) and op != 'c':
+                    self.rec = None
+                    return 'done'
+                self.apply_op(op, r1, c1, r2, c2, False, reg)
+        if is_change and self.mode not in (self.INSERT, self.REPLACE):
+            self.dot = (self.rec, 0)
+            self.rec = None
+        self.want = self.disp_col()
+        return 'done'
+
+    def simple(self, k, count, cnt, reg):
+        line = self.line
+        if k in ('i', 'a', 'I', 'A', 'o', 'O', 'gI'):
+            self.begin_change()
+            if k == 'a' and line:
+                self.col = min(len(line), self.col + 1)
+            elif k == 'A':
+                self.col = len(line)
+            elif k == 'I':
+                self.col = len(leading_ws(line))
+            elif k == 'gI':
+                self.col = 0
+            elif k in ('o', 'O'):
+                indent = leading_ws(line) if self.opts['autoindent'] else ''
+                at = self.row + 1 if k == 'o' else self.row
+                self.lines.insert(at, indent)
+                self.row, self.col = at, len(indent)
+            self.insert_count = cnt
+            self._o_kind = k if k in ('o', 'O') else None
+            self.start_insert(keep_group=True)
+            return
+        if k == '<Insert>':
+            k = 'i'
+            return self.simple(k, count, cnt, reg)
+        if k == 'R':
+            self.insert_count = cnt
+            self.start_insert(replace=True)
+            return
+        if k in ('x', '<Del>', 'X', 's'):
+            if not line:
+                return False
+            if k == 'X':
+                if self.col == 0:
+                    return False
+                a, b = max(0, self.col - cnt), self.col
+            else:
+                a, b = self.col, min(len(line), self.col + cnt)
+            self.apply_op('c' if k == 's' else 'd', self.row, a, self.row, b, False, reg)
+            return
+        if k == 'S':
+            r2 = min(len(self.lines) - 1, self.row + cnt - 1)
+            self.apply_op('c', self.row, 0, r2, len(self.lines[r2]), True, reg)
+            return
+        if k in ('D', 'C'):
+            r2 = min(len(self.lines) - 1, self.row + cnt - 1)
+            self.apply_op('d' if k == 'D' else 'c', self.row, self.col, r2, len(self.lines[r2]), False, reg)
+            return
+        if k == 'Y':
+            r2 = min(len(self.lines) - 1, self.row + cnt - 1)
+            self.apply_op('y', self.row, 0, r2, len(self.lines[r2]), True, reg)
+            return
+        if k in ('p', 'P', 'gp', 'gP'):
+            self.put(reg, k in ('p', 'gp'), cnt)
+            return
+        if k in ('J', 'gJ'):
+            self.begin_change()
+            ok = self.join_lines(self.row, max(2, cnt), spaces=k == 'J')
+            self.end_change()
+            return None if ok else False
+        if len(k) == 2 and k[0] == 'r':
+            ch = k[1]
+            if ch == '<Esc>' or self.col + cnt > len(line):
+                return False
+            self.begin_change()
+            if ch == '<CR>':
+                self.lines[self.row] = line[:self.col]
+                self.lines.insert(self.row + 1, line[self.col + cnt:])
+                self.row += 1
+                self.col = 0
+            elif len(ch) == 1:
+                self.lines[self.row] = line[:self.col] + ch * cnt + line[self.col + cnt:]
+                self.col += cnt - 1
+            self.end_change()
+            return
+        if k == '~':
+            if not line:
+                return False
+            b = min(len(line), self.col + cnt)
+            self.begin_change()
+            self.lines[self.row] = line[:self.col] + line[self.col:b].swapcase() + line[b:]
+            self.end_change()
+            self.col = min(b, len(line) - 1)
+            return
+        if k == 'u':
+            self.undo(cnt)
+            return
+        if k == '<C-r>':
+            self.redo(cnt)
+            return
+        if k == '.':
+            if not self.dot:
+                return
+            keys, c0 = self.dot
+            c = count or c0
+            replay = list(keys)
+            if c:
+                if replay[:1] == ['"']:
+                    replay = replay[:2] + list(str(c)) + replay[2:]
+                else:
+                    replay = list(str(c)) + replay
+            saved = self.dot
+            self.pending = []      # the replay is parsed on its own, never appended to the `.` being parsed
+            for kk in replay:
+                self.feed(kk)
+            if self.mode in (self.INSERT, self.REPLACE):
+                self.feed('<Esc>')
+            self.dot = saved
+            return
+        if k in ('v', 'V'):
+            self.mode = self.VISUAL if k == 'v' else self.VLINE
+            self.vstart = (self.row, self.col)
+            return
+        if k == 'gv':
+            if 'vis' in self.marks:
+                (a, b, mode) = self.marks['vis']
+                self.vstart = a
+                self.row, self.col = b
+                self.mode = mode
+                self.clamp()
+            return
+        if k in (':', '/', '?'):
+            self.open_cmdline(k)
+            return
+        if k == 'ZZ':
+            return self.ex('x')
+        if k == 'ZQ':
+            return self.ex('q!')
+        if len(k) == 2 and k[0] == 'm':
+            self.marks[k[1]] = (self.row, self.col)
+            return
+        if k in ('<C-d>', '<C-u>', '<C-f>', '<C-b>', '<PageDown>', '<PageUp>', '<C-e>', '<C-y>'):
+            h = self.text_rows()
+            step = {'<C-d>': h // 2, '<C-u>': -(h // 2), '<C-f>': h - 2, '<C-b>': -(h - 2), '<PageDown>': h - 2,
+                    '<PageUp>': -(h - 2), '<C-e>': 1, '<C-y>': -1}[k] * (cnt if k in ('<C-f>', '<C-b>', '<C-e>', '<C-y>') else 1)
+            if k in ('<C-e>', '<C-y>'):
+                self.top = max(0, min(len(self.lines) - 1, self.top + step))
+                self.row = max(self.top, min(self.row, self.top + h - 1))
+                self.clamp()
+                return
+            self.top = max(0, min(max(0, len(self.lines) - h), self.top + step))
+            self.goto_row(self.row + step)
+            return
+        if k in ('zz', 'zt', 'zb', 'z<CR>', 'z.', 'z-'):
+            h = self.text_rows()
+            self.top = max(0, self.row - {'zz': h // 2, 'z.': h // 2, 'zt': 0, 'z<CR>': 0, 'zb': h - 1, 'z-': h - 1}[k])
+            self._keep_top = True
+            return
+        if k == '<C-g>':
+            self.file_info()
+            return
+        if k == '<C-l>':
+            self.say('')
+            return
+        if k == 'g<C-g>':
+            words = sum(len(x.split()) for x in self.lines)
+            self.say('Line %d of %d; Word count %d' % (self.row + 1, len(self.lines), words))
+            return
+        if k == '<Esc>':
+            return
+        if k == '<C-a>' or k == '<C-x>':
+            return self.increment(cnt if k == '<C-a>' else -cnt)
+        return
+
+    def increment(self, delta):
+        line = self.line
+        for m in re.finditer(r'-?\d+', line):
+            if m.end() > self.col:
+                self.begin_change()
+                v = int(m.group()) + delta
+                self.lines[self.row] = line[:m.start()] + str(v) + line[m.end():]
+                self.col = m.start() + len(str(v)) - 1
+                self.end_change()
+                return
+        return False
+
+    def file_info(self):
+        n = len(self.lines)
+        self.say('"%s"%s %d line%s --%d%%--' % (self.path or '[No Name]', ' [Modified]' if self.modified else '',
+                                                n, '' if n == 1 else 's', (self.row + 1) * 100 // n))
+
+    # -- visual mode ------------------------------------------------------------------------------------------------
+    def vrange(self):
+        (a, b) = sorted((self.vstart, (self.row, self.col)))
+        return a, b
+
+    def visual_cmd(self, k, rest, count, reg):
+        cnt = count or 1
+        if k in ('i', 'a') or (len(k) == 2 and k[0] in 'ia' and k[1] in 'wW"\'`()bB{}[]<>'):
+            if len(k) == 1:
+                return 'more'
+            obj = self.text_object(k[0], k[1], cnt)
+            if obj:
+                r1, c1, r2, c2 = obj
+                self.vstart = (r1, c1)
+                self.row, self.col = r2, max(c1, c2 - 1)
+            return 'done'
+        if k in self.MOTION_KEYS or (len(k) == 2 and k[0] in "fFtT'`") or k == 'gg':
+            m = self.motion(k, count)
+            if m:
+                self.row = m[0]
+                if m[1] is None:
+                    self.goto_row(m[0])
+                else:
+                    self.col = m[1]
+                    self.clamp()
+                    self.want = self.disp_col()
+            return 'done'
+        if k == 'o':
+            r, c = self.vstart
+            self.vstart = (self.row, self.col)
+            self.row, self.col = r, c
+            return 'done'
+        if k in ('v', 'V'):
+            want = self.VISUAL if k == 'v' else self.VLINE
+            self.mode = self.NORMAL if self.mode == want else want
+            if self.mode == self.NORMAL:
+                self.clamp()
+            return 'done'
+        (r1, c1), (r2, c2) = self.vrange()
+        linewise = self.mode == self.VLINE
+        self.marks['vis'] = (self.vstart, (self.row, self.col), self.mode)
+        self.marks['<'] = (r1, c1)
+        self.marks['>'] = (r2, c2)
+        end_c = min(c2 + 1, len(self.lines[r2]))
+        if k == ':':
+            self.mode = self.NORMAL
+            self.open_cmdline(':', "'<,'>")
+            return 'done'
+        op = {'d': 'd', 'x': 'd', '<Del>': 'd', 'X': 'd', 'D': 'd', 'y': 'y', 'Y': 'y', 'c': 'c', 's': 'c',
+              'C': 'c', 'S': 'c', 'R': 'c', '>': '>', '<': '<', '~': 'g~', 'u': 'gu', 'U': 'gU', 'J': 'J', 'gJ': 'J'}.get(k)
+        if k in ('p', 'P'):
+            v = self.get_reg(reg)
+            self.mode = self.NORMAL
+            if not v:
+                return 'done'
+            self.begin_change()
+            self.delete_range(r1, c1 if not linewise else 0, r2, end_c if not linewise else len(self.lines[r2]), linewise)
+            text, lw = v
+            if lw:
+                at = r1 if linewise else r1 + 1
+                if not linewise:
+                    self.lines[r1:r1 + 1] = [self.lines[r1][:c1], self.lines[r1][c1:]] if self.lines[r1][c1:] else [self.lines[r1][:c1]]
+                self.lines[at:at] = text.split('\n')
+                self.row, self.col = at, 0
+            else:
+                self.row, self.col = self.insert_text(r1, c1, text)
+                self.col = max(0, self.col - 1)
+            self.end_change()
+            self.clamp()
+            return 'done'
+        if len(k) == 2 and k[0] == 'r' and len(k[1]) == 1:
+            self.begin_change()
+            for i in range(r1, r2 + 1):
+                a = 0 if linewise or i != r1 else c1
+                b = len(self.lines[i]) if linewise or i != r2 else end_c
+                self.lines[i] = self.lines[i][:a] + k[1] * (b - a) + self.lines[i][b:]
+            self.end_change()
+            self.mode = self.NORMAL
+            self.row, self.col = r1, c1 if not linewise else 0
+            self.clamp()
+            return 'done'
+        if not op:
+            if k == '<Esc>' or k == '<C-c>':
+                self.mode = self.NORMAL
+                self.clamp()
+            return 'done'
+        if k in ('X', 'D', 'Y', 'C', 'S', 'R'):
+            linewise = True
+        self.mode = self.NORMAL
+        if op == 'J':
+            self.begin_change()
+            self.join_lines(r1, max(2, r2 - r1 + 1), spaces=k == 'J')
+            self.end_change()
+            return 'done'
+        if linewise:
+            self.apply_op(op, r1, 0, r2, len(self.lines[r2]), True, reg)
+        else:
+            self.apply_op(op, r1, c1, r2, end_c, False, reg)
+        if op == 'y':
+            self.row, self.col = r1, c1 if not linewise else self.col
+            self.clamp()
+        if op in ('>', '<') and cnt > 1:
+            for _ in range(cnt - 1):
+                self.apply_op(op, r1, 0, r2, len(self.lines[r2]), True, reg)
+        if self.mode == self.NORMAL:
+            self.clamp()
+        return 'done'
+
+    # -- command line ---------------------------------------------------------------------------------------------
+    def open_cmdline(self, kind, text=''):
+        self.prev_mode = self.mode
+        self.mode = self.CMDLINE
+        self.cmd_kind = kind
+        self.cmdline = text
+        self.cmd_cur = len(text)
+        self.hist_i = None
+        self.search_origin = (self.row, self.col, self.top)
+
+    def cmd_key(self, k):
+        hist = self.cmd_hist if self.cmd_kind == ':' else self.search_hist
+        if k in ('<Esc>', '<C-c>'):
+            self.mode = self.NORMAL
+            if self.cmd_kind != ':':
+                self.row, self.col, self.top = self.search_origin
+            self.cmdline = ''
+            return
+        if k == '<CR>':
+            text = self.cmdline
+            self.mode = self.NORMAL
+            self.cmdline = ''
+            if text:
+                if hist and hist[-1] == text:
+                    pass
+                else:
+                    hist.append(text)
+            if self.cmd_kind == ':':
+                self.ex(text)
+            else:
+                self.do_search(text, self.cmd_kind == '/')
+            return
+        if k in ('<BS>', '<C-h>'):
+            if not self.cmdline:
+                self.mode = self.NORMAL
+                return
+            if self.cmd_cur > 0:
+                self.cmdline = self.cmdline[:self.cmd_cur - 1] + self.cmdline[self.cmd_cur:]
+                self.cmd_cur -= 1
+        elif k == '<Del>':
+            self.cmdline = self.cmdline[:self.cmd_cur] + self.cmdline[self.cmd_cur + 1:]
+        elif k == '<Left>':
+            self.cmd_cur = max(0, self.cmd_cur - 1)
+        elif k == '<Right>':
+            self.cmd_cur = min(len(self.cmdline), self.cmd_cur + 1)
+        elif k in ('<Home>', '<C-b>'):
+            self.cmd_cur = 0
+        elif k in ('<End>', '<C-e>'):
+            self.cmd_cur = len(self.cmdline)
+        elif k == '<C-u>':
+            self.cmdline = self.cmdline[self.cmd_cur:]
+            self.cmd_cur = 0
+        elif k == '<C-w>':
+            s = self.cmdline[:self.cmd_cur].rstrip()
+            j = len(s)
+            while j > 0 and char_class(s[j - 1]) == char_class(s[-1]) if s else False:
+                j -= 1
+            self.cmdline = s[:j] + self.cmdline[self.cmd_cur:]
+            self.cmd_cur = j
+        elif k in ('<Up>', '<Down>'):
+            if not hist:
+                return
+            if self.hist_i is None:
+                self.hist_i = len(hist)
+            self.hist_i = max(0, min(len(hist), self.hist_i + (-1 if k == '<Up>' else 1)))
+            self.cmdline = hist[self.hist_i] if self.hist_i < len(hist) else ''
+            self.cmd_cur = len(self.cmdline)
+        elif k == '<Tab>' and self.cmd_kind == ':':
+            self.complete()
+        elif k.startswith('<PASTE>'):
+            t = k[len('<PASTE>'):].replace('\n', ' ')
+            self.cmdline = self.cmdline[:self.cmd_cur] + t + self.cmdline[self.cmd_cur:]
+            self.cmd_cur += len(t)
+        elif len(k) == 1:
+            self.cmdline = self.cmdline[:self.cmd_cur] + k + self.cmdline[self.cmd_cur:]
+            self.cmd_cur += 1
+        if self.cmd_kind in '/?' and self.opts['incsearch'] and self.cmdline:
+            r, c, top = self.search_origin
+            p = self.search_from(self.cmdline, self.cmd_kind == '/', r, c, wrap=True) if self.cmdline else None
+            self.msg, self.msg_err = '', False
+            if p:
+                self.row, self.col = p
+            else:
+                self.row, self.col = r, c
+
+    def complete(self):
+        m = re.match(r'^(\s*(?:e|edit|w|write|sav|saveas|r|read|wq|x)!?\s+)(.*)$', self.cmdline)
+        if not m:
+            names = sorted(n for n in self.EX_NAMES if n.startswith(self.cmdline.strip()))
+            if len(names) == 1:
+                self.cmdline = names[0] + ' '
+                self.cmd_cur = len(self.cmdline)
+            elif names:
+                self.say('  '.join(names))
+            return
+        head, part = m.groups()
+        d, base = os.path.split(os.path.expanduser(part))
+        try:
+            entries = sorted(e for e in os.listdir(d or '.') if e.startswith(base) and (base.startswith('.') or not e.startswith('.')))
+        except OSError:
+            return
+        if not entries:
+            return
+        common = os.path.commonprefix(entries)
+        if len(entries) == 1:
+            full = os.path.join(d, common)
+            if os.path.isdir(full):
+                full += '/'
+            self.cmdline = head + (os.path.join(os.path.dirname(part), common) + ('/' if os.path.isdir(full.rstrip('/')) else '') if d else full)
+        else:
+            self.cmdline = head + os.path.join(os.path.dirname(part), common)
+            self.say('  '.join(entries[:40]))
+        self.cmd_cur = len(self.cmdline)
+
+    def do_search(self, pat, forward):
+        if not pat:
+            if not self.search:
+                self.say('E35: No previous regular expression', True)
+                return
+            pat = self.search[0]
+        r, c, _ = self.search_origin
+        self.row, self.col = r, c
+        self.search = (pat, forward)
+        self.hl_off = False
+        p = self.search_from(pat, forward, r, c)
+        if p:
+            self.marks["'"] = (r, c)
+            self.row, self.col = p
+            if not self.msg_err:
+                self.say(('/' if forward else '?') + pat)
+        self.want = self.disp_col()
+
+    # -- ex ---------------------------------------------------------------------------------------------------------
+    EX_NAMES = ['write', 'quit', 'wq', 'xit', 'edit', 'substitute', 'set', 'nohlsearch', 'help', 'delete', 'yank',
+                'saveas', 'read', 'sort', 'normal', 'retab', 'join', 'undo', 'redo', 'move', 'copy', 'global',
+                'qall', 'wall', 'update', 'version']
+
+    def parse_addr(self, s, i):
+        """One address at s[i:] -> (line or None, new i)."""
+        n = len(self.lines)
+        base = None
+        while i < len(s) and s[i] == ' ':
+            i += 1
+        if i < len(s):
+            ch = s[i]
+            if ch == '.':
+                base, i = self.row, i + 1
+            elif ch == '$':
+                base, i = n - 1, i + 1
+            elif ch.isdigit():
+                j = i
+                while j < len(s) and s[j].isdigit():
+                    j += 1
+                base, i = int(s[i:j]) - 1, j
+            elif ch == "'" and i + 1 < len(s):
+                m = self.marks.get(s[i + 1])
+                if m is None:
+                    raise ValueError('E20: Mark not set')
+                base, i = m[0], i + 2
+            elif ch in '/?':
+                j = s.find(ch, i + 1)
+                j = len(s) if j < 0 else j
+                pat = s[i + 1:j] or (self.search[0] if self.search else '')
+                p = self.search_from(pat, ch == '/', self.row, len(self.line) if ch == '/' else 0)
+                if p is None:
+                    raise ValueError('E486: Pattern not found: %s' % pat)
+                base, i = p[0], j + 1
+        while i < len(s) and s[i] in '+-':
+            sign = 1 if s[i] == '+' else -1
+            j = i + 1
+            while j < len(s) and s[j].isdigit():
+                j += 1
+            off = int(s[i + 1:j]) if j > i + 1 else 1
+            base = (self.row if base is None else base) + sign * off
+            i = j
+        return base, i
+
+    def parse_range(self, s):
+        s = s.lstrip()
+        if s.startswith('%'):
+            return (0, len(self.lines) - 1), s[1:], True
+        a, i = self.parse_addr(s, 0)
+        b = None
+        if i < len(s) and s[i] in ',;':
+            if s[i] == ';' and a is not None:
+                self.row = max(0, min(a, len(self.lines) - 1))
+            b, i = self.parse_addr(s, i + 1)
+            if b is None:
+                b = self.row
+            if a is None:
+                a = self.row
+        if a is None:
+            return None, s[i:], False
+        if b is None:
+            b = a
+        if a > b:
+            a, b = b, a
+        n = len(self.lines)
+        if a < 0 or b >= n:
+            raise ValueError('E16: Invalid range')
+        return (a, b), s[i:], True
+
+    def ex(self, text):
+        text = text.strip()
+        if not text:
+            return
+        try:
+            rng, rest, explicit = self.parse_range(text)
+        except ValueError as e:
+            self.say(str(e), True)
+            return
+        rest = rest.strip()
+        if not rest and explicit:
+            self.marks["'"] = (self.row, self.col)
+            self.row = rng[1]
+            self.col = len(leading_ws(self.line))
+            self.want = self.disp_col()
+            return
+        m = re.match(r'([a-zA-Z]+|[&<>!=#~])(!?)\s*(.*)$', rest, re.S)
+        if not m:
+            m2 = re.match(r'(s)([^\w\s"|\\])(.*)$', rest, re.S)
+            if not m2:
+                self.say('E492: Not an editor command: %s' % text, True)
+                return
+            name, bang, arg = 's', '', m2.group(2) + m2.group(3)
+        else:
+            name, bang, arg = m.group(1), m.group(2) == '!', m.group(3)
+        r = rng or (self.row, self.row)
+
+        def full(*specs):
+            # 'w|write': at least `w`, at most `write`, and a prefix of it
+            for spec in specs:
+                short, long_ = spec.split('|')
+                if name.startswith(short) and long_.startswith(name):
+                    return True
+            return False
+        try:
+            if name in ('wq', 'x', 'xi', 'xit', 'exi', 'exit', 'wqa', 'wqall', 'xa', 'xall'):
+                if name.startswith('x') or name.startswith('exi'):
+                    if (self.modified or arg) and not self.cmd_write(arg, bang, None):
+                        return
+                elif not self.cmd_write(arg, bang, None):
+                    return
+                raise Quit()
+            if full('w|write', 'up|update'):
+                if name in ('up', 'update') and not self.modified:
+                    return
+                return self.cmd_write(arg, bang, rng if explicit else None)
+            if full('q|quit', 'qa|qall', 'quita|quitall'):
+                if self.modified and not bang:
+                    self.say('E37: No write since last change (add ! to override)', True)
+                    return
+                raise Quit()
+            if full('e|edit'):
+                return self.cmd_edit(arg, bang)
+            if full('sav|saveas'):
+                if not arg:
+                    self.say('E471: Argument required', True)
+                    return
+                if self.cmd_write(arg, bang, None, rename=True):
+                    pass
+                return
+            if full('s|substitute'):
+                return self.cmd_sub(r, arg)
+            if name in ('&',):
+                return self.cmd_sub(r, '')
+            if full('se|set'):
+                return self.cmd_set(arg)
+            if full('noh|nohlsearch'):
+                self.hl_off = True
+                return
+            if full('h|help'):
+                return self.cmd_help()
+            if full('d|delete'):
+                reg = arg.strip()[:1] or None
+                self.apply_op('d', r[0], 0, r[1], len(self.lines[r[1]]), True, reg)
+                return
+            if full('y|yank'):
+                reg = arg.strip()[:1] or None
+                self.set_reg(reg, '\n'.join(self.lines[r[0]:r[1] + 1]), True, yank=True)
+                return
+            if full('j|join'):
+                self.begin_change()
+                self.join_lines(r[0], max(2, r[1] - r[0] + 1), spaces=not bang)
+                self.end_change()
+                return
+            if name in ('>', '<'):
+                self.apply_op(name, r[0], 0, r[1], len(self.lines[r[1]]), True, None)
+                return
+            if full('sor|sort'):
+                self.begin_change()
+                a, b = (r if explicit else (0, len(self.lines) - 1))
+                key = (lambda x: x.lower()) if 'i' in arg else None
+                block = sorted(self.lines[a:b + 1], key=key, reverse=bang)
+                if 'u' in arg:
+                    seen, out = set(), []
+                    for x in block:
+                        kx = x.lower() if 'i' in arg else x
+                        if kx not in seen:
+                            seen.add(kx)
+                            out.append(x)
+                    block = out
+                self.lines[a:b + 1] = block
+                self.end_change()
+                self.clamp()
+                return
+            if full('r|read'):
+                if not arg:
+                    self.say('E32: No file name', True)
+                    return
+                lines, info = read_file(os.path.expanduser(arg))
+                if not info.exists:
+                    self.say("E484: Can't open file %s" % arg, True)
+                    return
+                self.begin_change()
+                at = r[1] + 1
+                self.lines[at:at] = lines
+                self.end_change()
+                self.row, self.col = at, 0
+                return
+            if full('norm|normal'):
+                for i in range(r[0], r[1] + 1) if explicit else [self.row]:
+                    if explicit:
+                        self.row, self.col = i, 0
+                    for k in parse_keys(arg):
+                        self.feed(k)
+                    if self.mode != self.NORMAL:
+                        self.feed('<Esc>')
+                return
+            if full('ret|retab'):
+                self.begin_change()
+                ts = self.opts['tabstop']
+                for i in range(len(self.lines)):
+                    ind = leading_ws(self.lines[i])
+                    self.lines[i] = self.make_indent(display_cols(ind, ts)[-1]) + self.lines[i][len(ind):]
+                self.end_change()
+                return
+            if full('u|undo'):
+                return self.undo()
+            if full('red|redo'):
+                return self.redo()
+            if full('g|global', 'v|vglobal'):
+                return self.cmd_global(r if explicit else (0, len(self.lines) - 1), arg, invert=(name.startswith('v') or bang))
+            if full('m|move', 't|t', 'co|copy'):
+                dest, _ = self.parse_addr(arg, 0)
+                if dest is None:
+                    dest = -1 if arg.strip() == '0' else self.row
+                block = self.lines[r[0]:r[1] + 1]
+                self.begin_change()
+                if name.startswith('m'):
+                    if r[0] <= dest < r[1]:
+                        self.end_change()
+                        self.say('E134: Cannot move a range of lines into itself', True)
+                        return
+                    del self.lines[r[0]:r[1] + 1]
+                    if dest >= r[1]:
+                        dest -= len(block)
+                self.lines[dest + 1:dest + 1] = block
+                self.end_change()
+                self.row, self.col = dest + len(block), 0
+                return
+            if full('ve|version'):
+                self.say('pvim %s — PosterChanOS' % VERSION)
+                return
+            if name == '!':
+                self.say('E: shell commands are not available in pvim', True)
+                return
+        except Quit:
+            raise
+        except (OSError, ValueError, re.error) as e:
+            self.say(str(e), True)
+            return
+        self.say('E492: Not an editor command: %s' % text, True)
+
+    def cmd_write(self, arg, bang, rng, rename=False):
+        path = os.path.expanduser(arg.strip()) if arg.strip() else self.path
+        if not path:
+            self.say('E32: No file name', True)
+            return False
+        if arg.strip().startswith('!'):
+            self.say('E: :w !cmd is not available in pvim', True)
+            return False
+        lines = self.lines if rng is None else self.lines[rng[0]:rng[1] + 1]
+        target_is_other = self.path is not None and os.path.abspath(path) != os.path.abspath(self.path)
+        if os.path.isdir(path):
+            self.say('E502: "%s" is a directory' % path, True)
+            return False
+        if (target_is_other or self.path is None) and os.path.exists(path) and not bang:
+            self.say('E13: File exists (add ! to override)', True)
+            return False
+        if target_is_other or self.path is None:
+            info = FileInfo()
+            info.crlf, info.eol = self.info.crlf, self.info.eol
+            info.exists = os.path.exists(path)
+            info.was_empty = not info.exists or os.path.getsize(path) == 0
+        else:
+            info = self.info
+        if not target_is_other and self.info.readonly and not bang and os.path.exists(path):
+            self.say("E45: 'readonly' option is set (add ! to override)", True)
+            return False
+        try:
+            if bang and os.path.exists(path) and not os.access(path, os.W_OK):
+                st = os.stat(path)
+                try:
+                    os.chmod(path, st.st_mode | 0o200)
+                except OSError:
+                    pass
+            n = write_file(path, lines, info)
+        except PermissionError:
+            self.say('E212: Can\'t open file for writing: Permission denied — try: sudoedit %s' % path, True)
+            return False
+        except OSError as e:
+            self.say('E212: Can\'t open file for writing: %s' % e.strerror, True)
+            return False
+        if rng is None and (not target_is_other or rename or self.path is None):
+            if self.path is None or rename:
+                self.path = path
+                self.info = info
+                self.ft = filetype_of(path, self.lines[0] if self.lines else '')
+            self.saved_tick = self.tick
+            self.info.readonly = not os.access(path, os.W_OK)
+        self.say('"%s" %s%dL, %dB written' % (path, '[New] ' if not info.exists else '', len(lines), n))
+        return True
+
+    def cmd_edit(self, arg, bang):
+        arg = arg.strip()
+        if not arg:
+            if not self.path:
+                self.say('E32: No file name', True)
+                return
+            if self.modified and not bang:
+                self.say('E37: No write since last change (add ! to override)', True)
+                return
+            r = self.row
+            self.load(self.path)
+            self.row = min(r, len(self.lines) - 1)
+            return
+        if self.modified and not bang:
+            self.say('E37: No write since last change (add ! to override)', True)
+            return
+        path = os.path.expanduser(arg)
+        if os.path.isdir(path):
+            self.say('E: "%s" is a directory' % path, True)
+            return
+        self.load(path)
+
+    def cmd_sub(self, r, arg):
+        if arg:
+            d = arg[0]
+            parts, cur, i = [], '', 1
+            while i < len(arg):
+                ch = arg[i]
+                if ch == '\\' and i + 1 < len(arg):
+                    if arg[i + 1] == d:
+                        cur += d
+                    else:
+                        cur += ch + arg[i + 1]
+                    i += 2
+                    continue
+                if ch == d and len(parts) < 2:
+                    parts.append(cur)
+                    cur = ''
+                    i += 1
+                    continue
+                cur += ch
+                i += 1
+            parts.append(cur)
+            pat = parts[0] if parts else ''
+            rep = parts[1] if len(parts) > 1 else ''
+            flags = parts[2] if len(parts) > 2 else ''
+            m = re.match(r'([&cegiInp#lr]*)\s*(\d*)', flags)
+            flags = m.group(1) if m else ''
+            self.last_sub = (pat or (self.search[0] if self.search else ''), rep, flags)
+            if pat:
+                self.search = (pat, True)
+        elif getattr(self, 'last_sub', None):
+            pat, rep, flags = self.last_sub
+        else:
+            self.say('E35: No previous regular expression', True)
+            return
+        pat = pat or (self.search[0] if self.search else '')
+        if not pat:
+            self.say('E35: No previous regular expression', True)
+            return
+        ic = self.opts['ignorecase']
+        if 'i' in flags:
+            ic, sc = True, False
+        elif 'I' in flags:
+            ic, sc = False, False
+        else:
+            sc = self.opts['smartcase']
+        rx = vim_regex(pat, ic, sc)
+        fn = vim_replacement(rep)
+        count_only = 'n' in flags
+        total, lines_hit = 0, 0
+        self.begin_change()
+        new = []
+        last = None
+        for i in range(r[0], r[1] + 1):
+            line = self.lines[i]
+            cnt = 0 if 'g' in flags else 1
+            out, k = rx.subn(fn, line, count=cnt) if not count_only else (line, len(rx.findall(line)) if 'g' in flags else (1 if rx.search(line) else 0))
+            if k:
+                total += k
+                lines_hit += 1
+                last = i
+            new.append(out)
+        if not total:
+            self.end_change()
+            self.say('E486: Pattern not found: %s' % pat, True)
+            return
+        if count_only:
+            self.end_change()
+            self.say('%d match%s on %d line%s' % (total, 'es' if total != 1 else '', lines_hit, 's' if lines_hit != 1 else ''))
+            return
+        expanded = []
+        for x in new:
+            expanded.extend(x.split('\n'))
+        added = len(expanded) - len(new)
+        self.lines[r[0]:r[1] + 1] = expanded
+        self.end_change()
+        self.row = last + added if added and last is not None else last
+        self.row = max(0, min(self.row, len(self.lines) - 1))
+        self.col = len(leading_ws(self.line))
+        self.hl_off = False
+        if lines_hit > 1 or total > 1:
+            self.say('%d substitution%s on %d line%s' % (total, 's' if total != 1 else '', lines_hit, 's' if lines_hit != 1 else ''))
+
+    def cmd_global(self, r, arg, invert):
+        if not arg:
+            self.say('E35: No previous regular expression', True)
+            return
+        d = arg[0]
+        j = arg.find(d, 1)
+        pat, cmd = (arg[1:j], arg[j + 1:]) if j > 0 else (arg[1:], 'p')
+        rx = vim_regex(pat or (self.search[0] if self.search else ''), self.opts['ignorecase'], self.opts['smartcase'])
+        marked = [i for i in range(r[0], r[1] + 1) if bool(rx.search(self.lines[i])) != invert]
+        if not marked:
+            self.say('E486: Pattern not found: %s' % pat, True)
+            return
+        cmd = cmd.strip() or 'p'
+        if cmd in ('d', 'delete'):
+            self.begin_change()
+            keep = set(marked)
+            self.lines = [x for i, x in enumerate(self.lines) if i not in keep] or ['']
+            self.end_change()
+            self.row = min(marked[0], len(self.lines) - 1)
+            self.col = 0
+            self.say('%d fewer lines' % len(marked))
+            return
+        if cmd in ('p', 'print'):
+            self.say(' | '.join(self.lines[i] for i in marked[:20]))
+            return
+        # anything else (:s, :normal, :>, ...): run it on each matching line, BOTTOM UP so an edit never shifts a
+        # line still to come; the whole :g is one undo step.
+        self.begin_change()
+        try:
+            for i in reversed(marked):
+                if i < len(self.lines):
+                    self.row, self.col = i, 0
+                    self.ex(cmd)
+        finally:
+            self.end_change()
+
+    def cmd_set(self, arg):
+        if not arg.strip():
+            self.say('  '.join('%s=%s' % (k, v) if not isinstance(v, bool) else (k if v else 'no' + k)
+                               for k, v in sorted(self.opts.items())))
+            return
+        alias = {'nu': 'number', 'rnu': 'relativenumber', 'ts': 'tabstop', 'sw': 'shiftwidth', 'et': 'expandtab',
+                 'ai': 'autoindent', 'ic': 'ignorecase', 'scs': 'smartcase', 'hls': 'hlsearch', 'is': 'incsearch',
+                 'so': 'scrolloff', 'sts': 'shiftwidth', 'syn': 'syntax', 'ff': 'fileformat', 'eol': 'endofline',
+                 'ft': 'filetype', 'ro': 'readonly'}
+        for tok in arg.split():
+            m = re.match(r'^(no|inv)?([a-z]+)(\?|!|([+\-^]?=)(.*))?$', tok)
+            if not m:
+                self.say('E518: Unknown option: %s' % tok, True)
+                return
+            prefix, name, tail, op, val = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+            name = alias.get(name, name)
+            if name == 'fileformat':
+                if op:
+                    self.info.crlf = val == 'dos'
+                    self.tick += 1
+                else:
+                    self.say('fileformat=%s' % ('dos' if self.info.crlf else 'unix'))
+                continue
+            if name == 'endofline':
+                self.info.eol = prefix != 'no'
+                self.tick += 1
+                continue
+            if name == 'filetype':
+                if op:
+                    self.ft = val
+                else:
+                    self.say('filetype=%s' % self.ft)
+                continue
+            if name == 'readonly':
+                self.info.readonly = prefix != 'no'
+                continue
+            if name not in self.opts:
+                self.say('E518: Unknown option: %s' % name, True)
+                return
+            cur = self.opts[name]
+            if tail == '?':
+                self.say('%s=%s' % (name, cur) if not isinstance(cur, bool) else (name if cur else 'no' + name))
+            elif isinstance(cur, bool):
+                self.opts[name] = (not cur) if (prefix == 'inv' or tail == '!') else prefix != 'no'
+            elif op:
+                try:
+                    v = int(val)
+                except ValueError:
+                    self.say('E521: Number required after =: %s' % tok, True)
+                    return
+                self.opts[name] = cur + v if op == '+=' else cur - v if op == '-=' else v
+                if name in ('tabstop', 'shiftwidth') and self.opts[name] < 1:
+                    self.opts[name] = 1
+            else:
+                self.say('%s=%s' % (name, cur))
+
+    def cmd_help(self):
+        self.help_text = HELP.strip('\n').split('\n')
+        self.say('help: press q or Esc to close')
+
+
+HELP = r'''
+  ◢◤ PVIM — PosterChanOS's editor. vim keys, neon on black. ◢◤
+
+  MODES        i a I A o O  insert     v V  visual     R  replace     :  command     Esc  back to NORMAL
+  MOVE         h j k l  w b e  W B E  0 ^ $  gg G  {count}G  f t F T ; ,  % { }  H M L  Ctrl-d Ctrl-u Ctrl-f Ctrl-b
+  EDIT         x X  dd D  cc C  s S  r R  J  ~  >> <<  p P  u  Ctrl-r  .  Ctrl-a Ctrl-x
+  OPERATORS    d c y > < gu gU g~  + any motion or text object: iw aw i" a" i( a( i{ a{ i[ a[
+  SEARCH       /pattern  ?pattern  n N  * #  :noh
+  FILES        :w  :w name  :wq  :x  ZZ  :q  :q!  ZQ  :e file  :e!  :saveas name  :r file
+  LINES        :%s/old/new/g  :5,10d  :sort  :g/pat/d  :m  :t  :{n}  :set nu ts=4 sw=4 et
+  CLIPBOARD    "+y  "+p   (Wayland: wl-copy / wl-paste)
+
+  Settings live in ~/.pvimrc — one command per line, e.g.   set ts=4 sw=4 et
+'''
+
+
+# ── the screen ───────────────────────────────────────────────────────────────────────────────────────────────
+class Screen:
+    """Neon on black: cyan cursor line and line numbers, magenta mode badge, syntax in the PosterChan palette."""
+
+    def __init__(self, scr, ed):
+        self.scr, self.ed = scr, ed
+        self.pending_input = []
+        curses.curs_set(1)
+        scr.keypad(True)
+        curses.raw()
+        curses.noecho()
+        try:
+            curses.set_escdelay(25)
+        except AttributeError:
+            pass
+        self.colors = {}
+        if curses.has_colors():
+            curses.start_color()
+            try:
+                curses.use_default_colors()
+                bg = -1
+            except curses.error:
+                bg = curses.COLOR_BLACK
+            rich = curses.COLORS >= 256
+            def C(c256, c8):
+                return c256 if rich else c8
+            pal = {
+                'text': (C(255, curses.COLOR_WHITE), bg),
+                'num': (C(240, curses.COLOR_WHITE), bg),
+                'numcur': (C(51, curses.COLOR_CYAN), bg),
+                'comment': (C(244, curses.COLOR_WHITE), bg),
+                'string': (C(226, curses.COLOR_YELLOW), bg),
+                'number': (C(213, curses.COLOR_MAGENTA), bg),
+                'keyword': (C(201, curses.COLOR_MAGENTA), bg),
+                'func': (C(51, curses.COLOR_CYAN), bg),
+                'add': (C(46, curses.COLOR_GREEN), bg),
+                'del': (C(196, curses.COLOR_RED), bg),
+                'tilde': (C(93, curses.COLOR_BLUE), bg),
+                'status': (C(51, curses.COLOR_CYAN), C(234, curses.COLOR_BLACK)),
+                'statusdim': (C(245, curses.COLOR_WHITE), C(234, curses.COLOR_BLACK)),
+                'mode_NORMAL': (C(16, curses.COLOR_BLACK), C(51, curses.COLOR_CYAN)),
+                'mode_INSERT': (C(16, curses.COLOR_BLACK), C(201, curses.COLOR_MAGENTA)),
+                'mode_REPLACE': (C(16, curses.COLOR_BLACK), C(196, curses.COLOR_RED)),
+                'mode_VISUAL': (C(16, curses.COLOR_BLACK), C(226, curses.COLOR_YELLOW)),
+                'mode_V-LINE': (C(16, curses.COLOR_BLACK), C(226, curses.COLOR_YELLOW)),
+                'mode_COMMAND': (C(16, curses.COLOR_BLACK), C(46, curses.COLOR_GREEN)),
+                'visual': (C(16, curses.COLOR_BLACK), C(141, curses.COLOR_MAGENTA)),
+                'search': (C(16, curses.COLOR_BLACK), C(226, curses.COLOR_YELLOW)),
+                'err': (C(196, curses.COLOR_RED), bg),
+                'msg': (C(51, curses.COLOR_CYAN), bg),
+                'logo1': (C(51, curses.COLOR_CYAN), bg),
+                'logo2': (C(201, curses.COLOR_MAGENTA), bg),
+                'cursorline': (C(255, curses.COLOR_WHITE), C(235, curses.COLOR_BLACK) if rich else bg),
+                'special': (C(93, curses.COLOR_BLUE), bg),
+            }
+            for i, (k, (fg, b)) in enumerate(pal.items(), start=1):
+                try:
+                    curses.init_pair(i, fg, b)
+                    self.colors[k] = curses.color_pair(i)
+                except curses.error:
+                    self.colors[k] = 0
+        # bracketed paste: a pasted block arrives as one insert, not as typed keys (no autoindent staircase)
+        sys.stdout.write('\x1b[?2004h')
+        sys.stdout.flush()
+
+    def close(self):
+        sys.stdout.write('\x1b[?2004l')
+        sys.stdout.flush()
+
+    def attr(self, k, extra=0):
+        return self.colors.get(k, 0) | extra
+
+    def put(self, y, x, s, a=0):
+        h, w = self.scr.getmaxyx()
+        if y < 0 or y >= h or x >= w:
+            return
+        s = s[:max(0, w - x - (1 if y == h - 1 else 0))]
+        try:
+            self.scr.addstr(y, x, s, a)
+        except curses.error:
+            pass
+
+    def draw(self):
+        ed, scr = self.ed, self.scr
+        h, w = scr.getmaxyx()
+        ed.rows, ed.cols = h, w
+        if not getattr(ed, '_keep_top', False):
+            ed.scroll_into_view()
+        ed._keep_top = False
+        scr.erase()
+        if getattr(ed, 'help_text', None):
+            for i, l in enumerate(ed.help_text[:h - 1]):
+                self.put(i, 0, l, self.attr('logo1' if i == 0 else 'text', curses.A_BOLD if i == 0 else 0))
+            self.put(h - 1, 0, ' press q / Esc to close help ', self.attr('mode_COMMAND', curses.A_BOLD))
+            scr.move(h - 1, 0)
+            scr.refresh()
+            return
+        g = ed.gutter()
+        tw = w - g
+        ts = ed.opts['tabstop']
+        vis = None
+        if ed.mode in (ed.VISUAL, ed.VLINE):
+            vis = ed.vrange()
+        hl_rx = None
+        if ed.opts['hlsearch'] and ed.search and not ed.hl_off:
+            try:
+                hl_rx = vim_regex(ed.search[0], ed.opts['ignorecase'], ed.opts['smartcase'])
+            except re.error:
+                hl_rx = None
+        if ed.mode == ed.CMDLINE and ed.cmd_kind in '/?' and ed.cmdline:
+            try:
+                hl_rx = vim_regex(ed.cmdline, ed.opts['ignorecase'], ed.opts['smartcase'])
+            except re.error:
+                pass
+        rows = ed.text_rows()
+        if ed.intro and ed.lines == [''] and not ed.modified:
+            self.draw_intro(h, w)
+        for sy in range(rows):
+            r = ed.top + sy
+            if r >= len(ed.lines):
+                self.put(sy, 0, '~', self.attr('tilde'))
+                continue
+            line = ed.lines[r]
+            if g:
+                if ed.opts['relativenumber'] and r != ed.row:
+                    label = str(abs(r - ed.row))
+                else:
+                    label = str(r + 1)
+                self.put(sy, 0, label.rjust(g - 1) + ' ', self.attr('numcur' if r == ed.row else 'num',
+                                                                       curses.A_BOLD if r == ed.row else 0))
+            # per-char attributes
+            n = len(line)
+            attrs = [self.attr('text')] * n
+            if ed.opts['syntax'] and ed.ft and n < 4000:
+                for s, e, grp in highlight(line, ed.ft):
+                    a = self.attr(grp)
+                    for j in range(s, min(e, n)):
+                        attrs[j] = a
+            if hl_rx is not None and n < 4000:
+                try:
+                    for m in hl_rx.finditer(line):
+                        for j in range(m.start(), max(m.end(), m.start() + 1)):
+                            if j < n:
+                                attrs[j] = self.attr('search')
+                except re.error:
+                    pass
+            if vis:
+                (a1, b1), (a2, b2) = vis
+                if a1 <= r <= a2:
+                    if ed.mode == ed.VLINE:
+                        lo, hi = 0, n
+                    else:
+                        lo = b1 if r == a1 else 0
+                        hi = (b2 + 1) if r == a2 else n
+                    for j in range(lo, min(hi, n)):
+                        attrs[j] = self.attr('visual')
+            x = 0
+            left = ed.left
+            for j, c in enumerate(line):
+                if c == '\t':
+                    width = ts - x % ts
+                    glyph = ('›' + ' ' * (width - 1)) if ed.opts['list'] else ' ' * width
+                    a = self.attr('special') if ed.opts['list'] else attrs[j]
+                else:
+                    o = ord(c)
+                    if o < 32 or o == 127:
+                        glyph, a = '^' + chr((o + 64) % 128), self.attr('special')
+                    elif 0xDC80 <= o <= 0xDCFF:
+                        glyph, a = '<%02x>' % (o - 0xDC00), self.attr('special')
+                    else:
+                        glyph, a = c, attrs[j]
+                    width = char_width(c) if c not in ' ' else 1
+                if x + width > left and x - left < tw:
+                    sx = g + x - left
+                    if sx >= g:
+                        self.put(sy, sx, glyph, a)
+                x += width
+                if x - left >= tw:
+                    break
+            if ed.opts['list'] and x - left < tw:
+                self.put(sy, g + max(0, x - left), '¬', self.attr('special'))
+            if left > 0 and line:
+                self.put(sy, g, '«', self.attr('special'))
+        self.draw_status(h, w)
+        # cursor
+        if ed.mode == ed.CMDLINE:
+            pre = ed.cmd_kind + ed.cmdline[:ed.cmd_cur]
+            cx = sum(char_width(c) for c in pre)
+            try:
+                scr.move(h - 1, min(w - 1, cx))
+            except curses.error:
+                pass
+        else:
+            cy = ed.row - ed.top
+            cx = g + ed.disp_col() - ed.left
+            try:
+                scr.move(max(0, min(rows - 1, cy)), max(0, min(w - 1, cx)))
+            except curses.error:
+                pass
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
+        sys.stdout.write('\x1b[%d q' % (5 if ed.mode in (ed.INSERT,) else 3 if ed.mode == ed.REPLACE else 2))
+        sys.stdout.flush()
+        scr.refresh()
+
+    def draw_intro(self, h, w):
+        logo = [
+            '██████╗ ██╗   ██╗██╗███╗   ███╗',
+            '██╔══██╗██║   ██║██║████╗ ████║',
+            '██████╔╝██║   ██║██║██╔████╔██║',
+            '██╔═══╝ ╚██╗ ██╔╝██║██║╚██╔╝██║',
+            '██║      ╚████╔╝ ██║██║ ╚═╝ ██║',
+            '╚═╝       ╚═══╝  ╚═╝╚═╝     ╚═╝',
+        ]
+        lines = logo + ['', 'PosterChanOS editor  ·  v' + VERSION, '', ':help      every key on one page',
+                        ':e file    open a file', ':q         quit']
+        y0 = max(1, (h - 2 - len(lines)) // 2)
+        for i, l in enumerate(lines):
+            x = max(0, (w - len(l)) // 2) if i >= len(logo) else max(0, (w - len(logo[0])) // 2)
+            key = 'logo1' if i < 3 else 'logo2' if i < len(logo) else ('msg' if i == len(logo) + 1 else 'num')
+            self.put(y0 + i, x, l, self.attr(key, curses.A_BOLD if i < len(logo) + 2 else 0))
+
+    def draw_status(self, h, w):
+        ed = self.ed
+        y = h - 2
+        mode = ed.prev_mode if ed.mode == ed.CMDLINE and getattr(ed, 'prev_mode', None) else ed.mode
+        if ed.mode == ed.CMDLINE:
+            mode = ed.CMDLINE
+        badge = '  %s  ' % mode          # plain text: the Linux console's own font has no ◢◣ glyphs
+        self.put(y, 0, ' ' * (w - 1), self.attr('status'))
+        self.put(y, 0, badge, self.attr('mode_' + mode, curses.A_BOLD))
+        name = ed.path or '[No Name]'
+        home = os.path.expanduser('~')
+        if ed.path and home not in ('/', '') and os.path.abspath(name).startswith(home + os.sep):
+            name = '~' + os.path.abspath(name)[len(home):]
+        flags = (' [+]' if ed.modified else '') + (' [RO]' if ed.info.readonly else '')
+        right = '%s%s  %d:%d  %s ' % ((ed.ft + '  ') if ed.ft else '', 'dos  ' if ed.info.crlf else '',
+                                      ed.row + 1, ed.disp_col() + 1,
+                                      'Top' if ed.top == 0 and len(ed.lines) <= ed.text_rows() else
+                                      '%d%%' % ((ed.row + 1) * 100 // max(1, len(ed.lines))))
+        room = max(0, w - len(badge) - len(right) - (16 if w > 60 else 3))
+        if len(name) + len(flags) + 1 > room:          # keep the END of a long path: the file name is what matters
+            name = '…' + name[-max(1, room - len(flags) - 2):]
+        left = ' %s%s' % (name, flags)
+        self.put(y, len(badge), left[:room], self.attr('status', curses.A_BOLD))
+        self.put(y, max(len(badge), w - len(right) - 13), ' PosterChan ', self.attr('logo2', curses.A_BOLD) if w > 60 else 0)
+        self.put(y, max(0, w - len(right) - 1), right, self.attr('statusdim'))
+        # command / message line
+        if ed.mode == ed.CMDLINE:
+            self.put(h - 1, 0, ed.cmd_kind + ed.cmdline, self.attr('text'))
+        elif ed.msg:
+            self.put(h - 1, 0, ed.msg, self.attr('err' if ed.msg_err else 'msg'))
+        elif ed.pending and ed.mode == ed.NORMAL:
+            self.put(h - 1, max(0, w - 12), ''.join(k if len(k) == 1 else k for k in ed.pending)[-10:], self.attr('num'))
+
+    def read_key(self):
+        if self.pending_input:
+            return self.pending_input.pop(0)
+        try:
+            ch = self.scr.get_wch()
+        except curses.error:
+            return None
+        except KeyboardInterrupt:
+            return '<C-c>'
+        if ch == '\x1b':
+            # bracketed paste, or a lone Esc
+            self.scr.nodelay(True)
+            seq = []
+            try:
+                for _ in range(5):
+                    try:
+                        c = self.scr.get_wch()
+                    except curses.error:
+                        break
+                    seq.append(c)
+                    if ''.join(x for x in seq if isinstance(x, str)) != '[200~'[:len(seq)]:
+                        break
+            finally:
+                self.scr.nodelay(False)
+            if [x for x in seq if isinstance(x, str)] == list('[200~'):
+                return '<PASTE>' + self.read_paste()
+            self.pending_input.extend(keyname(x) for x in seq if keyname(x))
+            return '<Esc>'
+        return keyname(ch)
+
+    def read_paste(self):
+        buf = []
+        end = '\x1b[201~'
+        self.scr.nodelay(False)
+        while True:
+            try:
+                c = self.scr.get_wch()
+            except curses.error:
+                break
+            if isinstance(c, int):
+                continue
+            buf.append(c)
+            if len(buf) >= len(end) and ''.join(buf[-len(end):]) == end:
+                del buf[-len(end):]
+                break
+        return ''.join(buf).replace('\r\n', '\n').replace('\r', '\n')
+
+
+def load_rc(ed):
+    for p in (os.path.expanduser('~/.pvimrc'), '/etc/pvimrc'):
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('"'):
+                        ed.ex(line.lstrip(':'))
+            ed.say('')
+            return
+        except OSError:
+            continue
+
+
+def main(argv):
+    args = [a for a in argv[1:]]
+    if args and args[0] in ('-v', '--version'):
+        print('pvim %s — PosterChanOS editor' % VERSION)
+        return 0
+    if args and args[0] in ('-h', '--help'):
+        print('usage: pvim [+N|+/pattern] [file]\n' + HELP)
+        return 0
+    start = None
+    files = []
+    for a in args:
+        if a.startswith('+') and not files:
+            start = a[1:]
+        elif a == '--':
+            continue
+        elif a.startswith('-') and a not in ('-',):
+            continue      # vim flags editors are commonly handed (-n, -u NONE...): accepted and ignored
+        else:
+            files.append(a)
+    path = files[0] if files else None
+    if path and os.path.isdir(path):
+        print('pvim: %s is a directory' % path, file=sys.stderr)
+        return 1
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print('pvim: needs a terminal', file=sys.stderr)
+        return 1
+    try:
+        locale.setlocale(locale.LC_ALL, '')
+    except locale.Error:
+        pass
+    os.environ.setdefault('ESCDELAY', '25')
+    _init_curses_keys()
+    ed = Editor(path)
+    load_rc(ed)
+    if path:
+        ed.load(path)
+    if start is not None:
+        if start == '':
+            ed.feed('G')
+        elif start.startswith('/'):
+            ed.do_search_from_cli = True
+            ed.search_origin = (0, 0, 0)
+            ed.do_search(start[1:], True)
+        elif start.isdigit():
+            ed.ex(start)
+
+    def run(scr):
+        screen = Screen(scr, ed)
+        try:
+            while True:
+                screen.draw()
+                k = screen.read_key()
+                if k is None:
+                    continue
+                if getattr(ed, 'help_text', None):
+                    if k in ('q', '<Esc>', '<CR>', '<C-c>'):
+                        ed.help_text = None
+                        ed.say('')
+                    continue
+                if k == '<C-z>' and ed.mode == ed.NORMAL and not ed.pending:
+                    screen.close()
+                    curses.endwin()
+                    os.kill(0, signal.SIGTSTP)
+                    sys.stdout.write('\x1b[?2004h')
+                    sys.stdout.flush()
+                    scr.refresh()
+                    continue
+                if k == '<C-c>' and ed.mode == ed.NORMAL:
+                    ed.pending = []
+                    ed.say('Type  :q  and press <Enter> to exit pvim')
+                    continue
+                ed.msg = '' if ed.mode != ed.CMDLINE and k not in (':',) else ed.msg
+                ed.msg_err = ed.msg_err if ed.msg else False
+                try:
+                    ed.feed(k)
+                except Quit:
+                    return
+                except Exception as e:      # a bug must never cost the user their buffer
+                    ed.mode = ed.NORMAL
+                    ed.pending = []
+                    ed._depth = 0
+                    ed.say('pvim internal error: %s — your text is safe, :w still works' % e, True)
+        finally:
+            screen.close()
+
+    curses.wrapper(run)
+    sys.stdout.write('\x1b[0 q')
+    sys.stdout.flush()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

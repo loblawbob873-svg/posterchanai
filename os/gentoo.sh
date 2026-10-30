@@ -189,7 +189,7 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi nouveau virgl"
 PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
-BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
+BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/pvim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "media-libs/libavif -svt-av1" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
@@ -1334,6 +1334,7 @@ buildGentoo() {
 		echo -e "\033[1;33mNot upgraded, pinned by something else that is installed (normal):\033[0m"
 		echo -e "\033[1;33m  $(echo $pinned)\033[0m"
 	fi
+	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh pvim-only
 	echo
 	echo
 	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"
@@ -1650,6 +1651,30 @@ installPackages() {
 		echo
 		return 1
 	fi
+}
+
+# PVIM IS THE ONLY EDITOR ON A FRESH INSTALL ("so we don't need nano, nvim, vim", 2026-10-30).
+#
+# Every stage3 arrives with nano: @system needs virtual/editor, Gentoo's virtual accepts thirty editors, and
+# portage picks the first. The overlay's virtual/editor-0-r9 names app-editors/pvim alone; once it is in, nothing
+# needs nano any more and the depclean below takes it out -- it removes only what nothing depends on, so a machine
+# where somebody chose vim, neovim or nano (@world) keeps it. Run at the end of a from-scratch build, and on the ISO
+# build VM before `livecd` (the ISO is a copy of that system). Never part of an UPDATE: an installed machine's
+# editors are its owner's.
+pvimOnly() {
+	/usr/bin/emerge --oneshot --update --noreplace app-editors/pvim virtual/editor --autounmask-write >/dev/null 2>&1
+	/usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
+	if ! /usr/bin/emerge --oneshot --update app-editors/pvim virtual/editor; then
+		echo -e "\033[1;31mpvim did not install -- the stage3's editor stays: gentoo.sh pvim-only re-runs this\033[0m"
+		return 1
+	fi
+	local ed
+	for ed in app-editors/nano app-editors/neovim app-editors/vim app-editors/vim-core; do
+		# a name that is not installed is "nothing to clean"; one in @world is refused -- both are fine
+		/usr/bin/emerge --depclean "$ed" >/dev/null 2>&1 || true
+	done
+	/usr/sbin/env-update >/dev/null 2>&1
+	echo -e "\033[1;36mEditor: pvim (EDITOR/VISUAL); editors installed: $(ls -d /var/db/pkg/app-editors/* 2>/dev/null | xargs -rn1 basename | tr '\n' ' ')\033[0m"
 }
 
 # Flathub is added, and nothing is installed from it. The list this used to carry was the KDE
@@ -6535,6 +6560,8 @@ elif [ "$1" = "browser" ]; then
 	installBrowser
 elif [ "$1" = "install-packages" ]; then
 	installPackages
+elif [ "$1" = "pvim-only" ]; then
+	pvimOnly
 elif [ "$1" = "posterchan-shell" ]; then
 	# Called from INSIDE the chroot during finalize, where the new root is `/` and TARGET must not
 	# point anywhere else. The script assigns TARGET='/tmp/install' at load, so it is cleared here.

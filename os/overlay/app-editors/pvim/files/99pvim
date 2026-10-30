@@ -1,0 +1,3 @@
+# pvim is PosterChanOS's editor: git, crontab -e, visudo and sudoedit all open it.
+EDITOR="/usr/bin/pvim"
+VISUAL="/usr/bin/pvim"
