@@ -2649,13 +2649,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   font-weight:600;letter-spacing:.5px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
 .prof-tab:hover{color:var(--text)}
 .prof-tab.active{color:var(--neon);border-bottom-color:var(--neon)}
-.prof-find-tab{flex:0 0 52px;display:flex;align-items:center;justify-content:center}
-.prof-find-tab .ic{width:18px;height:18px}
+.prof-find-tab{flex:0 0 52px;display:grid;place-items:center}
 .prof-find{display:flex;align-items:center;gap:8px;margin:10px 12px 4px;padding:6px 6px 6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel2)}
 .prof-find[hidden]{display:none}
-.prof-find>.ic{width:16px;height:16px;color:var(--muted);flex:0 0 auto}
+.prof-find>.ic{width:16px;height:16px;color:var(--muted);flex:none}
 .prof-find input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:16px;padding:6px 0}
-.prof-find input::-webkit-search-cancel-button{display:none}
 .prof-find-sum{padding:8px 16px}
 /* drafts */
 .draft-card{flex-direction:column;gap:10px}
@@ -12136,8 +12134,6 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
   .prof-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .prof-tabs::-webkit-scrollbar{display:none}
   .prof-tab{flex:1 0 auto;padding:12px 12px}
-  /* …and the magnifier stays at the row's right edge while the tabs scroll under it, or on a phone it would be
-     off-screen behind "Streams" where nobody finds it. */
   .prof-find-tab{flex:0 0 48px;position:sticky;right:0;background:var(--bg);box-shadow:-10px 0 10px -6px var(--bg)}
 }
 /* The album form's description is a line or two, not an essay: the global textarea minimum drew it

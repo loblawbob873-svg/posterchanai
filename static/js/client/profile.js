@@ -41,7 +41,6 @@ window.PCProfileFactory = function(dep){
     return evs.reduce((m,e)=>Math.min(m, e.created_at), Infinity);
   }
   const _inWindow=e=>!_prof.oldest || e.created_at>=_prof.oldest;
-  // Profile search: the words of a query, and whether a post holds every one (the relay's own rule).
   const _findWords=q=>(String(q||'').toLowerCase().match(/[\p{L}\p{N}_]+/gu)||[]);
   const _findMatch=(e,words)=>{ const low=String(e.content||'').toLowerCase(); return words.every(w=>low.includes(w)); };
   let _findGen=0;
@@ -449,7 +448,7 @@ window.PCProfileFactory = function(dep){
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="albums">Albums</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button><button class="prof-tab prof-find-tab" data-tab="search" title="Search posts" aria-label="Search this profile’s posts"><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg></button></div>
-      <div class="prof-find" id="prof-find" hidden><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg><input type="search" id="prof-find-q" placeholder="Search ${enc(p.display_name||p.name||'their')}’s posts" aria-label="Search this profile’s posts" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="mini icon-btn" id="prof-find-x" title="Close search" aria-label="Close search">✕</button></div>
+      <div class="prof-find" id="prof-find" hidden><svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg><input type="text" inputmode="search" id="prof-find-q" placeholder="Search ${enc(p.display_name||p.name||'their')}’s posts" aria-label="Search this profile’s posts" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="mini icon-btn" id="prof-find-x" aria-label="Close search">✕</button></div>
       <div id="prof-list"></div>`;
     _bindProfileBack(feed,pk);
     _nostrFirstSeen(pk).then(ts=>{
@@ -476,10 +475,7 @@ window.PCProfileFactory = function(dep){
       // Albums (NIP-51 picture sets) draw themselves: albums.js fills this once the tab is opened. A
       // constant placeholder, so a background refresh of the profile (same HTML → skipped) never wipes it.
       if(tab==='albums') return '<div id="prof-albums" class="alb-root"></div>';
-      /* SEARCH THIS PERSON'S POSTS ("on X you go to someone's profile, hit the magnifying glass and search key
-       * words -- all posts with that word show up", 2026-10-30). Every word must be in the post, the rule the
-       * relay's NIP-50 index applies (server.py), so a relay that ignores `search` and answers with everything
-       * this author wrote adds nothing that does not match. What this device already holds shows at once. */
+      // Search their posts: every word, the relay's NIP-50 rule. A text input -- type=search hides the top search.
       if(tab==='search'){
         const words=_findWords(_prof.q);
         if(!words.length) return '<div class="empty">Type a word to find every post of theirs that has it.</div>';
