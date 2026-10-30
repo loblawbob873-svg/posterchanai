@@ -47,3 +47,21 @@ def test_a_blocked_account_is_told_so_and_not_offered_an_application(chrome):
         settle(chrome)
         shown = chrome.evaluate("document.querySelector('#feed').textContent")
         assert 'blocked' in shown and not chrome.evaluate("!!document.querySelector('.ia-apply')"), shown
+
+
+def test_a_server_that_cannot_answer_says_why_instead_of_one_vague_sentence(chrome):
+    """'my fren installed posterchan in docker and he is getting error "could not verify membership"' (2026-10-29).
+    The server said why in `detail` -- most often a fresh install whose NIP-05 domain was never set -- and the gate
+    threw it away. Its reason, and for the domain the admin's fix, are on the screen now."""
+    cases = {
+        'Instance NIP-05 domain is not configured': ('no NIP-05 domain yet', 'Nostr Relay'),
+        'Instance membership settings are not loaded yet': ('settings are not loaded yet', 'retry'),
+    }
+    for detail, wants in cases.items():
+        with opened(chrome):
+            chrome.evaluate("__PC.authFetch=async()=>({ok:false,status:503,json:async()=>({detail:%r})});"
+                            "PCInstanceAccess.gate('mail')" % detail)
+            settle(chrome)
+            shown = chrome.evaluate("document.querySelector('#feed').textContent")
+            for w in wants:
+                assert w.lower() in shown.lower(), (detail, w, shown[:400])

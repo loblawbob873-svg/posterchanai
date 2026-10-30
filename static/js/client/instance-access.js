@@ -72,7 +72,16 @@
       try{
         await pc().ensureAiSession();
         const response=await pc().authFetch('/api/instance-welcome/access'+(force?'?refresh=1':''));
-        if(!response.ok)throw Error(response.status===403?'Sign in with your Nostr account.':'Could not verify instance membership. Please retry.');
+        /* THE SERVER'S OWN REASON, not one sentence for every failure ("could not verify membership" on a friend's
+         * fresh Docker install, 2026-10-29): a server whose NIP-05 domain was never set, or whose settings are still
+         * loading, said so in `detail` and the screen threw it away. Its own words, plus what to do about the one an
+         * admin has to fix; anything without a reason keeps the old sentence. */
+        if(!response.ok){
+          let why='';try{const b=await response.json();why=typeof b.detail==='string'?b.detail.slice(0,200):'';}catch(_){}
+          if(response.status===403)throw Error('Sign in with your Nostr account.');
+          if(/domain is not configured/i.test(why))throw Error('This server has no NIP-05 domain yet -- its admin sets it in Admin \u2192 Nostr Relay (NIP-05 identity server) or sets the site URL.');
+          throw Error(why?('Could not verify instance membership: '+why+'. Please retry.'):'Could not verify instance membership. Please retry.');
+        }
         const data=await response.json();
         if(data.pubkey!==pk||typeof data.qualified!=='boolean')throw Error('Invalid membership response. Please retry.');
         if(scope()===epoch)accept(data,pk);
