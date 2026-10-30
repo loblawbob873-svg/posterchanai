@@ -444,7 +444,7 @@ def test_public_community_cards_do_not_fan_out_across_invite_relays():
     on_event = CONCORD.split("const onEvent=ev=>", 1)[1].split("\n", 1)[0]
     assert "discoverInvites(" in on_event, "the slice is not the discovery handler"
     assert 'hydrateDiscoveredIcon' not in on_event
-    assert 'publicRoomIcon(p,r)' in CONCORD
+    assert 'publicRoomIcon(p,r,i)' in CONCORD
     assert '.cc-public-icon img' in CONCORD_CSS
     assert "u.protocol==='https:'||u.protocol==='http:'" in CONCORD
     assert '.cc-server-img' in CONCORD_CSS
