@@ -1,3 +1,4 @@
+import re
 import json
 import subprocess
 from pathlib import Path
@@ -20,7 +21,9 @@ def test_signer_failure_rejects_and_theme_issues_no_protected_get():
 
 def test_mail_and_settings_gate_fetch_on_successful_auth():
     mail=APP[APP.index('    async api(path, opts={})'):APP.index('    async render(root)', APP.index('    async api(path, opts={})'))]
-    assert 'await ensureAiSession();' in mail
+    # awaited before the request -- directly, or inside the time limit that keeps a node that never answers from being
+    # a spinner for ever (test_mail_never_waits_for_ever_full_app); the rule, not the spelling
+    assert re.search(r"await (?:limit\([^;]*?)?ensureAiSession\(\)", mail[:mail.index("fetch('/api/mail'+path")]), mail[:600]
     assert 'catch' not in mail[:mail.index("fetch('/api/mail'+path")]
 
     settings_start=APP.index('async function renderUserSettings()')
