@@ -20,7 +20,7 @@ window.PCLinkCardsFactory = function(dep){
   // disk, linkCardHtml can emit the finished card inline on the very first paint, so a link you have seen
   // before never moves anything again. The remaining shift is a genuinely new URL, once.
   const _pv=(()=>{
-    const K='pc-lpv-v1', MAX=600;
+    const K='pc-lpv-v2', MAX=600;   // v2: v1 held titles with undecoded entities (&#x27;) from before the server decoded them
     let m=new Map(), dirty=false, t=null;
     try{ const raw=localStorage.getItem(K); if(raw) m=new Map(Object.entries(JSON.parse(raw))); }catch(_){}
     function flush(){ t=null; if(!dirty) return; dirty=false;

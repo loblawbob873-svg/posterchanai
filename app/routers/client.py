@@ -3094,20 +3094,26 @@ async def link_preview(url: str):
                             break
                     html = body.decode("utf-8", "ignore")
 
+                    import html as _html
+
                     def meta(*names):
+                        """A meta tag's content as TEXT: the attribute's own quote closes it (an apostrophe inside
+                        "…" is content, not the end), and entities are decoded -- a page writing The Writing&#x27;s
+                        showed exactly that in the card (reported 2026-10-30). The client escapes on render."""
+                        val = r'''content=(?:"([^"]*)"|'([^']*)')'''
                         for n in names:
-                            m = re.search(r'<meta[^>]+(?:property|name)=["\']' + re.escape(n)
-                                          + r'["\'][^>]+content=["\']([^"\']+)["\']', html, re.I) \
-                                or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']'
-                                             + re.escape(n) + r'["\']', html, re.I)
-                            if m:
-                                return m.group(1).strip()
+                            key = r'''(?:property|name)=["']''' + re.escape(n) + r'''["']'''
+                            m = re.search(r"<meta\b[^>]*?" + key + r"[^>]*?" + val, html, re.I) \
+                                or re.search(r"<meta\b[^>]*?" + val + r"[^>]*?" + key, html, re.I)
+                            got = m and (m.group(1) if m.group(1) is not None else m.group(2))
+                            if got and got.strip():
+                                return " ".join(_html.unescape(got).split())
                         return None
 
                     title = meta("og:title", "twitter:title")
                     if not title:
                         tm = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
-                        title = tm.group(1).strip() if tm else None
+                        title = " ".join(_html.unescape(tm.group(1)).split()) if tm else None
                     img = meta("og:image", "twitter:image", "twitter:image:src")
                     if img:
                         img = urljoin(target, img)   # relative to where we ENDED, not where we asked
