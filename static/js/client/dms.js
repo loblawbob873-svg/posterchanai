@@ -866,7 +866,7 @@ window.PCDmsFactory = function(dep){
                /* The peer wrap and our self-copy have different outer ids. WebXDC must use the
                   shared INNER rumor id or the two recipients derive different game sessions. */
                xdcMessageId:rumor.id||ev.id, tags:(rumor.tags||[]).map(t=>t.slice()),
-               em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
+               em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); _dmPlace(arr, arr[arr.length-1]);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
     // "everyone EOSE'd" test is never met and every incoming DM was classified as login backlog: no
@@ -1009,13 +1009,41 @@ window.PCDmsFactory = function(dep){
   /* THE LOCAL ECHO, for when the wrap could not be ingested. Deliberately minimal: it is the same
    * shape `ingestWrap` pushes, keyed on the SAME outer id, so the relay's copy of our own message
    * de-duplicates against it (`arr.find(m=>m.id===ev.id)`) instead of appearing twice. */
+  /* A CONVERSATION READS IN THE ORDER IT HAPPENED ON THIS SCREEN, not by each sender's clock ("you can see the
+   * conversation replies are out of order", 2026-10-30, Windows app). _dmSendAt keeps OUR replies below what they
+   * answer; nothing can fix the time ANOTHER client stamps. A peer whose clock is a minute behind dates "I know" -- sent
+   * after reading our message -- before our message, so a thread sorted by timestamp put the answer above the question.
+   * So a message that arrives LIVE (stamped within 10 minutes of now) is placed after everything this device had
+   * already shown or sent more than 1.5 s earlier; its bubble still shows the sender's own time. The placement is kept
+   * per message id (localStorage) so a reload reads the same; history loaded in bulk is not live and keeps time order,
+   * and another device that never saw it live can only order by the timestamps. */
+  /* Self-contained on purpose: tests lift _dmEcho / ingestWrap out of this file and run them alone, so everything the
+   * placement needs (its store, its sort key) hangs off this one function. */
+  function _dmPlace(arr, msg){
+    const key = m => Number.isFinite(m.k) ? m.k : (m.t || 0);
+    const store = _dmPlace.store || (_dmPlace.store = (() => {
+      const K = 'pc-dm-order-v1', MAX = 3000; let m = new Map(), t = null;
+      try{ const raw = localStorage.getItem(K); if(raw) m = new Map(JSON.parse(raw)); }catch(_){}
+      const flush = () => { t = null; try{ if(m.size > MAX) m = new Map([...m].slice(-MAX)); localStorage.setItem(K, JSON.stringify([...m])); }catch(_){} };
+      return { get: id => m.get(id), set(id, k){ m.set(id, k); if(!t) t = setTimeout(flush, 1500); } };
+    })());
+    const now = Date.now(), stored = store.get(msg.id);
+    msg.at = now; msg.fresh = Math.abs(now / 1000 - (msg.t || 0)) < 600;
+    msg.k = Number.isFinite(stored) ? stored : msg.t;
+    if(msg.fresh && !Number.isFinite(stored)){
+      let floor = -Infinity;
+      for(const n of arr) if(n !== msg && n.fresh && n.at && n.at < now - 1500) floor = Math.max(floor, key(n));
+      if(floor >= msg.k){ msg.k = floor + 0.001; store.set(msg.id, msg.k); }
+    }
+    arr.sort((x, y) => key(x) - key(y));
+  }
   function _dmEcho(pk, text, id, at){
     if(!pk || !id) return false;
     if(!dmPeers.has(pk)) dmPeers.set(pk, []);
     const arr = dmPeers.get(pk);
     if(arr.find(m => m.id === id)) return false;
     arr.push({ id, mine:true, text:String(text||''), t:Number.isFinite(at) ? at : Math.floor(Date.now()/1000), nip17:true, atts:[] });
-    arr.sort((a,b)=>(a.t||0)-(b.t||0));
+    _dmPlace(arr, arr[arr.length-1]);
     try{ _scheduleDmRefresh(); }catch(_){ }
     return true;
   }
@@ -1028,7 +1056,7 @@ window.PCDmsFactory = function(dep){
    * one, and our message keeps the real time. */
   function _dmSendAt(pk){
     const now = Math.floor(Date.now()/1000);
-    let newest = 0; for(const m of (dmPeers.get(pk) || [])) if((m.t||0) > newest) newest = m.t || 0;
+    let newest = 0; for(const m of (dmPeers.get(pk) || [])) newest = Math.max(newest, m.t || 0, Math.ceil(Number.isFinite(m.k) ? m.k : 0));
     return (newest >= now && newest - now < 3600) ? newest + 1 : now;
   }
   async function sendDm(pk, text){
@@ -1193,7 +1221,7 @@ window.PCDmsFactory = function(dep){
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at, xdcMessageId:ev.id,
-               tags:(ev.tags||[]).map(t=>t.slice()) }); arr.sort((a,b)=>a.t-b.t);
+               tags:(ev.tags||[]).map(t=>t.slice()) }); _dmPlace(arr, arr[arr.length-1]);
     _scheduleDmRefresh();
     return true;
   }

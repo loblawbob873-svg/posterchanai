@@ -52,7 +52,7 @@ function harness({ failFirst, selfNote=false }){
     Date, Math, String, Object, Array, JSON, Promise, setTimeout, Number, Boolean,
   };
   installStateGlobals(ctx);   // app.js's live lets read as S.<name> inside dms.js
-  vm.runInNewContext(extract('function isMutedAuthor(pk){') + '\n' + extract('async function ingestWrap(ev, live){') + '\nthis.ingest=ingestWrap;',
+  vm.runInNewContext(extract('function isMutedAuthor(pk){') + '\n' + extract('function _dmPlace(arr, msg){') + '\n' + extract('async function ingestWrap(ev, live){') + '\nthis.ingest=ingestWrap;',
                      ctx, {filename:'app-ingest.js'});
   return { ctx, dmPeers, calls };
 }

@@ -64,7 +64,7 @@ def test_the_echo_is_ordered_with_the_rest_of_the_thread():
     grouping and can render under yesterday's separator."""
     fn = APP_JS[APP_JS.index("function _dmEcho(pk, text, id, at){"):]
     fn = fn[:fn.index("\n  }") + 4]
-    assert "arr.sort(" in fn
+    assert "_dmPlace(arr" in fn, "the echo must go through the one placement rule every message uses (dms.js _dmPlace)"
 
 
 def test_it_refuses_without_the_two_things_it_needs():
