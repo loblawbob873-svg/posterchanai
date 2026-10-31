@@ -2452,7 +2452,7 @@ HELP = r'''
   LINES        :%s/old/new/g  :5,10d  :sort  :g/pat/d  :m  :t  :{n}  :set nu ts=4 sw=4 et
   CLIPBOARD    "+y  "+p   (Wayland: wl-copy / wl-paste)
 
-  THEMES       :set theme=electric   :set theme=ptop      (or PVIM_THEME=ptop in the environment)
+  THEMES       :set theme=ptop (default)   :set theme=electric   (or PVIM_THEME=electric)
   Settings live in ~/.pvimrc — one command per line, e.g.   set ts=4 sw=4 et theme=ptop
 '''
 
@@ -2467,7 +2467,7 @@ HELP = r'''
 #   grad    the wordmark/meter gradient                              rim   PosterChan's outline on the start screen
 #   p256    syntax and UI groups as xterm-256 (fg, bg) -- what curses draws text in
 THEMES = {
-    # Electric blue: deep electric blue to violet, icy white for what matters (owner's pick, 2026-10-30)
+    # Electric blue: deep electric blue to violet, icy white for what matters (`:set theme=electric`)
     'electric': {
         'a': (70, 140, 255), 'b': (160, 90, 255), 'c': (200, 225, 255), 'dim': (70, 90, 160),
         'grad': ((70, 140, 255), (115, 115, 255), (160, 90, 255)), 'rim': ((70, 140, 255), (160, 90, 255)),
@@ -2486,7 +2486,7 @@ THEMES = {
                  'mode_NORMAL': (16, 33), 'mode_INSERT': (231, 99), 'mode_REPLACE': (231, 160),
                  'mode_VISUAL': (231, 56), 'mode_V-LINE': (231, 56), 'mode_COMMAND': (16, 189), 'cursorline': (255, 235)},
     },
-    # ptop's own palette, so the two read as one family
+    # ptop's own palette, so the two read as one family -- THE DEFAULT (owner, 2026-10-30: "lets keep ptop theme")
     'ptop': {
         'a': (0, 240, 255), 'b': (255, 43, 214), 'c': (249, 248, 113), 'dim': (96, 104, 140),
         'grad': ((0, 240, 255), (155, 92, 255), (255, 43, 214)), 'rim': ((0, 240, 255), (255, 43, 214)),
@@ -2506,7 +2506,7 @@ THEMES = {
                  'mode_VISUAL': (231, 99), 'mode_V-LINE': (231, 99), 'mode_COMMAND': (16, 85), 'cursorline': (255, 235)},
     },
 }
-THEME = THEMES['electric']
+THEME = THEMES['ptop']
 CYAN = GREEN = BLUE = TEAL = (0, 0, 0)
 
 
@@ -2520,7 +2520,7 @@ def apply_theme(name):
     return True
 
 
-apply_theme(os.environ.get('PVIM_THEME', 'electric') if os.environ.get('PVIM_THEME') in THEMES else 'electric')
+apply_theme(os.environ.get('PVIM_THEME') if os.environ.get('PVIM_THEME') in THEMES else 'ptop')
 LOGO = (
     "......................................................................................................................................................................................................................................................00f0ff00f0ff..................................................................",
     "..........................................................................................................................................................................................................................................02f0f902f0f91c1d2214151802f0f9............................................................",
