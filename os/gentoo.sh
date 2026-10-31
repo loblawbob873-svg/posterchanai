@@ -5958,6 +5958,10 @@ PLUGIN
 	kver="$(ls "$R/var/db/pkg/sys-kernel/" | sed -n 's/^gentoo-kernel-bin-//p' | sort -V | tail -n1)"
 	[ -n "$kver" ] || { echo "anticheat: sys-kernel/gentoo-kernel-bin is not installed" >&2; return 1; }
 	emerge -1 sys-kernel/installkernel "$(anticheatKernelAtom "$kver")" sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools || return 1
+	# ...and KEPT: a one-shot leaves shim, mokutil and sbsigntools out of @world, so the first routine `emerge --depclean`
+	# took them -- previewed on the laptop 2026-10-30 while removing OBS. The ESP keeps its own shim copy, but re-signing
+	# a kernel, enrolling a key or keeping Secure Boot on after anticheat-off all need these. Never deselected.
+	emerge --noreplace sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools || return 1
 	[ -s "$esp/EFI/posterchan/posterchanos.efi" ] || { echo "anticheat: the signed kernel image did not reach $esp/EFI/posterchan" >&2; return 1; }
 	if [ -n "$opts" ]; then
 		# The reinstall above ran the plugin: the entry for the signed kernel's version must unlock by itself.

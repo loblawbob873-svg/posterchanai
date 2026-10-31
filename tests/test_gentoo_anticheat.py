@@ -135,6 +135,8 @@ def test_a_ready_machine_is_converted(tmp_path):
     plugin = r / "etc/kernel/install.d/95-posterchan-anticheat.install"
     assert plugin.exists() and os.access(plugin, os.X_OK)
     assert f"emerge -1 sys-kernel/installkernel =sys-kernel/gentoo-kernel-bin-{KVER} sys-boot/shim" in calls
+    # kept in @world, or the next `emerge --depclean` removes the Secure Boot tools (laptop, 2026-10-30)
+    assert "emerge --noreplace sys-boot/shim sys-boot/mokutil app-crypt/sbsigntools" in calls, calls
     assert (r / "boot/EFI/posterchan/shimx64.efi").read_text() == "BOOTX64.EFI"
     assert (r / "boot/EFI/posterchan/mmx64.efi").exists()
     # BUG 1 (10-22): the root GUID goes on partition 2 of the DISK holding the LUKS volume.
