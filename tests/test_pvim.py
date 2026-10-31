@@ -392,7 +392,7 @@ def test_cli_version_and_no_tty(tmp_path):
 
 
 # ── the real program in a real terminal ───────────────────────────────────────────────────────────────────────
-def _run_in_pty(args, chunks, timeout=10, rows=24, cols=80):
+def _run_in_pty(args, chunks, timeout=10, rows=24, cols=80, term='xterm-256color'):
     """Start pvim on a pseudo-terminal, type `chunks` (a list of bytes, with pauses), return (exit code, output)."""
     import fcntl
     import pty
@@ -404,7 +404,7 @@ def _run_in_pty(args, chunks, timeout=10, rows=24, cols=80):
     import time
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
-    env = dict(os.environ, TERM='xterm-256color', LANG='C.UTF-8', LC_ALL='C.UTF-8', HOME=str(Path(args[-1]).parent if args else '/tmp'))
+    env = dict(os.environ, TERM=term, LANG='C.UTF-8', LC_ALL='C.UTF-8', HOME=str(Path(args[-1]).parent if args else '/tmp'))
     proc = subprocess.Popen([sys.executable, str(PVIM), *args], stdin=slave, stdout=slave, stderr=slave, env=env,
                             close_fds=True, start_new_session=True)
     os.close(slave)
@@ -544,3 +544,28 @@ def test_the_dashboard_panels_draw_and_editing_inside_them_still_saves(tmp_path)
     assert 'EDITOR // mod.py' in text and 'FILE' in text and 'OUTLINE' in text, ('the panels are missing', text[-600:])
     assert 'alpha' in text and 'Beta' in text, 'the outline does not list the functions and classes'
     assert p.read_text() == 'import os\n\n\ndef alpha():  # edited\n    return 1\n\n\nclass Beta:\n    pass\n'
+
+
+def test_inside_gnu_screen_it_still_draws_its_256_colour_theme(tmp_path):
+    """"pvim is green and blue?" (2026-10-30): the PosterChanOS terminal's SSH sessions run inside GNU screen, whose plain
+    `screen` terminfo says 8 colours, so pvim drew its 8-colour fallback instead of the theme. screen passes 256 colours
+    through; pvim asks for `screen-256color` when that entry exists."""
+    import shutil
+    if not shutil.which('tput') or os.system('TERM=screen-256color tput colors >/dev/null 2>&1') != 0:
+        pytest.skip('no screen-256color terminfo on this host')
+    p = tmp_path / 'x.py'
+    p.write_text('def f():\n    return 1\n')
+    old = {k: os.environ.get(k) for k in ('TERM', 'STY', 'COLORTERM', 'PVIM_THEME')}
+    os.environ.update(STY='1.pts-0.host', PVIM_THEME='ptop')
+    os.environ.pop('COLORTERM', None)
+    try:
+        rc, out = _run_in_pty([str(p)], [b':q\r'], rows=30, cols=120, term='screen')
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    assert rc == 0
+    assert out.count(b'38;5;') > 20, 'inside screen pvim fell back to 8 colours'
+    assert b'38;5;201' in out or b'48;5;201' in out, "ptop's magenta never drawn"

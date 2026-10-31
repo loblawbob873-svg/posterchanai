@@ -3294,6 +3294,27 @@ def load_rc(ed):
             continue
 
 
+def _terminfo_exists(name):
+    dirs = [os.environ.get('TERMINFO', ''), os.path.expanduser('~/.terminfo'), '/etc/terminfo', '/usr/share/terminfo',
+            '/lib/terminfo', '/usr/lib/terminfo']
+    return any(d and (os.path.exists(os.path.join(d, name[0], name)) or os.path.exists(os.path.join(d, '%x' % ord(name[0]), name)))
+               for d in dirs)
+
+
+def upgrade_term():
+    """An 8-colour TERM in front of a 256-colour terminal gets its 256-colour twin.
+
+    The PosterChanOS terminal's SSH sessions run inside GNU screen, whose plain `screen` entry advertises EIGHT colours,
+    so curses (and pvim) fell back to the 8-colour look -- "pvim is green and blue?" (2026-10-30) when the theme was
+    ptop. screen passes 256 colours through untouched (ptop relies on it), so the twin entry is the honest one. The Linux
+    console and anything without a twin keep what they are."""
+    t = os.environ.get('TERM', '')
+    twin = {'screen': 'screen-256color', 'tmux': 'tmux-256color', 'xterm': 'xterm-256color',
+            'rxvt-unicode': 'rxvt-unicode-256color', 'putty': 'putty-256color'}.get(t)
+    if twin and _terminfo_exists(twin):
+        os.environ['TERM'] = twin
+
+
 def main(argv):
     args = [a for a in argv[1:]]
     if args and args[0] in ('-v', '--version'):
@@ -3325,6 +3346,7 @@ def main(argv):
     except locale.Error:
         pass
     os.environ.setdefault('ESCDELAY', '25')
+    upgrade_term()
     _init_curses_keys()
     ed = Editor(path)
     load_rc(ed)
