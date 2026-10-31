@@ -306,3 +306,34 @@ class TheAttachmentShape(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_command_with_the_mention_our_composer_writes_reaches_the_dispatcher():
+    """'@PosterChan AI geni cute anime girl sleeping.' answered 'sleeping...zzz' (2026-10-30): the composer writes a
+    picked mention as `@npub1…` on the wire (concord.js wireMentionText, Vector's form) and _strip_address removed the
+    npub but left the `@`, so the dispatcher saw '@ geni …' -- conversation. The wire text here comes from the SHIPPED
+    wireMentionText, so a change on either side is caught."""
+    import json
+    import re
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "static/js/client/concord.js").read_text()
+    fn = re.search(r"  function wireMentionText\(text,pairs,npubFor\)\{.*?\n  \}\n", src, re.S).group(0)
+    npub = "npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr"
+    hexkey = "4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6"
+    js = fn + "console.log(JSON.stringify(wireMentionText(%s,[['PosterChan_AI',%s]],()=>%s)))" % (
+        json.dumps("@PosterChan_AI geni cute anime girl sleeping."), json.dumps(hexkey), json.dumps(npub))
+    wire = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30).stdout)
+    assert wire == "@" + npub + " geni cute anime girl sleeping.", wire
+    import sys
+    sys.path.insert(0, str(root / "botframework"))
+    import concordListener as c
+    names = ["PosterChan AI"]
+    assert c.mentions(wire, npub, hexkey, names)
+    body = c._strip_address(wire, npub, names, hexkey)
+    assert body == "geni cute anime girl sleeping." and c._is_command(body), body
+    for form in ("nostr:" + npub, "@" + hexkey, "@nostr:" + npub):
+        b = c._strip_address(form + " geni a cat", npub, names, hexkey)
+        assert b == "geni a cat" and c._is_command(b), (form, b)
+    assert not c._is_command(c._strip_address("@" + npub + " how are you?", npub, names, hexkey))

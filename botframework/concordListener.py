@@ -298,7 +298,7 @@ def _announce(session: "RoomSession", w, npub: str, names) -> None:
          channel.get("name"), handle)
 
 
-def _strip_address(text: str, npub: str, names) -> str:
+def _strip_address(text: str, npub: str, names, pubkey_hex: str = "") -> str:
     """The message with the way it addressed us removed, so `geni a cat` is what the dispatcher sees.
 
     A room message names the bot before it asks for anything — "@PosterChan AI geni a cat" — and
@@ -312,8 +312,13 @@ def _strip_address(text: str, npub: str, names) -> str:
         # us keeps the address in its body and every command reads as prose.
         body = r"[\s_.\-]*".join(re.escape(w) for w in n.strip().split())
         out = re.sub(r"@?" + body + r"(?![\w-])[:,]?", " ", out, flags=re.I)
+    # A mention on the wire is `@npub1…` (our composer writes that form, as Vector does: concord.js wireMentionText),
+    # `nostr:npub1…`, or the bare key -- the `@` goes WITH it. Left behind, "@npub1… geni cute anime girl sleeping."
+    # reached the dispatcher as "@ geni …", read as conversation, and the model answered "sleeping...zzz" (2026-10-30).
     if npub:
-        out = re.sub(r"(nostr:)?" + re.escape(npub) + r"\b", " ", out, flags=re.I)
+        out = re.sub(r"@?(nostr:)?" + re.escape(npub) + r"\b", " ", out, flags=re.I)
+    if pubkey_hex:
+        out = re.sub(r"@?(nostr:)?" + re.escape(pubkey_hex) + r"\b", " ", out, flags=re.I)
     return re.sub(r"\s+", " ", out).strip()
 
 
@@ -644,7 +649,7 @@ def _room_pass(st: dict, w: Wire) -> int:
                 # here exactly as they do on Nostr. It is only ever reached for a message that
                 # NAMED this bot (the `mentions()` guard above), which is the rule that keeps a bot
                 # welcome in somebody else's room.
-                body = _strip_address(text, npub, names)
+                body = _strip_address(text, npub, names, pk_hex)
                 if w.dispatch is not None and (_is_command(body) or _asks_the_web(body)):
                     w.dispatch(body, _room_reply(session.room, cid, w.publish, session.relays),
                                author)
