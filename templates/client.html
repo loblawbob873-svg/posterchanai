@@ -48,12 +48,12 @@
     {% if meta %}
     <meta name="description" content="{{ meta.description }}">
     <meta property="og:type" content="{{ meta.type|default('website') }}">
-    <meta property="og:site_name" content="PosterChan">
+    <meta property="og:site_name" content="{{ meta.site|default('PosterChan') }}">
     <meta property="og:title" content="{{ meta.title }}">
     <meta property="og:description" content="{{ meta.description }}">
     {% if meta.url %}<meta property="og:url" content="{{ meta.url }}">{% endif %}
     {% if meta.image %}<meta property="og:image" content="{{ meta.image }}">{% endif %}
-    <meta name="twitter:card" content="{{ 'summary_large_image' if meta.image else 'summary' }}">
+    <meta name="twitter:card" content="{{ meta.card if meta.card else ('summary_large_image' if meta.image else 'summary') }}">
     <meta name="twitter:title" content="{{ meta.title }}">
     <meta name="twitter:description" content="{{ meta.description }}">
     {% if meta.image %}<meta name="twitter:image" content="{{ meta.image }}">{% endif %}

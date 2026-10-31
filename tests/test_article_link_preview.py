@@ -72,6 +72,12 @@ def test_an_article_this_node_cannot_read_and_other_entities_are_served_as_befor
     monkeypatch.setattr(article_share, "article_card", none)
     assert asyncio.run(m.nostr_entity_page(REPORTED, _request("/" + REPORTED))) == "PLAIN"
     assert "meta" not in seen
+    # a person this node knows nothing about is served as before too (their card is test_note_link_preview.py's)
+    from app.services import profile_share
+
+    async def nobody(port, pk):
+        return None
+    monkeypatch.setattr(profile_share, "profile_card", nobody)
     npub = "npub1fdtthaq7f3d4yv8ufxs2t5ppsr36tt6x7t4ww5c2mp4npfxpvc4qffyu4z"
     assert asyncio.run(m.nostr_entity_page(npub, _request("/" + npub))) == "PLAIN"
 

@@ -1919,6 +1919,32 @@ async def nostr_entity_page(entity: str, request: Request):
         if meta:
             from app.routers.client import render_client_shell
             return await render_client_shell(request, None, meta=meta)
+    # A shared POST or PERSON gets a card too -- "<name> on PosterChan", the text, a picture -- like a ditto.pub link
+    # does in Discord (app/services/note_share.py). Read off this node's relay only; unreadable = served as before.
+    elif entity.lower().startswith(("note1", "nevent1", "npub1", "nprofile1")):
+        meta = None
+        try:
+            from app.services import note_share, profile_share, settings_store
+            ref = note_share.decode(entity)
+            if ref:
+                port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+                fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+                fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+                base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/"))
+                url, logo = "%s/%s" % (base, entity), base + "/static/icon-512.png"
+                if ref["type"] == "note":
+                    card = await note_share.note_card(port, ref)
+                    if card:
+                        meta = note_share.note_meta(card, url, fallback_image=logo)
+                else:
+                    card = await profile_share.profile_card(port, ref["pubkey"])
+                    if card is not None:
+                        meta = dict(profile_share.og_meta(card, entity[:12] + "…", url, fallback_image=logo), card="summary")
+        except Exception as e:
+            logging.getLogger(__name__).warning("[note] preview failed for %s: %s", entity[:24], e)
+        if meta:
+            from app.routers.client import render_client_shell
+            return await render_client_shell(request, None, meta=meta)
     from app.routers.client import client_app
     return await client_app(request)
 
