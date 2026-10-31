@@ -2184,6 +2184,13 @@ liveISOinstall() {
 	# So the identity is minted first, in the target, and it is the installed machine's from then on.
 	sudo mkdir -p "$TARGET/var/tmp"
 	sudo chmod 1777 "$TARGET/var/tmp"
+	# AND /tmp. The live image carries no /tmp at all (it is a tmpfs at runtime, and the copy excludes it), so until the
+	# desktop download near the very end made one, every step in the installed system that wanted a temp file failed:
+	# pc-boot-check's mktemp ("No such file or directory") read as "the key inside the initramfs does not open the disk"
+	# and put the previous boot entry back, the overlay sync could not write its log -- and every install gate failed
+	# (2026-10-31: install, USB, GUI, server and upgrade). Made here, before the first step that runs in the target.
+	sudo mkdir -p "$TARGET/tmp"
+	sudo chmod 1777 "$TARGET/tmp"
 	sudo chroot $TARGET /usr/bin/systemd-machine-id-setup >/dev/null 2>&1 \
 		|| sudo chroot $TARGET /bin/sh -c 'systemd-machine-id-setup' >/dev/null 2>&1 || true
 	if [ ! -s "$TARGET/etc/machine-id" ]; then
