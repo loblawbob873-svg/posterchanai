@@ -564,7 +564,15 @@ window.PCBlossomFactory = function(dep){
   const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
     ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
     ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
-    ['sms','Text messages'],['reminders','Reminders'],['follows','New followers']];
+    ['sms','Text messages'],['reminders','Reminders'],['follows','New followers'],['calls','Ring for incoming calls']];
+  /* CALLS ARE THE ONE TYPE THAT IS OFF UNTIL SOMEBODY TURNS IT ON. "User is getting call spam from people he knows"
+   * (2026-10-31): a ring takes the whole screen and the speaker, from anyone, and a mute takes their posts with it.
+   * So nobody rings until the person says so; a call meanwhile is a MISSED call on the Calls screen, never lost.
+   * ONE switch, account-wide: it is not offered per device (two switches for one ring is a puzzle), and the push
+   * rows are told its value (`_pushPrefsWire`), so a closed phone obeys the same answer as the open app. */
+  const _OFF_BY_DEFAULT=new Set(['calls']);
+  const _ACCOUNT_ONLY=new Set(['calls']);
+  const _PUSH_TYPES=_NOTIFICATION_TYPES.filter(([k])=>!_ACCOUNT_ONLY.has(k));
   // 'posterchan' = the PosterChan Alert (static/sounds/posterchan-alert.*, scripts/make_notification_sound.py).
   /* 'system' = NO PosterChan sound: the phone's own notification sound on Android (its plain channel), and nothing
      of ours on the web and desktop. "can we make the posterchan notification sounds optional?" -- every other
@@ -621,8 +629,10 @@ window.PCBlossomFactory = function(dep){
    * picture and there is no gap for fail-open to widen. */
   function _pushPrefsWire(owner=_notificationOwner()){
     const stored=_pushPrefState(owner), out={};
-    for(const [key] of _NOTIFICATION_TYPES)
+    for(const [key] of _PUSH_TYPES)
       out[key]= typeof stored[key]==='boolean' ? stored[key] : _PUSH_PREF_DEFAULT;
+    // The account's answer, never a per-device one; the server reads a missing `calls` as "do not ring".
+    out.calls= notificationPreference('calls')===true;
     return out;
   }
   function pushPreference(key){
@@ -631,7 +641,7 @@ window.PCBlossomFactory = function(dep){
   }
   function setPushPreference(key,value){
     const owner=_notificationOwner();if(!owner)return false;
-    if(!_NOTIFICATION_TYPES.some(([k])=>k===key))return false;
+    if(!_PUSH_TYPES.some(([k])=>k===key))return false;
     const next={..._pushPrefState(owner),[key]:!!value};
     try{localStorage.setItem(_pushPrefKey(owner),JSON.stringify(next));}catch(_){}
     _paintNotificationSettings();
@@ -799,17 +809,23 @@ window.PCBlossomFactory = function(dep){
   }
   function notificationPreference(key){
     const state=_notificationState(),v={...state.values,...state.dirty}[key];
-    return v===undefined ? (key==='sound'?'chime':true) : v;
+    return v===undefined ? (key==='sound'?'chime':!_OFF_BY_DEFAULT.has(key)) : v;
   }
-  function notificationAllowed(type){return !_NOTIFICATION_TYPES.some(([key])=>key===type) || notificationPreference(type)!==false;}
+  function notificationAllowed(type){
+    if(!_NOTIFICATION_TYPES.some(([key])=>key===type))return true;
+    return _OFF_BY_DEFAULT.has(type) ? notificationPreference(type)===true : notificationPreference(type)!==false;
+  }
   function _hydrateNotificationPreferences(owner,remote,createdAt=0){
     if(!owner || owner!==_notificationOwner())return;
     const state=_notificationState(owner);
     if(remote===undefined || remote===null){_paintNotificationSettings();return;}
     if(createdAt && createdAt<state.clock)return;
     state.clock=Math.max(state.clock,createdAt||0);
+    const callsBefore=notificationPreference('calls')===true;
     state.values={..._notificationClean(remote),...state.dirty};
     _notificationStore(owner,state);_paintNotificationSettings();_applyAppAlert();
+    // Ringing switched on/off on ANOTHER device: this device's push row must hear it too (one signature, only on change).
+    if((notificationPreference('calls')===true)!==callsBefore)_resendPushPrefsOnce(owner);
   }
   /* THE ANDROID APP PLAYS THE ALERT THROUGH ITS OWN CHANNEL, so it must be TOLD when the sound preference is
    * the PosterChan Alert -- including when it was picked on another device and arrived here synced. The
@@ -832,6 +848,7 @@ window.PCBlossomFactory = function(dep){
     state.values={...state.values,...patch};state.dirty={...state.dirty,...patch};
     _notificationStore(owner,state);_paintNotificationSettings();
     if(key==='sound') _applyAppAlert();
+    if(key==='calls'){ void _pushPrefsToDevice(); _mirrorPushPrefsSoon(owner); }
     return _syncNotificationPreferences(owner);
   }
   function _syncNotificationPreferences(owner=_notificationOwner()){
@@ -879,7 +896,7 @@ window.PCBlossomFactory = function(dep){
         <p class="muted small">What reaches you when the app is CLOSED. Kept on this device and never
           synced, so a phone set to mentions only leaves every other device exactly as it is — these
           are a separate answer from the app alerts above.</p>
-        ${_NOTIFICATION_TYPES.map(([key,label])=>`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">${label}<label class="switch"><input type="checkbox" data-push-type="${key}" ${pushPreference(key)?'checked':''}><span class="slider"></span></label></label>`).join('')}
+        ${_PUSH_TYPES.map(([key,label])=>`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">${label}<label class="switch"><input type="checkbox" data-push-type="${key}" ${pushPreference(key)?'checked':''}><span class="slider"></span></label></label>`).join('')}
         <div class="muted small" id="us-push-sync-state" role="status"></div>
       </div>
 

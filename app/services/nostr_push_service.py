@@ -484,6 +484,9 @@ async def _call_handler(ev: dict):
 
     try:
         targets = await _subs_for_retrying(fresh)
+        # Ringing is opt-in per device row (push_prefs.OPT_IN_TYPES): only a row whose owner turned it on rings.
+        targets = {pk: [s for s in subs if push_prefs.allows_row(s, "calls")] for pk, subs in (targets or {}).items()}
+        targets = {pk: subs for pk, subs in targets.items() if subs}
         if not targets:
             return
         name = await _name_for(author)

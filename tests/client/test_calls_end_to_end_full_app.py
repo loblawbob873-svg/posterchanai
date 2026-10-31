@@ -158,7 +158,7 @@ class Person:
         return await self.js("JSON.parse(localStorage.getItem('pc_missed_calls:'+__PC.me().pubkey)||'[]').map(x=>x.pk)")
 
 
-async def _open(stack, http_port, relay_url, key_byte, name, extra=''):
+async def _open(stack, http_port, relay_url, key_byte, name, extra='', ring=True):
     profile = stack.enter_context(tempfile.TemporaryDirectory(prefix='pc-call-', ignore_cleanup_errors=True))
     proc = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', '--disable-gpu', '--window-size=1100,900',
                              '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
@@ -196,7 +196,10 @@ async def _open(stack, http_port, relay_url, key_byte, name, extra=''):
     p = Person(b, name)
     await p.until("!!window.__PC && !!window.NostrTools && document.readyState==='complete'", timeout=40, what='the client to boot')
     await p.until("document.body.classList.contains('guest')", timeout=30, what='the login screen')
-    await p.js(f"(()=>{{const k=new Uint8Array(32).fill({key_byte});document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(k);"
+    # Ringing is opt-in (blossom.js _OFF_BY_DEFAULT): a device that is meant to ring turned it on, as a person would.
+    ring_js = ("const pk=NostrTools.getPublicKey(k);localStorage.setItem('pc_notification_prefs:'+pk,"
+               "JSON.stringify({values:{calls:true},dirty:{calls:true},clock:0}));") if ring else ""
+    await p.js(f"(()=>{{const k=new Uint8Array(32).fill({key_byte});{ring_js}document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(k);"
                "document.querySelector('#btn-nsec-login').click()})()")
     await p.until('!!__PC.me()', timeout=30, what='login')
     p.pubkey = await p.js('__PC.me().pubkey')
@@ -217,9 +220,9 @@ def scenario(*people, extra='', relay_cls=None, handler=None):
             threading.Thread(target=http.serve_forever, daemon=True).start()
             try:
                 async with contextlib.AsyncExitStack() as stack:
-                    ps = await asyncio.gather(*[_open(stack, http.server_port, relay_url, k, n, extra) for k, n in people])
+                    ps = await asyncio.gather(*[_open(stack, http.server_port, relay_url, *person[:2], extra, *person[2:]) for person in people])
                     # A test may bring another device online later: relay.open(key_byte, name).
-                    relay.open = lambda k, n: _open(stack, http.server_port, relay_url, k, n, extra)
+                    relay.open = lambda k, n, *ring: _open(stack, http.server_port, relay_url, k, n, extra, *ring)
                     # Every device has subscribed for its own call frames before anyone dials.
                     def armed(p):
                         return any(p.pubkey in f.get('#p', []) and 25050 in f.get('kinds', [])

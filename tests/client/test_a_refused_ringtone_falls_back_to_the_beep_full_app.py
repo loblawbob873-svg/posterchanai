@@ -56,6 +56,8 @@ def test_a_ringtone_the_browser_refuses_rings_the_beep_and_never_freezes_the_pag
             assert not await callee.b.js("navigator.userActivation&&navigator.userActivation.hasBeenActive"), \
                 'the callee page has had a user gesture -- it would be allowed to play the ringtone'
             npub = await callee.b.js("NostrTools.nip19.npubEncode(__PC.me().pubkey)")
+            # Ringing is opt-in (2026-10-31): the callee turned "Ring for incoming calls" on, as a person would.
+            assert await callee.b.js("(async()=>{try{__PC.setNotificationPreference('calls',true);}catch(_){}for(let i=0;i<100;i++){if(await __PC.notificationAllowed('calls'))return true;await new Promise(r=>setTimeout(r,100));}return false;})()"), 'could not turn ringing on'
             await asyncio.sleep(2)                       # both subscribed for their own call frames
             await caller.b.js("__PC.switchView('calls');true")
             await R.wait(caller.b, "!!document.querySelector('#call-npub')", 30, 'the Calls screen')

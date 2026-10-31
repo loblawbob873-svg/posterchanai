@@ -110,8 +110,15 @@ def chain(tmp_path_factory):
             await s.wait_queued(timeout=8.0)
 
         async def call():
+            # Ringing is OPT-IN: a device that never turned "Ring for incoming calls" on is not rung.
+            s.nps._call_recent.clear()
+            await s.publish(s.note(25050, "<nip44>", [["p", BOB], ["t", "invite"]]))
+            assert not await s.wait_queued(timeout=2.0), "a call rang a device that never turned ringing on"
+            await s.set_prefs({"calls": True})
+            await s.set_prefs({"calls": True}, device=False)   # the Web Push row turned ringing on too
+            s.nps._call_recent.clear()
             ev["call"] = await s.publish(s.note(25050, "<nip44>", [["p", BOB], ["t", "invite"]]))
-            assert await s.wait_queued(), "the call watcher queued nothing for a real invite"
+            assert await s.wait_queued(), "the call watcher queued nothing for a real invite with ringing on"
 
         async def mail():
             await s.mail()

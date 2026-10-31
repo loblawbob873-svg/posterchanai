@@ -24,14 +24,20 @@ logger = logging.getLogger(__name__)
 # The SAME vocabulary the client's _NOTIFICATION_TYPES uses. One list of names, or a toggle labelled
 # "Likes and reactions" silences something else (or nothing at all) and no test would notice.
 PUSH_TYPES = ("email", "dm", "likes", "replies", "quotes", "mentions", "reposts",
-              "zaps", "concord", "channels", "sms", "reminders", "follows")
+              "zaps", "concord", "channels", "sms", "reminders", "follows", "calls")
+
+# THE ONE TYPE THAT FAILS CLOSED. "User is getting call spam from people he knows" (2026-10-31): a ring takes the
+# screen and the speaker, so ringing is OFF until the person turns "Ring for incoming calls" on, and only an explicit
+# `true` on the row rings it. Missing a call is not losing it -- the open app lists every screened call under Missed --
+# which is what makes the opposite default from the one argued above safe here and only here.
+OPT_IN_TYPES = ("calls",)
 
 
 def push_type(ev: dict, recipient: str = "", quoted: set | None = None) -> str:
     """Classify an event the way `_title` describes it, so the toggle and the wording cannot drift.
 
     Returns "" for anything with no matching toggle, which `allows` then treats as always-send —
-    a call is the case that matters, and it must ring whatever else is switched off.
+    a call is classified by its own handler, which asks `allows(prefs, "calls")` -- opt-in, see OPT_IN_TYPES.
     """
     try:
         kind = int(ev.get("kind", 0))
@@ -68,7 +74,14 @@ def push_type(ev: dict, recipient: str = "", quoted: set | None = None) -> str:
 
 
 def allows(prefs, kind_type: str) -> bool:
-    """Does this subscription want `kind_type`? Anything but an explicit `false` is yes."""
+    """Does this subscription want `kind_type`? Anything but an explicit `false` is yes -- except an OPT_IN type,
+    where anything but an explicit `true` is no."""
+    if kind_type in OPT_IN_TYPES:
+        try:
+            data = json.loads(prefs) if isinstance(prefs, str) else prefs
+        except Exception:
+            return False
+        return isinstance(data, dict) and data.get(kind_type) is True
     if not kind_type or kind_type not in PUSH_TYPES:
         return True                     # no toggle governs it — a call, an unknown kind
     if not prefs:

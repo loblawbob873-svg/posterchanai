@@ -58,7 +58,7 @@ def test_the_stored_shape_is_still_sparse():
 
 def test_the_wire_shape_carries_every_type():
     fn = _fn("function _pushPrefsWire(owner=_notificationOwner())")
-    assert "_NOTIFICATION_TYPES" in fn and "_PUSH_PREF_DEFAULT" in fn, (
+    assert "_PUSH_TYPES" in fn and "_PUSH_PREF_DEFAULT" in fn and "out.calls=" in fn, (
         "the mirrored preferences are a subset again, so any type nobody toggled is 'no opinion' "
         "to a filter that fails open — and is therefore sent")
 
@@ -104,7 +104,9 @@ def test_a_never_touched_type_is_sent_as_an_answer_not_a_gap():
     script = r"""
       const _PUSH_PREF_DEFAULT = true;
       const _NOTIFICATION_TYPES = [['dm','DMs'],['likes','Likes'],['mentions','Mentions'],
-                                   ['zaps','Zaps'],['concord','Communities']];
+                                   ['zaps','Zaps'],['concord','Communities'],['calls','Calls']];
+      const _PUSH_TYPES = _NOTIFICATION_TYPES.filter(([k]) => k !== 'calls');
+      const notificationPreference = (k) => k === 'calls' ? false : true;   // ringing never turned on
       const store = { 'pc_push_prefs:me': JSON.stringify({ likes: false }) };
       const localStorage = { getItem: (k) => store[k] ?? null };
       const _notificationOwner = () => 'me';
@@ -118,7 +120,8 @@ def test_a_never_touched_type_is_sent_as_an_answer_not_a_gap():
     got = json.loads(done.stdout.strip().splitlines()[-1])
 
     assert got["stored"] == {"likes": False}, "the stored shape stopped being sparse"
-    assert set(got["wire"]) == {"dm", "likes", "mentions", "zaps", "concord"}, (
+    assert got["wire"]["calls"] is False, "ringing that was never turned on must travel as an explicit no"
+    assert set(got["wire"]) == {"dm", "likes", "mentions", "zaps", "concord", "calls"}, (
         "the wire shape is missing types, so a fail-open filter sends them: %r" % (got["wire"],))
     assert got["wire"]["likes"] is False, "an explicit choice was lost on the way to the wire"
     assert got["wire"]["mentions"] is True, (

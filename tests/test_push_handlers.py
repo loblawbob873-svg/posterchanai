@@ -39,11 +39,11 @@ def _async(value):
     return f
 
 
-def _subscribed(monkeypatch, *pks):
-    """Pretend exactly `pks` have registered a device."""
+def _subscribed(monkeypatch, *pks, prefs='{"calls": true}'):
+    """Pretend exactly `pks` have registered a device (with ringing turned on unless `prefs` says otherwise)."""
     monkeypatch.setattr(nps, "_subscriber_pks", _async(set(pks)))
     monkeypatch.setattr(nps, "_subs_for",
-                        lambda want: {pk: [{"endpoint": f"https://push/{pk}", "keys": {}}]
+                        lambda want: {pk: [{"endpoint": f"https://push/{pk}", "keys": {}, "prefs": prefs}]
                                       for pk in want if pk in set(pks)})
 
 
@@ -109,6 +109,30 @@ def test_call_pushes_only_for_an_invite(monkeypatch, _isolate):
     hangup["tags"].append(["t", "sig"])
     asyncio.run(nps._call_handler(hangup))
     assert len(_isolate) == 1, "a non-invite frame pushed — this is the phantom second ring"
+
+
+@pytest.mark.parametrize("prefs", [None, "{}", '{"dm": true}', '{"calls": false}', "not json"])
+def test_a_call_does_not_ring_a_device_that_never_turned_ringing_on(monkeypatch, _isolate, prefs):
+    """"call spam from people he knows" (2026-10-31): ringing is opt-in. A row that never said `calls: true` --
+    never configured, configured before the switch existed, switched off, unreadable -- is not rung."""
+    _subscribed(monkeypatch, ME, prefs=prefs)
+    nps._call_recent.clear()
+    ring = _wrap(ME, kind=25050)
+    ring["tags"].append(["t", "invite"])
+    asyncio.run(nps._call_handler(ring))
+    assert _isolate == [], f"a call rang a device whose prefs were {prefs!r}"
+
+
+def test_a_call_rings_only_the_device_that_turned_ringing_on(monkeypatch, _isolate):
+    monkeypatch.setattr(nps, "_subscriber_pks", _async({ME}))
+    monkeypatch.setattr(nps, "_subs_for", lambda want: {ME: [
+        {"endpoint": "https://push/phone", "keys": {}, "prefs": '{"calls": true}'},
+        {"endpoint": "https://push/laptop", "keys": {}, "prefs": '{"calls": false}'}]})
+    nps._call_recent.clear()
+    ring = _wrap(ME, kind=25050)
+    ring["tags"].append(["t", "invite"])
+    asyncio.run(nps._call_handler(ring))
+    assert [x[0]["endpoint"] for x in _isolate] == ["https://push/phone"]
 
 
 def test_handlers_survive_a_hostile_event(monkeypatch, _isolate):

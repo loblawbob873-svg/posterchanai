@@ -292,6 +292,8 @@ async def open_calls(d):
 async def ring_and_give_up(caller, callee):
     """The caller's real client rings the callee, who does not answer; the caller hangs up."""
     npub = await js(callee, "NostrTools.nip19.npubEncode(__PC.me().pubkey)")
+    # Ringing is opt-in (2026-10-31): the callee turned "Ring for incoming calls" on, as a person would.
+    assert await js(callee, "(async()=>{try{__PC.setNotificationPreference('calls',true);}catch(_){}for(let i=0;i<100;i++){if(await __PC.notificationAllowed('calls'))return true;await new Promise(r=>setTimeout(r,100));}return false;})()"), 'could not turn ringing on'
     for attempt in range(3):
         await open_calls(caller)
         await js(caller, "document.querySelector('#call-npub').value=%s;document.querySelector('#call-start-btn').click();true"

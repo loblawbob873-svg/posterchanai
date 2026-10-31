@@ -158,7 +158,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: the title slug (app.js _articleLink/_articleSlug/_openArticleByName). 8.2245 MB measured.
 #: ...and 8.225 -> 8.227 for a DM thread ordered by when messages ARRIVED here, not only by each sender's clock
 #: (dms.js _dmPlace: a peer a minute behind put its answers above our question). 8.2268 MB measured.
-BUDGET_MB = 8.227
+#: ...and 8.227 -> 8.231 for calls that do not ring until the person turns ringing on (blossom.js _OFF_BY_DEFAULT,
+#: calls.js _callsMayRing + the Calls screen's switch): "call spam from people he knows". 8.2307 MB measured.
+BUDGET_MB = 8.231
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #

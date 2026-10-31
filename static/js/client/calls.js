@@ -11,9 +11,17 @@ window.PCCallsFactory = function(dep){
   const S = dep.state;   // live app.js bindings: S.CFG, S.FOLLOWS, S.GUEST, S.LOGO, S.ME, S.VIEW, S._aiToken, S.signer
   const {
     $, $$, BUNDLED, FOLLOWERS, _capPlugin, _guestPrompt, enc, ensureAiSession, ensureMyFollowers,
-    isMutedAuthor, needProfile, niceNip05, nip05Resolve, normalizeRelay, profOf, safePk, sign,
-    timeAgo, toast,
+    isMutedAuthor, needProfile, niceNip05, nip05Resolve, normalizeRelay, notificationAllowed, profOf, safePk,
+    setNotificationPreference, sign, timeAgo, toast,
   } = dep;
+  /* RINGING IS OPT-IN (2026-10-31, "call spam from people he knows"). Until the person turns "Ring for incoming
+   * calls" on, an invite never rings, never takes the screen and never answers the caller: it is written to the
+   * Missed list and that is all. The caller just hears no answer -- we do not tell them they were screened.
+   * notificationAllowed may be a promise (the preferences module loads lazily), so this awaits it; anything that
+   * cannot be read is "do not ring", the default it exists to keep. */
+  async function _callsMayRing(){
+    try{ return (await notificationAllowed('calls'))===true; }catch(_){ return false; }
+  }
 
   // ===== Voice/Video calls (WebRTC, P2P-first, signaled over Nostr) =====
   // Signaling = ephemeral kind-25050 events, NIP-44-encrypted {v,callId,t,sdp|cand|video} to the peer's
@@ -1115,6 +1123,8 @@ window.PCCallsFactory = function(dep){
   // that arrives late (or a timer that fires first) would otherwise record a MISSED call for one that
   // was answered — the log lying is worse than the log being empty.
   const _handledIds = new Set();
+  // Invites screened by "calls don't ring" -- one Missed row per call, however many times the invite is re-sent.
+  const _screenedIds = new Set();
   /* PER ACCOUNT, NOT PER DEVICE. It was one `pc_missed_calls` for whoever was signed in, so after an account
    * switch the other account's Calls screen listed who had called the first one -- and its Clear wiped them.
    * The log is `pc_missed_calls:<pubkey>`; the old unscoped list is adopted by the first account to open it
@@ -1137,6 +1147,20 @@ window.PCCallsFactory = function(dep){
       localStorage.setItem(k, JSON.stringify(l.slice(0, MISSED_MAX)));
       _redrawCallsIfIdle();
     }catch(_){}
+  }
+  /* The switch, where somebody looking for "why didn't my phone ring" will be: on the Calls screen. Same preference
+   * as Settings → Notifications → "Ring for incoming calls". */
+  async function _paintRinging(){
+    const box=$('#call-ringing'); if(!box) return;
+    const on=await _callsMayRing();
+    if(!box.isConnected) return;
+    box.innerHTML=`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;gap:12px">
+        <span><b>Ring for incoming calls</b><br><span class="muted small">${on?'Calls ring this app and your phone.':'Off: calls don\u2019t ring. They are listed under Missed instead.'}</span></span>
+        <label class="switch"><input type="checkbox" id="call-ring-switch" ${on?'checked':''}><span class="slider"></span></label></label>`;
+    const sw=$('#call-ring-switch',box);
+    if(sw) sw.onchange=async()=>{ sw.disabled=true;
+      try{ await setNotificationPreference('calls', sw.checked); toast(sw.checked?'Calls will ring':'Calls won\u2019t ring'); }catch(_){}
+      _paintRinging(); };
   }
   function _missedClear(){ const k=_missedKey(); try{ if(k) localStorage.removeItem(k); _redrawCallsIfIdle(); }catch(_){} }
   /* Redraw the Calls view only when the user is not mid-interaction. renderCalls() replaces innerHTML
@@ -1198,6 +1222,14 @@ window.PCCallsFactory = function(dep){
         /* Voice/video calls remain available globally, but a desktop session is deliberately
          * opt-in on BOTH ends. Merely being signed in must not make this device a remote endpoint. */
         if(remoteDesktopInvite&&!_remoteDesktopArmed)return;
+        // My OWN other device (Remote Desktop) is never screened -- opening it on both ends is the consent.
+        if(from!==S.ME.pubkey && Math.abs(Math.floor(Date.now()/1000)-(ev.created_at||0))<=60 && !(await _callsMayRing())){
+          if(!msg.callId || !_screenedIds.has(msg.callId)){
+            if(msg.callId){ _screenedIds.add(msg.callId); if(_screenedIds.size>200) _screenedIds.clear(); }
+            _missedAdd(from, msg.callId);
+          }
+          return;
+        }
         // Don't ring for an invite that is already over. The subscription's `since` cannot be relied on
         // to bound this: relay.js re-REQs the filters VERBATIM on re-arm, so `since` is frozen at
         // subscribe time and the window silently widens with uptime (an hour up = an hour of history
@@ -1577,6 +1609,7 @@ window.PCCallsFactory = function(dep){
     feed.innerHTML=`<div class="calls-view">
       <h2 style="margin:0 0 4px"><svg class="ic h-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Calls</h2>
       <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
+      <div class="call-ringing" id="call-ringing"></div>
       <p class="muted small">${_narrowed?'Showing friends — people you follow who follow you back. Anyone else: paste their npub or name below.':'Showing who you follow.'}</p>
       <div class="call-start">
         <input id="call-npub" class="input" placeholder="type a name, npub1…, or name@domain" autocapitalize="none" autocorrect="off" spellcheck="false">
@@ -1628,6 +1661,7 @@ window.PCCallsFactory = function(dep){
     $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
     // Sibling of the contact buttons, not nested in one, so stopPropagation is belt-and-braces.
     { const mc=$('#missed-clear',feed); if(mc) mc.onclick=(e)=>{ e.stopPropagation(); _missedClear(); }; }
+    _paintRinging();
     const gt=$('#grp-toggle'), gp=$('#grp-panel'); if(gt&&gp) gt.onclick=()=>{ const on=gp.style.display==='none'; gp.style.display=on?'':'none'; gt.textContent=on?'✕ Cancel group call':'👥 Start a group call'; };
     if($('#grp-start')) $('#grp-start').onclick=()=>{ const pks=$$('.grp-pick',feed).filter(c=>c.checked).map(c=>c.value); if(!pks.length){ toast('pick at least one person'); return; } startGroupCall(pks, false); };
     contacts.forEach(pk=>needProfile(pk));
@@ -1722,9 +1756,13 @@ window.PCCallsFactory = function(dep){
     for(const hex of members) _roomSend(hex,{v:1,room:id,t:'ginvite',video:!!video,members:memberList});
     _roomUI();
   }
-  function _roomRing(from, msg){
-    if(_call || _room){ _roomSend(from,{v:1,room:msg.room,t:'rbye'}); return; }   // busy
+  async function _roomRing(from, msg){
     if(isMutedAuthor(from)) return;
+    if(from!==S.ME.pubkey && !(await _callsMayRing())){
+      if(!msg.room || !_screenedIds.has(msg.room)){ if(msg.room) _screenedIds.add(msg.room); _missedAdd(from, msg.room); }
+      return;
+    }
+    if(_call || _room){ _roomSend(from,{v:1,room:msg.room,t:'rbye'}); return; }   // busy
     _room={ id:msg.room, video:!!msg.video, local:null, peers:new Map(), members:new Set([...(msg.members||[]), from, S.ME.pubkey]), ringing:true, invite:{from} };
     _room.timeout=setTimeout(()=>{ if(_room && _room.ringing){ _ringtone(false); _roomLeave(); } }, 60000);
     try{ needProfile(from); }catch(_){}
@@ -1743,7 +1781,7 @@ window.PCCallsFactory = function(dep){
   }
   function _roomDecline(){ if(_room){ if(_room.invite) _roomSend(_room.invite.from,{v:1,room:_room.id,t:'rbye'}); _roomLeave(); } }
   function _onRoomEvent(from, msg){
-    if(msg.t==='ginvite'){ _roomRing(from, msg); return; }
+    if(msg.t==='ginvite'){ _roomRing(from, msg).catch(()=>{}); return; }
     if(!_room || msg.room!==_room.id) return;
     if(Array.isArray(msg.members)) msg.members.forEach(h=>{ if(h) _room.members.add(h); });
     if(msg.t==='rhere'){ if(_room.local && from!==S.ME.pubkey && S.ME.pubkey<from) _roomOfferTo(from); return; }   // they joined → we offer if we're lower

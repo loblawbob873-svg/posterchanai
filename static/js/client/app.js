@@ -14897,8 +14897,8 @@
       get signer(){ return signer; },
     },
     $, $$, BUNDLED, FOLLOWERS, _capPlugin, _guestPrompt, enc, ensureAiSession, ensureMyFollowers,
-    isMutedAuthor, needProfile, niceNip05, nip05Resolve, normalizeRelay, profOf, safePk, sign,
-    timeAgo, toast,
+    isMutedAuthor, needProfile, niceNip05, nip05Resolve, normalizeRelay, notificationAllowed, profOf, safePk,
+    setNotificationPreference, sign, timeAgo, toast,
   }; }
   function _callsMod(){ return _lzGet('calls.js', 'PCCallsFactory', _callsDeps); }
   function _callsLoad(){ return _lzLoad('calls.js', 'PCCallsFactory', _callsDeps); }
