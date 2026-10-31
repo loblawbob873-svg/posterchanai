@@ -62,6 +62,13 @@ def test_media_from_files_adds_an_image_and_a_video_with_its_sound():
         got['choices'] = await b.js("[...document.querySelectorAll('.pbs-src-choices button')].map(x=>x.textContent.trim())")
         await b.js("document.querySelector('#pbs-media-files').click();true")
         await asyncio.sleep(.5)
+        # "This device" hands over to the system file chooser for images AND videos
+        await b.js("window.__chooser=[];const c=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){__chooser.push(this.accept);return;}return c.call(this);};true")
+        await F.click(b, '#pbs-add-image')
+        await b.until("!!document.querySelector('#pbs-media-device')")
+        await F.click(b, '#pbs-media-device')
+        await asyncio.sleep(.3)
+        got['device'] = await b.js("({accept:__chooser.slice(-1)[0]||'',modal:!!document.querySelector('#pbs-media-device')})")
         got['filter'] = await b.js("!!(window.__pickerOpts&&window.__pickerOpts.filter&&__pickerOpts.filter({type:'video/mp4'})&&__pickerOpts.filter({type:'image/png'})&&!__pickerOpts.filter({type:'audio/mpeg',name:'a.mp3'}))")
         await b.js("__realPicker(null,()=>{}, {title:'Add media from Files'});true")
         await b.until("!!document.querySelector('.bp-file-picker')")
@@ -80,6 +87,17 @@ def test_media_from_files_adds_an_image_and_a_video_with_its_sound():
         got['magenta'] = await F.count(b, (255, 0, 255))
         got['yellow'] = await F.count(b, (255, 255, 0))
         got['strips'] = await b.js("[...document.querySelectorAll('.pbs-strip')].map(s=>s.querySelector('b').textContent)")
+        # Properties: "Play from the start" rewinds the video; "Center" centres the image
+        await b.js("[...document.querySelectorAll('.pbs-layer')].find(l=>l.textContent.includes('Intro clip')).querySelector('.pbs-layer-main').click();true")
+        await asyncio.sleep(1.2)
+        got['t_before'] = await b.js("[...document.querySelectorAll('#pbs-media-host video')].map(v=>v.currentTime).find(t=>t>0)||0")
+        await F.click(b, '#pbs-p-restart')
+        got['t_after'] = await b.js("Math.min(...[...document.querySelectorAll('#pbs-media-host video')].filter(v=>v.src).map(v=>v.currentTime))")
+        await b.js("[...document.querySelectorAll('.pbs-layer')].find(l=>l.textContent.includes('Logo')).querySelector('.pbs-layer-main').click();true")
+        await asyncio.sleep(.2)
+        await F.click(b, '#pbs-p-center')
+        await asyncio.sleep(.2)
+        got['centered'] = await b.js("(()=>{const s=document.querySelector('#pbs-sel').style;const l=parseFloat(s.left),w=parseFloat(s.width),t=parseFloat(s.top),h=parseFloat(s.height);return Math.abs(l+w/2-50)<1&&Math.abs(t+h/2-50)<1})()")
         got['vid_db'] = await b.js("(()=>{const s=[...document.querySelectorAll('.pbs-strip')].find(x=>x.dataset.ch.startsWith('v:'));return s?Number(s.querySelector('.pbs-meter').dataset.peakDb):-99})()")
         got['errors'] = await b.js('__errors')
     asyncio.run(desktop.with_browser('online', '', check, F.init() + TRAP))
@@ -87,6 +105,9 @@ def test_media_from_files_adds_an_image_and_a_video_with_its_sound():
     assert got['label'] == 'Media', got['label']
     assert any('This device' in c for c in got['choices']) and any('Files' in c for c in got['choices']), got['choices']
     assert got['filter'], 'the Files picker must offer images and videos (not audio)'
+    assert got['device'] == {'accept': 'image/*,video/*', 'modal': False}, ('This device must open the chooser for images and videos', got['device'])
+    assert got['t_before'] > 0.5 and got['t_after'] < 0.3, ('Play from the start did not rewind the video', got['t_before'], got['t_after'])
+    assert got['centered'], 'Center did not centre the image'
     assert got['real_title'] == 'Add media from Files', got['real_title']
     assert sorted(got['layers']) == ['Intro clip', 'Logo'], got['layers']
     assert got['magenta']['n'] > 500, ('the video is not on the broadcast canvas', got['magenta'])

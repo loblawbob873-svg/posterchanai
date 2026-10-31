@@ -2840,6 +2840,8 @@
       photos:[X('Describe these photos','What the pictures shown here are about','Describe the photos shown here: one short line each, saying who posted it.'),
               X('Caption ideas','Captions for a photo of mine','Suggest three short captions for a photo post, in the style of the ones shown here.'),help],
       recorder:[X('How do I use this','Recording, trimming, saving and posting','How do I record my screen here, trim the recording, and post it or keep it in Files?'),help],
+      pbs:[X('Title and tags for my stream','A catchy title, a summary and tags','Suggest a catchy stream title, a one-line summary and five tags for what I am streaming in this studio.'),
+           X('How do I set this up','Sources, overlays, sound, going live','How do I set up this studio: add my game or screen, a camera, text and images, set the sound levels, and go live on Nostr?'),help],
       blossom:files, sync:files, __files:files,
       __installer:screen, __golive:screen, __remote:screen,
     };

@@ -131,10 +131,18 @@
   }
   /** dBFS of a sample peak/RMS, floored at -60 (the meter's scale). */
   const dbOf = v => Math.max(-60, Math.min(0, 20 * Math.log10(Math.max(1e-9, v))));
-  window.PCPbsDoc = { D, store, normalize, encoderKind, dbOf, KBPS, RES };
+  window.PCPbsDoc = { D, store, normalize, encoderKind, dbOf, KBPS, RES,
+                      // for the studio below, which sits OUTSIDE this closure (see the note there)
+                      _studio: { MAX_SOURCES, RES, FONTS, color, cleanSource, normalize, store, encoderKind, dbOf } };
+})();
 
-  /* ---------- the studio ---------- */
-  window.PCPbsFactory = function(dep){
+/* ---------- the studio ----------
+ * A TOP-LEVEL factory, like every other lazy module: tests/test_client_module_deps.py reads it from the file's top
+ * level to prove every name it uses resolves and every dep app.js passes is real -- wrapped in the closure above it
+ * was invisible to that check, so nothing could prove that every name in it resolves. */
+window.PCPbsFactory = function(dep){
+    'use strict';
+    const { MAX_SOURCES, RES, FONTS, color, cleanSource, normalize, store, encoderKind, dbOf } = window.PCPbsDoc._studio;
     const S = dep.state;
     const { enc, toast } = dep;
     const $ = (sel, root) => (root || document).querySelector(sel);
@@ -360,7 +368,7 @@
       E.doc.sources.push(s); E.sel = s.id; scheduleSave(); return s;
     }
     async function macBlocked(){
-      try{ if(window.pcCapture && pcCapture.info){ const i = await pcCapture.info(); return !!(i && i.platform === 'darwin' && (i.screen === 'denied' || i.screen === 'restricted')); } }catch(_){}
+      try{ if(window.pcCapture && window.pcCapture.info){ const i = await window.pcCapture.info(); return !!(i && i.platform === 'darwin' && (i.screen === 'denied' || i.screen === 'restricted')); } }catch(_){}
       return false;
     }
     function sayScreenBlocked(){
@@ -857,7 +865,7 @@
       ['pbs-title', 'pbs-summary', 'pbs-tags'].forEach(id => { const el = $('#' + id, root); if(el) el.oninput = () => { readMeta(); scheduleSave(); }; });
       $('#pbs-announce', root).onchange = () => { readMeta(); scheduleSave(); };
       $('#pbs-go', root).onclick = () => { ensureAudio(); return E.live ? stopLive() : goLive(); };
-      const mac = $('#pbs-mac-open', root); if(mac) mac.onclick = () => { try{ window.pcCapture && pcCapture.openSettings(); }catch(_){} };
+      const mac = $('#pbs-mac-open', root); if(mac) mac.onclick = () => { try{ window.pcCapture && window.pcCapture.openSettings(); }catch(_){} };
       $('#pbs-add-screen', root).onclick = async () => {
         ensureAudio();
         if(!canScreen()){ setWhy('Screen capture is desktop-only — phones and tablets don’t allow it. Camera and overlays work here.'); return; }
@@ -931,7 +939,7 @@
           const row = (id, label, val, secret) => `<label class="pbs-f"><span>${label}</span><span class="pbs-copy"><span class="pbs-field"><input id="${id}" readonly${secret ? ' type="password"' : ''} value="${enc(val)}"></span><button type="button" class="btn btn-ghost small" data-copy="${id}">Copy</button></span></label>`;
           body.innerHTML = `<p>For OBS and other encoders: Service <b>Custom</b>. PBS needs none of this.</p>${row('pbs-ext-srv', 'Server', info.rtmp_url || '')}${row('pbs-ext-key', 'Stream key', info.stream_key || '', true)}${row('pbs-ext-url', 'Stream URL', full, true)}
             <p>Then announce it from <b>Go Live</b> in the menu, which publishes the stream for an external encoder.</p>`;
-          $$('[data-copy]', body).forEach(b => b.onclick = () => dep._copyFrom($('#' + b.dataset.copy, body)));
+          $$('[data-copy]', body).forEach(b => b.onclick = () => dep._copyFrom($('#' + CSS.escape(b.dataset.copy), body)));
         }catch(e){ body.textContent = (e && e.message) || 'Couldn’t load your stream key.'; }
       };
       const inp = $('#pbs-chat-inp', root), send = $('#pbs-chat-send', root);
@@ -1082,4 +1090,3 @@
 
     return { render, _engine: () => E };
   };
-})();

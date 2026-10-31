@@ -79,6 +79,11 @@ def test_one_button_go_live_publishes_the_composite_and_stop_ends_it():
         await b.until("document.querySelector('#pbs-enc').dataset.hw==='software'")
         got['enc_sw'] = await b.js("document.querySelector('#pbs-enc').textContent")
         await b.until("document.querySelector('#pbs-chat-msgs').textContent.includes('hello from a viewer')")
+        # the streamer answers in the chat from PBS itself
+        await b.js("(()=>{const i=document.querySelector('#pbs-chat-inp');i.value='thanks for watching';i.dispatchEvent(new Event('input'));return true})()")
+        await F.click(b, '#pbs-chat-send')
+        await b.until("__published.some(e=>e.kind===1311&&e.content==='thanks for watching')")
+        got['chat_sent'] = await b.js("__published.filter(e=>e.kind===1311&&e.content==='thanks for watching').map(e=>e.tags.find(t=>t[0]==='a')[1])")
         got['timer'] = await b.js("document.querySelector('#pbs-timer').textContent")
         got['kbps'] = await b.js("document.querySelector('#pbs-kbps').textContent")
         await F.shot(b, 'golive-live-1280.png')
@@ -117,6 +122,7 @@ def test_one_button_go_live_publishes_the_composite_and_stop_ends_it():
     assert 'hardware' in got['enc_hw'] and 'VaapiVideoEncodeAccelerator' in got['enc_hw'], got['enc_hw']
     assert 'software' in got['enc_sw'] and 'OpenH264' in got['enc_sw'], got['enc_sw']
     assert got['timer'] != '0:00', got['timer']
+    assert got['chat_sent'] and got['chat_sent'][0].startswith('30311:'), ('a chat reply from PBS must go to the stream', got['chat_sent'])
     assert got['deleted'] and got['deleted'][0].endswith('/api/streams/whip/tok123/' + F.SID), ('Stop did not DELETE the WHIP session', got['deleted'])
     assert 'ended' in got['after'], ('Stop did not publish the 30311 ended', got['after'])
     assert got['button'].lower() == 'go live', got['button']
