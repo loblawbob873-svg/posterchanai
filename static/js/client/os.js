@@ -2101,7 +2101,7 @@
     // 'terminal' is here because COLUMNS are what a shell needs: 80 of them is the width every
     // piece of unix output was laid out for, and a narrow window wraps `ls -l` and every log line.
     wide: ['global', 'meme', 'admin', 'translate', 'stats', 'ai', 'websearch', 'calendar', 'markets',
-           'sync', 'terminal'],
+           'sync', 'terminal', 'pbs'],
     // Columns: a list beside a pane. Width past a point is empty space.
     column: ['messages', 'mail', 'notifications', 'notes', 'drafts', 'bookmarks', 'vault', 'contacts',
              'budget', 'news', 'articles', 'tg', 'texts'],
@@ -11309,6 +11309,7 @@ ${wfxHere?`<option value="page:effects" ${_osSettingsPage==='effects'?'selected'
       A('📸', 'Take a screenshot', ['screen', 'capture', 'print'], () => shoot('screen')),
       A('✂️', 'Screenshot an area', ['region', 'snip', 'capture'], () => shoot('region')),
       A('⏺️', 'Record the screen', ['recorder', 'video', 'capture', 'clip'], () => openLauncherApp('recorder')),
+      A('🎙️', 'Broadcast with PBS', ['pbs', 'obs', 'stream', 'broadcast', 'go live', 'studio'], () => openLauncherApp('pbs')),
       A('▦', 'Arrange windows in a grid', ['tile', 'snap', 'layout'], () => arrangeInPage('grid')),
       A('◫', 'Arrange windows side by side', ['tile', 'snap', 'split'], () => arrangeInPage('side-by-side')),
       A('⛶', 'Full screen', ['fullscreen', 'f11'], () => toggleFull()),

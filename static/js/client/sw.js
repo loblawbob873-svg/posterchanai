@@ -172,6 +172,7 @@ const SHELL = [
   '/static/js/client/albums.js',
   '/static/js/client/photos.js',
   '/static/js/client/recorder.js',
+  '/static/js/client/pbs.js',
   '/static/js/client/bud10.js',
   '/static/js/client/appmixer.js',
   '/static/js/client/deskassist.js',

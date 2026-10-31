@@ -155,7 +155,7 @@
             see files that were all still there. Reported as exactly that. */
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
-         t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
+         t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:pbs' || t[1] === 'pcai:agent-tasks' ||
          /* Where each Concord channel was last read, account-wide (concord.js READ_D). Evicted, a second
             device reads every mention from the last week as new again. */
          t[1] === 'pcai:concord-read' ||

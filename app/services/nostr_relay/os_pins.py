@@ -15,7 +15,7 @@ D_PREFIXES = ("pcai:note", "pcai:pw", "pcai:sms", "pcai:files-index", "pcai:play
 # `t[1] === '…'` in store.js _isPinned
 D_EXACT = frozenset({
     "pcai:budget", "pcai:desktop", "pcai:automute", "pcai:agent-tasks", "pcai:concord-read", "pcai:seen",
-    "pcai:concord-rail", "pcai:livetemplates", "pcai:musicshares", "pcai:dmkey", "pcai:dmcache",
+    "pcai:concord-rail", "pcai:livetemplates", "pcai:pbs", "pcai:musicshares", "pcai:dmkey", "pcai:dmcache",
     "pcai:vmhosts",
 })
 # Pinned only when the VIEWER wrote it (a share addressed to us is anybody's to publish).

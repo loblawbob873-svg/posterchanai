@@ -215,6 +215,21 @@ put('livetemplates.js', 'go-live templates save', await both(async world => {
 put('streams.js', 'go-live templates wiring',
     { wired: /homeAnswered\s*:/.test(lift(src('streams.js'), 'window.PCLiveTpl.store({')) });
 
+/* ---- pbs.js (pcai:pbs): PBS's scene/mixer document, through PCPbsDoc.store as the studio builds it. A save after a
+ * read nobody answered must stay on the device ("could not read" never replaces the account's setup). */
+put('pbs.js', 'studio setup save', await both(async world => {
+  const ctx = baseCtx(); ctx.window = ctx;
+  vm.createContext(ctx); vm.runInContext(src('pbs.js'), ctx);
+  const R = pool(world); let publishes = 0, local = null;
+  const st = ctx.PCPbsDoc.store({ owner: ME, query: f => R.query(f), homeAnswered: got => !!R.homeAnswered(got),
+    publish: async () => { publishes++; return { ok: true }; }, enc: async () => 'ct', dec: async () => '{}',
+    local: { get: () => local, set: d => { local = d; } } });
+  await st.save({ sources: [{ type: 'text', text: 'hello' }] });
+  return publishes > 0;
+}));
+put('pbs.js', 'studio wiring',
+    { wired: /homeAnswered\s*:/.test(lift(src('pbs.js'), 'E.store = store({')) });
+
 /* ---- musicshare.js: the accept/reject answers (pcai:musicshares) -- the whole module. */
 put('musicshare.js', 'share decisions save', await both(async world => {
   const ctx = baseCtx(); ctx.window = ctx;

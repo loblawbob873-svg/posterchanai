@@ -61,7 +61,11 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     assert "let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer;" in main
     assert "systemPreferences, screen, desktopCapturer } = electron" in main
     capture_wire = main[main.index("function wireWaylandCapture()") : main.index("// ---- Tor", main.index("function wireWaylandCapture()"))]
-    assert "appendSwitch('enable-features', 'WebRTCPipeWireCapturer')" in capture_wire
+    # ONE enable-features switch (Chromium keeps the last of a repeated switch), carrying the PipeWire capturer
+    # alongside PBS's VA-API encoder features.
+    assert "appendSwitch('enable-features', linuxFeatures().join(','))" in capture_wire
+    assert capture_wire.count("appendSwitch(") == 1
+    assert "'WebRTCPipeWireCapturer'" in main[main.index("const LINUX_FEATURES"):main.index("function linuxFeatures")]
     assert "process.env.WAYLAND_DISPLAY" not in capture_wire
     assert "useSystemPicker: process.platform === 'darwin'" in main
     assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main

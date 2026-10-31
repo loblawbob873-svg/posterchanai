@@ -88,6 +88,7 @@ public final class HomeTiles {
         new Tile("photos",        "Photos",        "image",    false),
         new Tile("calculator",    "Calculator",    "calc",     false),
         new Tile("streams",       "Streams",       "tv",       false),
+        new Tile("pbs",           "PBS Studio",    "mic",      false),
         new Tile("media-center",  "Media Center",  "tv",       true),
         new Tile("meme",          "Meme Builder",  "tv",       false),
         new Tile("translate",     "Live Translate","translate",false),

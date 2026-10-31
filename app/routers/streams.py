@@ -15,6 +15,7 @@ system, per the design decision.
 """
 from __future__ import annotations
 
+import re
 import asyncio
 import hashlib
 import hmac
@@ -762,11 +763,56 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
                                   headers={"Content-Type": "application/sdp"})
     except Exception:
         return Response(status_code=502)
-    # Relay only the SDP answer — NOT MediaMTX's Location header (it points at the internal 127.0.0.1
-    # WebRTC port; leaking it is pointless and confusing). The client tears the stream down by closing its
-    # RTCPeerConnection, which MediaMTX detects as a WebRTC disconnect and cleans up on its own.
-    return Response(content=r.content, status_code=r.status_code,
+    # Relay the SDP answer -- and NOT MediaMTX's Location header as it stands (it points at the internal
+    # 127.0.0.1 WebRTC port). WHIP ends a session with a DELETE on that resource, so the session id is handed
+    # back as OUR OWN resource, /api/streams/whip/<token>/<session>, which stream_whip_end forwards. Closing the
+    # RTCPeerConnection alone also ends it, but only once MediaMTX notices the WebRTC disconnect -- seconds in
+    # which the path stays "ready" and the stream reads as live (PBS's Stop, docs/PBS.md).
+    headers = {}
+    sid = _whip_session_of(r.headers.get("location", ""))
+    if sid and r.status_code in (200, 201):
+        headers["Location"] = f"/api/streams/whip/{token}/{sid}"
+    return Response(content=r.content, status_code=r.status_code, headers=headers,
                     media_type=r.headers.get("content-type", "application/sdp"))
+
+
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_WHIP_SESSION = re.compile(r"/whip/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$")
+
+
+def _whip_session_of(location: str) -> str:
+    """The session id in MediaMTX's WHIP Location (`/<path>/whip/<uuid>`), or '' -- a UUID and nothing else, since it
+    is put back into an upstream URL by stream_whip_end."""
+    m = _WHIP_SESSION.search((location or "").split("?", 1)[0])
+    return m.group(1).lower() if m else ""
+
+
+@router.delete("/whip/{token}/{session}")
+async def stream_whip_end(token: str, session: str, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """WHIP teardown (RFC 9725 DELETE on the session resource): end the publish NOW, so the media path stops at
+    once instead of when MediaMTX notices a dead PeerConnection. Same ownership rule as the POST; the session must be
+    a UUID (it is spliced into the upstream URL)."""
+    if not _stream_enabled():
+        return Response(status_code=404)
+    own = await user_settings_table.aget(db, current_user.id, _TOKEN_SETTING)
+    if not own or own != token:
+        return JSONResponse({"error": "not your stream"}, status_code=403)
+    sid = session.lower() if _UUID.fullmatch(session or "") else ""
+    if not sid:
+        return JSONResponse({"error": "bad session"}, status_code=400)
+    try:
+        key = await _aobs_key(db, current_user)
+    except Unavailable:
+        return JSONResponse({"error": "stream keys cannot be read right now; try again shortly"}, status_code=503)
+    upstream = f"http://127.0.0.1:{stream_service.webrtc_port()}/{token}/whip/{sid}?key={key}"
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
+            r = await client.delete(upstream)
+    except Exception:
+        return Response(status_code=502)
+    # 404 from MediaMTX = the session is already gone (the PeerConnection closed first): that IS ended.
+    return Response(status_code=200 if r.status_code in (200, 204, 404) else r.status_code)
 
 
 @router.get("/viewers/{token}")

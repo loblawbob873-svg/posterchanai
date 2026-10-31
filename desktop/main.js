@@ -618,6 +618,15 @@ function wireOzonePlatform() {
 
 // Wayland has no X11-style screen grab: capture goes through the xdg-desktop-portal/PipeWire path,
 // which Chromium only takes when this feature is on. Harmless no-op if the feature name ever changes.
+/* HARDWARE VIDEO ENCODE, per OS, for PBS (docs/PBS.md) and every other WebRTC publish (Go Live, calls).
+ * Windows (Media Foundation) and macOS (VideoToolbox) encode H.264 in hardware out of the box. Linux does NOT:
+ * Chromium's VA-API encoder is behind two features, and without them every frame PBS sends is OpenH264 on the
+ * CPU -- the same CPU as the game being streamed. ONE --enable-features switch carries every feature: Chromium
+ * keeps the LAST value of a repeated switch, so a second enable-features switch would silently
+ * drop the PipeWire capturer and with it all screen capture on Wayland. PBS reads what actually happened from
+ * getStats (encoderImplementation / powerEfficientEncoder) rather than trusting this list. */
+const LINUX_FEATURES = ['WebRTCPipeWireCapturer', 'AcceleratedVideoEncoder', 'VaapiVideoEncoder'];
+function linuxFeatures() { return LINUX_FEATURES.slice(); }
 function wireWaylandCapture() {
   if (process.platform !== 'linux') return;
   // Keep this unconditional on Linux. PosterChanOS launches Electron with an explicit
@@ -625,7 +634,7 @@ function wireWaylandCapture() {
   // environment. Testing WAYLAND_DISPLAY here therefore selected Chromium's X11 capturer on a
   // machine with no X server, yielding zero sources before the portal could open. The feature is a
   // harmless no-op on X11 and is required for the PipeWire portal path on Wayland.
-  app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+  app.commandLine.appendSwitch('enable-features', linuxFeatures().join(','));
 }
 
 // ---- Tor ---------------------------------------------------------------------------------------
@@ -4684,6 +4693,20 @@ ipcMain.handle('pc:clip:read', async (e) => {
     const text = native !== null ? native : await clipboard.readText();
     return fromOurPage(e) ? String(text || '').slice(0, 65536) : '';
   } catch (_) { return ''; }
+});
+
+// PBS: the capture permission and the encoder features this build turned on (see wireWaylandCapture).
+ipcMain.handle('pc:capture:info', (e) => {
+  if (!fromOurPage(e)) return null;
+  let screen = 'granted';
+  if (process.platform === 'darwin') {
+    try { screen = systemPreferences.getMediaAccessStatus('screen') || 'unknown'; } catch (_) { screen = 'unknown'; }
+  }
+  return { platform: process.platform, screen, features: process.platform === 'linux' ? linuxFeatures() : [] };
+});
+ipcMain.handle('pc:capture:open-settings', (e) => {
+  if (!fromOurPage(e) || process.platform !== 'darwin') return false;
+  return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').then(() => true, () => false);
 });
 
 // Screen picker: thumbnails as data URLs so the page stays a plain, network-free document.

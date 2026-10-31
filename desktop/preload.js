@@ -279,6 +279,16 @@ if (isOurPage) {
     read: () => ipcRenderer.invoke('pc:clip:read'),
   });
 
+  /* PBS (static/js/client/pbs.js): what this machine can capture and encode. `info()` answers
+   * { platform, screen, features } -- `screen` is macOS's Screen Recording permission ('granted', 'denied',
+   * 'restricted', 'not-determined'; 'granted' elsewhere, where there is no such gate), so PBS can SAY that the
+   * permission is off and where to turn it on instead of showing a black capture. `openSettings()` opens that
+   * pane on macOS and does nothing elsewhere. */
+  contextBridge.exposeInMainWorld('pcCapture', {
+    info: () => ipcRenderer.invoke('pc:capture:info'),
+    openSettings: () => ipcRenderer.invoke('pc:capture:open-settings'),
+  });
+
   contextBridge.exposeInMainWorld('pcShell', {
     instanceSync,
     windowContext,

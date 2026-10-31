@@ -316,6 +316,8 @@
                  id + onclick like #nav-music rather than data-view. Hidden when the node has no media
                  server (CFG.stream_enabled). -->
             <button class="nav-item nav-golive hidden" id="nav-golive"><svg class="ic"><use href="#i-live"></use></svg><span>Go Live</span></button>
+            <!-- PBS: docs/PBS.md -->
+            <button class="nav-item" data-view="pbs"><svg class="ic"><use href="#i-mic"></use></svg><span>PBS Studio</span></button>
             {% if not nostr_only %}<button class="nav-item" data-view="translate"><svg class="ic"><use href="#i-translate"></use></svg><span>Live Translate</span></button>{% endif %}
             <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
             <!-- Photos (client/photos.js): NIP-68 pictures + the profile's NIP-51 albums. Relay-only, like Notes. -->

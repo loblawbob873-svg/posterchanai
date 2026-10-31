@@ -535,11 +535,15 @@ window.PCStreamsFactory = function(dep){
     if(S._streamChatSub){ try{ Relay.close(S._streamChatSub); }catch(_){} S._streamChatSub=null; }
     if(S._streamChatPoll){ clearInterval(S._streamChatPoll); S._streamChatPoll=null; }
   }
-  function _streamChat(saddr, haddr, sRelays){
+  /* `opts` = { box, inp, send, alive() } lets another surface host the same room -- PBS's chat panel (pbs.js)
+   * shows the stream's chat beside the preview. Default: the stream page's own elements, alive while on it. */
+  function _streamChat(saddr, haddr, sRelays, opts){
     _closeStreamChat();
+    opts=opts||{};
+    const alive=opts.alive||(()=>S.VIEW==='stream');
     const addrs=[saddr, haddr].filter(Boolean);
     const relays=[...new Set([...STREAM_RELAYS, ...(sRelays||[])])];
-    const box=$('#st-chat-msgs'); if(!box) return;
+    const box=opts.box||$('#st-chat-msgs'); if(!box) return;
     const seen=new Set(); const msgs=[];
     const render=()=>{ if(!msgs.length) return;
       box.innerHTML=msgs.slice(-200).map(m=>{ const pr=profOf(m.pubkey)||{}; needProfile(m.pubkey);
@@ -566,14 +570,14 @@ window.PCStreamsFactory = function(dep){
     const onEv=ev=>{ if(!ev || (ev.kind!==1311 && ev.kind!==7) || seen.has(ev.id)) return; seen.add(ev.id);
       msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at);
       if(msgs.length>500) msgs.splice(0, msgs.length-500);   // bound memory on a long, busy chat
-      if(S.VIEW==='stream') render(); };
+      if(alive()) render(); };
     try{ S._streamChatSub=Relay.subscribe([{kinds:[1311,7], '#a':addrs, limit:150}], {onEvent:onEv, live:true}); }catch(_){}
     // Pull the same room from the public stream relays — this is what makes the chat cross-client rather
     // than poster.place-only. queryFrom is one-shot (no live external sub exists), so poll while it's open.
     const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311,7], '#a':addrs, limit:150}], {purpose:'stream chat'})
       .then(evs=>(evs||[]).forEach(onEv)).catch(()=>{}); };
-    pull(); S._streamChatPoll=setInterval(()=>{ if(S.VIEW!=='stream'){ _closeStreamChat(); return; } pull(); }, 10000);
-    const inp=$('#st-chat-inp'), send=$('#st-chat-send');
+    pull(); S._streamChatPoll=setInterval(()=>{ if(!alive()){ _closeStreamChat(); return; } pull(); }, 10000);
+    const inp=opts.inp||$('#st-chat-inp'), send=opts.send||$('#st-chat-send');
     const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;
       if(S.GUEST){ _guestPrompt(); return; } inp.value='';
       try{ const r=await publish(1311, t, [['a', saddr, (S.CFG&&S.CFG.relay_url)||'', 'root']]);
@@ -875,7 +879,23 @@ window.PCStreamsFactory = function(dep){
       info.d = info.token + '-' + Math.floor(Date.now()/1000);
       watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.d, pubkey:S.ME.pubkey, kind:30311, relays:_r}));
     }catch(_){ }
+    /* PBS IS THE ONE OBVIOUS WAY ("i want nostr streaming simplified with pbs"): compose the screen, a camera and
+     * overlays, then one button -- no key to copy. It leads the sheet. The quick camera / screen paths below
+     * publish through the SAME WHIP code PBS uses (_whipConnect), and the OBS server/key moved under "External
+     * encoder" for people who still use their own software. */
+    if(!document.getElementById('pc-gl-pbs-css')){ const st=document.createElement('style'); st.id='pc-gl-pbs-css';
+      st.textContent=`.gl-pbs{display:flex;align-items:center;gap:12px;width:100%;margin:4px 0 12px;padding:12px 14px;border-radius:12px;cursor:pointer;text-align:left;color:var(--text);font:inherit;
+  border:1px solid color-mix(in srgb,var(--green) 55%,transparent);background:linear-gradient(90deg,color-mix(in srgb,var(--green) 14%,transparent),rgba(var(--accent-rgb),.08));
+  box-shadow:0 0 18px color-mix(in srgb,var(--green) 18%,transparent)}
+.gl-pbs:hover{box-shadow:0 0 26px color-mix(in srgb,var(--green) 32%,transparent)}
+.gl-pbs:focus-visible{outline:2px solid var(--neon);outline-offset:2px}
+.gl-pbs>.ic{width:26px;height:26px;flex:none;color:var(--green)}
+.gl-pbs span{display:flex;flex-direction:column;gap:3px;min-width:0}.gl-pbs b{font-family:Orbitron,Inter,sans-serif;letter-spacing:.08em}
+.gl-pbs small{color:var(--muted);font-size:12.5px;line-height:1.35}
+.gl-ext{margin:8px 0;border-top:1px solid var(--line);padding-top:8px}
+.gl-ext>summary{cursor:pointer;font-weight:700;margin-bottom:6px}`; document.head.appendChild(st); }
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3>
+      <button type="button" class="gl-pbs" id="gl-pbs"><svg class="ic" aria-hidden="true"><use href="#i-mic"></use></svg><span><b>Open PBS Studio</b><small>Screen, camera, text and image overlays, a mixer — then one button to go live. Nothing to copy.</small></span></button>
       <div class="gl-tpl">
         <label class="fld" for="gl-tpl-sel">Template <span class="muted small">— reuse a title, description, cover and post</span></label>
         <div class="gl-tplrow"><select class="input" id="gl-tpl-sel" aria-label="Template"><option value="">— none —</option></select>
@@ -909,9 +929,11 @@ window.PCStreamsFactory = function(dep){
              <label class="gl-opt"><input type="radio" name="gl-src" value="obs"> 🎛 OBS / another encoder</label>
            </div>`
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
+      <details class="gl-ext" id="gl-ext"${(canPhone || canScreen) ? '' : ' open'}><summary>External encoder <span class="muted small">— OBS, ffmpeg, Larix: Service <b>Custom</b></span></summary>
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
       <label class="fld">Stream URL <span class="muted small">— server + key in one, for encoders with a single URL box</span><span class="copyrow"><input class="input" id="gl-full" type="password" readonly value="${enc(fullIngest)}"><button class="btn btn-ghost small" data-copy="gl-full">Copy</button></span></label>
+      </details>
       ${watchUrl?`<label class="fld">Watch link <span class="muted small">— share this; it opens the player</span><span class="copyrow"><input class="input" id="gl-watch" readonly value="${enc(watchUrl)}"><button class="btn btn-ghost small" data-copy="gl-watch">Copy</button></span></label>`:''}
       <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span></label>
       <img id="gl-img-prev" class="gl-img-prev hidden" alt="">
@@ -967,9 +989,11 @@ window.PCStreamsFactory = function(dep){
       const src=()=>{ const r=$('input[name="gl-src"]:checked',root); return r?r.value:''; };
       const facing=()=>{ const r=$('input[name="gl-facing"]:checked',root); return r?r.value:''; };
       const hasSrc=()=>!!$('input[name="gl-src"]',root);
+      { const gp=$('#gl-pbs',root); if(gp) gp.onclick=()=>{ closeModal(); switchView('pbs'); }; }
       const sync=()=>{
         const s=src(), fw=$('#gl-facing',root);
         if(fw) fw.classList.toggle('hidden', s!=='cam');
+        { const ex=$('#gl-ext',root); if(ex && s==='obs') ex.open=true; }   // OBS picked: show what OBS needs
         // No radios at all = a browser that can't capture (no WHIP/getUserMedia), so OBS is the ONLY
         // route and the button must stay live — gating on an unrendered choice locked those users out
         // of announcing entirely.
@@ -1430,6 +1454,48 @@ window.PCStreamsFactory = function(dep){
     if(status===401 || status===400) return 'the stream server refused your stream key — try again; if it keeps happening, tell an admin.';
     return 'the stream server refused the connection (error '+status+').';
   }
+  /* THE ONE WHIP PUBLISH. The phone camera, the browser screen share and PBS (pbs.js) all go live through this:
+   * one PeerConnection, H.264 first (MediaMTX can only remux H.264 to HLS -- and H.264 is the codec every GPU
+   * encodes in hardware: VAAPI, NVENC, VideoToolbox, MediaCodec), a non-trickle offer, and the upload capped on the
+   * sender with setParameters so what leaves the machine is already the size the node's clamp would cut it to
+   * (stream_clamp_bitrate, default 1500k at 720p30 -- the clamp then has nothing to re-encode).
+   * `enc` = { maxBitrate (bps), maxFramerate, scaleResolutionDownBy }; defaults are the phone path's.
+   * Answers { pc, session } -- `session` is the server's WHIP resource (Location), DELETEd at Stop. Throws an
+   * Error whose message says WHY (_whipRefusal), having closed whatever it opened. */
+  async function _whipConnect(info, local, enc){
+    enc = enc || {};
+    let pc=null;
+    try{
+      let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
+      pc=new RTCPeerConnection({iceServers:ice, iceCandidatePoolSize:1});
+      local.getTracks().forEach(t=>pc.addTrack(t,local));
+      // AWAITED: calls.js is loaded on demand, and an un-awaited preference landed after createOffer.
+      try{ await _preferH264(pc); }catch(_){}
+      const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+      await _iceGatherComplete(pc);
+      try{ await ensureAiSession(); }catch(_){}
+      const r=await fetch(info.whip_url, { method:'POST',
+        headers:Object.assign({'Content-Type':'application/sdp'}, S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}),
+        body:pc.localDescription.sdp });
+      if(!r.ok) throw new Error(_whipRefusal(r.status));
+      let session='';
+      try{ const loc=r.headers.get('Location')||''; if(loc) session=new URL(loc, info.whip_url).href; }catch(_){}
+      await pc.setRemoteDescription({type:'answer', sdp:await r.text()});
+      try{ const vs=pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+        if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
+          pr.encodings[0].maxBitrate=enc.maxBitrate||1500000; pr.encodings[0].maxFramerate=enc.maxFramerate||30;
+          if(enc.scaleResolutionDownBy) pr.encodings[0].scaleResolutionDownBy=enc.scaleResolutionDownBy;
+          await vs.setParameters(pr); } }catch(_){}
+      return { pc, session };
+    }catch(e){ try{ pc && pc.close(); }catch(_){} throw e; }
+  }
+  /* WHIP DELETE of a publish session: the media server stops the path NOW rather than when it notices the
+   * PeerConnection is gone. Best-effort and keepalive (Stop may be the last thing a closing tab does). */
+  function _whipEnd(session){
+    if(!session) return;
+    try{ fetch(session, { method:'DELETE', keepalive:true,
+      headers:S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{} }).catch(()=>{}); }catch(_){}
+  }
   // Go live straight from the phone/browser camera via WHIP (WebRTC ingest to the built-in MediaMTX).
   async function _phoneGoLive(info, title, doAnnounce, cover, opts){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
@@ -1469,30 +1535,11 @@ window.PCStreamsFactory = function(dep){
         : _mediaErrMsg(e));
       _goingLive=false; return; }
     toast('connecting…');
-    try{
-      let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
-      pc=new RTCPeerConnection({iceServers:ice, iceCandidatePoolSize:1});
-      local.getTracks().forEach(t=>pc.addTrack(t,local));
-      // Prefer H264 for the video: MediaMTX can only remux H264/H265/AV1 to HLS, so a VP8 stream is
-      // unwatchable (no playlist). The server also enforces this by munging the offer, but setting it here
-      // means the phone hardware-encodes H264 from the start. Best-effort — unsupported browsers just skip it.
-      _preferH264(pc);   // shared with calls — one implementation, so the two cannot drift apart
-      const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
-      await _iceGatherComplete(pc);
-      try{ await ensureAiSession(); }catch(_){}
-      const r=await fetch(info.whip_url, { method:'POST',
-        headers:Object.assign({'Content-Type':'application/sdp'}, S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}),
-        body:pc.localDescription.sdp });
-      if(!r.ok) throw new Error(_whipRefusal(r.status));
-      await pc.setRemoteDescription({type:'answer', sdp:await r.text()});
-      // Bandwidth saving: the browser already hardware-encodes; cap the upload bitrate/framerate so a
-      // phone on mobile data doesn't blast a huge stream (and viewers get a lighter feed).
-      try{ const vs=pc.getSenders().find(s=>s.track&&s.track.kind==='video');
-        if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
-          pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
-    }catch(e){
+    let whip=null;
+    try{ whip=await _whipConnect(info, local); pc=whip.pc; }
+    catch(e){
       console.error('go-live: media connection failed', e);
-      try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false;
+      try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false;
       const why=(e&&e.message)||'media connection failed';
       toast('couldn’t go live — '+why);
       return;
@@ -1500,7 +1547,7 @@ window.PCStreamsFactory = function(dep){
     let devId=null; try{ const s=local.getVideoTracks()[0].getSettings(); devId=s.deviceId||null; if(s.facingMode) facing=s.facingMode; }catch(_){}
     // `info` is kept so a later switch to the native screen share can build its RTMP target from the same
     // ingest (same token ⇒ same kind-30311, so viewers never have to re-open the stream).
-    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:wantScreen?'screen':'camera', info };
+    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:wantScreen?'screen':'camera', info, whipSession:whip.session };
     // The browser's own "Stop sharing" bar ends the display track directly. Same fallback the mid-stream
     // swap installs: drop back to the camera so the broadcast survives, and end it if there's no camera.
     if(wantScreen){ try{ local.getVideoTracks()[0].onended=()=>_onScreenShareEnded(_phoneStream); }catch(_){} }
@@ -1516,6 +1563,63 @@ window.PCStreamsFactory = function(dep){
                      : (isDesktop() ? '🔴 you’re live from your webcam' : '🔴 you’re live from your phone'));
     _afterGoLive(_ev, true);
   }
+  /* ---------- PBS (pbs.js): ONE BUTTON TO NOSTR ----------
+   * PBS hands over the composited MediaStream and the stream's words; everything else is this module's existing
+   * machinery, unchanged: the instance's own ingest (the account's token, its WHIP url and HLS url -- nothing to
+   * copy), the shared WHIP publish, the 30311 `live` (+ the parked `ended` sentinel, the viewer count, the
+   * optional announcement post), and _endLive for Stop. It answers instead of toasting, because PBS shows the
+   * reason in its own status bar: {ok:false, why} names what failed and NOTHING has been published on any of
+   * those paths. */
+  async function _studioIngest(){
+    if(S.GUEST) throw new Error('sign in to go live');
+    if(BUNDLED && !_instanceBase()) throw new Error('streaming needs a PosterChan instance');
+    let info=null;
+    try{ await ensureAiSession(); }catch(_){}
+    try{ info=await _fetchTimeout('/api/streams/ingest',{headers:S._aiToken?{'Authorization':'Bearer '+S._aiToken}:{}}, 20000).then(r=>r.json()); }
+    catch(_){ throw new Error('couldn’t reach your instance — check your connection and try again'); }
+    if(info && info.error==='no_permission') throw Object.assign(new Error(info.message||'live streaming isn’t enabled for your account yet — ask an admin'), { code:'no_permission' });
+    if(info && info.error) throw new Error(String(info.error));
+    if(!info || info.enabled===false || !info.token) throw new Error((info && info.message) || 'streaming isn’t enabled on this instance');
+    if(!info.whip_url) throw new Error('this instance has no WebRTC ingest — update the server');
+    if(info.server_up===false) throw new Error('the stream server isn’t answering — it may be restarting. Try again in a minute.');
+    return info;
+  }
+  async function _studioGoLive(local, meta){
+    meta=meta||{};
+    if(_liveStream || _phoneStream || _goingLive) return { ok:false, why:'you’re already live' };
+    _goingLive=true;
+    let info=null, whip=null;
+    try{
+      info=await _studioIngest();
+      whip=await _whipConnect(info, local, meta.encoding);
+    }catch(e){ _goingLive=false; return { ok:false, why:(e&&e.message)||'couldn’t go live', code:e&&e.code }; }
+    info.d=info.token+'-'+Math.floor(Date.now()/1000);
+    info.details=meta.details||{}; info.post=meta.post||'';
+    const pc=whip.pc;
+    _phoneStream={ pc, local, token:info.token, facing:'user', source:'studio', studio:true, info, whipSession:whip.session };
+    pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')){
+      try{ meta.onDropped && meta.onDropped(); }catch(_){} _endLive(); } };
+    _goingLive=false;
+    const title=(meta.title||'').trim()||'Live stream';
+    // The thumbnail may be a function (PBS snapshots its preview and uploads it): asked only NOW, once the media
+    // server took the publish, so a go-live that failed never uploaded anything either.
+    let image='';
+    try{ image = typeof meta.image==='function' ? String(await meta.image()||'') : String(meta.image||''); }catch(_){ image=''; }
+    let ev=null, announced=true;
+    try{ ev=await _publishLive(info, title, image); }catch(_){ announced=false; }
+    if(meta.announce && announced){ try{ await _announceStreamPost(info, title); }catch(_){} }
+    _startViewerPoll();
+    return { ok:true, pc, ev, announced, d:info.d, hls:info.hls_url,
+             addr:`30311:${S.ME.pubkey}:${info.d}`, relays:[...STREAM_RELAYS] };
+  }
+  function _studioState(){
+    const ps=_phoneStream, ls=_liveStream;
+    return { live:!!(ps && ps.studio), otherLive:!!((ps && !ps.studio) || (ls && !ps)), pc:ps&&ps.pc||null,
+             d:ls&&ls.d||'', starts:ls&&ls.starts||'', title:ls&&ls.title||'',
+             addr:(ls && S.ME) ? `30311:${S.ME.pubkey}:${ls.d||ls.token}` : '' };
+  }
+  async function _studioStop(){ if(_phoneStream && _phoneStream.studio) await _endLive(); }
+  async function _studioExternal(){ return _studioIngest(); }
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
@@ -1636,6 +1740,7 @@ window.PCStreamsFactory = function(dep){
       // Two places show YOUR headcount: the phone broadcast overlay, and the Streams bar — which is the
       // only one a desktop/OBS broadcaster ever sees (there's no overlay on that path).
       { const el=document.getElementById('pl-viewers'); if(el) el.textContent='👁 '+n; }
+      { const pv=document.getElementById('pbs-viewers'); if(pv){ pv.textContent=String(n); pv.dataset.n=String(n); } }
       { const sv=document.getElementById('stream-viewers'); if(sv) sv.textContent=`👁 ${n} watching`; }
       // The stream DETAIL view's av-by count (#st-viewers) is rendered ONCE from the cached event's
       // current_participants and never refreshes — so the streamer saw a stale "0 watching" even as the
@@ -2007,6 +2112,7 @@ window.PCStreamsFactory = function(dep){
     // the very stream we're moving.
     try{ if(ps.pc) ps.pc.onconnectionstatechange=null; }catch(_){}
     try{ ps.pc && ps.pc.close(); }catch(_){}
+    _whipEnd(ps.whipSession); ps.whipSession='';
     try{ ps.local && ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
     ps.pc=null; ps.local=null;
     const v=$('#pl-vid'); if(v) v.srcObject=null;
@@ -2057,6 +2163,7 @@ window.PCStreamsFactory = function(dep){
     if(ps.native){ const SS=_screenPlugin(); try{ SS && SS.stop(); }catch(_){} _dropNativeScreen(); }
     try{ if(ps.pc) ps.pc.onconnectionstatechange=null; }catch(_){}
     try{ ps.pc && ps.pc.close(); }catch(_){}
+    _whipEnd(ps.whipSession);
     try{ ps.local && ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
     const ov=document.getElementById('phone-live'); if(ov) ov.remove();
   }
@@ -2386,6 +2493,7 @@ window.PCStreamsFactory = function(dep){
   }
   return {
     _closeStreamChat, _forgetDeletedStream, _goLive, _pickBlossomImage, _reconcileNativeScreen, _stopStreamsReads,
+    _streamChat, _studioGoLive, _studioState, _studioStop, _studioExternal,
     _sweepStaleOwnLive, _sweepUnstampedReplays, cleanupInlineStream, closeMini, openStream,
     renderStreams,
   };
