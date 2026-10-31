@@ -2407,6 +2407,14 @@ class Editor:
             if name == 'readonly':
                 self.info.readonly = prefix != 'no'
                 continue
+            if name == 'theme':
+                if op:
+                    if not apply_theme(val):
+                        self.say('E: no theme %r -- themes: %s' % (val, ', '.join(sorted(THEMES))), True)
+                        return
+                else:
+                    self.say('theme=%s   (themes: %s)' % (next(k for k, v in THEMES.items() if v is THEME), ', '.join(sorted(THEMES))))
+                continue
             if name not in self.opts:
                 self.say('E518: Unknown option: %s' % name, True)
                 return
@@ -2444,7 +2452,8 @@ HELP = r'''
   LINES        :%s/old/new/g  :5,10d  :sort  :g/pat/d  :m  :t  :{n}  :set nu ts=4 sw=4 et
   CLIPBOARD    "+y  "+p   (Wayland: wl-copy / wl-paste)
 
-  Settings live in ~/.pvimrc — one command per line, e.g.   set ts=4 sw=4 et
+  THEMES       :set theme=electric   :set theme=ptop      (or PVIM_THEME=ptop in the environment)
+  Settings live in ~/.pvimrc — one command per line, e.g.   set ts=4 sw=4 et theme=ptop
 '''
 
 
@@ -2453,7 +2462,65 @@ HELP = r'''
 # yellow anywhere (owner, 2026-10-30: not the flag colours, and "yellow and pink ... looks terrible"). PosterChan on the
 # start screen: the app icon's art from the hood to the waist, rimmed cyan -> green, built by
 # `scripts/make_ptop_logo.py 36 00f0ff,39ff14` ("......" is transparent).
-CYAN, GREEN, BLUE, TEAL = (0, 240, 255), (57, 255, 20), (40, 110, 255), (40, 120, 130)
+# THEMES. Every colour pvim draws comes from here: `:set theme=<name>` switches live, PVIM_THEME sets the default.
+#   a/b/c   the three neon colours (primary, secondary, accent)     dim   frames' quiet parts, separators
+#   grad    the wordmark/meter gradient                              rim   PosterChan's outline on the start screen
+#   p256    syntax and UI groups as xterm-256 (fg, bg) -- what curses draws text in
+THEMES = {
+    # Electric blue: deep electric blue to violet, icy white for what matters (owner's pick, 2026-10-30)
+    'electric': {
+        'a': (70, 140, 255), 'b': (160, 90, 255), 'c': (200, 225, 255), 'dim': (70, 90, 160),
+        'grad': ((70, 140, 255), (115, 115, 255), (160, 90, 255)), 'rim': ((70, 140, 255), (160, 90, 255)),
+        'editor': (70, 140, 255), 'file': (160, 90, 255), 'outline': (120, 190, 255),
+        'info': ((70, 140, 255), (200, 225, 255), (160, 90, 255), (120, 190, 255), (70, 90, 160)),
+        'num_near': (210, 230, 255), 'num_far': (35, 45, 105), 'tilde': ((45, 65, 150), (85, 55, 160)),
+        'mm_off': (45, 55, 120), 'out_text': (175, 185, 230), 'meter_off': (35, 40, 85), 'here': (200, 225, 255),
+        'modes': {'NORMAL': (70, 140, 255), 'INSERT': (160, 90, 255), 'VISUAL': (110, 70, 220), 'V-LINE': (110, 70, 220),
+                  'REPLACE': (215, 40, 60), 'COMMAND': (220, 230, 255)},
+        'cursor': ('#468cff', '#a05aff'),
+        'p256': {'text': (255, None), 'num': (61, None), 'numcur': (153, None), 'comment': (60, None),
+                 'string': (153, None), 'number': (111, None), 'keyword': (135, None), 'func': (75, None),
+                 'add': (75, None), 'del': (196, None), 'tilde': (61, None), 'special': (61, None),
+                 'status': (75, 233), 'statusdim': (60, 233), 'visual': (231, 55), 'search': (16, 117),
+                 'err': (196, None), 'msg': (75, None), 'logo1': (75, None), 'logo2': (135, None),
+                 'mode_NORMAL': (16, 33), 'mode_INSERT': (231, 99), 'mode_REPLACE': (231, 160),
+                 'mode_VISUAL': (231, 56), 'mode_V-LINE': (231, 56), 'mode_COMMAND': (16, 189), 'cursorline': (255, 235)},
+    },
+    # ptop's own palette, so the two read as one family
+    'ptop': {
+        'a': (0, 240, 255), 'b': (255, 43, 214), 'c': (249, 248, 113), 'dim': (96, 104, 140),
+        'grad': ((0, 240, 255), (155, 92, 255), (255, 43, 214)), 'rim': ((0, 240, 255), (255, 43, 214)),
+        'editor': (0, 240, 255), 'file': (249, 248, 113), 'outline': (255, 43, 214),
+        'info': ((0, 240, 255), (57, 255, 136), (249, 248, 113), (155, 92, 255), (96, 104, 140)),
+        'num_near': (0, 240, 255), 'num_far': (55, 45, 100), 'tilde': ((80, 60, 140), (140, 40, 120)),
+        'mm_off': (90, 60, 120), 'out_text': (214, 222, 255), 'meter_off': (50, 40, 80), 'here': (57, 255, 136),
+        'modes': {'NORMAL': (0, 240, 255), 'INSERT': (255, 43, 214), 'VISUAL': (155, 92, 255), 'V-LINE': (155, 92, 255),
+                  'REPLACE': (255, 59, 92), 'COMMAND': (57, 255, 136)},
+        'cursor': ('#00f0ff', '#ff2bd6'),
+        'p256': {'text': (255, None), 'num': (60, None), 'numcur': (51, None), 'comment': (61, None),
+                 'string': (228, None), 'number': (85, None), 'keyword': (201, None), 'func': (51, None),
+                 'add': (85, None), 'del': (203, None), 'tilde': (97, None), 'special': (97, None),
+                 'status': (51, 233), 'statusdim': (60, 233), 'visual': (231, 55), 'search': (16, 201),
+                 'err': (203, None), 'msg': (51, None), 'logo1': (51, None), 'logo2': (201, None),
+                 'mode_NORMAL': (16, 51), 'mode_INSERT': (16, 201), 'mode_REPLACE': (231, 197),
+                 'mode_VISUAL': (231, 99), 'mode_V-LINE': (231, 99), 'mode_COMMAND': (16, 85), 'cursorline': (255, 235)},
+    },
+}
+THEME = THEMES['electric']
+CYAN = GREEN = BLUE = TEAL = (0, 0, 0)
+
+
+def apply_theme(name):
+    """Make `name` the colours every draw reads. Unknown names keep the current theme and answer False."""
+    global THEME, CYAN, GREEN, BLUE, TEAL
+    if name not in THEMES:
+        return False
+    THEME = THEMES[name]
+    CYAN, GREEN, BLUE, TEAL = THEME['a'], THEME['b'], THEME['c'], THEME['dim']
+    return True
+
+
+apply_theme(os.environ.get('PVIM_THEME', 'electric') if os.environ.get('PVIM_THEME') in THEMES else 'electric')
 LOGO = (
     "......................................................................................................................................................................................................................................................00f0ff00f0ff..................................................................",
     "..........................................................................................................................................................................................................................................02f0f902f0f91c1d2214151802f0f9............................................................",
@@ -2510,8 +2577,11 @@ def lerp(a, b, t):
 
 
 def neon(t):
-    """0 -> electric cyan, 1 -> acid green: the gradient everything flashy is drawn in."""
-    return lerp(CYAN, GREEN, t)
+    """0 -> 1 along the theme's gradient (its stops evenly spaced): what everything flashy is drawn in."""
+    stops = THEME['grad']
+    t = max(0.0, min(1.0, t)) * (len(stops) - 1)
+    i = min(int(t), len(stops) - 2)
+    return lerp(stops[i], stops[i + 1], t - i)
 
 
 def xterm256(r, g, b):
@@ -2574,17 +2644,29 @@ def human(n):
         n /= 1024.0
 
 
+_BUILT_RIM = ((0, 240, 255), (57, 255, 20))      # what `make_ptop_logo.py 36 00f0ff,39ff14` drew the rim in
+
+
 def logo_cells(logo=LOGO):
-    """The half-block art: rows of (char, fg rgb or None, bg rgb or None), two pixel rows per terminal row."""
-    def px(row, x):
+    """The half-block art: rows of (char, fg rgb or None, bg rgb or None), two pixel rows per terminal row, its neon
+    rim recoloured to the theme's (a rim pixel is the one that equals the built rim's colour for its row)."""
+    H = max(1, len(logo) - 1)
+
+    def px(row, x, y=0):
         v = row[x:x + 6]
-        return None if v == '......' else tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+        if v == '......':
+            return None
+        c = tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+        built = lerp(_BUILT_RIM[0], _BUILT_RIM[1], y / H)
+        if all(abs(a - b) <= 3 for a, b in zip(c, built)):
+            return lerp(THEME['rim'][0], THEME['rim'][1], y / H)
+        return c
     out = []
     for y in range(0, len(logo), 2):
         top, bot = logo[y], logo[y + 1] if y + 1 < len(logo) else '.' * len(logo[y])
         row = []
         for x in range(0, len(top), 6):
-            t, b = px(top, x), px(bot, x)
+            t, b = px(top, x, y), px(bot, x, y + 1)
             row.append(('▀', t, b) if t and b else ('▀', t, None) if t else ('▄', b, None) if b else (' ', None, None))
         out.append(row)
     return out
@@ -2614,60 +2696,53 @@ class Screen:
         self._pairs = {}
         self._next_pair = 1
         self.t0 = time.monotonic()
-        if curses.has_colors():
-            curses.start_color()
-            try:
-                curses.use_default_colors()
-                bg = -1
-            except curses.error:
-                bg = curses.COLOR_BLACK
-            rich = curses.COLORS >= 256
-            def C(c256, c8):
-                return c256 if rich else c8
-            pal = {
-                'text': (C(255, curses.COLOR_WHITE), bg),
-                'num': (C(30, curses.COLOR_CYAN), bg),
-                'numcur': (C(51, curses.COLOR_CYAN), bg),
-                'comment': (C(66, curses.COLOR_WHITE), bg),
-                'string': (C(82, curses.COLOR_GREEN), bg),
-                'number': (C(49, curses.COLOR_GREEN), bg),
-                'keyword': (C(51, curses.COLOR_CYAN), bg),
-                'func': (C(39, curses.COLOR_BLUE), bg),
-                'add': (C(46, curses.COLOR_GREEN), bg),
-                'del': (C(196, curses.COLOR_RED), bg),
-                'tilde': (C(30, curses.COLOR_CYAN), bg),
-                'status': (C(51, curses.COLOR_CYAN), C(233, curses.COLOR_BLACK)),
-                'statusdim': (C(66, curses.COLOR_WHITE), C(233, curses.COLOR_BLACK)),
-                'mode_NORMAL': (C(16, curses.COLOR_BLACK), C(51, curses.COLOR_CYAN)),
-                'mode_INSERT': (C(16, curses.COLOR_BLACK), C(46, curses.COLOR_GREEN)),
-                'mode_REPLACE': (C(231, curses.COLOR_WHITE), C(160, curses.COLOR_RED)),
-                'mode_VISUAL': (C(231, curses.COLOR_WHITE), C(27, curses.COLOR_BLUE)),
-                'mode_V-LINE': (C(231, curses.COLOR_WHITE), C(27, curses.COLOR_BLUE)),
-                'mode_COMMAND': (C(16, curses.COLOR_BLACK), C(255, curses.COLOR_WHITE)),
-                'visual': (C(231, curses.COLOR_WHITE), C(24, curses.COLOR_BLUE)),
-                'search': (C(16, curses.COLOR_BLACK), C(46, curses.COLOR_GREEN)),
-                'err': (C(196, curses.COLOR_RED), bg),
-                'msg': (C(51, curses.COLOR_CYAN), bg),
-                'logo1': (C(51, curses.COLOR_CYAN), bg),
-                'logo2': (C(46, curses.COLOR_GREEN), bg),
-                'cursorline': (C(255, curses.COLOR_WHITE), C(234, curses.COLOR_BLACK) if rich else bg),
-                'special': (C(30, curses.COLOR_CYAN), bg),
-            }
-            for i, (k, (fg, b)) in enumerate(pal.items(), start=1):
-                try:
-                    curses.init_pair(i, fg, b)
-                    self.colors[k] = curses.color_pair(i)
-                except curses.error:
-                    self.colors[k] = 0
-            self.rich = rich and curses.COLOR_PAIRS > 512
-            self._next_pair = len(pal) + 1
-            if self.rich:
-                # the current line: every text colour again on a raised background
-                for k in ('text', 'comment', 'string', 'number', 'keyword', 'func', 'add', 'del', 'special'):
-                    self.colors['cl:' + k] = self.rgb_attr(None, None, fg256=pal[k][0], bg256=234)
+        self._theme = None
+        self.setup_colors()
         # bracketed paste: a pasted block arrives as one insert, not as typed keys (no autoindent staircase)
         sys.stdout.write('\x1b[?2004h')
         sys.stdout.flush()
+
+    _FALLBACK8 = {
+        'text': ('WHITE', None), 'num': ('BLUE', None), 'numcur': ('CYAN', None), 'comment': ('WHITE', None),
+        'string': ('CYAN', None), 'number': ('BLUE', None), 'keyword': ('MAGENTA', None), 'func': ('CYAN', None),
+        'add': ('GREEN', None), 'del': ('RED', None), 'tilde': ('BLUE', None), 'special': ('BLUE', None),
+        'status': ('CYAN', 'BLACK'), 'statusdim': ('WHITE', 'BLACK'), 'visual': ('WHITE', 'BLUE'), 'search': ('BLACK', 'CYAN'),
+        'err': ('RED', None), 'msg': ('CYAN', None), 'logo1': ('CYAN', None), 'logo2': ('BLUE', None),
+        'mode_NORMAL': ('BLACK', 'CYAN'), 'mode_INSERT': ('BLACK', 'MAGENTA'), 'mode_REPLACE': ('WHITE', 'RED'),
+        'mode_VISUAL': ('WHITE', 'BLUE'), 'mode_V-LINE': ('WHITE', 'BLUE'), 'mode_COMMAND': ('BLACK', 'WHITE'),
+        'cursorline': ('WHITE', None),
+    }
+
+    def setup_colors(self):
+        """(Re)build every colour pair from the current THEME -- at start, and on `:set theme=`."""
+        self._theme = THEME
+        self.colors, self._pairs = {}, {}
+        if not curses.has_colors():
+            return
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+            bg = -1
+        except curses.error:
+            bg = curses.COLOR_BLACK
+        rich = curses.COLORS >= 256
+        n = 1
+        for k, (fg, b) in THEME['p256'].items():
+            f8, b8 = self._FALLBACK8[k]
+            f = fg if rich else getattr(curses, 'COLOR_' + f8)
+            bb = (b if b is not None else bg) if rich else (getattr(curses, 'COLOR_' + b8) if b8 else bg)
+            try:
+                curses.init_pair(n, f, bb)
+                self.colors[k] = curses.color_pair(n)
+            except curses.error:
+                self.colors[k] = 0
+            n += 1
+        self.rich = rich and curses.COLOR_PAIRS > 512
+        self._next_pair = n
+        if self.rich:
+            # the current line: every text colour again on a raised background
+            for k in ('text', 'comment', 'string', 'number', 'keyword', 'func', 'add', 'del', 'special'):
+                self.colors['cl:' + k] = self.rgb_attr(None, None, fg256=THEME['p256'][k][0], bg256=THEME['p256']['cursorline'][1])
 
     def close(self):
         sys.stdout.write('\x1b]112\x07' if self.rich else '')
@@ -2714,7 +2789,7 @@ class Screen:
             # line across her transparent cells stayed on screen for good (curses never knew it was there)
             for xx, (ch, _, _) in enumerate(scan):
                 if ch != ' ':
-                    out.append('\x1b[%d;%dH\x1b[1m%s▀\x1b[0m' % (y0 + len(rows) + 1, x0 + xx + 1, self._sgr(GREEN)))
+                    out.append('\x1b[%d;%dH\x1b[1m%s▀\x1b[0m' % (y0 + len(rows) + 1, x0 + xx + 1, self._sgr(THEME['b'])))
         out.append('\x1b[%d;%dH' % (cursor[0] + 1, cursor[1] + 1))
         sys.stdout.write(''.join(out))
         sys.stdout.flush()
@@ -2787,8 +2862,9 @@ class Screen:
             if ed.modified:
                 self.put(0, min(w - 12, x + 3 + len(name[-max(1, w - x - 16):]) + 1), '[+]', self.col(GREEN, 'add', curses.A_BOLD))
             self.put(0, w - len(clock) - 1, clock, self.col(CYAN, 'msg', curses.A_BOLD))
-            info = [(ed.ft or 'text', CYAN), ('%d lines' % len(ed.lines), GREEN), (human(st['bytes']), (249, 248, 113)),
-                    ('dos' if ed.info.crlf else 'unix', (155, 92, 255)), ('utf-8', TEAL)]
+            ic = THEME['info']
+            info = [(ed.ft or 'text', ic[0]), ('%d lines' % len(ed.lines), ic[1]), (human(st['bytes']), ic[2]),
+                    ('dos' if ed.info.crlf else 'unix', ic[3]), ('utf-8', ic[4])]
             xx = x
             for i, (txt, c) in enumerate(info):
                 if xx + len(txt) + 3 >= w:
@@ -2801,6 +2877,9 @@ class Screen:
 
     def draw(self):
         ed, scr = self.ed, self.scr
+        if self._theme is not THEME:
+            self.setup_colors()
+            scr.clearok(True)
         h, w = scr.getmaxyx()
         ed.rows, ed.cols = h, w
         # curses does not know about the raw portrait: when it goes away (or the window resizes) repaint everything
@@ -2834,7 +2913,7 @@ class Screen:
         if dash:
             self.draw_header(w)
             name = os.path.basename(ed.path) if ed.path else '[No Name]'
-            self.box(ey, ex, eh, ew, 'EDITOR // ' + name + (' [+]' if ed.modified else ''), CYAN, 'logo1')
+            self.box(ey, ex, eh, ew, 'EDITOR // ' + name + (' [+]' if ed.modified else ''), THEME['editor'], 'logo1')
             if side:
                 self.draw_side(2, ew, h - 4, w - ew)
         g = ed.gutter()
@@ -2861,7 +2940,7 @@ class Screen:
             r = ed.top + sy
             Y = Y0 + sy
             if r >= len(ed.lines):
-                self.put(Y, X0, '~', self.rgb_attr(lerp((0, 110, 120), (30, 120, 20), sy / max(1, rows - 1))) or self.attr('tilde'))
+                self.put(Y, X0, '~', self.rgb_attr(lerp(THEME['tilde'][0], THEME['tilde'][1], sy / max(1, rows - 1))) or self.attr('tilde'))
                 continue
             line = ed.lines[r]
             if g:
@@ -2872,14 +2951,14 @@ class Screen:
                 if self.rich:
                     # the numbers GLOW around the cursor: bright cyan on its line, fading through blue to deep teal
                     d = min(1.0, abs(r - ed.row) / 12)
-                    na = self.rgb_attr(lerp((60, 170, 255), (0, 70, 85), d), None, curses.A_BOLD if r == ed.row else 0)
+                    na = self.rgb_attr(lerp(THEME['num_near'], THEME['num_far'], d), None, curses.A_BOLD if r == ed.row else 0)
                     if r == ed.row:
-                        na = self.rgb_attr(CYAN, None, curses.A_BOLD)
+                        na = self.rgb_attr(THEME['num_near'], None, curses.A_BOLD)
                 else:
                     na = self.attr('numcur' if r == ed.row else 'num', curses.A_BOLD if r == ed.row else 0)
                 self.put(Y, X0, label.rjust(g - 1) + ' ', na)
                 if r == ed.row and self.rich:
-                    self.put(Y, X0, '▌', self.rgb_attr(CYAN, None, curses.A_BOLD))
+                    self.put(Y, X0, '▌', self.rgb_attr(THEME['a'], None, curses.A_BOLD))
             # per-char attributes; the current line is drawn on a raised background (not while selecting)
             n = len(line)
             cl = self.rich and r == ed.row and not vis and ed.mode != ed.CMDLINE
@@ -2925,7 +3004,7 @@ class Screen:
                 ind = display_cols(leading_ws(line), ts)[-1]
                 sw = max(1, ed.opts['shiftwidth'])
                 for gx in range(sw, ind, sw):
-                    self.put(Y, X0 + g + gx, '┊', A('special') if cl else self.rgb_attr((20, 70, 80)))
+                    self.put(Y, X0 + g + gx, '┊', A('special') if cl else self.rgb_attr(lerp(THEME['dim'], (0, 0, 0), .5)))
             x = 0
             left = ed.left
             for j, c in enumerate(line):
@@ -2979,7 +3058,7 @@ class Screen:
             pass
         out = '\x1b[%d q' % (5 if ed.mode in (ed.INSERT,) else 3 if ed.mode == ed.REPLACE else 2)
         if self.rich:   # the terminal cursor itself in neon: cyan, green while typing (OSC 12; reset on exit)
-            out += '\x1b]12;%s\x07' % ('#39ff14' if ed.mode in (ed.INSERT, ed.REPLACE) else '#00f0ff')
+            out += '\x1b]12;%s\x07' % THEME['cursor'][1 if ed.mode in (ed.INSERT, ed.REPLACE) else 0]
         sys.stdout.write(out)
         sys.stdout.flush()
         scr.refresh()
@@ -3000,31 +3079,31 @@ class Screen:
             ch = ' ' if dens == 0 else '░' if dens < .25 else '▒' if dens < .6 else '▓'
             seen = not (b <= ed.top or a >= ed.top + rows)
             if seen:
-                self.put(y0 + i, x, ch if ch != ' ' else '▏', self.col(CYAN, 'logo1', curses.A_BOLD))
+                self.put(y0 + i, x, ch if ch != ' ' else '▏', self.col(THEME['here'], 'logo1', curses.A_BOLD))
             elif ch != ' ':
-                self.put(y0 + i, x, ch, self.col((30, 110, 60), 'num'))
+                self.put(y0 + i, x, ch, self.col(THEME['mm_off'], 'num'))
 
     def draw_side(self, y, x, hgt, wid):
         """FILE (yellow) above OUTLINE (violet), ptop-style."""
         ed = self.ed
         st = self.file_stats()
         fh = min(10, hgt // 2)
-        Y = (249, 248, 113)
+        Y = THEME['file']
         self.box(y, x, fh, wid, 'FILE', Y, 'string')
         rows = [('path', os.path.dirname(os.path.abspath(ed.path)) if ed.path else '-'),
                 ('type', ed.ft or 'text'), ('lines', str(len(ed.lines))), ('words', str(st['words'])),
                 ('size', human(st['bytes'])), ('ending', 'dos' if ed.info.crlf else 'unix'),
                 ('state', ('modified' if ed.modified else 'saved') + (' · read-only' if ed.info.readonly else ''))]
         for i, (k, v) in enumerate(rows[:fh - 2]):
-            self.put(y + 1 + i, x + 2, k.ljust(7), self.col((150, 150, 90), 'num'))
+            self.put(y + 1 + i, x + 2, k.ljust(7), self.col(lerp(Y, (60, 60, 70), .45), 'num'))
             vv = v if len(v) <= wid - 12 else '…' + v[-(wid - 13):]
-            self.put(y + 1 + i, x + 9, vv, self.col((235, 235, 210), 'text', curses.A_BOLD if k == 'state' and ed.modified else 0))
+            self.put(y + 1 + i, x + 9, vv, self.col(lerp(Y, (255, 255, 255), .7), 'text', curses.A_BOLD if k == 'state' and ed.modified else 0))
         oy, oh = y + fh, hgt - fh
-        V = (155, 92, 255)
+        V = THEME['outline']
         self.box(oy, x, oh, wid, 'OUTLINE', V, 'special')
         items = st['outline']
         if not items:
-            self.put(oy + 1, x + 2, '(nothing to list)', self.col((110, 90, 160), 'num'))
+            self.put(oy + 1, x + 2, '(nothing to list)', self.col(lerp(V, (40, 40, 50), .5), 'num'))
             return
         cur = max([i for i, (ln, _) in enumerate(items) if ln <= ed.row] or [0])
         first = max(0, min(cur - (oh - 2) // 2, len(items) - (oh - 2)))
@@ -3032,8 +3111,8 @@ class Screen:
             here = first + k == cur
             txt = ('» ' if here else '  ') + label
             self.put(oy + 1 + k, x + 1, txt[:wid - 8].ljust(wid - 8),
-                     self.col(GREEN if here else (190, 170, 240), 'add' if here else 'text', curses.A_BOLD if here else 0))
-            self.put(oy + 1 + k, x + wid - 7, str(ln + 1).rjust(5), self.col((110, 90, 160), 'num'))
+                     self.col(THEME['here'] if here else THEME['out_text'], 'add' if here else 'text', curses.A_BOLD if here else 0))
+            self.put(oy + 1 + k, x + wid - 7, str(ln + 1).rjust(5), self.col(lerp(V, (40, 40, 50), .5), 'num'))
 
     def draw_intro(self, h, w):
         hints = [(':help', 'every key on one page'), (':e file', 'open a file'), ('i', 'start typing'),
@@ -3112,8 +3191,7 @@ class Screen:
         self.put(y, 0, badge, self.attr('mode_' + mode, curses.A_BOLD))
         if self.rich:
             # the badge bleeds out into the bar, HUD-style: ▓▒░ in the badge's own colour
-            fg = {'NORMAL': CYAN, 'INSERT': (0, 255, 0), 'VISUAL': BLUE, 'V-LINE': BLUE, 'REPLACE': (215, 0, 0),
-                  'COMMAND': (238, 238, 238)}.get(mode, CYAN)
+            fg = THEME['modes'].get(mode, THEME['a'])
             self.put(y, len(badge), '▓▒░', self.rgb_attr(fg, None, 0, bg256=233))
             badge += '   '
         name = ed.path or '[No Name]'
@@ -3145,7 +3223,7 @@ class Screen:
             self.put(y, bx, '░▒▓', self.rgb_attr(TEAL, None, 0, bg256=233))
             for j in range(n):
                 on = j < max(1, round(frac * n))
-                self.put(y, bx + 3 + j, '█' if on else '░', self.rgb_attr(neon(j / (n - 1)) if on else (30, 60, 70), None, 0, bg256=233))
+                self.put(y, bx + 3 + j, '█' if on else '░', self.rgb_attr(neon(j / (n - 1)) if on else THEME['meter_off'], None, 0, bg256=233))
         # command / message line
         if ed.mode == ed.CMDLINE:
             self.put(h - 1, 0, ed.cmd_kind + ed.cmdline, self.attr('text'))
