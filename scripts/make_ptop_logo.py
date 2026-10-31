@@ -22,7 +22,7 @@ def _icon_maker():
     return mod
 
 
-def build(height=HEIGHT):
+def build(height=HEIGHT, rim=(CYAN, MAGENTA)):
     maker = _icon_maker()
     im = maker.cutout(Image.open(maker.SOURCE))
     x0, y0, x1, y1 = im.getchannel("A").getbbox()
@@ -43,7 +43,7 @@ def build(height=HEIGHT):
             elif any(0 <= x + dx < W and 0 <= y + dy < H and solid[y + dy][x + dx]
                      for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
                 t = y / (H - 1)
-                row.append("%02x%02x%02x" % tuple(round(a + (b - a) * t) for a, b in zip(CYAN, MAGENTA)))
+                row.append("%02x%02x%02x" % tuple(round(a + (b - a) * t) for a, b in zip(rim[0], rim[1])))
             else:
                 row.append("......")
         rows.append("".join(row))
@@ -53,7 +53,12 @@ def build(height=HEIGHT):
 
 
 if __name__ == "__main__":
-    rows = build(int(sys.argv[1]) if len(sys.argv) > 1 else HEIGHT)
+    # usage: make_ptop_logo.py [HEIGHT] [RIMTOP,RIMBOTTOM as hex] -- pvim's start screen uses `36 fcee0a,ff3b3b`
+    rim = (CYAN, MAGENTA)
+    if len(sys.argv) > 2:
+        a, b = sys.argv[2].split(",")
+        rim = (tuple(int(a[i:i + 2], 16) for i in (0, 2, 4)), tuple(int(b[i:i + 2], 16) for i in (0, 2, 4)))
+    rows = build(int(sys.argv[1]) if len(sys.argv) > 1 else HEIGHT, rim)
     print("LOGO = (")
     for r in rows:
         print('    "%s",' % r)
