@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import logging
 import json
+import re
 import time
 from urllib.parse import urlparse
 
@@ -165,7 +166,9 @@ def refused(pk: str, why: str) -> None:
 DIAL_REPORT_EVERY = 600
 SHORT_TUNNEL_S = 15      # a tunnel closed this soon after its dial carried one read or one send, not a subscription
 _dials: dict[str, int] = {}
+_reused: dict[str, int] = {}          # tunnels that were handed a parked connection instead of dialling (park())
 _short: dict[str, int] = {}
+_short_by: dict[tuple, int] = {}
 _shapes: dict[tuple, int] = {}
 _dials_since = time.monotonic()
 
@@ -196,20 +199,30 @@ def _report() -> None:
     if time.monotonic() - _dials_since < DIAL_REPORT_EVERY:
         return
     mins = int((time.monotonic() - _dials_since) / 60)
-    top = sorted(_dials.items(), key=lambda x: -x[1])[:8]
+    hosts = {h: _dials.get(h, 0) for h in set(_dials) | set(_reused)}
+    top = sorted(hosts.items(), key=lambda x: -(x[1] + _reused.get(x[0], 0)))[:8]
     logger.info("[concord-tunnel] dialled in the last %d min: %s", mins,
-                ", ".join("%s %d (%d short)" % (k, v, _short.get(k, 0)) for k, v in top))
+                ", ".join("%s %d (%d short%s)" % (k, v, _short.get(k, 0),
+                                                 ", %d reused" % _reused[k] if _reused.get(k) else "") for k, v in top))
     shapes = sorted(_shapes.items(), key=lambda x: -x[1])[:8]
     if shapes:
         logger.info("[concord-tunnel] short tunnels by first frame: %s",
                     ", ".join("%s %s x%d" % (h, sh, n) for (h, sh), n in shapes))
+    # WHO ENDED THE SHORT ONES. On 2026-10-30 two thirds of jskitty's ~2,000 short tunnels per 10 min were LIVE
+    # subscriptions (REQ without a limit) and the far relay was measured holding exactly those open for 90 s -- so the
+    # short ones are ended by the member's client; this line says so from production instead of from a probe.
+    if _short_by:
+        logger.info("[concord-tunnel] short tunnels by who ended them: %s",
+                    ", ".join("%s by %s x%d" % (h, who, n) for (h, who), n in sorted(_short_by.items(), key=lambda x: -x[1])[:8]))
     longs = sorted(_long.items(), key=lambda x: -len(x[1]))[:8]
     if longs:
         logger.info("[concord-tunnel] long tunnels closed, by who ended them (median s): %s",
                     ", ".join("%s by %s %s x%d (%ds)" % (h, who, sh, len(v), sorted(v)[len(v) // 2])
                               for (h, who, sh), v in longs))
     _dials.clear()
+    _reused.clear()
     _short.clear()
+    _short_by.clear()
     _shapes.clear()
     _long.clear()
     _dials_since = time.monotonic()
@@ -252,6 +265,8 @@ def closed(url: str, first_frame: str, seconds: float, ended_by: str = "", clien
         _long.setdefault(k, []).append(seconds)
         return
     _short[h] = _short.get(h, 0) + 1
+    who = (h, ended_by or "?")
+    _short_by[who] = _short_by.get(who, 0) + 1
     key = (h, frame_shape(first_frame))
     _shapes[key] = _shapes.get(key, 0) + 1
 
@@ -355,30 +370,174 @@ def connect(url: str, proxy: str | None):
                            ping_interval=None)
 
 
-async def pipe(client, upstream, info: dict | None = None) -> None:
+# A CLIENT FRAME THAT OPENS OR ENDS A SUBSCRIPTION, and a relay frame that belongs to one -- by their subscription id only.
+_SUB_REPLY = re.compile(r'^\[\s*"(?:EVENT|EOSE|CLOSED)"\s*,\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _sub_verb(frame: str):
+    """("REQ"|"CLOSE", subscription id) for a client frame that opens or ends one, else None."""
+    head = frame[:12]
+    if '"REQ"' not in head and '"CLOSE"' not in head:
+        return None
+    try:
+        msg = json.loads(frame)
+        if isinstance(msg, list) and len(msg) >= 2 and msg[0] in ("REQ", "CLOSE"):
+            return msg[0], str(msg[1])
+    except Exception:
+        pass
+    return None
+
+
+async def pipe(client, upstream, info: dict | None = None, reused: bool = False) -> None:
     """Frames both ways, unchanged, until either side closes. `client` is a Starlette WebSocket.
-    `info` (a dict) receives `first` (the client's first frame) and `ended_by` ("relay"/"client") for `closed()`."""
+    `info` (a dict) receives `first` (the client's first frame) and `ended_by` ("relay"/"client") for `closed()`, and
+    `subs` (the subscriptions this client left open) and `auth` (the relay's last AUTH challenge) for park().
+
+    `reused`: `upstream` was parked by an earlier tunnel of the same member (take_parked). Its AUTH challenge is said to
+    this client first -- the relay said it once, at connect, to somebody else -- and a reply for a subscription THIS
+    client did not open (a late EVENT for one the last tunnel closed) is never delivered."""
+    if info is None:
+        info = {}
+    subs = info.setdefault("subs", set())
+
     async def down():
+        if reused and info.get("auth"):
+            await client.send_text(info["auth"])
         async for msg in upstream:
-            await client.send_text(msg if isinstance(msg, str) else msg.decode("utf-8", "replace"))
+            text = msg if isinstance(msg, str) else msg.decode("utf-8", "replace")
+            if text.startswith('["AUTH"'):
+                info["auth"] = text
+            elif reused:
+                m = _SUB_REPLY.match(text)
+                if m and m.group(1) not in subs:
+                    continue
+            await client.send_text(text)
 
     async def up():
         while True:
             data = await client.receive_text()
             if len(data) > MAX_FRAME:
                 return
-            if info is not None and "first" not in info:
+            if "first" not in info:
                 info["first"] = data
+            verb = _sub_verb(data)
+            if verb:
+                (subs.add if verb[0] == "REQ" else subs.discard)(verb[1])
             await upstream.send(data)
     tasks = [asyncio.ensure_future(down()), asyncio.ensure_future(up())]
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        if info is not None:
-            # Who ended it, for closed(): the far relay (its stream finished) or the member's client.
-            info["ended_by"] = "relay" if tasks[0].done() else "client"
+        # Who ended it, for closed(): the far relay (its stream finished) or the member's client.
+        info["ended_by"] = "relay" if tasks[0].done() else "client"
     finally:
         for t in tasks:
             t.cancel()
+        # Wait for both to stop: a socket handed on (park) must not have this tunnel still reading from it.
+        await asyncio.wait(tasks)
+
+
+# A FAR RELAY'S CONNECTION OUTLIVES THE TUNNEL THAT OPENED IT. Measured on poster.place 2026-10-30 (the day jskitty.com
+# began refusing this node's mirror -- "proxies, mirrors and aggregators are not permitted" -- so every member's client
+# reads it ITSELF, through this tunnel): 12,165 tunnels an hour to jskitty, 99.8% of them shorter than 15 s, sockets
+# living ~2.5 s. A client opens one websocket per read and per live subscription (relay.js queryFrom/subscribeFrom),
+# and one tunnel was one connection to the far relay, so every read was a new connection there -- the "churning
+# connections/websockets" jskitty blocked this node for once already. jskitty was measured holding those same
+# subscriptions open for 90 s: the CLIENT ends them. Installed apps (an APK, a desktop build) cannot be fixed from here,
+# so the fix is here: a tunnel its client ended leaves its far connection PARKED for PARK_FOR seconds, its
+# subscriptions CLOSEd, and the next tunnel of the SAME member to the SAME relay is handed it instead of dialling. A
+# different member never gets it (an AUTH done on it was that member's). The far relay sees one quiet connection
+# carrying REQ/CLOSE, which is what a normal client is.
+PARK_FOR = 60
+PARK_PER = 8          # parked connections per member per relay
+PARK_MAX = 512        # parked connections in all
+_parked: dict[tuple, list] = {}
+
+
+class _Parked:
+    __slots__ = ("cm", "ws", "auth", "task", "taken")
+
+    def __init__(self, cm, ws, auth):
+        self.cm, self.ws, self.auth, self.task, self.taken = cm, ws, auth or "", None, False
+
+
+def _is_open(ws) -> bool:
+    if ws is None or getattr(ws, "close_code", None) is not None:
+        return False
+    state = getattr(ws, "state", None)
+    return state is None or getattr(state, "name", "OPEN") == "OPEN"
+
+
+async def _close_quietly(cm) -> None:
+    try:
+        async with asyncio.timeout(5):
+            await cm.__aexit__(None, None, None)
+    except BaseException:
+        pass
+
+
+def _unpark(key, entry) -> None:
+    lst = _parked.get(key)
+    if lst and entry in lst:
+        lst.remove(entry)
+    if not lst:
+        _parked.pop(key, None)
+
+
+async def _hold(key, entry) -> None:
+    """A parked connection: read (and drop) whatever still arrives, remember a new AUTH challenge, and close it after
+    PARK_FOR or when the relay does. Cancelled by take_parked() when a tunnel takes it (`taken`): then nothing closes."""
+    try:
+        async with asyncio.timeout(PARK_FOR):
+            async for msg in entry.ws:
+                if isinstance(msg, str) and msg.startswith('["AUTH"'):
+                    entry.auth = msg
+    except BaseException:
+        if entry.taken:
+            raise
+    finally:
+        if not entry.taken:
+            _unpark(key, entry)
+            await _close_quietly(entry.cm)
+
+
+async def park(pk: str, url: str, cm, ws, info: dict) -> bool:
+    """Keep a tunnel's far connection for the member's next tunnel to `url`. False: the caller closes it."""
+    if cm is None or not _is_open(ws) or (info or {}).get("ended_by") != "client":
+        return False
+    key = (pk, url)
+    if len(_parked.get(key) or ()) >= PARK_PER or sum(len(v) for v in _parked.values()) >= PARK_MAX:
+        return False
+    try:
+        async with asyncio.timeout(2):
+            for sid in sorted(info.get("subs") or ()):
+                await ws.send(json.dumps(["CLOSE", sid]))
+    except BaseException:
+        return False
+    entry = _Parked(cm, ws, info.get("auth"))
+    _parked.setdefault(key, []).append(entry)
+    entry.task = asyncio.ensure_future(_hold(key, entry))
+    return True
+
+
+async def take_parked(pk: str, url: str):
+    """(context manager, socket, AUTH challenge) of a connection this member parked for `url`, or (None, None, '')."""
+    key = (pk, url)
+    while _parked.get(key):
+        entry = _parked[key][-1]
+        _unpark(key, entry)
+        if entry.task is not None and entry.task.get_loop() is not asyncio.get_running_loop():
+            continue                                 # parked by an event loop that is gone (tests): nothing to hand on
+        entry.taken = True
+        if entry.task is not None:
+            entry.task.cancel()
+            await asyncio.wait({entry.task})
+        if _is_open(entry.ws):
+            h = _host(url)
+            _reused[h] = _reused.get(h, 0) + 1
+            _report()
+            return entry.cm, entry.ws, entry.auth
+        await _close_quietly(entry.cm)
+    return None, None, ""
 
 
 def _known_to_answer(host: str) -> bool:

@@ -133,23 +133,37 @@ async def concord_relay(websocket: WebSocket):
         # this host a moment ago, when the answer is the same and nothing is dialled (concord_tunnel.unreachable).
         # concord_tunnel.open_upstream: one dial at a time to a host nothing reached lately (a burst of tunnels to a
         # dead relay walked the whole chain once EACH), and nothing at all inside a host's pause.
-        upstream_cm, upstream = await concord_tunnel.open_upstream(target)
+        # The member's own parked connection to this relay first (concord_tunnel.park: a tunnel used to be a new
+        # connection to the far relay, 12,165 an hour to jskitty.com on 2026-10-30); a dial only when there is none.
+        upstream_cm, upstream, challenge = await concord_tunnel.take_parked(pk, target)
+        reused = upstream is not None
+        if not reused:
+            upstream_cm, upstream = await concord_tunnel.open_upstream(target)
         if upstream is None:
-            await websocket.close(code=4502, reason="relay unreachable")
+            try:
+                await websocket.close(code=4502, reason="relay unreachable")
+            except Exception:
+                pass                                 # the member's client left while the relay was dialled
             return
-        info, began = {}, time.monotonic()
+        info, began = {"auth": challenge} if challenge else {}, time.monotonic()
         try:
-            await concord_tunnel.pipe(websocket, upstream, info)
+            await concord_tunnel.pipe(websocket, upstream, info, reused=reused)
         except Exception:
             pass
         finally:
             concord_tunnel.closed(target, info.get("first", ""), time.monotonic() - began, info.get("ended_by", ""),
                                   concord_tunnel.client_kind(websocket.headers.get("user-agent", ""),
                                                              websocket.headers.get("origin", "")))
+            kept = False
             try:
-                await upstream_cm.__aexit__(None, None, None)
+                kept = await concord_tunnel.park(pk, target, upstream_cm, upstream, info)
             except Exception:
-                pass
+                kept = False
+            if not kept:
+                try:
+                    await upstream_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
             try:
                 await websocket.close()
             except Exception:

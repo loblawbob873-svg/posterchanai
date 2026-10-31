@@ -28,6 +28,7 @@ def fixed_key(monkeypatch):
     monkeypatch.setattr(tun, "_strikes", {}, raising=False)
     monkeypatch.setattr(tun, "_reached", {}, raising=False)
     monkeypatch.setattr(tun, "_dialing", {}, raising=False)
+    monkeypatch.setattr(tun, "_parked", {}, raising=False)
     monkeypatch.setattr(tun, "tor_hops", lambda: list(TORS))
 
 
