@@ -116,7 +116,8 @@ def test_the_client_opens_a_profile_for_an_at_address():
     assert out["/@verita84"] == {"kind": "user", "q": "verita84"}
     assert out["/@verita84@poster.place"] == {"kind": "user", "q": "verita84@poster.place"}
     assert out["/client/@bob"] == {"kind": "user", "q": "bob"}
-    assert out["/@a/b"] is None and out["/admin"] is None
+    # two segments after @ is an ARTICLE's readable address now (tests/test_article_vanity_link.py), never a profile
+    assert out["/@a/b"] == {"kind": "article", "owner": "a", "d": "b"} and out["/admin"] is None
 
 
 def test_a_fediverse_view_profile_lands_on_the_readable_address():
