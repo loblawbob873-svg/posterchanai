@@ -1894,6 +1894,36 @@ async def profile_at_page(name: str, request: Request):
     return await _profile_page(name, request, "/@")
 
 
+@app.get("/@{name}/{article}", response_class=HTMLResponse)
+async def article_vanity_page(name: str, article: str, request: Request):
+    """`poster.place/@<name>/<title-slug>` -- the SHORT, READABLE address of a long-form article ("can we add vanity urls
+    for sharing nostr articles" / "entire point is for it to be short as possible, human readable"), e.g.
+    /@verita84/private-and-still-yours. `<name>` resolves as a repo owner or a profile does (an npub, a hex key, or a
+    NIP-05 name THIS node granted -- never a profile's own claim); the second part is the title's slug
+    (article_share.slug) or the article's `d` tag. Same card as the naddr form, with og:url this address. Anything
+    unreadable still serves the app, which routes the path itself."""
+    from app.routers.client import render_client_shell
+    meta = None
+    if name and len(name) <= 128 and article and len(article) <= 200 and "/" not in article:
+        try:
+            from app.services import article_share, git_share, settings_store
+            who = git_share.resolve_owner(name)
+            if who:
+                port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+                ref = await article_share.article_by_name(port, who, article)
+                card = await article_share.article_card(port, ref) if ref else None
+                if card:
+                    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+                    fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+                    base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/"))
+                    from urllib.parse import quote
+                    meta = article_share.og_meta(card, "%s/@%s/%s" % (base, quote(name, safe="@."), quote(article, safe="")),
+                                                 fallback_image=base + "/static/icon-512.png")
+        except Exception as e:
+            logging.getLogger(__name__).warning("[article] vanity preview failed for %r/%r: %s", name[:40], article[:40], e)
+    return await render_client_shell(request, None, meta=meta)
+
+
 @app.get("/{entity}", response_class=HTMLResponse)
 async def nostr_entity_page(entity: str, request: Request):
     """Serve the Nostr client for /<npub|nprofile|note|nevent|naddr>."""

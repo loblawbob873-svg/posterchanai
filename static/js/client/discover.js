@@ -18,7 +18,7 @@ window.PCDiscoverFactory = function(dep){
   const {
     $, $$, InstEmoji, NT, ZAP_ICON, _backOut, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
     _feedScrollable, _fmtBytes, _guestPrompt, _hidePill, _hold, _insertAt, _isDesktopApp,
-    _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
+    _articleLink, _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
@@ -144,8 +144,8 @@ window.PCDiscoverFactory = function(dep){
     $('#av-zap').onclick=()=>doZap(e.id, e.pubkey);
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
     { const dl=$('#av-del'); if(dl) dl.onclick=()=>deleteArticle(e); }
-    $('#av-copy').onclick=()=>{ let _lk=e.id, _m='id copied';
-      try{ _lk=_webLink(NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 })); _m='article link copied'; }catch(_){}
+    $('#av-copy').onclick=async()=>{ let _lk=e.id, _m='id copied';
+      try{ _lk=await _articleLink(e); _m='article link copied'; }catch(_){}
       copyValue(_lk, _m, 'Link to this article:'); };
     { const cb=$('#av-comment'); if(cb) cb.onclick=()=>{ if(S.GUEST){ _guestPrompt(); return; } compose({articleComment:e}); }; }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));

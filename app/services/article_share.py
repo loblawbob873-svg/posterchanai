@@ -130,6 +130,35 @@ async def article_card(port: int, ref: dict) -> dict | None:
     return card
 
 
+def slug(title: str, limit: int = 40) -> str:
+    """A title as the short, readable part of an article's link: the MAIN title (before a ':', '|' or dash -- a
+    subtitle only makes the link longer), lowercase ASCII words joined by '-', cut at a word boundary within `limit`. MUST match static/js/client/app.js `_articleSlug` character for character (the client mints
+    the link, this resolves it); tests/test_article_vanity_link.py runs both on the same titles."""
+    main = re.split(r"\s*[:|\u2014\u2013]\s*|\s+-\s+", title or "", maxsplit=1)[0]
+    words = re.findall(r"[a-z0-9]+", main.lower()) or re.findall(r"[a-z0-9]+", (title or "").lower())
+    out = ""
+    for w in words:
+        nxt = (out + "-" + w) if out else w
+        if len(nxt) > limit:
+            break
+        out = nxt
+    return out or (words[0][:limit] if words else "")
+
+
+async def article_by_name(port: int, pubkey: str, name: str) -> dict | None:
+    """`/@<who>/<name>` -> {"pubkey", "d"}: the article whose `d` IS `name`, else the newest whose title slug is."""
+    from app.services import nostr_store
+    evs = await nostr_store._ws_query(port, [{"authors": [pubkey], "kinds": [ARTICLE_KIND], "limit": 300}], timeout=4.0, strict=True)
+    evs = sorted((e for e in (evs or []) if e.get("pubkey") == pubkey), key=lambda e: e.get("created_at") or 0, reverse=True)
+    for e in evs:
+        if _tag(e, "d") == name:
+            return {"kind": ARTICLE_KIND, "pubkey": pubkey, "d": name}
+    for e in evs:
+        if slug(_tag(e, "title")) == name.lower():
+            return {"kind": ARTICLE_KIND, "pubkey": pubkey, "d": _tag(e, "d")}
+    return None
+
+
 def og_meta(card: dict, url: str, fallback_image: str = "") -> dict:
     """An article card -> the `meta` dict the client shell renders into <head> (escaped there)."""
     title = card.get("title") or "Article"

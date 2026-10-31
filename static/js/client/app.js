@@ -2335,6 +2335,50 @@
    * relative to whatever page the recipient happens to be on. `nostr:` is the address every client
    * understands; git's Share already does the same. */
   function _webLink(entity){ const o=_serverOrigin(); return o ? o + '/' + entity : 'nostr:' + entity; }
+  /* AN ARTICLE'S READABLE ADDRESS: <instance>/@<name>/<d>. The name is one THIS instance granted the author (asked of
+   * the server, which keeps the registry -- never the profile's own nip05 claim, which anyone can write); with none,
+   * the npub. No instance: the nostr: naddr, as _webLink does. */
+  const _grantedName = new Map();
+  async function _articleLink(ev){
+    const d = ((ev.tags||[]).find(t=>t[0]==='d')||[])[1] || '';
+    const naddr = NT().nip19.naddrEncode({ identifier:d, pubkey:ev.pubkey, kind:30023 });
+    const o = _serverOrigin(); if(!o || !d) return _webLink(naddr);
+    let name = _grantedName.get(ev.pubkey);
+    if(name === undefined){
+      name = '';
+      try{ const r = await fetch(o + '/client/admin-nip05?pubkey=' + encodeURIComponent(ev.pubkey)).then(r => r.json());
+           const host = new URL(o).host.toLowerCase();
+           const a = (r && r.ok && Array.isArray(r.addresses) ? r.addresses : []).map(String).find(x => x.toLowerCase().endsWith('@' + host));
+           if(a && /^[a-z0-9._-]{1,64}$/i.test(a.split('@')[0])) name = a.split('@')[0]; }catch(_){}
+      _grantedName.set(ev.pubkey, name);
+    }
+    // The TITLE's slug, unless another article of this author would answer to the same one -- then the d tag.
+    let tail = _articleSlug(((ev.tags||[]).find(t=>t[0]==='title')||[])[1] || '');
+    if(tail){
+      try{ const all = await Relay.query([{ kinds:[30023], authors:[ev.pubkey], limit:300 }]);
+           const clash = (all||[]).some(x => x.pubkey === ev.pubkey && ((x.tags||[]).find(t=>t[0]==='d')||[])[1] !== d
+                                        && _articleSlug(((x.tags||[]).find(t=>t[0]==='title')||[])[1] || '') === tail);
+           if(clash) tail = ''; }catch(_){ tail = ''; }
+    }
+    return o + '/@' + (name || NT().nip19.npubEncode(ev.pubkey)) + '/' + encodeURIComponent(tail || d);
+  }
+  /* MUST match app/services/article_share.py `slug` character for character (tests/test_article_vanity_link.py). */
+  function _articleSlug(title, limit=40){
+    const main = String(title||'').split(/\s*[:|\u2014\u2013]\s*|\s+-\s+/)[0];
+    const words = main.toLowerCase().match(/[a-z0-9]+/g) || String(title||'').toLowerCase().match(/[a-z0-9]+/g) || [];
+    let out = '';
+    for(const w of words){ const nxt = out ? out + '-' + w : w; if(nxt.length > limit) break; out = nxt; }
+    return out || (words[0] ? words[0].slice(0, limit) : '');
+  }
+  /* `/@<name>/<slug-or-d>` -> the article: its d tag, else the newest whose title slug matches (the server's rule). */
+  async function _openArticleByName(pk, name){
+    let evs = []; try{ evs = await Relay.query([{ kinds:[30023], authors:[pk], limit:300 }]); }catch(_){ evs = []; }
+    evs = (evs||[]).filter(x => x.pubkey === pk).sort((a, b) => (b.created_at||0) - (a.created_at||0));
+    const dOf = x => ((x.tags||[]).find(t=>t[0]==='d')||[])[1] || '';
+    const hit = evs.find(x => dOf(x) === name) || evs.find(x => _articleSlug(((x.tags||[]).find(t=>t[0]==='title')||[])[1] || '') === String(name).toLowerCase());
+    if(hit){ await openNaddr(pk, dOf(hit), 30023); return true; }
+    await openNaddr(pk, name, 30023); return true;      // not in reach yet: the reader's own fetch says what it finds
+  }
   /* `?e=<bech32>` — the same deep link, carried as a query instead of a path segment.
    * A bundled app (desktop Electron, the APK) has no router: its shell reads files off disk, so a
    * path segment after index.html is a 404 and nothing else. Anything that needs to point the app at
@@ -2354,6 +2398,8 @@
      * to). Resolved like /users/<name>; `@name@this.domain` is accepted, the domain dropped server-side
      * only when it IS this instance. */
     if(/^@[^@\s]+(@[^@\s]+)?$/.test(seg[0]) && seg.length === 1) return { kind:'user', q: seg[0].slice(1) };
+    /* `/@<name>/<article-id>` -- a long-form article's readable address (its `d` tag under its author). */
+    if(/^@[^@\s]+(@[^@\s]+)?$/.test(seg[0]) && seg.length === 2 && seg[1]) return { kind:'article', owner: seg[0].slice(1), d: seg[1] };
     /* `/r/<owner>/<repo-id>` — the READABLE address of a git repo, and the one people actually paste
      * to each other. The owner segment is whatever a human can type: an npub, a hex pubkey, or a
      * NIP-05 name this node granted (resolved server-side by the same rule). We only ever GENERATE
@@ -2558,6 +2604,11 @@
                  pk = await nip05Resolve(name.toLowerCase()); }
         if(pk){ await openNaddr(pk, String(e.repo||''), 30617); return; }
         toast('couldn’t work out whose repo that is');
+      } else if(e.kind==='article'){
+        let pk = safePk(e.owner);
+        if(!pk){ const name = e.owner.includes('@') ? e.owner : (e.owner + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
+        if(pk){ await Relay.ready(); await _openArticleByName(pk, String(e.d||'')); return; }
+        toast('couldn’t work out whose article that is');
       } else if(e.kind==='user'){
         let pk = safePk(e.q);
         if(!pk){ const name = e.q.includes('@') ? e.q : (e.q + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
@@ -8447,7 +8498,7 @@
     },
     $, $$, InstEmoji, NT, ZAP_ICON, _backOut, _bindTimelineHeader, _capFeedDom, _clearNav, _dedupAddr,
     _feedScrollable, _fmtBytes, _guestPrompt, _hidePill, _hold, _insertAt, _isDesktopApp,
-    _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
+    _articleLink, _matchAddr, _navTopHtml, _navUrl, _timelineHeaderHtml, _tlNotes, _webLink, applyEmojis, artTime, articleAddr,
     articleCard, cleanupInlineStream, clearSentinel, closeModal, compose, copyValue,
     decorateProfiles, doZap, emojiName, enc, ensureAiSession, feedNoteHtml, fetchNotes, hydrate,
     hydrateCounts, hydrateLinkCards, hydratePolls, invalidateCounts, isMutedView, linkify,
