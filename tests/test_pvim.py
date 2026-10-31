@@ -459,7 +459,7 @@ def test_in_a_terminal_type_save_quit(tmp_path):
 def test_in_a_terminal_intro_paste_and_resize(tmp_path):
     rc, out = _run_in_pty([], [('resize', 30, 100), b':q\r'])
     text = _text(out)
-    assert rc == 0 and 'N E O N' in text and 'PosterChanOS' in text, ('the start screen draws and :q quits', text[-400:])
+    assert rc == 0 and 'JACKED IN' in text and 'PosterChanOS' in text, ('the start screen draws and :q quits', text[-400:])
     # PosterChan herself: half blocks in 24-bit colour, written after curses (ptop's art, scripts/make_ptop_logo.py)
     assert '▀'.encode() in out and b'\x1b[38;2;' in out, 'the portrait was not drawn on the start screen'
     p = tmp_path / 'paste.py'
