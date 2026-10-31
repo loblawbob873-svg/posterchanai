@@ -54,6 +54,7 @@ def test_the_studio_is_saved_to_the_account_and_a_failed_read_never_replaces_it(
         await b.until("document.querySelectorAll('.pbs-layer').length===2")
         await F.click(b, '#pbs-add-camera')
         await b.until("document.querySelectorAll('.pbs-layer').length===3")
+        await F.click(b, '#pbs-cap')                                  # the 720p cap off, so 1080p/High can be picked
         await F.click(b, '.pbs-seg[data-seg="res"] .pbs-chip[data-v="1080"]')
         await F.click(b, '.pbs-seg[data-seg="kbps"] .pbs-chip[data-v="3000"]')
         await b.js("(()=>{const e=document.querySelector('#pbs-title');e.value='Saved show';e.dispatchEvent(new Event('input'));return true})()")

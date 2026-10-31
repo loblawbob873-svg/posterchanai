@@ -63,7 +63,9 @@
     const kbps = KBPS.includes(Number(out.kbps)) ? Number(out.kbps) : 1500;
     const ch = (c, d) => ({ vol: num(c && c.vol, 0, 2, 1), muted: !!(c && c.muted), ...(d ? { device: str(c && c.device, 200) } : {}) });
     return { v: 1, t: num(doc.t, 0, 1e13, 0),
-      out: { res, fps: Number(out.fps) === 60 ? 60 : 30, kbps },
+      // cap720: ONE switch that holds the stream at 720p and the standard 1500 kbps whatever res/kbps say (on by default;
+      // res/kbps keep the person's own choice, so turning the cap off brings it back).
+      out: { res, fps: Number(out.fps) === 60 ? 60 : 30, kbps, cap720: out.cap720 !== false },
       sources: (Array.isArray(doc.sources) ? doc.sources : []).map(cleanSource).filter(Boolean).slice(0, MAX_SOURCES),
       audio: { mic: ch(au.mic, true), desk: ch(au.desk, false) },
       meta: { title: str(me.title, 120), summary: str(me.summary, 1000), tags: str(me.tags, 400),
@@ -216,7 +218,10 @@
     async function idbGet(id){ const db = await idb(); return new Promise((res, rej) => { const q = db.transaction('img').objectStore('img').get(id); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); }
 
     /* ---- canvas + clock ---- */
-    function dims(){ return RES[E.doc.out.res] || RES['720']; }
+    /* What actually goes out: the 720p cap wins over the resolution and upload choices while it is on. */
+    function effRes(){ return E.doc.out.cap720 ? '720' : E.doc.out.res; }
+    function effKbps(){ return E.doc.out.cap720 ? Math.min(E.doc.out.kbps, 1500) : E.doc.out.kbps; }
+    function dims(){ return RES[effRes()] || RES['720']; }
     function ensureCanvas(){
       if(E.canvas) return;
       E.canvas = document.createElement('canvas'); E.canvas.id = 'pbs-canvas'; E.canvas.className = 'pbs-canvas';
@@ -430,12 +435,12 @@
     /* ---- going live ---- */
     function setPhase(p, why){ E.phase = p; if(why !== undefined) E.why = why; paintStatus(); }
     function setWhy(t, kind){ E.why = t || ''; E.whyKind = kind || ''; paintStatus(); }
-    function encodingFor(){ return { maxBitrate: E.doc.out.kbps * 1000, maxFramerate: E.doc.out.fps }; }
+    function encodingFor(){ return { maxBitrate: effKbps() * 1000, maxFramerate: E.doc.out.fps }; }
     async function applyEncoding(){
       const pc = E.pc; if(!pc) return;
       try{ const vs = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if(!vs) return;
         const p = vs.getParameters(); p.encodings = (p.encodings && p.encodings.length) ? p.encodings : [{}];
-        p.encodings[0].maxBitrate = E.doc.out.kbps * 1000; p.encodings[0].maxFramerate = E.doc.out.fps;
+        p.encodings[0].maxBitrate = effKbps() * 1000; p.encodings[0].maxFramerate = E.doc.out.fps;
         await vs.setParameters(p); }catch(_){}
     }
     function withTimeout(p, ms){ return Promise.race([p, new Promise(r => setTimeout(() => r(''), ms))]); }
@@ -738,6 +743,7 @@
             <span class="pbs-stat" title="Time live">${ic('clock')}<span id="pbs-timer">0:00</span></span>
             <span class="pbs-stat" title="Outgoing video bitrate">${ic('zap')}<span id="pbs-kbps">— kbps</span></span>
             <span class="pbs-stat" title="Watching now">${ic('eye')}<span id="pbs-viewers">0</span></span>
+            <span class="pbs-stat pbs-capchip" id="pbs-capchip" title="What leaves this computer"></span>
             <span class="pbs-stat pbs-enc" id="pbs-enc" data-hw="">Encoder: H.264 · hardware preferred</span>
           </div>
         </header>
@@ -780,6 +786,7 @@
           <section class="pbs-panel pbs-hud" aria-label="Properties"><h3 class="pbs-h">${ic('sliders')}Properties</h3><div id="pbs-props"></div></section>
           <section class="pbs-panel pbs-hud" aria-label="Audio mixer"><h3 class="pbs-h">${ic('volume')}Audio mixer</h3><div class="pbs-mixer" id="pbs-mixer"></div></section>
           <section class="pbs-panel pbs-hud" aria-label="Output"><h3 class="pbs-h">${ic('stream')}Output</h3>
+            <label class="pbs-check pbs-cap"><input type="checkbox" id="pbs-cap"${out.cap720 ? ' checked' : ''}> Cap at 720p <small>saves bandwidth — 720p, at most 1.5 Mbps</small></label>
             <div class="pbs-f"><span>Resolution</span>${seg('res', [['720', '720p'], ['1080', '1080p']], out.res, 'Resolution')}</div>
             <div class="pbs-f"><span>Frame rate</span>${seg('fps', [['30', '30 fps'], ['60', '60 fps']], out.fps, 'Frame rate')}</div>
             <div class="pbs-f"><span>Upload</span>${seg('kbps', [['900', 'Saver'], ['1500', 'Standard'], ['3000', 'High']], out.kbps, 'Upload bitrate')}</div>
@@ -792,11 +799,24 @@
       const stage = $('#pbs-stage', root);
       stage.insertBefore(E.canvas, stage.firstChild);
       wireStage(stage);
-      const outNote = () => { const n = $('#pbs-out-note', root); if(n) n.textContent = `${dims()[0]}×${dims()[1]} at ${E.doc.out.fps} fps, video capped at ${E.doc.out.kbps} kbps on the way out — Standard matches what this instance serves viewers, so nothing is re-encoded twice.`; };
+      /* The cap is shown, not just applied: the 1080p and High choices are greyed while it is on, the segmented
+       * controls show what is really sent, and the header chip says it at a glance. */
+      const showSeg = (name, v) => { const el = $(`.pbs-seg[data-seg="${name}"]`, root); if(!el) return;
+        $$('.pbs-chip', el).forEach((b, k) => { const on = b.dataset.v === String(v); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); if(on) el.style.setProperty('--i', k); }); };
+      const outNote = () => {
+        const cap = E.doc.out.cap720, n = $('#pbs-out-note', root);
+        [['res', '1080'], ['kbps', '3000']].forEach(([g, v]) => { const b = $(`.pbs-seg[data-seg="${g}"] .pbs-chip[data-v="${v}"]`, root);
+          if(b){ b.disabled = cap; b.title = cap ? 'Turn off “Cap at 720p” to use this' : ''; } });
+        showSeg('res', effRes()); showSeg('kbps', effKbps());
+        if(n) n.textContent = `${dims()[0]}×${dims()[1]} at ${E.doc.out.fps} fps, video capped at ${effKbps()} kbps on the way out`
+          + (cap ? ' — the 720p cap is on.' : ' — Standard matches what this instance serves viewers, so nothing is re-encoded twice.');
+        const chip = $('#pbs-capchip', root); if(chip){ chip.textContent = (effRes() === '720' ? '720p' : '1080p') + E.doc.out.fps + ' · ≤' + (effKbps() / 1000) + ' Mbps'; chip.dataset.cap = cap ? '1' : ''; }
+      };
       outNote();
-      wireSeg(root, 'res', v => { E.doc.out.res = v; sizeCanvas(); stage.style.aspectRatio = dims()[0] + '/' + dims()[1]; outNote(); scheduleSave(); });
+      $('#pbs-cap', root).onchange = e => { E.doc.out.cap720 = !!e.target.checked; sizeCanvas(); stage.style.aspectRatio = dims()[0] + '/' + dims()[1]; outNote(); applyEncoding(); scheduleSave(); };
+      wireSeg(root, 'res', v => { if(E.doc.out.cap720 && v !== '720') return; E.doc.out.res = v; sizeCanvas(); stage.style.aspectRatio = dims()[0] + '/' + dims()[1]; outNote(); scheduleSave(); });
       wireSeg(root, 'fps', v => { E.doc.out.fps = Number(v); setFps(); outNote(); applyEncoding(); scheduleSave(); });
-      wireSeg(root, 'kbps', v => { E.doc.out.kbps = Number(v); outNote(); applyEncoding(); scheduleSave(); });
+      wireSeg(root, 'kbps', v => { if(E.doc.out.cap720 && Number(v) > 1500) return; E.doc.out.kbps = Number(v); outNote(); applyEncoding(); scheduleSave(); });
       wireSeg(root, 'thumb', async v => {
         E.doc.meta.thumb = v; scheduleSave();
         const pv = $('#pbs-thumb-prev', root);
@@ -922,6 +942,9 @@
 .pbs input[type=range]{width:100%;accent-color:var(--pbs-a)}
 .pbs-check{display:flex;align-items:center;gap:8px;font-size:13px;margin:2px 0 12px;cursor:pointer}
 .pbs-check input{accent-color:var(--pbs-g);width:16px;height:16px}
+.pbs-cap small{color:var(--muted);font-size:11px;margin-left:2px}
+.pbs-chip:disabled{opacity:.35;cursor:not-allowed}
+.pbs-capchip:empty{display:none}.pbs-capchip[data-cap='1']{color:var(--pbs-g)}
 .pbs-seg{--n:2;--i:0;position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));padding:3px;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid var(--pbs-line);isolation:isolate}
 .pbs-seg-thumb{position:absolute;z-index:0;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / var(--n));transform:translateX(calc(100% * var(--i)));border-radius:8px;
   background:linear-gradient(90deg,var(--pbs-a),color-mix(in srgb,var(--pbs-a) 70%,var(--pbs-g)));box-shadow:0 0 12px rgba(var(--accent-rgb,60,232,255),.45);transition:transform .22s cubic-bezier(.3,.7,.4,1)}

@@ -105,7 +105,8 @@ async def _check(b, tmp):
     await F.click(b, '#pbs-p-repick')
     await asyncio.sleep(.4)
     got['gdm'] = await b.js('__gdm')
-    # ---- output
+    # ---- output (1080p is behind the 720p cap, which is on by default)
+    await F.click(b, '#pbs-cap')
     await F.click(b, '.pbs-seg[data-seg="res"] .pbs-chip[data-v="1080"]')
     await F.click(b, '.pbs-seg[data-seg="fps"] .pbs-chip[data-v="60"]')
     await asyncio.sleep(.4)

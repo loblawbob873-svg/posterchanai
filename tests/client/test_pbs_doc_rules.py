@@ -94,7 +94,7 @@ def test_images_are_referenced_never_inlined_and_fields_are_bounded(got):
     n = got['norm']
     assert n['urls'] == ['idb:img-abcdef12', 'https://blossom.example/x.png'], n
     assert n['text'] == 500 and n['color'] == '#3ce8ff' and n['count'] == 3, n
-    assert n['out'] == {'res': '720', 'fps': 30, 'kbps': 1500}, n
+    assert n['out'] == {'res': '720', 'fps': 30, 'kbps': 1500, 'cap720': True}, n
 
 
 def test_encoder_reporting_reads_getstats(got):
