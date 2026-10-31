@@ -20,6 +20,22 @@ it wherever those programs are not installed. Install vim, neovim or nano any ti
   `:retab`, `:set …`.
 - **Settings:** `~/.pvimrc` (or `/etc/pvimrc`), one command per line, e.g. `set ts=4 sw=4 et`.
 
+## `:format` — built-in Python and shell formatting
+
+`:format` (or `:fmt`) re-lays out the whole file as ONE undo step (`u` takes it back):
+
+- **Python** — PEP 8 spacing around operators, commas and `=` (none for keyword arguments and defaults), two blank
+  lines above a top-level `def`/`class` (above its decorators and the comments that belong to it), one above a
+  nested one, trailing whitespace off. Multi-line strings are content and are never touched. The result must parse to
+  the **same AST** as the original, or nothing is changed and pvim says why.
+- **Shell** (`.sh`, `bash`/`sh` scripts, ebuilds) — indents `if`/`for`/`while`/`case`/functions/`{ }` blocks;
+  heredocs and multi-line strings are left exactly as they are. Ebuilds and tab-indented files get tabs, everything
+  else `shiftwidth` spaces. Every line's text must be unchanged apart from indentation and `bash -n` must accept the
+  result, or nothing is changed.
+
+Any other file type answers "no built-in formatter". Checked across every Python and shell file in this repo
+(3,300+): no output ever changes the program, and formatting twice equals formatting once.
+
 ## The rules a system editor has to keep
 
 - **A save writes the file in place** — same inode, owner, mode and hard links. `crontab -e` and `visudo` check the

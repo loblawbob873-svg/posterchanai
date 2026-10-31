@@ -1942,7 +1942,7 @@ class Editor:
     # -- ex ---------------------------------------------------------------------------------------------------------
     EX_NAMES = ['write', 'quit', 'wq', 'xit', 'edit', 'substitute', 'set', 'nohlsearch', 'help', 'delete', 'yank',
                 'saveas', 'read', 'sort', 'normal', 'retab', 'join', 'undo', 'redo', 'move', 'copy', 'global',
-                'qall', 'wall', 'update', 'version']
+                'qall', 'wall', 'update', 'version', 'format']
 
     def parse_addr(self, s, i):
         """One address at s[i:] -> (line or None, new i)."""
@@ -2168,6 +2168,8 @@ class Editor:
                 self.end_change()
                 self.row, self.col = dest + len(block), 0
                 return
+            if full('fo|format') or name == 'fmt':
+                return self.cmd_format()
             if full('ve|version'):
                 self.say('pvim %s — PosterChanOS' % VERSION)
                 return
@@ -2180,6 +2182,32 @@ class Editor:
             self.say(str(e), True)
             return
         self.say('E492: Not an editor command: %s' % text, True)
+
+    def cmd_format(self):
+        """:format -- the built-in formatter for this file's language, as ONE undo step, or a reason it did nothing."""
+        text = '\n'.join(self.lines)
+        if self.ft == 'python':
+            new, err = format_python(text)
+        elif self.ft == 'sh':
+            ind = [l for l in self.lines if l[:1] in (' ', '\t') and l.strip()]
+            tabs = (self.path or '').endswith(('.ebuild', '.eclass')) or (ind and sum(l[0] == '\t' for l in ind) * 2 > len(ind))
+            new, err = format_shell(text, use_tabs=bool(tabs), width=self.opts['shiftwidth'])
+        else:
+            self.say('no built-in formatter for %s files (python and shell have one)' % (self.ft or 'plain text'), True)
+            return
+        if err:
+            self.say(err, True)
+            return
+        if new == text:
+            self.say('already formatted')
+            return
+        old = self.lines
+        self.begin_change()
+        self.lines = new.split('\n')
+        self.end_change()
+        changed = sum(1 for a, b in zip(old, self.lines) if a != b) + abs(len(old) - len(self.lines))
+        self.clamp()
+        self.say('formatted: %d line%s changed (u undoes it)' % (changed, '' if changed == 1 else 's'))
 
     def cmd_write(self, arg, bang, rng, rename=False):
         path = os.path.expanduser(arg.strip()) if arg.strip() else self.path
@@ -2451,10 +2479,370 @@ HELP = r'''
   FILES        :w  :w name  :wq  :x  ZZ  :q  :q!  ZQ  :e file  :e!  :saveas name  :r file
   LINES        :%s/old/new/g  :5,10d  :sort  :g/pat/d  :m  :t  :{n}  :set nu ts=4 sw=4 et
   CLIPBOARD    "+y  "+p   (Wayland: wl-copy / wl-paste)
+  FORMAT       :format (or :fmt) -- built-in for Python and shell; it only ever changes layout, u undoes it
 
   THEMES       :set theme=ptop (default)   :set theme=electric   (or PVIM_THEME=electric)
   Settings live in ~/.pvimrc — one command per line, e.g.   set ts=4 sw=4 et theme=ptop
 '''
+
+
+# ── formatters (:format) ─────────────────────────────────────────────────────────────────────────────────────
+# Both are built in -- nothing to install -- and both PROVE they changed only the layout before the buffer is touched:
+# Python must parse to the identical syntax tree, shell must keep every line's text and still pass `bash -n`. A
+# formatter that changes what code does is worse than none, so any doubt leaves the file exactly as it was.
+_PY_KEYWORDS_SPACED = {'and', 'or', 'not', 'in', 'is', 'if', 'else', 'for', 'while', 'return', 'yield', 'lambda',
+                       'import', 'from', 'as', 'with', 'assert', 'del', 'raise', 'global', 'nonlocal', 'elif', 'except',
+                       'await', 'async', 'def', 'class', 'print'}
+_PY_BINOPS = {'+', '-', '*', '/', '//', '%', '**', '@', '<<', '>>', '&', '|', '^', '<', '>', '<=', '>=', '==', '!=',
+              '=', '+=', '-=', '*=', '/=', '//=', '%=', '**=', '@=', '&=', '|=', '^=', '>>=', '<<=', '->', ':='}
+
+
+def _py_join(toks, in_def):
+    """One single-line logical line, rebuilt from its tokens with standard spacing. toks: [(type, string)]."""
+    import token as T
+    out = ''
+    depth = 0
+    stack = []                # per open bracket: [kind, saw_annotation_colon]
+    prev = None               # (type, string)
+    prev_unary = False        # the previous token was a unary sign: no space after it
+    prev2_star_arg = False    # the previous token was *args/**kwargs' star: no space after it
+    for i, (tt, s) in enumerate(toks):
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if tt == T.COMMENT:
+            out = out.rstrip() + ('  ' if out.strip() else '') + s
+            prev = (tt, s)
+            continue
+        if prev is None:
+            sp = ''
+        else:
+            pt, ps = prev
+            word = lambda t, x: t in (T.NAME, T.NUMBER, T.STRING) or x in ('...',)
+            unary = s in ('-', '+', '~') and (ps in _PY_BINOPS or ps in '([{,:;' or ps in _PY_KEYWORDS_SPACED or ps == 'return')
+            if ps in ('(', '[', '{') or s in (')', ']', '}', ',', ';', '.') or ps == '.':
+                sp = ''
+            elif ps == '~' or (prev_unary and ps in ('-', '+')):
+                sp = ''
+            elif s in ('(', '['):
+                sp = ' ' if (pt == T.NAME and ps in _PY_KEYWORDS_SPACED and ps != 'print') or ps in _PY_BINOPS or ps in (',', ':') else ''
+            elif s == ':':
+                sp = ''
+            elif ps == ':':
+                # a slice's colon is tight; a dict/annotation/lambda colon is followed by one space
+                sp = '' if (stack and stack[-1][0] == '[') else ' '
+            elif ps == ',':
+                sp = ' '
+            elif s == '=' or ps == '=':
+                if stack and stack[-1][0] == '(' and not stack[-1][1]:
+                    sp = ''                                   # f(a=1), def f(a=1)
+                else:
+                    sp = ' '
+            elif s in ('*', '**') and (ps in ('(', ',') or (ps in _PY_KEYWORDS_SPACED and ps != 'print')) and nxt and nxt[1] not in (')', ',', '='):
+                sp = '' if ps in ('(', ',') else ' '
+            elif ps in ('*', '**') and (prev2_star_arg):
+                sp = ''
+            elif unary:
+                sp = ' ' if ps not in '([{' else ''
+            elif ps == '@' and out == '@':
+                sp = ''                                       # a decorator: @app.get, not @ app.get
+            elif s in _PY_BINOPS or ps in _PY_BINOPS:
+                sp = ' '
+            elif word(pt, ps) and word(tt, s):
+                sp = ' '
+            else:
+                sp = ' '
+        # bookkeeping for the next token
+        prev_unary = s in ('-', '+') and prev is not None and (prev[1] in _PY_BINOPS or prev[1] in '([{,:;' or prev[1] in _PY_KEYWORDS_SPACED)
+        prev2_star_arg = s in ('*', '**') and prev is not None and prev[1] in ('(', ',')
+        if prev is None:
+            prev_unary = s in ('-', '+', '~')
+        out += sp + s
+        if s in ('(', '[', '{'):
+            stack.append([s, False])
+            depth += 1
+        elif s in (')', ']', '}'):
+            if stack:
+                stack.pop()
+            depth -= 1
+        elif s == ':' and stack and stack[-1][0] == '(' and in_def:
+            stack[-1][1] = True                               # an annotated parameter: `a: int = 1` keeps spaces
+        elif s == ',' and stack and stack[-1][0] == '(':
+            stack[-1][1] = False
+        prev = (tt, s)
+    return out
+
+
+def format_python(text):
+    """-> (new text, None) or (None, why). Re-indent to 4, standard spacing, PEP 8 blank lines; same AST or nothing."""
+    import ast
+    import io
+    import token as T
+    import tokenize
+    try:
+        before = ast.dump(ast.parse(text))
+    except SyntaxError as e:
+        return None, 'not formatted: syntax error on line %s (%s)' % (e.lineno, e.msg)
+    lines = text.split('\n')
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError) as e:
+        return None, 'not formatted: %s' % e
+    # logical lines: (first row, last row, tokens, indent level)
+    level, logical, cur, first = 0, [], [], None
+    protected = set()                       # rows inside multi-line strings/f-strings: their text is content
+    for tk in toks:
+        if tk.type == T.INDENT:
+            level += 1
+            continue
+        if tk.type == T.DEDENT:
+            level -= 1
+            continue
+        if tk.type in (T.ENCODING, T.ENDMARKER):
+            continue
+        if tk.type == T.STRING and tk.end[0] > tk.start[0]:
+            protected.update(range(tk.start[0] + 1, tk.end[0] + 1))
+        if getattr(T, 'FSTRING_START', None) is not None and tk.type in (T.FSTRING_START, T.FSTRING_MIDDLE, T.FSTRING_END) and tk.end[0] > tk.start[0]:
+            protected.update(range(tk.start[0] + 1, tk.end[0] + 1))
+        if tk.type == T.NL and not cur:
+            continue
+        if first is None and tk.type not in (T.NL, T.NEWLINE):
+            first = tk.start[0]
+            cur_level = level
+        if tk.type in (T.NEWLINE,) or (tk.type == T.NL and cur and all(t.type == T.COMMENT for t in cur)):
+            if cur:
+                logical.append((first, tk.start[0], cur, cur_level))
+            cur, first = [], None
+            continue
+        if tk.type != T.NL:
+            cur.append(tk)
+    out_rows = {}
+    has_fstring = getattr(T, 'FSTRING_START', None)
+    for first, last, tk_list, lvl in logical:
+        indent = '    ' * lvl
+        old = lines[first - 1]
+        old_indent = len(old) - len(old.lstrip(' \t'))
+        if first == last and not any(t.type == T.STRING and t.end[0] > t.start[0] for t in tk_list) \
+                and not (has_fstring and any(t.type == has_fstring for t in tk_list)) and '\\' not in old:
+            is_def = tk_list[0].string in ('def', 'async') and any(t.string == 'def' for t in tk_list[:2])
+            out_rows[first] = indent + _py_join([(t.type, t.string) for t in tk_list], is_def)
+        else:
+            # a statement over several lines: shift it as a block, keep its own inner layout
+            for r in range(first, last + 1):
+                if r in protected:
+                    continue
+                ln = lines[r - 1]
+                if r == first:
+                    out_rows[r] = indent + ln.lstrip(' \t').rstrip()
+                else:
+                    cur_ind = len(ln) - len(ln.lstrip(' \t'))
+                    out_rows[r] = (' ' * max(0, cur_ind - old_indent + len(indent)) + ln.lstrip(' \t')).rstrip() if ln.strip() else ''
+    # every row with its protection: a row inside a multi-line string is content and is never moved or squeezed
+    new = []
+    for r, ln in enumerate(lines, start=1):
+        if r in protected:
+            new.append((ln, True))
+        elif r in out_rows:
+            new.append((out_rows[r], False))
+        else:
+            new.append((ln.rstrip() if ln.strip() else '', False))
+    # blank lines: 2 before a top-level def/class (and its decorators/comments), 1 before a nested one, at most 2 / 1
+    res = []
+    i, n = 0, len(new)
+    while i < n:
+        ln, prot = new[i]
+        if prot:
+            res.append((ln, True))
+            i += 1
+            continue
+        if ln == '':
+            blanks = 0
+            while i < n and new[i] == ('', False):
+                blanks += 1
+                i += 1
+            nxt = new[i][0] if i < n else ''
+            res.extend([('', False)] * min(blanks, 2 if (nxt and nxt == nxt.lstrip()) else 1))
+            continue
+        st = ln.lstrip()
+        top = ln == st
+        starts_block = re.match(r'(async\s+def|def|class)\b|@', st) is not None
+        if starts_block and res:
+            # a def's decorators and the comments right above it belong to it: the blank lines go above all of them
+            j = len(res)
+            while j > 0 and not res[j - 1][1] and res[j - 1][0].strip().startswith(('@', '#')) and \
+                    len(res[j - 1][0]) - len(res[j - 1][0].lstrip()) == len(ln) - len(st):
+                j -= 1
+            above = res[j - 1][0] if j > 0 else None
+            if above is not None and not (above.rstrip().endswith(':') or (j < len(res) and res[j][0].lstrip().startswith('@') and st.startswith(('def', 'async', 'class')))):
+                k = j
+                while k > 0 and res[k - 1] == ('', False):
+                    k -= 1
+                if not (j < len(res) and res[j][0].lstrip().startswith('@') and starts_block and st[:1] != '@'):
+                    res[k:j] = [('', False)] * (2 if top else 1)
+        res.append((ln, False))
+        i += 1
+    while res and res[0] == ('', False):
+        res.pop(0)
+    while len(res) > 1 and res[-1] == ('', False):
+        res.pop()
+    res = [t for t, _ in res]
+    out = '\n'.join(res)
+    try:
+        after = ast.dump(ast.parse(out))
+    except SyntaxError as e:
+        return None, 'not formatted: the result would not parse (line %s) -- left as it was' % e.lineno
+    if after != before:
+        return None, 'not formatted: it would have changed what the code does -- left as it was'
+    return out, None
+
+
+def format_shell(text, use_tabs=False, width=4):
+    """-> (new text, None) or (None, why). Indent by block; heredocs and multi-line strings untouched."""
+    lines = text.split('\n')
+    unit = '\t' if use_tabs else ' ' * width
+    out = []
+    level = 0
+    case_depth = []                         # one entry per open `case`: pattern bodies open inside it
+    heredoc = None
+    in_quote = None
+    cont = False
+    opens_re = re.compile(r'(?:^|[;&|(\s])(then|do)\s*(?:#.*)?$|\{\s*(?:#.*)?$|\bcase\b.*\bin\s*(?:#.*)?$')
+    for raw in lines:
+        if heredoc:
+            out.append(raw)
+            if raw.strip() == heredoc or (raw.lstrip('\t') == heredoc):
+                heredoc = None
+            continue
+        if in_quote:
+            out.append(raw)
+            if raw.count(in_quote) % 2 == 1:
+                in_quote = None
+            continue
+        st = raw.strip()
+        if not st:
+            out.append('')
+            continue
+        code = _sh_code(st)                 # the line without quotes and comments, for keyword matching
+        first = code.split()[0] if code.split() else ''
+        dedent = 0
+        if first in ('fi', 'done', 'esac', '}') or code.startswith('}') or first in ('else', 'elif') or first.startswith(('fi;', 'done;', 'done)', 'fi)')):
+            dedent = 1
+        if first == 'esac' and case_depth and case_depth[-1]:
+            dedent = 2                       # the last pattern had no ;; (allowed before esac)
+        if first == ';;' or code in (';;', ';&', ';;&'):
+            dedent = 1
+        lvl = max(0, level - dedent) + (1 if cont else 0)
+        out.append(unit * lvl + st)
+        # what this line opens and closes
+        if first in ('fi', 'done', '}') or code.startswith('}'):
+            level = max(0, level - 1)
+        if first == 'esac':
+            level = max(0, level - (2 if case_depth and case_depth[-1] else 1))
+            if case_depth:
+                case_depth.pop()
+        if first in ('else', 'elif'):
+            level = max(0, level - 1)
+        if re.search(r'\bcase\b.*\bin\s*$', code):
+            level += 1
+            case_depth.append(False)
+        elif opens_re.search(code) or first == 'else' or (first == 'elif' and re.search(r'\bthen\s*$', code)):
+            level += 1
+        if case_depth and not case_depth[-1] and re.match(r'^[^()]*\)', code) and first != 'esac' and not code.startswith('('):
+            if not re.search(r';;&?\s*$|;&\s*$', code):
+                level += 1
+                case_depth[-1] = True        # inside a pattern's body
+        elif case_depth and case_depth[-1] and re.search(r';;&?\s*$|;&\s*$', code):
+            level = max(0, level - 1)
+            case_depth[-1] = False
+        # one-line closers on the same line (`if x; then y; fi`): net zero
+        for kw in ('fi', 'done'):
+            if re.search(r'[;&]\s*%s\s*(?:#.*)?$' % kw, code) and first != kw:
+                level = max(0, level - 1)
+        if re.search(r'\{[^}]*\}\s*$', code) and code.rstrip().endswith('}') and '{' in code and first != '}':
+            pass
+        # the marker is read from the LINE (`<<'EOF'` is quoted, and _sh_code drops quoted text), once `<<` is
+        # known to be outside quotes
+        if '<<' in code.replace('<<<', ''):
+            m = re.search(r'<<-?\s*([\'"]?)([A-Za-z_][\w-]*)\1', st.replace('<<<', ''))
+            if m:
+                heredoc = m.group(2)
+        q = _sh_open_quote(st)
+        if q:
+            in_quote = q
+        cont = st.endswith('\\') and not st.endswith('\\\\')
+    new = '\n'.join(_squeeze_blanks(out))
+    # PROOF: every line's text (indentation aside) is what it was, and bash still accepts it
+    if [l.strip() for l in text.split('\n') if l.strip()] != [l.strip() for l in new.split('\n') if l.strip()]:
+        return None, 'not formatted: a line would have changed -- left as it was'
+    if shutil.which('bash'):
+        for label, src in (('the file', text), ('the result', new)):
+            try:
+                r = subprocess.run(['bash', '-n'], input=src.encode('utf-8', 'surrogateescape'), capture_output=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                break
+            if r.returncode != 0:
+                msg = r.stderr.decode('utf-8', 'replace').strip().splitlines()
+                return None, 'not formatted: bash rejects %s (%s)' % (label, msg[-1][:80] if msg else 'syntax error')
+    return new, None
+
+
+def _sh_code(st):
+    """A shell line with its quoted parts and comment removed (for finding keywords)."""
+    out, q, i = [], None, 0
+    while i < len(st):
+        c = st[i]
+        if q:
+            if c == '\\' and q == '"':
+                i += 2
+                continue
+            if c == q:
+                q = None
+            i += 1
+            continue
+        if c in '\'"':
+            q = c
+            out.append(' ')
+        elif c == '\\':
+            i += 2
+            out.append(' ')
+            continue
+        elif c == '#' and (not out or out[-1] in ' \t;'):
+            break
+        else:
+            out.append(c)
+        i += 1
+    return ''.join(out).strip()
+
+
+def _sh_open_quote(st):
+    """The quote character a line leaves open (a string continuing on the next line), or None."""
+    q, i = None, 0
+    while i < len(st):
+        c = st[i]
+        if q:
+            if c == '\\' and q == '"':
+                i += 2
+                continue
+            if c == q:
+                q = None
+        elif c == '\\':
+            i += 2
+            continue
+        elif c == '#' and (i == 0 or st[i - 1] in ' \t;'):
+            return None
+        elif c in '\'"':
+            q = c
+        i += 1
+    return q
+
+
+def _squeeze_blanks(rows):
+    res = []
+    for r in rows:
+        if r == '' and len(res) >= 2 and res[-1] == '' and res[-2] == '':
+            continue
+        res.append(r)
+    while len(res) > 1 and res[-1] == '':
+        res.pop()
+    return res
 
 
 # ── the look ─────────────────────────────────────────────────────────────────────────────────────────────────

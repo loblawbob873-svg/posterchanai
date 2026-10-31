@@ -569,3 +569,115 @@ def test_inside_gnu_screen_it_still_draws_its_256_colour_theme(tmp_path):
     assert rc == 0
     assert out.count(b'38;5;') > 20, 'inside screen pvim fell back to 8 colours'
     assert b'38;5;201' in out or b'48;5;201' in out, "ptop's magenta never drawn"
+
+
+# ── :format ───────────────────────────────────────────────────────────────────────────────────────────────────
+# "can you add built-in formatting for bash and python for pvim, format command handles it" (2026-10-30). The rule
+# that matters more than the style: a formatter may never change what the program DOES. Python is checked by AST
+# equality, shell by every line's text being unchanged (indentation aside) and `bash -n` accepting the result.
+MESSY_PY = (
+    "import os\n"
+    "def f( a,b = 1 ,*args,**kw ):\n"
+    "  x=a+b*2\n"
+    "  if x>3 : return [ 1,2 ]\n"
+    "  return {'k' :x}\n"
+    "@staticmethod\n"
+    "def g(): pass\n"
+    "class C :\n"
+    "  def m(self ,y): return -y\n"
+    "  # a comment\n"
+    "  @property\n"
+    "  def p(self):\n"
+    "    s='''keep   this\n"
+    "     exactly'''\n"
+    "    return s\n"
+)
+
+
+def test_format_python_tidies_the_layout_and_keeps_the_program(tmp_path):
+    import ast
+    e = ed_with(MESSY_PY, tmp_path / 'm.py')
+    typed(e, ':format<CR>')
+    out = '\n'.join(e.lines)
+    assert not e.msg_err and 'formatted' in e.msg, e.msg
+    assert ast.dump(ast.parse(out)) == ast.dump(ast.parse(MESSY_PY))
+    assert 'def f(a, b=1, *args, **kw):' in out
+    assert '    x = a + b * 2' in out
+    assert '\n\n\n@staticmethod\ndef g():' in out, 'two blank lines go ABOVE the decorator, none between it and def'
+    assert "'''keep   this\n     exactly'''" in out, 'a multi-line string is content, never reindented'
+    assert '    # a comment\n    @property\n    def p(self):' in out
+    typed(e, 'u')
+    assert '\n'.join(e.lines) == MESSY_PY.rstrip('\n') or '\n'.join(e.lines) == MESSY_PY, 'one undo step'
+
+
+def test_format_python_is_idempotent_on_this_repo_sample():
+    for f in ['app/models.py', 'app/services/stream_service.py', 'scripts/make_ptop_logo.py', 'os/bin/pvim']:
+        src = (ROOT / f).read_text()
+        once, err = pv.format_python(src)
+        assert err is None, (f, err)
+        twice, _ = pv.format_python(once)
+        assert once == twice, f
+
+
+def test_format_python_refuses_a_file_that_does_not_parse(tmp_path):
+    e = ed_with('def f(:\n  pass\n', tmp_path / 'bad.py')
+    before = list(e.lines)
+    typed(e, ':format<CR>')
+    assert e.msg_err and e.lines == before
+
+
+MESSY_SH = (
+    "#!/bin/bash\n"
+    "f() {\n"
+    "echo in\n"
+    "if [ -n \"$1\" ]; then\n"
+    "for x in a b; do\n"
+    "echo \"$x\"\n"
+    "done\n"
+    "else\n"
+    "case $1 in\n"
+    "a) echo a ;;\n"
+    "b)\n"
+    "echo b\n"
+    ";;\n"
+    "esac\n"
+    "fi\n"
+    "cat <<'EOF'\n"
+    "  keep   this\n"
+    "EOF\n"
+    "}\n"
+)
+
+
+def test_format_shell_indents_blocks_and_leaves_heredocs_alone(tmp_path):
+    e = ed_with(MESSY_SH, tmp_path / 's.sh')
+    typed(e, ':format<CR>')
+    out = '\n'.join(e.lines)
+    assert not e.msg_err, e.msg
+    assert out.split('\n') == [
+        '#!/bin/bash', 'f() {', '    echo in', '    if [ -n "$1" ]; then', '        for x in a b; do',
+        '            echo "$x"', '        done', '    else', '        case $1 in', '            a) echo a ;;',
+        '            b)', '                echo b', '            ;;', '        esac', '    fi', "    cat <<'EOF'",
+        '  keep   this', 'EOF', '}'], out
+    once = out
+    again, _ = pv.format_shell(once)
+    assert again == once
+
+
+def test_format_shell_never_reindents_a_quoted_heredoc_terminator():
+    # `<<'PYEOF'`: the marker is quoted, which is how the first version missed it and indented the terminator
+    src = "if true; then\npython3 - <<'PYEOF'\nprint(1)\nPYEOF\nfi\n"
+    new, err = pv.format_shell(src)
+    assert err is None and '\nPYEOF\n' in new and '\nprint(1)\n' in new, new
+
+
+def test_format_uses_tabs_for_an_ebuild(tmp_path):
+    e = ed_with('src_install() {\ndobin x\n}\n', tmp_path / 'p-1.ebuild')
+    typed(e, ':format<CR>')
+    assert e.lines[1] == '\tdobin x', e.lines
+
+
+def test_format_says_why_for_a_language_it_does_not_know(tmp_path):
+    e = ed_with('hello\n', tmp_path / 'n.txt')
+    typed(e, ':format<CR>')
+    assert e.msg_err and 'no built-in formatter' in e.msg
