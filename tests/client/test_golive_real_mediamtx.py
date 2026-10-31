@@ -453,7 +453,7 @@ async def the_server_ends_a_stream_whose_tab_died(S):
     await F.until(lambda: tag(latest(S, pk, d) or {'tags': []}, 'status') == 'ended', 60,
                   'the server published the parked "ended" event')
     ev = latest(S, pk, d)
-    assert tag(ev, 'client') == 'PosterChan AI', ev['tags']        # the sentinel, signed by the streamer at go-live
+    assert tag(ev, 'client') == 'PosterChan', ev['tags']           # the sentinel, signed by the streamer at go-live (NIP-89 name)
     viewer = await S.device(1)
     await open_streams(viewer)
     card = ("[...document.querySelectorAll('.stream-card')].find(c=>c.querySelector('.stream-title').textContent===%s)"

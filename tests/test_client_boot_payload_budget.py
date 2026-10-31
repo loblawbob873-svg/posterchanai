@@ -149,7 +149,9 @@ PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 #: ...and 8.215 -> 8.217 for Communities saying "Loading your communities…" and not counting answered invitations
 #: before the answers arrive, the settings save that survives a background refresh (concord.js), and the quoted
 #: card's two-row header (cards.js); the row's Share to Communities button went, its ⋯ item stays. 8.2163 MB measured.
-BUDGET_MB = 8.217
+#: ...and 8.217 -> 8.219 for the NIP-89 client tag pointing at this node's kind-31990 announcement (app.js
+#: _clientTag) and the Concord settings save comparing membership, not the whole bundle. 8.2186 MB measured.
+BUDGET_MB = 8.219
 #: No single asset should be a surprise. app.js is 2.55 MB and is the reason this is not lower.
 # RAISED 2026-09-18, 2.80 -> 2.85, AND DELIBERATELY BY THE MEASURED AMOUNT AND NOT A ROUND NUMBER.
 #
