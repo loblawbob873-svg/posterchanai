@@ -91,9 +91,10 @@ class PosterChanOSProfile(unittest.TestCase):
         """Wayland has no "read the screen" call by design, so a recorder gets frames through the
         ScreenCast portal over PipeWire. The front end, the wlroots BACK end and PipeWire must all be
         there: with the front end alone the portal answers "no such capture" and OBS shows a screen
-        capture source that lists nothing to capture — at the moment somebody presses record."""
+        capture source that lists nothing to capture — at the moment somebody presses record. PBS (the
+        broadcaster that replaced OBS) captures through exactly this path, so OBS leaving took none of it."""
         for pkg in ("sys-apps/xdg-desktop-portal", "gui-libs/xdg-desktop-portal-wlr",
-                    "media-video/pipewire", "media-video/obs-studio"):
+                    "media-video/pipewire"):
             self.assertIn(pkg, self.pkgs, f"{pkg} missing — screen recording dies at record time")
 
     def test_the_session_environment_reaches_systemd_or_there_is_no_screen_capture(self):
@@ -246,16 +247,14 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("xdg-desktop-portal-gtk", self.src,
                       "no portal backend provides FileChooser, so no file dialog can open")
 
-    def test_obs_is_built_with_pipewire(self):
-        """An OBS without the flag builds, installs, runs, and has no PipeWire capture source in it.
-        Nothing about that looks like a packaging mistake from the desktop."""
-        m = re.search(r'SPECIAL_PACKAGE_USE=\((.*?)\n\)', self.src, re.S) \
-            or re.search(r'SPECIAL_PACKAGE_USE=\((.*?)\)\n', self.src, re.S)
-        self.assertTrue(m, "the USE table moved")
-        self.assertIn("media-video/obs-studio", m.group(1))
-        obs = re.search(r'"media-video/obs-studio ([^"]*)"', m.group(1))
-        self.assertTrue(obs and "pipewire" in obs.group(1),
-                        "obs-studio is not built with pipewire — no screen capture on Wayland")
+    def test_obs_is_not_part_of_the_os(self):
+        """"Then we can exclude obs and its deps from our os" (2026-10-30): PBS, PosterChan Broadcast Studio, is the
+        broadcaster. OBS was the slowest C++ build in the set and carried its own USE line and ~amd64 keyword; none
+        of the three may come back without somebody deciding it should (the portal + PipeWire it captured through
+        stay -- asserted above, because PBS needs them)."""
+        self.assertNotIn("media-video/obs-studio", self.pkgs)
+        live = "\n".join(l for l in self.src.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("obs-studio", live, "obs-studio is still in a package, USE or keyword list")
 
     def test_gpm_is_disabled_globally(self):
         """PosterChanOS uses a graphical Wayland session; console mouse support is unwanted."""

@@ -190,7 +190,7 @@ PC_MESA_REQUIRED_CARDS="virgl nouveau"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="sys-boot/efibootmgr net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower sys-power/upower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/pvim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "media-libs/libavif -svt-av1" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "media-libs/libavif -svt-av1" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl usb" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 # THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
 # Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
 # `h264_nvenc` (57), `h264_amf` (10), `libvpx`/`libvpx-vp9` (the alpha WebM path), `libmp3lame`,
@@ -245,9 +245,15 @@ SPECIAL_PACKAGE_USE+=("sys-apps/systemd tpm")
 # could read the screen, which is why it worked without anyone thinking about it; Wayland has no such
 # call by design, so a recorder gets frames through the ScreenCast PORTAL over PipeWire. That is
 # three packages that must all be present and agree — the portal front end, the wlroots BACK end
-# (there is no generic one; the front end alone answers "no such capture" and OBS shows a screen
-# capture source that lists nothing), and OBS built with the pipewire USE flag. Missing any one of
-# them fails at the moment somebody presses record, which is the worst possible moment to find out.
+# (there is no generic one; the front end alone answers "no such capture" and a recorder shows a
+# screen capture source that lists nothing), and PipeWire itself. Missing any one of them fails at
+# the moment somebody presses record, which is the worst possible moment to find out.
+#
+# OBS IS NOT INSTALLED (2026-10-30): PBS, PosterChan Broadcast Studio (static/js/client/pbs.js,
+# docs/PBS.md), is the broadcaster on this OS -- scenes, overlays, mixer and Go Live to the
+# connected instance -- and it captures through the SAME portal + PipeWire path, so none of the
+# three packages above went with it. OBS was the slowest C++ build in the set (see the
+# parallelism note) and the only thing that needed its own USE line and ~amd64 keyword.
 #
 # AND A FOURTH, for a portal a recorder never touches: the wlroots backend implements ScreenCast and
 # NOTHING ELSE, so with it alone there is no FileChooser interface on the bus at all. Measured: the
@@ -304,7 +310,6 @@ media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media
 games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
-media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 x11-drivers/nvidia-drivers \
 net-vpn/tor gui-apps/swayidle \
@@ -438,7 +443,7 @@ PC_DRACUT_OMIT_NOUVEAU='omit_drivers+=" nouveau "'
 PC_LIVE_GPU_CMDLINE='module_blacklist=nouveau nvidia_drm.modeset=1'
 PC_LIVE_NOUVEAU_CMDLINE='module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm pc.gpu=nouveau'
 PC_LIVE_SOFTWARE_CMDLINE="$PC_LIVE_GPU_CMDLINE pc.gpu=software"
-MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher)
+MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher)
 # ONE NARROW KEYWORD EXCEPTION FOR GAMESCOPE -- the 3.16 SERIES, not one version. Every gamescope in Gentoo is ~amd64;
 # this used to name =gui-wm/gamescope-3.16.25-r1, and once Gentoo dropped that ebuild the exception matched nothing,
 # so a from-scratch install could not emerge gamescope at all ("masked by: ~amd64 keyword", 2026-10-27).
