@@ -1376,7 +1376,7 @@ window.PCStreamsFactory = function(dep){
     try{
       const ev=await S.signer.signEvent({ kind:30311, content:'', pubkey:S.ME.pubkey,
         created_at: Math.floor(Date.now()/1000)+5,   // must outrank the "live" event we just published
-        tags: _liveBase(s).concat([['status','ended'], ['client','PosterChan AI']]) });
+        tags: _liveBase(s).concat([['status','ended'], (window.__PC&&__PC.clientTag?__PC.clientTag():['client','PosterChan'])]) });
       const res=await _streamFetch('/api/streams/sentinel', { method:'POST', headers:{'Content-Type':'application/json'},
                                                               body: JSON.stringify({ event: ev }) });
       // fetch only rejects on a network error, so a 401/403/400 would sail through unnoticed and leave the

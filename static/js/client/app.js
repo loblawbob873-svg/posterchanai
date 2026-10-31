@@ -1878,8 +1878,16 @@
     // (notes, replies, reactions, articles, group chat) gets it without remembering to.
     tags = InstEmoji.tagsFor(content, tags);
     if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !tags.some(t=>t&&t[0]==='monero_address')) tags.push(['monero_address', my]); }catch(_){} }
-    if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(['client','PosterChan AI']);
+    if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(_clientTag());
     return tags;
+  }
+  /* NIP-89 `client` tag: "PosterChan", plus -- with an instance -- the address of that node's kind-31990 announcement
+   * (/client/config `client_tag`, app_handler.py), so other apps can show our name, picture and links and app
+   * dashboards (radarnostr) count us. A bundle with no instance stamps the name alone, still a valid tag. */
+  function _clientTag(){
+    const t=CFG&&CFG.client_tag;
+    if(Array.isArray(t)&&t[0]==='client'&&t[1]==='PosterChan'&&t.length<=4&&t.every(x=>typeof x==='string'&&x.length<300)) return t.slice();
+    return ['client','PosterChan'];
   }
   // A replaceable's new version is newer than the held one: a same-second tie keeps the LOWER id (NIP-01).
   function _replaceableCreatedAt(kind, tags, now){
@@ -10319,7 +10327,7 @@
       if(!targets.every(e=>e.pubkey===owner&&(e.kind===6||e.kind===16)&&e.id!==id&&e.tags.some(t=>t[0]==='e'&&t[1]===id)&&_fediOnlyEvent(e)===privateEvent&&_repostVerified(e)))return null;
       const ids=deletion.tags.filter(t=>t[0]==='e').map(t=>t[1]);
       if(!ids.length||ids.length!==targets.length||new Set(ids).size!==ids.length||!ids.every(id=>targets.some(e=>e.id===id)))return null;
-      if(!deletion.tags.every(t=>['e','k'].includes(t[0])||(t[0]==='client-mode'&&t[1]==='fedi-only')||(t[0]==='client'&&t.length===2&&t[1]==='PosterChan AI')))return null;
+      if(!deletion.tags.every(t=>['e','k'].includes(t[0])||(t[0]==='client-mode'&&t[1]==='fedi-only')||(t[0]==='client'&&/^PosterChan( AI)?$/.test(t[1]||''))))return null;
       const value={deletion,targets};
       if(_repostReceiptMemo.size>=64)_repostReceiptMemo.delete(_repostReceiptMemo.keys().next().value);
       _repostReceiptMemo.set(key,{raw,context,value});return _repostReceiptSpent(key,value);
@@ -15302,6 +15310,7 @@
     applyUpdate: () => applyUpdate(),
     notifsRead: () => { try{ markNotifsRead(); }catch(_){} },
     reactTo: (id, pk, btn) => pickEmoji(id, pk, btn),
+    clientTag: () => _clientTag(),                         // NIP-89 tag for paths that build events outside publish()
     mailUnread: () => { try{ return _mailUnread(); }catch(_){ return 0; } },
     // The community counters the sidebar shows under ONLINE. The desktop hides the sidebar, so it
     // reads them from here rather than polling /client/stats a second time — that endpoint counts

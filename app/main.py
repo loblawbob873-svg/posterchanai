@@ -897,6 +897,12 @@ async def startup():
                         await emoji_sets.publish_all()
                     except Exception as e:
                         logging.warning(f"Emoji sets publish failed: {e}")
+                    try:
+                        # NIP-89: the app announcement every event's `client` tag points at; unchanged = no publish.
+                        from app.services import app_handler
+                        await app_handler.publish()
+                    except Exception as e:
+                        logging.warning(f"App handler (kind 31990) publish failed: {e}")
                     finally:
                         _db.close()
                 _aio.create_task(_hydrate_settings())

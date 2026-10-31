@@ -37,7 +37,7 @@ from app.utils import redirect_guard
 from app.services.content_disposition import content_disposition
 from app.auth import get_admin_user as _auth_get_admin_user
 from app.database import get_db
-from app.services import emoji_service, settings_store, tor_service, user_table
+from app.services import app_handler, emoji_service, settings_store, tor_service, user_table
 from app.services.nostr import nostr_service, event as nostr_event
 from app.services.text_utils import strip_preamble
 from app.services.relay_reader import Unavailable
@@ -308,6 +308,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
 
     return JSONResponse({
         "relay_url": _relay_url(request, db),
+        # NIP-89: the `client` tag the client stamps on what it publishes -- the name plus THIS node's kind-31990
+        # announcement, so "via PosterChan" resolves to the app's name, picture and links (app_handler.py).
+        "client_tag": app_handler.client_tag(),
         "default_relays": _default_relays[:8],
         "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
