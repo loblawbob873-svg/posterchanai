@@ -530,3 +530,17 @@ def test_the_aliases_never_shadow_a_real_editor(tmp_path):
     for name in ('vi', 'nvim', 'nano'):
         if subprocess.run(['bash', '-c', 'command -v %s' % name], env={'PATH': '/usr/bin:/bin'}, capture_output=True).returncode:
             assert ("alias %s='pvim'" % name) in aliases, (name, aliases)
+
+
+def test_the_dashboard_panels_draw_and_editing_inside_them_still_saves(tmp_path):
+    """ptop's look ("you made ptop look awesome, but pvim is trash", 2026-10-30): on a terminal with room, the text sits
+    in an EDITOR panel under the POSTERCHAN VIM header, beside FILE and OUTLINE panels -- and typing still lands in the
+    file where the cursor is (the text area is offset into the frame)."""
+    p = tmp_path / 'mod.py'
+    p.write_text('import os\n\n\ndef alpha():\n    return 1\n\n\nclass Beta:\n    pass\n')
+    rc, out = _run_in_pty([str(p)], [b'4G', b'A  # edited', b'\x1b', b':wq\r'], rows=34, cols=130)
+    text = _text(out)
+    assert rc == 0, text[-300:]
+    assert 'EDITOR // mod.py' in text and 'FILE' in text and 'OUTLINE' in text, ('the panels are missing', text[-600:])
+    assert 'alpha' in text and 'Beta' in text, 'the outline does not list the functions and classes'
+    assert p.read_text() == 'import os\n\n\ndef alpha():  # edited\n    return 1\n\n\nclass Beta:\n    pass\n'

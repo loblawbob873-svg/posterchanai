@@ -401,6 +401,7 @@ class Editor:
         self.insert_count = 1
         self.insert_keys = []
         self.intro = False
+        self.view_rows = self.view_cols = 0
         self.help_text = None
         self._await_reg = False
         self._o_kind = None
@@ -1305,7 +1306,8 @@ class Editor:
 
     # -- views ------------------------------------------------------------------------------------------------------
     def text_rows(self):
-        return max(1, self.rows - 2)
+        # the Screen sets view_rows/view_cols to its EDITOR panel; the engine alone (tests) uses the whole terminal
+        return max(1, self.view_rows if self.view_rows else self.rows - 2)
 
     def scroll_into_view(self):
         h = self.text_rows()
@@ -1315,7 +1317,7 @@ class Editor:
         elif self.row >= self.top + h - so:
             self.top = self.row - h + so + 1
         self.top = max(0, min(self.top, max(0, len(self.lines) - 1)))
-        width = self.cols - self.gutter()
+        width = (self.view_cols if self.view_cols else self.cols) - self.gutter()
         x = self.disp_col()
         if x < self.left:
             self.left = max(0, x - 8)
@@ -2538,6 +2540,40 @@ def color_mode():
     return 'truecolor'
 
 
+_OUTLINE = {
+    'python': re.compile(r'^\s*(?:async\s+)?(?:def|class)\s+(\w+)'),
+    'js': re.compile(r'^\s*(?:export\s+)?(?:async\s+)?(?:function\s*\*?\s*(\w+)|class\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:function|\())'),
+    'sh': re.compile(r'^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)'),
+    'c': re.compile(r'^[A-Za-z_][\w \t\*]*?\b(\w+)\s*\([^;]*$'),
+    'rust': re.compile(r'^\s*(?:pub\s+)?(?:fn|struct|enum|impl|trait)\s+(\w+)'),
+    'go': re.compile(r'^func\s+(?:\([^)]*\)\s*)?(\w+)'),
+    'markdown': re.compile(r'^(#{1,6}\s+.+)'),
+    'conf': re.compile(r'^\s*\[([^\]]+)\]'),
+}
+
+
+def outline(lines, ft):
+    """[(line index, label)] -- functions, classes, headings or sections, for the OUTLINE panel."""
+    rx = _OUTLINE.get(ft)
+    if not rx:
+        return []
+    out = []
+    for i, l in enumerate(lines[:20000]):
+        m = rx.match(l)
+        if m:
+            name = next((x for x in m.groups() if x), '')
+            if name:
+                out.append((i, name.strip()[:60]))
+    return out
+
+
+def human(n):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if n < 1024 or unit == 'GB':
+            return ('%d %s' % (n, unit)) if unit == 'B' else ('%.1f %s' % (n, unit))
+        n /= 1024.0
+
+
 def logo_cells(logo=LOGO):
     """The half-block art: rows of (char, fg rgb or None, bg rgb or None), two pixel rows per terminal row."""
     def px(row, x):
@@ -2634,6 +2670,7 @@ class Screen:
         sys.stdout.flush()
 
     def close(self):
+        sys.stdout.write('\x1b]112\x07' if self.rich else '')
         sys.stdout.write('\x1b[?2004l')
         sys.stdout.flush()
 
@@ -2696,6 +2733,72 @@ class Screen:
         except curses.error:
             pass
 
+    # ── the dashboard: ptop's look -- a pixel wordmark header and titled neon panels ────────────────────────────────
+    def col(self, rgb, key='text', extra=0):
+        """An rgb colour where the terminal has 256 colours, else the nearest named one from the palette."""
+        return self.rgb_attr(rgb, None, extra) if self.rich else self.attr(key, extra)
+
+    def box(self, y, x, hgt, wid, title, rgb, key):
+        """A ptop panel: a frame in one neon colour with `─ TITLE ─` set into its top edge."""
+        if hgt < 2 or wid < 4:
+            return
+        c = self.col(rgb, key)
+        self.put(y, x, '┌' + '─' * (wid - 2) + '┐', c)
+        for yy in range(y + 1, y + hgt - 1):
+            self.put(yy, x, '│', c)
+            self.put(yy, x + wid - 1, '│', c)
+        self.put(y + hgt - 1, x, '└' + '─' * (wid - 2) + '┘', c)
+        if title:
+            t = title[:max(0, wid - 6)]
+            self.put(y, x + 2, ' ' + t + ' ', self.col(rgb, key, curses.A_BOLD))
+
+    def file_stats(self):
+        """Words/bytes/outline, recomputed only when the text changed."""
+        ed = self.ed
+        key = (id(ed.lines), ed.tick, len(ed.lines), ed.path)
+        if getattr(self, '_stats_key', None) != key:
+            text_bytes = sum(len(l.encode('utf-8', 'surrogateescape')) + 1 for l in ed.lines[:200000])
+            words = sum(len(l.split()) for l in ed.lines[:200000])
+            self._stats = {'bytes': text_bytes, 'words': words, 'outline': outline(ed.lines, ed.ft)}
+            self._stats_key = key
+        return self._stats
+
+    def draw_header(self, w):
+        """Row 0-1: POSTERCHAN VIM in ptop's pixel font, cyan -> green, and the live file line beside it."""
+        art = ('█▀█ █▀█ █▀ ▀█▀ █▀▀ █▀█ █▀▀ █ █ ▄▀█ █▄ █   █ █ █ █▀▄▀█',
+               '█▀▀ █▄█ ▄█  █  ██▄ █▀▄ █▄▄ █▀█ █▀█ █ ▀█   ▀▄▀ █ █ ▀ █')
+        n = len(art[0])
+        if w >= n + 2:
+            for i, row in enumerate(art):
+                for j, ch in enumerate(row):
+                    if ch != ' ':
+                        self.put(i, j, ch, self.col(neon(j / (n - 1)), 'logo1' if j < n // 2 else 'logo2', curses.A_BOLD))
+            x = n + 3
+        else:
+            self.put(0, 0, 'PVIM', self.col(CYAN, 'logo1', curses.A_BOLD))
+            x = 6
+        ed = self.ed
+        st = self.file_stats()
+        clock = time.strftime('%H:%M:%S')
+        if x + 20 < w:
+            name = ed.path or '[No Name]'
+            self.put(0, x, '// ', self.col(TEAL, 'num'))
+            self.put(0, x + 3, name[-max(1, w - x - 16):], self.col((235, 245, 255), 'text', curses.A_BOLD))
+            if ed.modified:
+                self.put(0, min(w - 12, x + 3 + len(name[-max(1, w - x - 16):]) + 1), '[+]', self.col(GREEN, 'add', curses.A_BOLD))
+            self.put(0, w - len(clock) - 1, clock, self.col(CYAN, 'msg', curses.A_BOLD))
+            info = [(ed.ft or 'text', CYAN), ('%d lines' % len(ed.lines), GREEN), (human(st['bytes']), (249, 248, 113)),
+                    ('dos' if ed.info.crlf else 'unix', (155, 92, 255)), ('utf-8', TEAL)]
+            xx = x
+            for i, (txt, c) in enumerate(info):
+                if xx + len(txt) + 3 >= w:
+                    break
+                self.put(1, xx, txt, self.col(c, 'msg'))
+                xx += len(txt)
+                if i < len(info) - 1:
+                    self.put(1, xx, '  ·  ', self.col(TEAL, 'num'))
+                    xx += 5
+
     def draw(self):
         ed, scr = self.ed, self.scr
         h, w = scr.getmaxyx()
@@ -2706,6 +2809,17 @@ class Screen:
             self._art_drawn = False
         self._size = (h, w)
         self._raw_art = None
+        intro = ed.intro and ed.lines == [''] and not ed.modified
+        # THE LAYOUT. A dashboard needs room: below 60x16 (or on the start screen) the text gets the whole terminal.
+        dash = not intro and w >= 60 and h >= 16
+        side = dash and w >= 104 and h >= 22
+        if dash:
+            ey, ex = 2, 0                                   # the EDITOR panel's frame
+            eh, ew = h - 4, w - (32 if side else 0)
+            Y0, X0, VR, VC = ey + 1, ex + 1, eh - 2, ew - 3  # its text area (one column kept for the minimap)
+        else:
+            Y0, X0, VR, VC = 0, 0, h - 2, w
+        ed.view_rows, ed.view_cols = VR, VC
         if not getattr(ed, '_keep_top', False):
             ed.scroll_into_view()
         ed._keep_top = False
@@ -2717,8 +2831,14 @@ class Screen:
             scr.move(h - 1, 0)
             scr.refresh()
             return
+        if dash:
+            self.draw_header(w)
+            name = os.path.basename(ed.path) if ed.path else '[No Name]'
+            self.box(ey, ex, eh, ew, 'EDITOR // ' + name + (' [+]' if ed.modified else ''), CYAN, 'logo1')
+            if side:
+                self.draw_side(2, ew, h - 4, w - ew)
         g = ed.gutter()
-        tw = w - g
+        tw = VC - g
         ts = ed.opts['tabstop']
         vis = None
         if ed.mode in (ed.VISUAL, ed.VLINE):
@@ -2734,13 +2854,14 @@ class Screen:
                 hl_rx = vim_regex(ed.cmdline, ed.opts['ignorecase'], ed.opts['smartcase'])
             except re.error:
                 pass
-        rows = ed.text_rows()
-        if ed.intro and ed.lines == [''] and not ed.modified:
+        rows = VR
+        if intro:
             self.draw_intro(h, w)
         for sy in range(rows):
             r = ed.top + sy
+            Y = Y0 + sy
             if r >= len(ed.lines):
-                self.put(sy, 0, '~', self.rgb_attr(lerp((0, 110, 120), (30, 120, 20), sy / max(1, rows - 1))) or self.attr('tilde'))
+                self.put(Y, X0, '~', self.rgb_attr(lerp((0, 110, 120), (30, 120, 20), sy / max(1, rows - 1))) or self.attr('tilde'))
                 continue
             line = ed.lines[r]
             if g:
@@ -2748,22 +2869,39 @@ class Screen:
                     label = str(abs(r - ed.row))
                 else:
                     label = str(r + 1)
-                self.put(sy, 0, label.rjust(g - 1) + ' ', self.attr('numcur' if r == ed.row else 'num',
-                                                                       curses.A_BOLD if r == ed.row else 0))
+                if self.rich:
+                    # the numbers GLOW around the cursor: bright cyan on its line, fading through blue to deep teal
+                    d = min(1.0, abs(r - ed.row) / 12)
+                    na = self.rgb_attr(lerp((60, 170, 255), (0, 70, 85), d), None, curses.A_BOLD if r == ed.row else 0)
+                    if r == ed.row:
+                        na = self.rgb_attr(CYAN, None, curses.A_BOLD)
+                else:
+                    na = self.attr('numcur' if r == ed.row else 'num', curses.A_BOLD if r == ed.row else 0)
+                self.put(Y, X0, label.rjust(g - 1) + ' ', na)
                 if r == ed.row and self.rich:
-                    self.put(sy, 0, '▌', self.rgb_attr(CYAN, None, curses.A_BOLD))
+                    self.put(Y, X0, '▌', self.rgb_attr(CYAN, None, curses.A_BOLD))
             # per-char attributes; the current line is drawn on a raised background (not while selecting)
             n = len(line)
             cl = self.rich and r == ed.row and not vis and ed.mode != ed.CMDLINE
             A = (lambda k: self.colors.get('cl:' + k, self.attr(k))) if cl else self.attr
             if cl:
-                self.put(sy, g, ' ' * max(0, w - g), A('text'))
+                self.put(Y, X0 + g, ' ' * max(0, tw), A('text'))
             attrs = [A('text')] * n
             if ed.opts['syntax'] and ed.ft and n < 4000:
-                for s, e, grp in highlight(line, ed.ft):
-                    a = A(grp)
-                    for j in range(s, min(e, n)):
-                        attrs[j] = a
+                for s_, e, grp in highlight(line, ed.ft):
+                    a_ = A(grp)
+                    for j in range(s_, min(e, n)):
+                        attrs[j] = a_
+            if self.rich and ed.opts['syntax'] and n < 4000:
+                # rainbow brackets: cyan, green, blue by depth (counted from this line's start)
+                depth, cols3 = 0, (CYAN, GREEN, BLUE)
+                for j, ch in enumerate(line):
+                    if ch in '([{':
+                        attrs[j] = self.rgb_attr(cols3[depth % 3], None, curses.A_BOLD)
+                        depth += 1
+                    elif ch in ')]}':
+                        depth = max(0, depth - 1)
+                        attrs[j] = self.rgb_attr(cols3[depth % 3], None, curses.A_BOLD)
             if hl_rx is not None and n < 4000:
                 try:
                     for m in hl_rx.finditer(line):
@@ -2782,12 +2920,18 @@ class Screen:
                         hi = (b2 + 1) if r == a2 else n
                     for j in range(lo, min(hi, n)):
                         attrs[j] = self.attr('visual')
+            # indent guides: a dim ┊ at each shiftwidth inside the leading whitespace
+            if self.rich and line[:1] in (' ', '\t') and ed.left == 0:
+                ind = display_cols(leading_ws(line), ts)[-1]
+                sw = max(1, ed.opts['shiftwidth'])
+                for gx in range(sw, ind, sw):
+                    self.put(Y, X0 + g + gx, '┊', A('special') if cl else self.rgb_attr((20, 70, 80)))
             x = 0
             left = ed.left
             for j, c in enumerate(line):
                 if c == '\t':
                     width = ts - x % ts
-                    glyph = ('›' + ' ' * (width - 1)) if ed.opts['list'] else ' ' * width
+                    glyph = ('›' + ' ' * (width - 1)) if ed.opts['list'] else None
                     a = self.attr('special') if ed.opts['list'] else attrs[j]
                 else:
                     o = ord(c)
@@ -2795,20 +2939,24 @@ class Screen:
                         glyph, a = '^' + chr((o + 64) % 128), self.attr('special')
                     elif 0xDC80 <= o <= 0xDCFF:
                         glyph, a = '<%02x>' % (o - 0xDC00), self.attr('special')
+                    elif c == ' ':
+                        glyph, a = None, attrs[j]              # a space draws nothing: the indent guide shows through
                     else:
                         glyph, a = c, attrs[j]
-                    width = char_width(c) if c not in ' ' else 1
+                    width = char_width(c) if c != ' ' else 1
                 if x + width > left and x - left < tw:
                     sx = g + x - left
-                    if sx >= g:
-                        self.put(sy, sx, glyph, a)
+                    if sx >= g and glyph is not None:
+                        self.put(Y, X0 + sx, glyph, a)
                 x += width
                 if x - left >= tw:
                     break
             if ed.opts['list'] and x - left < tw:
-                self.put(sy, g + max(0, x - left), '¬', self.attr('special'))
+                self.put(Y, X0 + g + max(0, x - left), '¬', self.attr('special'))
             if left > 0 and line:
-                self.put(sy, g, '«', self.attr('special'))
+                self.put(Y, X0 + g, '«', self.attr('special'))
+        if dash:
+            self.draw_minimap(Y0, X0 + VC, VR)
         self.draw_status(h, w)
         # cursor
         if ed.mode == ed.CMDLINE:
@@ -2819,21 +2967,73 @@ class Screen:
             except curses.error:
                 pass
         else:
-            cy = ed.row - ed.top
-            cx = g + ed.disp_col() - ed.left
+            cy = Y0 + ed.row - ed.top
+            cx = X0 + g + ed.disp_col() - ed.left
             try:
-                scr.move(max(0, min(rows - 1, cy)), max(0, min(w - 1, cx)))
+                scr.move(max(Y0, min(Y0 + rows - 1, cy)), max(0, min(w - 1, cx)))
             except curses.error:
                 pass
         try:
             curses.curs_set(1)
         except curses.error:
             pass
-        sys.stdout.write('\x1b[%d q' % (5 if ed.mode in (ed.INSERT,) else 3 if ed.mode == ed.REPLACE else 2))
+        out = '\x1b[%d q' % (5 if ed.mode in (ed.INSERT,) else 3 if ed.mode == ed.REPLACE else 2)
+        if self.rich:   # the terminal cursor itself in neon: cyan, green while typing (OSC 12; reset on exit)
+            out += '\x1b]12;%s\x07' % ('#39ff14' if ed.mode in (ed.INSERT, ed.REPLACE) else '#00f0ff')
+        sys.stdout.write(out)
         sys.stdout.flush()
         scr.refresh()
         if self._raw_art:
             self.paint_art(scr.getyx())
+
+    def draw_minimap(self, y0, x, rows):
+        """The panel's right edge: the whole file's shape, one cell per slice, the visible part lit cyan."""
+        ed = self.ed
+        n = len(ed.lines)
+        per = max(1.0, n / max(1, rows))
+        for i in range(rows):
+            a, b = int(i * per), int((i + 1) * per)
+            if a >= n:
+                break
+            sl = ed.lines[a:max(b, a + 1)]
+            dens = sum(len(l.strip()) for l in sl) / (max(1, len(sl)) * 40)
+            ch = ' ' if dens == 0 else '░' if dens < .25 else '▒' if dens < .6 else '▓'
+            seen = not (b <= ed.top or a >= ed.top + rows)
+            if seen:
+                self.put(y0 + i, x, ch if ch != ' ' else '▏', self.col(CYAN, 'logo1', curses.A_BOLD))
+            elif ch != ' ':
+                self.put(y0 + i, x, ch, self.col((30, 110, 60), 'num'))
+
+    def draw_side(self, y, x, hgt, wid):
+        """FILE (yellow) above OUTLINE (violet), ptop-style."""
+        ed = self.ed
+        st = self.file_stats()
+        fh = min(10, hgt // 2)
+        Y = (249, 248, 113)
+        self.box(y, x, fh, wid, 'FILE', Y, 'string')
+        rows = [('path', os.path.dirname(os.path.abspath(ed.path)) if ed.path else '-'),
+                ('type', ed.ft or 'text'), ('lines', str(len(ed.lines))), ('words', str(st['words'])),
+                ('size', human(st['bytes'])), ('ending', 'dos' if ed.info.crlf else 'unix'),
+                ('state', ('modified' if ed.modified else 'saved') + (' · read-only' if ed.info.readonly else ''))]
+        for i, (k, v) in enumerate(rows[:fh - 2]):
+            self.put(y + 1 + i, x + 2, k.ljust(7), self.col((150, 150, 90), 'num'))
+            vv = v if len(v) <= wid - 12 else '…' + v[-(wid - 13):]
+            self.put(y + 1 + i, x + 9, vv, self.col((235, 235, 210), 'text', curses.A_BOLD if k == 'state' and ed.modified else 0))
+        oy, oh = y + fh, hgt - fh
+        V = (155, 92, 255)
+        self.box(oy, x, oh, wid, 'OUTLINE', V, 'special')
+        items = st['outline']
+        if not items:
+            self.put(oy + 1, x + 2, '(nothing to list)', self.col((110, 90, 160), 'num'))
+            return
+        cur = max([i for i, (ln, _) in enumerate(items) if ln <= ed.row] or [0])
+        first = max(0, min(cur - (oh - 2) // 2, len(items) - (oh - 2)))
+        for k, (ln, label) in enumerate(items[first:first + oh - 2]):
+            here = first + k == cur
+            txt = ('» ' if here else '  ') + label
+            self.put(oy + 1 + k, x + 1, txt[:wid - 8].ljust(wid - 8),
+                     self.col(GREEN if here else (190, 170, 240), 'add' if here else 'text', curses.A_BOLD if here else 0))
+            self.put(oy + 1 + k, x + wid - 7, str(ln + 1).rjust(5), self.col((110, 90, 160), 'num'))
 
     def draw_intro(self, h, w):
         hints = [(':help', 'every key on one page'), (':e file', 'open a file'), ('i', 'start typing'),
@@ -3066,7 +3266,7 @@ def main(argv):
         screen = Screen(scr, ed)
         try:
             while True:
-                scr.timeout(16 if screen.animating() else -1)
+                scr.timeout(16 if screen.animating() else 1000)     # the header's clock ticks; a key wakes it at once
                 screen.draw()
                 k = screen.read_key()
                 if k is None:
