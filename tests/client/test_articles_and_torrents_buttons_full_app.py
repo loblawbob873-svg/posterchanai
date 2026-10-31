@@ -63,7 +63,8 @@ def test_write_publish_then_every_button_on_your_own_article():
         await b.js("document.querySelector('#av-bm').click(); 1")
         await b.until("document.querySelector('#av-bm').classList.contains('on')")
         await b.js("document.querySelector('#av-copy').click(); 1")
-        await b.until("__clip.some(c=>/naddr1|nevent1|note1/.test(c))")
+        # the article's SHORT link (/a/<slug> or /@<name>/<id>, tests/test_article_vanity_link.py), or nostr:naddr with no instance
+        await b.until(r"__clip.some(c=>/\/a\/[a-z0-9-]+$|\/@[^/]+\/[^/]+$|naddr1/.test(c))")
         await b.js("document.querySelector('#av-comment').click(); 1")
         await b.until("!!document.querySelector('#cmp-send')")
         await b.js("__PC.closeModal(); 1")

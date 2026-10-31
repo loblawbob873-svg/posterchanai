@@ -49,6 +49,15 @@ def for_token(token: str) -> list:
     return _newest(r for _k, r in _require_sync().where(lambda r: r.get("token") == token))
 
 
+async def aremove_for(user_id: int, sha256: str) -> list:
+    """Delete THIS user's recording rows for one blob; returns the rows removed (none = not theirs)."""
+    t = await _require()
+    rows = [(k, r) for k, r in t.where(lambda r: r.get("user_id") == user_id and r.get("sha256") == sha256)]
+    for k, _r in rows:
+        await t.adelete(k)
+    return [r for _k, r in rows]
+
+
 async def aexists(token: str, started_at: int) -> bool:
     return (await (await _require()).aget(vod_key(token, started_at))) is not None
 

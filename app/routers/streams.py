@@ -1006,6 +1006,37 @@ def stream_vods(current_user: User = Depends(get_current_user), db=Depends(get_d
     return _vod_answer(lambda: _playable(db, stream_vod_store.for_user(current_user.id)))
 
 
+@router.delete("/vods/{sha256}")
+async def stream_vod_delete(sha256: str, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Delete ONE of the signed-in user's recordings: the VOD row and, once nobody else references it, the Blossom
+    blob ("I deleted stream from my profile page but I see it in blossom still", 2026-10-30 -- deleting a stream only
+    published a kind 5 for the 30311 and the recording stayed on the drive). The blob goes through the same owner-safe
+    release Blossom's own DELETE uses: dedup means the same bytes can be someone else's file, and they keep it."""
+    from app.services import blossom_service, stream_vod_store
+    from app.services.relay_reader import Unavailable
+    sha = (sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return JSONResponse({"error": "bad recording id"}, status_code=400)
+    try:
+        mine = [r for r in await asyncio.to_thread(stream_vod_store.for_user, current_user.id) if r.get("sha256") == sha]
+        if not mine:
+            return JSONResponse({"error": "no such recording of yours"}, status_code=404)
+        shared = False
+        blob = await blossom_service.blob_index.aget(sha)
+        if blob:
+            remaining = await blossom_service.release_owner(db, sha, mine[0].get("pubkey") or "")
+            if remaining > 0:
+                shared = True
+                blossom_service.drop_meta(sha)
+            else:
+                await blossom_service.delete_blob(db, blob)
+        removed = await stream_vod_store.aremove_for(current_user.id, sha)
+    except Unavailable:
+        return JSONResponse({"error": "recordings are temporarily unavailable"}, status_code=503, headers={"Retry-After": "30"})
+    logger.info("[stream-vod] user %s deleted recording %s (%d row(s), shared=%s)", current_user.id, sha[:12], len(removed), shared)
+    return {"deleted": sha, "rows": len(removed), "shared": shared}
+
+
 @router.get("/vods/by-token/{token}")
 def stream_vods_by_token(token: str, db=Depends(get_db)):
     """A streamer's past streams by publish token — PUBLIC, like HLS playback (the bytes are already

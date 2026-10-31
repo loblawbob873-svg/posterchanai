@@ -509,7 +509,7 @@ window.PCStreamsFactory = function(dep){
   // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
   async function _deleteStream(e){
     if(!S.ME || e.pubkey!==S.ME.pubkey){ toast('you can only delete your own stream'); return; }
-    if(!await uiConfirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
+    if(!await uiConfirm('Delete this stream and its recording? It’s removed from Nostr and from your Blossom drive.')) return;
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     try{
       const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true,publicDeletion:true});
@@ -519,7 +519,21 @@ window.PCStreamsFactory = function(dep){
       try{ if(r.ev) Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }catch(_){}
       _forgetDeletedStream(e);
       try{ Store.removeEvent(e.id); }catch(_){}
-      _closeStreamChat(); toast('stream deleted'); switchView('streams');
+      /* ...AND ITS RECORDING. The kind 5 only takes the 30311 off Nostr; the VOD stayed on the drive ("I deleted stream
+       * from my profile page but I see it in blossom still", 2026-10-30). This broadcast's recording is the one the
+       * player would pick (_vodPick by `starts`), else the sha in its `recording` tag. */
+      let recGone='';
+      try{
+        let sha='';
+        const vods=d ? await _vodList(_tokenOfD(d)) : null;
+        const url=vods ? _vodPick(vods, (e.tags.find(t=>t[0]==='starts')||[])[1]||'') : '';
+        const hit=url && (vods||[]).find(v=>v.url===url);
+        sha=(hit && hit.sha256) || (((e.tags.find(t=>t[0]==='recording')||[])[1]||'').match(/[0-9a-f]{64}/)||[])[0] || '';
+        if(sha){ const r2=await _streamFetch('/api/streams/vods/'+sha, {method:'DELETE'});
+                 recGone = r2 && r2.ok ? ' and its recording' : (r2 && r2.status===404 ? '' : ' (the recording could not be deleted — try again from Files)');
+                 if(d) _vodLists.delete(_tokenOfD(d)); }
+      }catch(_){ recGone=' (the recording could not be deleted — try again from Files)'; }
+      _closeStreamChat(); toast('stream deleted'+recGone); switchView('streams');
     }catch(_){ toast('couldn’t delete the stream'); }
   }
   function _forgetDeletedStream(e){
