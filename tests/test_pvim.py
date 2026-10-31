@@ -441,18 +441,27 @@ def _run_in_pty(args, chunks, timeout=10, rows=24, cols=80):
     return proc.returncode, out
 
 
+def _text(out):
+    """What a person reads: the terminal output with its colour and cursor escapes removed."""
+    import re
+    return re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][A-Z0-9]|\x1b[=>]', b'', out).decode('utf-8', 'replace')
+
+
 def test_in_a_terminal_type_save_quit(tmp_path):
     p = tmp_path / 'notes.txt'
     p.write_text('first\n')
     rc, out = _run_in_pty([str(p)], [b'o', 'second line with ünïcode 漢字'.encode(), b'\x1b', b':wq\r'])
     assert rc == 0, out[-400:]
     assert p.read_text() == 'first\nsecond line with ünïcode 漢字\n'
-    assert b'NORMAL' in out and b'PosterChan' in out, 'the status line (mode badge, branding) was drawn'
+    assert 'NORMAL' in _text(out) and 'PosterChan' in _text(out), 'the status line (mode badge, branding) was drawn'
 
 
 def test_in_a_terminal_intro_paste_and_resize(tmp_path):
     rc, out = _run_in_pty([], [('resize', 30, 100), b':q\r'])
-    assert rc == 0 and b'PosterChanOS editor' in out, 'the intro screen draws and :q quits'
+    text = _text(out)
+    assert rc == 0 and 'N E O N' in text and 'PosterChanOS' in text, ('the start screen draws and :q quits', text[-400:])
+    # PosterChan herself: half blocks in 24-bit colour, written after curses (ptop's art, scripts/make_ptop_logo.py)
+    assert '▀'.encode() in out and b'\x1b[38;2;' in out, 'the portrait was not drawn on the start screen'
     p = tmp_path / 'paste.py'
     p.write_text('')
     paste = b'\x1b[200~def f():\n    return 1\n\x1b[201~'

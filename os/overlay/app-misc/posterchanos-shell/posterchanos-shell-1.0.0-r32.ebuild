@@ -35,6 +35,7 @@ RDEPEND="
 	>=app-misc/posterchan-desktop-1.0.2082
 	app-misc/posterchan-server
 	app-misc/posterchan-relay
+	app-editors/pvim
 	dev-vcs/ngit
 	>=gui-wm/wayfire-0.10.1-r3
 	<gui-wm/wayfire-0.11
