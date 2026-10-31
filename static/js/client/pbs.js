@@ -38,10 +38,11 @@
   const str = (v, max) => String(v == null ? '' : v).slice(0, max);
   const color = (v, dflt) => (/^#[0-9a-fA-F]{6}$/.test(String(v || '')) ? String(v).toLowerCase() : dflt);
   /** A URL an overlay may name: a Blossom/https URL or this device's IndexedDB id. Never a data: URI. */
-  const imgRef = v => { v = String(v || ''); return (/^https?:\/\//i.test(v) || /^idb:[a-z0-9-]{6,64}$/.test(v)) ? v.slice(0, 2048) : ''; };
+  // ...or `enc:<sha256>`: a file of an ENCRYPTED Files folder, decrypted on this device each time it loads.
+  const imgRef = v => { v = String(v || ''); return (/^https?:\/\//i.test(v) || /^idb:[a-z0-9-]{6,64}$/.test(v) || /^enc:[0-9a-f]{64}$/.test(v)) ? v.slice(0, 2048) : ''; };
   function cleanSource(s){
     if(!s || typeof s !== 'object') return null;
-    const type = ['screen', 'camera', 'image', 'text'].includes(s.type) ? s.type : null;
+    const type = ['screen', 'camera', 'image', 'video', 'text'].includes(s.type) ? s.type : null;
     if(!type) return null;
     const o = { id: str(s.id, 40).replace(/[^a-z0-9-]/gi, '') || Math.random().toString(36).slice(2, 10), type,
                 name: str(s.name, 80), visible: s.visible !== false,
@@ -53,6 +54,8 @@
                          shadow: s.shadow !== false, bold: s.bold !== false });
     }
     if(type === 'image'){ o.url = imgRef(s.url); if(!o.url) return null; }
+    // A video plays on a loop; its SOUND is its own strip in the mixer (vol/muted live on the source).
+    if(type === 'video'){ o.url = imgRef(s.url); if(!o.url) return null; o.vol = num(s.vol, 0, 2, 1); o.muted = !!s.muted; }
     if(type === 'camera'){ o.device = str(s.device, 200); }
     return o;
   }
@@ -208,6 +211,7 @@
       for(const [id] of E.media) if(!keep.has(id)) dropMedia(id);
       E.doc = normalize(doc);
       E.doc.sources.filter(s => s.type === 'image').forEach(loadImage);
+      E.doc.sources.filter(s => s.type === 'video' && !E.media.has(s.id)).forEach(loadVideo);
       sizeCanvas();
     }
 
@@ -264,7 +268,7 @@
         if(!s.visible) continue;
         c.globalAlpha = s.opacity;
         const bx = s.x * W, by = s.y * H, bw = s.w * W, bh = s.h * H;
-        if(s.type === 'screen' || s.type === 'camera'){
+        if(s.type === 'screen' || s.type === 'camera' || s.type === 'video'){
           const m = E.media.get(s.id), v = m && m.video;
           if(v && v.readyState >= 2 && v.videoWidth){ const [x, y, w, h] = fitContain(v.videoWidth, v.videoHeight, bx, by, bw, bh); c.drawImage(v, x, y, w, h); }
         } else if(s.type === 'image'){
@@ -315,13 +319,33 @@
       const m = E.media.get(id); if(!m) return;
       E.media.delete(id);
       try{ m.stream && m.stream.getTracks().forEach(t => t.stop()); }catch(_){}
-      try{ if(m.video){ m.video.srcObject = null; m.video.remove(); } }catch(_){}
+      try{ if(m.video){ m.video.pause(); m.video.srcObject = null; m.video.removeAttribute('src'); m.video.remove(); } }catch(_){}
       if(m.deskOf) dropChannel('desk');
+      if(m.file) dropChannel('v:' + id);
+      if(m.blobUrl){ try{ URL.revokeObjectURL(m.blobUrl); }catch(_){} }
+    }
+    /* A stored reference -> something an <img>/<video> can load: idb: from this device, enc: decrypted from Files. */
+    async function playableUrl(ref){
+      if(ref.startsWith('idb:')){ const b = await idbGet(ref.slice(4)); return b ? URL.createObjectURL(b) : ''; }
+      if(ref.startsWith('enc:')){ return dep.encFileUrl ? String(await dep.encFileUrl(ref.slice(4)) || '') : ''; }
+      return ref;
+    }
+    async function loadVideo(s){
+      let url = '';
+      try{ url = await playableUrl(s.url); }catch(_){ url = ''; }
+      if(!url){ setWhy('Couldn’t open “' + (s.name || 'that video') + '” on this device.'); return; }
+      const v = document.createElement('video'); v.crossOrigin = 'anonymous'; v.loop = true; v.playsInline = true; v.preload = 'auto';
+      v.onloadedmetadata = () => { if(s.fresh){ fitNew(s, v.videoWidth || 16, v.videoHeight || 9, 0.5); delete s.fresh; scheduleSave(); } paintLayers(); };
+      v.src = url; hostEl().appendChild(v);
+      E.media.set(s.id, { video: v, file: true, blobUrl: url.startsWith('blob:') ? url : '' });
+      // Its sound goes through the mix (and only there): a media-element source takes the element's output.
+      if(ensureAudio()){ try{ addChannel('v:' + s.id, null, E.ac.createMediaElementSource(v)); }catch(_){} }
+      try{ const p = v.play(); if(p && p.catch) p.catch(() => {}); }catch(_){}
     }
     async function loadImage(s){
       const im = new Image(); im.crossOrigin = 'anonymous';
       let url = s.url;
-      if(url.startsWith('idb:')){ try{ const b = await idbGet(url.slice(4)); if(!b) return; url = URL.createObjectURL(b); }catch(_){ return; } }
+      if(url.startsWith('idb:') || url.startsWith('enc:')){ try{ url = await playableUrl(url); if(!url) return; }catch(_){ return; } }
       im.onload = () => { if(s.fresh){ fitNew(s, im.naturalWidth, im.naturalHeight, 0.4); delete s.fresh; scheduleSave(); } paintLayers(); };
       im.src = url;
       E.media.set(s.id, { img: im });
@@ -383,12 +407,12 @@
       if(E.ac.state === 'suspended'){ try{ E.ac.resume(); }catch(_){} }
       return E.ac;
     }
-    function chCfg(k){ return E.doc.audio[k] || { vol: 1, muted: false }; }
+    function chCfg(k){ if(k.startsWith('v:')){ const s = src(k.slice(2)); return s || { vol: 1, muted: false }; } return E.doc.audio[k] || { vol: 1, muted: false }; }
     function applyGain(k){ const c = E.ch.get(k); if(c){ const g = chCfg(k); c.gain.gain.value = g.muted ? 0 : g.vol; } }
-    function addChannel(k, stream){
+    function addChannel(k, stream, node){
       if(!ensureAudio()) return;
       dropChannel(k);
-      const src = E.ac.createMediaStreamSource(stream), gain = E.ac.createGain(), an = E.ac.createAnalyser();
+      const src = node || E.ac.createMediaStreamSource(stream), gain = E.ac.createGain(), an = E.ac.createAnalyser();
       an.fftSize = 2048; src.connect(gain); gain.connect(an); gain.connect(E.dest);
       E.ch.set(k, { stream, src, gain, an, buf: new Float32Array(an.fftSize), peak: -60, rms: -60, hold: -60 });
       applyGain(k); startMeters(); paintMixer();
@@ -567,7 +591,7 @@
       if(s.type === 'text') return (s.text || 'Text').split('\n')[0].slice(0, 40) || 'Text';
       return s.name || { screen: 'Screen', camera: 'Camera', image: 'Image' }[s.type];
     }
-    const typeIcon = { screen: 'monitor', camera: 'camera', image: 'image', text: 'text' };
+    const typeIcon = { screen: 'monitor', camera: 'camera', image: 'image', video: 'film', text: 'text' };
     function paintLayers(){
       const box = $('#pbs-layers'); if(!box) return;
       const list = E.doc.sources.slice().reverse();      // top of the stack first, as in every editor
@@ -615,6 +639,9 @@
         h += `<label class="pbs-f"><span>Camera</span><div class="pbs-field"><select id="pbs-p-cam"><option value="">Default camera</option>${
           E.cams.map((d, i) => `<option value="${enc(d.deviceId)}"${d.deviceId === s.device ? ' selected' : ''}>${enc(d.label || 'Camera ' + (i + 1))}</option>`).join('')}</select></div></label>`;
       }
+      if(s.type === 'video'){
+        h += `<button type="button" class="btn btn-ghost small pbs-btn" id="pbs-p-restart">${ic('refresh')}Play from the start</button>`;
+      }
       if(s.type === 'screen'){
         h += `<button type="button" class="btn btn-ghost small pbs-btn" id="pbs-p-repick">${ic('monitor')}Change what’s shared…</button>`;
       }
@@ -632,6 +659,7 @@
       on('pbs-p-opacity', 'oninput', e => { s.opacity = Number(e.target.value) / 100; $('#pbs-p-op-o', box).textContent = e.target.value + '%'; scheduleSave(); });
       on('pbs-p-cam', 'onchange', async e => { s.device = e.target.value; scheduleSave(); await captureCamera(s); paintLayers(); });
       on('pbs-p-repick', 'onclick', async () => { await captureScreen(s); paintLayers(); });
+      on('pbs-p-restart', 'onclick', () => { const m = E.media.get(s.id); if(m && m.video){ m.video.currentTime = 0; try{ m.video.play(); }catch(_){} } });
       on('pbs-p-fit', 'onclick', () => { s.x = 0; s.y = 0; if(s.type === 'text'){ s.x = 0.04; s.y = 0.04; } else { s.w = 1; s.h = 1; } scheduleSave(); placeSel(); });
       on('pbs-p-center', 'onclick', () => { s.x = (1 - s.w) / 2; s.y = (1 - s.h) / 2; scheduleSave(); placeSel(); });
     }
@@ -651,11 +679,14 @@
         <div class="pbs-field pbs-dsel"><select id="pbs-mic-dev" aria-label="Microphone"><option value="">Default microphone</option>${
           E.mics.map((d, i) => `<option value="${enc(d.deviceId)}"${d.deviceId === micDev ? ' selected' : ''}>${enc(d.label || 'Microphone ' + (i + 1))}</option>`).join('')}</select></div></div>`;
       const deskExtra = E.ch.has('desk') ? '' : `<div class="pbs-strip-x pbs-note">${canScreen() ? 'Desktop sound comes with a screen capture where your system shares it.' : 'No desktop audio on this device.'}</div>`;
-      box.innerHTML = strip('mic', 'Microphone', micExtra) + strip('desk', 'Desktop audio', deskExtra);
+      const vids = E.doc.sources.filter(s => s.type === 'video' && E.ch.has('v:' + s.id));
+      box.innerHTML = strip('mic', 'Microphone', micExtra) + strip('desk', 'Desktop audio', deskExtra)
+        + vids.map(s => strip('v:' + s.id, enc(layerName(s)))).join('');
       $$('.pbs-strip', box).forEach(el => {
         const k = el.dataset.ch, c = chCfg(k);
-        const vol = $('.pbs-vol', el); if(vol) vol.oninput = () => { c.vol = Number(vol.value) / 100; E.doc.audio[k] = c; applyGain(k); scheduleSave(); };
-        const mu = $('.pbs-mute', el); if(mu) mu.onclick = () => { c.muted = !c.muted; E.doc.audio[k] = c; applyGain(k); scheduleSave(); paintMixer(); };
+        const keep = () => { if(!k.startsWith('v:')) E.doc.audio[k] = c; };   // a video's level lives on its source
+        const vol = $('.pbs-vol', el); if(vol) vol.oninput = () => { c.vol = Number(vol.value) / 100; keep(); applyGain(k); scheduleSave(); };
+        const mu = $('.pbs-mute', el); if(mu) mu.onclick = () => { c.muted = !c.muted; keep(); applyGain(k); scheduleSave(); paintMixer(); };
       });
       const mo = $('#pbs-mic-on', box); if(mo) mo.onclick = () => enableMic();
       const md = $('#pbs-mic-dev', box); if(md) md.onchange = async () => { E.doc.audio.mic.device = md.value; scheduleSave(); if(E.ch.has('mic')) await enableMic(); };
@@ -756,9 +787,9 @@
           <div class="pbs-addbar" role="toolbar" aria-label="Add a source">
             <button type="button" class="pbs-add" id="pbs-add-screen"${canScreen() ? '' : ' aria-disabled="true"'}>${ic('monitor')}<span>Screen</span></button>
             <button type="button" class="pbs-add" id="pbs-add-camera">${ic('camera')}<span>Camera</span></button>
-            <button type="button" class="pbs-add" id="pbs-add-image">${ic('image')}<span>Image</span></button>
+            <button type="button" class="pbs-add" id="pbs-add-image">${ic('image')}<span>Media</span></button>
             <button type="button" class="pbs-add" id="pbs-add-text">${ic('text')}<span>Text</span></button>
-            <input type="file" id="pbs-img-file" accept="image/*" hidden>
+            <input type="file" id="pbs-img-file" accept="image/*,video/*" hidden>
           </div>
           ${canScreen() ? '' : `<p class="pbs-note pbs-mobile-note">Screen capture is desktop-only — phones and tablets don’t allow it. Camera, images and text work here.</p>`}
         </section>
@@ -844,10 +875,43 @@
         paint(); const ta = $('#pbs-p-text'); if(ta){ ta.focus(); ta.select(); }
       };
       const file = $('#pbs-img-file', root);
-      $('#pbs-add-image', root).onclick = () => { ensureAudio(); file.value = ''; file.click(); };
+      /* MEDIA: an image or a video, from this device or from Files (the app's one picker -- folders, search and
+       * encrypted folders included). A Files pick is used IN PLACE: nothing is uploaded again; a file of an encrypted
+       * folder is kept as `enc:<sha>` and decrypted on this device whenever the studio opens. */
+      const fromFiles = () => {
+        if(!dep.blossomPicker){ file.value = ''; file.click(); return; }
+        dep.blossomPicker(null, ({ url, type, ext, name, sha, enc: sealed }) => {
+          const t = String(type || ''), isVid = /^video\//.test(t) || /^(mp4|webm|mov|m4v|mkv)$/i.test(ext || '');
+          if(!isVid && !/^image\//.test(t) && !/^(png|jpe?g|gif|webp|avif|svg)$/i.test(ext || '')){ setWhy('Pick an image or a video.'); return; }
+          const ref = sealed && sha ? 'enc:' + sha : url;
+          const s = cleanSource({ id: uid(), type: isVid ? 'video' : 'image', url: ref, name: String(name || (isVid ? 'Video' : 'Image')).slice(0, 60), x: isVid ? 0.25 : 0.55, y: isVid ? 0.25 : 0.06, w: 0.4, h: 0.4 });
+          if(!s){ setWhy('That file can’t be used here.'); return; }
+          s.fresh = true;
+          if(addSource(s)){ (isVid ? loadVideo : loadImage)(s); paint(); }
+        }, { title: 'Add media from Files', filter: b => /^(image|video)\//.test(String(b.type || '')) || /\.(png|jpe?g|gif|webp|avif|svg|mp4|webm|mov|m4v|mkv)$/i.test(String(b.name || b.url || '')) });
+      };
+      $('#pbs-add-image', root).onclick = () => {
+        ensureAudio();
+        if(dep.standalone() || !dep.blossomPicker || !dep.modal){ file.value = ''; file.click(); return; }
+        dep.modal(`<h3>Add media</h3><p class="muted">An image or a video — from this device, or one already in Files.</p>
+          <div class="pbs-src-choices"><button type="button" class="btn btn-ghost" id="pbs-media-device">${ic('upload')}This device</button>
+          <button type="button" class="btn btn-neon" id="pbs-media-files">${ic('folder')}Files</button></div>`, mroot => {
+          mroot.querySelector('#pbs-media-device').onclick = () => { dep.closeModal(); file.value = ''; file.click(); };
+          mroot.querySelector('#pbs-media-files').onclick = () => { dep.closeModal(); fromFiles(); };
+        });
+      };
       file.onchange = async () => {
         const fl = file.files && file.files[0]; if(!fl) return;
-        if(!/^image\//.test(fl.type)){ setWhy('That isn’t an image.'); return; }
+        if(/^video\//.test(fl.type)){
+          // A video stays on THIS device (IndexedDB): uploading a long clip before it can be shown would hold the studio.
+          const id = 'img-' + uid() + uid();
+          try{ await idbPut(id, fl); }catch(_){ setWhy('Couldn’t keep that video on this device.'); return; }
+          const s = cleanSource({ id: uid(), type: 'video', url: 'idb:' + id, name: fl.name.slice(0, 60), x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+          s.fresh = true;
+          if(addSource(s)){ loadVideo(s); paint(); }
+          return;
+        }
+        if(!/^image\//.test(fl.type)){ setWhy('That isn’t an image or a video.'); return; }
         let url = '';
         if(!dep.standalone()){ try{ url = String(await withTimeout(dep.uploadBlob(fl, { noMirror: true, folder: 'PBS' }), 30000) || ''); }catch(_){ url = ''; } }
         if(!/^https?:\/\//.test(url)){ const id = 'img-' + uid() + uid(); try{ await idbPut(id, fl); url = 'idb:' + id; }catch(_){ setWhy('Couldn’t keep that image on this device.'); return; } }
@@ -944,6 +1008,7 @@
 .pbs-check input{accent-color:var(--pbs-g);width:16px;height:16px}
 .pbs-cap small{color:var(--muted);font-size:11px;margin-left:2px}
 .pbs-chip:disabled{opacity:.35;cursor:not-allowed}
+.pbs-src-choices{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.pbs-src-choices .btn{flex:1 1 140px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .pbs-capchip:empty{display:none}.pbs-capchip[data-cap='1']{color:var(--pbs-g)}
 .pbs-seg{--n:2;--i:0;position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));padding:3px;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid var(--pbs-line);isolation:isolate}
 .pbs-seg-thumb{position:absolute;z-index:0;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / var(--n));transform:translateX(calc(100% * var(--i)));border-radius:8px;

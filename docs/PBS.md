@@ -23,6 +23,19 @@ the WHIP DELETE). The desktop side is `desktop/main.js` (the source picker, the 
 | **Chat** | The stream's chat (kind 1311, plus reactions) appears in a panel beside the preview, and you can reply from there. It is the same chat code the stream page uses. |
 | **Saved setup** | The scene, mixer, output settings and stream words are stored in one kind-30078 document, `d=pcai:pbs`, encrypted with NIP-44 to your own key. It follows your account to any device. |
 
+## Media from Files
+
+**Media** (in the source bar) asks *This device* or *Files*. Files is the app's own picker -- the same folders,
+search and encrypted folders as everywhere else -- narrowed to images and videos. A pick is used in place, nothing is
+uploaded again; a file of an ENCRYPTED folder is stored in the studio as `enc:<sha256>` and decrypted on this device
+whenever the studio opens. A video loops on the canvas and its sound gets its own strip in the mixer (volume and mute
+live on the source). A video from this device is kept in this device's IndexedDB (`idb:`) rather than uploaded first.
+`tests/client/test_pbs_media_from_files_full_app.py`.
+
+**Cap at 720p** (Output, on by default) holds what leaves the computer at 720p and at most 1.5 Mbps -- the instance's
+own serving ceiling -- whatever Resolution/Upload say; turning it on while live re-caps the sender at once.
+`tests/client/test_pbs_cap720_full_app.py`.
+
 ## How it ties into the instance
 
 When you press **Go Live**, PBS does the following:

@@ -14769,6 +14769,7 @@
   function _pbsDeps(){ return {
     state: { get ME(){ return ME; }, get GUEST(){ return GUEST; }, get LOGO(){ return LOGO; }, get VIEW(){ return VIEW; }, get signer(){ return signer; } },
     enc, toast, uploadBlob, _copyFrom, publish, standalone: _standalone, guestPrompt: _guestPrompt, streams: _streamsLoad, pickImage: _pickBlossomImage,
+    blossomPicker, encFileUrl, modal, closeModal,                   // Media from Files (images and videos, encrypted folders too)
   }; }
   function _pbsMod(){ return _lzGet('pbs.js', 'PCPbsFactory', _pbsDeps); }
   function _pbsLoad(){ return _lzLoad('pbs.js', 'PCPbsFactory', _pbsDeps); }
