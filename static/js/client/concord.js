@@ -541,15 +541,28 @@
   /* The ONE door every room write goes through (app.js `relayPublishRoom`) asks this. */
   window.PCConcordMirror={publish:roomPublish,serves:(relays,filters)=>homeServes(PC()||{},relays,filters)};
   function cordControlStamp(wraps){return [...new Set((wraps||[]).map(ev=>ev&&ev.id).filter(Boolean))].sort();}
+  /* WHAT MEMBERSHIP IS, as opposed to what the community LOOKS like. The stored bundle also carries its name, icon, label,
+   * relay list and public-channel history, and a metadata refresh rewrites those -- including the refresh set off by the
+   * live control subscription receiving the very profile edit a save just published. Compared whole, that echo read as
+   * "membership changed": every community avatar save worked and then said "Not saved: Concord membership changed during
+   * profile update" (2026-10-30). Keys, epochs, the owner and dissolution are membership; everything else is not. */
+  const CORD_COSMETIC=['name','icon','label','relays','expires_at','creator_npub','public_channel_history','description','banner'];
+  function cordMembershipStamp(bundle){
+    if(!bundle||typeof bundle!=='object')return JSON.stringify(bundle);
+    const out={};
+    for(const k of Object.keys(bundle).sort())if(!CORD_COSMETIC.includes(k))out[k]=bundle[k];
+    if(Array.isArray(out.channels))out.channels=out.channels.map(c=>{const{name,...rest}=c||{};return rest;});
+    return JSON.stringify(out);
+  }
   function cordPlaneContext(p,bundle,controls=[],room=null){
     const owner=String(p&&p.viewer&&p.viewer().pubkey||''), identity=room&&roomIdentity(room),
-      material=JSON.stringify(bundle),loadKey=room&&(room.communityId||room.naddr),
+      material=cordMembershipStamp(bundle),loadKey=room&&(room.communityId||room.naddr),
       generation=loadKey&&JSON.stringify(cordControlStamp(roomControls.get(loadKey)));
     const membershipCurrent=()=>{
       if(String(p&&p.viewer&&p.viewer().pubkey||'')!==owner)return false;
       if(!room)return true;
       const live=saved().find(r=>roomIdentity(r)===identity);
-      return !!live&&JSON.stringify(live.cord&&live.cord.bundle)===material;
+      return !!live&&cordMembershipStamp(live.cord&&live.cord.bundle)===material;
     };
     return {bundle,controls:controls||[],membershipCurrent,current:()=>membershipCurrent()&&
       (!generation||JSON.stringify(cordControlStamp(roomControls.get(loadKey)))===generation)};
