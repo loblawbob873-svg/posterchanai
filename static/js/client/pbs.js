@@ -320,6 +320,7 @@ window.PCPbsFactory = function(dep){
       hostEl().appendChild(v);
       try{ const p = v.play(); if(p && p.catch) p.catch(() => {}); }catch(_){}
       E.media.set(id, { stream, video: v });
+      stampFrames(E.media.get(id)); watchFrames();
       const vt = stream.getVideoTracks()[0];
       if(vt) vt.addEventListener('ended', () => { if(E.media.get(id) && E.media.get(id).stream === stream){ dropMedia(id); paint(); } });
     }
@@ -378,7 +379,10 @@ window.PCPbsFactory = function(dep){
       if(!canScreen()){ setWhy('Screen capture is desktop-only — phones and tablets don’t allow it. Camera and overlays work here.'); return false; }
       if(await macBlocked()){ sayScreenBlocked(); return false; }
       let st;
-      try{ st = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: E.doc.out.fps }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true }); }
+      // selfBrowserSurface:'exclude' -- Chrome/Edge leave THIS tab out of their picker (sharing the studio itself shows
+      // viewers the studio); other browsers ignore the hint, so selfCaptured() below still checks what was picked.
+      try{ st = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: E.doc.out.fps }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true,
+                                                                selfBrowserSurface: 'exclude', surfaceSwitching: 'include' }); }
       catch(e){
         if(e && e.name === 'NotAllowedError'){ if(await macBlocked()) sayScreenBlocked(); else setWhy('Screen capture cancelled.'); }
         else setWhy('Screen capture could not start' + (e && e.message ? ': ' + e.message : '') + (window.pcShell ? ' — capture details are in screen-share.log' : ''));
@@ -391,8 +395,38 @@ window.PCPbsFactory = function(dep){
       attachVideo(s.id, new MediaStream([vt]));
       if(at){ addChannel('desk', new MediaStream([at])); E.media.get(s.id).deskOf = true; }
       else if(E.ch.has('desk')) dropChannel('desk');
-      setWhy(at ? '' : 'Shared without its sound — this platform (or the source you picked) gives no desktop audio.', 'info');
+      if(selfCaptured(vt)) setWhy('You’re sharing PosterChan itself, so viewers see this studio (and any dialog you open in it). Pick the game’s window instead: Properties → Change what’s shared…', 'self');
+      else setWhy(at ? '' : 'Shared without its sound — this platform (or the source you picked) gives no desktop audio.', 'info');
       return true;
+    }
+    /* Is the shared surface the window or tab PBS runs in? The track's label is the window/tab title where the browser
+     * says (Chrome: the title; Firefox may say nothing) -- a heuristic, so it only ever WARNS. */
+    function selfCaptured(vt){
+      const lab = String((vt && vt.label) || '').toLowerCase(), title = String(document.title || '').toLowerCase();
+      return !!lab && ((title.length > 3 && lab.includes(title)) || /posterchan|pbs studio/.test(lab));
+    }
+    /* A SHARED WINDOW THAT STOPS SENDING FRAMES (minimised, or a covered window on some systems) leaves its LAST picture
+     * on the broadcast -- reported live: a Firefox window captured while the Files picker was open kept showing that
+     * picker to viewers "despite minimizing everything". Every capture's video stamps its frames; one with none for 4 s
+     * is said out loud, and the warning clears itself when frames come back. */
+    function watchFrames(){
+      if(E.frameT) return;
+      E.frameT = setInterval(() => {
+        let stale = null;
+        for(const s of E.doc.sources){
+          if(s.type !== 'screen' || !s.visible) continue;
+          const m = E.media.get(s.id); if(!m || !m.video || !m.lastFrame) continue;
+          if(Date.now() - m.lastFrame > 4000){ stale = s; break; }
+        }
+        if(stale) setWhy('“' + layerName(stale) + '” isn’t sending a picture — the window you shared may be minimized, so viewers see its last frame. Restore it, or pick another: Properties → Change what’s shared…', 'frozen');
+        else if(E.whyKind === 'frozen') setWhy('');
+      }, 1000);
+    }
+    function stampFrames(m){
+      const v = m.video; m.lastFrame = Date.now();
+      if(!v || typeof v.requestVideoFrameCallback !== 'function') return;
+      const tick = () => { if(![...E.media.values()].includes(m)) return; m.lastFrame = Date.now(); v.requestVideoFrameCallback(tick); };   // stops with its media
+      v.requestVideoFrameCallback(tick);
     }
     async function captureCamera(s){
       if(!canCamera()){ setWhy('This browser has no camera access.'); return false; }

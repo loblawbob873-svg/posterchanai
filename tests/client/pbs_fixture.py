@@ -36,7 +36,7 @@ window.__ingestMode=window.__ingestMode||'ok';window.__whipMode=window.__whipMod
 window.__publishOK=true;
 (()=>{
  const mkVideo=(color,w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');let f=0;
-   const paint=()=>{x.fillStyle=color;x.fillRect(0,0,w,h);x.fillStyle='#ffffff';x.fillRect((f++*9)%(w-20),4,16,16);};paint();setInterval(paint,33);
+   const paint=()=>{if(window.__freezeScreen&&color==='#0000ff')return;x.fillStyle=color;x.fillRect(0,0,w,h);x.fillStyle='#ffffff';x.fillRect((f++*9)%(w-20),4,16,16);};paint();setInterval(paint,33);
    return c.captureStream(30);};
  let ac=null;
  const tone=(freq)=>{ac=ac||new AudioContext();try{ac.resume()}catch(_){}
@@ -45,7 +45,7 @@ window.__publishOK=true;
  window.__noScreen=window.__noScreen||false;
  const md=navigator.mediaDevices;
  if(window.__noScreen){ try{ Object.defineProperty(md,'getDisplayMedia',{value:undefined,configurable:true}); }catch(_){ md.getDisplayMedia=undefined; } }
- else md.getDisplayMedia=async(c)=>{__gdm++;const s=new MediaStream(mkVideo('#0000ff',1280,720).getVideoTracks());
+ else md.getDisplayMedia=async(c)=>{__gdm++;window.__gdmOpts=c;const s=new MediaStream(mkVideo('#0000ff',1280,720).getVideoTracks());
    if(c&&c.audio)tone(330).getAudioTracks().forEach(t=>s.addTrack(t));return s;};
  md.getUserMedia=async(c)=>{__gum.push(JSON.parse(JSON.stringify(c||{})));const s=new MediaStream();
    if(c&&c.video)mkVideo('#00ff00',640,360).getVideoTracks().forEach(t=>s.addTrack(t));
