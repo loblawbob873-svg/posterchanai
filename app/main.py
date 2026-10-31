@@ -1894,6 +1894,29 @@ async def profile_at_page(name: str, request: Request):
     return await _profile_page(name, request, "/@")
 
 
+@app.get("/a/{slug}", response_class=HTMLResponse)
+async def article_short_page(slug: str, request: Request):
+    """`poster.place/a/<title-slug>` -- the SHORTEST readable address of an article ("we want to make the url as short as
+    possible"). The slug belongs to the member article that claimed it FIRST (article_share.short_claim); a clash or a
+    non-member gets the /@<name>/<slug> form instead. Same card as every other article link; anything unreadable still
+    serves the app, which asks /client/article-slug itself."""
+    from app.routers.client import render_client_shell
+    meta = None
+    try:
+        from app.services import article_share, settings_store
+        port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+        ref = await article_share.short_claim(port, slug)
+        card = await article_share.article_card(port, ref) if ref else None
+        if card:
+            fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+            fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+            base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host else str(request.base_url).rstrip("/"))
+            meta = article_share.og_meta(card, "%s/a/%s" % (base, slug.lower()), fallback_image=base + "/static/icon-512.png")
+    except Exception as e:
+        logging.getLogger(__name__).warning("[article] short preview failed for %r: %s", slug[:40], e)
+    return await render_client_shell(request, None, meta=meta)
+
+
 @app.get("/@{name}/{article}", response_class=HTMLResponse)
 async def article_vanity_page(name: str, article: str, request: Request):
     """`poster.place/@<name>/<title-slug>` -- the SHORT, READABLE address of a long-form article ("can we add vanity urls

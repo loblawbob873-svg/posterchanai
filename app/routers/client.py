@@ -6802,6 +6802,20 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
     return JSONResponse({"ok": True, "name": name, "nip05": f"{name}@{domain}"})
 
 
+@router.get("/article-slug")
+async def article_slug(s: str = ""):
+    """Who owns the short article link `/a/<s>` here: {ok, pubkey, d} or {ok:false}. The client asks it to OPEN such a
+    link and, before handing one out, to check the slug is really this article's (first claim among this instance's
+    members, article_share.short_claim). Public facts only: the article itself is public."""
+    from app.services import article_share
+    port = int(_setting(None, "nostr_relay_port", "3052") or 3052)
+    try:
+        ref = await article_share.short_claim(port, s)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "unavailable"}, status_code=503)
+    return JSONResponse({"ok": True, "pubkey": ref["pubkey"], "d": ref["d"]} if ref else {"ok": False})
+
+
 @router.get("/admin-nip05")
 async def admin_nip05_status(pubkey: str, request: Request, db: Session = Depends(get_db)):
     """Current NIP-05 name granted to this pubkey on THIS node's identity server (if any). Lets the

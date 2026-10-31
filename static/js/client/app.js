@@ -2360,6 +2360,11 @@
                                         && _articleSlug(((x.tags||[]).find(t=>t[0]==='title')||[])[1] || '') === tail);
            if(clash) tail = ''; }catch(_){ tail = ''; }
     }
+    // SHORTEST FIRST: /a/<slug> when this instance says the slug is THIS article's (first claim among members).
+    if(tail){
+      try{ const r = await fetch(o + '/client/article-slug?s=' + encodeURIComponent(tail)).then(r => r.json());
+           if(r && r.ok && r.pubkey === ev.pubkey && r.d === d) return o + '/a/' + tail; }catch(_){}
+    }
     return o + '/@' + (name || NT().nip19.npubEncode(ev.pubkey)) + '/' + encodeURIComponent(tail || d);
   }
   /* MUST match app/services/article_share.py `slug` character for character (tests/test_article_vanity_link.py). */
@@ -2398,6 +2403,8 @@
      * to). Resolved like /users/<name>; `@name@this.domain` is accepted, the domain dropped server-side
      * only when it IS this instance. */
     if(/^@[^@\s]+(@[^@\s]+)?$/.test(seg[0]) && seg.length === 1) return { kind:'user', q: seg[0].slice(1) };
+    /* `/a/<title-slug>` -- an article's SHORT address; the server says whose (first claim among members). */
+    if(/^a$/.test(seg[0]) && seg.length === 2 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(seg[1])) return { kind:'article-short', s: seg[1].toLowerCase() };
     /* `/@<name>/<article-id>` -- a long-form article's readable address (its `d` tag under its author). */
     if(/^@[^@\s]+(@[^@\s]+)?$/.test(seg[0]) && seg.length === 2 && seg[1]) return { kind:'article', owner: seg[0].slice(1), d: seg[1] };
     /* `/r/<owner>/<repo-id>` — the READABLE address of a git repo, and the one people actually paste
@@ -2604,6 +2611,10 @@
                  pk = await nip05Resolve(name.toLowerCase()); }
         if(pk){ await openNaddr(pk, String(e.repo||''), 30617); return; }
         toast('couldn’t work out whose repo that is');
+      } else if(e.kind==='article-short'){
+        let r = null; try{ r = await fetch('/client/article-slug?s=' + encodeURIComponent(e.s)).then(x => x.json()); }catch(_){}
+        if(r && r.ok && safePk(r.pubkey)){ await openNaddr(r.pubkey, String(r.d||''), 30023); return; }
+        toast('that article link doesn’t lead anywhere here');
       } else if(e.kind==='article'){
         let pk = safePk(e.owner);
         if(!pk){ const name = e.owner.includes('@') ? e.owner : (e.owner + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }

@@ -75,3 +75,66 @@ def test_the_client_routes_the_path_and_the_reader_copies_the_short_link():
     assert "e.kind==='article'" in src and "_openArticleByName(pk" in src
     disc = (ROOT / "static/js/client/discover.js").read_text()
     assert "_lk=await _articleLink(e)" in disc
+
+
+# ── /a/<slug>: the shortest form, owned by the FIRST member article to claim it ─────────────────────────────────
+ALICE, BOB, EVE = "a1" * 32, "b2" * 32, "e3" * 32      # alice and bob are members; eve is not
+
+
+def _claims_fixture(monkeypatch, arts):
+    from app.services import article_share, nostr_store, nip05_access
+
+    async def q(port, filters, timeout=4.0, strict=False):
+        f = filters[0]
+        if f.get("kinds") == [0]:
+            return []
+        out = [a for a in arts if a["pubkey"] in (f.get("authors") or [a["pubkey"]])]
+        if f.get("#d"):
+            out = [a for a in out if a["tags"][0][1] in f["#d"]]
+        return out
+    monkeypatch.setattr(nostr_store, "_ws_query", q)
+    monkeypatch.setattr(nip05_access, "granted_pubkeys", lambda: frozenset({ALICE, BOB}))
+    article_share._claims.clear()
+    article_share._cache.clear()
+    return article_share
+
+
+def _art(pk, d, title, published, created=None, eid=None):
+    return {"pubkey": pk, "kind": 30023, "id": eid or (pk[:2] + d).ljust(64, "0"), "created_at": created or published + 500,
+            "content": "x", "tags": [["d", d], ["title", title], ["published_at", str(published)]]}
+
+
+def test_the_first_member_to_claim_a_slug_keeps_it(monkeypatch):
+    t = "Private, and still yours: part two"
+    arts = [_art(BOB, "b-copy", t, published=2000, created=9999),        # a later copycat, edited most recently
+            _art(ALICE, "a-orig", t, published=1000, created=1500),      # the first claim
+            _art(EVE, "e-old", t, published=10)]                         # older still, but not a member
+    a = _claims_fixture(monkeypatch, arts)
+    ref = asyncio.run(a.short_claim(3052, "private-and-still-yours"))
+    assert ref == {"kind": 30023, "pubkey": ALICE, "d": "a-orig"}, ("first claim among members must win", ref)
+    assert asyncio.run(a.short_claim(3052, "PRIVATE-AND-STILL-YOURS")) == ref
+    assert asyncio.run(a.short_claim(3052, "../etc/passwd")) is None
+    assert asyncio.run(a.short_claim(3052, "nothing-by-that-name")) is None
+
+
+def test_the_short_route_renders_the_claimed_articles_card(monkeypatch):
+    import app.main as m
+    from app.routers import client
+    a = _claims_fixture(monkeypatch, [_art(ALICE, "a-orig", "Private, and still yours: why", published=1000)])
+    seen = {}
+
+    async def shell(request, db, meta=None):
+        seen["meta"] = meta
+        return "SHELL"
+    monkeypatch.setattr(client, "render_client_shell", shell)
+    asyncio.run(m.article_short_page("private-and-still-yours", _request("/a/private-and-still-yours")))
+    assert seen["meta"]["url"] == "https://poster.place/a/private-and-still-yours" and seen["meta"]["title"].startswith("Private"), seen
+    r = asyncio.run(client.article_slug("private-and-still-yours"))
+    assert json.loads(r.body) == {"ok": True, "pubkey": ALICE, "d": "a-orig"}
+    assert json.loads(asyncio.run(client.article_slug("nope")).body) == {"ok": False}
+
+
+def test_the_client_mints_a_short_only_when_the_server_says_it_is_this_article():
+    src = (ROOT / "static/js/client/app.js").read_text()
+    assert "r.pubkey === ev.pubkey && r.d === d) return o + '/a/' + tail" in src
+    assert "kind:'article-short'" in src and "e.kind==='article-short'" in src

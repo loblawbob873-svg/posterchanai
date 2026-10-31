@@ -159,6 +159,48 @@ async def article_by_name(port: int, pubkey: str, name: str) -> dict | None:
     return None
 
 
+_claims: dict[str, tuple[float, dict | None]] = {}
+
+
+def _published(e: dict) -> int:
+    try:
+        return int(_tag(e, "published_at") or e.get("created_at") or 0)
+    except ValueError:
+        return int(e.get("created_at") or 0)
+
+
+async def short_claim(port: int, s: str) -> dict | None:
+    """`/a/<slug>` -> {"pubkey", "d"}: the article that CLAIMED that slug first, among this instance's MEMBERS only.
+
+    Name-less links are only safe with both rules: outsiders cannot claim slugs on this domain at all, and a later
+    article with the same title -- from anyone, members included -- never takes over a link already shared (newest-wins
+    would hand every famous link to whoever copies its title). "First" is NIP-23's `published_at` (an edit keeps it),
+    the version's created_at without one; a tie goes to the lower event id so every node answers alike."""
+    s = (s or "").strip().lower()
+    if not s or len(s) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", s):
+        return None
+    now = time.time()
+    hit = _claims.get(s)
+    if hit and hit[0] > now:
+        return hit[1]
+    from app.services import nostr_store
+    from app.services.nip05_access import granted_pubkeys
+    members = sorted(granted_pubkeys())
+    if not members:
+        return None
+    evs = await nostr_store._ws_query(port, [{"authors": members, "kinds": [ARTICLE_KIND], "limit": 5000}], timeout=6.0, strict=True)
+    mem = set(members)
+    cands = [e for e in (evs or []) if e.get("pubkey") in mem and slug(_tag(e, "title")) == s and _tag(e, "d")]
+    ref = None
+    if cands:
+        e = min(cands, key=lambda x: (_published(x), x.get("id") or ""))
+        ref = {"kind": ARTICLE_KIND, "pubkey": e["pubkey"], "d": _tag(e, "d")}
+    _claims[s] = (now + (_CARD_TTL if ref else 60.0), ref)
+    if len(_claims) > 4000:
+        _claims.clear()
+    return ref
+
+
 def og_meta(card: dict, url: str, fallback_image: str = "") -> dict:
     """An article card -> the `meta` dict the client shell renders into <head> (escaped there)."""
     title = card.get("title") or "Article"
