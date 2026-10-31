@@ -86,7 +86,11 @@ for rep, g in enumerate((0.35, 0.2, 0.1)):
 dry = zapl + spark + voice
 st = np.stack([dry + dl * 0.8 + dr * 0.2, dry + dr * 0.8 + dl * 0.2], 1)
 st = np.tanh(st * 1.3) / np.tanh(1.3)
-st /= np.max(np.abs(st)) / 0.95
+# A NOTIFICATION, NOT A SIREN: peak at -11 dBFS (mean ~ -22 dB, where Android's own notification sounds sit).
+# Normalised to 0.95 it peaked at full scale and averaged -11 dB -- ~10 dB louder than anything else on the phone at
+# the same volume ("very loud and does not obey volume controls ... need it softer", 2026-10-30).
+PEAK = 10 ** (-11 / 20)
+st /= np.max(np.abs(st)) / PEAK
 fade = int((0.2 if CHIME else 0.12) * SR); st[-fade:] *= np.linspace(1, 0, fade)[:, None]
 st[:int(0.002 * SR)] *= np.linspace(0, 1, int(0.002 * SR))[:, None]
 

@@ -104,3 +104,23 @@ def test_the_phone_plays_the_same_arrival_sound_as_the_web_and_desktop():
     # The client tells the phone the WHOLE choice, and re-tells it whenever it changes.
     blossom = open(os.path.join(ROOT, "static", "js", "client", "blossom.js")).read()
     assert "plug.appAlert({on,sound})" in blossom and "localStorage.getItem(key)===sound" in blossom
+
+
+def test_the_alerts_are_as_loud_as_a_notification_not_a_siren():
+    """"the phone notification sound for alerts is very loud and does not obey volume controls. need it softer"
+    (2026-10-30). Both sounds peaked at 0 dBFS and averaged -11 dB -- ~10 dB above Android's own notification sounds at
+    the same volume. Every copy (APK res/raw, web/OS static/sounds) is measured, and the generator carries the level."""
+    if not shutil.which("ffmpeg"):
+        import pytest
+        pytest.skip("ffmpeg needed to measure loudness")
+    import re
+    paths = [os.path.join(ANDROID, "src", "main", "res", "raw", n) for n in ("posterchan_alert.ogg", "posterchan_chime.ogg")]
+    paths += [os.path.join(ROOT, "static", "sounds", n) for n in ("posterchan-alert.ogg", "posterchan-alert.mp3",
+                                                                   "posterchan-chime.ogg", "posterchan-chime.mp3")]
+    for path in paths:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-af", "volumedetect", "-f", "null", "-"],
+                             capture_output=True, text=True).stderr
+        mean = float(re.search(r"mean_volume: (-?[\d.]+) dB", out).group(1))
+        peak = float(re.search(r"max_volume: (-?[\d.]+) dB", out).group(1))
+        assert mean <= -18 and peak <= -6, (path, mean, peak)
+    assert "PEAK = 10 ** (-11 / 20)" in open(os.path.join(ROOT, "scripts", "make_notification_sound.py")).read()
